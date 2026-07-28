@@ -118,7 +118,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const accessData: AccessRow = { token: result.token as string | undefined };
       if (access != null) {
         // Access is already existing, updating it with new token (as we have updated the sessions with it earlier).
-        updatePersonalAccess(accessData, context, next);
+        updatePersonalAccess(accessData, access, context, next);
       } else {
         // Access not found, creating it
         createAccess(accessData, context, (err: (Error & { isDuplicate?: boolean }) | null) => {
@@ -130,7 +130,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
                 if (err || access == null) { return next(errors.unexpectedError(err)); }
                 result.token = access.token;
                 accessData.token = access.token;
-                updatePersonalAccess(accessData, context, next);
+                updatePersonalAccess(accessData, access, context, next);
               });
             } else {
               // Any other error
@@ -157,9 +157,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       });
     }
 
-    function updatePersonalAccess (access: AccessRow, context: MethodContext, callback: (err: Error | null) => void) {
-      context.updateTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
-      userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
+    function updatePersonalAccess (accessData: AccessRow, existing: AccessRow, context: MethodContext, callback: (err: Error | null) => void) {
+      context.updateTrackingProperties(accessData, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
+      userAccessesStorage.updateOne(context.user, context.accessQuery, accessData, (err: Error | null) => {
+        if (err != null) return callback(err);
+        // Keep the reverse-index fresh on token rotation, and index a
+        // pre-backfill personal access on its next login. Merge the
+        // authoritative identity fields with the just-bumped modified time.
+        const merged = { id: existing.id, type: existing.type, created: existing.created, expires: existing.expires, modified: accessData.modified };
+        reindexAccessNonFatal(context.user.username, merged as { id?: unknown }).then(() => callback(null));
+      });
     }
   }
 

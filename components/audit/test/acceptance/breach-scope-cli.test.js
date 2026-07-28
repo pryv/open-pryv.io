@@ -103,6 +103,11 @@ describe('[BRSC] bin/breach-scope.js CLI', function () {
     assert.ok(report.activity.errorCalls >= 1, 'the bad-parameter read is an error row');
     const codes = report.caveats.map((c) => c.code);
     assert.ok(codes.includes('G7') && codes.includes('G2') && !codes.includes('G1'), 'caveats present, no G1');
+    // OD2: the local stream 'yo' resolves to its name best-effort.
+    const yoStream = report.dataCategories.streams.find((s) => s.id === 'yo');
+    assert.ok(yoStream, 'yo stream present in dataCategories');
+    assert.strictEqual(yoStream.name, 'YO', 'stream-name resolution filled the name');
+    assert.strictEqual(yoStream.resolvedAtReportTime, true);
   });
 
   it('[BRSC2] --output writes both a .json and a .md file', function () {

@@ -624,6 +624,9 @@ describe('[AUDT] Audit', function () {
         assert.ok(log, 'events.get audit row present');
         assert.deepEqual(log.content.scopedStreamIds, ['*'], 'wildcard sentinel');
         assert.strictEqual(typeof log.content.recordCount, 'number', 'recordCount present');
+        // The real producer sets scopedStreamCount = the expansion size on a
+        // sentinel row (this is what the report must not read as truncation).
+        assert.strictEqual(typeof log.content.scopedStreamCount, 'number', 'scopedStreamCount present on the real wildcard row');
       });
     });
 

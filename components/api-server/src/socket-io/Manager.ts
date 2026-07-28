@@ -478,7 +478,7 @@ class Connection {
         const sa = await getSocketAudit();
         if (sa.active && sa.audit != null) await sa.audit.validApiCall(methodContext, result);
       } catch (auditErr) {
-        logger.error('[socket.io audit] validApiCall failed for ' + apiMethod, auditErr);
+        logger.warn('[socket.io audit] validApiCall failed for ' + apiMethod, auditErr);
       }
       // good ending
       tracing.finishSpan('socket.io');
@@ -497,7 +497,7 @@ class Connection {
         const sa = await getSocketAudit();
         if (sa.active && sa.audit != null) await sa.audit.errorApiCall(methodContext, err);
       } catch (auditErr) {
-        logger.error('[socket.io audit] errorApiCall failed for ' + apiMethod, auditErr);
+        logger.warn('[socket.io audit] errorApiCall failed for ' + apiMethod, auditErr);
       }
       // bad ending
       tracing.setError('socket.io', err);

@@ -90,4 +90,47 @@ describe('[ACIX] access reverse-index population hooks', function () {
     assert.ok(entry.deleted != null, 'deleted timestamp set');
     assert.strictEqual(entry.accessId, access.id);
   });
+
+  it('[ACIX04] login indexes the personal access, and re-login reindexes it', async function () {
+    const luser = cuid();
+    const lpass = cuid();
+    await fixtures.user(luser, { password: lpass });
+    const login1 = await coreRequest.post(`/${luser}/auth/login`).set('Origin', 'https://sw.backloop.dev')
+      .send({ username: luser, password: lpass, appId: 'acix-app' });
+    assert.strictEqual(login1.status, 200, JSON.stringify(login1.body));
+    const tok = login1.body.token;
+    const list1 = await coreRequest.get(`/${luser}/accesses`).set('Authorization', tok);
+    const personal = list1.body.accesses.find((a) => a.type === 'personal' && a.name === 'acix-app');
+    assert.ok(personal, 'personal access exists after login');
+    const entry1 = await accessIndex.getAccessIndex(platform, personal.id);
+    assert.ok(entry1 != null, 'login-created personal access is indexed');
+    assert.strictEqual(entry1.type, 'personal');
+    // Re-login rotates the token -> updatePersonalAccess -> reindex (L1).
+    const login2 = await coreRequest.post(`/${luser}/auth/login`).set('Origin', 'https://sw.backloop.dev')
+      .send({ username: luser, password: lpass, appId: 'acix-app' });
+    assert.strictEqual(login2.status, 200);
+    const entry2 = await accessIndex.getAccessIndex(platform, personal.id);
+    assert.ok(entry2 != null && entry2.lastModified >= entry1.lastModified, 'reindexed on token rotation');
+  });
+
+  it('[ACIX05] user erasure (default) removes the index rows', async function () {
+    const euser = cuid();
+    const eu = await fixtures.user(euser);
+    const ep = cuid();
+    await eu.access({ token: ep, type: 'personal' });
+    await eu.session(ep);
+    await eu.stream({ id: 'se', name: 'Se' });
+    const res = await coreRequest.post(`/${euser}/accesses`).set('Authorization', ep)
+      .send({ name: 'erase-me', type: 'app', permissions: [{ streamId: 'se', level: 'read' }] });
+    assert.strictEqual(res.status, 201);
+    const accId = res.body.access.id;
+    assert.ok(await accessIndex.getAccessIndex(platform, accId) != null, 'indexed before erasure');
+    const { getUsersLocalIndex } = require('storage');
+    const idx = await getUsersLocalIndex();
+    const userId = await idx.getUserId(euser);
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const repo = await getUsersRepository();
+    await repo.deleteOne(userId, euser);
+    assert.strictEqual(await accessIndex.getAccessIndex(platform, accId), null, 'index rows removed on erasure (Art.17)');
+  });
 });

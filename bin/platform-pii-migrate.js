@@ -21,20 +21,26 @@
 //
 // Behaviour:
 //   - Reads every cleartext row in PlatformDB by enumerating the engine's
-//     prefix scans (`user-core/`, `user-unique/`, `user-indexed/`).
+//     prefix scans (`user-core/`, `user-unique/`, `user-indexed/`) plus the
+//     breach-scope reverse-index (`access-index/`, whose value JSON carries
+//     the owning username).
 //   - For each row, computes the hashed equivalent (key + value, where the
-//     value is itself a username on `user-unique/*` rows). Writes the
-//     hashed row, then deletes the cleartext row. Atomic enough at the
-//     row granularity that a crash mid-loop leaves a half-migrated state
-//     that the next run finishes.
+//     value is itself a username on `user-unique/*` rows, and the in-VALUE
+//     `username` on `access-index/*` rows). Writes the hashed row, then
+//     deletes the cleartext row. Atomic enough at the row granularity that a
+//     crash mid-loop leaves a half-migrated state that the next run finishes.
 //   - Skips rows whose key already looks HMAC-shaped (64 lowercase hex
-//     chars). Hence the script is idempotent + restartable.
-//   - Touches only `user-*` keys (user-core / user-unique / user-indexed).
-//     DNS-record subdomains are operator infrastructure names, NOT user
-//     PII, so they are stored cleartext and left untouched. Other
-//     PlatformDB namespaces (`core-info/`, `invitation/`, `tls-cert/`,
+//     chars), and access-index rows already carrying a `usernameToken` (or a
+//     tombstone carrying neither). Hence the script is idempotent + restartable.
+//   - Touches `user-*` keys (user-core / user-unique / user-indexed) and
+//     `access-index/` rows. DNS-record subdomains are operator infrastructure
+//     names, NOT user PII, so they are stored cleartext and left untouched.
+//     Other PlatformDB namespaces (`core-info/`, `invitation/`, `tls-cert/`,
 //     `acme-account`, `observability/*`, `mail-template/*`,
 //     `access-state/*`, `platform-secrets/*`) likewise stay untouched.
+//   - Alternatively/additionally, `bin/backfill-access-index.js --resync` on
+//     every core rewrites all access-index rows from authoritative storage in
+//     the CURRENT mode — a complete repair if this migration is ever skipped.
 //
 // Usage:
 //   node bin/platform-pii-migrate.js status    # report what would change
@@ -95,6 +101,7 @@ const USERNAME_FIELD = 'username';
     console.log('  user-core/      ' + plan.userCore.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userCore.toString().padStart(6) + ' already-hashed');
     console.log('  user-unique/    ' + plan.userUnique.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userUnique.toString().padStart(6) + ' already-hashed');
     console.log('  user-indexed/   ' + plan.userIndexed.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userIndexed.toString().padStart(6) + ' already-hashed');
+    console.log('  access-index/   ' + plan.accessIndex.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.accessIndex.toString().padStart(6) + ' already-hashed');
 
     if (args.command === 'status') {
       process.exit(0);
@@ -113,6 +120,7 @@ const USERNAME_FIELD = 'username';
     console.log('  user-core/      ' + counts.userCore);
     console.log('  user-unique/    ' + counts.userUnique);
     console.log('  user-indexed/   ' + counts.userIndexed);
+    console.log('  access-index/   ' + counts.accessIndex);
     process.exit(0);
   } catch (err) {
     console.error('platform-pii-migrate: ' + ((err && err.stack) || err));
@@ -128,7 +136,8 @@ async function buildPlan ({ platformDB }) {
     userCore: [],         // [{ username, coreId }]
     userUnique: [],       // [{ field, value, ownerUsername }]
     userIndexed: [],      // [{ username, field, value }]
-    alreadyHashed: { userCore: 0, userUnique: 0, userIndexed: 0 }
+    accessIndex: [],      // [{ key, entry }] — breach-scope reverse-index rows
+    alreadyHashed: { userCore: 0, userUnique: 0, userIndexed: 0, accessIndex: 0 }
   };
 
   // --- user-core ---
@@ -154,6 +163,22 @@ async function buildPlan ({ platformDB }) {
     }
   }
 
+  // --- access-index/ (breach-scope reverse-index) ---
+  // The value JSON carries the owning `username` in cleartext mode; hashed mode
+  // stores `usernameToken` instead. Without migrating these, pre-flip rows keep
+  // a plaintext username cluster-wide AND Art.17 erasure (which matches by
+  // hashFor token after the flip) silently misses them. Rows already carrying a
+  // token (or tombstoned, carrying neither) are skipped — idempotent.
+  const accessIndexKeys = await platformDB.listPlatformKvKeys('access-index/');
+  for (const key of accessIndexKeys) {
+    const raw = await platformDB.getPlatformKv(key);
+    if (raw == null) continue;
+    let entry;
+    try { entry = JSON.parse(raw); } catch { continue; }
+    if (typeof entry.username !== 'string') { plan.alreadyHashed.accessIndex++; continue; }
+    plan.accessIndex.push({ key, entry });
+  }
+
   // DNS-record subdomains are operator infrastructure names, not user PII —
   // stored cleartext in all modes, so they are intentionally NOT migrated.
 
@@ -164,7 +189,7 @@ async function buildPlan ({ platformDB }) {
  *  atomicity — a crash mid-loop leaves rows half-migrated which the next
  *  run completes. */
 async function applyPlan ({ platformDB, hasher, plan }) {
-  const counts = { userCore: 0, userUnique: 0, userIndexed: 0 };
+  const counts = { userCore: 0, userUnique: 0, userIndexed: 0, accessIndex: 0 };
 
   for (const { username, coreId } of plan.userCore) {
     const usernameToken = hasher.hashFor(USERNAME_FIELD, username);
@@ -193,6 +218,15 @@ async function applyPlan ({ platformDB, hasher, plan }) {
       await platformDB.deleteUserIndexedField(username, field);
     }
     counts.userIndexed++;
+  }
+
+  for (const { key, entry } of plan.accessIndex) {
+    // Replace the cleartext username in place with its token (same key).
+    const usernameToken = hasher.hashFor(USERNAME_FIELD, entry.username);
+    delete entry.username;
+    entry.usernameToken = usernameToken;
+    await platformDB.setPlatformKv(key, JSON.stringify(entry));
+    counts.accessIndex++;
   }
 
   return counts;

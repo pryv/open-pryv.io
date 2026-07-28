@@ -231,7 +231,10 @@ export async function safeIndexAccessMutation (platform: PlatformIndexHandle, us
   try {
     await putAccessIndex(platform, username, row, opts);
   } catch (err) {
-    logger.warn(`[access-index] failed to index access ${row?.id} (user ${username}): ${(err as Error).message}`);
+    // Log the mode-aware username token (identity in cleartext, HMAC in hashed)
+    // so an operator shipping logs off-core never gets plaintext where the
+    // STORE was carefully tokenized.
+    logger.warn(`[access-index] failed to index access ${row?.id} (user ${platform.hashFor(USERNAME_FIELD, username)}): ${(err as Error).message}`);
   }
 }
 
@@ -240,7 +243,7 @@ export async function safeMarkAccessDeleted (platform: PlatformIndexHandle, user
   try {
     await markAccessDeletedInIndex(platform, username, row, ts);
   } catch (err) {
-    logger.warn(`[access-index] failed to mark access ${row?.id} deleted (user ${username}): ${(err as Error).message}`);
+    logger.warn(`[access-index] failed to mark access ${row?.id} deleted (user ${platform.hashFor(USERNAME_FIELD, username)}): ${(err as Error).message}`);
   }
 }
 
@@ -277,7 +280,9 @@ export async function reindexAccessNonFatal (username: string, input: LooseAcces
     const platform = await getPlatform();
     await putAccessIndex(platform, username, row);
   } catch (err) {
-    logger.warn(`[access-index] platform unavailable, could not index access ${row.id} (user ${username}): ${(err as Error).message}`);
+    // platform is unavailable here (the fetch above failed), so no mode-aware
+    // token is obtainable — the access id identifies the divergent row.
+    logger.warn(`[access-index] platform unavailable, could not index access ${row.id}: ${(err as Error).message}`);
   }
 }
 
@@ -290,7 +295,7 @@ export async function tombstoneAccessesNonFatal (username: string, inputs: Array
     const platform = await getPlatform();
     for (const row of rows) await markAccessDeletedInIndex(platform, username, row, ts);
   } catch (err) {
-    logger.warn(`[access-index] platform unavailable, could not tombstone deleted access(es) (user ${username}): ${(err as Error).message}`);
+    logger.warn(`[access-index] platform unavailable, could not tombstone deleted access(es): ${(err as Error).message}`);
   }
 }
 
@@ -307,7 +312,7 @@ export async function cleanupUserAccessIndexNonFatal (platform: PlatformIndexHan
     if (keepMode) await tombstoneAccessIndexForUser(platform, username);
     else await deleteAccessIndexForUser(platform, username);
   } catch (err) {
-    logger.warn(`[access-index] failed to ${keepMode ? 'tombstone' : 'delete'} index rows for erased user ${username}: ${(err as Error).message}`);
+    logger.warn(`[access-index] failed to ${keepMode ? 'tombstone' : 'delete'} index rows for erased user ${platform.hashFor(USERNAME_FIELD, username)}: ${(err as Error).message}`);
   }
 }
 

@@ -184,8 +184,35 @@ require('@pryv/boiler').init({
     };
     const report = buildReport(auditRows || [], accessRow, entry, meta);
 
-    // 7. render + emit. Stream names are rendered id-only in v1 (name resolution
-    // needs the mall layer and is deferred; the report degrades gracefully).
+    // 6b. Best-effort stream-name resolution for LOCAL streams (the mall layer
+    // maps stream ids -> names). Any failure or a since-deleted id degrades to
+    // id-only with resolvedAtReportTime:false; resolution must NEVER fail the
+    // report. Store-prefixed ids are left id-only (external stores).
+    try {
+      const localIds = report.dataCategories.streams.map((s) => s.id).filter((id) => !id.startsWith(':'));
+      if (localIds.length > 0) {
+        const { getMall } = require('mall');
+        const mall = await getMall();
+        const tree = await mall.streams.get(userId, { id: '*', storeId: 'local', childrenDepth: -1, includeTrashed: true, excludedIds: [] });
+        const nameById = new Map();
+        const stack = Array.isArray(tree) ? [...tree] : [];
+        while (stack.length > 0) {
+          const s = stack.pop();
+          if (s == null) continue;
+          if (typeof s.id === 'string') nameById.set(s.id, s.name ?? null);
+          if (Array.isArray(s.children)) for (const c of s.children) stack.push(c);
+        }
+        let resolved = 0;
+        for (const s of report.dataCategories.streams) {
+          if (nameById.has(s.id)) { s.name = nameById.get(s.id); s.resolvedAtReportTime = true; resolved++; }
+        }
+        trace('resolved ' + resolved + '/' + localIds.length + ' local stream names');
+      }
+    } catch (err) {
+      trace('stream-name resolution skipped (id-only): ' + (err && err.message));
+    }
+
+    // 7. render + emit.
     const fs = require('fs');
     for (const out of args.outputs) {
       const ext = path.extname(out).toLowerCase();

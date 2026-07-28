@@ -103,7 +103,7 @@ export const CAVEATS: Array<{ code: string; text: string }> = [
   { code: 'advisory-index', text: 'The access reverse-index is routing metadata only; the access facts in this report come from the home core\'s authoritative storage. A disagreement is flagged as indexDivergence.' },
   { code: 'recordCountIncomplete', text: 'A flagged read means the result drain aborted mid-stream; the partial count approximates what the caller received and is labeled, never summed as complete. Rows with no record count predate the enrichment and are listed as count-unknown.' },
   { code: 'G7', text: 'Calls made with the token AFTER it stopped resolving to an access (revocation or expiry) are audited under the invalid-access stream (access-invalid), not this access id. This report covers the window in which the token resolved to the access; post-revocation attempts live in the invalid-access audit stream and the HTTP logs.' },
-  { code: 'scope-semantics', text: 'scopedStreamIds is the query\'s resolved scope, an upper bound on exposure per call, not the streams of the events actually returned.' }
+  { code: 'scope-semantics', text: 'scopedStreamIds is the query\'s resolved scope, an upper bound on exposure per call, not the streams of the events actually returned. When a call combines a wildcard with concrete streams the row collapses to the [\'*\'] sentinel; the original query expression is preserved in content.query.' }
 ];
 
 export interface ReportMeta {
@@ -300,6 +300,19 @@ export function buildReport (
   }));
   const externalStoreStreams = [...externalStreams.entries()].map(([id, v]) => ({ id, readCalls: v.readCalls }));
 
+  // Divergence = no authoritative row at all, OR one whose routing fields
+  // disagree with the index (the index is advisory; the home-core row wins).
+  let indexDivergence = accessRow == null;
+  if (accessRow != null && indexEntry != null) {
+    const differs = (a: unknown, b: unknown): boolean => a != null && b != null && a !== b;
+    if (
+      differs(accessRow.type, indexEntry.type) ||
+      differs(accessRow.created, indexEntry.created) ||
+      differs(accessRow.deleted, indexEntry.deleted) ||
+      differs(accessRow.expires, indexEntry.expires)
+    ) indexDivergence = true;
+  }
+
   return {
     reportVersion: REPORT_VERSION,
     generatedAt: meta.generatedAt,
@@ -324,7 +337,7 @@ export function buildReport (
       permissions: accessRow?.permissions ?? [],
       serialsSeen: [...serialsSeen].sort(),
       indexRow: indexEntry,
-      indexDivergence: accessRow == null
+      indexDivergence
     },
     activity: {
       totalCalls,
@@ -393,7 +406,13 @@ function aggregateStreams (
 export function renderMarkdown (report: BreachScopeReport): string {
   const r = report;
   const L: string[] = [];
-  const isoOrNull = (ts: number | null): string => (ts == null ? 'n/a' : String(ts));
+  // Timestamps are pryv seconds; render them as ISO dates for auditors (with the
+  // raw value in parentheses so nothing is lost). 'n/a' when absent.
+  const isoOrNull = (ts: number | null): string => {
+    if (ts == null) return 'n/a';
+    const iso = new Date(ts * 1000).toISOString();
+    return `${iso} (${ts})`;
+  };
 
   L.push('# Breach-scope report');
   L.push('');
