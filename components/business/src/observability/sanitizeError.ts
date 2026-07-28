@@ -11,29 +11,43 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = require('path').dirname(__filename);
 
 /**
- * Turn an arbitrary thrown value into the only error shape allowed to
- * leave the process: a code, a class name and code locations.
+ * Reduce an arbitrary thrown value to code locations inside THIS
+ * repository, and nothing else.
  *
- * ⚠ The message is NEVER forwarded. It is the single highest-risk field on
- * an error object: Node builds messages by interpolating whatever failed,
- * so `ENOENT: no such file or directory, open '/var-pryv/users/<id>/...'`,
- * "user <email> not found" and validation errors echoing the submitted
- * payload are all ordinary messages. The message stays in the local logs,
- * where it belongs; the backend gets the code.
+ * ⚠ The message is never forwarded. It is the highest-risk field on an
+ * error object: Node builds messages by interpolating whatever failed, so
+ * `ENOENT ... open '/var-pryv/users/<id>/...'`, "user <email> not found"
+ * and validation errors quoting the submitted payload are all ordinary
+ * messages. Callers emit a hard-coded message chosen by error code
+ * instead; the real message stays in the local logs.
  *
- * Frames are code locations, which are safe, with one caveat handled here:
- * absolute paths embed the deployment layout (and, for filesystem errors
- * raised inside a user directory, can embed a user id), so every path is
- * rewritten relative to the repository root before it is emitted.
+ * ⚠ Frames are rebuilt, not filtered. Every frame is decomposed into a
+ * function name and a location, each checked against an allow-list, and
+ * reassembled. A frame that cannot be expressed as
+ * `at <safe-name> (<repo-relative-path>:<line>:<col>)` or a `node:`
+ * internal is replaced by `at <external>` rather than emitted in some
+ * partially-scrubbed form. This is deliberate: the previous deny-list
+ * version let `file://`-form absolute paths through, because the check
+ * looked for a slash immediately after `(`, and V8 emits `file://` URLs
+ * throughout this ESM codebase. Deny-listing path shapes is exactly the
+ * mistake this whole layer exists to stop making.
  */
 
 const MAX_FRAMES = 30;
-const MAX_FRAME_LENGTH = 200;
-
+/** Function names as V8 writes them: `Object.foo`, `new Bar`, `<anonymous>`. */
+const SAFE_FUNCTION_NAME = /^[A-Za-z0-9_$.<> [\]]{1,80}$/;
 /**
- * Repository root, derived from this file's location:
- * components/business/src/observability → up 4.
+ * A repository-relative source location. The first character is pinned to
+ * a non-slash on purpose: a class that merely contains '/' also matches a
+ * leading one, i.e. an absolute path.
  */
+const SAFE_LOCATION = /^[A-Za-z0-9_.\-][A-Za-z0-9_.\-/]{0,199}:\d{1,7}:\d{1,7}$/;
+/** A Node internal frame location. */
+const SAFE_NODE_LOCATION = /^node:[A-Za-z0-9_/.]{1,100}:\d{1,7}:\d{1,7}$/;
+
+const EXTERNAL_FRAME = 'at <external>';
+
+/** Repository root: components/business/src/observability → up 4. */
 function repositoryRoot (): string {
   return require('path').resolve(__dirname, '..', '..', '..', '..');
 }
@@ -46,22 +60,71 @@ function rootPath (): string {
 }
 
 /**
- * Rewrite absolute paths in one stack frame to repository-relative form,
- * and drop any frame still holding an absolute path afterwards (a frame
- * from outside the repository tells us nothing worth the risk).
+ * Strip the `file://` scheme V8 uses for ESM frames, then make the path
+ * repository-relative. Returns null when the result still points outside
+ * the repository.
  */
-function sanitizeFrame (frame: string, root: string): string | null {
-  let out = frame.trim();
-  if (out.length > MAX_FRAME_LENGTH) out = out.slice(0, MAX_FRAME_LENGTH);
-  // Node internal frames carry no filesystem path at all.
-  if (out.includes('(node:') || out.includes(' node:')) return out;
-  if (root.length > 0) out = out.split(root + '/').join('').split(root).join('');
-  // Anything left that still looks like an absolute path (a linked
-  // dependency, a global install, a home directory) is discarded rather
-  // than emitted: outside the repository we cannot reason about what the
-  // path contains.
-  if (/[( ]\//.test(out)) return null;
-  return out;
+function toRepositoryRelative (location: string, root: string): string | null {
+  let path = location;
+  if (path.startsWith('file://')) path = fileUrlToPath(path);
+  if (path.startsWith(root + '/')) path = path.slice(root.length + 1);
+  // Anything still absolute, or still carrying a scheme, is outside the
+  // repository: a linked dependency, a global install, an operator's own
+  // plugin directory. Those paths can embed account names and directory
+  // names we do not control, so no part of them is emitted.
+  if (path.startsWith('/') || path.includes('://')) return null;
+  return path;
+}
+
+/**
+ * `fileURLToPath` throws on the malformed URLs that appear in synthesised
+ * or bundled stacks, and a throw here would lose the whole report.
+ */
+function fileUrlToPath (url: string): string {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return url.replace(/^file:\/\//, '');
+  }
+}
+
+/** Rebuild one `at ...` line, or return the external placeholder. */
+function sanitizeFrame (line: string, root: string): string {
+  const trimmed = line.trim();
+  // `at FUNC (LOCATION)` — the common form.
+  const withFunction = /^at\s+(.+?)\s+\((.+)\)$/.exec(trimmed);
+  if (withFunction != null) {
+    const name = safeName(withFunction[1]);
+    const location = safeLocation(withFunction[2], root);
+    if (location == null) return EXTERNAL_FRAME;
+    return 'at ' + name + ' (' + location + ')';
+  }
+  // `at LOCATION` — top-level module frames.
+  const bare = /^at\s+(.+)$/.exec(trimmed);
+  if (bare != null) {
+    const location = safeLocation(bare[1], root);
+    if (location == null) return EXTERNAL_FRAME;
+    return 'at ' + location;
+  }
+  return EXTERNAL_FRAME;
+}
+
+/**
+ * Function names come from our own source, but a dynamically-keyed
+ * function takes its name from the key, so the name is bounded rather
+ * than trusted.
+ */
+function safeName (raw: string): string {
+  const name = raw.trim();
+  return SAFE_FUNCTION_NAME.test(name) ? name : '<anonymous>';
+}
+
+function safeLocation (raw: string, root: string): string | null {
+  const location = raw.trim();
+  if (SAFE_NODE_LOCATION.test(location)) return location;
+  const relative = toRepositoryRelative(location, root);
+  if (relative == null) return null;
+  return SAFE_LOCATION.test(relative) ? relative : null;
 }
 
 interface SanitizedError {
@@ -80,24 +143,26 @@ function sanitizeError (err: unknown): SanitizedError {
   const root = rootPath();
   const frames: string[] = [];
   for (const line of stack.split('\n')) {
-    // Only `at ...` lines are code locations; the first line of a stack is
-    // "<ClassName>: <message>" and must not be forwarded.
+    // Only `at ...` lines are code locations; a stack's first line is
+    // "<ClassName>: <message>" and must never be forwarded.
     if (!/^\s*at\s/.test(line)) continue;
-    const sanitized = sanitizeFrame(line, root);
-    if (sanitized != null) frames.push(sanitized);
+    const frame = sanitizeFrame(line, root);
+    // Collapse runs of external frames: they carry no information and a
+    // long run of them is just noise.
+    if (frame === EXTERNAL_FRAME && frames[frames.length - 1] === EXTERNAL_FRAME) continue;
+    frames.push(frame);
     if (frames.length >= MAX_FRAMES) break;
   }
   return { errorClass, frames };
 }
 
 /**
- * Constructor name, bounded to a JS-identifier shape so that an exotic
- * thrown value cannot smuggle text through this field.
+ * Constructor name, bounded to a JS-identifier shape so an exotic thrown
+ * value cannot smuggle text through this field. Works for objects and
+ * primitives alike.
  */
 function classNameOf (err: unknown): string {
   let name = 'Unknown';
-  // Works for objects and primitives alike: a thrown 42 reports 'Number',
-  // a thrown string 'String', an Error subclass its own name.
   if (err != null) {
     const ctor = (err as { constructor?: { name?: string } }).constructor;
     if (ctor != null && typeof ctor.name === 'string' && ctor.name.length > 0) name = ctor.name;
@@ -105,5 +170,5 @@ function classNameOf (err: unknown): string {
   return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ? name : 'Unknown';
 }
 
-export { sanitizeError, classNameOf, MAX_FRAMES };
+export { sanitizeError, classNameOf, sanitizeFrame, MAX_FRAMES, EXTERNAL_FRAME, SAFE_LOCATION };
 export type { SanitizedError };

@@ -96,11 +96,20 @@ describe('[OBS] observability', function () {
       });
     });
 
-    it('[OB04] hostname derived from new URL(core.url).hostname', async function () {
-      const coreUrl = 'https://core-ob04.example.com';
-      await withInjectedConfig({ core: { url: coreUrl } }, async () => {
+    it('[OB04] hostname is the MACHINE hostname, never derived from the URL layer', async function () {
+      // In DNS-ful deployments user-facing hosts are <username>.<domain>,
+      // so a hostname taken from core.url / dns.domain is one config
+      // change away from carrying a username — and it would ride on every
+      // metric and every error report as a direct identifier.
+      const machine = require('os').hostname();
+      await withInjectedConfig({
+        core: { url: 'https://alice.example.com' },
+        dns: { domain: 'example.com' }
+      }, async () => {
         const obs = await platform.getObservabilityConfig();
-        assert.strictEqual(obs.hostname, 'core-ob04.example.com');
+        assert.strictEqual(obs.hostname, machine);
+        assert.ok(!obs.hostname.includes('alice'),
+          'no URL-layer name may reach the telemetry instance id');
       });
     });
 
@@ -146,7 +155,8 @@ describe('[OBS] observability', function () {
         assert.strictEqual(env.PRYV_OBS_ENDPOINT, 'https://otlp.example.test');
         assert.strictEqual(JSON.parse(env.PRYV_OBS_HEADERS)['api-key'], 'k'.repeat(40));
         assert.strictEqual(env.PRYV_OBS_SERVICE_NAME, 'test-cluster-app');
-        assert.strictEqual(env.PRYV_OBS_INSTANCE_ID, 'core-ob07.example.com');
+        assert.strictEqual(env.PRYV_OBS_INSTANCE_ID, require('os').hostname(),
+          'instance id is the machine, not anything from the URL layer');
       });
     });
   });

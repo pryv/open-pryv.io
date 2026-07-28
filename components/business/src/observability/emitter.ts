@@ -26,8 +26,12 @@ const require = createRequire(import.meta.url);
  *   - Buffers are bounded. Under backpressure we drop and count.
  */
 
-const { validateMetric, validateErrorAttributes, METRICS, DROP_REASONS, knownErrorCodes } = require('./schema.ts');
+const {
+  validateMetric, validateErrorAttributes, validateResource,
+  METRICS, DROP_REASONS, knownErrorCodes
+} = require('./schema.ts');
 const { sanitizeError } = require('./sanitizeError.ts');
+const { messageFor } = require('./errorRegistry.ts');
 const {
   buildMetricsPayload, buildLogsPayload, emptyBuckets, bucketIndex
 } = require('./otlp.ts');
@@ -63,7 +67,23 @@ const counters: Map<string, Map<string, { attributes: Attributes, value: number 
 const histograms: Map<string, Map<string, {
   attributes: Attributes, count: number, sum: number, bucketCounts: number[]
 }>> = new Map();
-let errorRecords: Array<{ timeMs: number, code: string, attributes: Attributes, frames: string[] }> = [];
+/**
+ * Error reports, AGGREGATED by fault rather than kept per occurrence.
+ *
+ * Each distinct (code, class, method, stack) becomes one record with a
+ * count, emitted at the flush boundary. This is a privacy control, not a
+ * volume optimisation: a per-occurrence record carries a precise
+ * timestamp, and "this method failed at 14:32:07.123 on this core" singles
+ * out one person's one action to anyone holding a second timestamped
+ * signal, the operator's own audit log included. Aggregating to the
+ * interval removes the instant, and with it the correlation handle. The
+ * cost, accepted deliberately, is that sub-interval ordering and exact
+ * error times are no longer available from telemetry; they remain in the
+ * operator's local logs.
+ */
+const errorGroups: Map<string, {
+  code: string, message: string, attributes: Attributes, frames: string[], count: number
+}> = new Map();
 
 function isActive (): boolean {
   return config !== null;
@@ -162,18 +182,31 @@ function recordApiCall (
 function reportError (err: unknown, code: string, methodId?: string | null): void {
   if (config == null) return;
   const { errorClass, frames } = sanitizeError(err);
+  const stack = frames.join('\n');
   const attributes: Attributes = { 'error.code': code, 'error.class': errorClass };
   if (methodId != null) attributes['method.id'] = methodId;
-  const check = validateErrorAttributes(attributes);
+  // The stack is validated with everything else: it is the one field
+  // carrying free-form text, so it is exactly the field that must not be
+  // trusted on the sanitizer's word alone.
+  const check = validateErrorAttributes(Object.assign({ 'error.stack': stack }, attributes));
   if (!check.ok) {
     countDrop(check.reason);
     return;
   }
-  if (errorRecords.length >= MAX_ERROR_RECORDS) {
+  const key = attributes['error.code'] + '|' + errorClass + '|' + (methodId ?? '') + '|' + stack;
+  const existing = errorGroups.get(key);
+  if (existing != null) {
+    existing.count += 1;
+    return;
+  }
+  if (errorGroups.size >= MAX_ERROR_RECORDS) {
     countDrop(DROP_REASONS.BUFFER_FULL);
     return;
   }
-  errorRecords.push({ timeMs: nowMs(), code, attributes, frames });
+  // The message is resolved here, from the hard-coded catalogue keyed by
+  // the already-validated code, so the serializer only ever encodes a
+  // compile-time constant.
+  errorGroups.set(key, { code, message: messageFor(code), attributes, frames, count: 1 });
 }
 
 function resourceAttributes (): Attributes {
@@ -194,10 +227,10 @@ function drain () {
     attributes: Attributes, count: number, sum: number, bucketCounts: number[]
   }>> = {};
   for (const [name, series] of histograms) histogramsOut[name] = Array.from(series.values());
-  const errorsOut = errorRecords;
+  const errorsOut = Array.from(errorGroups.values());
   counters.clear();
   histograms.clear();
-  errorRecords = [];
+  errorGroups.clear();
   return { countersOut, histogramsOut, errorsOut };
 }
 
@@ -229,6 +262,15 @@ async function flush (): Promise<void> {
   intervalStartMs = endMs;
   const { countersOut, histogramsOut, errorsOut } = drain();
   const resource = resourceAttributes();
+  // Resource identity is validated like everything else: the service name
+  // is the one operator-supplied string in the payload. A resource that
+  // fails validation means the whole batch is unsafe to send.
+  const resourceCheck = validateResource(resource);
+  if (!resourceCheck.ok) {
+    countDrop(DROP_REASONS.INVALID_RESOURCE);
+    if (cfg.logger) cfg.logger.warn('observability: resource attributes rejected, batch dropped');
+    return;
+  }
   const send = cfg.send || defaultSend;
 
   const metricsPayload = buildMetricsPayload({
@@ -247,7 +289,11 @@ async function flush (): Promise<void> {
     }
   }
 
-  const logsPayload = buildLogsPayload({ errors: errorsOut, resourceAttributes: resource });
+  // Timestamped at the interval boundary, not at occurrence: see the
+  // errorGroups note above.
+  const logsPayload = buildLogsPayload({
+    errors: errorsOut, intervalEndMs: endMs, resourceAttributes: resource
+  });
   if (Object.keys(logsPayload).length > 0) {
     try {
       await send(joinUrl(cfg.endpoint, '/v1/logs'), logsPayload, cfg.headers);
@@ -294,7 +340,7 @@ function _reset (): void {
   config = null;
   counters.clear();
   histograms.clear();
-  errorRecords = [];
+  errorGroups.clear();
   intervalStartMs = 0;
 }
 
@@ -304,7 +350,7 @@ function _buffered () {
   for (const [name, series] of counters) countersOut[name] = Array.from(series.values());
   const histogramsOut: Record<string, Array<{ attributes: Attributes, count: number, sum: number }>> = {};
   for (const [name, series] of histograms) histogramsOut[name] = Array.from(series.values());
-  return { counters: countersOut, histograms: histogramsOut, errors: errorRecords.slice() };
+  return { counters: countersOut, histograms: histogramsOut, errors: Array.from(errorGroups.values()) };
 }
 
 export {

@@ -1153,16 +1153,18 @@ class Platform {
     await this.#db.deleteObservabilityValue(key);
   }
 
+  /**
+   * Telemetry instance identity: the MACHINE's hostname, and nothing
+   * derived from the API's URL scheme.
+   *
+   * ⚑ This must never be resolved from `core.url` / `dns.domain`. In
+   * DNS-ful deployments user-facing hosts are `<username>.<domain>`, so
+   * any hostname taken from the URL layer is one config change away from
+   * carrying a username, and it would then be attached to EVERY metric and
+   * every error report as a direct identifier. `os.hostname()` is set by
+   * the OS or the container runtime and has no path to a user id.
+   */
   #deriveHostname (): string {
-    const coreUrl = this.#config.get('core:url') as string | undefined;
-    if (coreUrl) {
-      try {
-        const h = new URL(coreUrl).hostname;
-        if (h) return h;
-      } catch { /* fall through */ }
-    }
-    const domain = this.#config.get('dns:domain') as string | undefined;
-    if (domain) return 'single.' + domain;
     return require('os').hostname();
   }
 

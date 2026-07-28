@@ -121,37 +121,50 @@ function buildMetricsPayload (input: MetricsInput): Record<string, unknown> {
 }
 
 interface ErrorRecord {
-  timeMs: number;
-  code: string;
+  /** Hard-coded text for the error code, resolved by the caller. */
+  message: string;
   attributes: Attributes;
   frames: string[];
+  count: number;
 }
 interface LogsInput {
   errors: ErrorRecord[];
+  intervalEndMs: number;
   resourceAttributes: Attributes;
 }
 
 /**
  * Build an OTLP ExportLogsServiceRequest body for error reports.
  *
- * The record body is the error CODE, never a message. The stack travels as
- * a dedicated attribute holding the sanitized frames joined by newlines,
- * which is why it is assembled here rather than passed through the generic
- * attribute allow-list: it is not a label, it is the payload the operator
- * needs to locate the fault, and it has already been stripped of paths.
+ * Two properties are deliberate and load-bearing:
+ *
+ * **The body is a hard-coded message chosen by error code** (resolved by
+ * the emitter from the repository's own message catalogue). The thrown
+ * error's message is never consulted, so the body is a compile-time
+ * constant, identical on every deployment. This module is a pure
+ * serializer: it never derives a value, it only encodes what it is
+ * handed, so there is one place to audit for what may be emitted.
+ *
+ * **Every record is timestamped at the interval boundary**, and carries a
+ * count, because the emitter aggregates by fault rather than keeping one
+ * record per occurrence. A precise per-occurrence timestamp would single
+ * out an individual action to anyone holding a second timestamped signal;
+ * the interval boundary carries no such handle.
  */
 function buildLogsPayload (input: LogsInput): Record<string, unknown> {
   if (input.errors.length === 0) return {};
+  const timestamp = nanos(input.intervalEndMs);
   const logRecords = input.errors.map(function (record) {
     const attributes = toKeyValues(record.attributes);
     if (record.frames.length > 0) {
       attributes.push({ key: 'error.stack', value: { stringValue: record.frames.join('\n') } });
     }
+    attributes.push({ key: 'error.count', value: { intValue: String(record.count) } });
     return {
-      timeUnixNano: nanos(record.timeMs),
+      timeUnixNano: timestamp,
       severityNumber: SEVERITY_ERROR,
       severityText: 'ERROR',
-      body: { stringValue: record.code },
+      body: { stringValue: record.message },
       attributes
     };
   });

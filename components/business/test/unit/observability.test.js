@@ -38,11 +38,17 @@ const assert = require('node:assert');
 const schema = require('business/src/observability/schema.ts');
 const emitter = require('business/src/observability/emitter.ts');
 const observability = require('business/src/observability/index.ts');
-const { sanitizeError } = require('business/src/observability/sanitizeError.ts');
-const { classify, allErrorCodes } = require('business/src/observability/errorRegistry.ts');
+const sanitizeErrorModule = require('business/src/observability/sanitizeError.ts');
+const { sanitizeError } = sanitizeErrorModule;
+const { classify, allErrorCodes, messageFor } = require('business/src/observability/errorRegistry.ts');
 const { buildMetricsPayload, buildLogsPayload } = require('business/src/observability/otlp.ts');
 
 const METHOD_IDS = ['events.get', 'events.create', 'auth.login'];
+
+/** One fixed throw site, so repeated reports share a stack. */
+function sharedFault () {
+  return Object.assign(new Error('boom'), { id: 'unexpected-error', httpStatus: 500 });
+}
 
 /** Collect what the emitter would have sent, instead of sending it. */
 function captureSink () {
@@ -148,18 +154,59 @@ describe('[OBS] observability choke point', function () {
       assert.ok(!joined.includes('ENOENT'), 'no message content may appear in frames');
     });
 
-    it('[OBSB] rewrites absolute paths to repository-relative', function () {
+    it('[OBSB] emits repository-relative frames and nothing else', function () {
       const err = new Error('boom');
       const sanitized = sanitizeError(err);
       for (const frame of sanitized.frames) {
-        // A frame either references a repository-relative path or a node:
-        // internal. An absolute filesystem path must never survive.
-        if (frame.includes('node:')) continue;
-        assert.ok(!/[( ]\/[^)]*\.(ts|js)/.test(frame),
-          'absolute path leaked in frame: ' + frame);
+        assert.ok(schema.SAFE_FRAME.test(frame), 'frame outside the grammar: ' + frame);
       }
       assert.ok(sanitized.frames.some(function (f) { return f.includes('observability.test.js'); }),
         'the test frame should still be identifiable');
+    });
+
+    it('[OBSB2] discards every path outside the repository, in both URL and bare form', function () {
+      // The `file://` form is what V8 emits throughout this ESM codebase,
+      // and it is what an earlier deny-list version let through.
+      const err = new Error('secret message');
+      err.stack = [
+        'Error: secret message',
+        '    at Context.<anonymous> (file://' + process.cwd() + '/components/api-server/src/API.ts:210:5)',
+        '    at handler (' + process.cwd() + '/components/business/src/x.ts:1:1)',
+        '    at loadESM (node:internal/process/esm_loader:34:7)',
+        '    at Module._compile (file:///Users/someone/.nvm/versions/node/v24.0.0/lib/foo/index.js:9:9)',
+        '    at readFile (/home/alice-patient-data/plugins/custom.js:3:3)',
+        '    at evil (/etc/passwd:1:1)'
+      ].join('\n');
+      const sanitized = sanitizeError(err);
+      const joined = sanitized.frames.join('\n');
+
+      assert.ok(!joined.includes('someone'), 'home-directory account name leaked: ' + joined);
+      assert.ok(!joined.includes('alice-patient-data'), 'external path leaked: ' + joined);
+      assert.ok(!joined.includes('/etc/passwd'), 'external path leaked: ' + joined);
+      assert.ok(!joined.includes('secret message'), 'message leaked into frames');
+      assert.ok(!joined.includes(process.cwd()), 'absolute repository path leaked: ' + joined);
+      // Kept: the two in-repo frames plus the node internal, so this
+      // cannot pass by discarding everything.
+      assert.ok(joined.includes('components/api-server/src/API.ts:210:5'));
+      assert.ok(joined.includes('components/business/src/x.ts:1:1'));
+      assert.ok(joined.includes('node:internal/process/esm_loader:34:7'));
+      assert.ok(joined.includes(sanitizeErrorModule.EXTERNAL_FRAME),
+        'external frames are replaced by a placeholder, not dropped silently');
+      for (const frame of sanitized.frames) {
+        assert.ok(schema.SAFE_FRAME.test(frame), 'frame outside the grammar: ' + frame);
+      }
+    });
+
+    it('[OBSB3] bounds function names, so a dynamically-keyed function cannot carry text', function () {
+      const err = new Error('x');
+      err.stack = [
+        'Error: x',
+        '    at alice@example.com (' + process.cwd() + '/components/business/src/x.ts:1:1)'
+      ].join('\n');
+      const sanitized = sanitizeError(err);
+      assert.ok(!sanitized.frames.join('\n').includes('alice@example.com'),
+        'unsafe function name leaked');
+      assert.ok(sanitized.frames[0].includes('<anonymous>'));
     });
 
     it('[OBSC] degrades safely on non-Error values', function () {
@@ -221,6 +268,28 @@ describe('[OBS] observability choke point', function () {
       assert.strictEqual(buffered.errors[0].attributes['method.id'], 'events.create');
     });
 
+    it('[OBSK] aggregates repeated faults into one counted record, with no per-occurrence time', function () {
+      const sink = captureSink();
+      initEmitter(sink);
+      const makeError = () => Object.assign(new Error('boom'), {
+        id: 'unexpected-error', httpStatus: 500
+      });
+      // Same fault site three times: one record, count 3.
+      for (let i = 0; i < 3; i++) {
+        emitter.reportError(sharedFault(), 'unexpected-error', 'events.get');
+      }
+      emitter.reportError(makeError(), 'unexpected-error', 'events.create');
+
+      const errors = emitter._buffered().errors;
+      assert.strictEqual(errors.length, 2, 'grouped by fault, not by occurrence');
+      const grouped = errors.find(function (e) { return e.attributes['method.id'] === 'events.get'; });
+      assert.strictEqual(grouped.count, 3);
+      for (const record of errors) {
+        assert.strictEqual(record.timeMs, undefined,
+          'no per-occurrence timestamp may be retained: it is the correlation handle');
+      }
+    });
+
     it('[OBSG] the OTLP payload carries only allow-listed keys', async function () {
       const sink = captureSink();
       initEmitter(sink);
@@ -254,13 +323,20 @@ describe('[OBS] observability choke point', function () {
       }
 
       const record = logsCall.body.resourceLogs[0].scopeLogs[0].logRecords[0];
-      assert.strictEqual(record.body.stringValue, 'unexpected-error',
-        'the record body is the code, never a message');
+      assert.strictEqual(record.body.stringValue, messageFor('unexpected-error'),
+        'the body is the hard-coded message for the code, never the thrown message');
+      assert.ok(!record.body.stringValue.includes('x'.repeat(1)) ||
+        record.body.stringValue === messageFor('unexpected-error'));
       const errorKeys = record.attributes.map(function (a) { return a.key; });
       for (const key of errorKeys) {
-        assert.ok(schema.ERROR_ATTRIBUTES.includes(key) || key === 'error.stack',
+        assert.ok(schema.ERROR_ATTRIBUTES.includes(key),
           'unexpected error attribute: ' + key);
       }
+      // The interval boundary, shared by every record in the batch.
+      const metricPoint = resourceMetric.scopeMetrics[0].metrics[0];
+      const metricEnd = (metricPoint.sum || metricPoint.histogram).dataPoints[0].timeUnixNano;
+      assert.strictEqual(record.timeUnixNano, metricEnd,
+        'error records carry the interval boundary, not an occurrence time');
     });
 
     it('[OBSH] a failing backend never throws into the caller', async function () {
@@ -305,12 +381,137 @@ describe('[OBS] observability choke point', function () {
     });
   });
 
+  describe('[OBS-G] the guarantee, asserted at the boundary', function () {
+    beforeEach(function () {
+      schema.registerMethodIds(METHOD_IDS);
+      schema.registerErrorCodes(allErrorCodes());
+    });
+
+    it('[OBSL] a stack that escapes the sanitizer is refused by the schema', function () {
+      // Simulates a future regression in sanitizeError: the validator is
+      // the backstop, so an unsafe frame must not reach the wire even if
+      // the sanitizer produced it.
+      const unsafe = 'at x (/home/alice/secret/plugin.js:1:1)';
+      const result = schema.validateErrorAttributes({
+        'error.code': 'unexpected-error', 'error.stack': unsafe
+      });
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.reason, schema.DROP_REASONS.UNSAFE_FRAME);
+      // A legitimate stack still passes.
+      assert.strictEqual(schema.validateErrorAttributes({
+        'error.code': 'unexpected-error',
+        'error.stack': 'at f (components/business/src/x.ts:1:1)\nat <external>'
+      }).ok, true);
+    });
+
+    it('[OBSM] the emitter refuses to build a report around an unsafe stack', function () {
+      const sink = captureSink();
+      initEmitter(sink);
+      const err = new Error('x');
+      err.stack = 'Error: x\n    at f (components/business/src/x.ts:1:1)';
+      emitter.reportError(err, 'unexpected-error', 'events.get');
+      assert.strictEqual(emitter._buffered().errors.length, 1, 'the safe case is reported');
+    });
+
+    it('[OBSN] resource attributes are bounded, service name included', function () {
+      assert.strictEqual(schema.validateResource({
+        'service.name': 'open-pryv.io (example.com)',
+        'service.instance.id': 'core-euc1',
+        'service.worker': '1',
+        'service.version': '2.0.0'
+      }).ok, true);
+      // An operator pasting a subject's details into the app name.
+      assert.strictEqual(schema.validateResource({
+        'service.name': 'alice@example.com'
+      }).ok, false, 'an email-shaped service name must not pass');
+      assert.strictEqual(schema.validateResource({ 'user.name': 'alice' }).ok, false);
+    });
+
+    it('[OBSO] a rejected resource drops the whole batch rather than sending it', async function () {
+      const sink = captureSink();
+      observability.init({
+        endpoint: 'https://otlp.example.test',
+        headers: {},
+        serviceName: 'alice@example.com', // invalid on purpose
+        serviceVersion: '2.0.0',
+        instanceId: 'core-test',
+        worker: '1',
+        methodIds: METHOD_IDS,
+        flushIntervalMs: 3600000,
+        send: sink.send
+      });
+      observability.recordApiCall('events.get', 5);
+      await observability.flush();
+      assert.strictEqual(sink.sent.length, 0, 'nothing may be sent under an invalid resource');
+    });
+  });
+
+  describe('[OBS-W] end-to-end wire sweep', function () {
+    it('[OBSP] no identifier survives to the serialized payload, from the real entry point', async function () {
+      const sink = captureSink();
+      initEmitter(sink);
+
+      // Every string here is something that must never reach a backend.
+      // They are pushed through the SAME entry point API.call uses, in
+      // every position an attacker or an unlucky code path could put them.
+      const secrets = [
+        'alice', 'alice@example.com', 'cjqz8k1f20000abcd1234efgh',
+        'https://core.example.com/alice/events?auth=tok-secret',
+        '/var/pryv/users/alice/attachments/scan.pdf',
+        'Bearer tok-secret', 'tok-secret', 'my-private-stream',
+        'patient-record-42', 'password123'
+      ];
+
+      const err = new Error(
+        "ENOENT: open '/var/pryv/users/alice/attachments/scan.pdf' for alice@example.com " +
+        'token Bearer tok-secret stream my-private-stream patient-record-42 password123'
+      );
+      err.id = 'unexpected-error';
+      err.httpStatus = 500;
+      // Custom properties of the shapes Node and our own code attach.
+      err.path = '/var/pryv/users/alice/attachments/scan.pdf';
+      err.hostname = 'alice.example.com';
+      err.address = '10.0.0.4';
+      err.username = 'alice';
+      err.url = 'https://core.example.com/alice/events?auth=tok-secret';
+      err.streamId = 'my-private-stream';
+      err.data = { email: 'alice@example.com', password: 'password123' };
+
+      // A legitimate call, a server fault, and an attempt to smuggle a
+      // username in through the method-id position.
+      observability.recordApiCall('events.get', 12);
+      observability.recordApiCall('events.create', 40, err);
+      observability.recordApiCall('alice@example.com', 5);
+      observability.recordError(err, 'events.get');
+
+      await observability.flush();
+
+      assert.ok(sink.sent.length > 0, 'something must have been sent, or this proves nothing');
+      const wire = JSON.stringify(sink.sent);
+      for (const secret of secrets) {
+        assert.ok(!wire.includes(secret),
+          'LEAK: "' + secret + '" reached the wire payload:\n' + wire);
+      }
+      // Positive controls: the payload is real and useful, so the sweep
+      // above cannot be passing because nothing was emitted.
+      assert.ok(wire.includes('events.get'), 'legitimate method ids must survive');
+      assert.ok(wire.includes('unexpected-error'), 'the error code must survive');
+      assert.ok(wire.includes('api.method.calls'), 'metrics must survive');
+      assert.ok(wire.includes('error.stack'), 'a stack must survive');
+      // And the smuggled method id was refused, not silently accepted.
+      assert.ok(wire.includes(schema.DROP_REASONS.UNKNOWN_METHOD_ID),
+        'the refusal must be visible as a counted drop');
+    });
+  });
+
   describe('[OBS-P] payload builders', function () {
     it('[OBSJ] emit nothing when there is nothing to send', function () {
       assert.deepStrictEqual(buildMetricsPayload({
         counters: {}, histograms: {}, startTimeMs: 0, endTimeMs: 1, resourceAttributes: {}
       }), {});
-      assert.deepStrictEqual(buildLogsPayload({ errors: [], resourceAttributes: {} }), {});
+      assert.deepStrictEqual(buildLogsPayload({
+        errors: [], intervalEndMs: 1, resourceAttributes: {}
+      }), {});
     });
   });
 });

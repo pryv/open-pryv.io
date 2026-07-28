@@ -25,8 +25,31 @@ const require = createRequire(import.meta.url);
  */
 
 const { ErrorIds } = require('errors/src/ErrorIds.ts');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 
 const UNKNOWN_CODE = 'unknown';
+
+/**
+ * The hard-coded message list. A report's human-readable text is looked
+ * up here by code and is therefore a compile-time constant of this
+ * repository, identical on every deployment. The thrown error's own
+ * message is never consulted.
+ */
+const FALLBACK_MESSAGES: Record<string, string> = {
+  [UNKNOWN_CODE]: 'Unclassified server error'
+};
+
+/**
+ * @param code — a registry code (see `allErrorCodes`).
+ * @returns the hard-coded message for that code.
+ */
+function messageFor (code: string): string {
+  const message = ErrorMessages[code] ?? FALLBACK_MESSAGES[code];
+  if (typeof message === 'string' && message.length > 0 && message.length <= 200) return message;
+  // Codes without a catalogue entry report the code itself, which is
+  // also a compile-time constant.
+  return code;
+}
 
 /** Every value of ErrorIds, plus the fallback. The emitter's vocabulary. */
 function allErrorCodes (): string[] {
@@ -90,5 +113,5 @@ function readNumber (obj: unknown, key: string): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-export { classify, allErrorCodes, statusClassOf, UNKNOWN_CODE, ALWAYS_REPORTED };
+export { classify, allErrorCodes, statusClassOf, messageFor, UNKNOWN_CODE, ALWAYS_REPORTED };
 export type { ErrorClassification };
