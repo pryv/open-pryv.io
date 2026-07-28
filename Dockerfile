@@ -1,4 +1,9 @@
-FROM node:24-bookworm
+# Base image digest-pinned for reproducibility + supply-chain integrity.
+# `node:24-bookworm` is a moving tag (Docker Hub republishes it on every Node
+# patch); the digest freezes the exact image. Re-pin deliberately (quarterly
+# or on a security bump): docker buildx imagetools inspect node:24-bookworm
+# (or the registry manifest API) → update the sha256 below + re-baseline.
+FROM node:24-bookworm@sha256:5711a0d445a1af54af9589066c646df387d1831a608226f4cd694fc59e745059
 
 WORKDIR /app
 
@@ -11,10 +16,22 @@ RUN apt-get update && \
 # master.js spawns rqlited directly; the binary must be inside the image.
 # Installed under /app/bin-ext/ (NOT /app/var-pryv/) so operators can bind-mount
 # /app/var-pryv/rqlite-data without shadowing the baked-in binary.
+# The release tarball is integrity-checked (sha256) before extraction, so a
+# tampered or MITM-able download fails the build instead of landing silently.
+# Update both checksums when bumping RQLITE_VERSION (they are per-arch):
+#   curl -fsSL <url> | sha256sum
 ARG RQLITE_VERSION=9.4.5
+ARG RQLITE_SHA256_amd64=96c82652929085af49d1ebc8d14891a02105d063be7eee25a9bb90af4e5f9f3b
+ARG RQLITE_SHA256_arm64=5fe34f9c610aaa7ad631e8d7d66e0302cc6b7c799be5b30996a52deeaa542a7b
 RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) RQLITE_SHA256="$RQLITE_SHA256_amd64" ;; \
+      arm64) RQLITE_SHA256="$RQLITE_SHA256_arm64" ;; \
+      *) echo "unsupported architecture for rqlite: $ARCH" >&2; exit 1 ;; \
+    esac && \
     curl -fsSL -o /tmp/rqlite.tar.gz \
       "https://github.com/rqlite/rqlite/releases/download/v${RQLITE_VERSION}/rqlite-v${RQLITE_VERSION}-linux-${ARCH}.tar.gz" && \
+    echo "${RQLITE_SHA256}  /tmp/rqlite.tar.gz" | sha256sum -c - && \
     mkdir -p /app/bin-ext /app/var-pryv/rqlite-data && \
     tar xzf /tmp/rqlite.tar.gz -C /tmp --strip-components=1 && \
     cp /tmp/rqlited /app/bin-ext/ && \
