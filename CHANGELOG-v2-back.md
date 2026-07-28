@@ -1,5 +1,28 @@
 # Changelog - Internal (no API impact)
 
+## chore(supply-chain): dependency-audit gate, SBOM, image signing + provenance, hardened base image
+
+The build pipeline now detects, gates, and attests the software supply chain.
+
+**Added.**
+- `scripts/audit-prod-deps` — a CI gate that fails the build on high or critical
+  advisories affecting the shipped (`--omit=dev`) npm tree. Accepted advisories
+  live in a documented, justified allowlist rather than being silenced.
+- A CycloneDX SBOM of the source tree is emitted on every CI run and scanned
+  with Grype (build fails on critical findings); released images carry their own
+  CycloneDX SBOM.
+- On release tags, the published image is signed with keyless (OIDC) cosign and
+  carries a SLSA build-provenance attestation that pullers can verify.
+- The Docker base image is digest-pinned and the rqlite download is
+  checksum-verified before unpacking.
+
+**Changed.** nodemailer bumped to 9, clearing the standing runtime advisories.
+
+**Known bound.** The pinned `node:24-bookworm` base image still carries
+OS-level CVEs that image scanners surface; a slimmer-base migration is tracked
+separately. The claim here is detection, gating, and attestation, not a
+CVE-free image.
+
 ## fix(socket-io): the periodic client-revoke sweep had never run
 
 `revalidateConnections()` is implemented on `NamespaceContext`, but the
