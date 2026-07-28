@@ -115,9 +115,19 @@ function nowMs (): number {
  * Count a drop. Deliberately bypasses validateMetric (the reason values are
  * the schema's own constants) and is itself bounded, so a storm of drops
  * cannot recurse or grow.
+ *
+ * `detail` names the offending value and is written to the LOCAL log only,
+ * never to a payload. Without it, a misconfigured deployment reports a
+ * rising `telemetry.dropped` with no way to find out what is being
+ * refused — which is how the emitter's first deployment spent a cycle
+ * being diagnosed from the outside. Local logs already contain
+ * identifiers; this adds no exposure.
  */
-function countDrop (reason: string): void {
+function countDrop (reason: string, detail?: string): void {
   addToCounter(METRICS.DROPPED, { reason }, 1);
+  if (detail != null && config?.logger != null) {
+    config.logger.warn('observability: refused a datapoint (' + reason + '): ' + detail);
+  }
 }
 
 function addToCounter (name: string, attributes: Attributes, delta: number): void {
@@ -170,7 +180,7 @@ function recordApiCall (
   const attributes: Attributes = { 'method.id': methodId, 'status.class': statusClass };
   const check = validateMetric(METRICS.CALLS, attributes, 1);
   if (!check.ok) {
-    countDrop(check.reason);
+    countDrop(check.reason, 'method.id=' + methodId + ' status.class=' + statusClass);
     return;
   }
   addToCounter(METRICS.CALLS, attributes, 1);
