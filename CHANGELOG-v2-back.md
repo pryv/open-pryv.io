@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## fix(socket-io): the periodic client-revoke sweep had never run
+
+`revalidateConnections()` is implemented on `NamespaceContext`, but the
+30-second timer in `socket-io/index.ts` calls it on the `Manager`. The call was
+`undefined`, so every tick threw `manager.revalidateConnections is not a
+function`. The throw was caught and logged at `warn`, which is why it went
+unnoticed on deployed cores while emitting two warnings a minute per worker.
+
+A socket authenticates once at handshake and never re-authenticates, so two
+things can drop a revoked connection: the pubsub notification on an access
+change, which works, and this timer, which is the backstop for when that
+notification never arrives. Since a broker loss is exactly the case where it
+does not arrive (see the pubsub-reconnect fix in the same series), the belt was
+working and the braces had never been fastened.
+
+`Manager` now implements `revalidateConnections()` as a fan-out over its open
+namespace contexts, which is what the call site already assumed. `[SNRS1-3]`
+pin the manager-level shape, the fan-out, and the empty case; without the fix
+they reproduce the production `TypeError` exactly.
+
 ## feat(breach-scope): operator tooling to scope a breach from a compromised accessId
 
 An incident responder who holds only a compromised `accessId` and a time window

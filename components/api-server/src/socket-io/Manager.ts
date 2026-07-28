@@ -131,6 +131,21 @@ class Manager {
       if (this.apiVersion == null) { this.apiVersion = await getAPIVersion(); }
     }
   }
+
+  // Fan the client-revoke sweep out over every open namespace.
+  //
+  // The per-namespace method below is the single implementation, and pubsub
+  // drives it directly on an access change (D10). This manager-level entry
+  // point exists for the periodic sweep in `index.ts`, which is the backstop
+  // for the case where that notification never arrives: after a broker loss,
+  // an access can be revoked with no `accessesChanged` reaching this worker,
+  // and an already-open socket authenticates once at handshake, so nothing
+  // else would ever re-check it.
+  revalidateConnections (): void {
+    for (const context of this.contexts.values()) {
+      context.revalidateConnections();
+    }
+  }
 }
 
 class NamespaceContext {
