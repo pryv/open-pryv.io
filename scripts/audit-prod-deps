@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# Production-dependency vulnerability gate — run in CI (security-audit job).
+#
+# Fails the build on any HIGH or CRITICAL advisory affecting the RUNTIME
+# dependency tree (`npm audit --omit=dev`), so a freshly-disclosed CVE on a
+# shipped package breaks CI at build time instead of only surfacing later in
+# the GitHub Dependabot tab. devDependencies (lint/test/build toolchain) are
+# out of scope here: they are pruned by `--omit=dev` and never ship in the
+# image, so their advisories are triaged separately, not gated.
+#
+# ALLOWLIST — advisories accepted after review (documented, not silent). Each
+# entry MUST carry a reason and stay minimal; re-review when the dependency
+# tree changes. An allowlisted advisory is still reported, just non-fatal.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+node <<'NODE'
+const cp = require('child_process');
+
+// GHSA id → why it is accepted. Keep this list SHORT and justified.
+const ALLOWLIST = {
+  // brace-expansion OOM DoS, reached only via email-templates → @ladjs/i18n →
+  // multimatch → minimatch (locale-file glob matching). The patched
+  // brace-expansion (>=5.0.8) changed its module export shape and breaks
+  // minimatch@3.x, which that subtree pins; no non-breaking fix exists until
+  // @ladjs/i18n/multimatch update upstream. The expanded patterns are
+  // app-owned locale paths, not attacker input, so the DoS is not reachable.
+  'GHSA-mh99-v99m-4gvg': 'brace-expansion OOM; unreachable (locale-file globs, not user input); upstream-blocked patched version breaks minimatch@3.x pin',
+};
+
+let raw = '';
+try {
+  // npm audit exits non-zero when advisories exist; capture regardless.
+  raw = cp.execSync('npm audit --omit=dev --json', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+} catch (e) {
+  raw = e.stdout ? e.stdout.toString() : '';
+}
+if (!raw) { console.error('audit-prod-deps: could not run npm audit'); process.exit(2); }
+
+const report = JSON.parse(raw);
+const vulns = report.vulnerabilities || {};
+
+// A package's `via` entries are either advisory objects (with a GHSA url) or
+// strings naming another vulnerable package it depends on. Resolve the full
+// set of root-cause GHSAs by following the string references transitively.
+function rootGhsas(name, seen = new Set()) {
+  if (seen.has(name)) return [];
+  seen.add(name);
+  const v = vulns[name];
+  if (!v) return [];
+  const out = [];
+  for (const x of v.via || []) {
+    if (typeof x === 'object' && x.url) {
+      const g = (x.url.match(/GHSA-[^/]+$/) || [])[0];
+      if (g) out.push(g);
+    } else if (typeof x === 'string') {
+      out.push(...rootGhsas(x, seen));
+    }
+  }
+  return out;
+}
+
+const gating = [];   // high/critical, not allowlisted → fail
+const accepted = []; // high/critical, allowlisted → report only
+for (const v of Object.values(vulns)) {
+  if (!['high', 'critical'].includes(v.severity)) continue;
+  const ghsas = [...new Set(rootGhsas(v.name))];
+  const allowed = ghsas.length > 0 && ghsas.every((g) => ALLOWLIST[g]);
+  (allowed ? accepted : gating).push({ name: v.name, severity: v.severity, ghsas });
+}
+
+for (const a of accepted) {
+  console.log(`audit-prod-deps: ACCEPTED ${a.severity} ${a.name} [${a.ghsas.join(', ')}] — allowlisted`);
+}
+if (gating.length) {
+  console.error('audit-prod-deps: FAILED — high/critical advisories on runtime dependencies:');
+  for (const g of gating) console.error(`  ${g.severity}  ${g.name}  ${g.ghsas.join(', ')}`);
+  console.error('\nFix: bump the package (npm audit fix), add an override, or — after review — allowlist the advisory in scripts/audit-prod-deps with a reason.');
+  process.exit(1);
+}
+console.log(`audit-prod-deps: OK — no gating high/critical runtime advisories (${accepted.length} allowlisted).`);
+NODE
