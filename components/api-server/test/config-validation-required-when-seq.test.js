@@ -210,6 +210,38 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
   });
 });
 
+describe('[CVSE] config-validation reportProblems stderr mirror', () => {
+  let reportProblems;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ reportProblems } =
+      require('../../../config/plugins/config-validation.js'));
+  });
+
+  it('[CVSE-01] mirrors the header + every problem to stderr with a [config-validation] tag', () => {
+    const writes = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk) => { writes.push(String(chunk)); return true; };
+    try {
+      reportProblems([
+        { path: ['auth', 'passwordResetPageURL'], message: 'is missing' },
+        { path: ['letsEncrypt', 'atRestKey'], message: 'is missing' }
+      ]);
+    } finally {
+      process.stderr.write = orig;
+    }
+    const out = writes.join('');
+    assert.ok(out.includes('[config-validation]'), 'stderr carries the [config-validation] tag');
+    assert.ok(out.includes('2 problem(s) found'), 'header mirrored to stderr');
+    assert.ok(out.includes('auth:passwordResetPageURL'), 'first problem path mirrored to stderr');
+    assert.ok(out.includes('letsEncrypt:atRestKey'), 'second problem path mirrored to stderr');
+    assert.ok(out.includes('is missing'), 'problem message mirrored to stderr');
+  });
+});
+
 describe('[CV-AOUD] config-validation audit.onUserDelete', () => {
   let checkAuditOnUserDeleteMode, AUDIT_ON_USER_DELETE_MODES;
 

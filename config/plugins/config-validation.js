@@ -351,20 +351,39 @@ function formatProblem (p) {
   return 'Configuration is invalid at [' + (p.path || []).join(':') + '] ' + p.message;
 }
 
+/**
+ * Report all validation problems to BOTH the boiler logger and stderr.
+ *
+ * The logger's only sink is the configured log file, which on a fresh deploy
+ * may not exist yet / be unwritable - the logger then silently swallows the
+ * writes and the operator sees a bare `exit 1` with no diagnostics. Mirroring
+ * to stderr unconditionally guarantees the problems reach the operator
+ * (terminal, systemd journal, container stdout) even when the file sink is
+ * dead. Does NOT exit - the caller decides that.
+ */
+function reportProblems (problems) {
+  if (logger == null) logger = getLogger('validate-config');
+  const header = `Configuration is invalid — ${problems.length} problem(s) found:`;
+  logger.error(header);
+  process.stderr.write('[config-validation] ' + header + '\n');
+  for (const p of problems) {
+    logger.error(formatProblem(p), p.payload);
+    process.stderr.write('[config-validation] ' + formatProblem(p) + '\n');
+  }
+}
+
 module.exports = {
   load: async function (store) {
     logger = getLogger('validate-config');
     const problems = await validate(store);
     if (problems.length === 0) return;
-    logger.error(`Configuration is invalid — ${problems.length} problem(s) found:`);
-    for (const p of problems) {
-      logger.error(formatProblem(p), p.payload);
-    }
+    reportProblems(problems);
     process.exit(1);
   },
   // Exported for unit testing — kept stable so [CV-REQ] / future tests can
   // exercise the validator without booting the boiler init lifecycle.
   validate,
+  reportProblems,
   checkRequiredWhen,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,

@@ -133,7 +133,7 @@ Shows: config differences, throughput delta (absolute + %), latency comparison, 
 
 ### Storage
 - MongoDB data directory size
-- SQLite file sizes (platform, audit)
+- rqlite snapshot + per-user audit SQLite file sizes
 - InfluxDB data directory size
 - User directories total size
 - Syslog file size and line count (audit overhead)
