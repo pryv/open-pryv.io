@@ -129,7 +129,7 @@ storages:
       password: <db-password>
       max: 20
     filesystem:
-      attachmentsDirPath: /path/to/data/users
+      # attachments co-locate with per-user data under sqlite.path (below); only previews have their own dir
       previewsDirPath: /path/to/data/previews
     sqlite:
       path: /path/to/data/users
@@ -393,8 +393,7 @@ which is a declared `VOLUME`):
 storages:
   base:   { engine: sqlite }      # SQLite base storage lands on the mount
   engines:
-    sqlite:     { path: /app/var-pryv/encrypted/mnt/users }
-    filesystem: { attachmentsDirPath: /app/var-pryv/encrypted/mnt/attachments }
+    sqlite:     { path: /app/var-pryv/encrypted/mnt/users }   # attachments co-locate here → already on the encrypted mount
     rqlite:     { dataDir: /app/var-pryv/encrypted/mnt/rqlite-data }
 ```
 
@@ -453,7 +452,6 @@ storages:
     # The remaining paths are caches / unused placeholders — point them at
     # ephemeral storage (tmpfs). Nothing durable is written there.
     filesystem:
-      attachmentsDirPath: /tmp/pryv/attachments   # unused with file.engine: s3
       previewsDirPath: /tmp/pryv/previews         # preview cache — rebuilt on demand
     sqlite:
       path: /tmp/pryv/users                       # unused in full PG mode

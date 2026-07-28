@@ -51,6 +51,14 @@ pinned in each block so the suite cannot pass by dropping everything. `[OB01]`-
 `[OB10]` cover config resolution, encrypted round-trip, worker env propagation
 and startup refusal; `[OC01]`-`[OC08]` cover the CLI.
 
+## fix(config): invalid-config problems now mirror to stderr so a fresh-deploy exit is diagnosable
+
+On a fresh deploy the boiler logger's only sink is a log file that may not exist yet; an invalid config then produced `exit 1` with no output at all, forcing operators to wrap `process.exit` to find the caller. `config-validation.js` now factors the reporting into `reportProblems()`, which writes the header + every problem to stderr (tagged `[config-validation]`) in addition to the logger, before `load()` exits — stderr always reaches the operator (terminal, systemd journal, container stdout). Unit test `[CVSE-01]` asserts the mirror. Also: `tools/performance/README.md` now names rqlite instead of the removed "platform" SQLite engine.
+
+## fix(filesystem): remove the dead `attachmentsDirPath` config knob
+
+`storages.engines.filesystem.attachmentsDirPath` was declared required in the engine manifest and set in every config file, but read by no code path: event attachments co-locate with per-user data under the user local directory (`storages.engines.sqlite.path`) via `UserLocalDirectory.getPathForUser(userId, 'attachments')`. The knob was a leftover from before that refactor and actively misleading — `paths-config` and `production-config` pointed it at a separate directory that stayed empty. Removed from the manifest, default/production config, `paths-config` and `bin/init.js` (kept mirrored), documented the co-location in `userLocalDirectory` + the manifest previews description, and scrubbed the stale INSTALL.md examples (including the encrypted-volume one that recreated the empty-directory trap). No behaviour change — `getPathForUser` is untouched, so attachments land exactly where they already did; `manifest.configuration.fields` is declarative (not validated), so removing the field is inert.
+
 ## fix(observability): the agent never loaded its config file, the high-security opt-in was dead code, and the posture is now test-pinned
 
 Three internal gaps behind the operator-visible scrubbing change.
