@@ -1,16 +1,16 @@
 # AGENTS.md
 
-Welcome, agent. This file is a fast-orientation guide so you don't have to rediscover the repo the hard way. It complements `README.md`, `INSTALL.md`, `README-DBs.md`, `CHANGELOG-v2.md`, and `SINGLE-TO-MULTIPLE.md` — read those for depth; read this one first for shape.
+Welcome, agent. This file is a fast-orientation guide so you don't have to rediscover the repo the hard way. It complements `README.md`, `INSTALL.md`, `README-DBs.md`, `CHANGELOG-v2.md`, and `SINGLE-TO-MULTIPLE.md`; read those for depth; read this one first for shape.
 
 ## What this repo is
 
-`open-pryv.io` is the v2 codebase of Pryv.io — a personal-data REST/WebSocket platform. It is a **single Node.js codebase** that produces a single binary (`bin/master.js`) and a single Docker image (`pryvio/open-pryv.io`). Registration, MFA, API, high-frequency series, previews, and the email renderer all run inside that binary as cluster workers.
+`open-pryv.io` is the v2 codebase of Pryv.io, a personal-data REST/WebSocket platform. It is a **single Node.js codebase** that produces a single binary (`bin/master.js`) and a single Docker image (`pryvio/open-pryv.io`). Registration, MFA, API, high-frequency series, previews, and the email renderer all run inside that binary as cluster workers.
 
-Some sibling projects live in separate repos and are consumed as dependencies or downloaded as artifacts at deploy time — they are **not** bundled here:
+Some sibling projects live in separate repos and are consumed as dependencies or downloaded as artifacts at deploy time; they are **not** bundled here:
 
-- [`pryv/lib-js`](https://github.com/pryv/lib-js) — the `pryv` npm package (JS client lib).
-- [`pryv/pryv-datastore`](https://github.com/pryv/pryv-datastore) — the datastore interface that custom datastore plugins implement.
-- [`pryv/app-web-user-account`](https://github.com/pryv/app-web-user-account) — the React auth/register/password-reset web app (current reference; replaces the deprecated `app-web-auth3`).
+- [`pryv/lib-js`](https://github.com/pryv/lib-js): the `pryv` npm package (JS client lib).
+- [`pryv/pryv-datastore`](https://github.com/pryv/pryv-datastore): the datastore interface that custom datastore plugins implement.
+- [`pryv/app-web-user-account`](https://github.com/pryv/app-web-user-account): the React auth/register/password-reset web app (current reference; replaces the deprecated `app-web-auth3`).
 
 The v1 line (pre-single-binary) is preserved on the [`release/1.9.3`](https://github.com/pryv/open-pryv.io/tree/release/1.9.3) branch and is no longer updated.
 
@@ -18,7 +18,7 @@ The v1 line (pre-single-binary) is preserved on the [`release/1.9.3`](https://gi
 
 ```
 bin/              Entry points and admin CLIs
-  master.js         Supervisor — forks cluster workers, runs rqlited, AcmeOrchestrator
+  master.js         Supervisor, forks cluster workers, runs rqlited, AcmeOrchestrator
   bootstrap.js      Multi-core onboarding (issue/consume sealed bundle)
   backup.js         Engine-agnostic backup + restore (JSONL + gzip)
   migrate.js        Schema migration runner (status / up)
@@ -36,10 +36,10 @@ components/       Source code split by domain
   dns-server/       Embedded DNS server for multi-core DNS-based topology
   mail/             In-process email renderer (Pug templates in PlatformDB)
   middleware/       Express middleware (auth, wrong-core, regSubdomainPathMap, ...)
-  mall/             Data access layer (events, streams — engine-agnostic)
+  mall/             Data access layer (events, streams, engine-agnostic)
   cache/            Caching layer
   platform/         PlatformDB interface + config-snapshot hash drift
-  storage/          Storage facade — uses the engines selected in config
+  storage/          Storage facade, uses the engines selected in config
   audit/            Audit logging (uses SQLite directly)
   business/         Cross-domain logic:
     accesses/  acme/  auth/  backup/  bootstrap/  integrity/
@@ -66,12 +66,12 @@ storages/         Plugin tree for storage engines (npm workspace)
 
 config/           default-config.yml + plugins
 Dockerfile        Canonical container (bundles rqlited, sharp)
-test/             Integration test entry — see `just test …` in justfile
+test/             Integration test entry, see `just test …` in justfile
 ```
 
 ## Running locally
 
-Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite, bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env     # prepares var-pryv/ layout + launches PG/rqlite binaries
@@ -95,20 +95,20 @@ just clean-test-data               # reset test DBs + per-user dirs
 NODE_ENV=production node bin/master.js --config /path/to/your/override-config.yml
 ```
 
-`NODE_ENV=test` short-circuits optional integrations (observability providers, strict startup checks). Always honour it in new code — tests must stay hermetic.
+`NODE_ENV=test` short-circuits optional integrations (observability providers, strict startup checks). Always honour it in new code; tests must stay hermetic.
 
 ## Five architectural truths that aren't obvious from grep
 
 1. **`bin/master.js` owns the lifecycle.** It:
    - Runs a minimal `@pryv/boiler` init to read config,
-   - Spawns and supervises an **embedded `rqlited`** in both single- and multi-core mode (no separate DB process to manage; skipped entirely when `storages.platform.engine: postgresql` — the single-core diskless shape),
+   - Spawns and supervises an **embedded `rqlited`** in both single- and multi-core mode (no separate DB process to manage; skipped entirely when `storages.platform.engine: postgresql`, the single-core diskless shape),
    - Forks cluster workers: `cluster.apiWorkers` (default 2) API workers, `cluster.hfsWorkers` HFS workers, `cluster.previewsWorker` previews worker,
    - On the CA-holder core only, runs the **AcmeOrchestrator** that polls PlatformDB for cert state (other cores poll + materialize),
    - Handles the `--bootstrap` mode used to add new cores (decrypts a sealed bundle, writes `override-config.yml` + TLS files, acks the issuer, falls through into normal startup).
 
    Don't add a PM2 / systemd / Docker-compose-style process supervisor around it. master.js *is* the supervisor.
 
-2. **TLS termination is native.** api-server workers call `https.createServer(buildHttpsOptions(config), requestHandler)` and `setSecureContext()` for **zero-downtime hot-swap** on cert renewal. The `requestHandler` is an in-process dispatcher (`components/api-server/src/hfsIngress.ts`) that routes `^/<user>/events/<id>/series` and `^/<user>/series/batch` to the HFS worker on `localhost:4000` before falling through to `app.expressApp`. This is the **quick / out-of-the-box** ingress; for high-throughput installs, front with nginx (`docs/nginx-ingress-sample.conf`) and let it do the routing instead — the in-process dispatcher stays present but is bypassed because external traffic doesn't reach it.
+2. **TLS termination is native.** api-server workers call `https.createServer(buildHttpsOptions(config), requestHandler)` and `setSecureContext()` for **zero-downtime hot-swap** on cert renewal. The `requestHandler` is an in-process dispatcher (`components/api-server/src/hfsIngress.ts`) that routes `^/<user>/events/<id>/series` and `^/<user>/series/batch` to the HFS worker on `localhost:4000` before falling through to `app.expressApp`. This is the **quick / out-of-the-box** ingress; for high-throughput installs, front with nginx (`docs/nginx-ingress-sample.conf`) and let it do the routing instead; the in-process dispatcher stays present but is bypassed because external traffic doesn't reach it.
 
    If you must front-proxy, wire the front's reload into `letsEncrypt.onRotateScript` in config so the front picks up new certs within the same renewal cycle.
 
@@ -120,14 +120,14 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    | `dns.active: true` + `dns.domain: X` | `X` + `*.X` | `dns-01` |
    | `core.url: https://Y/` (DNSless multi-core) | `Y` | `http-01` |
 
-   The embedded DNS server answers `_acme-challenge.X` transiently during DNS-01 — you don't need to integrate certbot or a third-party DNS API.
+   The embedded DNS server answers `_acme-challenge.X` transiently during DNS-01; you don't need to integrate certbot or a third-party DNS API.
 
 4. **Storage engines are pluggable at runtime.** Engine choice is per-core. The config keys in `config/default-config.yml` are:
 
    ```yaml
    storages:
      base:     { engine: postgresql }   # baseStorage + dataStore
-     platform: { engine: rqlite }       # platformStorage — or postgresql (single-core dnsLess only)
+     platform: { engine: rqlite }       # platformStorage, or postgresql (single-core dnsLess only)
      series:   { engine: influxdb }     # seriesStorage
      file:     { engine: filesystem }   # fileStorage
      audit:    { engine: sqlite }       # auditStorage
@@ -142,13 +142,13 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    const engine = pluginLoader.getEngineModule(pluginLoader.getEngineFor('platformStorage'));
    ```
 
-   Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.js`. Don't reinvent — the plugin pattern exists.
+   Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.js`. Don't reinvent; the plugin pattern exists.
 
-   PostgreSQL is a first-class production engine for every `storageType`. `platform` defaults to rqlite (Raft consensus is what makes multi-core work); single-core dnsLess deployments in full PG mode may select postgresql instead — the diskless shape, with `storages.file.engine: s3` for attachments and `bin/migrate-platform.js` to move platform data when the topology changes. See `README-DBs.md` for the human-readable DB layout.
+   PostgreSQL is a first-class production engine for every `storageType`. `platform` defaults to rqlite (Raft consensus is what makes multi-core work); single-core dnsLess deployments in full PG mode may select postgresql instead, the diskless shape, with `storages.file.engine: s3` for attachments and `bin/migrate-platform.js` to move platform data when the topology changes. See `README-DBs.md` for the human-readable DB layout.
 
-5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately** — the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
+5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately**; the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
 
-6. **`components/tracing/` is a permanent no-op shim — keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked were removed during the v2 dependency cleanup. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing` — every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. The opt-in observability layer (`components/business/src/observability/`) is the active telemetry path and runs in parallel, *not* through this component. If a future tracer is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl — the 8 consumers do not need to change.
+6. **`components/tracing/` is a permanent no-op shim: keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked were removed during the v2 dependency cleanup. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing`; every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. The opt-in observability layer (`components/business/src/observability/`) is the active telemetry path and runs in parallel, *not* through this component. If a future tracer is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl; the 8 consumers do not need to change.
 
 ## Common pitfalls for agents
 
@@ -157,17 +157,17 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 - **Don't introduce a second TLS terminator.** See truth #2.
 - **Don't hot-wire cert rotation with `fs.watchFile` or cron.** Use the existing `AcmeOrchestrator` → `acme:rotate` IPC → worker `reloadTls()` path.
 - **Don't ship multi-process orchestration shims** (PM2, runit, supervisord configs). master.js replaces those. If you need to restart a worker, master.js already does it (see `cluster.on('exit', ...)`).
-- **Don't write PlatformDB directly.** Go through `components/platform/` — it enforces config-snapshot hashes and cluster-wide semantics. Bypassing it silently desyncs cores.
-- **Don't trust silence from the logs when debugging a test.** Under `NODE_ENV=test` the console is off (`logs:console:active: false`) and the async file transport loses whatever is still buffered when mocha force-exits (`exit: true`), so a server-side error can leave no trace at all — "no log line" does NOT mean "did not happen". Read **`components/<component>/var-pryv/logs/test-sync.log`**: `logs:fileSync` (see `components/boiler/src/logging.ts`) appends synchronously at `warn`+ and survives force-exit. Keep it at `warn`/`error` — sync writes cost an fs call each, and extra I/O can mask the timing bug you are chasing (`LOGS=info` is especially good at hiding races). If you add a new swallow site (`catch { return null }`, a sanitised 500), record the real error on the server trail — never toward the client.
-- **CMC access-state-mutating triggers are gated — two distinct gate shapes.** `consent/accept-cmc` (mint) + `consent/scope-update-cmc` (widen) are personal-token-only at `events.create` (`components/cmc/src/cmcAcceptAccessGate.ts`) AND chain-checked in `handleAccept` / `handleSystemScopeUpdate`. `consent/revoke-cmc` (delete) is NOT in the personal-token gate — `handleRevoke` runs `AccessLogic.canDeleteAccess(target)` per delete (honours the `selfRevoke` feature permission so the relationship's data-grant access can self-revoke). Apps without a personal token use `pryv.cmc.requestAccept(...)` (lib-js `@pryv/cmc` ≥ 3.9) or `requestScopeUpdate(...)` to hand off to `app-web-user-account`'s `/cmc-accept` / `/cmc-scope-update` page. There is no `requestRevoke` hand-off — revoke goes through the standard access-permission rule. Don't relax the mint/widen gate to make a test pass — it exists to enforce user-presence at the moment access is created or widened. The plugin-managed access exemption (`clientData.cmc.kind === 'capability'` / `role === 'counterparty'`) is how cross-platform delivery still works — don't widen it. See `components/cmc/INTERNALS.md` "Access-state-mutating triggers — token-class + access-permission gates" for the full story.
+- **Don't write PlatformDB directly.** Go through `components/platform/`: it enforces config-snapshot hashes and cluster-wide semantics. Bypassing it silently desyncs cores.
+- **Don't trust silence from the logs when debugging a test.** Under `NODE_ENV=test` the console is off (`logs:console:active: false`) and the async file transport loses whatever is still buffered when mocha force-exits (`exit: true`), so a server-side error can leave no trace at all: "no log line" does NOT mean "did not happen". Read **`components/<component>/var-pryv/logs/test-sync.log`**: `logs:fileSync` (see `components/boiler/src/logging.ts`) appends synchronously at `warn`+ and survives force-exit. Keep it at `warn`/`error`: sync writes cost an fs call each, and extra I/O can mask the timing bug you are chasing (`LOGS=info` is especially good at hiding races). If you add a new swallow site (`catch { return null }`, a sanitised 500), record the real error on the server trail, never toward the client.
+- **CMC access-state-mutating triggers are gated: two distinct gate shapes.** `consent/accept-cmc` (mint) + `consent/scope-update-cmc` (widen) are personal-token-only at `events.create` (`components/cmc/src/cmcAcceptAccessGate.ts`) AND chain-checked in `handleAccept` / `handleSystemScopeUpdate`. `consent/revoke-cmc` (delete) is NOT in the personal-token gate: `handleRevoke` runs `AccessLogic.canDeleteAccess(target)` per delete (honours the `selfRevoke` feature permission so the relationship's data-grant access can self-revoke). Apps without a personal token use `pryv.cmc.requestAccept(...)` (lib-js `@pryv/cmc` ≥ 3.9) or `requestScopeUpdate(...)` to hand off to `app-web-user-account`'s `/cmc-accept` / `/cmc-scope-update` page. There is no `requestRevoke` hand-off; revoke goes through the standard access-permission rule. Don't relax the mint/widen gate to make a test pass; it exists to enforce user-presence at the moment access is created or widened. The plugin-managed access exemption (`clientData.cmc.kind === 'capability'` / `role === 'counterparty'`) is how cross-platform delivery still works; don't widen it. See `components/cmc/INTERNALS.md` "Access-state-mutating triggers: token-class + access-permission gates" for the full story.
 
-- **`:_shared-secrets:` items are ordinary events with server-owned semantics — don't reach them through the plain events/streams API.** The shared-secrets plugin (`components/shared-secrets/`) stores each one-time secret as an event under `:_shared-secrets:<accessId>`; the only supported entry points are `POST /shared-secrets`, `/shared-secrets/retrieve` (unauthenticated — key in the body, NEVER the URL), and `/shared-secrets/status`. Guards refuse creating/updating/moving a `shared-secret/item` or hand-editing the namespace streams; `events.delete` on a pending item discards it, on a terminal item purges it. The consume is a real compare-and-set (`mall.events.update({ onlyIfNotTrashed })`) — don't replace it with a read-then-write, one-shot depends on it. The secret + any signature passphrase are scrubbed on transition and kept out of event history (`{ skipVersioning }`); don't add a code path that persists them past `pending`. The namespace is deny-by-default for non-personal accesses across `canGetEventsOnStream` / `canCreateEventsOnStream` / `canListStream` incl. the root — don't add a predicate that lets a `*` grant resolve onto it. See `components/shared-secrets/{README,INTERNALS,IMPLEMENTERS-GUIDE}.md`.
+- **`:_shared-secrets:` items are ordinary events with server-owned semantics; don't reach them through the plain events/streams API.** The shared-secrets plugin (`components/shared-secrets/`) stores each one-time secret as an event under `:_shared-secrets:<accessId>`; the only supported entry points are `POST /shared-secrets`, `/shared-secrets/retrieve` (unauthenticated, key in the body, NEVER the URL), and `/shared-secrets/status`. Guards refuse creating/updating/moving a `shared-secret/item` or hand-editing the namespace streams; `events.delete` on a pending item discards it, on a terminal item purges it. The consume is a real compare-and-set (`mall.events.update({ onlyIfNotTrashed })`); don't replace it with a read-then-write, one-shot depends on it. The secret + any signature passphrase are scrubbed on transition and kept out of event history (`{ skipVersioning }`); don't add a code path that persists them past `pending`. The namespace is deny-by-default for non-personal accesses across `canGetEventsOnStream` / `canCreateEventsOnStream` / `canListStream` incl. the root; don't add a predicate that lets a `*` grant resolve onto it. See `components/shared-secrets/{README,INTERNALS,IMPLEMENTERS-GUIDE}.md`.
 
 ## TypeScript conventions
 
-Naming: a bare `Xxx` is a canonical type defined once and imported (`import type`); `XxxLike` is a *local structural* model of just the members a file actually uses; `XxxRow` is a storage-engine row shape (snake_case columns); `Wire`/`Raw` prefixes mark unparsed wire shapes before normalization. Use the **most precise real type available** — `unknown` only for genuinely-opaque pass-through and runtime-validator inputs, never as a shortcut when a real shape exists. Explicit `any` fails lint (`just lint-ts-any`, part of `just lint`); the few legitimate escape hatches carry a justified `eslint-disable` comment in place — read them before adding a new one. Don't add field initializers (`= ''`, `?? 0`) just to satisfy the compiler: they silently change undefined-by-default runtime semantics — use `field!: T`, `field?: T`, or an explicit union instead. Gates: `just typecheck` (tsc, `strict: true`), `just type-coverage` (floor 81%), and the open-index-signature ratchet (`scripts/open-type-ratchet`, part of `just lint`) — `[k: string]: unknown` disables typo detection on reads, so the site count may only go down; enumerate a new shape's fields unless the openness is load-bearing (dynamic key access, passthrough, the open event data model).
+Naming: a bare `Xxx` is a canonical type defined once and imported (`import type`); `XxxLike` is a *local structural* model of just the members a file actually uses; `XxxRow` is a storage-engine row shape (snake_case columns); `Wire`/`Raw` prefixes mark unparsed wire shapes before normalization. Use the **most precise real type available**: `unknown` only for genuinely-opaque pass-through and runtime-validator inputs, never as a shortcut when a real shape exists. Explicit `any` fails lint (`just lint-ts-any`, part of `just lint`); the few legitimate escape hatches carry a justified `eslint-disable` comment in place; read them before adding a new one. Don't add field initializers (`= ''`, `?? 0`) just to satisfy the compiler: they silently change undefined-by-default runtime semantics; use `field!: T`, `field?: T`, or an explicit union instead. Gates: `just typecheck` (tsc, `strict: true`), `just type-coverage` (floor 81%), and the open-index-signature ratchet (`scripts/open-type-ratchet`, part of `just lint`): `[k: string]: unknown` disables typo detection on reads, so the site count may only go down; enumerate a new shape's fields unless the openness is load-bearing (dynamic key access, passthrough, the open event data model).
 
-### Canonical type homes — import, don't redeclare
+### Canonical type homes: import, don't redeclare
 
 | You need | Import from |
 |---|---|
@@ -175,21 +175,21 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 | `StoredEvent`, `StoredStream`, `StoredAccess`, `StoredPermission`, `SessionData` (storage-side shapes) | `storages/interfaces/_shared/domain.ts` |
 | `Callback`, `UserOrId`, `StoredItem`, `Query`, `UpdateData`, `FindOptions`, `EventsQueryState` (storage plumbing) | `storages/interfaces/_shared/types.ts` |
 | `Mall`, `MallEvents`, `MallStreams`, `MallTransactionLike`, `DataStore`, `StoreSupports` | `components/mall/src/types.ts` |
-| `Logger`, `LogFn`, `ConfigLike` | `@pryv/boiler` (components and engines; `storages/interfaces/**` use the mirror pair in `_shared/types.ts` — contract files stay boiler-free) |
+| `Logger`, `LogFn`, `ConfigLike` | `@pryv/boiler` (components and engines; `storages/interfaces/**` use the mirror pair in `_shared/types.ts`, contract files stay boiler-free) |
 | `SqliteDb`, `SqliteStmt<Row>`, `SqlParam` | `storages/engines/sqlite/src/types.ts` |
 | CMC views: `MallLike` groups, `CmcAccessLike`, `CmcClientData`, `OutboundDeps`, `FetchLike` | `components/cmc/src/_types.ts` |
 | Storage contracts (`UserStorage<T>`, `Sessions`, `UserAccountStorage`, `UserAuditDatabase`+`AuditEvent`, `BackupReader`+`BackupManifest`, …) | the `storages/interfaces/<kind>/` file that defines them |
 
-**Three layers, never merged:** wire (`Event`, what the API returns), stored (`StoredEvent`, what flows through interfaces and the mall — carries `headId`/`deleted`/`endTime`), engine row (`XxxRow`, per-engine, converted at the `toDB`/`fromDB` boundary). If your shape genuinely differs from all three, it's probably a narrow view — name it `XxxLike` and keep it local.
+**Three layers, never merged:** wire (`Event`, what the API returns), stored (`StoredEvent`, what flows through interfaces and the mall, carries `headId`/`deleted`/`endTime`), engine row (`XxxRow`, per-engine, converted at the `toDB`/`fromDB` boundary). If your shape genuinely differs from all three, it's probably a narrow view; name it `XxxLike` and keep it local.
 
-**Lint-enforced — one type name, one meaning:** every noun in this table is guarded by `no-restricted-syntax` in `eslint.ts-any.config.js` (part of `just lint`) — declaring a local `type`/`interface` with a canonical name fails lint with a pointer to the canonical home. A local structural view gets its own name (`XxxLike`), an engine row `XxxRow`, a domain-distinct concept a real name of its own (e.g. `SeriesQuery`, not `Query`). When several shapes compete for a bare noun, the API-facing (wire) shape owns it. When adding a row to this table, add the noun to the `CANONICAL_NOUNS` block in the config.
+**Lint-enforced, one type name, one meaning:** every noun in this table is guarded by `no-restricted-syntax` in `eslint.ts-any.config.js` (part of `just lint`): declaring a local `type`/`interface` with a canonical name fails lint with a pointer to the canonical home. A local structural view gets its own name (`XxxLike`), an engine row `XxxRow`, a domain-distinct concept a real name of its own (e.g. `SeriesQuery`, not `Query`). When several shapes compete for a bare noun, the API-facing (wire) shape owns it. When adding a row to this table, add the noun to the `CANONICAL_NOUNS` block in the config.
 
 ### Patterns
 
-- **Method-context scratch fields**: api-server method chains refine the context as `type MethodContext = BaseMethodContext & { myField?: T }` with *named, typed* fields — never `[key: string]: any`. A field written by one component and read by another belongs on the base `MethodContext` class. Mid-chain reads of step-populated fields use one capture with an invariant comment: `const x = context.x!; // Invariant: <populating step> ran earlier in this chain.`
+- **Method-context scratch fields**: api-server method chains refine the context as `type MethodContext = BaseMethodContext & { myField?: T }` with *named, typed* fields, never `[key: string]: any`. A field written by one component and read by another belongs on the base `MethodContext` class. Mid-chain reads of step-populated fields use one capture with an invariant comment: `const x = context.x!; // Invariant: <populating step> ran earlier in this chain.`
 - **DI-seam narrow views**: modules that receive dependencies for fake-based unit testing (CMC handlers) type them with the shared narrow views (`cmc/src/_types.ts`), not the full interfaces.
-- **Typed require handles**: when a `require()`d module erases a useful signature (e.g. a `: never` throw helper), re-bind it: `const m: typeof import('./m.ts') = require('./m.ts');`. This applies to **class extends too** — `class X extends require('./Base.ts').Base` makes the parent `any` and silences ALL override-compatibility checking; re-bind the require (`const { Base } = require('./Base.ts') as typeof import('./Base.ts');`) so the inheritance seam is checked.
-- **Generic storage bases**: `BaseStoragePG<T>` / `BaseStorageSQLite<TItem>` are generic over the stored item shape and declare `implements UserStorage<T>`. Collection subclasses bind their item type (`extends BaseStoragePG<StoredAccess>`); free-form collections (profile) stay on the default `StoredItem`. Override callbacks carry `T | null` to match the base contracts — don't strip the `| null`.
+- **Typed require handles**: when a `require()`d module erases a useful signature (e.g. a `: never` throw helper), re-bind it: `const m: typeof import('./m.ts') = require('./m.ts');`. This applies to **class extends too**: `class X extends require('./Base.ts').Base` makes the parent `any` and silences ALL override-compatibility checking; re-bind the require (`const { Base } = require('./Base.ts') as typeof import('./Base.ts');`) so the inheritance seam is checked.
+- **Generic storage bases**: `BaseStoragePG<T>` / `BaseStorageSQLite<TItem>` are generic over the stored item shape and declare `implements UserStorage<T>`. Collection subclasses bind their item type (`extends BaseStoragePG<StoredAccess>`); free-form collections (profile) stay on the default `StoredItem`. Override callbacks carry `T | null` to match the base contracts; don't strip the `| null`.
 
 ## Config precedence
 
@@ -199,43 +199,43 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 2. `config/plugins/*` (derived values like system streams)
 3. `${NODE_ENV}-config.yml` or the file passed via `--config <path>`
 4. `override-config.yml` at the baseConfigDir (written by `master.js --bootstrap` on core join)
-5. Environment variables — boiler uses `__` (double underscore) as the nested-key separator (e.g. `auth__adminAccessKey=…` sets `auth.adminAccessKey`). See `@pryv/boiler` for the exact mapping rules.
+5. Environment variables: boiler uses `__` (double underscore) as the nested-key separator (e.g. `auth__adminAccessKey=…` sets `auth.adminAccessKey`). See `@pryv/boiler` for the exact mapping rules.
 
 Understand this before debugging why a setting "isn't taking effect".
 
 ## Where to read next
 
 **In this repo:**
-- `README.md` — project overview + quick-start.
-- `INSTALL.md` — operator install steps.
-- `README-DBs.md` — storage-by-storage DB layout and engine selection.
-- `SINGLE-TO-MULTIPLE.md` — multi-core onboarding, cluster CA, sealed bundle flow.
-- `CHANGELOG-v2.md` — API-facing changes; `CHANGELOG-v2-back.md` — internal changes.
-- `components/business/src/acme/` — ACME orchestrator + cert renewer internals.
-- `components/platform/` — PlatformDB interface + rqlite specifics.
-- `storages/manifest-schema.js` + `storages/pluginLoader.js` — how engines are loaded.
-- `storages/engines/<name>/manifest.json` — what each engine provides.
+- `README.md`: project overview + quick-start.
+- `INSTALL.md`: operator install steps.
+- `README-DBs.md`: storage-by-storage DB layout and engine selection.
+- `SINGLE-TO-MULTIPLE.md`: multi-core onboarding, cluster CA, sealed bundle flow.
+- `CHANGELOG-v2.md`: API-facing changes; `CHANGELOG-v2-back.md` for internal changes.
+- `components/business/src/acme/`: ACME orchestrator + cert renewer internals.
+- `components/platform/`: PlatformDB interface + rqlite specifics.
+- `storages/manifest-schema.js` + `storages/pluginLoader.js`: how engines are loaded.
+- `storages/engines/<name>/manifest.json`: what each engine provides.
 
 **External docs (pryv.github.io):**
-- [API reference](https://pryv.github.io/) — canonical REST/WebSocket reference (full, light, admin, system variants).
-- [Concepts](https://pryv.github.io/concepts/) — streams, events, accesses, permissions.
-- [Data in Pryv](https://pryv.github.io/data-in-pryv/) — data model deep-dive.
-- [Event types](https://pryv.github.io/event-types/) — the curated type catalogue.
-- [System streams](https://pryv.github.io/customer-resources/system-streams/) — how account fields map to streams.
-- [Getting started](https://pryv.github.io/getting-started/) — first API calls.
-- [Guides](https://pryv.github.io/guides/) — app guidelines, audit logs, consent, custom auth, data modelling, webhooks.
+- [API reference](https://pryv.github.io/): canonical REST/WebSocket reference (full, light, admin, system variants).
+- [Concepts](https://pryv.github.io/concepts/): streams, events, accesses, permissions.
+- [Data in Pryv](https://pryv.github.io/data-in-pryv/): data model deep-dive.
+- [Event types](https://pryv.github.io/event-types/): the curated type catalogue.
+- [System streams](https://pryv.github.io/customer-resources/system-streams/): how account fields map to streams.
+- [Getting started](https://pryv.github.io/getting-started/): first API calls.
+- [Guides](https://pryv.github.io/guides/): app guidelines, audit logs, consent, custom auth, data modelling, webhooks.
 - [FAQ API](https://pryv.github.io/faq-api/) and [FAQ Infra](https://pryv.github.io/faq-infra/).
 
 **Operator-facing setup guides (pryv.github.io/customer-resources/):**
-- [Infrastructure procurement](https://pryv.github.io/customer-resources/infrastructure-procurement/) — topology + sizing.
-- [Pryv.io setup](https://pryv.github.io/customer-resources/pryv.io-setup/) — single-node topology.
-- [Single node to cluster](https://pryv.github.io/customer-resources/single-node-to-cluster/) — multi-core upgrade.
-- [SSL certificate](https://pryv.github.io/customer-resources/ssl-certificate/) — built-in ACME / Let's Encrypt.
-- [Backup](https://pryv.github.io/customer-resources/backup/) — `bin/backup.js`.
-- [Core migration](https://pryv.github.io/customer-resources/core-migration/) — moving a core to a new host.
-- [MFA](https://pryv.github.io/customer-resources/mfa/) — SMS-based two-factor.
-- [Emails setup](https://pryv.github.io/customer-resources/emails-setup/) — in-process vs microservice.
-- [Observability](https://pryv.github.io/customer-resources/observability/) — opt-in telemetry over OTLP.
+- [Infrastructure procurement](https://pryv.github.io/customer-resources/infrastructure-procurement/): topology + sizing.
+- [Pryv.io setup](https://pryv.github.io/customer-resources/pryv.io-setup/): single-node topology.
+- [Single node to cluster](https://pryv.github.io/customer-resources/single-node-to-cluster/): multi-core upgrade.
+- [SSL certificate](https://pryv.github.io/customer-resources/ssl-certificate/): built-in ACME / Let's Encrypt.
+- [Backup](https://pryv.github.io/customer-resources/backup/): `bin/backup.js`.
+- [Core migration](https://pryv.github.io/customer-resources/core-migration/): moving a core to a new host.
+- [MFA](https://pryv.github.io/customer-resources/mfa/): SMS-based two-factor.
+- [Emails setup](https://pryv.github.io/customer-resources/emails-setup/): in-process vs microservice.
+- [Observability](https://pryv.github.io/customer-resources/observability/): opt-in telemetry over OTLP.
 - [Healthchecks](https://pryv.github.io/customer-resources/healthchecks/) and [platform validation](https://pryv.github.io/customer-resources/platform-validation/).
 - [Change log](https://pryv.github.io/change-log/).
 
@@ -244,12 +244,12 @@ _A few operator pages on pryv.github.io (notably `dns-config`, `audit-setup`, an
 ## Where to file issues / PRs
 
 - Bugs + feature requests: [`pryv/open-pryv.io` GitHub Issues](https://github.com/pryv/open-pryv.io/issues).
-- Pull requests against `master`. For anything touching the cluster CA, ACME orchestrator, PlatformDB interface, or the storage plugin tree — open a draft PR early and tag a maintainer; those areas have subtle invariants that aren't obvious from a local diff.
+- Pull requests against `master`. For anything touching the cluster CA, ACME orchestrator, PlatformDB interface, or the storage plugin tree, open a draft PR early and tag a maintainer; those areas have subtle invariants that aren't obvious from a local diff.
 
 ## When in doubt
 
 - Read `bin/master.js` top-to-bottom. It's the single entry point and its comments explain more than this file can.
-- If a config key feels like it should exist but you can't find it: check `config/default-config.yml` — if it's not there, it probably isn't a thing.
+- If a config key feels like it should exist but you can't find it: check `config/default-config.yml`; if it's not there, it probably isn't a thing.
 - Test changes against both engines before assuming engine-agnostic behaviour: `just test all` (PostgreSQL default) and `just test-sqlite all`.
 
-— Happy hacking.
+Happy hacking.

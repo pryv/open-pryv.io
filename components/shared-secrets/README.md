@@ -1,9 +1,9 @@
-# components/shared-secrets — one-time secret hand-off (`:_shared-secrets:`)
+# components/shared-secrets: one-time secret hand-off (`:_shared-secrets:`)
 
 > **Living design.** This README is the canonical design document for the
 > shared-secrets plugin. Companions in this directory:
-> - [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md) — customer-facing wire shape (API consumers).
-> - [INTERNALS.md](INTERNALS.md) — storage model, guard seams, and security review notes.
+> - [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md): customer-facing wire shape (API consumers).
+> - [INTERNALS.md](INTERNALS.md): storage model, guard seams, and security review notes.
 
 **Status:** Released to `master`. Client SDK ships as `pryv.SharedSecrets` in the
 [`pryv`](https://github.com/pryv/lib-js) npm package. Event type
@@ -12,15 +12,15 @@
 
 ## The problem
 
-Handing a secret to a third party — most often an apiEndpoint carrying an access
-token — has meant putting it in a URL. A URL is the worst possible carrier: it
+Handing a secret to a third party, most often an apiEndpoint carrying an access
+token, has meant putting it in a URL. A URL is the worst possible carrier: it
 survives in browser history, in `Referer` headers, and in every server access
 log it passes through. The credential outlives the moment it was needed.
 
 ## The primitive
 
 Store the secret on the account and hand over a **random one-time key** instead.
-The third party redeems the key, exactly once, for the secret — with no
+The third party redeems the key, exactly once, for the secret, with no
 credentials of their own, because the key IS the credential.
 
 - **One-shot.** A key is redeemable exactly once; concurrent redemptions resolve
@@ -30,7 +30,7 @@ credentials of their own, because the key IS the credential.
   default, a caller must decide the lifetime.
 - **Hash-only at rest.** The server stores only `SHA-256` of the key's random
   half. The clear key exists once, in the creation response, and cannot be
-  recovered afterwards by anyone — a database dump yields no live credential.
+  recovered afterwards by anyone: a database dump yields no live credential.
 - **Scrubbed on use.** The secret (and any signature passphrase) is removed the
   moment the item stops being pending, and never enters event history.
 - **Optional proof.** A `secret` (passphrase) or `hmac-sha256` signature can gate
@@ -40,7 +40,7 @@ credentials of their own, because the key IS the credential.
 
 1. **Plugin, not storage engine.** Lives at `components/shared-secrets/`; every
    item is an ordinary event in standard per-user main storage (PG / SQLite),
-   addressed by the streamId prefix `:_shared-secrets:` — the same discipline as
+   addressed by the streamId prefix `:_shared-secrets:`, the same discipline as
    the CMC plugin. No new storage primitive.
 2. **One namespace, one substream per creating access.** Items live under
    `:_shared-secrets:<accessId>`, provisioned lazily on first use (write **and**
@@ -49,7 +49,7 @@ credentials of their own, because the key IS the credential.
 3. **Three thin HTTP routes, everything else is the events API.** `POST
    /shared-secrets` (create), `POST /shared-secrets/retrieve` (redeem,
    unauthenticated), `POST /shared-secrets/status` (inspect). The key always
-   travels in the request body, never the URL — the exposure this feature exists
+   travels in the request body, never the URL, which is the exposure this feature exists
    to remove. Listing, reading and purging reuse `events.get` / `events.getOne`
    / `events.delete` on the namespace.
 4. **The events API cannot subvert the lifecycle.** Guards refuse creating,

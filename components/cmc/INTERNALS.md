@@ -1,20 +1,20 @@
-# CMC plugin — Internal Flows (full plugin-side diagrams)
+# CMC plugin: Internal Flows (full plugin-side diagrams)
 
-> **Audience:** plugin engineering, security review. **Not customer-facing** — for the API-consumer view see [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md).
+> **Audience:** plugin engineering, security review. **Not customer-facing**, for the API-consumer view see [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md).
 >
-> This document expands each flow with plugin internals (orchestration loop, outbound HTTP, retry queue, post-hook double-fire suppression, slug-resolution, anchor stream auto-creation, etc.) — the things the GUIDE deliberately keeps abstract.
+> This document expands each flow with plugin internals (orchestration loop, outbound HTTP, retry queue, post-hook double-fire suppression, slug-resolution, anchor stream auto-creation, etc.), the things the GUIDE deliberately keeps abstract.
 
 ## Data residency assumed in these diagrams
 
-**Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process — NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / SQLite)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
+**Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process, NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / SQLite)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
 
-**CMC introduces zero new storage primitives.** Internal plugin state — the outbound-delivery retry queue (flow 4) — lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all** — same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
+**CMC introduces zero new storage primitives.** Internal plugin state, the outbound-delivery retry queue (flow 4), lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all**, same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
 
 ## Conventions
 
 - `App` = customer code on either side (`DoctorApp`, `PatientApp`, etc.).
 - `Core-X` = the open-pryv.io master process running the API server + the CMC plugin write-hooks. Where the boundary matters (post-hook, retry-queue), the diagrams split it into `APIServer-X` and `Plugin-X`.
-- `Storage-X` = the **per-user PG / SQLite** instance for that core. Holds standard events, accesses, streams — including the user-visible `:_cmc:*` streams AND the hidden `:_cmc:_internal:*` plugin-state stream(s).
+- `Storage-X` = the **per-user PG / SQLite** instance for that core. Holds standard events, accesses, streams, including the user-visible `:_cmc:*` streams AND the hidden `:_cmc:_internal:*` plugin-state stream(s).
 - HTTPS arrows crossing the `Plugin-X` ↔ `APIServer-Y` boundary are outbound deliveries (`/events` calls, `accesses.*` calls, etc.) authenticated by the access token embedded in the counterparty's stored `apiEndpoint`.
 
 ---
@@ -30,7 +30,7 @@ The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc
 | `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc` |
 | `:_cmc:_internal:retries` | `cmc-internal/retry-cmc` (plugin-managed; loop consumer) |
 
-**Why nest under `:_cmc:apps:<app-code>:[<path>:]`** — an app's access can be scoped to all of its data (`:_cmc:apps:<app-code>:*`) or more granularly to a single per-request sub-tree (`:_cmc:apps:<app-code>:<request-slug>:*`). Chats / collectors lifetime under whichever stream the trigger event was written to is a natural permission prefix-match.
+**Why nest under `:_cmc:apps:<app-code>:[<path>:]`**: an app's access can be scoped to all of its data (`:_cmc:apps:<app-code>:*`) or more granularly to a single per-request sub-tree (`:_cmc:apps:<app-code>:<request-slug>:*`). Chats / collectors lifetime under whichever stream the trigger event was written to is a natural permission prefix-match.
 
 The trigger event's `content.status` is the visible state-machine. Apps subscribe to the trigger's home stream to see status updates land.
 
@@ -70,7 +70,7 @@ sequenceDiagram
 'failed'     Terminal failure; content.failure has details
 ```
 
-The Plugin and APIServer are typically the same process (workers). The split in the diagram is **logical** — the plugin's post-hook runs inside the same event-loop tick as the `events.create` that triggered it; outbound HTTPS is async / queue-driven.
+The Plugin and APIServer are typically the same process (workers). The split in the diagram is **logical**, the plugin's post-hook runs inside the same event-loop tick as the `events.create` that triggered it; outbound HTTPS is async / queue-driven.
 
 ---
 
@@ -78,10 +78,10 @@ The Plugin and APIServer are typically the same process (workers). The split in 
 
 When `consent/request-cmc` is written with `capabilityRequested: true`, the plugin creates a `shared` access scoped to **exactly one event** (the request) via two **real per-capability streams** under the hidden `:_cmc:_internal:` parent:
 
-- `:_cmc:_internal:offer:<capId>` — the plugin pre-populates with the one request event (read).
-- `:_cmc:_internal:responses:<capId>` — empty at mint, accepts exactly one accept/refuse (create-only).
+- `:_cmc:_internal:offer:<capId>`: the plugin pre-populates with the one request event (read).
+- `:_cmc:_internal:responses:<capId>`: empty at mint, accepts exactly one accept/refuse (create-only).
 
-These are real streams, not virtual — per-event access scoping doesn't exist in core (see [audit notes](#audit-notes)). The plugin GCs both streams (and the access) together on first response or TTL expiry.
+These are real streams, not virtual, per-event access scoping doesn't exist in core (see [audit notes](#audit-notes)). The plugin GCs both streams (and the access) together on first response or TTL expiry.
 
 ```mermaid
 sequenceDiagram
@@ -112,13 +112,13 @@ sequenceDiagram
     APIServer->>Storage: remove access + both per-capability streams
 ```
 
-**Single-use enforcement under concurrency** (open question, tested via `[CMCRACE]`): two `consent/accept-cmc` arriving in parallel against the same capability — first-write-wins on `:_cmc:_internal:responses:<capId>`. The plugin enforces "exactly one event ever in this stream" via a write-hook that checks the stream's event count before persisting (queries via standard `events.get` with `limit: 1`). The losing accept rolls back its local data-grant access (atomic dual-write — see flow 3).
+**Single-use enforcement under concurrency** (open question, tested via `[CMCRACE]`): two `consent/accept-cmc` arriving in parallel against the same capability, first-write-wins on `:_cmc:_internal:responses:<capId>`. The plugin enforces "exactly one event ever in this stream" via a write-hook that checks the stream's event count before persisting (queries via standard `events.get` with `limit: 1`). The losing accept rolls back its local data-grant access (atomic dual-write, see flow 3).
 
 **Visibility:** capability accesses are filtered out of `accesses.get` by default via `clientData.cmc.kind: 'capability'`. Operator audit can opt-in via a query parameter (open question 5).
 
 ---
 
-# 3. Acceptance — bidirectional access pair creation
+# 3. Acceptance: bidirectional access pair creation
 
 The most intricate flow. The accepting user writes `consent/accept-cmc`; their plugin orchestrates with the requester's plugin to provision:
 
@@ -161,11 +161,11 @@ All persistence happens in the **per-user accesses/streams/events tables** of ea
 
 ---
 
-# 4. Outbound delivery — HTTPS + retry queue (hidden companion stream)
+# 4. Outbound delivery: HTTPS + retry queue (hidden companion stream)
 
 Plugin's outbound calls to counterparty `apiEndpoint`s. All cross-platform / cross-core deliveries go through this path; same-core same-platform is short-circuited (see flow 12).
 
-**Retry queue lives as events in a hidden companion stream.** No new storage primitive — the queue is just events in `:_cmc:_internal:retries`, persisted in the user's standard main storage. The plugin reads / writes via the same `events.*` API any app uses. The `:_cmc:_internal:*` prefix is filtered out of regular `events.get` responses by the plugin's read-hooks so app code can't see it.
+**Retry queue lives as events in a hidden companion stream.** No new storage primitive, the queue is just events in `:_cmc:_internal:retries`, persisted in the user's standard main storage. The plugin reads / writes via the same `events.*` API any app uses. The `:_cmc:_internal:*` prefix is filtered out of regular `events.get` responses by the plugin's read-hooks so app code can't see it.
 
 Each pending delivery is one event:
 
@@ -232,13 +232,13 @@ sequenceDiagram
 ```
 
 **Retry policy** (proposed):
-- Attempts: 1 immediate + N retries with exponential backoff (1m, 5m, 30m, 2h, 6h, 24h — total ~32h).
+- Attempts: 1 immediate + N retries with exponential backoff (1m, 5m, 30m, 2h, 6h, 24h, total ~32h).
 - Audit: every attempt logs (apiEndpoint host, payload type, attempt#, outcome) to the standard Pryv audit stream. Bodies redacted.
 - Cross-cluster vs cross-platform: same code path; only the destination host differs.
 
-**v1 limitation (acknowledged, not solved):** the retry queue lives with the user's data. If the user's home core dies, pending retries wait for the core to recover — same failure mode as every other piece of user state. Cross-core failover for users is a platform-wide problem outside CMC's scope.
+**v1 limitation (acknowledged, not solved):** the retry queue lives with the user's data. If the user's home core dies, pending retries wait for the core to recover, same failure mode as every other piece of user state. Cross-core failover for users is a platform-wide problem outside CMC's scope.
 
-**Concurrency:** two workers picking the same due retry — solved by `events.update` optimistic locking on the retry event (compare-and-swap on `content.attempts`). Standard Pryv semantics, no new primitive.
+**Concurrency:** two workers picking the same due retry, solved by `events.update` optimistic locking on the retry event (compare-and-swap on `content.attempts`). Standard Pryv semantics, no new primitive.
 
 **Backpressure:** a saturated peer (sustained 503s from a foreign platform) shouldn't pin the whole retry loop. Per-host queue with hot/cold-host separation is a backlog optimization.
 
@@ -278,13 +278,13 @@ sequenceDiagram
     APIServer-->>App: socket.io push :_cmc:inbox
 ```
 
-**`content.from` is unforgeable** — the peer plugin cannot set `content.from` themselves; even if they include it in the body, the receiving plugin overwrites with the access's stored counterparty identity. The access was created by the recipient's plugin at acceptance time (flow 3); its `clientData.cmc.counterparty` is server-internal and not visible to API consumers.
+**`content.from` is unforgeable**: the peer plugin cannot set `content.from` themselves; even if they include it in the body, the receiving plugin overwrites with the access's stored counterparty identity. The access was created by the recipient's plugin at acceptance time (flow 3); its `clientData.cmc.counterparty` is server-internal and not visible to API consumers.
 
 **Chat/collector write-hooks** are analogous but allow a different event-type set per region (Family 2 events on `:_cmc:apps:<app-code>:[<path>:]chats:*`, Family 3 events on `:_cmc:apps:<app-code>:[<path>:]collectors:*`). The `content.from` unforgeability extends to these paths too: `createCounterpartyFromStampingHook` overwrites `content.from` from the writer's `clientData.cmc.counterparty` for any chat / system event type when the access is counterparty-marked. Inbox writes stay handled by `createInboxWriteHook` (it has stricter rejection semantics on missing identity); the per-app stamping hook covers everything else.
 
 ---
 
-# 6. Chat delivery — slug-driven access resolution
+# 6. Chat delivery: slug-driven access resolution
 
 App writes `message/chat-cmc` to `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`. The trigger stream-id encodes the app scope + counterparty; the plugin resolves the access pair from local state.
 
@@ -317,7 +317,7 @@ sequenceDiagram
 
 ---
 
-# 7. System channel delivery — features gate
+# 7. System channel delivery: features gate
 
 Same shape as chat, with an additional `features.systemMessaging` check.
 
@@ -366,7 +366,7 @@ sequenceDiagram
 
 ---
 
-# 9. Scope-update — user accepts; `accesses.update`
+# 9. Scope-update: user accepts; `accesses.update`
 
 ```mermaid
 sequenceDiagram
@@ -380,7 +380,7 @@ sequenceDiagram
     UserApp->>Plugin: events.create consent/scope-update-cmc<br/>content.scopeRequestEventId<br/>content.accept=true
     Plugin->>APIServer: events.get scopeRequestEventId<br/>(reads the pending request)
     APIServer-->>Plugin: scope-request event<br/>(newPermissions, accessId)
-    Plugin->>Plugin: set cls.context.cmcInternalUpdate = true<br/>(double-fire suppression — see flow 10)
+    Plugin->>Plugin: set cls.context.cmcInternalUpdate = true<br/>(double-fire suppression, see flow 10)
     Plugin->>APIServer: accesses.update id=<data-grant><br/>permissions=newPermissions
     APIServer->>Storage: composite-id bumps<br/>'abc123' → 'abc123:1'
     APIServer-->>Plugin: updated access
@@ -433,7 +433,7 @@ sequenceDiagram
 
 **Failure cases:**
 - App calls `accesses.update` against a non-counterparty access → post-hook detects `role !== 'counterparty'` and skips. No-op (correct).
-- App calls `accesses.update` against a counterparty access while a CMC trigger is mid-flight → cls is request-scoped, so the two paths don't see each other's flags. The post-hook fires once for the app's call; the trigger handler delivers its own notification for the CMC call. Two notifications for two distinct user actions — correct.
+- App calls `accesses.update` against a counterparty access while a CMC trigger is mid-flight → cls is request-scoped, so the two paths don't see each other's flags. The post-hook fires once for the app's call; the trigger handler delivers its own notification for the CMC call. Two notifications for two distinct user actions, correct.
 - Concurrent app + CMC updates against the same access → composite-id ensures only one wins; the loser sees `stale-access-id` and retries. The retry path reads fresh permissions and either: skips (already at desired state) or fires the post-hook (legitimate second change).
 
 ---
@@ -453,7 +453,7 @@ flowchart LR
     F -- yes --> G[username, host-slug]
 ```
 
-**Why app-code is in the stream PATH, not the slug** — this is what lets the user's access be scoped at the `:_cmc:apps:<app-code>:*` level (whole-app) OR at `:_cmc:apps:<app-code>:<request-slug>:*` (per-request) via natural prefix matching. Putting the app-code into the slug would break that.
+**Why app-code is in the stream PATH, not the slug**: this is what lets the user's access be scoped at the `:_cmc:apps:<app-code>:*` level (whole-app) OR at `:_cmc:apps:<app-code>:<request-slug>:*` (per-request) via natural prefix matching. Putting the app-code into the slug would break that.
 
 **Edge cases to enforce:**
 - Username containing `--` is rejected at registration time (user-validation rule).
@@ -477,17 +477,17 @@ sequenceDiagram
         Plugin->>LocalAPI: in-process events.create<br/>(no HTTPS, no TLS handshake)
         LocalAPI-->>Plugin: ok
     else cross-core same-platform
-        Note over Plugin: go through flow 4 (standard HTTPS path).<br/>NO dedicated cross-core auth lane —<br/>see README.md "Future development scoping"<br/>(mTLS reserved for platformDB + setup, not data path).
+        Note over Plugin: go through flow 4 (standard HTTPS path).<br/>NO dedicated cross-core auth lane,<br/>see README.md "Future development scoping"<br/>(mTLS reserved for platformDB + setup, not data path).
     else cross-platform
         Note over Plugin: go through flow 4 (standard HTTPS path)
     end
 ```
 
-**Cross-core deliveries take the standard HTTPS path**, same as cross-platform. The access token in the apiEndpoint is the auth. We deliberately do NOT short-circuit cross-core via cluster-CA mTLS on `/events` — see README.md "Future development scoping" for the rationale.
+**Cross-core deliveries take the standard HTTPS path**, same as cross-platform. The access token in the apiEndpoint is the auth. We deliberately do NOT short-circuit cross-core via cluster-CA mTLS on `/events`, see README.md "Future development scoping" for the rationale.
 
 ---
 
-# 13. Revoke teardown — local delete + peer notification
+# 13. Revoke teardown: local delete + peer notification
 
 > ⚠️ **Current behaviour is NOT a dual delete.** This section previously
 > described the peer deleting its half of the pair. That has never been
@@ -500,7 +500,7 @@ sequenceDiagram
 >
 > Consequence, stated plainly: **revocation is advisory in the
 > trigger-writer → peer direction.** The direction that does enforce is the
-> local one — an accepter revoking destroys the data-grant on their own
+> local one, an accepter revoking destroys the data-grant on their own
 > account, which is what actually cuts the requester's read. Server-side
 > teardown of the peer's access is planned; until it lands, an app that
 > observes a `consent/revoke-cmc` arrival is responsible for deleting its own
@@ -521,16 +521,16 @@ sequenceDiagram
     APIServer-->>Plugin: access record
     Plugin->>APIServer: accesses.delete <accessId>
     Plugin->>Peer: POST /events :_cmc:inbox<br/>type: consent/revoke-cmc
-    Note over Peer: dispatch SKIPS peer-delivered revokes —<br/>no handler runs, peer's half is NOT deleted
+    Note over Peer: dispatch SKIPS peer-delivered revokes:<br/>no handler runs, peer's half is NOT deleted
     Peer-->>Plugin: 201 (event stored in inbox)
     Plugin->>APIServer: events.update trigger status='completed'
 ```
 
-Note that `status: 'completed'` on the trigger means "local teardown done and the notification was accepted by the peer" — **not** that the peer tore anything down.
+Note that `status: 'completed'` on the trigger means "local teardown done and the notification was accepted by the peer", **not** that the peer tore anything down.
 
 **Anchor stream history preservation:** chat + collector streams are NOT deleted on revoke. They become orphan-but-readable; the user can still scroll history. If the two parties later re-accept, the plugin re-creates the access pair pointing at the existing streams. (Re-acceptance edge case is tested in `[CMCREVOKE]`.)
 
-**Delivery is best-effort and requires a peer endpoint.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, or if delivery fails, the revoke currently no-ops with a log warning — no error surfaced to the caller and no retry. Retry-queue integration is planned.
+**Delivery is best-effort and requires a peer endpoint.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, or if delivery fails, the revoke currently no-ops with a log warning, no error surfaced to the caller and no retry. Retry-queue integration is planned.
 
 ---
 
@@ -552,7 +552,7 @@ sequenceDiagram
     Note over RApp,AApp: out-of-band hand-off
     AApp->>RCore: events.get :_cmc:_internal:offer:<capId> via capabilityUrl<br/>(standard HTTPS, capability access token)
     AApp->>ACore: events.create consent/accept-cmc
-    ACore->>RCore: HTTPS: events.create :_cmc:_internal:responses:<capId><br/>(via capability — flow 3 dance)
+    ACore->>RCore: HTTPS: events.create :_cmc:_internal:responses:<capId><br/>(via capability, flow 3 dance)
     RCore->>ACore: HTTPS: events.create response with back-channel
     RCore-->>RApp: socket.io :_cmc:inbox
 
@@ -572,38 +572,38 @@ sequenceDiagram
 
 **TLS:** each plugin's outbound HTTPS uses standard public-CA-validated TLS to the peer's domain. No mTLS, no shared cluster CA. The access token in the `apiEndpoint` URL is the auth.
 
-**Topology invariance:** works for `dnsLess: true` on either side, mixed topologies, etc. — because all addressing is through `apiEndpoint` URLs, which the receiving platform serves at its own DNS / port.
+**Topology invariance:** works for `dnsLess: true` on either side, mixed topologies, etc., because all addressing is through `apiEndpoint` URLs, which the receiving platform serves at its own DNS / port.
 
 ---
 
-# Access-state-mutating triggers — token-class + access-permission gates
+# Access-state-mutating triggers: token-class + access-permission gates
 
-The CMC lifecycle triggers that **mint, widen, or delete** data-grant accesses on the recipient's account are gated. Two distinct gate shapes — chosen per trigger by what the orchestrator does with the access state:
+The CMC lifecycle triggers that **mint, widen, or delete** data-grant accesses on the recipient's account are gated. Two distinct gate shapes, chosen per trigger by what the orchestrator does with the access state:
 
 | Trigger | Gate at `events.create` | Per-handler permission check | Rationale |
 |---|---|---|---|
 | `consent/accept-cmc` (mint) | Personal-token only (`cmcAcceptAccessGateHook`) | `triggerAccess.canCreateAccess(dataGrantPayload)` in `handleAccept` | New access on the user's account → no existing access bounds the chain; user-presence enforced by the personal-token gate. |
 | `consent/scope-update-cmc` (widen) | Personal-token only (same hook) | `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` in `handleSystemScopeUpdate` | Widens an existing access → user-presence enforced; chain check mirrors `accesses.update`'s `applyPrerequisitesForUpdate`. |
-| `consent/revoke-cmc` (delete) | NOT in the personal-token gate | `triggerAccess.canDeleteAccess(target)` in `handleRevoke` (per delete; covers data-grant + counterparty) | Contraction, not escalation — the target access bounds the impact. The standard `canDeleteAccess` honours the `selfRevoke` feature permission, so the relationship's own data-grant access can self-revoke from any holder. |
+| `consent/revoke-cmc` (delete) | NOT in the personal-token gate | `triggerAccess.canDeleteAccess(target)` in `handleRevoke` (per delete; covers data-grant + counterparty) | Contraction, not escalation, the target access bounds the impact. The standard `canDeleteAccess` honours the `selfRevoke` feature permission, so the relationship's own data-grant access can self-revoke from any holder. |
 
 ## Why personal-token at all (mint + widen)
 
-The orchestration treats the trigger event as authoritative consent — for accept it reads the offer through the capability connection, mints a `shared` data-grant access with permissions derived from the offer, and delivers the accept back to the requester. Without the gate, an app holding only `:_cmc:apps:<app>:*, contribute` could write `consent/accept-cmc` carrying a colluding requester's offer and have the recipient's plugin mint a much broader access on the user's account with no consent UI shown. Requiring a personal token at mint/widen means the user is provably signed in at the moment the trigger is recorded.
+The orchestration treats the trigger event as authoritative consent, for accept it reads the offer through the capability connection, mints a `shared` data-grant access with permissions derived from the offer, and delivers the accept back to the requester. Without the gate, an app holding only `:_cmc:apps:<app>:*, contribute` could write `consent/accept-cmc` carrying a colluding requester's offer and have the recipient's plugin mint a much broader access on the user's account with no consent UI shown. Requiring a personal token at mint/widen means the user is provably signed in at the moment the trigger is recorded.
 
 ## Why NOT personal-token for revoke
 
-Revoke deletes accesses; the access being deleted already bounds the impact. Forcing personal-token would prevent the relationship's data-grant access (held by the peer) from terminating its own side of the relationship without bouncing through the auth pages — clumsy UX with no security benefit. The standard `AccessLogic.canDeleteAccess` rule covers:
+Revoke deletes accesses; the access being deleted already bounds the impact. Forcing personal-token would prevent the relationship's data-grant access (held by the peer) from terminating its own side of the relationship without bouncing through the auth pages, clumsy UX with no security benefit. The standard `AccessLogic.canDeleteAccess` rule covers:
 - personal token → always passes;
 - the access being deleted is the same as the trigger writer (self-revoke), AND the target's `selfRevoke` feature permission isn't `forbidden` → passes (default allow);
 - an app token that created the access → passes;
 - anything else → rejected with `cmc-revoke-forbidden`.
 
-This matches what the `accesses.delete` route enforces — same primitive, no parallel implementation.
+This matches what the `accesses.delete` route enforces, same primitive, no parallel implementation.
 
 ## Where the code lives
 
 - **Mint/widen gate**: `src/cmcAcceptAccessGate.ts` exports `createCmcAcceptAccessGateHook({errors})`. Wired into the `events.create` middleware chain right after `cmcContentValidationHook`. Uses `AccessLogic.isPersonal()`.
-- **Per-handler chain checks** (defense in depth — the gate is the primary guard for mint/widen, but the handlers also run the check so any future bypass doesn't re-open the surface):
+- **Per-handler chain checks** (defense in depth, the gate is the primary guard for mint/widen, but the handlers also run the check so any future bypass doesn't re-open the surface):
   - `handleAccept` → `triggerAccess.canCreateAccess(payload)` before `mall.accesses.create`. Failure: `cmc-insufficient-permissions`.
   - `handleSystemScopeUpdate` → `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` before `mall.accesses.update`. Failure: `cmc-insufficient-permissions`.
   - `handleRevoke` → `triggerAccess.canDeleteAccess(target)` before each `mall.accesses.delete` (this is the primary guard for revoke since there's no events.create gate). Failure: `cmc-revoke-forbidden`.
@@ -619,12 +619,12 @@ This matches what the `accesses.delete` route enforces — same primitive, no pa
 
 All ids match the existing CMC error convention (top-level `invalid-operation`, CMC id under `error.data.id`).
 
-## Exemption for the mint/widen gate — plugin-managed accesses pass through
+## Exemption for the mint/widen gate: plugin-managed accesses pass through
 
 The hand-off + delivery paths the CMC plugin orchestrates itself use accesses that aren't personal but legitimately carry lifecycle event types:
 
-- **`clientData.cmc.kind === 'capability'`** — the one-shot capability access POSTs `consent/accept-cmc` into the requester's `:_cmc:_internal:responses:<capId>` stream as part of step 3 of the accept flow. Without the exemption this cross-platform protocol message would be rejected.
-- **`clientData.cmc.role === 'counterparty'`** — bidirectional shared accesses created at acceptance deliver follow-up protocol events (`consent/back-channel-cmc`, inbox mirrors of subsequent triggers) into the peer's mall.
+- **`clientData.cmc.kind === 'capability'`**: the one-shot capability access POSTs `consent/accept-cmc` into the requester's `:_cmc:_internal:responses:<capId>` stream as part of step 3 of the accept flow. Without the exemption this cross-platform protocol message would be rejected.
+- **`clientData.cmc.role === 'counterparty'`**: bidirectional shared accesses created at acceptance deliver follow-up protocol events (`consent/back-channel-cmc`, inbox mirrors of subsequent triggers) into the peer's mall.
 
 Both markers are plugin-stamped at mint time (`capability.ts` / `acceptOrchestration.ts`). User-initiated triggers never carry them; an app trying to spoof the marker is blocked by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook on `accesses.create` / `accesses.update`.
 
@@ -636,9 +636,9 @@ Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited
 
 ## Hand-off for apps without a personal token
 
-- **Accept** — `@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-user-account`'s `/cmc-accept` page; the user signs in, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. (`app-web-user-account` is the React auth+account web app; it replaces the deprecated `app-web-auth3`.)
-- **Scope-update** — `@pryv/cmc.requestScopeUpdate` / `requestScopeUpdateUrl` open `app-web-user-account`'s `/cmc-scope-update` page; same shape, input is `scopeRequestEventId` instead of `capabilityUrl`.
-- **Revoke** — no hand-off helper exists or is needed. `cmc.revokeAcceptance` / `cmc.revokeRelationship` work from any access that satisfies `canDeleteAccess` on the target (the relationship's own data-grant access by default).
+- **Accept**: `@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-user-account`'s `/cmc-accept` page; the user signs in, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. (`app-web-user-account` is the React auth+account web app; it replaces the deprecated `app-web-auth3`.)
+- **Scope-update**: `@pryv/cmc.requestScopeUpdate` / `requestScopeUpdateUrl` open `app-web-user-account`'s `/cmc-scope-update` page; same shape, input is `scopeRequestEventId` instead of `capabilityUrl`.
+- **Revoke**: no hand-off helper exists or is needed. `cmc.revokeAcceptance` / `cmc.revokeRelationship` work from any access that satisfies `canDeleteAccess` on the target (the relationship's own data-grant access by default).
 
 ---
 
@@ -653,7 +653,7 @@ Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited
 
 ---
 
-# Out-of-scope flows (for completeness — not in v1)
+# Out-of-scope flows (for completeness: not in v1)
 
 - **future federated invite-webhook**: cross-platform directed invite auto-routing. CMC v1 falls back to capability-URL hand-off for cross-platform directed.
 - **E2E encryption** of chat / system payloads. Plugin terminates TLS but content lives in plaintext on both platforms' per-user storage. Backlog.
