@@ -33,6 +33,8 @@ const { produceStorageConnection } = require('./test-helpers');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
 const { getConfig } = require('@pryv/boiler');
+const { getPlatform } = require('platform');
+const accessIndex = require('platform/src/accessIndex.ts');
 
 require('date-utils');
 
@@ -644,6 +646,51 @@ describe('[SYER] system (ex-register)', function () {
           id: ErrorIds.UnknownResource
         }, done);
       });
+    });
+  });
+
+  describe('[SYAX] GET /system/accesses/{accessId}', function () {
+    let platform, aid, usernameToken;
+    const adminKey = () => helpers.dependencies.settings.auth.adminAccessKey;
+
+    before(async function () {
+      await server.ensureStartedAsync(helpers.dependencies.settings);
+      platform = await getPlatform();
+      aid = 'sysacc' + cuid();
+      usernameToken = platform.hashFor('username', 'someuser');
+      // Seed one index row directly; the population hooks are covered in
+      // access-index.test.js, so this isolates the read endpoint.
+      await accessIndex.putAccessIndex(platform, 'someuser', { id: aid, type: 'app', expires: null, created: 1700000000, modified: 1700000100 });
+    });
+    after(async function () {
+      if (platform != null) await platform.deletePlatformKv('access-index/' + aid);
+    });
+
+    it('[SYX1] resolves a bare accessId to its owning user + metadata (hashed token, no secret)', async function () {
+      const res = await helpers.request(server.url).get('/system/accesses/' + aid).set('authorization', adminKey());
+      assert.strictEqual(res.status, 200);
+      const idx = res.body.accessIndex;
+      assert.ok(idx != null);
+      assert.strictEqual(idx.accessId, aid);
+      assert.strictEqual(idx.type, 'app');
+      assert.strictEqual(idx.usernameToken, usernameToken);
+      assert.ok(!('token' in idx));
+    });
+
+    it('[SYX2] normalizes a composite <base>:<serial> id to its base', async function () {
+      const res = await helpers.request(server.url).get('/system/accesses/' + aid + ':1').set('authorization', adminKey());
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.accessIndex.accessId, aid);
+    });
+
+    it('[SYX3] returns 404 for an unknown accessId', async function () {
+      const res = await helpers.request(server.url).get('/system/accesses/nope' + cuid()).set('authorization', adminKey());
+      assert.strictEqual(res.status, 404);
+    });
+
+    it('[SYX4] rejects a bad admin key with 404', async function () {
+      const res = await helpers.request(server.url).get('/system/accesses/' + aid).set('authorization', 'bad-key');
+      assert.strictEqual(res.status, 404);
     });
   });
 });

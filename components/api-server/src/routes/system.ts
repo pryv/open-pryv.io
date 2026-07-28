@@ -48,6 +48,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.delete(Paths.System + '/users/:username/mfa', setMethodId('system.deactivateMfa'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, { username: req.params.username }, methodCallback(res, next, 204));
   });
+  // Resolve a bare accessId -> its owning user + operational metadata, for
+  // breach scoping (admin-key gated by the /system/* guard above). The
+  // responder typically holds only a compromised accessId and no username.
+  expressApp.get(Paths.System + '/accesses/:accessId', setMethodId('system.getAccess'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, { accessId: req.params.accessId }, methodCallback(res, next, 200));
+  });
   // --------------------- admin user listing ----------------- //
   expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));

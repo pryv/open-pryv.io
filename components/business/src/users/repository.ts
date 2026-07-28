@@ -24,9 +24,13 @@ import type { UserStorage } from 'storages/interfaces/baseStorage/UserStorage.ts
 import type { UserAccountStorage } from 'storages/interfaces/baseStorage/UserAccountStorage.ts';
 import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
 const { getPlatform } = require('platform');
+// Breach-scope reverse-index: a personal access is created with the user at
+// registration (a distinct site from accesses.create + login), so index it too;
+// and a user's index rows are cleaned up (Art.17) when the account is erased.
+const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal } = require('platform/src/accessIndex.ts');
 const cache = require('cache').default;
 const cmc = require('cmc');
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, getConfig } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
 const logger = getLogger('users:repository');
 
@@ -380,6 +384,7 @@ class UsersRepository {
     const mallTransaction = await this.mall.newTransaction();
     // Invariant: the local store always provides a transaction.
     const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
+    let createdAccess: { id?: unknown; type?: unknown; created?: unknown; modified?: unknown } | null = null;
     await localTransaction.exec(async () => {
       let accessId = UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
       if (withSession &&
@@ -389,6 +394,7 @@ class UsersRepository {
         const access = await this.createPersonalAccessForUser(user.id, token, user.appId as string, localTransaction.transactionSession) as { id: string; token: string };
         accessId = access?.id;
         user.token = access.token;
+        createdAccess = access;
       }
       user.accessId = accessId;
       // add the user to local index
@@ -416,6 +422,11 @@ class UsersRepository {
         await this.setUserPassword(user.id, user.password!, user.accessId as string);
       }
     });
+    // Populate the breach-scope reverse-index AFTER the local transaction
+    // commits (so a rollback can't orphan an index row). Non-fatal.
+    if (createdAccess != null) {
+      await reindexAccessNonFatal(user.username, createdAccess);
+    }
   }
 
   /**
@@ -487,6 +498,13 @@ class UsersRepository {
     if (username != null) {
       cache.unsetUser(username);
       await this.platform.deleteUser(username, user);
+      // Breach-scope reverse-index cleanup (Art.17). The index is keyed by
+      // accessId, so it is not covered by platform.deleteUser (keyed by user);
+      // clean it explicitly. Default deletes the user's rows; `keep` mode
+      // tombstones them (strip username) so a late breach can still confirm the
+      // accessId belonged to a since-erased account. Non-fatal.
+      const keepMode = ((await getConfig()).get('audit:onUserDelete') as string) === 'keep';
+      await cleanupUserAccessIndexNonFatal(this.platform, username, keepMode);
     }
     await this.mall.deleteUser(userId);
   }

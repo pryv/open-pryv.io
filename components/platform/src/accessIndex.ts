@@ -241,4 +241,71 @@ export async function safeMarkAccessDeleted (platform: PlatformIndexHandle, user
   }
 }
 
+// --- Self-contained hooks for mutation call sites --- //
+//
+// These fetch the platform handle themselves and narrow a loosely-typed
+// access row, so the three access-creation sites + the update/delete paths
+// call ONE function each without duplicating the platform-fetch + non-fatal
+// wiring. Never reject — a PlatformDB (or platform-init) failure is logged
+// and swallowed so it can't break access CRUD.
+
+/** A loosely-typed access row as handed by the storage/method layer. */
+export type LooseAccessRow = { id?: unknown; type?: unknown; expires?: unknown; created?: unknown; modified?: unknown };
+
+/** Narrow a loose storage row to the fields the index needs, or null if it has no usable id. */
+export function coerceAccessRow (input: LooseAccessRow | null | undefined): AccessRowLike | null {
+  const id = input?.id;
+  if (typeof id !== 'string' || id.length === 0) return null;
+  return {
+    id,
+    type: typeof input!.type === 'string' ? input!.type : 'unknown',
+    expires: typeof input!.expires === 'number' ? input!.expires : null,
+    created: typeof input!.created === 'number' ? input!.created : undefined,
+    modified: typeof input!.modified === 'number' ? input!.modified : undefined
+  };
+}
+
+/** Index one created/updated access (fetches platform, non-fatal). Never rejects. */
+export async function reindexAccessNonFatal (username: string, input: LooseAccessRow | null | undefined): Promise<void> {
+  const row = coerceAccessRow(input);
+  if (row == null) return;
+  try {
+    const { getPlatform } = require('./index.ts');
+    const platform = await getPlatform();
+    await putAccessIndex(platform, username, row);
+  } catch (err) {
+    logger.warn(`[access-index] platform unavailable, could not index access ${row.id} (user ${username}): ${(err as Error).message}`);
+  }
+}
+
+/** Tombstone a set of deleted accesses (fetches platform, non-fatal). Never rejects. */
+export async function tombstoneAccessesNonFatal (username: string, inputs: Array<LooseAccessRow | null | undefined>, ts: number): Promise<void> {
+  const rows = inputs.map(coerceAccessRow).filter((r): r is AccessRowLike => r != null);
+  if (rows.length === 0) return;
+  try {
+    const { getPlatform } = require('./index.ts');
+    const platform = await getPlatform();
+    for (const row of rows) await markAccessDeletedInIndex(platform, username, row, ts);
+  } catch (err) {
+    logger.warn(`[access-index] platform unavailable, could not tombstone deleted access(es) (user ${username}): ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Clean up a user's index rows on account erasure (non-fatal). Default (Art.17):
+ * delete every row the user owns. Under `audit.onUserDelete: keep`: tombstone
+ * instead (strip username, keep type + deleted) so a late-discovered breach can
+ * still confirm the accessId belonged to a since-erased account. Takes the
+ * platform handle the caller already holds. Never rejects — a failure leaves
+ * (repairable) rows rather than blocking the user deletion.
+ */
+export async function cleanupUserAccessIndexNonFatal (platform: PlatformIndexHandle, username: string, keepMode: boolean): Promise<void> {
+  try {
+    if (keepMode) await tombstoneAccessIndexForUser(platform, username);
+    else await deleteAccessIndexForUser(platform, username);
+  } catch (err) {
+    logger.warn(`[access-index] failed to ${keepMode ? 'tombstone' : 'delete'} index rows for erased user ${username}: ${(err as Error).message}`);
+  }
+}
+
 export { PREFIX as ACCESS_INDEX_PREFIX, keyFor as accessIndexKey, readStoredUser };

@@ -66,6 +66,7 @@ const ALL_METHODS = [
   'system.createUser',
   'system.deactivateMfa',
   'system.getUserInfo',
+  'system.getAccess',
   'system.listUsers',
   'system.listCores',
   'auth.hostings',
@@ -90,6 +91,9 @@ const ALL_METHODS = [
 const NOT_AUDITED_METHODS = [
   'service.info',
   'system.getUserInfo',
+  // getAccess is a pure PlatformDB read carrying no user method-context; it
+  // must not reach per-user audit storage.forUser(undefined).
+  'system.getAccess',
   'auth.usernameCheck',
   'auth.emailCheck',
   'auth.cores',

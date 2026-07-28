@@ -25,6 +25,9 @@ const { ready } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
 const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
+// Breach-scope reverse-index: personal accesses are created here at login (a
+// distinct site from accesses.create), so index them too. Non-fatal.
+const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 
 const MFA_PROFILE_ID = 'private';
 
@@ -147,7 +150,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     function createAccess (access: AccessRow, context: MethodContext, callback: (err: (Error & { isDuplicate?: boolean }) | null) => void) {
       Object.assign(access, context.accessQuery);
       context.initTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
-      userAccessesStorage.insertOne(context.user, access, callback);
+      userAccessesStorage.insertOne(context.user, access, (err: (Error & { isDuplicate?: boolean }) | null, inserted?: AccessRow | null) => {
+        if (err != null) return callback(err);
+        // Index the authoritative inserted row (carries the generated id).
+        reindexAccessNonFatal(context.user.username, (inserted ?? access) as { id?: unknown }).then(() => callback(null));
+      });
     }
 
     function updatePersonalAccess (access: AccessRow, context: MethodContext, callback: (err: Error | null) => void) {

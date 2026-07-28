@@ -53,6 +53,13 @@ const { getLogger } = require('@pryv/boiler');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { getUsersRepository } = require('business/src/users/index.ts');
 
+// Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
+// The index maps a bare accessId -> its owning user + minimal metadata so an
+// incident responder can scope a breach from an accessId alone. Both hooks
+// are non-fatal (never reject): a PlatformDB failure must not break access CRUD.
+const { reindexAccessNonFatal, tombstoneAccessesNonFatal } = require('platform/src/accessIndex.ts');
+type IndexAccessInput = { id?: unknown; type?: unknown; expires?: unknown; created?: unknown; modified?: unknown };
+
 type AccessLike = {
   id?: string;
   type?: AccessType;
@@ -491,7 +498,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       result.access = wire;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
       notifyScopedAccessChange(context.user.username, wire, 'create');
-      next();
+      // Populate the breach-scope reverse-index from the authoritative stored
+      // row (base id, no token). Awaited-but-non-fatal (never rejects).
+      reindexAccessNonFatal(context.user.username, newAccess as IndexAccessInput).then(() => next());
     });
   }
 
@@ -772,6 +781,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = wire;
       result.__updateNotification = { baseId: baseId!, serial: newSerial, compositeId: wire.id! };
+      // Refresh the breach-scope reverse-index from the authoritative new head
+      // (stateless full-row write; keyed by the base id). Non-fatal — never
+      // rejects, so it cannot trip the surrounding catch.
+      await reindexAccessNonFatal(context.user.username, newHead as IndexAccessInput);
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
@@ -928,11 +941,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     // Collect any aliases carried by the accesses being deleted, so their
-    // platform reservation + routing entries can be released afterwards.
+    // platform reservation + routing entries can be released afterwards. The
+    // same pass captures the authoritative access rows (still live here) so
+    // the breach-scope reverse-index can be tombstoned after deletion.
     const aliasesToRelease: string[] = [];
+    const rowsToTombstone: IndexAccessInput[] = [];
     for (const idToDelete of idsToDelete) {
       const access = await fromCallback((cb: NodeCallback) => accessesRepository.findOne(context.user, { id: idToDelete.id }, dbFindOptions, cb)) as AccessLike | null;
       if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
+      if (access != null) { rowsToTombstone.push(access as IndexAccessInput); }
+      else if (idToDelete.id != null) { rowsToTombstone.push({ id: idToDelete.id }); }
     }
     // Cascade webhook deletion BEFORE access deletion. On partial failure,
     // the access still exists so a retry re-runs the cascade.
@@ -957,6 +975,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     result.accessDeletion = { id: params.id };
+    // Tombstone every deleted (base + cascaded) access in the breach-scope
+    // reverse-index — the row is retained with a `deleted` timestamp so a
+    // breach scoped after revocation still resolves the accessId. Non-fatal.
+    await tombstoneAccessesNonFatal(context.user.username, rowsToTombstone, timestamp.now());
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     notifyScopedAccessChange(context.user.username, result.accessDeletion, 'delete');
     next();
