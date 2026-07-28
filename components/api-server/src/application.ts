@@ -123,6 +123,9 @@ class Application {
 
   expressApp!: ExpressApp;
 
+  /** Set during initiate(); reported as the telemetry service version. */
+  apiVersion!: string;
+
   isAuditActive: boolean;
 
   constructor () {
@@ -165,9 +168,7 @@ class Application {
     this.expressApp.use(middleware.notFound);
     const errorsMiddleware = errorsMiddlewareMod(this.logging);
     this.expressApp.use(errorsMiddleware);
-    // Start telemetry once the method registry is complete: those ids are
-    // the emitter's vocabulary, and anything outside it is refused.
-    this.startObservability(apiVersion);
+    this.apiVersion = apiVersion;
     logger.debug('Init done');
     this.initalized = true;
     if (this.config.get('showRoutes')) { this.helperShowRoutes(); }
@@ -178,16 +179,18 @@ class Application {
   /**
    * Attach the telemetry emitter, if the operator enabled observability.
    *
-   * The vocabulary handed over is the union of both API registries, so a
-   * system method is emitted under its own id rather than being dropped
-   * as unknown. Failure here is logged and ignored: telemetry never
-   * prevents a worker from serving.
+   * ⚠ Call this only AFTER the API method modules have registered (see
+   * Server.registerApiMethods). The vocabulary handed over is the union of
+   * both API registries, and it IS the emitter's allow-list: attach it too
+   * early and every datapoint is refused as an unknown method id, which
+   * looks like working telemetry and reports nothing. Failure here is
+   * logged and ignored: telemetry never prevents a worker from serving.
    */
-  startObservability (serviceVersion: string) {
+  startObservability () {
     try {
       const { startFromEnv } = require('business/src/observability/startup.ts');
       const methodIds = this.api.getMethodKeys().concat(this.systemAPI.getMethodKeys());
-      const result = startFromEnv({ methodIds, serviceVersion, logger });
+      const result = startFromEnv({ methodIds, serviceVersion: this.apiVersion, logger });
       if (result.activated) {
         logger.info('observability: telemetry emitter active (' + methodIds.length + ' methods)');
       } else {

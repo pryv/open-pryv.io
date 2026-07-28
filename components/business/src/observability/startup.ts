@@ -53,6 +53,19 @@ function startFromEnv (options: StartupOptions): StartupResult {
   const endpoint = env[ENV.ENDPOINT];
   if (!endpoint) return { activated: false, reason: 'no endpoint configured' };
 
+  // An empty vocabulary would attach an emitter that refuses every
+  // datapoint as an unknown method id: telemetry that looks configured
+  // and reports nothing. Refusing here turns that into one legible line
+  // instead of a silent inert deployment, which is how the previous
+  // generation of this layer went unnoticed for weeks.
+  const methodIds = Array.from(options.methodIds);
+  if (methodIds.length === 0) {
+    return {
+      activated: false,
+      reason: 'no API methods registered yet — start observability after the method registry is populated'
+    };
+  }
+
   let headers: Record<string, string> = {};
   if (env[ENV.HEADERS]) {
     try {
@@ -70,7 +83,7 @@ function startFromEnv (options: StartupOptions): StartupResult {
       serviceVersion: options.serviceVersion,
       instanceId: env[ENV.INSTANCE_ID] || '',
       worker: workerId(),
-      methodIds: options.methodIds,
+      methodIds,
       // Operator-set reporting interval; the emitter clamps it. Absent
       // means the emitter's privacy-biased default.
       flushIntervalMs: flushIntervalMs(env[ENV.FLUSH_SECONDS]),

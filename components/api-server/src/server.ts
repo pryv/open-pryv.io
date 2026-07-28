@@ -28,6 +28,7 @@ type AppInstance = {
   webhooksService?: unknown;
   initiate (): Promise<unknown>;
   getCustomAuthFunction (from: string): unknown;
+  startObservability (): void;
 };
 type HttpsLike = {
   setSecureContext (opts: HttpsOptions): void;
@@ -146,6 +147,11 @@ class Server {
     await require('./methods/streams.ts').default(app.api);
     await require('./methods/events.ts').default(app.api);
     this.logger.debug('api methods registered');
+    // Telemetry starts HERE, not in Application.initiate(): the registry is
+    // only complete once the lines above have run, and those method ids are
+    // the emitter's entire vocabulary. Starting earlier attaches an emitter
+    // that knows no method and silently drops every datapoint.
+    app.startObservability();
   }
 
   async setupSocketIO (server: unknown) {

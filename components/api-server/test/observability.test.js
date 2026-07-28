@@ -197,6 +197,19 @@ describe('[OBS] observability', function () {
       assert.strictEqual(observability.isActive(), false);
     });
 
+    it('[OB11] refuses an empty method vocabulary rather than going inert', function () {
+      // Regression: startup used to run before the API method modules
+      // registered, so the emitter attached knowing zero methods and
+      // silently refused every datapoint. Caught only by reading a
+      // deployed log line, which is exactly the failure mode this layer
+      // is supposed to have retired — so it now fails loudly.
+      const result = startFromEnv({ methodIds: [], serviceVersion: '2.0.0', env: baseEnv });
+      assert.strictEqual(result.activated, false);
+      assert.match(result.reason, /no API methods registered/);
+      assert.strictEqual(observability.isActive(), false,
+        'an emitter that knows no method must not attach at all');
+    });
+
     it('[OB10] activates and registers the method vocabulary', function () {
       const result = startFromEnv({
         methodIds: ['events.get', 'events.create'],
