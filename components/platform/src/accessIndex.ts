@@ -37,6 +37,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { getLogger } = require('@pryv/boiler');
+const timestamp = require('unix-timestamp');
 const logger = getLogger('access-index');
 
 /** Field name used when hashing a username (stable across call sites). */
@@ -114,7 +115,7 @@ function readStoredUser (entry: AccessIndexEntry): string | null {
  */
 function buildEntry (platform: PlatformIndexHandle, username: string, row: AccessRowLike, opts: PutOptions = {}): AccessIndexEntry {
   const stored = platform.hashFor(USERNAME_FIELD, username);
-  const created = typeof row.created === 'number' ? row.created : (opts.now ?? Date.now());
+  const created = typeof row.created === 'number' ? row.created : (opts.now ?? timestamp.now());
   const lastModified = opts.lastModified ?? (typeof row.modified === 'number' ? row.modified : created);
   const entry: AccessIndexEntry = {
     accessId: row.id,
@@ -147,8 +148,10 @@ export async function putAccessIndex (platform: PlatformIndexHandle, username: s
  * time — so it also covers the pre-backfill case (no prior index row) without
  * a separate upsert path. Throws; wrap in {@link safeMarkAccessDeleted}.
  */
-export async function markAccessDeletedInIndex (platform: PlatformIndexHandle, username: string, row: AccessRowLike, ts: number = Date.now()): Promise<void> {
-  await putAccessIndex(platform, username, row, { deleted: ts, lastModified: ts });
+export async function markAccessDeletedInIndex (platform: PlatformIndexHandle, username: string, row: AccessRowLike, ts: number = timestamp.now()): Promise<void> {
+  // Thread `now: ts` so the created-fallback (pre-backfill delete: no prior row,
+  // no `row.created`) is written in the SAME pryv-seconds unit as `deleted`.
+  await putAccessIndex(platform, username, row, { deleted: ts, lastModified: ts, now: ts });
 }
 
 /** Read one index row by BASE access id (composite ids must be normalized by the caller). */
@@ -195,7 +198,7 @@ export async function deleteAccessIndexForUser (platform: PlatformIndexHandle, u
  * erased account" (the responder then pivots to the retained home-core audit).
  * No plaintext or token username survives cluster-wide. Returns the count.
  */
-export async function tombstoneAccessIndexForUser (platform: PlatformIndexHandle, username: string, ts: number = Date.now()): Promise<number> {
+export async function tombstoneAccessIndexForUser (platform: PlatformIndexHandle, username: string, ts: number = timestamp.now()): Promise<number> {
   const target = platform.hashFor(USERNAME_FIELD, username);
   const keys = await platform.listPlatformKvKeys(PREFIX);
   let tombstoned = 0;
@@ -233,7 +236,7 @@ export async function safeIndexAccessMutation (platform: PlatformIndexHandle, us
 }
 
 /** Non-fatal delete index write. Never rejects. */
-export async function safeMarkAccessDeleted (platform: PlatformIndexHandle, username: string, row: AccessRowLike, ts: number = Date.now()): Promise<void> {
+export async function safeMarkAccessDeleted (platform: PlatformIndexHandle, username: string, row: AccessRowLike, ts: number = timestamp.now()): Promise<void> {
   try {
     await markAccessDeletedInIndex(platform, username, row, ts);
   } catch (err) {

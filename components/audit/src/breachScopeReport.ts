@@ -257,7 +257,14 @@ export function buildReport (
         aggregateStreams(row, localStreams, externalStreams, fullScopeReads, typeof rc === 'number' ? rc : 0);
         const ssc = row.content?.scopedStreamCount;
         const ssi = row.content?.scopedStreamIds;
-        if (typeof ssc === 'number') {
+        // The wildcard sentinel carries scopedStreamCount = the full expansion
+        // size (e.g. 37) while scopedStreamIds is ['*'] (length 1). That is NOT
+        // truncation of an id list — a full-account read is a distinct breach
+        // narrative (fullScopeReads), never conflated with a capped explicit
+        // read. Exclude the sentinel from both the truncation flag and the
+        // capped-read category-count survivor.
+        const isSentinel = Array.isArray(ssi) && ssi.length === 1 && ssi[0] === '*';
+        if (typeof ssc === 'number' && !isSentinel) {
           if (ssc > maxScopedStreamCount) maxScopedStreamCount = ssc;
           if (Array.isArray(ssi) && ssc > ssi.length) streamsTruncated = true;
         }

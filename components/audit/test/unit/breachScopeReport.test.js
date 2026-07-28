@@ -75,12 +75,16 @@ describe('[BSRP] breachScopeReport (pure module)', () => {
     assert.strictEqual(r.records.read.recordsRead, 2);
   });
 
-  it('[BSR4] separates the ["*"] wildcard sentinel from concrete streams', () => {
-    const rows = [readRow({ content: { action: 'events.get', recordCount: 10, scopedStreamIds: ['*'], scopedStreamCount: 1 } })];
+  it('[BSR4] separates the ["*"] wildcard sentinel from concrete streams and never flags truncation', () => {
+    // The real producer sets scopedStreamCount = the full expansion size (here
+    // 37) on a sentinel row; that must NOT be read as a truncated id list.
+    const rows = [readRow({ content: { action: 'events.get', recordCount: 10, scopedStreamIds: ['*'], scopedStreamCount: 37 } })];
     const r = buildReport(rows, null, null, meta());
     assert.strictEqual(r.dataCategories.fullScopeReads.calls, 1);
     assert.strictEqual(r.dataCategories.fullScopeReads.recordsRead, 10);
     assert.strictEqual(r.dataCategories.streams.length, 0);
+    assert.strictEqual(r.dataCategories.streamsTruncated, false, 'sentinel must not flag truncation');
+    assert.strictEqual(r.dataCategories.maxScopedStreamCount, 0, 'sentinel expansion size must not pollute the capped-read survivor');
   });
 
   it('[BSR5] groups store-prefixed ids under external streams', () => {

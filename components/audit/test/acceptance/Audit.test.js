@@ -649,5 +649,34 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(log.content.scopedStreamIds, undefined, 'no stream-scope field on getOne');
       });
     });
+
+    describe('[AT75] a batch of reads must not double-count the last read', function () {
+      let now;
+      before(async function () {
+        now = timestamp.now();
+        const res = await coreRequest
+          .post('/' + username)
+          .set('Authorization', access.token)
+          .send([
+            { method: 'events.get', params: { streams: ['yo'] } },
+            { method: 'events.get', params: { streams: ['yo'] } }
+          ]);
+        assert.strictEqual(res.status, 200);
+      });
+      it('[QK5E] produces exactly one events.get row per batched read (no envelope duplicate)', async function () {
+        const entries = await getAuditEvents({ fromTime: now });
+        // The batch envelope's own audit row (callBatch, or filtered out) must
+        // NOT be a third events.get carrying the last read's recordCount.
+        const getRows = entries.filter(e => e.content.action === 'events.get');
+        assert.strictEqual(getRows.length, 2, 'two batched reads -> exactly two events.get rows');
+        for (const row of getRows) {
+          assert.strictEqual(typeof row.content.recordCount, 'number', 'each batched read carries its own recordCount');
+        }
+        const envelope = entries.find(e => e.content.action === 'callBatch');
+        if (envelope) {
+          assert.strictEqual(envelope.content.recordCount, undefined, 'batch envelope row must not carry a read recordCount');
+        }
+      });
+    });
   });
 });

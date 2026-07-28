@@ -195,7 +195,11 @@ require('@pryv/boiler').init({
       trace('wrote ' + out);
     }
     if (args.outputs.length === 0) {
-      process.stdout.write(args.json ? JSON.stringify(report, null, 2) + '\n' : renderMarkdown(report) + '\n');
+      // Flush stdout BEFORE exiting: process.exit() right after an async
+      // stdout.write can truncate a piped report (e.g. `... --json | jq`).
+      const text = (args.json ? JSON.stringify(report, null, 2) : renderMarkdown(report)) + '\n';
+      process.stdout.write(text, () => process.exit(0));
+      return;
     }
     process.exit(0);
   } catch (err) {

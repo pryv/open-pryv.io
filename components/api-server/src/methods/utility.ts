@@ -88,6 +88,18 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
     for (const call of calls) {
       result.results.push(await executeCall(call));
     }
+    // The OUTER callBatch result is written to HTTP, so its onEnd (API.ts) fires
+    // `validApiCall` once more for the batch envelope. After the loop `context`
+    // still holds the LAST inner call's methodId + breach-scope enrichment (reset
+    // happens BEFORE each call, not after the loop) — without this the envelope
+    // row would duplicate that call's action AND its recordCount/scope, so a
+    // batched read's records get counted twice in the breach report. Restore the
+    // envelope's own identity and clear the per-read enrichment.
+    context.methodId = 'callBatch';
+    context.auditRecordCount = undefined;
+    context.auditRecordCountIncomplete = undefined;
+    context.auditScopedStreamIds = undefined;
+    context.auditScopedStreamCount = undefined;
     context.disableAccessUsageStats = false; // to allow tracking functions
     next();
     async function executeCall (call: ApiCall) {
