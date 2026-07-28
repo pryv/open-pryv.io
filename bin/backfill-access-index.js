@@ -35,6 +35,15 @@ if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
   process.exit(0);
 }
 
+// Multi-core joiners (e.g. a raw-deploy secondary core) carry their PG /
+// storage-path config in a host-config file layered on top via `--config`,
+// exactly as `bin/master.js` does. Load it here too so the backfill reads the
+// same authoritative storage the running core uses.
+const configFileArg = (() => {
+  const i = process.argv.indexOf('--config');
+  return i !== -1 && process.argv[i + 1] != null ? process.argv[i + 1] : null;
+})();
+
 require('@pryv/boiler').init({
   appName: 'backfill-access-index',
   baseFilesDir: path.resolve(__dirname, '../'),
@@ -46,7 +55,9 @@ require('@pryv/boiler').init({
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
     plugin: require('../config/plugins/core-identity')
-  }]
+  }, ...(configFileArg != null
+    ? [{ scope: 'host-config', file: path.resolve(process.cwd(), configFileArg) }]
+    : [])]
 });
 
 (async () => {
@@ -108,10 +119,11 @@ require('@pryv/boiler').init({
 
 function parseArgs (argv) {
   const args = { resync: false, dryRun: false };
-  for (const a of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     if (a === '--resync') args.resync = true;
     else if (a === '--dry-run') args.dryRun = true;
-    else {
+    else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
     }
@@ -125,6 +137,10 @@ function printUsage (stream) {
     '  node bin/backfill-access-index.js            # write index rows that are absent',
     '  node bin/backfill-access-index.js --resync   # overwrite every row from access storage (repair)',
     '  node bin/backfill-access-index.js --dry-run  # report counts; do not write',
+    '',
+    'On a multi-core joiner that layers a host-config file (PG host, storage',
+    'paths) on top, pass it through so the backfill reads the same storage:',
+    '  node bin/backfill-access-index.js --config config/host-config.yml',
     '',
     'Run once per core (reads the core-local per-user access storage; writes the',
     'cluster-wide reverse-index). Safe to re-run; --resync is the repair mode.',
