@@ -148,7 +148,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately** — the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
 
-6. **`components/tracing/` is a permanent no-op shim — keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked were removed during the v2 dependency cleanup. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing` — every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. New Relic APM (the opt-in observability façade) is the active observability path and runs in parallel, *not* through this component. If a future tracer (OpenTelemetry, Tempo, custom) is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl — the 8 consumers do not need to change.
+6. **`components/tracing/` is a permanent no-op shim — keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked were removed during the v2 dependency cleanup. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing` — every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. The opt-in observability layer (`components/business/src/observability/`) is the active telemetry path and runs in parallel, *not* through this component. If a future tracer is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl — the 8 consumers do not need to change.
 
 ## Common pitfalls for agents
 
@@ -235,7 +235,7 @@ Understand this before debugging why a setting "isn't taking effect".
 - [Core migration](https://pryv.github.io/customer-resources/core-migration/) — moving a core to a new host.
 - [MFA](https://pryv.github.io/customer-resources/mfa/) — SMS-based two-factor.
 - [Emails setup](https://pryv.github.io/customer-resources/emails-setup/) — in-process vs microservice.
-- [Observability (APM)](https://pryv.github.io/customer-resources/observability/) — opt-in New Relic integration.
+- [Observability](https://pryv.github.io/customer-resources/observability/) — opt-in telemetry over OTLP.
 - [Healthchecks](https://pryv.github.io/customer-resources/healthchecks/) and [platform validation](https://pryv.github.io/customer-resources/platform-validation/).
 - [Change log](https://pryv.github.io/change-log/).
 

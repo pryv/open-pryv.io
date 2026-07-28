@@ -1067,7 +1067,7 @@ class Platform {
    *   appName: string,
    *   logLevel: 'error' | 'warn' | 'info' | 'debug',
    *   hostname: string,
-   *   newrelic: { licenseKey: string, highSecurity: boolean }
+   *   otlp: { endpoint: string, headers: Record<string, string> }
    * }>}
    */
   async getObservabilityConfig () {
@@ -1077,7 +1077,7 @@ class Platform {
       provider?: string;
       logLevel?: string;
       appName?: string;
-      newrelic?: { licenseKey?: string; highSecurity?: boolean };
+      otlp?: { endpoint?: string; headers?: Record<string, string> };
     };
     const localYaml = (this.#config.get('observability') || {}) as ObservabilityYaml;
     const dbRows = await this.#db.getAllObservabilityValues();
@@ -1116,24 +1116,20 @@ class Platform {
     // dns.domain (prefixed with "single.") or OS hostname as last resort.
     const hostname = this.#deriveHostname();
 
-    // Decrypt provider secrets on demand — only if they exist AND the
-    // operator hasn't set a local override in YAML.
-    // High Security Mode is account-side and irreversible once enabled, so it
-    // ships off; this row is the operator's opt-in once their account has it.
-    // Not a secret, so it is stored and read in the clear. YAML wins over DB
-    // to keep the local-override emergency path consistent with `enabled`.
-    const highSecurity = localYaml.newrelic?.highSecurity != null
-      ? localYaml.newrelic.highSecurity === true
-      : (db['newrelic-high-security'] != null
-          ? parseJsonBoolean(db['newrelic-high-security'])
-          : false);
-    const newrelic = {
-      licenseKey: localYaml.newrelic?.licenseKey ||
-        await this.#decryptObservabilitySecret('newrelic-license-key', db['newrelic-license-key']),
-      highSecurity
-    };
+    // Telemetry destination. The endpoint is plain config; the headers
+    // carry the backend's credential (an api-key, a bearer token, basic
+    // auth — whatever that backend wants), so they are stored encrypted at
+    // rest. Keeping auth as an opaque header map rather than a named
+    // vendor key is what makes the destination interchangeable: any
+    // OTLP-ingesting backend is reachable with a URL and its own header.
+    // YAML wins over DB, consistent with the `enabled` override path.
+    const endpoint = localYaml.otlp?.endpoint ||
+      (db['otlp-endpoint'] != null ? parseJsonString(db['otlp-endpoint']) : '');
+    const headers = localYaml.otlp?.headers ||
+      parseHeaders(await this.#decryptObservabilitySecret('otlp-headers', db['otlp-headers']));
+    const otlp = { endpoint, headers };
 
-    return { enabled, provider, appName, logLevel, hostname, newrelic };
+    return { enabled, provider, appName, logLevel, hostname, otlp };
   }
 
   /**
@@ -1198,7 +1194,28 @@ class Platform {
   }
 }
 
-const SECRET_OBSERVABILITY_KEYS = new Set(['newrelic-license-key']);
+const SECRET_OBSERVABILITY_KEYS = new Set(['otlp-headers']);
+
+/**
+ * Parse the stored OTLP header map. A malformed or non-object value
+ * yields no headers rather than throwing: a broken credential must not
+ * stop a core from booting.
+ */
+function parseHeaders (stored: string): Record<string, string> {
+  if (!stored) return {};
+  try {
+    const parsed = JSON.parse(stored);
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const key of Object.keys(parsed)) {
+      if (typeof parsed[key] === 'string') out[key] = parsed[key];
+    }
+    return out;
+  } catch {
+    logger.warn('observability: otlp-headers is not valid JSON — ignoring');
+    return {};
+  }
+}
 
 // Service URLs in this codebase carry a trailing slash by convention
 // (matches serviceInfo.{register,api,access}). Centralizing here so naive

@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 
-// Observability boot MUST come before any other require so APM agents
-// can instrument http/express/pg from the start. No-op in NODE_ENV=test
-// or when PRYV_OBSERVABILITY_PROVIDER is unset.
-require('./_observability-boot');
-
 /**
  * @license
  * Copyright (C) Pryv https://pryv.com
@@ -474,10 +469,10 @@ if (cluster.isPrimary) {
 
     // Observability env vars workers inherit via setupPrimary.
     // Effective config comes from `Platform.getObservabilityConfig()` which
-    // merges PlatformDB rows + local YAML + derives hostname.
-    // `buildObservabilityEnv` returns an empty object when disabled or
-    // misconfigured — workers then see no provider env and the boot shim
-    // no-ops.
+    // merges PlatformDB rows + local YAML + derives hostname. Resolving it
+    // once here keeps every worker on the same posture without each one
+    // querying PlatformDB at boot. `buildObservabilityEnv` returns an empty
+    // object when disabled or without an endpoint — workers then stay silent.
     let observabilityEnv = {};
     try {
       const { getPlatform } = require('../components/platform/src/index.ts');
@@ -486,12 +481,12 @@ if (cluster.isPrimary) {
       const { buildObservabilityEnv } = require('business/src/observability/envBuilder.ts');
       observabilityEnv = buildObservabilityEnv(obs);
       if (Object.keys(observabilityEnv).length > 0) {
-        log(`[observability] provider=newrelic host=${obs.hostname} logLevel=${obs.logLevel}`);
+        log(`[observability] telemetry enabled host=${obs.hostname} endpoint=${obs.otlp.endpoint}`);
       } else if (obs.enabled) {
-        log(`[observability] enabled but provider=${obs.provider || 'unset'} or license-key unset — not activating`);
+        log('[observability] enabled but no endpoint configured — not activating');
       }
     } catch (err) {
-      log('[observability] getObservabilityConfig FAILED: ' + err.message + ' — workers start without APM');
+      log('[observability] getObservabilityConfig FAILED: ' + err.message + ' — workers start without telemetry');
       if (process.env.DEBUG) console.error(err.stack);
     }
 

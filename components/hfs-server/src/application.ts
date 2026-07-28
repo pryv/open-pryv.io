@@ -43,9 +43,8 @@ interface LoggerLike {
   error: (msg: string) => void;
 }
 
-// Tracing shim. See components/tracing/src/Tracing.ts for the rationale
-// — New Relic APM is the active observability path; this layer
-// preserves the architectural slot.
+// Tracing shim. See components/tracing/src/Tracing.ts for the rationale;
+// this layer preserves the architectural slot.
 class NoopSpan {
   operationName: string;
   constructor (name: string) { this.operationName = name; }

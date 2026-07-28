@@ -121,9 +121,6 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       if (selectedCoreId == null || selectedCoreId === this.platform.coreId) {
         return next();
       }
-      // Label the transaction in APM so local vs forwarded registrations
-      // are distinguishable in the UI. No-op when no provider is attached.
-      observability.setTransactionName('auth.register.forwarded');
       const targetUrl = this.platform.coreIdToUrl(selectedCoreId);
       // 30 s timeout: a hung target must not wedge the landing worker.
       // 30 s matches Node fetch's default connect timeout + leaves headroom
@@ -156,7 +153,8 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       result.forwarded = true;
       return next();
     } catch (err) {
-      observability.recordError(err, { context: 'auth.register.forward' });
+      // The failure travels the API chain, where the telemetry choke point
+      // counts and reports it under `auth.register`.
       return next(err);
     }
   }

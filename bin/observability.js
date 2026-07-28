@@ -7,23 +7,25 @@
  * Refer to LICENSE file
  */
 
-// CLI for managing observability (APM) configuration directly in PlatformDB.
-// Works whether the master process is running or not — a rolling restart of
-// cores is required for changes to the license key / provider to take effect
-// (the agent reads its license key once at require() time).
+// CLI for managing observability configuration directly in PlatformDB.
+// Works whether the master process is running or not — a rolling restart
+// of cores is required for changes to take effect (workers receive the
+// resolved posture from master at fork time).
 //
 // Usage:
 //   node bin/observability.js show
-//   node bin/observability.js enable <provider>          # e.g. "newrelic"
+//   node bin/observability.js enable
 //   node bin/observability.js disable
-//   node bin/observability.js set-log-level <level>      # error | warn | info | debug
+//   node bin/observability.js set-endpoint <url>
+//   node bin/observability.js set-header <name> <value>
+//   node bin/observability.js clear-headers
 //   node bin/observability.js set-app-name <name>
-//   node bin/observability.js newrelic set-license-key <key>
-//   node bin/observability.js newrelic set-high-security <true|false>
 //
-// The license key is stored AES-256-GCM encrypted at rest (HKDF key
-// material derived from auth.adminAccessKey); the `show` command never
-// echoes secret values.
+// Telemetry is shipped over OTLP/HTTP, so the destination is a URL and
+// whatever auth header that backend expects: New Relic wants `api-key`,
+// others want `Authorization`. Headers are stored AES-256-GCM encrypted
+// at rest (HKDF key material derived from auth.adminAccessKey) because
+// they carry the credential; `show` never echoes their values.
 
 const path = require('path');
 
@@ -67,14 +69,17 @@ require('@pryv/boiler').init({
       case 'disable':
         await runDisable(platform);
         break;
-      case 'set-log-level':
-        await runSetLogLevel(platform, args);
-        break;
       case 'set-app-name':
         await runSetAppName(platform, args);
         break;
-      case 'newrelic':
-        await runNewrelic(platform, args);
+      case 'set-endpoint':
+        await runSetEndpoint(platform, args);
+        break;
+      case 'set-header':
+        await runSetHeader(platform, args);
+        break;
+      case 'clear-headers':
+        await runClearHeaders(platform);
         break;
       default:
         console.error('Unknown command: ' + args.command);
@@ -148,27 +153,26 @@ async function waitForRqlite (url, timeoutMs = 30000) {
 
 async function runShow (platform) {
   const obs = await platform.getObservabilityConfig();
-  const licenseKeySet = !!obs.newrelic.licenseKey;
+  const headerNames = Object.keys(obs.otlp.headers || {});
   console.log('enabled:          ' + obs.enabled);
-  console.log('provider:         ' + (obs.provider || '(unset)'));
   console.log('appName:          ' + obs.appName);
-  console.log('logLevel:         ' + obs.logLevel);
   console.log('hostname:         ' + obs.hostname);
-  console.log('newrelic licenseKey set: ' + (licenseKeySet ? 'yes' : 'no'));
-  console.log('newrelic highSecurity:   ' + (obs.newrelic.highSecurity === true));
+  console.log('otlp endpoint:    ' + (obs.otlp.endpoint || '(unset)'));
+  console.log('otlp headers set: ' + (headerNames.length > 0 ? headerNames.join(', ') + ' (values hidden)' : 'none'));
   console.log('');
-  // What the shipped agent config sends, restated here so an operator can
-  // answer "what does the vendor see?" without reading source.
-  console.log('Data sent to the provider:');
-  console.log('  sent:     route-shaped transaction names, status codes, timings,');
-  console.log('            this core FQDN, datastore and external call timing');
-  console.log('  NOT sent: request URLs and query parameters, request bodies,');
-  console.log('            auth/cookie/Host/Referer headers, SQL text (hard-coded)');
-  console.log('  NOT sent: application log messages, unless the log-forwarding');
-  console.log('            env opt-in is set on the service process (this command');
-  console.log('            runs in a different shell and cannot see that)');
-  console.log('  Authoritative list: the agent config in');
-  console.log('  components/business/src/observability/providers/newrelic/');
+  // What leaves the deployment, restated here so an operator can answer
+  // "what does the backend see?" without reading source.
+  console.log('Data sent to the backend:');
+  console.log('  sent:     per-method call counts, durations and error counts');
+  console.log('            (API method ids, status classes, error codes),');
+  console.log('            this core FQDN, worker id, service name and version,');
+  console.log('            and stack traces for server-side faults');
+  console.log('  NOT sent: request URLs, query parameters, request bodies,');
+  console.log('            headers, usernames, event data, log messages and');
+  console.log('            error messages — none of these have a representation');
+  console.log('            in the emitted schema, so they cannot be sent');
+  console.log('  Authoritative list: the allow-list in');
+  console.log('  components/business/src/observability/schema.ts');
   console.log('');
 
   // Cross-reference against the boot-log [platform-config-snapshot] line.
@@ -178,22 +182,17 @@ async function runShow (platform) {
   console.log('platform-config-snapshot hash: ' + hash);
   console.log('platform-config-snapshot:      ' + JSON.stringify(snapshot));
   console.log('');
-  console.log('Note: license key rotation requires a rolling restart of all cores.');
+  console.log('Note: configuration changes require a rolling restart of all cores.');
 }
 
-async function runEnable (platform, args) {
-  if (!args.provider) throw new Error('enable: provider argument is required (e.g. "newrelic")');
-  if (args.provider !== 'newrelic') {
-    throw new Error('enable: only "newrelic" is currently supported (got "' + args.provider + '")');
-  }
+async function runEnable (platform) {
   const current = await platform.getObservabilityConfig();
-  if (!current.newrelic.licenseKey) {
-    console.error('Warning: no license key is set. Run `newrelic set-license-key <KEY>` first.');
-    console.error('         Observability will not activate until a valid key is stored.');
+  if (!current.otlp.endpoint) {
+    console.error('Warning: no endpoint is set. Run `set-endpoint <URL>` first.');
+    console.error('         Telemetry will not activate until an endpoint is stored.');
   }
-  await platform.setObservabilityValue('provider', args.provider);
   await platform.setObservabilityValue('enabled', true);
-  console.log('observability enabled (provider=' + args.provider + ')');
+  console.log('observability enabled');
   console.log('Rolling restart cores to pick up the change.');
 }
 
@@ -203,13 +202,37 @@ async function runDisable (platform) {
   console.log('Rolling restart cores to pick up the change.');
 }
 
-async function runSetLogLevel (platform, args) {
-  const level = args.level;
-  if (!['error', 'warn', 'info', 'debug'].includes(level)) {
-    throw new Error('set-log-level: level must be one of error | warn | info | debug (got "' + level + '")');
+async function runSetEndpoint (platform, args) {
+  if (!args.endpoint) throw new Error('set-endpoint: url argument is required');
+  let parsed;
+  try {
+    parsed = new URL(args.endpoint);
+  } catch {
+    throw new Error('set-endpoint: "' + args.endpoint + '" is not a valid URL');
   }
-  await platform.setObservabilityValue('log-level', level);
-  console.log('observability log level set to "' + level + '"');
+  if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+    throw new Error('set-endpoint: refusing a non-HTTPS remote endpoint (' + parsed.protocol + '//)');
+  }
+  await platform.setObservabilityValue('otlp-endpoint', args.endpoint);
+  console.log('observability OTLP endpoint set to "' + args.endpoint + '"');
+  console.log('The standard OTLP/HTTP paths /v1/metrics and /v1/logs are appended to it.');
+  console.log('Rolling restart cores to pick up the change.');
+}
+
+async function runSetHeader (platform, args) {
+  if (!args.headerName) throw new Error('set-header: name argument is required');
+  if (!args.headerValue) throw new Error('set-header: value argument is required');
+  const current = await platform.getObservabilityConfig();
+  const headers = Object.assign({}, current.otlp.headers || {});
+  headers[args.headerName] = args.headerValue;
+  await platform.setObservabilityValue('otlp-headers', JSON.stringify(headers));
+  console.log('observability OTLP header "' + args.headerName + '" stored (AES-256-GCM encrypted at rest)');
+  console.log('Rolling restart cores to pick up the change.');
+}
+
+async function runClearHeaders (platform) {
+  await platform.setObservabilityValue('otlp-headers', JSON.stringify({}));
+  console.log('observability OTLP headers cleared');
   console.log('Rolling restart cores to pick up the change.');
 }
 
@@ -218,44 +241,6 @@ async function runSetAppName (platform, args) {
   await platform.setObservabilityValue('app-name', args.appName);
   console.log('observability app name set to "' + args.appName + '"');
   console.log('Rolling restart cores to pick up the change.');
-}
-
-async function runNewrelic (platform, args) {
-  if (args.subcommand === 'set-license-key') {
-    if (!args.licenseKey) throw new Error('newrelic set-license-key: key argument is required');
-    if (args.licenseKey.length < 20) {
-      throw new Error('newrelic set-license-key: key looks too short (got ' + args.licenseKey.length + ' chars; expected ~40)');
-    }
-    await platform.setObservabilityValue('newrelic-license-key', args.licenseKey);
-    console.log('newrelic license key rotated in PlatformDB (AES-256-GCM encrypted at rest)');
-    console.log('Rolling restart cores to pick up the change.');
-    return;
-  }
-  if (args.subcommand === 'set-high-security') {
-    const raw = args.licenseKey; // positional slot after the subcommand
-    if (raw !== 'true' && raw !== 'false') {
-      throw new Error('newrelic set-high-security: expected "true" or "false" (got "' + (raw || '') + '")');
-    }
-    await platform.setObservabilityValue('newrelic-high-security', raw === 'true');
-    if (raw === 'true') {
-      console.log('newrelic High Security Mode requested for this platform.');
-      console.log('');
-      console.log('IMPORTANT: enable High Security Mode on the New Relic ACCOUNT first.');
-      console.log('The agent refuses to connect when the two disagree, so a core');
-      console.log('restarted before the account side is ready reports nothing at all.');
-      console.log('Account-side HSM cannot be switched off again without New Relic support.');
-      console.log('');
-      console.log('It also disables custom events, custom attributes and log forwarding,');
-      console.log('and coerces SQL capture to obfuscated. The default scrubbing this');
-      console.log('platform ships does not depend on it.');
-    } else {
-      console.log('newrelic High Security Mode disabled for this platform (the default).');
-      console.log('Attribute exclusion and URL obfuscation still apply; they are hard-coded.');
-    }
-    console.log('Rolling restart cores to pick up the change.');
-    return;
-  }
-  throw new Error('newrelic: unknown subcommand "' + (args.subcommand || '') + '" (expected "set-license-key" or "set-high-security")');
 }
 
 // ---------------------------------------------------------------------------
@@ -268,18 +253,15 @@ function parseArgs (argv) {
   args.command = positional[0];
 
   switch (args.command) {
-    case 'enable':
-      args.provider = positional[1];
-      break;
-    case 'set-log-level':
-      args.level = positional[1];
-      break;
     case 'set-app-name':
       args.appName = positional[1];
       break;
-    case 'newrelic':
-      args.subcommand = positional[1];
-      args.licenseKey = positional[2];
+    case 'set-endpoint':
+      args.endpoint = positional[1];
+      break;
+    case 'set-header':
+      args.headerName = positional[1];
+      args.headerValue = positional[2];
       break;
   }
   return args;
@@ -288,15 +270,16 @@ function parseArgs (argv) {
 function printUsage (stream) {
   stream.write('Usage:\n');
   stream.write('  observability show\n');
-  stream.write('  observability enable <provider>\n');
+  stream.write('  observability enable\n');
   stream.write('  observability disable\n');
-  stream.write('  observability set-log-level <error|warn|info|debug>\n');
+  stream.write('  observability set-endpoint <url>\n');
+  stream.write('  observability set-header <name> <value>\n');
+  stream.write('  observability clear-headers\n');
   stream.write('  observability set-app-name <name>\n');
-  stream.write('  observability newrelic set-license-key <key>\n');
-  stream.write('  observability newrelic set-high-security <true|false>\n');
   stream.write('\n');
-  stream.write('The license key is stored AES-256-GCM encrypted in PlatformDB.\n');
-  stream.write('Rotation requires a rolling restart of all cores.\n');
-  stream.write('High Security Mode must be enabled on the provider account FIRST;\n');
-  stream.write('the agent refuses to connect when the two sides disagree.\n');
+  stream.write('Telemetry ships over OTLP/HTTP: set the backend base URL with\n');
+  stream.write('set-endpoint, and whatever auth header it expects with set-header\n');
+  stream.write('(e.g. "api-key" for New Relic, "Authorization" elsewhere).\n');
+  stream.write('Headers are stored AES-256-GCM encrypted in PlatformDB and are\n');
+  stream.write('never echoed back. Changes require a rolling restart of all cores.\n');
 }

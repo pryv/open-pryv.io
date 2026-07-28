@@ -6,42 +6,38 @@
  */
 
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
-const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
- * Observability tests.
+ * Observability configuration + worker-startup tests.
  *
- * Covers:
- *   [OB01] Platform.getObservabilityConfig encrypts/decrypts license key round-trip
+ * The choke point itself (what may be emitted, and what is refused) is
+ * covered by the business component's unit suite; this file covers the
+ * layer around it: how the posture is resolved from PlatformDB and local
+ * YAML, how it reaches workers, and how a worker decides to start.
+ *
+ *   [OB01] OTLP headers round-trip PlatformDB encrypted at rest
  *   [OB02] local `observability.enabled: false` overrides PlatformDB true
  *   [OB03] appName falls back to `open-pryv.io (<dns.domain>)` when unset
  *   [OB04] hostname derived from `new URL(core.url).hostname`
- *   [OB05] façade is no-op when no provider attached
- *   [OB06] shim bypasses in NODE_ENV=test
- *   [OB07] shim no-ops when PRYV_OBSERVABILITY_PROVIDER unset
- *   [OB08] logForwarder forwards ONLY errors at default log level
- *   [OB09] logForwarder forwards warns when log level is raised to 'warn'
- *   [OBSC] agent config pins the scrub constants (exclusions, URL
- *          obfuscation, no SQL capture, log forwarding off by default)
- *   [OBHS] high-security opt-in round-trips PlatformDB -> config -> worker env
+ *   [OB05] malformed stored headers degrade to none rather than throwing
+ *   [OB06] worker env is empty when telemetry is off or has no endpoint
+ *   [OB07] worker env has the full shape when enabled with an endpoint
+ *   [OB08] startup refuses to activate in NODE_ENV=test
+ *   [OB09] startup refuses to activate without an endpoint
+ *   [OB10] startup activates and registers the method vocabulary
  *
- * Sequential because it mutates PlatformDB + process.env + global façade state.
+ * Sequential because it mutates PlatformDB + global façade state.
  */
 
 const assert = require('node:assert');
-const path = require('node:path');
-const fs = require('node:fs');
-const { spawnSync } = require('node:child_process');
 const cuid = require('cuid');
 
 const { getConfig } = require('@pryv/boiler');
 const { withInjectedConfig } = require('test-helpers');
 const { platform } = require('platform');
 const observability = require('business/src/observability/index.ts');
-const logForwarder = require('business/src/observability/logForwarder.ts');
 const { buildObservabilityEnv } = require('business/src/observability/envBuilder.ts');
+const { startFromEnv } = require('business/src/observability/startup.ts');
 
 function getPlatformDB () {
   return require('storages').platformDB;
@@ -57,7 +53,6 @@ describe('[OBS] observability', function () {
 
   afterEach(function () {
     observability._reset();
-    logForwarder.setLogLevel('error');
   });
 
   describe('[OB-PF] Platform.getObservabilityConfig', function () {
@@ -68,22 +63,21 @@ describe('[OBS] observability', function () {
       }
     });
 
-    it('[OB01] encrypts and decrypts the newrelic license key round-trip', async function () {
-      const licenseKey = 'test-license-' + cuid();
+    it('[OB01] encrypts and decrypts the OTLP headers round-trip', async function () {
+      const apiKey = 'test-key-' + cuid();
       await platform.setObservabilityValue('enabled', true);
-      await platform.setObservabilityValue('provider', 'newrelic');
-      await platform.setObservabilityValue('newrelic-license-key', licenseKey);
+      await platform.setObservabilityValue('otlp-endpoint', 'https://otlp.example.test');
+      await platform.setObservabilityValue('otlp-headers', JSON.stringify({ 'api-key': apiKey }));
 
-      // Raw storage MUST be encrypted envelope — not plaintext.
-      const rawStored = await getPlatformDB().getObservabilityValue('newrelic-license-key');
-      assert.notStrictEqual(rawStored, licenseKey, 'raw PlatformDB value must not be plaintext');
-      assert.ok(rawStored.length > licenseKey.length, 'envelope should be larger than plaintext');
+      // Raw storage MUST be an encrypted envelope — the header carries the
+      // backend credential.
+      const rawStored = await getPlatformDB().getObservabilityValue('otlp-headers');
+      assert.ok(!rawStored.includes(apiKey), 'raw PlatformDB value must not hold the key in clear');
 
-      // getObservabilityConfig must decrypt correctly.
       const obs = await platform.getObservabilityConfig();
       assert.strictEqual(obs.enabled, true);
-      assert.strictEqual(obs.provider, 'newrelic');
-      assert.strictEqual(obs.newrelic.licenseKey, licenseKey);
+      assert.strictEqual(obs.otlp.endpoint, 'https://otlp.example.test');
+      assert.strictEqual(obs.otlp.headers['api-key'], apiKey);
     });
 
     it('[OB02] local observability.enabled:false overrides PlatformDB true', async function () {
@@ -109,60 +103,17 @@ describe('[OBS] observability', function () {
         assert.strictEqual(obs.hostname, 'core-ob04.example.com');
       });
     });
-  });
 
-  describe('[OB-FC] façade behaviour', function () {
-    it('[OB05] façade is no-op when no provider attached', function () {
-      observability._reset();
-      assert.strictEqual(observability.isActive(), false);
-      // All methods must be safe to call without a provider.
-      observability.setTransactionName('x');
-      observability.recordError(new Error('y'), { z: 1 });
-      observability.recordCustomEvent('PryvLog', { level: 'error', msg: 'z' });
+    it('[OB05] malformed stored headers yield none rather than throwing', async function () {
+      // Write a non-JSON payload through the encrypting setter, so the
+      // decrypt succeeds and the parse is what fails.
+      await platform.setObservabilityValue('otlp-headers', 'not json at all');
+      const obs = await platform.getObservabilityConfig();
+      assert.deepStrictEqual(obs.otlp.headers, {}, 'a broken credential must not stop a boot');
     });
   });
 
-  describe('[OB-SH] bin/_observability-boot shim', function () {
-    const shimPath = path.resolve(__dirname, '../../../bin/_observability-boot.js');
-
-    it('[OB06] returns `{activated:false, reason:"NODE_ENV=test"}` in test mode', function () {
-      const result = spawnSync('node', ['-e',
-        'process.env.NODE_ENV = "test"; console.log(JSON.stringify(require("' + shimPath + '")));'
-      ], { encoding: 'utf8' });
-      const parsed = JSON.parse(result.stdout.trim());
-      assert.strictEqual(parsed.activated, false);
-      assert.match(parsed.reason, /NODE_ENV=test/);
-    });
-
-    it('[OB07] no-ops when PRYV_OBSERVABILITY_PROVIDER unset', function () {
-      const result = spawnSync('node', ['-e',
-        'delete process.env.NODE_ENV; delete process.env.PRYV_OBSERVABILITY_PROVIDER; ' +
-        'console.log(JSON.stringify(require("' + shimPath + '")));'
-      ], { encoding: 'utf8' });
-      const parsed = JSON.parse(result.stdout.trim());
-      assert.strictEqual(parsed.activated, false);
-      assert.match(parsed.reason, /PRYV_OBSERVABILITY_PROVIDER unset/);
-    });
-
-    it('[OB06B] env-set + missing provider module records boot-failure without crashing', function () {
-      // Simulate the master having populated env but the provider boot
-      // file being absent (future-proofing or a mistyped provider id).
-      const result = spawnSync('node', ['-e',
-        'delete process.env.NODE_ENV; ' +
-        'process.env.PRYV_OBSERVABILITY_PROVIDER = "nonexistent-xyz"; ' +
-        'console.log(JSON.stringify(require("' + shimPath + '")));'
-      ], { encoding: 'utf8' });
-      const parsed = JSON.parse(result.stdout.trim());
-      assert.strictEqual(parsed.activated, false);
-      assert.match(parsed.reason, /boot-failure/);
-      // Expected: non-fatal. Process must have exited 0 (shim must never
-      // crash the host process).
-      assert.strictEqual(result.status, 0, 'shim must not crash the host process on boot-failure');
-      assert.match(result.stderr, /failed to activate provider "nonexistent-xyz"/);
-    });
-  });
-
-  describe('[OB-EP] env propagation from Platform.getObservabilityConfig', function () {
+  describe('[OB-EP] env propagation to workers', function () {
     beforeEach(async function () {
       const values = await getPlatformDB().getAllObservabilityValues();
       for (const { key } of values) {
@@ -170,458 +121,80 @@ describe('[OBS] observability', function () {
       }
     });
 
-    it('[OB08B] master env object is empty when no provider is enabled', async function () {
-      // Reproduce master's check: the config must be "enabled && provider && licenseKey"
-      // to emit env for cluster.fork(). Anything else yields an empty env.
-      const obs = await platform.getObservabilityConfig();
-      const env = buildObservabilityEnv(obs);
-      assert.deepStrictEqual(env, {}, 'no provider should yield empty env: ' + JSON.stringify(env));
+    it('[OB06] env is empty when disabled, and when enabled without an endpoint', async function () {
+      const disabled = await platform.getObservabilityConfig();
+      assert.deepStrictEqual(buildObservabilityEnv(disabled), {});
+
+      await platform.setObservabilityValue('enabled', true);
+      const noEndpoint = await platform.getObservabilityConfig();
+      assert.deepStrictEqual(buildObservabilityEnv(noEndpoint), {},
+        'enabled without a destination must not start workers emitting');
     });
 
-    it('[OB09B] env has the full shape when enabled + provider + license are set', async function () {
-      const coreUrl = 'https://core-ob09b.example.com';
+    it('[OB07] env has the full shape when enabled with an endpoint', async function () {
+      const coreUrl = 'https://core-ob07.example.com';
       await withInjectedConfig({ core: { url: coreUrl }, dns: { domain: 'example.com' } }, async () => {
         await platform.setObservabilityValue('enabled', true);
-        await platform.setObservabilityValue('provider', 'newrelic');
-        await platform.setObservabilityValue('newrelic-license-key', 'test-license-xyz-01234567890123456789');
-        await platform.setObservabilityValue('log-level', 'warn');
+        await platform.setObservabilityValue('otlp-endpoint', 'https://otlp.example.test');
+        await platform.setObservabilityValue('otlp-headers', JSON.stringify({ 'api-key': 'k'.repeat(40) }));
         await platform.setObservabilityValue('app-name', 'test-cluster-app');
 
         const obs = await platform.getObservabilityConfig();
         const env = buildObservabilityEnv(obs);
 
-        assert.strictEqual(env.PRYV_OBSERVABILITY_PROVIDER, 'newrelic');
-        assert.strictEqual(env.NEW_RELIC_LICENSE_KEY, 'test-license-xyz-01234567890123456789');
-        assert.strictEqual(env.NEW_RELIC_APP_NAME, 'test-cluster-app');
-        assert.strictEqual(env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, 'core-ob09b.example.com');
-        assert.strictEqual(env.NEW_RELIC_LOG_LEVEL, 'warn');
-        // HSM defaults to 'false' (must match account-side or connect returns 409).
-        assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'false');
-        assert.ok(env.NEW_RELIC_HOME, 'NEW_RELIC_HOME must point at the provider config dir');
+        assert.strictEqual(env.PRYV_OBS_ENABLED, 'true');
+        assert.strictEqual(env.PRYV_OBS_ENDPOINT, 'https://otlp.example.test');
+        assert.strictEqual(JSON.parse(env.PRYV_OBS_HEADERS)['api-key'], 'k'.repeat(40));
+        assert.strictEqual(env.PRYV_OBS_SERVICE_NAME, 'test-cluster-app');
+        assert.strictEqual(env.PRYV_OBS_INSTANCE_ID, 'core-ob07.example.com');
       });
-    });
-
-    it('[OB09C] NEW_RELIC_HIGH_SECURITY flips to "true" only when obs.newrelic.highSecurity=true', async function () {
-      const obs = {
-        enabled: true,
-        provider: 'newrelic',
-        appName: 'x',
-        logLevel: 'error',
-        hostname: 'core.x',
-        newrelic: { licenseKey: 'k'.repeat(40), highSecurity: true }
-      };
-      const env = buildObservabilityEnv(obs);
-      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true');
     });
   });
 
-  describe('[OB-LF] logForwarder', function () {
-    let calls;
-    let mockAdapter;
+  describe('[OB-ST] worker startup', function () {
+    const baseEnv = {
+      PRYV_OBS_ENABLED: 'true',
+      PRYV_OBS_ENDPOINT: 'https://otlp.example.test',
+      PRYV_OBS_HEADERS: '{"api-key":"k"}',
+      PRYV_OBS_SERVICE_NAME: 'open-pryv.io (test)',
+      PRYV_OBS_INSTANCE_ID: 'core-test.example.com'
+    };
 
-    beforeEach(function () {
-      observability._reset();
-      calls = [];
-      mockAdapter = {
-        id: 'mock',
-        setTransactionName () { /* noop */ },
-        recordError (err, attrs) { calls.push({ kind: 'error', msg: err.message, attrs }); },
-        recordCustomEvent (type, attrs) { calls.push({ kind: 'event', type, attrs }); },
-        async startBackgroundTransaction (name, fn) { return fn(); }
-      };
-      observability.init(mockAdapter);
-    });
-
-    it('[OB08] default log level forwards only errors', function () {
-      logForwarder.setLogLevel('error');
-      const base = {
-        error (msg) { /* base logger */ },
-        warn (msg) { /* base logger */ },
-        info (msg) { /* base logger */ },
-        debug (msg) { /* base logger */ }
-      };
-      const wrapped = logForwarder.wrap(base, 'test-logger');
-      wrapped.error('boom');
-      wrapped.warn('soft');
-      wrapped.info('chatter');
-      wrapped.debug('noise');
-
-      assert.strictEqual(calls.length, 1, 'only the error call should forward');
-      assert.strictEqual(calls[0].kind, 'error');
-      assert.strictEqual(calls[0].msg, 'boom');
-    });
-
-    it('[OB09] log level "warn" forwards errors + warns, not info/debug', function () {
-      logForwarder.setLogLevel('warn');
-      const base = {
-        error (msg) { /* base logger */ },
-        warn (msg) { /* base logger */ },
-        info (msg) { /* base logger */ },
-        debug (msg) { /* base logger */ }
-      };
-      const wrapped = logForwarder.wrap(base, 'test-logger');
-      wrapped.error('boom');
-      wrapped.warn('soft');
-      wrapped.info('chatter');
-      wrapped.debug('noise');
-
-      assert.strictEqual(calls.length, 2);
-      assert.strictEqual(calls[0].kind, 'error');
-      assert.strictEqual(calls[1].kind, 'event');
-      assert.strictEqual(calls[1].type, 'PryvLog');
-      assert.strictEqual(calls[1].attrs.level, 'warn');
-    });
-  });
-
-  describe('[OB-SC] agent config scrub constants', function () {
-    // These values are quoted verbatim in the customer-facing data-flow
-    // documentation, which answers "what does our APM vendor receive?".
-    // Pin them here so a well-meaning edit cannot loosen the posture
-    // silently: if this test changes, that documentation must change too.
-    const NR_CONFIG_MODULE = 'business/src/observability/providers/newrelic/newrelic.ts';
-
-    it('[OBSC] excludes credentials, request bodies, URLs and identifying attributes', function () {
-      const { config } = require(NR_CONFIG_MODULE);
-
-      assert.strictEqual(config.allow_all_headers, false,
-        'header capture must stay on the agent default allowlist');
-
-      const mustExclude = [
-        // Credentials and payloads. Names are the agent's published attribute
-        // names, which camel-case multi-word headers, not the header names.
-        'request.headers.authorization',
-        'request.headers.cookie',
-        'request.headers.proxyAuthorization',
-        'request.headers.setCookie*',
-        'request.headers.x*',
-        'request.body',
-        // subject-linking attributes: URLs carry usernames and record ids,
-        // the parameter wildcard also catches route params such as
-        // request.parameters.route.username, and Host carries the username
-        // as a subdomain in DNS-ful topologies
-        'request.uri',
-        'request.parameters.*',
-        'http.url',
-        'request.headers.host',
-        'request.headers.referer',
-        // A User-Agent identifies nobody alone but contributes to
-        // fingerprinting, so privacy wins over debuggability here.
-        'request.headers.userAgent'
-      ];
-      for (const key of mustExclude) {
-        assert.ok(config.attributes.exclude.includes(key),
-          'attributes.exclude must contain ' + key);
-      }
-
-      assert.strictEqual(config.transaction_tracer.record_sql, 'off',
-        'SQL text must never be captured');
-      assert.strictEqual(config.strip_exception_messages.enabled, true,
-        'error message text can quote client-supplied values, so it is redacted');
-      assert.strictEqual(config.custom_insights_events.enabled, false);
-      assert.strictEqual(config.api.custom_attributes_enabled, false);
-    });
-
-    it('[OBSC2] masks the WHOLE path in segment and span names', function () {
-      const { config } = require(NR_CONFIG_MODULE);
-      // Attribute exclusion cannot reach a segment or span NAME, and those
-      // embed the outbound path on cross-core forwards and webhook calls.
-      assert.strictEqual(config.url_obfuscation.enabled, true);
-      assert.strictEqual(config.url_obfuscation.regex.pattern, '^/.*',
-        'the whole path must be masked; matching identifier SHAPES leaked');
-      assert.strictEqual(config.url_obfuscation.regex.replacement, '*');
-    });
-
-    it('[OBSC6] the mask leaves nothing identifying in a path, whatever its shape', function () {
-      // Regression guard for a real leak. An earlier pattern matched
-      // identifier shapes (leading segment, cuid-like ids, query strings) and
-      // missed everything else: attachment filenames, user-chosen stream ids,
-      // and webhook path segments all survived. Enumerating shapes a caller
-      // might use is a losing game, so assert that nothing survives.
-      const { config } = require(NR_CONFIG_MODULE);
-      const { pattern, flags, replacement } = config.url_obfuscation.regex;
-      const mask = (p) => p.replace(new RegExp(pattern, flags), replacement);
-
-      const leakedBefore = [
-        // attachment download forwarded between cores: the filename is
-        // user-chosen and sat in a non-leading segment
-        '/alice/events/c1a2b3c4d5e6f7g8h9i0j1k2/cfileid00000000000000000/blood-report-jane-doe.pdf',
-        // user-chosen stream id
-        '/alice/streams/diary-anna',
-        // webhook delivery to an app-supplied path
-        '/pryv-notify/alice',
-        // an id shape nobody thought of
-        '/alice/events/EVT-2026-0001'
-      ];
-      for (const path of leakedBefore) {
-        assert.strictEqual(mask(path), replacement,
-          'path must mask to exactly the replacement, got: ' + mask(path));
-      }
-    });
-
-    it('[OBSC3] ships application log forwarding OFF by default', function () {
-      // The agent auto-instruments the logging stack and would forward log
-      // records including message bodies. Attribute exclusion does not apply
-      // to a message, and nothing here scrubs identifiers out of one.
-      assert.strictEqual(
-        process.env.NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED,
-        undefined,
-        'this assertion is only meaningful with the opt-in env var unset');
-      const { config } = require(NR_CONFIG_MODULE);
-      assert.strictEqual(config.application_logging.forwarding.enabled, false,
-        'log forwarding must be off unless an operator opts in');
-      assert.strictEqual(config.application_logging.enabled, true);
-      assert.strictEqual(config.application_logging.metrics.enabled, true,
-        'log-to-metric counts carry no message content and stay on');
-      assert.strictEqual(config.application_logging.local_decorating.enabled, false);
-    });
-
-    it('[OBSC5] the AGENT actually discovers this config, not just our importers', function () {
-      // The regression this guards is not hypothetical: the config used to live
-      // in a .ts file, which the agent cannot discover. It scans NEW_RELIC_HOME
-      // for exactly newrelic.js / newrelic.cjs / newrelic.mjs (or
-      // NEW_RELIC_CONFIG_FILENAME) and otherwise silently runs on env vars and
-      // built-in defaults: no exclusions, SQL recorded as obfuscated rather
-      // than off, and log forwarding ON. Every assertion above passed happily
-      // through all of that, because they read the object we export rather than
-      // the config the agent resolves. So ask the agent.
-      // Take the directory from the env builder rather than computing it
-      // here, so this asserts the actual production chain: the value master
-      // puts in NEW_RELIC_HOME must be a directory the agent can discover
-      // the config in. Computing it independently would leave that link
-      // untested, which is the same seam that hid the original defect.
-      const producedEnv = buildObservabilityEnv({
-        enabled: true,
-        provider: 'newrelic',
-        appName: 'x',
-        logLevel: 'error',
-        hostname: 'core.x',
-        newrelic: { licenseKey: 'k'.repeat(40) }
+    it('[OB08] refuses to activate in NODE_ENV=test', function () {
+      const result = startFromEnv({
+        methodIds: ['events.get'],
+        serviceVersion: '2.0.0',
+        env: Object.assign({}, baseEnv, { NODE_ENV: 'test' })
       });
-      const providerDir = producedEnv.NEW_RELIC_HOME;
-      assert.ok(providerDir, 'master must emit NEW_RELIC_HOME');
-      assert.ok(fs.existsSync(path.join(providerDir, 'newrelic.cjs')),
-        'NEW_RELIC_HOME must contain a file the agent will discover, found: ' +
-        fs.readdirSync(providerDir).join(', '));
-      const result = spawnSync('node', ['-e',
-        'const c = require("newrelic/lib/config").initialize();' +
-        'console.log(JSON.stringify({' +
-        '  exclude: c.attributes.exclude,' +
-        '  recordSql: c.transaction_tracer.record_sql,' +
-        '  logForwarding: c.application_logging.forwarding.enabled,' +
-        '  obfuscation: c.url_obfuscation && c.url_obfuscation.enabled' +
-        '}));'
-      ], {
-        encoding: 'utf8',
-        cwd: path.resolve(__dirname, '../../..'),
-        env: {
-          ...process.env,
-          NEW_RELIC_HOME: providerDir,
-          NEW_RELIC_LICENSE_KEY: 'd'.repeat(40),
-          NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: undefined
-        }
+      assert.strictEqual(result.activated, false);
+      assert.match(result.reason, /NODE_ENV=test/);
+      assert.strictEqual(observability.isActive(), false);
+    });
+
+    it('[OB09] refuses to activate without an endpoint', function () {
+      const env = Object.assign({}, baseEnv);
+      delete env.PRYV_OBS_ENDPOINT;
+      const result = startFromEnv({ methodIds: ['events.get'], serviceVersion: '2.0.0', env });
+      assert.strictEqual(result.activated, false);
+      assert.match(result.reason, /endpoint/);
+      assert.strictEqual(observability.isActive(), false);
+    });
+
+    it('[OB10] activates and registers the method vocabulary', function () {
+      const result = startFromEnv({
+        methodIds: ['events.get', 'events.create'],
+        serviceVersion: '2.0.0',
+        env: baseEnv
       });
-      assert.strictEqual(result.status, 0, 'child failed: ' + result.stderr);
-      const resolved = JSON.parse(result.stdout.trim());
+      assert.strictEqual(result.activated, true, result.reason);
+      assert.strictEqual(observability.isActive(), true);
 
-      assert.ok(resolved.exclude.includes('request.uri'),
-        'the agent resolved no URL exclusion, so it did not load our config file: ' +
-        JSON.stringify(resolved.exclude));
-      assert.ok(resolved.exclude.includes('request.parameters.*'));
-      assert.ok(resolved.exclude.includes('request.headers.host'));
-      assert.strictEqual(resolved.recordSql, 'off');
-      assert.strictEqual(resolved.logForwarding, false);
-      assert.strictEqual(resolved.obfuscation, true);
-    });
-
-    it('[OBSC7] the agent EXCLUDES the attribute names it actually emits', function () {
-      // The exclude list is matched against the agent's published attribute
-      // names, which are not the HTTP header names: multi-word headers are
-      // camel-cased, so `request.headers.user-agent` matches nothing while
-      // `request.headers.userAgent` is what gets emitted. A hand-written list
-      // is therefore only as good as its spelling, and a wrong spelling fails
-      // silently and invisibly. Ask the agent's own filter what it decided.
-      const mustBeExcluded = [
-        'request.uri',
-        'http.url',
-        'request.headers.host',
-        'request.headers.referer',
-        'request.headers.userAgent',
-        'request.parameters.route.username',
-        'request.parameters.auth'
-      ];
-      // Retained on purpose, and asserted so this test cannot pass by
-      // excluding everything.
-      const mustBeKept = ['request.headers.accept'];
-      const result = spawnSync('node', ['-e',
-        'const c = require("newrelic/lib/config").initialize();' +
-        'const AttributeFilter = require("newrelic/lib/config/attribute-filter");' +
-        'const DESTINATIONS = AttributeFilter.DESTINATIONS;' +
-        'const f = new AttributeFilter(c);' +
-        'const out = {};' +
-        'for (const k of ' + JSON.stringify([...mustBeExcluded, ...mustBeKept]) + ') {' +
-        '  out[k] = f.filterAll(DESTINATIONS.TRANS_EVENT, k);' +
-        '}' +
-        'console.log(JSON.stringify(out));'
-      ], {
-        encoding: 'utf8',
-        cwd: path.resolve(__dirname, '../../..'),
-        env: {
-          ...process.env,
-          NEW_RELIC_HOME: buildObservabilityEnv({
-            enabled: true,
-            provider: 'newrelic',
-            appName: 'x',
-            logLevel: 'error',
-            hostname: 'core.x',
-            newrelic: { licenseKey: 'k'.repeat(40) }
-          }).NEW_RELIC_HOME,
-          NEW_RELIC_LICENSE_KEY: 'd'.repeat(40)
-        }
-      });
-      assert.strictEqual(result.status, 0, 'child failed: ' + result.stderr);
-      const decisions = JSON.parse(result.stdout.trim());
-      for (const key of mustBeExcluded) {
-        assert.strictEqual(decisions[key], 0,
-          key + ' must be excluded from transaction events, filter returned ' +
-          decisions[key] + ' (a non-zero destination mask means it is SENT)');
-      }
-      for (const key of mustBeKept) {
-        assert.notStrictEqual(decisions[key], 0,
-          key + ' should still be collected; if this is 0 the filter is ' +
-          'excluding everything and the assertions above prove nothing');
-      }
-    });
-
-    it('[OBSC4] the log-forwarding opt-in env var is honoured at module load', function () {
-      // `forwarding.enabled` is evaluated when the module is first imported,
-      // and these modules load through ESM interop, so clearing require.cache
-      // does NOT re-evaluate them. Load in a child process instead, which is
-      // also closer to reality: the setting is decided when a worker boots.
-      const modulePath = path.resolve(
-        __dirname,
-        '../../business/src/observability/providers/newrelic/newrelic.ts');
-      const read = (env) => {
-        const result = spawnSync('node', ['--input-type=module', '-e',
-          'const m = await import("file://' + modulePath + '");' +
-          'console.log(m.config.application_logging.forwarding.enabled);'
-        ], { encoding: 'utf8', env: { ...process.env, ...env } });
-        assert.strictEqual(result.status, 0,
-          'child failed: ' + result.stderr);
-        return result.stdout.trim();
-      };
-
-      assert.strictEqual(
-        read({ NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: 'true' }),
-        'true',
-        'an explicit opt-in must be honoured');
-      assert.strictEqual(
-        read({ NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: undefined }),
-        'false',
-        'and the shipped default with no env set must stay off');
-    });
-  });
-
-  describe('[OB-NT] named transactions', function () {
-    // A transaction NAME reaches the vendor unmasked: it bypasses the
-    // attribute exclude list and URL obfuscation alike. So the only safe
-    // naming rule is compile-time literals from a fixed set, and that is
-    // what these assert. A regression that passed `context.methodId`
-    // straight through would still look correct in review.
-    const API = require('api-server/src/API.ts').default || require('api-server/src/API.ts');
-
-    function callWith (methodId, api) {
-      const named = [];
-      // The facade refuses a second provider; each call needs a fresh one.
-      observability._reset();
-      observability.init({
-        id: 'mock',
-        setTransactionName (n) { named.push(n); },
-        recordError () {},
-        recordCustomEvent () {},
-        async startBackgroundTransaction (n, fn) { return fn(); }
-      });
-      const ctx = {
-        methodId,
-        tracing: { startSpan () {}, finishSpan () {}, setError () {} }
-      };
-      // Unregistered methods short-circuit before naming; that is fine, the
-      // assertion is about what name (if any) was emitted.
-      try {
-        api.call(ctx, {}, function () {});
-      } catch (e) { /* handler chain is irrelevant here */ }
-      return named;
-    }
-
-    it('[OB12] emits the exact literal for each named method, and nothing else', function () {
-      const api = new API();
-      for (const id of ['auth.register', 'auth.login', 'events.create', 'events.get']) {
-        api.register(id, function noop (ctx, params, result, next) { next(); });
-      }
-      for (const id of ['auth.register', 'auth.login', 'events.create', 'events.get']) {
-        const named = callWith(id, api);
-        assert.deepStrictEqual(named, [id],
-          'expected exactly one transaction name, the literal "' + id + '", got ' +
-          JSON.stringify(named));
-      }
-    });
-
-    it('[OB12B] leaves every other method to the agent, so no value can ride a name', function () {
-      const api = new API();
-      // A method id that is NOT in the table, and one that looks like it
-      // carries a value, which is the shape a careless change would emit.
-      for (const id of ['streams.get', 'events.getOne']) {
-        api.register(id, function noop (ctx, params, result, next) { next(); });
-        const named = callWith(id, api);
-        assert.deepStrictEqual(named, [],
-          id + ' must not be named explicitly; the agent names it by route ' +
-          'pattern. Got: ' + JSON.stringify(named));
-      }
-    });
-  });
-
-  describe('[OB-HS] high-security opt-in', function () {
-    beforeEach(async function () {
-      const values = await getPlatformDB().getAllObservabilityValues();
-      for (const { key } of values) {
-        await getPlatformDB().deleteObservabilityValue(key);
-      }
-    });
-
-    it('[OBHS] defaults to false with no PlatformDB row', async function () {
-      const obs = await platform.getObservabilityConfig();
-      assert.strictEqual(obs.newrelic.highSecurity, false);
-    });
-
-    it('[OBHS2] round-trips PlatformDB -> config -> worker env', async function () {
-      await platform.setObservabilityValue('enabled', true);
-      await platform.setObservabilityValue('provider', 'newrelic');
-      await platform.setObservabilityValue('newrelic-license-key', 'k'.repeat(40));
-      await platform.setObservabilityValue('newrelic-high-security', true);
-
-      const obs = await platform.getObservabilityConfig();
-      assert.strictEqual(obs.newrelic.highSecurity, true,
-        'the opt-in row must reach the resolved config');
-
-      const env = buildObservabilityEnv(obs);
-      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true',
-        'and must reach the worker env, or the opt-in is dead code');
-    });
-
-    it('[OBHS3] is stored in the clear, unlike the license key', async function () {
-      // Not a secret: an operator comparing cores should be able to read it.
-      await platform.setObservabilityValue('newrelic-high-security', true);
-      const raw = await getPlatformDB().getObservabilityValue('newrelic-high-security');
-      assert.ok(/true/.test(String(raw)),
-        'expected a readable boolean, got: ' + String(raw));
-    });
-
-    it('[OBHS4] local YAML wins over the PlatformDB row, as for `enabled`', async function () {
-      await platform.setObservabilityValue('newrelic-high-security', true);
-      await withInjectedConfig({ observability: { newrelic: { highSecurity: false } } }, async () => {
-        const obs = await platform.getObservabilityConfig();
-        assert.strictEqual(obs.newrelic.highSecurity, false,
-          'the local override is the operator kill-switch and must win');
-      });
+      const schema = require('business/src/observability/schema.ts');
+      assert.ok(schema.knownMethodIds().has('events.get'));
+      assert.ok(!schema.knownMethodIds().has('events.delete'),
+        'only the ids handed over may be emitted');
+      assert.ok(schema.knownErrorCodes().has('invalid-access-token'),
+        'the error registry is registered alongside');
     });
   });
 });

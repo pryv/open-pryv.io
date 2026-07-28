@@ -2,68 +2,62 @@
 
 ## Unreleased
 
-### Observability: the agent's scrubbing config was never applied; stricter posture now in force
+### Observability rebuilt: no third-party agent, telemetry built from a fixed allow-list, any OTLP backend
 
-⚠ **If you have optional APM enabled, read this.** The agent configuration that
-was supposed to strip sensitive data was placed in a file the agent does not
-look for, so it was **never loaded**. Affected deployments have been running on
-the agent's built-in defaults instead, which means the vendor received request
-URLs, the `Host` header, route parameters (including the username as a
-first-class attribute), obfuscated SQL rather than none, and **forwarded
-application log records including their message text**. The documented
-protections listed below did not take effect. This is fixed by moving the
-configuration to a filename the agent discovers, and a test now asserts the
-posture through the agent's own configuration loader rather than by inspecting
-our own object, which is what allowed the gap to pass unnoticed.
+⚠ **If you enabled the optional APM integration in an earlier version, read
+this.** The vendor agent's scrubbing configuration was placed in a file the
+agent does not look for, so it was **never loaded**, and affected deployments
+ran on the agent's built-in defaults: the vendor received request URLs, the
+`Host` header, route parameters (including the username as a first-class
+attribute), obfuscated SQL, and **forwarded application log records including
+their message text**. Assume that behaviour applied for as long as the
+integration was enabled, and check what your provider account holds; ingested
+telemetry usually cannot be deleted on demand.
 
-Operators who enable APM should assume the previous behaviour applied for as
-long as it was enabled, and check what their provider account holds. Note that
-ingested telemetry usually cannot be deleted on demand.
+That defect is fixed, but the response went further than a fix. Configuring an
+agent that instruments everything means enumerating what must *not* leave, and
+anything overlooked (or added by the next agent release) leaves by default.
+**The integration is now built the other way round: no third-party agent runs
+in the process, nothing is auto-instrumented, and telemetry is constructed by
+the platform from a closed vocabulary.** What can be emitted is the vocabulary,
+so the answer to "could a URL, a username or a message body reach the backend?"
+is structural rather than a matter of configuration.
 
-Beyond that fix, a deployment that enables APM now sends considerably less than
-the original design intended. This changes shipped defaults, so **upgrading is
-enough to inherit the stricter posture**: no configuration change is required,
-and an operator who wants the previous behaviour has to ask for it explicitly.
+**This replaces the previous integration.** Upgrading is enough to inherit it;
+there is nothing to re-scrub and no vendor-agent settings to review.
 
-- **Request URLs, query and route parameters, and the `Host` and `Referer`
-  headers are no longer sent.** On this API a request path carries the username
-  and record identifiers, the `Host` header carries the username as a subdomain
-  in DNS-ful deployments, and route parameters are captured as attributes in
-  their own right, so all of them are now excluded from every destination
-  (transactions, errors, traces and spans). Query parameters are excluded too,
-  which also covers the case where a credential travels as `?auth=` or
-  `?readToken=` and would otherwise be re-emitted when a request is forwarded
-  between cores.
-- **Outbound paths are masked entirely** in external segment and span names,
-  the one surface attribute exclusion cannot reach. Masking only recognisable
-  identifier shapes was tried first and leaked: attachment filenames,
-  user-chosen stream ids and webhook path segments all survived it. Nothing in
-  a path is treated as safe now. The cost, accepted deliberately, is that
-  external calls no longer break down per route; your own routes are
-  unaffected because transaction names are route patterns.
-- **Error message text is redacted.** The platform's own validation errors can
-  quote client-supplied values (an unknown-referenced-streams error names the
-  rejected stream ids), and an extension can put anything in a message. Error
-  class, stack location, route and timing still reach the provider.
-- **The `User-Agent` header is no longer sent**, and custom events and custom
-  attributes are disabled. Neither is a subject identifier on its own; both are
-  avenues for one, and nothing in the platform emits the latter.
-- **Application log forwarding is off.** The agent would otherwise auto-instrument
-  the logging stack and forward log records including their message bodies, which
-  no filter scrubs for identifiers. Operators who want it can opt in by setting
-  `NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED=true` on the service
-  process, and they own what those messages contain. Log-derived metrics, which
-  carry no message content, remain enabled.
-- **What still flows**, so APM remains useful: route-shaped transaction names,
-  status codes, timings, the core's own FQDN, and datastore and external call
-  timing. Request bodies, `Authorization`/`Cookie` headers and SQL text were
-  already excluded and remain so.
-- **New command `observability newrelic set-high-security <true|false>`.** High
-  Security Mode was previously documented as operator-selectable but could not
-  actually be turned on. It is now settable, still off by default. Enable it on
-  the provider account *first*: the agent refuses to connect when the two sides
-  disagree, and the account-side setting cannot be undone without provider
-  support. It is not required for the scrubbing above, which is unconditional.
+- **What is sent**, and nothing else can be: per-API-method call counts,
+  duration histograms and error counts, labelled only with an API method id (a
+  registered identifier from the platform's own method registry), a status class
+  (`2xx`/`3xx`/`4xx`/`5xx`) and an error code from the API's documented error id
+  list; plus the service name, service version, this core's FQDN and a worker
+  index. Server-side faults additionally carry a stack trace whose frames are
+  rewritten repository-relative.
+- **What cannot be sent**: request URLs, query and route parameters, request and
+  response bodies, headers of any kind, usernames, stream and event identifiers,
+  log records, and error *messages*. None has a representation in the emitted
+  schema. Error messages are excluded deliberately and permanently: they
+  routinely interpolate file paths and client input, so the code travels and the
+  message stays in your own logs.
+- **Outbound host names are gone.** The previous integration could not stop the
+  agent reporting the destination host of outbound calls, which for webhooks is
+  an endpoint the operator chose and may itself identify. Nothing observes
+  outbound calls now, so this disappears.
+- **Transport is OTLP over HTTP**, so the destination is a URL plus whatever
+  auth header the backend expects. New Relic, Grafana, Datadog, Honeycomb,
+  Elastic and a self-hosted OpenTelemetry Collector all ingest it. Pointing at a
+  collector inside your own infrastructure keeps telemetry within your trust
+  boundary entirely.
+- **Configuration commands changed** (`bin/observability.js`): `set-endpoint
+  <url>`, `set-header <name> <value>` and `clear-headers` replace the
+  vendor-specific `newrelic set-license-key` and `newrelic set-high-security`,
+  and `enable` no longer takes a provider argument. Headers carry the backend
+  credential and are stored AES-256-GCM encrypted at rest; `show` never echoes
+  them. `set-endpoint` refuses a non-HTTPS destination unless it is local.
+- **Honest limit**: what remains is pseudonymous, not anonymous. Timestamps,
+  method ids, status codes and the core FQDN still describe activity and can be
+  correlated against another signal, so the telemetry is still personal data and
+  your processor obligations toward the backend still apply.
 
 ### Multiple emails per account (beta)
 

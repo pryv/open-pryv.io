@@ -7,11 +7,10 @@
 
 
 // No-op tracing shim. The architectural slot is preserved so a future
-// tracer (e.g. an OpenTelemetry adapter) can plug in here without
-// touching any of the hot-path consumers documented in AGENTS.md
-// truth #6. New Relic APM is the active observability path and does
-// NOT route through this component — it instruments the Node process
-// via the agent at boot.
+// tracer can plug in here without touching any of the hot-path consumers
+// documented in AGENTS.md truth #6. Telemetry does NOT route through this
+// component: metrics and error reports are built at the API choke point
+// and shipped by components/business/src/observability.
 
 class DummyTracing {
   startSpan () {}

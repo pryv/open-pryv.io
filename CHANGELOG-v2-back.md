@@ -1,5 +1,56 @@
 # Changelog - Internal (no API impact)
 
+## refactor(observability): replace the vendor agent with an allow-list emitter
+
+The optional APM integration is rebuilt around a single choke point instead of
+an in-process vendor agent. Rationale, since it is the whole point: configuring
+an agent that auto-instruments everything makes the data-protection posture a
+property of that agent's evolving defaults, provable only by enumerating what
+must not escape. Constructing telemetry ourselves makes it a property of two
+readable files.
+
+**Removed.** The `newrelic` optional dependency; the provider boot shim
+(`bin/_observability-boot.js`) and its require from all five entrypoints; the
+provider adapter/config directory; the dead log-forwarder module; the
+`setTransactionName` / `recordCustomEvent` / `startBackgroundTransaction`
+façade surface and its call sites, including the named-transaction table in
+`API.ts` and the background-transaction wrapper in `CertRenewer`. Because no
+library is being patched, the "must be the first require in the process"
+constraint is gone with it.
+
+**Added**, all under `components/business/src/observability/`:
+- `schema.ts` — the allow-list: metric names, per-metric attribute keys, closed
+  enums, and the method-id and error-code vocabularies registered at startup.
+  Validation returns a drop reason rather than throwing.
+- `emitter.ts` — the choke point. Validates, aggregates in memory (delta
+  counters and fixed-bound histograms), batches on a timer off the request
+  path, and drops-and-counts anything refused or unsendable under
+  `telemetry.dropped`. Bounded buffers; a failing backend costs a counter.
+- `sanitizeError.ts` — class name plus stack frames, absolute paths rewritten
+  repository-relative, frames from outside the repository discarded, and the
+  message never forwarded.
+- `errorRegistry.ts` — reuses `ErrorIds` as the code vocabulary, so emitted
+  codes are the ones the API already documents; decides which failures deserve
+  a stack (5xx, unexpected, unclassifiable) versus counting only.
+- `otlp.ts` — OTLP/HTTP JSON payload builders, hand-rolled. No vendor SDK and
+  no OpenTelemetry SDK: an SDK is precisely the kind of dependency that
+  auto-instruments and widens the surface unnoticed.
+- `startup.ts` — starts the emitter from the environment master resolved.
+
+**Wiring.** `API.call` is the single instrumentation site: method id, outcome
+and duration are all known there, and it serves HTTP and socket calls alike.
+`Application.initiate` starts the emitter after the routes are registered,
+because the method registry *is* the emitter's vocabulary. `Platform`'s
+observability config swaps the vendor key for `otlp-endpoint` plus an encrypted
+`otlp-headers` map, which is what makes the backend interchangeable.
+
+**Tests.** `[OBS1]`-`[OBSJ]` (business unit suite) are the filter proof: they
+ask the validator what it decided for accepted *and* refused inputs, including
+a fuzz pass over identifier-shaped keys and values, with a legitimate datapoint
+pinned in each block so the suite cannot pass by dropping everything. `[OB01]`-
+`[OB10]` cover config resolution, encrypted round-trip, worker env propagation
+and startup refusal; `[OC01]`-`[OC08]` cover the CLI.
+
 ## fix(observability): the agent never loaded its config file, the high-security opt-in was dead code, and the posture is now test-pinned
 
 Three internal gaps behind the operator-visible scrubbing change.

@@ -4,50 +4,37 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = require('path').dirname(__filename);
+import type {} from 'node:fs';
+
 /**
- * Build the `env` object that master injects into every
- * `cluster.fork({...})` call. The underlying APM agent picks these up
- * at require() time inside the worker process.
+ * Build the `env` object master injects into every `cluster.fork({...})`
+ * call, so workers start their emitter from the posture master resolved.
  *
- * Returns an empty object when observability is disabled, misconfigured,
- * or the selected provider isn't `newrelic` — workers then see no
- * provider env and the boot shim no-ops.
+ * Returns an empty object when observability is disabled or has no
+ * endpoint — workers then see no observability env and stay silent.
  *
  * @param obs — output of `Platform.getObservabilityConfig()`.
  */
-const path = require('path');
 
-// Shape of `Platform.getObservabilityConfig()`'s resolved result.
 interface ObservabilityConfig {
   enabled: boolean;
-  provider: string;
   appName: string;
-  logLevel: string;
   hostname: string;
-  newrelic?: { licenseKey?: string; highSecurity?: boolean };
+  otlp?: { endpoint?: string; headers?: Record<string, string> };
 }
 
 function buildObservabilityEnv (obs: ObservabilityConfig | null | undefined): Record<string, string> {
   if (!obs || !obs.enabled) return {};
-  if (obs.provider !== 'newrelic') return {};
-  if (!obs.newrelic || !obs.newrelic.licenseKey) return {};
+  const endpoint = obs.otlp?.endpoint;
+  if (!endpoint) return {};
   return {
-    PRYV_OBSERVABILITY_PROVIDER: 'newrelic',
-    NEW_RELIC_LICENSE_KEY: obs.newrelic.licenseKey,
-    NEW_RELIC_APP_NAME: obs.appName,
-    NEW_RELIC_PROCESS_HOST_DISPLAY_NAME: obs.hostname,
-    NEW_RELIC_LOG_LEVEL: obs.logLevel,
-    // Account-side HSM is irreversible once enabled; default OFF so the
-    // agent can connect to any account. Operators who have enabled
-    // account-side HSM can flip this via a future observability CLI hook.
-    NEW_RELIC_HIGH_SECURITY: obs.newrelic?.highSecurity === true ? 'true' : 'false',
-    NEW_RELIC_HOME: path.resolve(__dirname, 'providers/newrelic')
+    PRYV_OBS_ENABLED: 'true',
+    PRYV_OBS_ENDPOINT: endpoint,
+    PRYV_OBS_HEADERS: JSON.stringify(obs.otlp?.headers || {}),
+    PRYV_OBS_SERVICE_NAME: obs.appName,
+    PRYV_OBS_INSTANCE_ID: obs.hostname
   };
 }
 
 export { buildObservabilityEnv };
+export type { ObservabilityConfig };

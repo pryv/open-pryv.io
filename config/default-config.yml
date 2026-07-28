@@ -490,13 +490,19 @@ letsEncrypt:
 # override-config.yml, the local value wins over PlatformDB. This lets an
 # operator yank a misbehaving agent without touching cluster state.
 observability:
-  # `enabled`, `provider`, `appName`, `logLevel`: default unset — PlatformDB
-  # is authoritative. Operators who need an emergency local kill-switch can
-  # set `observability.enabled: false` in override-config.yml; that always
-  # wins over PlatformDB. Conversely, setting `enabled: true` locally is a
-  # no-op unless `provider` is also set and a license key is configured.
-  newrelic:
-    licenseKey: ''                                # if set locally, wins over PlatformDB (emergency override)
+  # `enabled`, `appName`: default unset — PlatformDB is authoritative.
+  # Operators who need an emergency local kill-switch can set
+  # `observability.enabled: false` in override-config.yml; that always wins
+  # over PlatformDB. Conversely, setting `enabled: true` locally is a no-op
+  # unless an OTLP endpoint is configured.
+  #
+  # Telemetry is built from a fixed allow-list (per-method call counts,
+  # durations, error counts and sanitized stack traces) and shipped over
+  # OTLP/HTTP, so any OTLP-ingesting backend works — including a collector
+  # you run yourself, which keeps telemetry inside your trust boundary.
+  otlp:
+    endpoint: ''                                  # if set locally, wins over PlatformDB (emergency override)
+    # headers: { api-key: '' }                    # auth header the backend expects; prefer bin/observability.js set-header (encrypted at rest)
 
 # === PER-CORE: schema migrations ===
 # Engine-agnostic schema migration runner (see storages/interfaces/migrations/).

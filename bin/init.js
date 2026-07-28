@@ -487,16 +487,17 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #         isShown: true
 # #         isEditable: true
 
-# # observability — opt-in APM (New Relic today; framework supports more).
-# # The license key is stored encrypted in PlatformDB via bin/observability.js;
-# # set 'enabled: true' here to flip the feature on without re-deploying.
+# # observability — opt-in telemetry over OTLP/HTTP (any OTLP-ingesting
+# # backend, including a collector you host yourself). What is sent is a
+# # fixed allow-list: per-method call counts, durations, error counts and
+# # sanitized stack traces. Auth headers are stored encrypted in PlatformDB
+# # via bin/observability.js; set 'enabled: true' here to flip the feature
+# # on without re-deploying.
 # # observability:
 # #   enabled: false
-# #   provider: newrelic
 # #   appName: 'open-pryv.io'
-# #   logLevel: error
-# #   newrelic:
-# #     licenseKey: ''   # leave blank; set via 'bin/observability.js newrelic set-license-key'
+# #   otlp:
+# #     endpoint: ''   # leave blank; set via 'bin/observability.js set-endpoint'
 
 # # platform.piiMode — DEFAULT since 2.0.0-rc.3 is "hashed". The wizard
 # # writes piiMode + a fresh piiHmacKey into the generated config above,

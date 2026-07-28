@@ -24,7 +24,6 @@ const require = createRequire(import.meta.url);
 
 const AtRestEncryption = require('./AtRestEncryption.ts');
 const AcmeClient = require('./AcmeClient.ts');
-const observability = require('../observability/index.ts');
 
 const AT_REST_PURPOSE = 'pryv-at-rest-tls-v1';
 
@@ -136,62 +135,52 @@ class CertRenewer {
       throw new Error('CertRenewer.renew: at least one of dnsWriter / http01Store is required');
     }
 
-    // Wrap as a named background transaction so LE issuance + renewal
-    // rollups show up in APM even without Express-triggered traffic.
-    // No-op when no observability provider is attached.
-    return await observability.startBackgroundTransaction('letsencrypt.renew', async () => {
-      try {
-        const account = await this.ensureAccount();
-        const result = await AcmeClient.issueCert({
-          commonName: hostname,
-          altNames,
-          account,
-          challengePriority,
-          directoryUrl: this.#directoryUrl,
-          challengeCreateFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
-            const type = (challenge && challenge.type) || 'dns-01';
-            if (type === 'dns-01') {
-              if (!hasDns) throw new Error('CertRenewer.renew: dns-01 challenge but no dnsWriter provided');
-              const name = acmeChallengeName(authz.identifier.value);
-              await dnsWriter!.create(name, keyAuthorization);
-            } else if (type === 'http-01') {
-              if (!hasHttp) throw new Error('CertRenewer.renew: http-01 challenge but no http01Store provided');
-              http01Store!.set(challenge.token, keyAuthorization);
-            } else {
-              throw new Error(`CertRenewer.renew: unsupported challenge type "${type}"`);
-            }
-          },
-          challengeRemoveFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
-            const type = (challenge && challenge.type) || 'dns-01';
-            if (type === 'dns-01') {
-              if (!hasDns) return;
-              const name = acmeChallengeName(authz.identifier.value);
-              await dnsWriter!.remove(name, keyAuthorization);
-            } else if (type === 'http-01') {
-              if (!hasHttp) return;
-              http01Store!.delete(challenge.token);
-            }
-          },
-          acmeLib: this.#acmeLib
-        });
-
-        await this.#platformDB.setCertificate(hostname, {
-          certPem: result.certPem,
-          chainPem: result.chainPem,
-          keyPem: AtRestEncryption.encrypt(result.keyPem, this.#atRestKey),
-          issuedAt: result.issuedAt,
-          expiresAt: result.expiresAt
-        });
-        return {
-          hostname,
-          issuedAt: result.issuedAt,
-          expiresAt: result.expiresAt
-        };
-      } catch (err) {
-        observability.recordError(err, { hostname, context: 'letsencrypt.renew' });
-        throw err;
-      }
+    const account = await this.ensureAccount();
+    const result = await AcmeClient.issueCert({
+      commonName: hostname,
+      altNames,
+      account,
+      challengePriority,
+      directoryUrl: this.#directoryUrl,
+      challengeCreateFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
+        const type = (challenge && challenge.type) || 'dns-01';
+        if (type === 'dns-01') {
+          if (!hasDns) throw new Error('CertRenewer.renew: dns-01 challenge but no dnsWriter provided');
+          const name = acmeChallengeName(authz.identifier.value);
+          await dnsWriter!.create(name, keyAuthorization);
+        } else if (type === 'http-01') {
+          if (!hasHttp) throw new Error('CertRenewer.renew: http-01 challenge but no http01Store provided');
+          http01Store!.set(challenge.token, keyAuthorization);
+        } else {
+          throw new Error(`CertRenewer.renew: unsupported challenge type "${type}"`);
+        }
+      },
+      challengeRemoveFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
+        const type = (challenge && challenge.type) || 'dns-01';
+        if (type === 'dns-01') {
+          if (!hasDns) return;
+          const name = acmeChallengeName(authz.identifier.value);
+          await dnsWriter!.remove(name, keyAuthorization);
+        } else if (type === 'http-01') {
+          if (!hasHttp) return;
+          http01Store!.delete(challenge.token);
+        }
+      },
+      acmeLib: this.#acmeLib
     });
+
+    await this.#platformDB.setCertificate(hostname, {
+      certPem: result.certPem,
+      chainPem: result.chainPem,
+      keyPem: AtRestEncryption.encrypt(result.keyPem, this.#atRestKey),
+      issuedAt: result.issuedAt,
+      expiresAt: result.expiresAt
+    });
+    return {
+      hostname,
+      issuedAt: result.issuedAt,
+      expiresAt: result.expiresAt
+    };
   }
 
   /**

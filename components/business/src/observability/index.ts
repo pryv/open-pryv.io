@@ -4,83 +4,118 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
- * Provider-agnostic observability façade.
+ * Observability façade — the only telemetry entry point for the rest of
+ * the codebase.
  *
- * Shape:
- *   - `init(providerId)` is called once at process start by the shim at
- *     `bin/_observability-boot.js`. If no provider is active, everything
- *     on this module is a cheap no-op.
- *   - Callers (business layer, LE renewer, auth flows) invoke the façade
- *     without knowing which provider is active. The goal is that adding
- *     a second provider in a future plan requires zero edits to business-
- *     layer code.
+ * Design in one paragraph: no third-party agent runs in this process and
+ * nothing auto-instruments anything. Telemetry is CONSTRUCTED by our own
+ * code from the closed vocabulary in `schema.ts` and shipped over
+ * OTLP/HTTP to whichever backend the operator configured. What can leave
+ * is therefore a property of two files that can be read end to end, not
+ * of a vendor library's evolving defaults. Concretely, what leaves is:
+ * per-method call counts, durations and error counts (identifiers from
+ * our own API registry, status classes, error codes), plus stack traces
+ * for server-side faults with all paths rewritten repository-relative.
+ * URLs, headers, parameters, payloads, usernames and error messages have
+ * no representation in the schema, so they cannot be emitted.
  *
- * Method set:
- *   - `isActive()`              — is a provider attached?
- *   - `setTransactionName(name)` — rename the current auto-instrumented
- *                                   transaction (route-pattern override).
- *   - `recordError(err, attrs)` — send an error to the provider's Error
- *                                   inbox.
- *   - `recordCustomEvent(type, attrs)` — queryable custom event.
- *   - `startBackgroundTransaction(name, fn)` — wrap `fn` as a named
- *                                   background transaction (LE renewer,
- *                                   cron-like work).
+ * Everything is a no-op until `init()` runs, and every call is
+ * exception-safe: telemetry must never break a request.
  */
 
-interface ObservabilityProvider {
-  id: string;
-  setTransactionName: (name: string) => void;
-  recordError: (err: unknown, attrs?: Record<string, unknown>) => void;
-  recordCustomEvent: (type: string, attrs?: Record<string, unknown>) => void;
-  startBackgroundTransaction: <T> (name: string, fn: () => T | Promise<T>) => T | Promise<T>;
+const emitter = require('./emitter.ts');
+const schema = require('./schema.ts');
+const { classify } = require('./errorRegistry.ts');
+const { allErrorCodes } = require('./errorRegistry.ts');
+
+interface ObservabilityInit {
+  endpoint: string;
+  headers: Record<string, string>;
+  serviceName: string;
+  serviceVersion: string;
+  instanceId: string;
+  worker: string;
+  methodIds: Iterable<string>;
+  flushIntervalMs?: number;
+  send?: (url: string, body: unknown, headers: Record<string, string>) => Promise<void>;
+  logger?: { warn: (msg: string) => void };
 }
 
-let activeProvider: ObservabilityProvider | null = null;
-
-function init (provider: ObservabilityProvider): void {
-  if (activeProvider) {
-    throw new Error('observability.init: a provider is already attached (' + activeProvider.id + ')');
-  }
-  activeProvider = provider;
+/**
+ * Attach the emitter and register the vocabularies. Called once per
+ * process, from the boot shim, when the operator has enabled
+ * observability.
+ */
+function init (options: ObservabilityInit): void {
+  schema.registerMethodIds(options.methodIds);
+  schema.registerErrorCodes(allErrorCodes());
+  emitter.init({
+    endpoint: options.endpoint,
+    headers: options.headers,
+    serviceName: options.serviceName,
+    serviceVersion: options.serviceVersion,
+    instanceId: options.instanceId,
+    worker: options.worker,
+    flushIntervalMs: options.flushIntervalMs,
+    send: options.send,
+    logger: options.logger
+  });
 }
 
 function isActive (): boolean {
-  return activeProvider !== null;
+  return emitter.isActive();
 }
 
-function setTransactionName (name: string): void {
-  if (!activeProvider) return;
-  try { activeProvider.setTransactionName(name); } catch { /* never let obs break a request */ }
-}
-
-function recordError (err: unknown, attrs?: Record<string, unknown>): void {
-  if (!activeProvider) return;
-  try { activeProvider.recordError(err, attrs); } catch { /* idem */ }
-}
-
-function recordCustomEvent (type: string, attrs?: Record<string, unknown>): void {
-  if (!activeProvider) return;
-  try { activeProvider.recordCustomEvent(type, attrs); } catch { /* idem */ }
-}
-
-async function startBackgroundTransaction<T> (name: string, fn: () => T | Promise<T>): Promise<T> {
-  if (!activeProvider) return fn();
+/**
+ * Record one finished API call.
+ *
+ * @param methodId — the API method id (must be one registered at init).
+ * @param durationMs — wall-clock duration.
+ * @param err — the failure, when the call failed.
+ */
+function recordApiCall (methodId: string, durationMs: number, err?: unknown): void {
+  if (!emitter.isActive()) return;
   try {
-    return await activeProvider.startBackgroundTransaction(name, fn);
-  } catch (err) {
-    // Provider failure must not mask the underlying operation's error.
-    // If `fn` itself hasn't run yet (provider threw pre-dispatch), run it now.
-    return fn();
-  }
+    if (err == null) {
+      emitter.recordApiCall(methodId, '2xx', durationMs, null);
+      return;
+    }
+    const { code, statusClass, reportable } = classify(err);
+    emitter.recordApiCall(methodId, statusClass, durationMs, code);
+    if (reportable) emitter.reportError(err, code, methodId);
+  } catch { /* never let telemetry break a request */ }
 }
 
-// Test-only: reset internal state between test runs.
-function _reset () {
-  activeProvider = null;
+/**
+ * Report a server-side failure that did not arise from an API call (the
+ * certificate renewer, registration forwarding, background work).
+ */
+function recordError (err: unknown, methodId?: string | null): void {
+  if (!emitter.isActive()) return;
+  try {
+    const { code } = classify(err);
+    emitter.reportError(err, code, methodId ?? null);
+  } catch { /* idem */ }
 }
 
-export { init, isActive, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction, _reset };
+/** Send whatever is buffered (used at shutdown and by tests). */
+async function flush (): Promise<void> {
+  try { await emitter.flush(); } catch { /* idem */ }
+}
+
+async function shutdown (): Promise<void> {
+  try { await emitter.shutdown(); } catch { /* idem */ }
+}
+
+/** Test-only: reset all state. */
+function _reset (): void {
+  emitter._reset();
+  schema._resetVocabularies();
+}
+
+export { init, isActive, recordApiCall, recordError, flush, shutdown, _reset };
+export type { ObservabilityInit };
