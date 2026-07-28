@@ -212,15 +212,11 @@ async function runDisable (platform) {
 
 async function runSetEndpoint (platform, args) {
   if (!args.endpoint) throw new Error('set-endpoint: url argument is required');
-  let parsed;
-  try {
-    parsed = new URL(args.endpoint);
-  } catch {
-    throw new Error('set-endpoint: "' + args.endpoint + '" is not a valid URL');
-  }
-  if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
-    throw new Error('set-endpoint: refusing a non-HTTPS remote endpoint (' + parsed.protocol + '//)');
-  }
+  // Same rule the emitter applies at startup, so the CLI cannot be the only
+  // thing standing between cleartext telemetry and the public internet.
+  const { endpointRefusal } = require('business/src/observability/endpointPolicy.ts');
+  const refusal = endpointRefusal(args.endpoint);
+  if (refusal != null) throw new Error('set-endpoint: ' + refusal);
   await platform.setObservabilityValue('otlp-endpoint', args.endpoint);
   console.log('observability OTLP endpoint set to "' + args.endpoint + '"');
   console.log('The standard OTLP/HTTP paths /v1/metrics and /v1/logs are appended to it.');

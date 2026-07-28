@@ -99,7 +99,7 @@ describe('[OBCLI] bin/observability.js CLI', () => {
   it('[OC05] set-endpoint refuses a non-HTTPS remote destination', () => {
     const res = runCli(['set-endpoint', 'http://otlp.example.test']);
     assert.notStrictEqual(res.status, 0);
-    assert.match(res.stderr, /refusing a non-HTTPS remote endpoint/);
+    assert.match(res.stderr, /refusing cleartext telemetry/);
   });
 
   it('[OC06] set-endpoint allows a plain-HTTP local collector', () => {
@@ -109,6 +109,27 @@ describe('[OBCLI] bin/observability.js CLI', () => {
     assert.strictEqual(res.status, 0, res.stderr);
     const show = runCli(['show']);
     assert.match(show.stdout, /otlp endpoint:\s+http:\/\/localhost:4318/);
+  });
+
+  it('[OC09] set-endpoint allows a plain-HTTP collector on the container bridge', () => {
+    // The sidecar shape the zero-egress guidance actually describes: the
+    // collector is a separate container, so the core reaches it on the
+    // bridge gateway rather than on loopback. Same trust boundary, no
+    // certificate needed for a hop that never crosses a network.
+    const res = runCli(['set-endpoint', 'http://172.17.0.1:4318']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const show = runCli(['show']);
+    assert.match(show.stdout, /otlp endpoint:\s+http:\/\/172\.17\.0\.1:4318/);
+  });
+
+  it('[OC10] set-endpoint still refuses cleartext just outside private space', () => {
+    // 172.15/16 and 172.32/16 bracket RFC1918's 172.16/12: an off-by-one in
+    // the range check would open cleartext to the public internet.
+    for (const url of ['http://172.15.0.1:4318', 'http://172.32.0.1:4318']) {
+      const res = runCli(['set-endpoint', url]);
+      assert.notStrictEqual(res.status, 0, url + ' must be refused');
+      assert.match(res.stderr, /not host-local/);
+    }
   });
 
   it('[OC07] clear-headers removes stored credentials', () => {

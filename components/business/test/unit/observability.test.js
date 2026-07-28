@@ -31,6 +31,8 @@ const require = createRequire(import.meta.url);
  *   [OBSF] 4xx is counted but not reported; 5xx is reported
  *   [OBSG] the OTLP payload carries only allow-listed keys
  *   [OBSH] a failing backend never throws into the caller
+ *   [OBSR] cleartext is allowed to host-local collectors, refused beyond them
+ *   [OBSS] the emitter itself refuses a cleartext remote endpoint at startup
  */
 
 const assert = require('node:assert');
@@ -42,6 +44,8 @@ const sanitizeErrorModule = require('business/src/observability/sanitizeError.ts
 const { sanitizeError } = sanitizeErrorModule;
 const { classify, allErrorCodes, messageFor } = require('business/src/observability/errorRegistry.ts');
 const { buildMetricsPayload, buildLogsPayload } = require('business/src/observability/otlp.ts');
+const { isHostLocal, endpointRefusal } = require('business/src/observability/endpointPolicy.ts');
+const { startFromEnv, ENV } = require('business/src/observability/startup.ts');
 
 const METHOD_IDS = ['events.get', 'events.create', 'auth.login'];
 
@@ -574,6 +578,70 @@ describe('[OBS] observability choke point', function () {
       // And the smuggled method id was refused, not silently accepted.
       assert.ok(wire.includes(schema.DROP_REASONS.UNKNOWN_METHOD_ID),
         'the refusal must be visible as a counted drop');
+    });
+  });
+
+  describe('[OBS-T] transport policy', function () {
+    it('[OBSR] permits cleartext to host-local collectors and refuses it beyond them', function () {
+      // The deployment this exists for: a collector sidecar reached across
+      // the container bridge. Never leaves the host, so it needs no cert.
+      const local = [
+        'http://localhost:4318', 'http://127.0.0.1:4318', 'http://127.5.0.1:4318',
+        'http://otel.localhost:4318', 'http://172.17.0.1:4318', 'http://172.31.255.254:4318',
+        'http://10.1.2.3:4318', 'http://192.168.1.10:4318', 'http://169.254.10.9:4318',
+        'http://[::1]:4318', 'http://[fe80::1]:4318', 'http://[fd00::1]:4318'
+      ];
+      for (const url of local) {
+        assert.strictEqual(endpointRefusal(url), null, 'must accept ' + url);
+      }
+
+      // Anything routable from off the network still needs TLS. 172.15 and
+      // 172.32 sit just outside RFC1918, which is where an off-by-one in the
+      // range check would show up.
+      const remote = [
+        'http://otlp.example.test:4318', 'http://8.8.8.8:4318',
+        'http://172.15.0.1:4318', 'http://172.32.0.1:4318',
+        'http://11.0.0.1:4318', 'http://[2001:db8::1]:4318'
+      ];
+      for (const url of remote) {
+        assert.match(endpointRefusal(url) || '', /not host-local/, 'must refuse ' + url);
+      }
+
+      // https is fine wherever it points; a malformed URL is refused as such.
+      assert.strictEqual(endpointRefusal('https://otlp.example.test'), null);
+      assert.match(endpointRefusal('not-a-url') || '', /not a valid URL/);
+      assert.match(endpointRefusal('ftp://otlp.example.test') || '', /unsupported protocol/);
+
+      // The predicate is decided on the address, not on a name that merely
+      // looks local.
+      assert.strictEqual(isHostLocal('localhost.example.test'), false);
+    });
+
+    it('[OBSS] the emitter refuses a cleartext remote endpoint at startup', function () {
+      // The configuration path is not the only way in: PlatformDB and the
+      // environment both reach here without the CLI, so the emitter has to
+      // enforce the rule itself or it is not enforced at all.
+      const base = {
+        [ENV.ENABLED]: 'true',
+        [ENV.SERVICE_NAME]: 'open-pryv.io (test)',
+        NODE_ENV: 'production'
+      };
+      const remote = startFromEnv({
+        methodIds: METHOD_IDS,
+        serviceVersion: '2.0.0',
+        env: { ...base, [ENV.ENDPOINT]: 'http://otlp.example.test' }
+      });
+      assert.strictEqual(remote.activated, false);
+      assert.match(remote.reason, /not host-local/);
+
+      // And it does not refuse the supported sidecar shape.
+      const sidecar = startFromEnv({
+        methodIds: METHOD_IDS,
+        serviceVersion: '2.0.0',
+        env: { ...base, [ENV.ENDPOINT]: 'http://172.17.0.1:4318' }
+      });
+      assert.strictEqual(sidecar.activated, true, sidecar.reason);
+      observability._reset();
     });
   });
 

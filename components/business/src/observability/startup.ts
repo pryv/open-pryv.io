@@ -23,6 +23,7 @@ const require = createRequire(import.meta.url);
  */
 
 const observability = require('./index.ts');
+const { endpointRefusal } = require('./endpointPolicy.ts');
 
 const ENV = {
   ENABLED: 'PRYV_OBS_ENABLED',
@@ -52,6 +53,13 @@ function startFromEnv (options: StartupOptions): StartupResult {
   if (env[ENV.ENABLED] !== 'true') return { activated: false, reason: 'not enabled' };
   const endpoint = env[ENV.ENDPOINT];
   if (!endpoint) return { activated: false, reason: 'no endpoint configured' };
+
+  // The transport rule belongs to the emitter, not to the tool that happens
+  // to write the value: PlatformDB and the environment are both reachable
+  // without the CLI. Failing closed here means a misconfigured destination
+  // costs telemetry, never an unencrypted payload on the wire.
+  const refusal = endpointRefusal(endpoint);
+  if (refusal != null) return { activated: false, reason: refusal };
 
   // An empty vocabulary would attach an emitter that refuses every
   // datapoint as an unknown method id: telemetry that looks configured

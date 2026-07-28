@@ -64,8 +64,10 @@ there is nothing to re-scrub and no vendor-agent settings to review.
   <seconds>` replace the vendor-specific `newrelic set-license-key` and
   `newrelic set-high-security`, and `enable` no longer takes a provider
   argument. Headers carry the backend credential and are stored AES-256-GCM
-  encrypted at rest; `show` never echoes them. `set-endpoint` refuses a
-  non-HTTPS destination unless it is local.
+  encrypted at rest; `show` never echoes them. `set-endpoint` accepts plain
+  `http://` to a host-local collector (loopback, RFC1918 or link-local) and
+  refuses cleartext to any routable address; the emitter applies the same rule
+  at startup, so the constraint holds however the endpoint was configured.
 - **`set-interval` is a privacy control**, not just a tuning knob: it sets the
   granularity at which activity is observable and is the only lever on the
   low-traffic residual noted below. Default 300s, clamped to 60-3600.
@@ -116,6 +118,28 @@ primary. **This feature is beta** — the surface may still change.
   `services.email.enabled.verifyEmail` + `services.email.verifyEmailTemplate`,
   and `auth.emailVerificationPageURL` (required when the verification mail is
   enabled).
+
+### Fixed — the OTLP endpoint guard blocked the collector layout it recommends
+
+Reported as [#119](https://github.com/pryv/open-pryv.io/issues/119). Pointing
+telemetry at a self-hosted collector is the way to keep it out of a third
+party's hands, but `set-endpoint` only accepted plain `http://` for exactly
+`localhost` or `127.0.0.1`. In a containerised deployment the collector is a
+separate container, so the core reaches it on the bridge gateway (for instance
+`172.17.0.1:4318`), which the check treated as remote and refused. The
+recommended architecture therefore required a certificate for a hop that never
+leaves the machine.
+
+Cleartext is now decided by whether the destination is reachable from off the
+network: loopback, RFC1918 private space and link-local (plus the IPv6
+equivalents) are accepted, anything routable still requires `https:`.
+
+The same report noted that the check lived only in the CLI, so an operator
+writing the value straight into PlatformDB, or exporting `PRYV_OBS_ENDPOINT`,
+got plaintext telemetry with nothing to stop it. The rule now belongs to the
+emitter: startup refuses a cleartext remote endpoint and reports why, leaving
+telemetry off rather than putting a credentialed payload on the wire. If you
+configured such an endpoint by one of those paths, it will stop activating.
 
 ### Fixed — a method disabled by the operator no longer blames the licence
 
