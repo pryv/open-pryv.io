@@ -287,16 +287,25 @@ Apps query via plain `events.get({streamIds:[':_cmc:state']})`.
 
 Every successful `:_cmc:inbox` write (whether by in-process plugin routing for same-platform same-core directed invites, or by counterparty access writes for everything else) fires a standard socket.io `eventsCreated`. The recipient's app uses the standard `@pryv/monitor` add-on, `new pryv.Monitor(connection, { streams: [':_cmc:inbox'] })` + `monitor.on('event', cb)` + `monitor.start()`, no new socket primitive.
 
-## Risks & open questions
+## Risks
 
-- **`:_cmc:inbox` writable-by-counterparty permission model.** New behaviour for Pryv, today no stream accepts writes from accesses based on a `clientData` marker. The plugin's write-hook is the enforcer. Careful security review needed: must reject forged `content.from`, must validate event-type belongs to the family allowed for the access's counterparty relationship.
-- **Capability access lifecycle.** Hidden from `accesses.get` by default? Visible? Discoverable by operator audit?
-- **Back-channel apiEndpoint delivery.** How does the recipient retrieve the back-channel apiEndpoint after writing accept? Proposed: the plugin appends a `cmc/accept-receipt-v1` event to `:_cmc:_internal:offer:<capId>` (readable via the same capability connection). Or: the accept event's `events.create` response includes it server-stamped.
-- **Single-use enforcement under concurrency.** Two patients simultaneously hit an open invite (`to: null`); first-write-wins must be transactional. Tested in `[CMCRACE]`.
-- **State projection cost.** Maintaining `:_cmc:state` materialized off outbox/inbox is O(events) on write. For high-volume operators, benchmark before enabling it at scale.
-- **Cross-platform directed invites.** Out of scope for v1. Backlog item depending on future OAuth2 / app-accounts work federated invite webhook.
-- **Capability access visibility.** Operators may want audit visibility. Plugin should expose capability accesses to operator audit but hide from regular `accesses.get`.
-- **Existing legacy data.** Legacy compat shim covers runtime; data migration deferred.
+- **`:_cmc:inbox` is writable by counterparty accesses.** This is unusual for
+  Pryv: no other stream accepts writes on the strength of a `clientData`
+  marker. The write-hook is the enforcer, and it is the part of this component
+  to read first when reviewing security. It rejects a forged `content.from` by
+  stamping the value itself from the access's stored counterparty identity, and
+  it refuses event types outside the family that the relationship allows.
+- **Single-use enforcement under concurrency.** Two accepters can hit the same
+  open invite at once, so first-write-wins has to be decided by the database
+  rather than by a read-then-write in the plugin.
+- **Cross-platform directed invites.** Not supported. A directed invite to a
+  user on another platform degrades to capability-URL hand-off; auto-routing
+  needs a federation channel that does not exist yet.
+- **State projection cost.** If `:_cmc:state` is ever materialized off
+  outbox/inbox it is O(events) on write, so it wants a benchmark before any
+  high-volume operator enables it. It is not implemented today.
+- **Existing legacy data.** The compatibility shim covers runtime; migrating
+  stored legacy data is deferred.
 
 ## Out of scope
 
@@ -361,19 +370,58 @@ Anything else proposing mTLS should justify why it can't live in those scopes.
 
 CMC does not add to this list.
 
+## Settled by the implementation
+
+These were open while the component was being designed. The shipped code
+answered them, so they are recorded here as behaviour, not as choices still to
+be made.
+
+1. **Namespace name: `:_cmc:`.** The alternatives considered (`:channels:`,
+   `:consent:`, `:messages:`, `:cross:`) are moot: the prefix is part of the
+   published wire format and of every stream id an app builds, so it is fixed.
+2. **Capability TTL default: 7 days**
+   (`capability.ts` `DEFAULT_TTL_SECONDS`). A caller may set an absolute
+   `content.request.expiresAt` on `consent/request-cmc`; values outside the
+   accepted bounds (floor 60 s) are refused with
+   `cmc-capability-ttl-out-of-range`, and the default applies when no
+   `expiresAt` is given.
+3. **System-messaging opt-in is all-or-nothing.** The negotiated flag is a
+   single boolean, `clientData.cmc.features.systemMessaging`; there is no
+   per-level (info / warning / critical) granularity.
+4. **Back-channel apiEndpoint delivery: a `consent/back-channel-cmc` event.**
+   The requester's plugin POSTs it to the accepter's `:_cmc:inbox` shortly
+   after the accept, and the accepter stores the endpoint in
+   `clientData.cmc.counterparty`. It is not stamped onto the accept's
+   `events.create` response, which is why a data-grant access is briefly
+   present with no back-channel recorded (the two-stage behaviour described in
+   [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md)).
+
 ## Open questions
 
-1. **Namespace name.** `:_cmc:` is functional but cryptic. Alternatives: `:channels:`, `:consent:`, `:messages:`, `:cross:`.
-2. **`:_cmc:inbox` deletion.** Can a user `events.delete` from their inbox? Proposed: yes, soft-delete.
-3. **Capability TTL default.** 7 days proposed. **Align with future OAuth2 token TTL default.**
-4. **Quota numbers.** Per-source per-recipient inbox limit: 100 events/min proposed.
-5. **System-messaging opt-in granularity.** All-or-nothing vs per-level (info/warning/critical)?
-6. **Legacy shim removal date.** Proposed: removed in a follow-on cycle after CMC ships and consumer apps are migrated.
-7. **`:_cmc:state` semantics across multiple apps.** Filter by app at read time vs server-projected per-app?
-8. **Future OAuth2 capability-token unification.** Use CMC's capability access mechanism for OAuth2 authorization codes too? Same single-use, TTL-bounded, opaque-token-equivalent.
-9. **Back-channel apiEndpoint delivery mechanism.** Plugin appends a follow-up event to `:_cmc:_internal:offer:<capId>` (capability connection re-read)? Or `events.create` response carries it server-stamped?
-10. **Capability access visibility in `accesses.get`.** Hidden by default? Always visible to operator?
-11. **App-scope enforcement default.** `clientData.cmc.appScope` enforced when set (opt-in) vs always enforced when present (default-on)?
+1. **`:_cmc:inbox` deletion.** Should a user be able to `events.delete` from
+   their inbox? No CMC-specific guard covers it today, so the standard events
+   rules apply; nothing has deliberately ruled on it.
+2. **Quota numbers.** A per-source per-recipient inbox limit (100 events/min
+   was proposed) is not implemented. Operators rely on their own rate limiting
+   in the meantime.
+3. **Legacy shim removal date.** Product decision, unchanged: removal in a
+   follow-on cycle once consumer apps have migrated.
+4. **`:_cmc:state` semantics across multiple apps.** Still deferred; the
+   projection stream is not implemented, and apps query their own trigger
+   streams for status. Filter by app at read time, or project per-app
+   server-side, remains undecided.
+5. **Capability access visibility in `accesses.get`.** Whether capability
+   accesses should be hidden by default and surfaced only to operator audit is
+   still unsettled.
+6. **App-scope enforcement default.** Whether `clientData.cmc.appScope` should
+   be enforced only when set (opt-in) or always when present is still
+   unsettled.
+7. **Deeper OAuth2 / capability unification.** OAuth2 already references CMC
+   capability URLs: a client registers `cmcOffers` and the matching
+   `cmc:<name>` scope tokens (`components/oauth2/src/clientRegistry.ts`). Using
+   the capability access mechanism as the store for OAuth2 authorization codes
+   themselves, which share the single-use, TTL-bounded shape, has not been
+   done.
 
 ---
 
