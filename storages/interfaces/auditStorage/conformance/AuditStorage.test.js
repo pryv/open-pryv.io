@@ -120,6 +120,37 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
         assert.ok(Array.isArray(accesses));
       });
 
+      it('[SQ17] createEvent()/getOneEvent() must round-trip breach-scope content fields', async () => {
+        // The breach-scope read enrichment rides inside the `content` JSON blob
+        // (TEXT on SQLite, JSONB on PG). Assert both engines preserve the shape,
+        // including a re-prefixed non-local stream id and the incomplete flag.
+        const contentEvent = {
+          id: 'sq-breach-scope-1',
+          streamIds: ['sq-stream-1'],
+          type: 'test/test',
+          time: 3000,
+          created: 3000,
+          createdBy: 'test',
+          modified: 3000,
+          modifiedBy: 'test',
+          content: {
+            action: 'events.get',
+            recordCount: 42,
+            recordCountIncomplete: true,
+            scopedStreamIds: ['yo', ':_audit:access-xyz'],
+            scopedStreamCount: 2
+          }
+        };
+        await userDb.createEvent(contentEvent);
+        const event = await userDb.getOneEvent('sq-breach-scope-1');
+        assert.ok(event);
+        assert.ok(event.content, 'content persisted');
+        assert.strictEqual(event.content.recordCount, 42);
+        assert.strictEqual(event.content.recordCountIncomplete, true);
+        assert.deepEqual(event.content.scopedStreamIds, ['yo', ':_audit:access-xyz']);
+        assert.strictEqual(event.content.scopedStreamCount, 2);
+      });
+
       describe('migration methods', () => {
         it('[SQ13] exportAllEvents() must return all raw rows', async () => {
           const rows = await userDb.exportAllEvents();

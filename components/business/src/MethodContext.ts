@@ -46,6 +46,18 @@ class MethodContext {
   /** Audit payload landed by api-server create steps (events/accesses) and
    *  consumed by the audit component when recording the call. */
   auditIntegrityPayload?: { key: string; integrity: string };
+  /** Breach-scope audit enrichment (read methods): count of records returned,
+   *  a flag when the streamed drain aborted mid-count, and the streams the read
+   *  was SCOPED to (post-expansion resolved set). Landed by the events.get path
+   *  and consumed by the audit component (content.recordCount / scopedStreamIds).
+   *  `recordCount` is initialised to 0 on any read so its absence means
+   *  "pre-fix / non-read", not "read that returned nothing". */
+  auditRecordCount?: number;
+  auditRecordCountIncomplete?: boolean;
+  auditScopedStreamIds?: string[];
+  /** Total resolved scope size, always present when scopedStreamIds is set —
+   *  survives id-list capping and the `['*']` all-streams sentinel. */
+  auditScopedStreamCount?: number;
   /** Raw Authorization header value, landed by the auth.delete route and
    *  checked against auth.adminAccessKey by the deletion chain. */
   authorizationHeader?: string;

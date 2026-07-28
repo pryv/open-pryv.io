@@ -23,7 +23,13 @@ cd "$(dirname "$0")/.."
 # unblock; the shared-secrets shape should enumerate its fields.
 # 223→221: measured count dropped (open signatures removed elsewhere);
 # lowered to lock it in per the ratchet rule.
-MAX=221
+# 221->222: the access reverse-index's `AccessRowLike` is a deliberate PARTIAL
+# view of the (open-by-design) access row. It enumerates only the handful of
+# fields the index reads and stays open to the rest (token, name, permissions,
+# clientData, deviceName, etc.) which it intentionally never touches.
+# Enumerating would misrepresent a partial view as a closed shape; the openness
+# is load-bearing, so the ratchet is raised by one per the rule above.
+MAX=222
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

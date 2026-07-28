@@ -634,6 +634,46 @@ describe('[SK01] Socket.IO', function () {
     }
   });
 
+  describe('[SK06] audit rows for socket calls (breach-scope enrichment)', function () {
+    before(async function () {
+      const { getConfig } = require('@pryv/boiler');
+      const config = await getConfig();
+      // The socket path historically produced NO audit row at all; it is now
+      // wired best-effort. This assertion only runs when audit storage is on.
+      if (config.get('audit:active') !== true) { this.skip(); }
+    });
+
+    it('[SKAU] an events.get over socket.io is audited with recordCount + scopedStreamIds', function () {
+      const scopedStream = testData.streams[0].id;
+      ioCons.con = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con.once('connect_error', (e) => reject(e || new Error('connect failed')));
+        ioCons.con.once('connect', function () {
+          ioCons.con.emit('events.get', { streams: [scopedStream] }, function (err) {
+            if (err) { return reject(err instanceof Error ? err : new Error(JSON.stringify(err))); }
+            // audit is best-effort and awaited before the ack, but the storage
+            // write can settle a tick later; give it a short buffer then read.
+            setTimeout(async () => {
+              try {
+                const url = server.url + '/' + user.username + '/events?' +
+                  queryString.stringify({ streams: [':_audit:'] });
+                const res = await superagent.get(url).set('Authorization', token);
+                const logs = res.body.events || [];
+                const log = logs.find((l) => l.content &&
+                  l.content.action === 'events.get' &&
+                  Array.isArray(l.content.scopedStreamIds) &&
+                  l.content.scopedStreamIds.includes(scopedStream));
+                assert.ok(log, 'socket events.get produced an audit row scoped to the read stream');
+                assert.strictEqual(typeof log.content.recordCount, 'number', 'recordCount present on the socket audit row');
+                resolve();
+              } catch (e) { reject(e); }
+            }, 400);
+          });
+        });
+      });
+    });
+  });
+
   after(async function () {
     await testData.cleanup();
   });

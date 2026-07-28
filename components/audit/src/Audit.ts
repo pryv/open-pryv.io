@@ -32,6 +32,10 @@ type MethodContext = {
   originalQuery?: unknown;
   auditIntegrityPayload?: unknown;
   callerId?: string;
+  auditRecordCount?: number;
+  auditRecordCountIncomplete?: boolean;
+  auditScopedStreamIds?: string[];
+  auditScopedStreamCount?: number;
 };
 type AuditEventLike = {
   id?: string;
@@ -44,7 +48,7 @@ type AuditEventLike = {
   modified?: number;
   trashed?: boolean;
   type?: string;
-  content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string };
+  content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number };
 };
 type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
@@ -207,6 +211,19 @@ function buildDefaultEvent (context: MethodContext): AuditEventLike {
   };
   if (context.callerId != null) {
     event.content.callerId = context.callerId;
+  }
+  // Breach-scope read enrichment (present only on read methods that landed it).
+  if (context.auditRecordCount != null) {
+    event.content.recordCount = context.auditRecordCount;
+    if (context.auditRecordCountIncomplete === true) {
+      event.content.recordCountIncomplete = true;
+    }
+  }
+  if (context.auditScopedStreamIds != null) {
+    event.content.scopedStreamIds = context.auditScopedStreamIds;
+    if (context.auditScopedStreamCount != null) {
+      event.content.scopedStreamCount = context.auditScopedStreamCount;
+    }
   }
   return event;
 }
