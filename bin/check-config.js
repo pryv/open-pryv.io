@@ -92,14 +92,21 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// auth.emailVerificationPageURL — required unless services.email.enabled.verifyEmail === false
+// auth.emailVerificationPageURL — required only when the checked file EXPLICITLY
+// enables the verify-email sub-feature. Unlike passwordResetPageURL above, this
+// one is opt-in: the shipped default is `verifyEmail: false` (beta), and this
+// script reads the override standalone, without the default merge. Defaulting
+// to "needed" here would flag every minimal override that never mentions
+// `services.email.enabled` — configs that boot fine.
+// The scalar case matters: `enabled: true` (not an object) enables every message
+// class at runtime, so it does require the URL.
 {
   const emailEnabled = get('services.email.enabled');
-  let verifyEmailNeeded = true;
-  if (emailEnabled === false) verifyEmailNeeded = false;
-  if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === false) verifyEmailNeeded = false;
+  let verifyEmailNeeded = false;
+  if (emailEnabled === true) verifyEmailNeeded = true;
+  if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === true) verifyEmailNeeded = true;
   if (verifyEmailNeeded && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
-    problems.push('auth.emailVerificationPageURL missing or unset (required unless services.email.enabled.verifyEmail is false)');
+    problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.enabled.verifyEmail is true)');
   }
 }
 

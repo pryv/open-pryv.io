@@ -12,6 +12,11 @@ logs:
       days: 14
 auth:
   adminAccessKey: CHANGE_ME_WITH_SOMETHING
+  # Placeholder so a stock checkout boots under NODE_ENV=development: the
+  # default-config value is a `REPLACE ME` sentinel and the key is required
+  # unconditionally, so without this the master exits 1 during validation.
+  # Never use this value outside local development.
+  filesReadTokenSecret: CHANGE_ME_WITH_SOMETHING
   trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@https://*.backloop.dev*, *@http://127.0.0.1*"
 serviceInfoUrl: file://test/service-info.json
 services:

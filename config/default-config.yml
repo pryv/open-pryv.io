@@ -197,7 +197,16 @@ services:
     enabled:
       welcome: true
       resetPassword: true
-      verifyEmail: true
+      # OFF by default while the multiple-emails / verify-email flow is beta.
+      # Turning it on makes `auth.emailVerificationPageURL` a REQUIRED key, so
+      # a default of `true` would invalidate every previously-valid config that
+      # does not define it and stop the core booting on upgrade. Opt in with
+      # BOTH of these in your override:
+      #   services: { email: { enabled: { verifyEmail: true } } }
+      #   auth: { emailVerificationPageURL: 'https://<your-app>/verify-email' }
+      # While off, `account.emails.add` still records a pending address but no
+      # verification mail is sent and `resend` succeeds without delivering.
+      verifyEmail: false
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.

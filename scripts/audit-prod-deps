@@ -21,12 +21,23 @@ const cp = require('child_process');
 // GHSA id → why it is accepted. Keep this list SHORT and justified.
 const ALLOWLIST = {
   // brace-expansion OOM DoS, reached only via email-templates → @ladjs/i18n →
-  // multimatch → minimatch (locale-file glob matching). The patched
-  // brace-expansion (>=5.0.8) changed its module export shape and breaks
-  // minimatch@3.x, which that subtree pins; no non-breaking fix exists until
-  // @ladjs/i18n/multimatch update upstream. The expanded patterns are
-  // app-owned locale paths, not attacker input, so the DoS is not reachable.
-  'GHSA-mh99-v99m-4gvg': 'brace-expansion OOM; unreachable (locale-file globs, not user input); upstream-blocked patched version breaks minimatch@3.x pin',
+  // multimatch → minimatch (locale-file glob matching).
+  //
+  // The installed version IS patched: the advisory names 5.0.8 as the only
+  // fixed release, but the maintainer also backported the bound to the
+  // maintenance lines (1.1.17, 2.1.3, 3.0.5), and the advisory range was never
+  // narrowed to exclude them. Verified by running the expansion directly:
+  // 2.0.2 expands a 13-group pattern to 53.3M characters, 1.1.17 stops at
+  // 4.0M (EXPANSION_MAX_LENGTH). The root `overrides` entry pins that subtree
+  // to ^1.1.17, which also satisfies minimatch@3.x's declared ^1.1.7 — the
+  // resolution used to be flagged `invalid` by npm.
+  //
+  // Upgrading that subtree to 5.x is NOT an option and should not be retried:
+  // brace-expansion 4+ exports `{ expand }` where 1.x–3.x export the function
+  // itself, so minimatch@3.x fails with `TypeError: expand is not a function`
+  // (verified). Drop this entry once the advisory range excludes the patched
+  // maintenance lines, or once @ladjs/i18n/multimatch move off minimatch@3.x.
+  'GHSA-mh99-v99m-4gvg': 'brace-expansion OOM; installed 1.1.17 carries the backported bound (verified); advisory range not narrowed to the patched maintenance lines; 5.x export shape breaks minimatch@3.x',
 };
 
 let raw = '';

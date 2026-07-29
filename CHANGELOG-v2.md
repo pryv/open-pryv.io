@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Email verification now ships OFF by default (beta) — opt in explicitly
+
+⚠ **Read this if your configuration does not set
+`services.email.enabled.verifyEmail`.** Enabling that sub-feature makes
+`auth.emailVerificationPageURL` a **required** configuration key, and the core
+refuses to boot when a required key is unset. Because the sub-feature shipped
+`true` by default, a deployment that had been valid for months could stop
+booting on upgrade without its operator changing anything. It is now `false` by
+default, so an upgrade can no longer invalidate a working configuration.
+
+**Opt in with both keys — neither works without the other:**
+
+```yaml
+services:
+  email:
+    enabled:
+      verifyEmail: true
+auth:
+  emailVerificationPageURL: 'https://<your-auth-ui>/verify-email'
+```
+
+**If you rely on email verification today, this flips it OFF for you.** That
+includes deployments layering the shipped production configuration, where the
+sub-feature was previously on. Add the two keys above to keep the behaviour.
+
+**Behaviour while it is off:** `account.update` still records an added address
+as pending, but no verification mail is sent, and the resend operation reports
+success without delivering anything. Addresses therefore stay unverifiable
+until the feature is turned on. This is unchanged logic — only the default
+moved — but it is easy to mistake for a mail-delivery fault.
+
+Operators who worked around the boot failure by pinning
+`services.email.enabled.verifyEmail: false` in a host configuration can drop
+that pin; it now matches the default.
+
 ### Observability rebuilt: no third-party agent, telemetry built from a fixed allow-list, any OTLP backend
 
 ⚠ **If you enabled the optional APM integration in an earlier version, read

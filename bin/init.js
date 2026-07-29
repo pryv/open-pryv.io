@@ -429,6 +429,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #     enabled:
 #       welcome: true
 #       resetPassword: true
+#       # Beta, ships OFF. Turning it on makes auth.emailVerificationPageURL
+#       # a required key — set both or the core refuses to boot.
+#       verifyEmail: false
 #     method: in-process
 #     fromName: 'My Pryv'
 #     fromEmail: 'no-reply@example.com'
@@ -885,7 +888,9 @@ async function main () {
   const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL);
 
   // emailVerificationPageURL: sibling page under the same auth UI. Backs the
-  // verify-email link; required unless services.email.enabled.verifyEmail=false.
+  // verify-email link; required once services.email.enabled.verifyEmail is
+  // turned on (it ships off, beta). Collected up front so opting in later is a
+  // one-line change rather than a failed boot.
   const defaultEmailVerificationPageURL = `${authUiUrl}/verify-email`;
   const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL);
 

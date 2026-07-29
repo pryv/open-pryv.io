@@ -210,6 +210,71 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
   });
 });
 
+/**
+ * [CV-DEF] — the SHIPPED defaults, not a hand-built map.
+ *
+ * Every [CV-REQ] case above feeds `checkRequiredWhen` a `fakeConfig`, so it
+ * pins the predicate and nothing else. The incident this suite grew from did
+ * not live in the predicate: `default-config.yml` shipped a beta sub-feature
+ * ON, which silently promoted `auth.emailVerificationPageURL` to a required
+ * key and stopped previously-valid deployments from booting on upgrade. No
+ * fakeConfig test can catch that — it needs the real YAML.
+ *
+ * `js-yaml` is a declared dependency of the `@pryv/boiler` workspace package
+ * (and the parser boiler itself uses for config files), hoisted to the root
+ * tree; `dns-records-cli.test.js` reads YAML the same way.
+ */
+describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
+  let checkRequiredWhen, REQUIRED_WHEN, defaults;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ checkRequiredWhen, REQUIRED_WHEN } =
+      require('../../../config/plugins/config-validation.js'));
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const yaml = require('js-yaml');
+    defaults = yaml.load(fs.readFileSync(
+      path.resolve(import.meta.dirname, '../../../config/default-config.yml'), 'utf8'));
+  });
+
+  // Wrap the parsed YAML in the colon-path getter the REQUIRED_WHEN
+  // predicates expect, so they see exactly what boiler would hand them for a
+  // deployment that overrides nothing.
+  function defaultConfig () {
+    return {
+      get: (key) => key.split(':').reduce(
+        (node, seg) => (node == null ? undefined : node[seg]), defaults)
+    };
+  }
+
+  it('[CV-DEF-01] verifyEmail ships OFF (beta sub-feature)', () => {
+    assert.strictEqual(defaults.services.email.enabled.verifyEmail, false,
+      'services.email.enabled.verifyEmail must ship false: turning it on makes ' +
+      'auth.emailVerificationPageURL required, which breaks the boot of every ' +
+      'previously-valid config that does not define it');
+  });
+
+  it('[CV-DEF-02] the shipped defaults do not make emailVerificationPageURL required', () => {
+    const rule = REQUIRED_WHEN.find((r) => r.path === 'auth:emailVerificationPageURL');
+    assert.ok(rule, 'the auth:emailVerificationPageURL rule still exists');
+    assert.strictEqual(rule.when(defaultConfig()), false,
+      'stock defaults must not gate on auth:emailVerificationPageURL');
+
+    const problems = [];
+    checkRequiredWhen(defaultConfig(), problems);
+    const hit = problems.find((p) => p.payload &&
+      p.payload.path === 'auth:emailVerificationPageURL');
+    assert.strictEqual(hit, undefined,
+      'stock defaults must not report auth:emailVerificationPageURL as missing');
+    // Deliberately NOT asserting zero problems: default-config legitimately
+    // leaves adminAccessKey / filesReadTokenSecret / passwordResetPageURL for
+    // the operator to supply, and those SHOULD refuse to boot when unset.
+  });
+});
+
 describe('[CVSE] config-validation reportProblems stderr mirror', () => {
   let reportProblems;
 

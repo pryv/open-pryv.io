@@ -97,6 +97,9 @@
     "node": "24.x"
   },
   "overrides": {
+    "minimatch@3.1.5": {
+      "brace-expansion": "^1.1.17"
+    },
     "@protobufjs/utf8": "^1.1.1",
     "diff": "^8.0.3",
     "axios": "^1.16.0",
