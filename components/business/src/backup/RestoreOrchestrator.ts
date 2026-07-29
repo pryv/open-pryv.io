@@ -262,10 +262,7 @@ class RestoreOrchestrator {
         for await (const ae of await userReader.readAudit()) {
           auditEvents.push(ae);
         }
-        if (auditEvents.length > 0) {
-          const userAudit = this.auditStorage.forUser(targetUserId);
-          await userAudit.importAllEvents(auditEvents);
-        }
+        await this._restoreAudit(targetUserId, auditEvents);
       } catch (e: unknown) {
         this.logger.warn(`Audit import failed for user ${targetUserId}: ${(e as Error).message}`);
       }
@@ -301,6 +298,16 @@ class RestoreOrchestrator {
         (cb: NodeCallback) => eventsStore.importAll(user, events, cb)
       );
     }
+  }
+
+  async _restoreAudit (targetUserId: string, auditEvents: unknown[]) {
+    // `AuditStorage.forUser` is async (returns Promise<UserAuditDatabase>). The
+    // backup/export path awaits it; this restore path must do the same. Without
+    // the await, `forUser(...)` stayed a pending Promise whose `.importAllEvents`
+    // was undefined, so the audit trail was silently dropped on restore.
+    if (this.auditStorage == null || auditEvents.length === 0) return;
+    const userAudit = await this.auditStorage.forUser(targetUserId);
+    await userAudit.importAllEvents(auditEvents);
   }
 
   async _clearUserData (user: UserRef, userId: string) {
@@ -512,7 +519,7 @@ type EventFilesLike = {
   removeAllForUser (userId: string): Promise<unknown>;
 };
 type AuditStorageLike = {
-  forUser (userId: string): { importAllEvents (events: unknown[]): Promise<unknown> };
+  forUser (userId: string): Promise<{ importAllEvents (events: unknown[]): Promise<unknown> }>;
   deleteUser (userId: string): Promise<unknown>;
 };
 type SeriesConnectionLike = {

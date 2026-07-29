@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('assert');
 const { BackupOrchestrator } = require('business/src/backup/BackupOrchestrator.ts');
+const { RestoreOrchestrator } = require('business/src/backup/RestoreOrchestrator.ts');
 
 // Direct unit tests for the shape-guard helpers added to address
 // B-2026-05-20-1 (bin/backup.js "items.filter is not a function" with no hint).
@@ -158,5 +159,58 @@ describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
         /\(user user-id-123\)/
       );
     });
+  });
+});
+
+describe('[BKP-SHAPE-RESTORE] RestoreOrchestrator audit shape guard', function () {
+  // Restore-side counterpart of [BKP-SHAPE-AUDIT-*]. AuditStorage.forUser is
+  // async (Promise<UserAuditDatabase>). The restore path previously called it
+  // without awaiting, so `userAudit` was a pending Promise and
+  // `.importAllEvents` was undefined — the audit trail was silently dropped on
+  // recovery and the failure downgraded to a warn. These drive the real
+  // `_restoreAudit` so a re-introduced missing-await fails the suite.
+  function makeRestoreWithAudit (audit) {
+    const o = Object.create(RestoreOrchestrator.prototype);
+    o.auditStorage = audit;
+    o.logger = { warn () {}, info () {}, error () {} };
+    return o;
+  }
+
+  it('[BKP-SHAPE-RESTORE-AUDIT-01] awaits auditStorage.forUser before calling importAllEvents (regression: missing-await dropped the audit trail)', async function () {
+    let forUserCalledWith = null;
+    let importedWith = null;
+    const userDb = {
+      async importAllEvents (events) { importedWith = events; }
+    };
+    const auditStorage = {
+      async forUser (userId) { forUserCalledWith = userId; return userDb; }
+    };
+    const o = makeRestoreWithAudit(auditStorage);
+    const events = [{ id: 'a1' }, { id: 'a2' }];
+    await o._restoreAudit('audit-user-id', events);
+    assert.strictEqual(forUserCalledWith, 'audit-user-id', 'forUser must be called with the userId');
+    assert.strictEqual(importedWith, events, 'importAllEvents must receive the audit events after forUser is awaited');
+  });
+
+  it('[BKP-SHAPE-RESTORE-AUDIT-02] calling importAllEvents on the unawaited forUser Promise is undefined (this is the bug shape)', function () {
+    const userDb = { async importAllEvents () {} };
+    const auditStorage = { async forUser () { return userDb; } };
+    const promised = auditStorage.forUser('x');
+    assert.strictEqual(typeof promised.importAllEvents, 'undefined',
+      'Promise objects must not expose .importAllEvents — confirms the runtime TypeError shape when forUser is not awaited');
+  });
+
+  it('[BKP-SHAPE-RESTORE-AUDIT-03] empty audit events → forUser is never called (nothing to import)', async function () {
+    let forUserCalled = false;
+    const auditStorage = { async forUser () { forUserCalled = true; return { async importAllEvents () {} }; } };
+    const o = makeRestoreWithAudit(auditStorage);
+    await o._restoreAudit('u', []);
+    assert.strictEqual(forUserCalled, false, 'no per-user audit DB should be opened when there are no events');
+  });
+
+  it('[BKP-SHAPE-RESTORE-AUDIT-04] auditStorage = null is a silent no-op (operator chose no audit)', async function () {
+    const o = makeRestoreWithAudit(null);
+    await o._restoreAudit('u', [{ id: 'a1' }]); // must not throw
+    assert.strictEqual(o.auditStorage, null);
   });
 });
