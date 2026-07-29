@@ -74,10 +74,34 @@ if (cluster.isPrimary) {
       }, {
         plugin: require('../config/plugins/core-identity')
       }, {
+        // `service.*` comes from `serviceInfoUrl` on any deployment that does
+        // not spell it out in YAML. Master validates those fields below, so it
+        // has to fetch them the same way the api-server does — otherwise it
+        // reports the whole block missing and refuses to start.
+        scope: 'serviceInfo',
+        key: 'service',
+        urlFromKey: 'serviceInfoUrl'
+      }, {
+        // Resolves the `REPLACE ME` path sentinels that `default-config.yml`
+        // ships for the sqlite / filesystem / custom-extension directories.
+        // The api-server registers this too; without it master judges those
+        // sentinels unreplaced and refuses to start on a stock checkout.
+        scope: 'default-paths',
+        file: path.resolve(__dirname, '../config/plugins/paths-config.js')
+      }, {
         // Fail master startup if required service fields are missing so
         // operators see the problem immediately rather than through
         // api-server worker crash loops.
-        plugin: require('../config/plugins/config-validation')
+        //
+        // pluginAsync (not plugin), and registered AFTER the serviceInfo fetch
+        // above, for two reasons. Sync `plugin` loads run inside boiler's
+        // initSync BEFORE it loads `default-config.yml` and applies its own
+        // defaults, so a sync validator judges a half-built config and reports
+        // keys as missing that the defaults would have supplied. Async ones
+        // drain afterwards, in registration order, so this sees the complete
+        // config — defaults, serviceInfo and all. The api-server carries the
+        // same note at its own registration site.
+        pluginAsync: require('../config/plugins/config-validation')
       }]
     });
 
