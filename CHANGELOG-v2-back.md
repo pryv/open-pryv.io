@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## fix(platform): make Platform.init() idempotent
+
+`Platform.init()` guarded re-entry on the private `#initialized` field, but the
+initialiser set the public `initialized` field instead, so the guard never
+fired and `init()` re-ran its whole body (self-registration, core-URL cache
+refresh, invitation-token seeding) on every `getPlatform()` call. That let
+invitation-token seeding re-run mid-request whenever the platform config listed
+tokens, seeding and then consuming a token into the platform database where it
+persisted, which could make a later registration that reused the same token
+fail with "Invalid invitation token". `init()` now sets the guarded field so
+its body runs exactly once.
+
 ## chore(docker): migrate base image to node:24-slim
 
 Switch the Dockerfile base from `node:24-bookworm` to the digest-pinned
