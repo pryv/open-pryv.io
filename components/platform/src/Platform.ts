@@ -88,6 +88,7 @@ class Platform {
       return this;
     }
 
+    this.#initialized = true; // guards re-entry (read at the top of init())
     this.initialized = true; // intentionally public — see original code note
     this.#config = await getConfig();
     this.#db = await getPlatformDB();
