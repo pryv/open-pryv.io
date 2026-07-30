@@ -22,7 +22,10 @@ const { _internals } = require('./_internals.ts');
 /**
  * Receive host internals from the barrel.
  */
-type PgConnection = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+type PgConnection = {
+  query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+  queryIterable (sql: string, params?: unknown[], batchSize?: number): AsyncGenerator<Record<string, unknown>>;
+};
 type StorageLayer = {
   connection?: unknown;
   passwordResetRequests?: unknown;
@@ -31,7 +34,7 @@ type StorageLayer = {
   profile?: unknown;
   streams?: unknown;
   webhooks?: unknown;
-  events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
+  events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; exportAllStreamed?: (u: UserOrId) => AsyncGenerator<unknown>; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
   getAllUserIdsFromCollection?: (col: string) => Promise<string[]>;
   clearCollection?: (col: string) => Promise<void>;
@@ -85,6 +88,15 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
         // forwarding it instead of `.rows` crashed bin/backup.js on every PG platform.
         .then((res: { rows: Array<Record<string, unknown>> }) => callback(null, res.rows.map(rowToEvent)))
         .catch(callback);
+    },
+    async * exportAllStreamed (userOrUserId: UserOrId): AsyncGenerator<unknown> {
+      // Streaming counterpart of exportAll for bounded-memory backup: yields
+      // canonical (camelCase) events one at a time via a server-side cursor.
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      const { rowToEvent } = require('./dataStore/localUserEventsPG.ts');
+      for await (const row of connection.queryIterable('SELECT * FROM events WHERE user_id = $1', [userId])) {
+        yield rowToEvent(row);
+      }
     },
     importAll (userOrUserId: UserOrId, items: EventRow[], callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;

@@ -62,46 +62,26 @@ class UserAuditDatabasePG {
     params.query.push({ type: 'equal', content: { field: 'head_id', value: null } });
     const { sql, values } = buildSelectQuery(this.userId, params);
     const db = this.db;
-    let rows: AuditRow[] | null = null;
-    let idx = 0;
-    return new Readable({
-      objectMode: true,
-      async read (this: ReadableType) {
-        if (rows === null) {
-          const res = await db.query(sql, values);
-          rows = res.rows;
-        }
-        if (idx < rows!.length) {
-          this.push(fromDB(rows![idx++]));
-        } else {
-          this.push(null);
-        }
-      }
-    });
+    // Truly streamed via a server-side cursor — rows are fetched in batches and
+    // converted one at a time, so memory stays bounded regardless of result
+    // size. (Readable.from cleans up the generator, hence the cursor/client,
+    // when the consumer destroys the stream early.)
+    async function * rows (): AsyncGenerator<AuditEvent> {
+      for await (const row of db.queryIterable(sql, values)) yield fromDB(row);
+    }
+    return Readable.from(rows());
   }
 
   getEventDeletionsStreamed (deletedSince: number): ReadableType {
     const db = this.db;
     const userId = this.userId;
-    let rows: AuditRow[] | null = null;
-    let idx = 0;
-    return new Readable({
-      objectMode: true,
-      async read (this: ReadableType) {
-        if (rows === null) {
-          const res = await db.query(
-            'SELECT * FROM audit_events WHERE user_id = $1 AND deleted >= $2 ORDER BY deleted DESC',
-            [userId, deletedSince]
-          );
-          rows = res.rows;
-        }
-        if (idx < rows!.length) {
-          this.push(fromDB(rows![idx++]));
-        } else {
-          this.push(null);
-        }
-      }
-    });
+    async function * rows (): AsyncGenerator<AuditEvent> {
+      for await (const row of db.queryIterable(
+        'SELECT * FROM audit_events WHERE user_id = $1 AND deleted >= $2 ORDER BY deleted DESC',
+        [userId, deletedSince]
+      )) yield fromDB(row);
+    }
+    return Readable.from(rows());
   }
 
   async getOneEvent (eventId: string): Promise<AuditEvent | null> {
@@ -220,6 +200,15 @@ class UserAuditDatabasePG {
       [this.userId]
     );
     return res.rows;
+  }
+
+  // Streaming counterpart of exportAllEvents for bounded-memory backup: yields
+  // the same raw rows (converters bypassed) one at a time via a cursor.
+  async * exportAllEventsStreamed (): AsyncGenerator<AuditRow> {
+    yield * this.db.queryIterable(
+      'SELECT * FROM audit_events WHERE user_id = $1',
+      [this.userId]
+    ) as AsyncIterable<AuditRow>;
   }
 
   async importAllEvents (events: AuditRow[]): Promise<void> {

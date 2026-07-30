@@ -30,6 +30,17 @@ interface PgQueryResult {
   [k: string]: unknown;
 }
 
+interface PgCursor {
+  read: (rowCount: number) => Promise<Array<Record<string, unknown>>>;
+  close: () => Promise<void>;
+}
+
+// A pooled client viewed through the cursor API: pg's client.query(cursor)
+// returns the cursor object rather than a result promise.
+interface CursorClient {
+  query: (cursor: unknown) => PgCursor;
+}
+
 interface PgError extends Error {
   code?: string;
   constraint?: string;
@@ -173,6 +184,36 @@ class DatabasePG {
       throw err;
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * Stream a query's rows one at a time through a server-side cursor, so the
+   * full result set is never materialized in memory. Used by bounded-memory
+   * export (backup). A dedicated pooled client is held for the cursor's
+   * lifetime and released in `finally`; if iteration errored, the client is
+   * released with the error flag so a poisoned connection is discarded rather
+   * than returned to the pool. Early consumer break triggers the generator's
+   * `return()`, which runs the same cleanup.
+   */
+  async * queryIterable (text: string, params: unknown[] = [], batchSize: number = 1000): AsyncGenerator<Record<string, unknown>> {
+    const Cursor = require('pg-cursor');
+    await this.ensureConnect();
+    const client = await this.pool!.connect();
+    const cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
+    let failed = false;
+    try {
+      for (;;) {
+        const rows = await cursor.read(batchSize);
+        if (rows.length === 0) break;
+        yield * rows;
+      }
+    } catch (err) {
+      failed = true;
+      throw err;
+    } finally {
+      try { await cursor.close(); } catch (_e) { /* best-effort cursor cleanup */ }
+      (client.release as (err?: unknown) => void)(failed ? new Error('queryIterable failed; discarding client') : undefined);
     }
   }
 
