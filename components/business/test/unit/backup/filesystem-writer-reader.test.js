@@ -87,11 +87,10 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
     });
 
     it('round-trips events with chunking', async function () {
-      // `maxChunkSize` targets *compressed* output size per the
-      // writeChunkedJsonlFiles docstring, so the content must be random /
-      // non-compressible for chunking to trigger reliably. Earlier versions
-      // used 'Hello world '.repeat(5) which gzipped to ~20 bytes total and
-      // produced a single chunk regardless of item count.
+      // `maxChunkSize` targets RAW (pre-gzip) bytes per the
+      // writeChunkedJsonlFiles docstring, so 20 events well over 500 raw bytes
+      // each split into multiple chunks regardless of compressibility (the
+      // compressible-data case is covered by its own test below).
       const randomContent = (i) => {
         // 128 bytes of pseudo-random-ish base64 per event — not compressible.
         let s = '';
@@ -116,7 +115,7 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
 
       const writer = createFilesystemBackupWriter(TEST_DIR, {
         compress: true,
-        maxChunkSize: 500 // force chunking at 500 bytes compressed
+        maxChunkSize: 500 // force chunking at 500 raw bytes
       });
       const userWriter = await writer.openUser('user1', 'testuser');
       await userWriter.writeEvents(events);
@@ -148,6 +147,114 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
 
       assert.strictEqual(readEvents.length, 20);
       assert.deepStrictEqual(readEvents, events);
+      await reader.close();
+    });
+
+    it('chunks highly-compressible data by raw size (does not re-gzip the whole buffer)', async function () {
+      // Regression for issue #121: with a raw-byte cap, a large but highly
+      // compressible collection must flush into multiple chunks. The old
+      // design gzipped the whole accumulated buffer on every item once raw
+      // size passed the cap; because gzip(whole) stayed under the cap it never
+      // flushed, producing a single chunk (and O(n^2) synchronous gzip). Here
+      // ~1000 near-identical events (~200 B raw each, ~200 KB total) gzip to a
+      // couple of KB, well under the 16 KB cap — the exact trigger condition.
+      const events = [];
+      for (let i = 0; i < 1000; i++) {
+        events.push({
+          id: `evt${i}`,
+          streamIds: ['s1'],
+          type: 'note/txt',
+          content: 'x'.repeat(150),
+          time: 1000 + i,
+          created: 1000 + i,
+          modified: 1000 + i
+        });
+      }
+
+      const writer = createFilesystemBackupWriter(TEST_DIR, {
+        compress: true,
+        maxChunkSize: 16384 // 16 KB raw; total raw ~200 KB -> many chunks
+      });
+      const userWriter = await writer.openUser('user1', 'testuser');
+      await userWriter.writeEvents(events);
+      const userManifest = await userWriter.close();
+      await writer.writeManifest({
+        coreVersion: '2.0.0',
+        config: {},
+        userManifests: [userManifest],
+        backupType: 'full',
+        backupTimestamp: Date.now()
+      });
+      await writer.close();
+
+      assert.strictEqual(userManifest.stats.events, 1000);
+      // Old code produced exactly 1 chunk here; the fix yields ~12.
+      assert.ok(userManifest.chunks.events.length >= 5,
+        `compressible data should split into several chunks, got ${userManifest.chunks.events.length}`);
+      assert.ok(fs.existsSync(path.join(TEST_DIR, 'manifest.json')), 'manifest.json should exist');
+
+      const reader = createFilesystemBackupReader(TEST_DIR);
+      await reader.readManifest();
+      const userReader = await reader.openUser('user1');
+      let readCount = 0;
+      for await (const e of await userReader.readEvents()) {
+        assert.strictEqual(e.content, 'x'.repeat(150));
+        readCount++;
+      }
+      assert.strictEqual(readCount, 1000);
+      await reader.close();
+    });
+
+    it('splits a larger compressible collection into many raw-sized chunks (bounded buffer)', async function () {
+      // Second guard for issue #121, at larger scale. The unfixed code lets the
+      // accumulated buffer grow far past the cap while re-gzipping the whole
+      // thing every item (the O(n^2) hang); it also under-flushes, so this
+      // collection lands in only ~3 chunks. The fix caps each chunk at ~16 KB
+      // raw, so the same data splits into dozens of chunks and the in-memory
+      // buffer never exceeds one chunk. Chunk count is the deterministic
+      // discriminator here (the real hang is synchronous, so a mocha timeout
+      // cannot interrupt it); the generous timeout is only a backstop.
+      this.timeout(20000);
+      const events = [];
+      for (let i = 0; i < 6000; i++) {
+        events.push({
+          id: `evt${i}`,
+          streamIds: ['s1'],
+          type: 'note/txt',
+          content: 'x'.repeat(150),
+          time: 1000 + i
+        });
+      }
+
+      const writer = createFilesystemBackupWriter(TEST_DIR, {
+        compress: true,
+        maxChunkSize: 16384
+      });
+      const userWriter = await writer.openUser('user1', 'testuser');
+      await userWriter.writeEvents(events);
+      const userManifest = await userWriter.close();
+      await writer.writeManifest({
+        coreVersion: '2.0.0',
+        config: {},
+        userManifests: [userManifest],
+        backupType: 'full',
+        backupTimestamp: Date.now()
+      });
+      await writer.close();
+
+      assert.strictEqual(userManifest.stats.events, 6000);
+      assert.ok(userManifest.chunks.events.length >= 32,
+        `expected many chunks, got ${userManifest.chunks.events.length}`);
+
+      const reader = createFilesystemBackupReader(TEST_DIR);
+      await reader.readManifest();
+      const userReader = await reader.openUser('user1');
+      let readCount = 0;
+      for await (const e of await userReader.readEvents()) {
+        assert.strictEqual(e.content, 'x'.repeat(150));
+        readCount++;
+      }
+      assert.strictEqual(readCount, 6000);
       await reader.close();
     });
 

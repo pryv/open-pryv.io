@@ -19,10 +19,15 @@ const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
 
-const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB (output file size)
+const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
 
 interface WriterOptions {
-  /** max output file size in bytes (compressed when compression is on) */
+  /**
+   * Target chunk size in RAW (pre-gzip) bytes. gzip shrinks compressible data
+   * well below this and, worst case, expands incompressible data by only
+   * ~0.03% plus a small header, so this approximately bounds the on-disk file
+   * size too. Only affects chunked collections (events, audit).
+   */
   maxChunkSize?: number;
   /** gzip JSONL/CSV files */
   compress?: boolean;
@@ -232,10 +237,14 @@ async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> |
 }
 
 /**
- * Write items to chunked JSONL files, targeting maxChunkSize per output file.
- * When compression is enabled, the target applies to the compressed (gzip) output size.
- * When compression is off, the target applies to the raw file size.
- * Files may exceed the target by ~10% — this is a soft limit.
+ * Write items to chunked JSONL files, targeting maxChunkSize of RAW (pre-gzip)
+ * bytes per chunk. Each chunk is compressed exactly once, at flush time, so the
+ * total gzip work is O(total bytes) regardless of how compressible the data is.
+ * gzip output approximately bounds the on-disk file to the target (worst-case
+ * expansion on incompressible data is ~0.03% plus a small header); highly
+ * compressible data simply yields smaller, more numerous files. The last
+ * (partial) chunk may fall short of the target — this is a soft limit, sized by
+ * raw bytes.
  */
 async function writeChunkedJsonlFiles (dir: string, baseName: string, items: AsyncIterable<unknown> | unknown[], opts: ResolvedWriterOptions): Promise<{ totalCount: number, chunkFiles: string[] }> {
   let chunkIndex = 1;
@@ -257,16 +266,15 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
     currentLines = [];
   }
 
-  // Track uncompressed size as a proxy — check actual output size every N items.
-  // In compressed mode we also trigger an early check when rawSize has already
-  // reached maxChunkSize: gzip never expands highly compressible input below its
-  // header size but cannot shrink below ~20 bytes either, so once the raw size
-  // exceeds the target, the compressed output is *possibly* over the limit —
-  // worth a check. Without this lower-bound trigger, small datasets (fewer than
-  // CHECK_INTERVAL items) never fire the batch check and produce a single chunk
-  // regardless of maxChunkSize.
+  // Size chunks by RAW bytes and compress once per chunk in flushChunk(). This
+  // works identically whether or not compression is on: gzip keeps the file at
+  // or (worst case, on incompressible data) marginally above the raw cap, well
+  // within the soft-limit tolerance. The
+  // earlier design probed gzip(whole buffer) on every item once rawSize passed
+  // the target; for highly compressible data the probe stayed under the cap, so
+  // the flush never fired and the growing buffer was re-gzipped on every item —
+  // O(n^2) synchronous compression that never completed (issue #121).
   let rawSize = 0;
-  const CHECK_INTERVAL = 100;
 
   for await (const item of items) {
     const line = JSON.stringify(item);
@@ -274,28 +282,9 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
     rawSize += Buffer.byteLength(line, 'utf8') + 1;
     totalCount++;
 
-    // Uncompressed mode: rawSize IS the file size — check directly.
-    if (!opts.compress) {
-      if (rawSize >= opts.maxChunkSize) {
-        flushChunk();
-        rawSize = 0;
-      }
-      continue;
-    }
-
-    // Compressed mode: check when either
-    //   (a) the batch interval hit — amortizes gzipSync cost on large datasets
-    //   (b) raw size already exceeds the target — catches small datasets and
-    //       aggressive maxChunkSize values where the batch check never fires.
-    const batchHit = currentLines.length % CHECK_INTERVAL === 0;
-    const rawOverBudget = rawSize >= opts.maxChunkSize;
-    if (batchHit || rawOverBudget) {
-      const content = currentLines.join('\n') + '\n';
-      const compressed = zlib.gzipSync(Buffer.from(content, 'utf8'));
-      if (compressed.length >= opts.maxChunkSize) {
-        flushChunk();
-        rawSize = 0;
-      }
+    if (rawSize >= opts.maxChunkSize) {
+      flushChunk();
+      rawSize = 0;
     }
   }
 

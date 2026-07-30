@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## fix(backup): stop O(n^2) re-gzip that hung backups on large compressible collections
+
+`writeChunkedJsonlFiles` sized chunks in compressed mode by probing
+`gzip(whole accumulated buffer)` on every item once the raw size passed
+`maxChunkSize`, and flushed only when that probe exceeded the limit. For highly
+compressible data (audit logs, repetitive events) the gzip of the whole buffer
+stayed under the limit, so the flush never fired: the buffer grew without bound
+and the entire growing buffer was re-gzipped on every item, i.e. O(n^2)
+synchronous compression that never completed. A full backup hung at ~100% CPU on
+the first user with a large, compressible collection and never wrote a manifest
+(issue #121). Chunks are now sized by raw (pre-gzip) bytes and compressed once at
+flush, so total gzip work is linear and the in-memory buffer is bounded to one
+chunk. `maxChunkSize` (and the `--max-chunk-size` CLI flag) now caps raw bytes
+per chunk; gzip output stays at or below that, so on-disk files remain within the
+target while compressible data yields smaller, more numerous chunks. See
+https://github.com/pryv/open-pryv.io/issues/121.
+
 ## fix(platform): make Platform.init() idempotent
 
 `Platform.init()` guarded re-entry on the private `#initialized` field, but the
