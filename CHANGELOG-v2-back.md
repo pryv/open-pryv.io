@@ -1,5 +1,29 @@
 # Changelog - Internal (no API impact)
 
+## feat(backup): stream events + audit export end-to-end so backup memory is bounded
+
+Backup export no longer materializes a whole collection in memory before writing.
+Storage producers gained streaming counterparts to the array export
+(`storageLayer.events.exportAllStreamed`, and `exportAllEventsStreamed` on the
+SQLite and PostgreSQL audit engines), and the backup orchestrator runs events and
+audit through a lazy async-generator pipeline (filter + sanitize, one item at a
+time); attachment references are collected during that single pass instead of a
+second full iteration. On PostgreSQL the producers read through a new
+server-side-cursor iterator (`DatabasePG.queryIterable`, backed by `pg-cursor`).
+The change is additive and feature-detected: engines without a streaming producer
+keep working via the array path, and the audit interface's required-method set is
+unchanged.
+
+The PostgreSQL audit `getEventsStreamed` / `getEventDeletionsStreamed` methods,
+which previously buffered the entire result set before emitting rows one at a
+time, now stream through the cursor. To make that safe on the HTTP path,
+`Result.writeStreams` now destroys its source streams when the response closes,
+so a client that aborts mid-stream cannot leave a server-side cursor and its
+pooled connection checked out (which under repeated aborts would exhaust the
+pool). This also releases abandoned SQLite read iterators on aborted responses.
+
+The backup archive format is unchanged, so existing backups still restore.
+
 ## fix(backup): stop O(n^2) re-gzip that hung backups on large compressible collections
 
 `writeChunkedJsonlFiles` sized chunks in compressed mode by probing
