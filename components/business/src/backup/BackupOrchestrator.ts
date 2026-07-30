@@ -206,13 +206,23 @@ class BackupOrchestrator {
     const webhooks = this._filterByTimestamp(rawWebhooks, snapshotBefore, since, 'webhooks');
     await userWriter.writeWebhooks(webhooks.map(sanitize));
 
-    // Events
-    const rawEvents = await this._exportEvents(userId);
-    const events = this._filterByTimestamp(rawEvents, snapshotBefore, since, 'events');
-    await userWriter.writeEvents(events.map(sanitize));
+    // Events — streamed end-to-end when the engine supports it. The export
+    // source (async iterable, or an array on engines without a streamed
+    // producer), the timestamp filter and sanitize run as a lazy pipeline, so
+    // at most one event is materialized at a time on the way to the writer.
+    // Attachment refs are collected during that single pass (from the filtered,
+    // pre-sanitize event) and backed up afterwards — replacing the previous
+    // second full-array iteration.
+    const eventsSource = await this._exportEvents(userId);
+    const attachmentRefs: Array<{ eventId: string; fileIds: string[] }> = [];
+    const eventsPipeline = this._exportPipeline(
+      eventsSource, snapshotBefore, since, 'events',
+      (event) => this._collectAttachmentRefs(event, attachmentRefs)
+    );
+    await userWriter.writeEvents(eventsPipeline);
 
-    // Attachments — only for events in this backup
-    await this._backupAttachments(userWriter, userId, events as Array<{ id: string; attachments?: Array<{ id?: string }> }>);
+    // Attachments — only for events in this backup (refs collected above)
+    await this._backupAttachments(userWriter, userId, attachmentRefs);
 
     // Account data (no timestamps — always full export)
     const accountData = await this.userAccountStorage._exportAll(userId);
@@ -233,9 +243,16 @@ class BackupOrchestrator {
     // surface on the audit interface.
     if (this.auditStorage) {
       const userAudit = await this.auditStorage.forUser(userId);
-      const auditEvents = await userAudit.exportAllEvents();
-      const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since, 'audit');
-      await userWriter.writeAudit(filteredAudit.map(sanitize));
+      // Prefer the streamed producer (bounded memory) when the audit engine
+      // offers it; otherwise fall back to the full array. Either way the rows
+      // flow through the same lazy filter+sanitize pipeline. Audit rows are raw
+      // (no camelCase timestamps), so the filter's "no timestamp — always
+      // include" branch keeps audit a full snapshot, as before.
+      const auditSource = typeof userAudit.exportAllEventsStreamed === 'function'
+        ? userAudit.exportAllEventsStreamed()
+        : await userAudit.exportAllEvents();
+      const auditPipeline = this._exportPipeline(auditSource, snapshotBefore, since, 'audit');
+      await userWriter.writeAudit(auditPipeline);
     }
 
     // Series (optional — skip if no series engine configured)
@@ -267,23 +284,32 @@ class BackupOrchestrator {
    */
   _filterByTimestamp (items: unknown, snapshotBefore: number, since: number | null, source: string = 'items') {
     this._assertArray(items, source);
-    return (items as Array<{ modified?: number; created?: number; time?: number }>).filter((item) => {
-      const ts = item.modified || item.created || item.time;
-      if (ts == null) return true; // no timestamp — always include
-      // Exclude items modified after snapshot (consistency)
-      if (ts > snapshotBefore) return false;
-      // For incremental: exclude items not modified since last backup
-      if (since != null && ts <= since) return false;
-      return true;
-    });
+    return (items as Array<{ modified?: number; created?: number; time?: number }>)
+      .filter((item) => this._passesTimestampFilter(item, snapshotBefore, since));
+  }
+
+  // Single source of truth for the snapshot/incremental predicate, shared by
+  // the array path (_filterByTimestamp) and the streaming path (_exportPipeline)
+  // so the two can never drift.
+  //
+  // - `snapshotBefore`: exclude items modified after backup start (consistency)
+  // - `since`: for incremental, only include items modified after the previous backup
+  // Items without `modified`/`created`/`time` are always included (e.g. profile
+  // data, or raw audit rows without camelCase timestamps).
+  _passesTimestampFilter (item: unknown, snapshotBefore: number, since: number | null): boolean {
+    const it = item as { modified?: number; created?: number; time?: number };
+    const ts = it.modified || it.created || it.time;
+    if (ts == null) return true; // no timestamp — always include
+    if (ts > snapshotBefore) return false;
+    if (since != null && ts <= since) return false;
+    return true;
   }
 
   // Defensive check. Storage-layer export methods are typed to return arrays,
   // but a shape drift in any of the underlying `exportAll`/`exportAllEvents`
-  // (e.g. a wrapper change returning `{rows}` or `{data}` instead of bare
+  // (e.g. a wrapper change returning `{rows}` or `{data}` instead of a bare
   // array) used to surface as a cryptic "items.filter is not a function" with
-  // no hint about which collection — see B-2026-05-20-1. Throw a clear,
-  // localized message instead.
+  // no hint about which collection. Throw a clear, localized message instead.
   _assertArray (items: unknown, source: string, userId?: string): asserts items is unknown[] {
     if (!Array.isArray(items)) {
       const ctx = userId ? ` (user ${userId})` : '';
@@ -293,6 +319,46 @@ class BackupOrchestrator {
         'Likely a storage-layer return-shape drift; check the engine\'s exportAll implementation.'
       );
     }
+  }
+
+  // Streaming counterpart of _assertArray: the pipeline accepts an array or any
+  // (sync/async) iterable. Same intent — a clear, collection-named error when a
+  // producer's return shape drifts (e.g. a `{rows}` result object) instead of a
+  // cryptic failure deep in `for await`.
+  _assertIterable (items: unknown, source: string, userId?: string): void {
+    if (Array.isArray(items)) return;
+    const asIter = items as { [Symbol.iterator]?: unknown; [Symbol.asyncIterator]?: unknown } | null;
+    if (asIter != null && (typeof asIter[Symbol.asyncIterator] === 'function' || typeof asIter[Symbol.iterator] === 'function')) return;
+    const ctx = userId ? ` (user ${userId})` : '';
+    const got = items == null ? String(items) : `${typeof items}${typeof items === 'object' ? ` keys=[${Object.keys(items as object).slice(0, 5).join(',')}]` : ''}`;
+    throw new Error(
+      `Backup export shape mismatch: expected array or iterable from "${source}"${ctx}, got ${got}. ` +
+      'Likely a storage-layer return-shape drift; check the engine\'s exportAll implementation.'
+    );
+  }
+
+  // Lazy export pipeline: filter by timestamp (shared predicate) then sanitize,
+  // yielding one item at a time so no full copy is materialized. Accepts an
+  // array or an (async) iterable as source. `onItem` (optional) observes each
+  // item that PASSES the filter, BEFORE sanitize — used to collect attachment
+  // refs from the pre-sanitize event shape.
+  async * _exportPipeline (source: unknown, snapshotBefore: number, since: number | null, sourceName: string, onItem?: (item: unknown) => void): AsyncGenerator<unknown> {
+    this._assertIterable(source, sourceName);
+    for await (const item of source as AsyncIterable<unknown> | Iterable<unknown>) {
+      if (!this._passesTimestampFilter(item, snapshotBefore, since)) continue;
+      if (onItem) onItem(item);
+      yield sanitize(item);
+    }
+  }
+
+  // Collect attachment refs from a filtered, PRE-sanitize event — exactly the
+  // population the events pipeline writes. Kept to ids only, so memory is
+  // O(#attachments) rather than O(#events).
+  _collectAttachmentRefs (event: unknown, refs: Array<{ eventId: string; fileIds: string[] }>): void {
+    const e = event as { id: string; attachments?: Array<{ id?: string }> };
+    if (!Array.isArray(e.attachments)) return;
+    const fileIds = e.attachments.map((att) => att.id).filter((id): id is string => !!id);
+    if (fileIds.length > 0) refs.push({ eventId: e.id, fileIds });
   }
 
   async _exportEvents (userId: string) {
@@ -308,23 +374,25 @@ class BackupOrchestrator {
       this.logger.warn(`Events export skipped for user ${userId}: storage engine exposes no events.exportAll`);
       return [];
     }
+    // Prefer the streaming producer (bounded memory) when the engine offers it;
+    // it yields the same canonical events as exportAll, one at a time.
+    if (typeof eventsStore.exportAllStreamed === 'function') {
+      return eventsStore.exportAllStreamed({ id: userId });
+    }
     const events = await fromCallback(
       (cb: NodeCallback) => eventsStore.exportAll({ id: userId }, cb)
     );
     return events || [];
   }
 
-  async _backupAttachments (userWriter: UserWriter, userId: string, events: Array<{ id: string; attachments?: Array<{ id?: string }> }>) {
-    for (const event of events) {
-      if (!event.attachments || !Array.isArray(event.attachments)) continue;
-      for (const att of event.attachments) {
-        const fileId = att.id;
-        if (!fileId) continue;
+  async _backupAttachments (userWriter: UserWriter, userId: string, refs: Array<{ eventId: string; fileIds: string[] }>) {
+    for (const ref of refs) {
+      for (const fileId of ref.fileIds) {
         try {
-          const stream = await this.eventFiles.getAttachmentStream(userId, event.id, fileId);
-          await userWriter.writeAttachment(event.id, fileId, stream);
+          const stream = await this.eventFiles.getAttachmentStream(userId, ref.eventId, fileId);
+          await userWriter.writeAttachment(ref.eventId, fileId, stream);
         } catch (e: unknown) {
-          this.logger.warn(`Attachment backup failed: event=${event.id} file=${fileId}: ${(e as Error).message}`);
+          this.logger.warn(`Attachment backup failed: event=${ref.eventId} file=${fileId}: ${(e as Error).message}`);
         }
       }
     }
@@ -356,7 +424,12 @@ type UserRef = { id: string };
 
 // Structural slices of the storage handles — the methods this orchestrator
 // calls. Tighten further if/when these stores expose formal interfaces.
-type ExportStore = { exportAll (user: UserRef, cb: NodeCallback): void };
+type ExportStore = {
+  exportAll (user: UserRef, cb: NodeCallback): void;
+  // Optional streaming producer: yields the same items as exportAll, one at a
+  // time, for bounded-memory backup. The orchestrator feature-detects it.
+  exportAllStreamed? (user: UserRef): AsyncIterable<unknown>;
+};
 type StorageLayerLike = {
   streams: ExportStore;
   accesses: ExportStore;
@@ -391,10 +464,10 @@ type UserWriter = {
   writeAccesses (items: unknown[]): Promise<void>;
   writeProfile (items: unknown[]): Promise<void>;
   writeWebhooks (items: unknown[]): Promise<void>;
-  writeEvents (items: unknown[]): Promise<void>;
+  writeEvents (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   writeAttachment (eventId: string, fileId: string, stream: Readable): Promise<void>;
   writeAccountData (data: unknown): Promise<void>;
-  writeAudit (items: unknown[]): Promise<void>;
+  writeAudit (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   writeSeries (items: unknown[]): Promise<void>;
   close (): Promise<UserManifest>;
 };

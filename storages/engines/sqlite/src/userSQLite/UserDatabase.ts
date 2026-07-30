@@ -301,6 +301,19 @@ UserDatabase.prototype.exportAllEvents = function (this: UserDatabaseInstance): 
 };
 
 /**
+ * Stream all raw event rows from the database, one at a time, for backup.
+ * Async generator so every export producer presents a uniform AsyncIterable;
+ * it wraps better-sqlite3's `.iterate()`, whose read lock is released when the
+ * consumer exhausts or breaks out of the iteration (the generator forwards
+ * `return()` to the inner iterator). Memory stays O(1) in the row count.
+ */
+UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDatabaseInstance): AsyncGenerator<EventRow> {
+  for (const row of this.eventQueries.getAll.iterate()) {
+    yield row;
+  }
+};
+
+/**
  * Import raw event rows into the database.
  */
 UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {

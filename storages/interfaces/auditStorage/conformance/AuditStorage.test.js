@@ -175,6 +175,22 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
           const countAfter = await userDb.countEvents();
           assert.strictEqual(countAfter, countBefore);
         });
+
+        it('[SQ17] exportAllEventsStreamed() (when present) must yield the same raw rows as exportAllEvents(), in order', async function () {
+          if (typeof userDb.exportAllEventsStreamed !== 'function') return this.skip();
+          const arrayRows = await userDb.exportAllEvents();
+          const streamedRows = [];
+          for await (const row of userDb.exportAllEventsStreamed()) streamedRows.push(row);
+          assert.deepStrictEqual(streamedRows, arrayRows);
+        });
+
+        it('[SQ18] exportAllEventsStreamed() (when present) on an empty store must yield nothing', async function () {
+          const emptyDb = await storage.forUser(getUserId() + '-empty-streamed');
+          if (typeof emptyDb.exportAllEventsStreamed !== 'function') return this.skip();
+          const rows = [];
+          for await (const row of emptyDb.exportAllEventsStreamed()) rows.push(row);
+          assert.strictEqual(rows.length, 0);
+        });
       });
 
       it('[SQ16] deleteUser() must remove the user database', async () => {
