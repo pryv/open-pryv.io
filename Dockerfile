@@ -3,7 +3,7 @@
 # patch); the digest freezes the exact image. Re-pin deliberately (quarterly
 # or on a security bump): docker buildx imagetools inspect node:24-slim
 # (or the registry manifest API) → update the sha256 below + re-baseline.
-# Slim (Debian trixie-slim) carries far fewer OS-package CVEs than the full
+# Slim (Debian bookworm-slim) carries far fewer OS-package CVEs than the full
 # bookworm variant (Grype 2026-07 base scan: Critical 60 -> 8, High 248 -> 21)
 # while still apt-installing the build deps the native modules need below.
 FROM node:24-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d

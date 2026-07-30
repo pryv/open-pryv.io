@@ -3,7 +3,7 @@
 ## chore(docker): migrate base image to node:24-slim
 
 Switch the Dockerfile base from `node:24-bookworm` to the digest-pinned
-`node:24-slim` (Debian trixie-slim). The build steps are unchanged (python3 +
+`node:24-slim` (Debian bookworm-slim). The build steps are unchanged (python3 +
 build-essential + curl are apt-installed explicitly and then purged), so the
 native modules (better-sqlite3, sharp) and the baked-in rqlite binary are
 unaffected: a fresh image build passes the runtime smoke checks (`rqlited
