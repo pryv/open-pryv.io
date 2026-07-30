@@ -283,8 +283,13 @@ clean-test-data:
       RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid)
       kill "$RQLITED_PID" 2>/dev/null || true
       for i in $(seq 1 40); do kill -0 "$RQLITED_PID" 2>/dev/null || break; sleep 0.25; done
+      # The snapshot dir is named `rsnapshots` in current rqlite (older builds
+      # used `wsnapshots`); wipe both. Missing it leaves the last snapshot on
+      # disk, which rqlite replays on restart — resurrecting the very users this
+      # reset is meant to clear, so the platform-integrity check then sees ghost
+      # users and later suites fail with "Check should be empty".
       rm -rf ./var-pryv/rqlite-data/db.sqlite* ./var-pryv/rqlite-data/raft ./var-pryv/rqlite-data/raft.db \
-             ./var-pryv/rqlite-data/wsnapshots ./var-pryv/rqlite-data/clean_snapshot ./var-pryv/rqlite-data/rqlited.pid
+             ./var-pryv/rqlite-data/rsnapshots ./var-pryv/rqlite-data/wsnapshots ./var-pryv/rqlite-data/clean_snapshot ./var-pryv/rqlite-data/rqlited.pid
       RQLITE_HTTP_PORT="$RQLITE_PORT" RQLITE_RAFT_PORT="$RQLITE_RAFT_PORT" ./storages/engines/rqlite/scripts/start > /dev/null 2>&1 || echo "rqlited restart FAILED — run storages/engines/rqlite/scripts/start manually"
     else
       # --max-time guards against an unresponsive rqlited (a hung HTTP API
