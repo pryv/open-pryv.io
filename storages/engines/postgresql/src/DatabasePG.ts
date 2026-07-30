@@ -200,9 +200,12 @@ class DatabasePG {
     const Cursor = require('pg-cursor');
     await this.ensureConnect();
     const client = await this.pool!.connect();
-    const cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
+    let cursor: PgCursor | undefined;
     let failed = false;
     try {
+      // Inside the try so a synchronous throw from client.query (e.g. a
+      // torn-down client) still releases the checked-out client below.
+      cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
       for (;;) {
         const rows = await cursor.read(batchSize);
         if (rows.length === 0) break;
@@ -212,7 +215,7 @@ class DatabasePG {
       failed = true;
       throw err;
     } finally {
-      try { await cursor.close(); } catch (_e) { /* best-effort cursor cleanup */ }
+      try { if (cursor) await cursor.close(); } catch (_e) { /* best-effort cursor cleanup */ }
       (client.release as (err?: unknown) => void)(failed ? new Error('queryIterable failed; discarding client') : undefined);
     }
   }

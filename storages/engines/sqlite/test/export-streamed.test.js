@@ -45,6 +45,13 @@ describe('[SQXS] userSQLite exportAllEventsStreamed', () => {
     await userLocalDirectory.deleteUserDirectory(userId);
   });
 
+  it('[SQXS3] the SQLite engine actually implements exportAllEventsStreamed', function () {
+    // Regression guard against silent fallback: the conformance [SQ17/SQ18]
+    // tests skip when the method is absent, so assert its presence explicitly
+    // for this in-repo engine (a rename/removal must fail a test).
+    assert.strictEqual(typeof userDb.exportAllEventsStreamed, 'function');
+  });
+
   it('[SQXS1] yields the same raw rows as exportAllEvents(), in order', async () => {
     const arrayRows = userDb.exportAllEvents();
     const streamedRows = [];

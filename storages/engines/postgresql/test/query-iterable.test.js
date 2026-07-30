@@ -23,6 +23,7 @@ describe('[PGQI] DatabasePG.queryIterable', function () {
   });
 
   let db;
+  let auditUserDb;
   const userId = 'pgqi-' + cuid();
 
   before(async function () {
@@ -34,6 +35,7 @@ describe('[PGQI] DatabasePG.queryIterable', function () {
     const storage = new AuditStoragePG(db);
     await storage.init();
     const userDb = await storage.forUser(userId);
+    auditUserDb = userDb;
     for (let i = 0; i < 25; i++) {
       await userDb.createEvent({
         id: 'evt-' + i,
@@ -50,6 +52,12 @@ describe('[PGQI] DatabasePG.queryIterable', function () {
 
   after(async function () {
     if (db) await db.query('DELETE FROM audit_events WHERE user_id = $1', [userId]);
+  });
+
+  it('[PGQI5] the PG audit engine actually implements exportAllEventsStreamed', function () {
+    // Regression guard against silent fallback (conformance [SQ17/SQ18] skip
+    // when absent): assert the method exists for this in-repo engine.
+    assert.strictEqual(typeof auditUserDb.exportAllEventsStreamed, 'function');
   });
 
   it('[PGQI1] yields every row of the query one at a time', async function () {

@@ -129,4 +129,30 @@ describe('[BKP-STREAM] BackupOrchestrator streaming pipeline', function () {
       }
     });
   });
+
+  describe('_exportEvents feature detection', function () {
+    it('[BKP-STREAM-07] uses exportAllStreamed when present (not exportAll), so a misspelled name cannot silently fall back', async function () {
+      const orch = Object.create(BackupOrchestrator.prototype);
+      let exportAllCalled = false;
+      orch.storageLayer = {
+        events: {
+          exportAll (user, cb) { exportAllCalled = true; cb(null, [{ id: 'array-path' }]); },
+          async * exportAllStreamed () { yield { id: 'streamed-1' }; yield { id: 'streamed-2' }; }
+        }
+      };
+      const source = await orch._exportEvents('user-1');
+      const collected = [];
+      for await (const e of source) collected.push(e.id);
+      assert.deepStrictEqual(collected, ['streamed-1', 'streamed-2']);
+      assert.strictEqual(exportAllCalled, false, 'exportAll must not be used when exportAllStreamed exists');
+    });
+
+    it('[BKP-STREAM-08] falls back to exportAll (array) when no streamed producer is present', async function () {
+      const orch = Object.create(BackupOrchestrator.prototype);
+      const arr = [{ id: 'a' }, { id: 'b' }];
+      orch.storageLayer = { events: { exportAll (user, cb) { cb(null, arr); } } };
+      const source = await orch._exportEvents('user-2');
+      assert.strictEqual(source, arr, 'array fallback returns the store array as-is');
+    });
+  });
 });

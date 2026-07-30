@@ -184,12 +184,27 @@ class Result {
     if (!this._private.isStreamResult) { throw new Error('AF: not a stream result.'); }
     if (streamsArray.length < 1) { throw new Error('streams array empty'); }
 
+    const sources: Readable[] = [];
     const streams: Readable[] = [];
     for (let i = 0; i < streamsArray.length; i++) {
       const s = streamsArray[i];
+      sources.push(s.stream);
       const serializedStream = s.stream.pipe(s.isArray ? new ArraySerializationStream(s.name) : new SingleObjectSerializationStream(s.name));
       streams.push(serializedStream);
     }
+
+    // .pipe() does NOT propagate destroy upstream: if the client aborts (or the
+    // response otherwise closes before the sources drain), the source streams
+    // stay suspended and never release resources they hold — e.g. a DB source
+    // backed by a server-side cursor keeps its pooled connection checked out,
+    // which under repeated aborts exhausts the pool. Destroy the sources on
+    // response close so their generators run cleanup. On a normal end the
+    // sources are already ended, so this is a no-op.
+    res.on('close', () => {
+      for (const src of sources) {
+        if (!src.destroyed) src.destroy();
+      }
+    });
 
     return new MultiStream(streams)
       .pipe(new ResultStream(this._private.tracing, this._private.tracingId!))
