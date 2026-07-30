@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## chore(docker): migrate base image to node:24-slim
+
+Switch the Dockerfile base from `node:24-bookworm` to the digest-pinned
+`node:24-slim` (Debian trixie-slim). The build steps are unchanged (python3 +
+build-essential + curl are apt-installed explicitly and then purged), so the
+native modules (better-sqlite3, sharp) and the baked-in rqlite binary are
+unaffected: a fresh image build passes the runtime smoke checks (`rqlited
+-version`, and `require` of both better-sqlite3 and sharp). Slim carries far
+fewer OS-package CVEs: a same-database Grype scan of the base images drops
+Critical 60 -> 8 and High 248 -> 21. The built image's residual findings are now
+dominated by the application's JS dependencies rather than the OS layer.
+
 ## chore(supply-chain): dependency-audit gate, SBOM, image signing + provenance, hardened base image
 
 The build pipeline now detects, gates, and attests the software supply chain.

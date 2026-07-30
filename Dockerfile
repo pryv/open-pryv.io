@@ -1,9 +1,12 @@
 # Base image digest-pinned for reproducibility + supply-chain integrity.
-# `node:24-bookworm` is a moving tag (Docker Hub republishes it on every Node
+# `node:24-slim` is a moving tag (Docker Hub republishes it on every Node
 # patch); the digest freezes the exact image. Re-pin deliberately (quarterly
-# or on a security bump): docker buildx imagetools inspect node:24-bookworm
+# or on a security bump): docker buildx imagetools inspect node:24-slim
 # (or the registry manifest API) → update the sha256 below + re-baseline.
-FROM node:24-bookworm@sha256:5711a0d445a1af54af9589066c646df387d1831a608226f4cd694fc59e745059
+# Slim (Debian trixie-slim) carries far fewer OS-package CVEs than the full
+# bookworm variant (Grype 2026-07 base scan: Critical 60 -> 8, High 248 -> 21)
+# while still apt-installing the build deps the native modules need below.
+FROM node:24-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
 
 WORKDIR /app
 
