@@ -123,6 +123,19 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
         return udb.exportAllEvents().map((row: Record<string, unknown>) => eventsSchema.fromDB(row));
       })().then((items) => callback(null, items)).catch(callback);
     },
+    async * exportAllStreamed (userOrUserId: UserOrId): AsyncGenerator<unknown> {
+      // Streaming counterpart of exportAll for backup: yields canonical
+      // (camelCase) events one at a time so backup memory stays bounded to the
+      // writer's chunk size rather than the whole collection. Same no-close
+      // lifecycle and empty-store handling (yield nothing) as exportAll.
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      const udb = await openUserEventsDbSafe(userId, false);
+      if (!udb) return;
+      const eventsSchema = require('./userSQLite/schema/events.ts');
+      for await (const row of udb.exportAllEventsStreamed()) {
+        yield eventsSchema.fromDB(row);
+      }
+    },
     importAll (userOrUserId: UserOrId, items: unknown[], callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       if (!items || items.length === 0) return callback(null);
@@ -173,7 +186,7 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
    * instead of lazily creating an empty one (read paths must not leave
    * empty `local-*.sqlite` files behind for users that never had events).
    */
-  async function openUserEventsDbSafe (userId: string, create: boolean): Promise<{ exportAllEvents: () => Array<Record<string, unknown>>; importAllEvents: (rows: unknown[]) => Promise<void>; deleteEvents: (params: Record<string, unknown>) => Promise<unknown> } | null> {
+  async function openUserEventsDbSafe (userId: string, create: boolean): Promise<{ exportAllEvents: () => Array<Record<string, unknown>>; exportAllEventsStreamed: () => AsyncIterable<Record<string, unknown>>; importAllEvents: (rows: unknown[]) => Promise<void>; deleteEvents: (params: Record<string, unknown>) => Promise<unknown> } | null> {
     try {
       const fs = require('node:fs');
       const { getStorage } = require('./userSQLite/index.ts');
