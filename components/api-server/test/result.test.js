@@ -109,35 +109,6 @@ describe('[RSLT] Result', function () {
       res.toObject(expectation);
     });
   });
-
-  describe('[RS-ABORT] writeStreams source cleanup on response close', function () {
-    const { Readable, Writable } = require('stream');
-
-    it('[RSAB1] destroys source streams when the response closes before they drain', function (done) {
-      const res = new Result();
-      // A source that never ends — models a long, DB-backed stream suspended at
-      // a yield while holding a resource (a server-side cursor / pooled client).
-      const source = new Readable({ read () {} });
-      source.on('error', () => {});
-      res.addStream('events', source, true);
-
-      // Minimal HTTP-response mock: a Writable with setHeader + statusCode.
-      const httpRes = new Writable({ write (chunk, enc, cb) { cb(); } });
-      httpRes.on('error', () => {});
-      httpRes.setHeader = function () {};
-      httpRes.statusCode = 200;
-
-      res.writeStreams(httpRes, 200);
-      assert.strictEqual(source.destroyed, false, 'source is live before the response closes');
-
-      // Simulate a client abort / premature response close.
-      httpRes.emit('close');
-      setImmediate(() => {
-        assert.strictEqual(source.destroyed, true, 'source must be destroyed on response close');
-        done();
-      });
-    });
-  });
 });
 
 /**

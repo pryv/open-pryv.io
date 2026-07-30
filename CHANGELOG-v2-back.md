@@ -14,14 +14,6 @@ The change is additive and feature-detected: engines without a streaming produce
 keep working via the array path, and the audit interface's required-method set is
 unchanged.
 
-The PostgreSQL audit `getEventsStreamed` / `getEventDeletionsStreamed` methods,
-which previously buffered the entire result set before emitting rows one at a
-time, now stream through the cursor. To make that safe on the HTTP path,
-`Result.writeStreams` now destroys its source streams when the response closes,
-so a client that aborts mid-stream cannot leave a server-side cursor and its
-pooled connection checked out (which under repeated aborts would exhaust the
-pool). This also releases abandoned SQLite read iterators on aborted responses.
-
 The backup archive format is unchanged, so existing backups still restore.
 
 ## fix(backup): stop O(n^2) re-gzip that hung backups on large compressible collections
