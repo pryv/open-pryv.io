@@ -255,9 +255,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       if (platform.isUsernameReserved(newUsername)) {
         return next(errors.invalidOperation('This username is reserved.', { newUsername }));
       }
-      // Availability: reject if the name resolves to ANY user (primary or alias).
-      const taken = await usersRepository.getUserIdForUsername(newUsername);
-      if (taken != null) {
+      // Availability: reject if the name resolves to ANY user platform-wide —
+      // primary or alias on THIS core (local index, `usernameExists` falls
+      // back to the alias index) OR, on multi-core, hosted on ANOTHER core
+      // (the shared `user-core/` map). Without the cross-core arm a rename to a
+      // name held on a different core would slip past this gate; changeUsername
+      // then atomically claims the name as the backstop, but this returns the
+      // friendly error first. Single-core reduces to the local check.
+      if (await usersRepository.usernameExistsOnPlatform(newUsername)) {
         return next(errors.itemAlreadyExists('user', { username: newUsername }));
       }
 

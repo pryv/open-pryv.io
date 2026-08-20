@@ -1,5 +1,38 @@
 # Changelog - Internal (no API impact)
 
+## fix(multi-core): username checks and reservations must be platform-wide, not per-core
+
+On a multi-core platform every username check read only the core-local user
+index, so a username hosted on a DIFFERENT core reported as available: each core
+answered `GET /reg/:username/check_username` with `reserved: false` for names it
+did not host, and the registry hostname round-robins across cores, so a client
+got a wrong answer roughly half the time. Registration, the `/system/users`
+reservation endpoint, and `account.changeUsername` shared the same blind spot,
+so a name already hosted elsewhere could be registered or renamed into on a
+second core, silently repointing the original user's routing. See
+https://github.com/pryv/open-pryv.io/issues/122.
+
+A new platform-wide existence check consults the shared name-to-core map on
+multi-core (single-core is unchanged by construction), and all the availability
+call sites now use it. Registration reserves the username atomically for the
+creating core (a redirecting core no longer writes the mapping, so a forwarded
+registration is never pre-rejected), and `changeUsername` claims the new name
+atomically as its cross-core collision gate. The name-to-core map is now kept
+truthful: deleting a user (and each of its aliases) frees the routing row on
+every core, and a failed registration releases its claim. A new operator tool,
+`bin/reconcile-user-cores.js`, heals historical drift per core (removes
+self-pointing rows with no local user, recreates missing rows for local users;
+never touches rows owned by other cores). The engine layer gains an atomic
+`setUserCoreIfNotExists` (claim-or-confirm) on both PostgreSQL and rqlite.
+
+While here, two adjacent defects were fixed: registration now rolls back a
+unique-field reservation if a later field in the same request conflicts (an
+earlier value no longer stays reserved with no user behind it), and the
+`DELETE /system/users/:username?onlyReg=true` admin route now deletes platform
+fields through the mode-aware layer (the previous raw path read a unique
+field's value from an indexed row and bypassed hashing, so it left the unique
+row behind and broke outright in hashed piiMode).
+
 ## fix(backup): stop O(n^2) re-gzip that hung backups on large compressible collections
 
 `writeChunkedJsonlFiles` sized chunks in compressed mode by probing

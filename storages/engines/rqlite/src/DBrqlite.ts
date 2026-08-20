@@ -220,6 +220,28 @@ class DBrqlite {
     );
   }
 
+  async setUserCoreIfNotExists (username: string, coreId: string) {
+    const key = getUserCoreKey(username);
+    // Atomic claim: INSERT OR IGNORE commits exactly one winner per key
+    // (Raft-linearized). Claim-or-confirm read-back at 'strong' (leader-read,
+    // never a pre-insert snapshot): unlike a unique field (whose value IS the
+    // claimant), a user-core row's value is a coreId, so value equality is the
+    // only ownership signal. Return true when the surviving row points at OUR
+    // coreId (we won, or an existing self-pointing row already claimed it),
+    // false only when it points at a DIFFERENT core.
+    await this.execute(
+      'INSERT OR IGNORE INTO keyValue (key, value) VALUES (?, ?)',
+      [key, coreId]
+    );
+    const rows = await this.query(
+      'SELECT value FROM keyValue WHERE key = ?',
+      [key],
+      'strong'
+    );
+    if (rows.length === 0) return false;
+    return rows[0].value === coreId;
+  }
+
   async getUserCore (username: string) {
     const key = getUserCoreKey(username);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');

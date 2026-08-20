@@ -257,10 +257,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         return res.status(400).json({ reservation: false, error: { id: 'invitationToken-invalid' } });
       }
 
-      // 2. Check username uniqueness (username is in usersRepository, not PlatformDB)
+      // 2. Check username uniqueness PLATFORM-WIDE. The local index holds only
+      //    this core's usernames; on multi-core a name reserved here must also
+      //    be free on every other core, so consult the shared `user-core/` map
+      //    too (single-core reduces to the local check by construction).
       const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
-      if (await usersRepository.usernameExists(username)) {
+      if (await usersRepository.usernameExistsOnPlatform(username)) {
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
       }
 
@@ -364,9 +367,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         ));
       }
 
-      const platformDB = require('storages').platformDB;
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
 
-      // Check user exists via usersRepository (username is in MongoDB/PG, not PlatformDB)
+      // Check user exists via usersRepository (username is in the user index, not PlatformDB)
       const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
       if (!await usersRepository.usernameExists(username)) {
@@ -374,17 +378,22 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       }
 
       if (!dryRun) {
-        // Delete all platform entries for this user
-        const systemStreams = require('business/src/system-streams/index.ts');
-        for (const field of systemStreams.uniqueFieldNames) {
-          const value = await platformDB.getUserIndexedField(username, field);
-          if (value != null) {
-            await platformDB.deleteUserUniqueField(field, value);
-          }
-        }
-        for (const field of systemStreams.indexedFieldNames) {
-          await platformDB.deleteUserIndexedField(username, field);
-        }
+        // Delete this user's platform-side fields (unique + indexed) via the
+        // mode-aware Platform layer. It matches rows by the (hashed) username
+        // token, so it is correct in both cleartext and hashed piiMode and
+        // deletes unique fields as the unique rows they actually are. The
+        // previous raw path read a unique field's value from an INDEXED row
+        // (which is never written), so it missed the unique row entirely, and
+        // it bypassed the hashing layer so it broke outright in hashed mode.
+        await platform.deleteUser(username, null);
+        // NB: the `user-core/` routing row is intentionally NOT removed here.
+        // This route is registry-only (onlyReg): it leaves the user's local
+        // index entry AND base storage on this core, so the user is still
+        // hosted here and MUST stay routable. Deleting the routing row would
+        // not free the name (the local index still resolves it) but would make
+        // this core's live user unreachable and let another core claim the
+        // name. The full cascading delete (DELETE /users/:username) is what
+        // frees routing, via repository.deleteOne -> platform.deleteUserCore.
       }
 
       res.status(200).json({ result: { dryRun: !!dryRun, deleted: !dryRun } });

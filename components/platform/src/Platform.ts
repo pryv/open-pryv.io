@@ -600,6 +600,19 @@ class Platform {
   }
 
   /**
+   * Atomically CLAIM a name→core mapping for `coreId`, but only when no row
+   * holds the name yet (claim-or-confirm: an existing row already pointing at
+   * `coreId` also counts as success, so retries and self-pointing rows are
+   * idempotent). Returns false when the name is already claimed by a DIFFERENT
+   * core. Plaintext input; hashed internally. Use this to reserve a username
+   * against other cores during registration/rename; `setUserCore` (overwrite)
+   * stays for legitimate re-assignment (admin move, migration, restore, alias).
+   */
+  async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> {
+    return await this.#db.setUserCoreIfNotExists(this.hashFor(USERNAME_FIELD, username), coreId);
+  }
+
+  /**
    * Variant of `setUserCore` for callers that already hold the hashed
    * username token (e.g. from `getAllUserCores()` mappings). In
    * `cleartext` mode this is equivalent to `setUserCore`.
@@ -614,6 +627,16 @@ class Platform {
    */
   async deleteUserCore (username: string) {
     await this.#db.deleteUserCore(this.hashFor(USERNAME_FIELD, username));
+  }
+
+  /**
+   * Variant of `deleteUserCore` for callers that already hold the hashed
+   * username token (e.g. a `getAllUserCores()` mapping key). In `cleartext`
+   * mode this is equivalent to `deleteUserCore`. Used by the reconciliation
+   * pass, which deletes stale rows matched by token without a plaintext.
+   */
+  async deleteUserCoreByPreHashedUsername (usernameToken: string) {
+    await this.#db.deleteUserCore(usernameToken);
   }
 
   // ---------------- Low-level field accessors (mode-aware) ----------------
@@ -902,10 +925,13 @@ class Platform {
 
     const usernameToken = this.hashFor(USERNAME_FIELD, username);
 
-    // 3. Check username existence (lazy require to avoid circular dependency)
+    // 3. Check username existence PLATFORM-WIDE (lazy require to avoid a
+    //    circular dependency). On multi-core this consults the shared
+    //    `user-core/` map so a name hosted on ANOTHER core is seen as taken;
+    //    single-core reduces to the local index by construction.
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
-    if (await usersRepository.usernameExists(username)) {
+    if (await usersRepository.usernameExistsOnPlatform(username)) {
       // Gather other eventual uniqueness conflicts for a complete error
       const allConflicts: Record<string, string> = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
@@ -918,32 +944,69 @@ class Platform {
       throw errors.itemAlreadyExists('user', allConflicts);
     }
 
-    // 4. Atomically reserve unique fields (except username, handled by usersIndex)
+    // 4. Select a core (honour requested hosting so e.g. aws-us-east-1
+    //    registrations don't leak to aws-eu-central-1 just because the latter
+    //    happens to have fewer users).
+    const selectedCoreId = await this.selectCoreForRegistration(hosting);
+
+    // 5. If the selected core is not self, redirect WITHOUT writing anything:
+    //    only the core that actually creates the user claims its `user-core/`
+    //    row. An eager write here would make the name "exist" platform-wide
+    //    (step 3) and reject the client's follow-up registration on the target
+    //    core, permanently reserving a name with no user behind it.
+    if (!this.isSingleCore && selectedCoreId !== this.coreId) {
+      return { redirect: this.coreIdToUrl(selectedCoreId) };
+    }
+
+    // 6. Claim the username for THIS core, BEFORE the slower per-field
+    //    reservation loop (shrinking the check-then-act window to one Raft
+    //    round). Multi-core uses the atomic claim so a concurrent registration
+    //    of the same name on another core loses; single-core keeps the plain
+    //    overwrite so recycling a previously-deleted name stays byte-identical.
+    if (this.isSingleCore) {
+      await this.#db.setUserCore(usernameToken, this.coreId);
+    } else {
+      const claimed = await this.#db.setUserCoreIfNotExists(usernameToken, this.coreId);
+      if (!claimed) {
+        throw errors.itemAlreadyExists('user', { username });
+      }
+    }
+
+    // 7. Atomically reserve the OTHER unique fields (username handled above).
     const conflicts: Record<string, string> = {};
+    const reservedHere: Array<[string, string]> = [];
     for (const [field, value] of Object.entries(uniqueFields)) {
       if (field === 'username') continue;
       if (value == null) continue;
-      const success = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, this.hashFor(field, value));
-      if (!success) {
+      const valueToken = this.hashFor(field, value);
+      const success = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+      if (success) {
+        reservedHere.push([field, valueToken]);
+      } else {
         conflicts[field] = value;
       }
     }
     if (Object.keys(conflicts).length > 0) {
+      // Release the fields reserved EARLIER in this same call so a multi-field
+      // registration that conflicts on a later field doesn't orphan an earlier
+      // one (which would block that value for everyone until manual cleanup). We
+      // own each of these (we just won the atomic claim), so a direct delete by
+      // (field, valueToken) removes exactly our rows.
+      for (const [field, valueToken] of reservedHere) {
+        await this.#db.deleteUserUniqueField(field, valueToken);
+      }
+      // Release the username claim from step 6 so the name is free to retry.
+      // Guard on the local index (B3): never remove a row a concurrent
+      // same-name winner already owns locally. insertOne has not run in this
+      // call, so in the common single-registration case the guard passes and
+      // the just-made claim is freed (matching the pre-reorder behaviour, where
+      // a field conflict threw before any user-core write).
+      if (!(await usersRepository.usernameExists(username))) {
+        await this.#db.deleteUserCore(usernameToken);
+      }
       throw errors.itemAlreadyExists('user', conflicts);
     }
 
-    // 5. Assign user to a core (honour requested hosting so e.g.
-    //    aws-us-east-1 registrations don't leak to aws-eu-central-1
-    //    just because the latter happens to have fewer users).
-    const selectedCoreId = await this.selectCoreForRegistration(hosting);
-    if (selectedCoreId != null) {
-      await this.#db.setUserCore(usernameToken, selectedCoreId);
-    }
-
-    // 6. If selected core is not self, return redirect
-    if (!this.isSingleCore && selectedCoreId !== this.coreId) {
-      return { redirect: this.coreIdToUrl(selectedCoreId) };
-    }
     return {};
   }
 

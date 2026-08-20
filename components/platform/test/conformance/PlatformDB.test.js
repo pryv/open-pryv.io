@@ -227,6 +227,44 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('[SUCINE] setUserCoreIfNotExists()', () => {
+      it('[SUCINE-1] must claim an absent name and return true', async () => {
+        const username = 'user-' + cuid();
+        const result = await db.setUserCoreIfNotExists(username, 'core-a');
+        assert.strictEqual(result, true);
+        assert.strictEqual(await db.getUserCore(username), 'core-a');
+      });
+
+      it('[SUCINE-2] must confirm (true) when the row already points at the SAME core', async () => {
+        const username = 'user-' + cuid();
+        await db.setUserCore(username, 'core-a');
+        // Claim-or-confirm: idempotent for retries and pre-existing self-rows.
+        const result = await db.setUserCoreIfNotExists(username, 'core-a');
+        assert.strictEqual(result, true);
+        assert.strictEqual(await db.getUserCore(username), 'core-a');
+      });
+
+      it('[SUCINE-3] must reject (false) and NOT overwrite when a DIFFERENT core holds it', async () => {
+        const username = 'user-' + cuid();
+        await db.setUserCore(username, 'core-a');
+        const result = await db.setUserCoreIfNotExists(username, 'core-b');
+        assert.strictEqual(result, false);
+        assert.strictEqual(await db.getUserCore(username), 'core-a');
+      });
+
+      it('[SUCINE-4] concurrent double-claim with different cores: exactly one true', async () => {
+        const username = 'user-' + cuid();
+        const [a, b] = await Promise.all([
+          db.setUserCoreIfNotExists(username, 'core-a'),
+          db.setUserCoreIfNotExists(username, 'core-b')
+        ]);
+        assert.strictEqual((a === true ? 1 : 0) + (b === true ? 1 : 0), 1,
+          'exactly one claimant wins');
+        const winner = await db.getUserCore(username);
+        assert.ok(winner === 'core-a' || winner === 'core-b');
+      });
+    });
+
     describe('deleteUserCore()', () => {
       it('must remove the user-to-core mapping', async () => {
         const username = 'user-' + cuid();

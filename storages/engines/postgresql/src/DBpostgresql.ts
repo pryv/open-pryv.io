@@ -165,6 +165,23 @@ class DBpostgresql {
     await this.#set(getUserCoreKey(username), coreId);
   }
 
+  async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> {
+    const key = getUserCoreKey(username);
+    // Atomic claim: the INSERT either wins or yields to the existing row.
+    // Claim-or-confirm read-back: unlike a unique field (whose value IS the
+    // claimant), a user-core row's value is a coreId, so the only ownership
+    // signal is value equality. Return true when the surviving row points at
+    // OUR coreId (we won, or an existing self-pointing row already claimed it,
+    // which makes retries and pre-existing rows idempotent), false only when
+    // it points at a DIFFERENT core.
+    await this.db.query(
+      'INSERT INTO platform_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
+      [key, coreId]
+    );
+    const holder = await this.#get(key);
+    return holder === coreId;
+  }
+
   async getUserCore (username: string): Promise<string | null> {
     return await this.#get(getUserCoreKey(username));
   }

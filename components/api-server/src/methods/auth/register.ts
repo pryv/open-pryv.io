@@ -97,7 +97,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    * Check if username is taken
    */
   async function checkUsername (_context: MethodContext, params: CheckUsernameParams, result: ResultBag, next: MethodNext) {
-    result.reserved = await usersRepository.usernameExists(params.username);
+    result.reserved = await usersRepository.usernameExistsOnPlatform(params.username);
     if (result.reserved == null) {
       return next(errors.unexpectedError('username reserved cannot be null'));
     }
@@ -111,7 +111,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     result.reserved = false;
     const field = Object.keys(params)[0];
     if (field === 'username') {
-      if (await usersRepository.usernameExists(params[field])) {
+      if (await usersRepository.usernameExistsOnPlatform(params[field])) {
         return next(errors.itemAlreadyExists('user', { username: params[field] }));
       }
     }

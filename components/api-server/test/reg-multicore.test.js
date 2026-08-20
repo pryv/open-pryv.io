@@ -273,6 +273,162 @@ describe('[RGMC] register: multi-core', function () {
   });
 
   // ----------------------------------------------------------------
+  // 1b. Cross-core username availability (issue 122): the username checks +
+  //     registration/rename gates must see names hosted on OTHER cores via the
+  //     shared user-core map, not just this core's local index. "A user on
+  //     another core" is, to this in-process test, a user-core row pointing
+  //     elsewhere with no local index entry.
+  // ----------------------------------------------------------------
+  describe('[MCUC] cross-core username availability', function () {
+    let request;
+    let snapshot;
+    // Local users created here that outlive their own test — cleaned in after()
+    // so later suites keep their static fixtures (never call deleteAll here).
+    let createdUsers;
+    // Hosted on CORE_B (routing row only, no local user) — the reported case.
+    const GHOST = 'mcucghost' + cuid.slug().toLowerCase();
+
+    before(async function () {
+      createdUsers = [];
+      // Start from a clean map (strip stray user-core rows left by [MC01]) so
+      // load-based core selection is deterministic.
+      snapshot = (await getPlatformDB().exportAll()).filter(e => e.username != null);
+      await getPlatformDB().clearAll();
+      if (snapshot.length > 0) await getPlatformDB().importAll(snapshot);
+      await setupMultiCore(CORE_A);
+      await seedCore(CORE_B, { hosting: 'us-east-1' });
+      const app = getApplication(true);
+      await app.initiate();
+      await require('../src/methods/auth/register.ts').default(app.api);
+      request = supertest(app.expressApp);
+      await platform.setUserCore(GHOST, CORE_B);
+    });
+
+    after(async function () {
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      // Remove ONLY the users this block created (deleteAll would strip the
+      // static fixtures every later suite depends on).
+      for (const u of createdUsers) {
+        try { await usersRepository.deleteOne(u.id, u.username); } catch (e) { /* best effort */ }
+      }
+      await getPlatformDB().clearAll();
+      if (snapshot.length > 0) await getPlatformDB().importAll(snapshot);
+      restoreSingleCore();
+      await platform.registerSelf();
+    });
+
+    it('[MCUC1] check_username reports a name hosted on another core as reserved', async function () {
+      const res = await request.get('/reg/' + GHOST + '/check_username');
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.reserved, true,
+        'a username hosted on another core must read reserved:true');
+    });
+
+    it('[MCUC2] check_username reports a genuinely-free name as available', async function () {
+      const free = 'mcucfree' + cuid.slug().toLowerCase();
+      const res = await request.get('/reg/' + free + '/check_username');
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.reserved, false);
+    });
+
+    it('[MCUC3] registering a cross-core-held name is rejected, routing row intact', async function () {
+      // GHOST sits on CORE_B (1 user) vs self CORE_A (0), so load-based
+      // selection keeps this registration on self — no forward — and the
+      // platform-wide existence check rejects it before core assignment.
+      const res = await request.post('/users').send({
+        appId: 'test-app',
+        username: GHOST,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        hosting: 'us-east-1',
+        insurancenumber: charlatan.Number.number(3)
+      });
+      assert.strictEqual(res.status, 409,
+        'must reject with item-already-exists: ' + JSON.stringify(res.body));
+      assert.strictEqual(await platform.getUserCore(GHOST), CORE_B,
+        'the original owner routing row must survive (no hijack)');
+    });
+
+    it('[MCUC4] deleting a user frees its name on every core', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const uname = 'mcucdel' + cuid.slug().toLowerCase();
+      const user = new User({
+        username: uname,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        appId: 'test-app'
+      });
+      await usersRepository.insertOne(user, true);
+      // Simulate the registration-time claim (insertOne alone writes no row).
+      await platform.setUserCore(uname, CORE_A);
+      assert.strictEqual((await request.get('/reg/' + uname + '/check_username')).body.reserved, true);
+
+      await usersRepository.deleteOne(user.id, uname);
+      assert.strictEqual(await platform.getUserCore(uname), null,
+        'routing row must be gone after delete');
+      assert.strictEqual((await request.get('/reg/' + uname + '/check_username')).body.reserved, false,
+        'the freed name must read available again');
+    });
+
+    it('[MCUC5] changeUsername to a cross-core-held name is rejected, victim row intact', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const uname = 'mcucren' + cuid.slug().toLowerCase();
+      const user = new User({
+        username: uname,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        appId: 'test-app'
+      });
+      await usersRepository.insertOne(user, true);
+      createdUsers.push({ id: user.id, username: uname });
+      await platform.setUserCore(uname, CORE_A);
+      const victim = 'mcucvictim' + cuid.slug().toLowerCase();
+      await platform.setUserCore(victim, CORE_B); // hosted elsewhere
+
+      await assert.rejects(
+        usersRepository.changeUsername(user.id, uname, victim, 'test-access'),
+        (err) => err && err.id === 'item-already-exists',
+        'renaming to a name hosted on another core must be rejected');
+      assert.strictEqual(await platform.getUserCore(victim), CORE_B,
+        'the victim routing row must be untouched');
+      // The renamer keeps its original name/routing.
+      assert.strictEqual(await platform.getUserCore(uname), CORE_A);
+    });
+
+    it('[MCUC6] reconcileUserCoreMap deletes stale self-rows and heals missing ones, never touching other cores', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      // Missing self-row: a live local user with no routing row (insertOne
+      // writes none).
+      const live = 'mcucheal' + cuid.slug().toLowerCase();
+      const user = new User({
+        username: live,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        appId: 'test-app'
+      });
+      await usersRepository.insertOne(user, true);
+      createdUsers.push({ id: user.id, username: live });
+      // Stale self-row: points at self, no local user.
+      const stale = 'mcucstale' + cuid.slug().toLowerCase();
+      await platform.setUserCore(stale, CORE_A);
+      // Foreign row: points at another core; must be left alone.
+      const foreign = 'mcucforeign' + cuid.slug().toLowerCase();
+      await platform.setUserCore(foreign, CORE_B);
+
+      const summary = await usersRepository.reconcileUserCoreMap();
+
+      assert.strictEqual(await platform.getUserCore(stale), null, 'stale self-row deleted');
+      assert.strictEqual(await platform.getUserCore(live), CORE_A, 'missing self-row healed');
+      assert.strictEqual(await platform.getUserCore(foreign), CORE_B, 'foreign row untouched');
+      assert.ok(summary.deleted.length >= 1 && summary.healed.length >= 1);
+    });
+  });
+
+  // ----------------------------------------------------------------
   // 2. /reg/cores multi-core: lookup returns correct core URL
   // ----------------------------------------------------------------
   describe('[MC02] GET /reg/cores multi-core', function () {

@@ -206,14 +206,24 @@ class UsersRepository {
   async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<void> {
     const coreId = await this.#aliasOwnerCoreId(oldUsername);
 
-    // 1. re-key ALL PlatformDB rows old→new (username self-row, email + alias
-    //    unique fields re-owned, indexed fields moved). Caller verified the
-    //    new name is free.
-    await this.platform.renameUser(oldUsername, newUsername);
+    // 1. Claim the new name for this core FIRST, atomically, as the real
+    //    cross-core collision gate: renameUser below OVERWRITES platform rows
+    //    and cannot reject, and the caller's availability check is not atomic,
+    //    so without this a rename to a name hosted on another core would
+    //    silently repoint the victim's routing (the change-username variant of
+    //    the registration hijack). Multi-core only — single-core has no
+    //    user-core rows to claim (`#aliasOwnerCoreId` returns null) and relies
+    //    on the local index + username unique-field for uniqueness. On a lost
+    //    claim nothing has been written yet, so simply reject.
+    if (coreId != null) {
+      const claimed = await this.platform.setUserCoreIfNotExists(newUsername, coreId);
+      if (!claimed) { throw errors.itemAlreadyExists('user', { username: newUsername }); }
+    }
 
-    // 2. route the new name to this core (old name's core mapping stays, so it
-    //    keeps routing as an alias below).
-    if (coreId != null) { await this.platform.setUserCore(newUsername, coreId); }
+    // 2. re-key ALL PlatformDB rows old→new (username self-row, email + alias
+    //    unique fields re-owned, indexed fields moved). Caller verified the
+    //    new name is free; the claim above made it atomic.
+    await this.platform.renameUser(oldUsername, newUsername);
 
     // 3. local index rename (leaves the alias index intact)
     await this.usersIndex.renameUser(oldUsername, newUsername);
@@ -271,6 +281,27 @@ class UsersRepository {
 
   async usernameExists (username: string) {
     return await this.usersIndex.usernameExists(username);
+  }
+
+  /**
+   * Platform-wide username existence: true when the name is held on THIS core
+   * (local index, aliases included) OR, on a multi-core platform, on ANY other
+   * core (via the shared `user-core/` mapping). Single-core reduces to the
+   * local check by construction (the platform arm is gated on `!isSingleCore`),
+   * so single-core behaviour is byte-identical to {@link usernameExists}.
+   *
+   * Use this for "is this name free to register anywhere on the platform"
+   * questions (check_username, registration validation, the reservation
+   * endpoint, change-username availability). Keep {@link usernameExists} for
+   * local-data questions ("does THIS core host the user"): notably
+   * {@link insertOne}'s guard MUST stay per-core, because registration has
+   * already claimed this name's `user-core/` row by the time insertOne runs, so
+   * a platform-wide check there would reject every legitimate registration.
+   */
+  async usernameExistsOnPlatform (username: string): Promise<boolean> {
+    if (await this.usersIndex.usernameExists(username)) return true;
+    if (this.platform.isSingleCore) return false;
+    return (await this.platform.getUserCore(username)) != null;
   }
 
   async getUserByUsername (username: string) {
@@ -351,7 +382,10 @@ class UsersRepository {
         });
       }
     }
-    // check locally for username
+    // check locally for username. MUST stay per-core (usersIndex, not the
+    // platform-wide check): validateRegistration has already claimed this
+    // name's `user-core/` row for this core by the time insertOne runs, so a
+    // platform-wide check here would reject every legitimate registration.
     if (await this.usersIndex.usernameExists(user.username)) {
       // gather eventual other uniqueness conflicts
       const eventualPlatformUniquenessErrors = await this.platform.checkUpdateOperationUniqueness(user.username, operations);
@@ -439,6 +473,16 @@ class UsersRepository {
       ['usersIndex', async () => { await this.usersIndex.init(); await this.usersIndex.deleteById(user.id); }],
       ['cache', async () => cache.unsetUser(user.username)],
       ['platform', async () => await this.platform.deleteUser(user.username, user)],
+      // Free the name→core claim validateRegistration made for this name, but
+      // ONLY if no local user now owns it (B3): a concurrent same-name winner
+      // reached the local index, so its routing row must survive. Runs after
+      // the usersIndex cleanup above, so this failed registration's own index
+      // row (if any) is already gone and the guard reflects the winner alone.
+      ['user-core', async () => {
+        if (!(await this.usersIndex.usernameExists(user.username))) {
+          await this.platform.deleteUserCore(user.username);
+        }
+      }],
       ['mall', async () => await this.mall.deleteUser(user.id)]
     ];
     for (const [what, cleanup] of cleanups) {
@@ -494,10 +538,24 @@ class UsersRepository {
     // being deleted.  The reverse race (index gone but events still exist)
     // is handled by getUserById() returning null when username is null.
     await this.usersIndex.init();
+    // Enumerate aliases BEFORE deleteById wipes the alias index — needed to
+    // release each alias's name→core routing row + evict its cache entry.
+    const aliases = await this.usersIndex.getAliasesForId(userId);
     await this.usersIndex.deleteById(userId);
     if (username != null) {
       cache.unsetUser(username);
       await this.platform.deleteUser(username, user);
+      // Free the name→core routing rows so the released name (and each alias)
+      // reports available again on EVERY core. platform.deleteUser leaves these
+      // behind: it matches rows by username, but `user-core/` rows carry no
+      // username. Ungated on single-core (registration writes the canonical
+      // row there too); no B3 guard needed since the index entry is already
+      // gone above.
+      await this.platform.deleteUserCore(username);
+      for (const alias of aliases) {
+        await this.platform.deleteUserCore(alias);
+        cache.unsetUser(alias);
+      }
       // Breach-scope reverse-index cleanup (Art.17). The index is keyed by
       // accessId, so it is not covered by platform.deleteUser (keyed by user);
       // clean it explicitly. Default deletes the user's rows; `keep` mode
@@ -512,6 +570,85 @@ class UsersRepository {
   async count () {
     const users = await this.usersIndex.getAllByUsername();
     return Object.keys(users).length;
+  }
+
+  /**
+   * Reconcile THIS core's slice of the shared name→core (`user-core/`) map with
+   * its local user index. Multi-core maintenance that heals the two drift
+   * states the platform-wide username check is sensitive to:
+   *  - STALE self-row (points at THIS core but no local user/alias owns the
+   *    name) → delete, so a deleted/never-created name reports free again and
+   *    stops falsely reserving itself platform-wide;
+   *  - MISSING self-row (a local user/alias has no routing row) → recreate it
+   *    (claim-or-confirm), so the live name cannot be hijacked by another core
+   *    and stays routable.
+   * Rows pointing at OTHER cores are NEVER touched — each core owns only its own
+   * slice. Single-core is a no-op (the platform-wide check ignores the map).
+   * Works in both piiModes: local names are hashed to the storage-form token
+   * via `platform.hashFor` for comparison, exactly as user-core keys are stored.
+   * Idempotent; safe to run repeatedly and concurrently with live traffic
+   * (healing uses the atomic claim; stale deletion is guarded on ownership).
+   *
+   * @param dryRun when true, computes the summary without writing.
+   * @returns { deleted, healed, scanned, skippedOtherCore } — `deleted`/`healed`
+   *   are the affected name TOKENS (storage form; opaque HMAC in hashed mode).
+   */
+  async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; scanned: number; skippedOtherCore: number }> {
+    const summary = { deleted: [] as string[], healed: [] as string[], scanned: 0, skippedOtherCore: 0 };
+    if (this.platform.isSingleCore) return summary;
+    const selfCoreId = this.platform.coreId;
+
+    // Build this core's owned name tokens (canonical usernames + aliases) in the
+    // SAME storage form as `user-core/` keys (HMAC token in hashed mode).
+    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+    const ownedTokens = new Set<string>();
+    for (const username of Object.keys(byUsername)) {
+      ownedTokens.add(this.platform.hashFor('username', username));
+    }
+    for (const userId of Object.values(byUsername)) {
+      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
+        ownedTokens.add(this.platform.hashFor('username', alias));
+      }
+    }
+
+    // (i) delete stale self-rows; heal missing self-rows in one pass over the map.
+    const allMappings = await this.platform.getAllUserCores(); // { username: token, coreId }
+    const presentSelfTokens = new Set<string>();
+    for (const { username: token, coreId } of allMappings) {
+      summary.scanned++;
+      if (coreId !== selfCoreId) { summary.skippedOtherCore++; continue; }
+      presentSelfTokens.add(token);
+      if (!ownedTokens.has(token)) {
+        if (!dryRun) await this.platform.deleteUserCoreByPreHashedUsername(token);
+        summary.deleted.push(token);
+      }
+    }
+
+    // (ii) recreate missing self-rows for every owned name (claim-or-confirm, so
+    //      a name a DIFFERENT core legitimately holds is left alone — a name
+    //      genuinely owned locally but claimed elsewhere is a conflict the
+    //      operator must resolve, not something to silently overwrite).
+    for (const username of Object.keys(byUsername)) {
+      const token = this.platform.hashFor('username', username);
+      if (presentSelfTokens.has(token)) continue;
+      if (!dryRun) {
+        const claimed = await this.platform.setUserCoreIfNotExists(username, selfCoreId);
+        if (!claimed) continue; // held by another core — do not clobber
+      }
+      summary.healed.push(token);
+    }
+    for (const userId of Object.values(byUsername)) {
+      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
+        const token = this.platform.hashFor('username', alias);
+        if (presentSelfTokens.has(token)) continue;
+        if (!dryRun) {
+          const claimed = await this.platform.setUserCoreIfNotExists(alias, selfCoreId);
+          if (!claimed) continue;
+        }
+        summary.healed.push(token);
+      }
+    }
+    return summary;
   }
 
   // -------------------- Password Management ------------------- //

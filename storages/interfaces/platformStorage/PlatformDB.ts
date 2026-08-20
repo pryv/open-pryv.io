@@ -108,6 +108,19 @@ export interface PlatformDB {
 
   // --- User-to-core mapping (multi-core) --------------------------
   setUserCore (username: string, coreId: string): Promise<void>;
+  /**
+   * ATOMIC claim-or-confirm: install `coreId` for `username` ONLY when no row
+   * holds the key, in one linearized operation. Returns true when the surviving
+   * row points at THIS `coreId` (this call won the claim, OR a pre-existing row
+   * already pointed here — idempotent for retries and self-pointing rows),
+   * false only when the key is held by a DIFFERENT core. Concurrent claimants
+   * on different cores: exactly ONE gets true. Use this (not getUserCore +
+   * setUserCore, which races, nor plain setUserCore, which overwrites) to
+   * reserve a username against other cores during registration/rename.
+   * Legitimate re-assignment (admin move, migration, restore) keeps using
+   * setUserCore.
+   */
+  setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean>;
   getUserCore (username: string): Promise<string | null>;
   deleteUserCore (username: string): Promise<void>;
   getAllUserCores (): Promise<UserCoreMapping[]>;
@@ -237,6 +250,8 @@ const PlatformDB: PlatformDB = {
   // --- User-to-core mapping (multi-core) --- //
 
   async setUserCore (username: string, coreId: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getUserCore (username: string): Promise<string | null> { throw new Error('Not implemented'); },
 
