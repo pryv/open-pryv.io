@@ -40,6 +40,14 @@ describe('[BRSC] bin/breach-scope.js CLI', function () {
     this.timeout(60000);
     await initTests();
     if (!config.get('audit:active')) { this.skip(); return; }
+    // The SQLite base-storage engine is selected by an in-memory, load-time
+    // test override that only the in-process core honours. This case drives the
+    // CLI as a SEPARATE child process, which boots from config files and so
+    // falls back to the default (PostgreSQL) engine — reading a different users
+    // index than the one this test seeded, and never resolving the subject's
+    // home core. The CLI logic itself is engine-agnostic and fully exercised on
+    // the PostgreSQL matrix; skip the spawned-subprocess case under SQLite.
+    if (process.env.STORAGE_ENGINE === 'sqlite') { this.skip(); return; }
     await initCore();
 
     const fixtures = getNewFixture();
