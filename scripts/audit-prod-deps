@@ -37,7 +37,16 @@ const ALLOWLIST = {
   // itself, so minimatch@3.x fails with `TypeError: expand is not a function`
   // (verified). Drop this entry once the advisory range excludes the patched
   // maintenance lines, or once @ladjs/i18n/multimatch move off minimatch@3.x.
-  'GHSA-mh99-v99m-4gvg': 'brace-expansion OOM; installed 1.1.17 carries the backported bound (verified); advisory range not narrowed to the patched maintenance lines; 5.x export shape breaks minimatch@3.x',
+  'GHSA-mh99-v99m-4gvg': 'brace-expansion OOM; installed 1.1.18 carries the backported bound; advisory range not narrowed to the patched maintenance lines; 5.x export shape breaks minimatch@3.x',
+  // js-yaml quadratic CPU in !!omap resolution. The fix (CVE-2026-59870) landed
+  // only in the 5.x line and was NOT backported to 4.x, so it cannot be cleared
+  // without a major bump of the foundational config parser (@pryv/boiler). The
+  // vulnerability is a DoS reachable only by parsing attacker-controlled YAML;
+  // js-yaml is used exclusively to load operator-controlled config files
+  // (components/boiler/src/lib/nconf-yaml.ts → yaml.load of the on-disk config),
+  // never request or user input, so the quadratic path is not reachable at
+  // runtime. Drop this entry once boiler moves to js-yaml 5.x.
+  'GHSA-5p4m-2wfm-xmqj': 'js-yaml !!omap quadratic CPU; reachable only via untrusted YAML, but js-yaml parses operator-controlled config files only (boiler nconf-yaml); fix is a non-backported 5.x major bump of the config parser',
 };
 
 let raw = '';
