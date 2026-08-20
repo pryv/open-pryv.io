@@ -85,8 +85,9 @@ require('@pryv/boiler').init({
 
     console.log('reconcile-user-cores: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
       ' on core "' + platform.coreId + '"');
-    console.log('  self-rows scanned       ' + summary.scanned);
+    console.log('  map rows scanned        ' + summary.scanned);
     console.log('  other-core rows skipped ' + summary.skippedOtherCore);
+    console.log('  self-rows (this core)   ' + (summary.scanned - summary.skippedOtherCore));
     console.log('  stale rows deleted      ' + summary.deleted.length);
     console.log('  missing rows healed     ' + summary.healed.length);
     process.exit(0);
