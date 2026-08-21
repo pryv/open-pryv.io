@@ -48,3 +48,8 @@ just test-sqlite oauth2   # SQLite baseStorage
 ```
 
 Test families: `[OAUTH-SCOPE]`, `[OAUTH-ERR]`, `[OAUTH-CLIENT]`, `[OAUTH-STORE]`, `[PLKV]`, `[OAUTH-WK]`.
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

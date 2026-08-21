@@ -88,3 +88,8 @@ The HTTP surface and orchestration live in api-server:
 `components/api-server/src/routes/shared-secrets.ts` (routes; retrieve is
 unauthenticated). The guards are wired into the `events.*` and `streams.*` method
 chains. See [INTERNALS.md](INTERNALS.md) for the seams.
+
+
+# License
+
+[BSD-3-Clause](LICENSE)
