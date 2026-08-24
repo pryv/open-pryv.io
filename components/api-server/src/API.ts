@@ -194,9 +194,15 @@ class API {
     const startedAtMs = Date.now();
 
     const tracing = context.tracing;
-    const tags = context.username != null ? {} : { username: context.username };
     const apiSpanName = 'api:' + methodId;
-    tracing.startSpan(apiSpanName, tags);
+    // No user-identifying tags on spans. The former `context.username != null ?
+    // {} : { username: context.username }` was an inverted ternary that never
+    // carried a real value — and must NOT be "fixed" by swapping the branches:
+    // that would start leaking usernames into spans the moment a real tracer
+    // replaces the DummyTracing no-op. The method id (already in the span name)
+    // is the only safe request-scoped label, matching the observability
+    // allow-list rule. Revisit deliberately if span attributes are ever revived.
+    tracing.startSpan(apiSpanName);
 
     const result = new Result({
       arrayLimit: RESULT_TO_OBJECT_MAX_ARRAY_SIZE,
