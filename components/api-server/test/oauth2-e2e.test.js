@@ -543,6 +543,26 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
   });
 
   describe('[OAUTH-E2E-REFRESH] refresh_token grant — bound to the consent data-grant', function () {
+    // Same prerequisite discrimination as [OAUTH-E2E-FAIL]: a bare 404 out of the
+    // OAuth2 routes is ambiguous (route not mounted / client row missing / offer
+    // capability not resolving). This block also probes POST /oauth2/token,
+    // because [OE15]'s intermittent 404 landed on the token route, not /authorize
+    // — so an unexplained failure here reports which prerequisite actually broke.
+    beforeEach(async function () {
+      const noParams = await coreRequest.get('/oauth2/authorize');
+      assert.notEqual(noParams.status, 404,
+        '/oauth2/authorize route not mounted: ' + describeRes(noParams));
+      const tokenProbe = await coreRequest.post('/oauth2/token').type('form').send({});
+      assert.notEqual(tokenProbe.status, 404,
+        '/oauth2/token route not mounted: ' + describeRes(tokenProbe));
+      const platformDB = require('storages').platformDB;
+      const clientRow = await storage.getClient(platformDB, clientId);
+      assert.ok(clientRow != null, 'OAuth client fixture missing from PlatformDB: ' + clientId);
+      const capRes = await globalThis.fetch(capabilityUrl);
+      assert.equal(capRes.status, 200,
+        'consent-offer capability URL does not resolve: ' + capabilityUrl + ' -> ' + capRes.status);
+    });
+
     it('[OE15] refresh round-trip: code-grant → refresh-grant → new Bearer usable on /events', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200);
