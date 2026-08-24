@@ -590,11 +590,15 @@ class UsersRepository {
    * (healing uses the atomic claim; stale deletion is guarded on ownership).
    *
    * @param dryRun when true, computes the summary without writing.
-   * @returns { deleted, healed, scanned, skippedOtherCore } — `deleted`/`healed`
-   *   are the affected name TOKENS (storage form; opaque HMAC in hashed mode).
+   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore } —
+   *   `deleted`/`healed` are the affected name TOKENS (storage form; opaque HMAC
+   *   in hashed mode). `conflicts` names each local user/alias whose routing row
+   *   points at ANOTHER core (owned locally but claimed elsewhere): the tool will
+   *   NOT clobber it, so the operator must resolve it by hand. Reported in both
+   *   dry-run and apply so the two agree (a conflict is never counted as a heal).
    */
-  async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; scanned: number; skippedOtherCore: number }> {
-    const summary = { deleted: [] as string[], healed: [] as string[], scanned: 0, skippedOtherCore: 0 };
+  async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number }> {
+    const summary = { deleted: [] as string[], healed: [] as string[], conflicts: [] as Array<{ username: string; coreId: string }>, scanned: 0, skippedOtherCore: 0 };
     if (this.platform.isSingleCore) return summary;
     const selfCoreId = this.platform.coreId;
 
@@ -614,7 +618,9 @@ class UsersRepository {
     // (i) delete stale self-rows; heal missing self-rows in one pass over the map.
     const allMappings = await this.platform.getAllUserCores(); // { username: token, coreId }
     const presentSelfTokens = new Set<string>();
+    const tokenToCore = new Map<string, string>(); // token -> owning coreId (any core)
     for (const { username: token, coreId } of allMappings) {
+      tokenToCore.set(token, coreId);
       summary.scanned++;
       if (coreId !== selfCoreId) { summary.skippedOtherCore++; continue; }
       presentSelfTokens.add(token);
@@ -631,9 +637,20 @@ class UsersRepository {
     for (const username of Object.keys(byUsername)) {
       const token = this.platform.hashFor('username', username);
       if (presentSelfTokens.has(token)) continue;
+      const mappedCore = tokenToCore.get(token);
+      if (mappedCore != null && mappedCore !== selfCoreId) {
+        // Owned locally but the map routes it elsewhere — a genuine conflict the
+        // operator must resolve. Never clobber another core's claim.
+        summary.conflicts.push({ username, coreId: mappedCore });
+        continue;
+      }
       if (!dryRun) {
         const claimed = await this.platform.setUserCoreIfNotExists(username, selfCoreId);
-        if (!claimed) continue; // held by another core — do not clobber
+        if (!claimed) {
+          // Raced: another core claimed the name between the scan and the claim.
+          summary.conflicts.push({ username, coreId: (await this.platform.getUserCore(username)) ?? 'unknown' });
+          continue;
+        }
       }
       summary.healed.push(token);
     }
@@ -641,9 +658,17 @@ class UsersRepository {
       for (const alias of await this.usersIndex.getAliasesForId(userId)) {
         const token = this.platform.hashFor('username', alias);
         if (presentSelfTokens.has(token)) continue;
+        const mappedCore = tokenToCore.get(token);
+        if (mappedCore != null && mappedCore !== selfCoreId) {
+          summary.conflicts.push({ username: alias, coreId: mappedCore });
+          continue;
+        }
         if (!dryRun) {
           const claimed = await this.platform.setUserCoreIfNotExists(alias, selfCoreId);
-          if (!claimed) continue;
+          if (!claimed) {
+            summary.conflicts.push({ username: alias, coreId: (await this.platform.getUserCore(alias)) ?? 'unknown' });
+            continue;
+          }
         }
         summary.healed.push(token);
       }

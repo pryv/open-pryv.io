@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## fix(reconcile-user-cores): report names that cannot be healed due to a cross-core conflict
+
+`reconcileUserCoreMap` now returns a `conflicts` list naming each local user or
+alias whose routing row points at a DIFFERENT core (owned locally but claimed
+elsewhere). Such names are never overwritten — they need manual operator
+resolution — and were previously invisible: the tool silently declined to heal
+them, so a dry-run counted them as would-be heals while apply healed nothing,
+making the two disagree. The classification is now consistent across dry-run and
+apply, and `bin/reconcile-user-cores.js` prints each conflicting name and the
+core it is routed to.
+
 ## fix(multi-core): username checks and reservations must be platform-wide, not per-core
 
 On a multi-core platform every username check read only the core-local user

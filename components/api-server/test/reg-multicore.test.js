@@ -426,6 +426,37 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(await platform.getUserCore(foreign), CORE_B, 'foreign row untouched');
       assert.ok(summary.deleted.length >= 1 && summary.healed.length >= 1);
     });
+
+    it('[MCUC7] reconcileUserCoreMap reports a locally-owned name routed to another core as a conflict, in both dry-run and apply, and never clobbers it', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      // A live local user whose routing row (wrongly) points at another core.
+      const name = 'mcucconflict' + cuid.slug().toLowerCase();
+      const user = new User({
+        username: name,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        appId: 'test-app'
+      });
+      await usersRepository.insertOne(user, true);
+      createdUsers.push({ id: user.id, username: name });
+      await platform.setUserCore(name, CORE_B); // owned locally, routed elsewhere
+
+      // Dry-run: named as a conflict, NOT counted as a heal; nothing written.
+      const dry = await usersRepository.reconcileUserCoreMap(true);
+      assert.ok(dry.conflicts.some((c) => c.username === name && c.coreId === CORE_B),
+        'the conflict is named in the dry-run summary');
+      assert.ok(!dry.healed.includes(platform.hashFor('username', name)),
+        'a conflict is never counted as a heal');
+      assert.strictEqual(await platform.getUserCore(name), CORE_B, 'dry-run wrote nothing');
+
+      // Apply: still a conflict; the foreign claim is left intact.
+      const applied = await usersRepository.reconcileUserCoreMap();
+      assert.ok(applied.conflicts.some((c) => c.username === name && c.coreId === CORE_B),
+        'the conflict is named in the apply summary too');
+      assert.strictEqual(await platform.getUserCore(name), CORE_B,
+        'apply never overwrites another core\'s claim');
+    });
   });
 
   // ----------------------------------------------------------------

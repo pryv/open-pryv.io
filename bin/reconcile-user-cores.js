@@ -90,6 +90,11 @@ require('@pryv/boiler').init({
     console.log('  self-rows (this core)   ' + (summary.scanned - summary.skippedOtherCore));
     console.log('  stale rows deleted      ' + summary.deleted.length);
     console.log('  missing rows healed     ' + summary.healed.length);
+    console.log('  conflicts (unhealable)  ' + summary.conflicts.length);
+    for (const c of summary.conflicts) {
+      console.log('    ! "' + c.username + '" is owned locally but routed to ' + c.coreId +
+        ' — resolve by hand (this tool never overwrites another core\'s claim)');
+    }
     process.exit(0);
   } catch (err) {
     console.error('reconcile-user-cores: ' + ((err && err.stack) || err));
