@@ -87,10 +87,16 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
       let jsonString = '';
       let chunkCount = 0;
       let finished = false;
-      // The test's intent is "chunks arrive incrementally", not "within X ms" —
-      // 5s is permissive enough for either engine on a busy runner. Pre-2026-04
-      // mongo used a 500 ms bound which made the test flaky on slower disks.
-      const timeout = 5000;
+      // The test's intent is "chunks arrive incrementally" (asserted by
+      // `chunkCount >= 3` below), NOT "within X ms". This guard only catches a
+      // genuinely stalled stream faster than mocha's overall timeout, with a
+      // clearer message. It measures wall-clock between `data` callbacks in the
+      // TEST process, so under full-matrix CPU contention it also captures
+      // event-loop starvation unrelated to streaming — which is why a tight
+      // bound flakes on a loaded runner (500 ms -> 5 s pre-2026-04; 5 s -> 30 s
+      // in 2026-08 after inter-chunk-gap false positives under the 8-core matrix).
+      // Not a product SLA; mocha's `this.timeout` is the real hang backstop.
+      const timeout = 30000;
       res.on('data', function (chunk) {
         if (finished) return;
         if (Date.now() - lastChunkRecievedAt > timeout) {
@@ -137,7 +143,9 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
         let jsonString = '';
         let chunkCount = 0;
         let finished = false;
-        const timeout = 5000;
+        // Inter-chunk stall backstop, not a product SLA — see the [SE1K] note
+        // above on why this is generous (event-loop starvation under load).
+        const timeout = 30000;
         res.on('data', function (chunk) {
           if (finished) return;
           if (Date.now() - lastChunkRecievedAt > timeout) {
