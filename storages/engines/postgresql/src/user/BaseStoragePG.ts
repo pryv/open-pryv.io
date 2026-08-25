@@ -92,6 +92,14 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  *   this.defaultSort    — (optional) default ORDER BY clause
  *   this.hasDeletedCol  — (optional, default true) whether table has a `deleted` column
  *   this.hasHeadIdCol   — (optional, default false) whether table has a `head_id` column
+ *
+ * Transaction support: the write/read helpers used inside a transaction come in
+ * `_<method>On(queryable, …)` variants that take the query-executor explicitly.
+ * The public method delegates with `this.db` (the pool); a subclass running a
+ * multi-statement operation inside `DatabasePG.withTransaction` MUST call the
+ * `_<method>On` variants with the transaction client instead — a statement
+ * issued via `this.db` (the pool) inside a transaction runs on a different
+ * connection, escaping the transaction AND self-deadlocking on its row lock.
  */
 class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T> {
   db: PgDbLike;
@@ -358,6 +366,13 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
   }
 
   findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<T | null>): void {
+    this._findOneOn(this.db, userOrUserId, query, options, callback);
+  }
+
+  /** Transaction-aware variant: runs the SELECT via the supplied `queryable`
+   *  (the pool via `this.db`, or a `withTransaction` client). See the class
+   *  note on the `_<method>On` variants. */
+  _findOneOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
@@ -366,7 +381,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     const where = this.buildWhere(userId, query);
 
     const sql = `SELECT ${select} FROM ${this.tableName} ${where.text} LIMIT 1`;
-    this.db.query(sql, where.params)
+    queryable.query(sql, where.params)
       .then((res: PGResult) => {
         if (res.rows.length === 0) return callback(null, null);
         const item = this.rowToItem(res.rows[0]);
@@ -432,13 +447,19 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
   }
 
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void {
+    this._findOneAndUpdateOn(this.db, userOrUserId, query, updatedData, callback);
+  }
+
+  /** Transaction-aware variant: runs the UPDATE via the supplied `queryable`.
+   *  See the class note on the `_<method>On` variants. */
+  _findOneAndUpdateOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
 
     const allClauses = [...setClauses, ...unsetClauses, ...incClauses];
     if (allClauses.length === 0) {
-      return this.findOne(userOrUserId, query, null, callback);
+      return this._findOneOn(queryable, userOrUserId, query, null, callback);
     }
 
     const where = this.buildWhere(userId, query, nextIdx);
@@ -446,7 +467,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     const sql = `UPDATE ${this.tableName} SET ${allClauses.join(', ')} ${where.text} RETURNING *`;
     const allParams = [...params, ...where.params];
 
-    this.db.query(sql, allParams)
+    queryable.query(sql, allParams)
       .then((res: PGResult) => {
         callback(null, res.rows.length > 0 ? this.rowToItem(res.rows[0]) : null);
       })
@@ -461,6 +482,12 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
   }
 
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
+    this._updateManyOn(this.db, userOrUserId, query, updatedData, callback);
+  }
+
+  /** Transaction-aware variant: runs the UPDATE via the supplied `queryable`.
+   *  See the class note on the `_<method>On` variants. */
+  _updateManyOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
@@ -473,7 +500,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     const sql = `UPDATE ${this.tableName} SET ${allClauses.join(', ')} ${where.text}`;
     const allParams = [...params, ...where.params];
 
-    this.db.query(sql, allParams)
+    queryable.query(sql, allParams)
       .then((res: PGResult) => callback(null, { modifiedCount: res.rowCount }))
       .catch(callback);
   }
@@ -753,12 +780,19 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
   /** `updateIfNeededCallback` only ever receives non-null items — null rows
    *  are skipped before it is invoked. */
   findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: T) => UpdateData | null, callback: Callback<{ count: number }>): void {
+    this._findAndUpdateIfNeededOn(this.db, userOrUserId, query, options, updateIfNeededCallback, callback);
+  }
+
+  /** Transaction-aware variant: runs the SELECT and every per-row UPDATE via
+   *  the supplied `queryable`, so the whole recompute pass stays inside one
+   *  transaction. See the class note on the `_<method>On` variants. */
+  _findAndUpdateIfNeededOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: T) => UpdateData | null, callback: Callback<{ count: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
 
     const sql = `SELECT * FROM ${this.tableName} ${where.text} ${orderBy}`;
-    this.db.query(sql, where.params)
+    queryable.query(sql, where.params)
       .then(async (res: PGResult) => {
         let updatesDone = 0;
         for (const row of res.rows) {
@@ -767,7 +801,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
           const updateQuery = updateIfNeededCallback(item);
           if (updateQuery == null) continue;
           await new Promise<void>((resolve, reject) => {
-            this.findOneAndUpdate(userOrUserId, { id: item.id }, updateQuery,
+            this._findOneAndUpdateOn(queryable, userOrUserId, { id: item.id }, updateQuery,
               (err: Error | null) => err ? reject(err) : resolve());
           });
           updatesDone++;

@@ -27,34 +27,35 @@ type AccessUpdate = UpdateData & { modified?: number; integrity?: string | null 
  * about to be persisted carries no `integrity` value. Without this the
  * gap only surfaces one operation later, when a full-store integrity scan
  * reports "access has no integrity property" — far from the write that
- * produced it. The diagnostic captures the process id and whether a real
- * integrity ref was injected (vs the inert constructor fallback), the two
- * root causes of a silently-skipped hash.
+ * produced it. With the integrity ref now a required constructor arg, the
+ * remaining root cause this guards is a business-side `set()` that failed
+ * to stamp.
  */
-function assertIntegritySet (access: AccessItem, integrityInjected: boolean): void {
+function assertIntegritySet (access: AccessItem): void {
   if (access.integrity != null) return;
   throw new Error(
     'access persisted without an integrity property while integrity is active' +
     ' (name=' + JSON.stringify(access.name) + ', id=' + JSON.stringify(access.id) +
-    ', pid=' + process.pid + ', integrityRefInjected=' + integrityInjected + ')'
+    ', pid=' + process.pid + ')'
   );
 }
 
 class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   integrityAccesses: IntegrityAccesses;
-  /** True when a real integrity ref was threaded in; false when the
-   *  constructor fell back to the inert `{ isActive: false }` stub. Kept
-   *  for the write-time integrity guard's diagnostics. */
-  integrityInjected: boolean;
 
-  constructor (integrityAccesses?: IntegrityAccesses) {
+  constructor (integrityAccesses: IntegrityAccesses) {
     super();
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = true;
     this.defaultSort = `json_extract(data, '$.name') ASC`;
-    this.integrityInjected = integrityAccesses != null;
-    this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
+    if (integrityAccesses == null) {
+      throw new Error(
+        'AccessesSQLite requires an integrityAccesses ref — pass ' +
+        '{ isActive: false, set: () => {} } explicitly for integrity-less contexts'
+      );
+    }
+    this.integrityAccesses = integrityAccesses;
   }
 
   rowToItem (row: DbRow): AccessItem | null {
@@ -73,7 +74,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     delete copy.apiEndpoint;
     if (this.integrityAccesses.isActive) {
       this.integrityAccesses.set(copy);
-      assertIntegritySet(copy, this.integrityInjected);
+      assertIntegritySet(copy);
     }
     return copy;
   }
@@ -103,24 +104,26 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     const integrityBatchCode = Math.random();
     updateData.$set!.integrityBatchCode = integrityBatchCode;
 
-    this.updateMany(userOrUserId, query, updateData, (err: Error | null, res?: { modifiedCount: number }) => {
-      if (err) return callback(err);
-      const initial = res!.modifiedCount;
-      const updateIfNeeded = (access: AccessItem): AccessUpdate | null => {
-        delete access.integrityBatchCode;
-        const prev = access.integrity;
-        this.integrityAccesses.set(access, true);
-        if (prev === access.integrity) return null;
-        return {
-          $unset: { integrityBatchCode: 1 },
-          $set: { integrity: access.integrity }
-        };
+    const updateIfNeeded = (access: AccessItem): AccessUpdate | null => {
+      delete access.integrityBatchCode;
+      const prev = access.integrity;
+      this.integrityAccesses.set(access, true);
+      if (prev === access.integrity) return null;
+      return {
+        $unset: { integrityBatchCode: 1 },
+        $set: { integrity: access.integrity }
       };
-      this.findAndUpdateIfNeeded(userOrUserId, { integrityBatchCode }, {}, updateIfNeeded, (err2: Error | null, res2?: { count?: number }) => {
-        if (err2) return callback(err2);
-        callback(null, { modifiedCount: initial, integrityRecomputed: res2?.count ?? 0 });
-      });
-    });
+    };
+
+    // Batch-unset (statement 1) and the per-row recompute pass (statement 2)
+    // run inside ONE better-sqlite3 transaction so a concurrent integrity scan
+    // never sees a soft-deleted row while its hash is transiently absent
+    // (B-2026-08-25-1). The tx body must be synchronous — hence the *Sync cores.
+    this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
+      const res = this._updateManySync(udb, query, updateData);
+      const res2 = this._findAndUpdateIfNeededSync(udb, { integrityBatchCode }, {}, updateIfNeeded);
+      return { modifiedCount: res.modifiedCount, integrityRecomputed: res2.count };
+    })());
   }
 
   updateOne (userOrUserId: UserOrId, query: Record<string, unknown>, update: AccessUpdate, callback: Callback<AccessItem | null>): void {
@@ -131,20 +134,20 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
       if (!update.$unset) update.$unset = {};
       update.$unset.integrity = 1;
     }
-    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData?: AccessItem | null) => {
-      if (err || accessData?.id == null) return callback(err, accessData ?? undefined);
+    // Statement 1 (apply fields + unset integrity) and statement 2 (recompute +
+    // set integrity) run inside ONE better-sqlite3 transaction so a concurrent
+    // integrity scan never observes the row while its hash is transiently
+    // absent (B-2026-08-25-1). The tx body must be synchronous.
+    this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
+      const accessData = this._findOneAndUpdateSync(udb, query, update);
+      if (accessData?.id == null) return accessData ?? null;
       const before = accessData.integrity;
-      try {
-        this.integrityAccesses.set(accessData, true);
-      } catch (eInt) {
-        return callback(eInt as Error | null, accessData);
-      }
+      this.integrityAccesses.set(accessData, true);
       if (before !== accessData.integrity) {
-        return this.findOneAndUpdate(userOrUserId, { id: accessData.id },
-          { integrity: accessData.integrity }, callback);
+        return this._findOneAndUpdateSync(udb, { id: accessData.id }, { integrity: accessData.integrity });
       }
-      callback(err, accessData);
-    });
+      return accessData;
+    })());
   }
 
   async findHistory (userOrUserId: UserOrId, baseId: string): Promise<AccessItem[]> {

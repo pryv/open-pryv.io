@@ -25,6 +25,9 @@ export type SqliteStmt<Row = Record<string, unknown>> = {
 
 export type SqliteDb = {
   prepare: <Row = Record<string, unknown>>(sql: string) => SqliteStmt<Row>;
-  transaction: <T>(fn: (arg: T) => void) => (arg: T) => void;
+  // Mirrors better-sqlite3: wrapping a fn returns a callable with the same
+  // args that runs it in a transaction and forwards its return value (so a
+  // no-arg fn returning a value — e.g. the accesses integrity tx — typechecks).
+  transaction: <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A) => R;
   close: () => void;
 };

@@ -72,6 +72,14 @@ function colSql (name: string): string {
  *   this.defaultSort    (optional)
  *
  * applyDefaults(item) can be overridden to inject defaults at insertOne.
+ *
+ * Transaction support: the read-modify-write helpers used inside a transaction
+ * come in `_<method>Sync(udb, …)` variants that take an already-acquired `udb`
+ * and run synchronously. A subclass composing several statements atomically
+ * acquires `udb` once (via `_userDbAndWrite`) and runs the `_<method>Sync` calls
+ * inside a single `udb.db.transaction(() => …)()` so no other connection can
+ * observe an intermediate row (better-sqlite3 transactions cannot span awaits,
+ * hence the fully-synchronous cores).
  */
 class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> implements UserStorage<TItem> {
   tableName: string | null = null;
@@ -342,15 +350,20 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<TItem | null>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
-      const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
-      if (!row) return null;
-      const merged = this.applyUpdateToItem(this.rowToItem(row), updatedData);
-      this._writeMerged(udb, row.id, merged);
-      const updated = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(row.id);
-      return this.rowToItem(updated);
-    });
+    this._userDbAndWrite(userOrUserId, callback, (udb) => this._findOneAndUpdateSync(udb, query, updatedData));
+  }
+
+  /** Synchronous core of `findOneAndUpdate`, taking an already-acquired `udb`
+   *  so a subclass can compose it with other statements inside ONE
+   *  `udb.db.transaction`. See the class note on the `_<method>Sync` variants. */
+  protected _findOneAndUpdateSync (udb: UserDb, query: Query, updatedData: UpdateData): TItem | null {
+    const { sql: where, params } = this.buildWhere(query || {});
+    const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
+    if (!row) return null;
+    const merged = this.applyUpdateToItem(this.rowToItem(row), updatedData);
+    this._writeMerged(udb, row.id, merged);
+    const updated = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(row.id);
+    return this.rowToItem(updated);
   }
 
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<TItem | null>): void {
@@ -358,17 +371,20 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
-      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
-      let modified = 0;
-      for (const r of rows) {
-        const merged = this.applyUpdateToItem(this.rowToItem(r), updatedData);
-        this._writeMerged(udb, r.id, merged);
-        modified++;
-      }
-      return { modifiedCount: modified };
-    });
+    this._userDbAndWrite(userOrUserId, callback, (udb) => this._updateManySync(udb, query, updatedData));
+  }
+
+  /** Synchronous core of `updateMany`. See `_findOneAndUpdateSync`. */
+  protected _updateManySync (udb: UserDb, query: Query, updatedData: UpdateData): { modifiedCount: number } {
+    const { sql: where, params } = this.buildWhere(query || {});
+    const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
+    let modified = 0;
+    for (const r of rows) {
+      const merged = this.applyUpdateToItem(this.rowToItem(r), updatedData);
+      this._writeMerged(udb, r.id, merged);
+      modified++;
+    }
+    return { modifiedCount: modified };
   }
 
   delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
@@ -467,7 +483,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   // ---- Update merging ----
 
-  private applyUpdateToItem (item: SqliteStoredItem | null, updatedData: UpdateData): SqliteStoredItem {
+  protected applyUpdateToItem (item: SqliteStoredItem | null, updatedData: UpdateData): SqliteStoredItem {
     const merged: SqliteStoredItem = Object.assign({}, item);
     const $set: Record<string, unknown> = updatedData.$set || {};
     const $unset: Record<string, unknown> = updatedData.$unset || {};
@@ -556,7 +572,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     return cur;
   }
 
-  private _writeMerged (udb: UserDb, id: string, merged: SqliteStoredItem): void {
+  protected _writeMerged (udb: UserDb, id: string, merged: SqliteStoredItem): void {
     const row = this.itemToRow(Object.assign({}, merged, { id }));
     const cols: string[] = [];
     const vals: SqlParam[] = [];
@@ -621,22 +637,25 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   /** `updateIfNeededCallback` only ever receives non-null items — null rows
    *  are skipped before it is invoked (mirrors the PG base). */
   findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: TItem) => UpdateData | null, callback: Callback<{ count: number }>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
-      const orderBy = this.buildOrderBy(options);
-      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} ${orderBy}`.trim()).all(...params);
-      let updates = 0;
-      for (const r of rows) {
-        const item = this.rowToItem(r);
-        if (item == null) continue;
-        const updateQuery = updateIfNeededCallback(item);
-        if (updateQuery == null) continue;
-        const merged = this.applyUpdateToItem(item, updateQuery);
-        this._writeMerged(udb, r.id, merged);
-        updates++;
-      }
-      return { count: updates };
-    });
+    this._userDbAndWrite(userOrUserId, callback, (udb) => this._findAndUpdateIfNeededSync(udb, query, options, updateIfNeededCallback));
+  }
+
+  /** Synchronous core of `findAndUpdateIfNeeded`. See `_findOneAndUpdateSync`. */
+  protected _findAndUpdateIfNeededSync (udb: UserDb, query: Query, options: Options, updateIfNeededCallback: (item: TItem) => UpdateData | null): { count: number } {
+    const { sql: where, params } = this.buildWhere(query || {});
+    const orderBy = this.buildOrderBy(options);
+    const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} ${orderBy}`.trim()).all(...params);
+    let updates = 0;
+    for (const r of rows) {
+      const item = this.rowToItem(r);
+      if (item == null) continue;
+      const updateQuery = updateIfNeededCallback(item);
+      if (updateQuery == null) continue;
+      const merged = this.applyUpdateToItem(item, updateQuery);
+      this._writeMerged(udb, r.id, merged);
+      updates++;
+    }
+    return { count: updates };
   }
 
   // ---- Async / write plumbing ----
@@ -649,7 +668,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       .catch(callback);
   }
 
-  private _userDbAndWrite<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => T): void {
+  protected _userDbAndWrite<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => T): void {
     this.userDb(userOrUserId)
       .then(async (udb) => {
         try {
