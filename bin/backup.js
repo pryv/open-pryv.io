@@ -61,8 +61,9 @@ require('@pryv/boiler').init({
     // Initialize storage subsystems
     await initStorage();
 
+    let exitCode = 0;
     if (args.restore) {
-      await runRestore(args);
+      exitCode = await runRestore(args);
     } else if (args.output) {
       await runBackup(args);
     } else {
@@ -71,7 +72,7 @@ require('@pryv/boiler').init({
       process.exit(1);
     }
 
-    process.exit(0);
+    process.exit(exitCode);
   } catch (err) {
     console.error('Error:', err.message);
     if (process.env.DEBUG) console.error(err.stack);
@@ -208,6 +209,10 @@ async function runRestore (args) {
 
   await reader.close();
 
+  // Exit code from the verification step (0 = ok / not requested, 1 = a failure was
+  // rolled back, 2 = restored but could not be verified). Returned to the caller.
+  let verifyExitCode = 0;
+
   // Post-restore integrity verification
   if (args.verifyIntegrity && report.restored.length > 0) {
     console.log('\nVerifying integrity of restored data...');
@@ -216,12 +221,11 @@ async function runRestore (args) {
     await checker.init();
 
     const failedUsers = [];
+    const unverifiedUsers = [];
     for (const { userId, username } of report.restored) {
       const intReport = await checker.checkUser(userId);
       const errorCount = intReport.events.errors.length + intReport.accesses.errors.length;
-      if (intReport.ok) {
-        console.log(`  [OK] ${username} — events=${intReport.events.checked} accesses=${intReport.accesses.checked}`);
-      } else {
+      if (!intReport.ok) {
         console.log(`  [FAIL] ${username} — ${errorCount} integrity error(s)`);
         for (const err of intReport.events.errors.slice(0, 3)) {
           console.log(`    Event ${err.eventId}: ${err.error}`);
@@ -230,6 +234,14 @@ async function runRestore (args) {
           console.log(`    Access ${err.accessId}: ${err.error}`);
         }
         failedUsers.push({ userId, username, intReport });
+      } else if (!intReport.verified) {
+        // No errors, but at least one store was not actually checked (integrity
+        // inactive or store unavailable). A restore that verified nothing must
+        // NOT read as [OK].
+        console.log(`  [NOT VERIFIED] ${username} — events=${storeCheckDetail(intReport.events)} accesses=${storeCheckDetail(intReport.accesses)}`);
+        unverifiedUsers.push({ userId, username, intReport });
+      } else {
+        console.log(`  [OK] ${username} — events=${intReport.events.checked} accesses=${intReport.accesses.checked}`);
       }
     }
 
@@ -250,10 +262,29 @@ async function runRestore (args) {
       );
       console.log('\nRollback complete. Only users that passed integrity checks remain.');
     }
+
+    if (unverifiedUsers.length > 0) {
+      // Loud, unmissable: this restore was NOT verified. Not rolled back
+      // (rollback is for proven corruption, not for absence of proof).
+      console.log(`\nWARNING: ${unverifiedUsers.length} user(s) were NOT verified — restored data could not be`);
+      console.log('  confirmed (integrity inactive or store unavailable). This restore did NOT earn [OK]:');
+      for (const { username, userId } of unverifiedUsers) {
+        console.log(`    - ${username} (${userId})`);
+      }
+      report.unverified = unverifiedUsers.map(u => ({ userId: u.userId, username: u.username }));
+    }
+
+    // Precedence: any failure trumps; else any unverified user.
+    if (failedUsers.length > 0) verifyExitCode = 1;
+    else if (unverifiedUsers.length > 0) verifyExitCode = 2;
   }
 
-  // Post-restore cleanup
-  if (report.restored.length > 0) {
+  // Post-restore cleanup — when integrity verification was requested, only clean up
+  // the backup source on a fully green result (nothing failed AND nothing unverified);
+  // otherwise keep it, since for rolled-back or unverified users the backup may be the
+  // only remaining copy. Without --verify-integrity, behaviour is unchanged.
+  const verifyIncomplete = args.verifyIntegrity && verifyExitCode !== 0;
+  if (report.restored.length > 0 && !verifyIncomplete) {
     if (args.deleteOnSuccess) {
       fs.rmSync(args.restore, { recursive: true, force: true });
       console.log(`Backup deleted: ${args.restore}`);
@@ -262,6 +293,8 @@ async function runRestore (args) {
       fs.renameSync(args.restore, args.moveOnSuccess);
       console.log(`Backup moved to: ${args.moveOnSuccess}`);
     }
+  } else if (verifyIncomplete && (args.deleteOnSuccess || args.moveOnSuccess)) {
+    console.log('Backup kept: integrity verification incomplete or failed.');
   }
 
   // Print report
@@ -288,6 +321,24 @@ async function runRestore (args) {
       console.log(`    - ${u.username} (${u.userId})`);
     }
   }
+  if (report.unverified && report.unverified.length > 0) {
+    console.log(`  Not verified (integrity inactive or store unavailable): ${report.unverified.length} users`);
+    for (const u of report.unverified) {
+      console.log(`    - ${u.username} (${u.userId})`);
+    }
+  }
+
+  return verifyExitCode;
+}
+
+/**
+ * Human-readable per-store detail for a verification report line: the checked
+ * count when the store was actually verified, or why it was not.
+ */
+function storeCheckDetail (store) {
+  if (store.status === 'checked') return String(store.checked);
+  if (store.status === 'inactive') return 'not verified (integrity inactive)';
+  return 'not verified (store unavailable)';
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +517,10 @@ Restore:
   --skip-conflicts          Skip users with username/email conflicts
   --delete-on-success       Delete backup data after successful restore
   --move-on-success <path>  Move backup data after successful restore
-  --verify-integrity        Verify integrity hashes after restore; roll back on failure
+  --verify-integrity        Verify integrity hashes after restore. Roll back and
+                            exit 1 on failure; exit 2 if verification could not run
+                            (integrity inactive or store unavailable). On a non-green
+                            result the backup source is kept (never cleaned up).
   --private-key <pem>       Private key to decrypt a hybrid-encrypted backup
   --private-key-passphrase <s>  Passphrase protecting the private key (if any)
   --decrypt-passphrase <s>  Passphrase to decrypt a symmetric-encrypted backup
@@ -474,5 +528,10 @@ Restore:
 
 General:
   --help, -h                Show this help
+
+Restore exit codes (with --verify-integrity):
+  0   all restored users verified clean (or nothing to verify)
+  1   an integrity failure was found and rolled back
+  2   restored, but one or more users could not be verified
 `);
 }

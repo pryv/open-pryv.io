@@ -24,12 +24,14 @@ type Integrity = {
 };
 type EventLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
 type AccessLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
+type StoreCheckStatus = 'checked' | 'inactive' | 'unavailable';
 type Report = {
   userId: string;
   username?: string;
-  ok: boolean;
-  events: { checked: number; errors: Array<Record<string, unknown>> };
-  accesses: { checked: number; errors: Array<Record<string, unknown>> };
+  ok: boolean;          // no integrity errors found — says nothing about coverage
+  verified: boolean;    // every store was actually checked (both statuses 'checked')
+  events: { status: StoreCheckStatus; checked: number; errors: Array<Record<string, unknown>> };
+  accesses: { status: StoreCheckStatus; checked: number; errors: Array<Record<string, unknown>> };
 };
 
 class IntegrityCheck {
@@ -59,9 +61,10 @@ class IntegrityCheck {
   async checkUser (userId: string): Promise<Report> {
     const report: Report = {
       userId,
-      events: { checked: 0, errors: [] },
-      accesses: { checked: 0, errors: [] },
-      ok: true
+      events: { status: 'inactive', checked: 0, errors: [] },
+      accesses: { status: 'inactive', checked: 0, errors: [] },
+      ok: true,
+      verified: false
     };
 
     if (this.integrity!.events.isActive) {
@@ -73,6 +76,7 @@ class IntegrityCheck {
     }
 
     report.ok = report.events.errors.length === 0 && report.accesses.errors.length === 0;
+    report.verified = report.events.status === 'checked' && report.accesses.status === 'checked';
     return report;
   }
 
@@ -108,14 +112,21 @@ class IntegrityCheck {
     // resolves to a non-iterable result object, not a row array) and
     // silently skipped events on SQLite (no shared database handle).
     const eventsStore = this.storageLayer?.events;
-    if (!eventsStore || typeof eventsStore.exportAll !== 'function') return;
+    if (!eventsStore || typeof eventsStore.exportAll !== 'function') {
+      report.events.status = 'unavailable';
+      return;
+    }
 
     const events = await fromCallback((cb: (err: Error | null, items?: EventLike[]) => void) =>
       eventsStore.exportAll({ id: userId }, cb)
     ) as EventLike[];
 
-    if (!events) return;
+    if (!events) {
+      report.events.status = 'unavailable';
+      return;
+    }
 
+    report.events.status = 'checked';
     for (const event of events) {
       // Normalize _id -> id for MongoDB raw docs
       if (event._id != null && event.id == null) {
@@ -176,8 +187,12 @@ class IntegrityCheck {
       this.storageLayer!.accesses.exportAll(user, cb)
     ) as AccessLike[];
 
-    if (!accesses) return;
+    if (!accesses) {
+      report.accesses.status = 'unavailable';
+      return;
+    }
 
+    report.accesses.status = 'checked';
     for (const access of accesses) {
       // Normalize _id -> id for MongoDB raw docs
       if (access._id != null && access.id == null) {
@@ -219,7 +234,8 @@ export { IntegrityCheck };
  * @typedef {Object} IntegrityReport
  * @property {string} userId
  * @property {string} [username]
- * @property {boolean} ok
- * @property {{checked: number, errors: Array}} events
- * @property {{checked: number, errors: Array}} accesses
+ * @property {boolean} ok - no integrity errors were found (says nothing about coverage)
+ * @property {boolean} verified - every store was actually checked (both statuses 'checked')
+ * @property {{status: string, checked: number, errors: Array}} events
+ * @property {{status: string, checked: number, errors: Array}} accesses
  */

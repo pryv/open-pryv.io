@@ -30,6 +30,21 @@ outbound, with a legacy bridge that recovers the capability id from the revoke's
 back-channel access now carries `capabilityId` so these paths can correlate the
 relationship to its capability.
 
+## fix(backup): integrity verification no longer reports `[OK]` when it verified nothing
+
+`--verify-integrity` (and the standalone `bin/integrity-check.js`) derived its
+verdict solely from error counts, so a run that checked nothing — integrity
+inactive for a store, or the store unavailable — was reported identically to one
+that verified everything clean (`[OK] <user> — events=0 accesses=0`, exit 0). The
+integrity report now carries a per-store status (`checked` / `inactive` /
+`unavailable`) and a top-level `verified` flag, and both CLIs distinguish
+`[OK]` (verified clean) from `[NOT VERIFIED]` (nothing to compare against);
+`ok` keeps its error-free meaning. New exit codes: `1` an integrity failure was
+found (backup restore rolls it back), `2` restored/checked but could not be
+verified, `0` fully verified clean. A restore whose verification is not fully
+green now keeps its backup source (never runs `--delete/move-on-success`), and a
+`bin/backup.js` restore that rolled a user back now exits non-zero instead of 0.
+
 ## fix(storage): access integrity-preserving update/delete are now atomic
 
 The integrity-preserving `updateOne`/`delete` on the accesses store wrote the

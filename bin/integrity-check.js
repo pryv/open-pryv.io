@@ -64,10 +64,7 @@ require('@pryv/boiler').init({
     } else {
       log('Checking integrity for all users...');
       reports = await checker.checkAllUsers((userId, report) => {
-        const status = report.ok ? 'OK' : 'ERRORS';
-        const details = `events=${report.events.checked} accesses=${report.accesses.checked}`;
-        const errorCount = report.events.errors.length + report.accesses.errors.length;
-        log(`  [${status}] ${report.username || userId} — ${details}${errorCount > 0 ? ` (${errorCount} errors)` : ''}`);
+        log(`  ${userReportLine(report, userId)}`);
       });
     }
 
@@ -78,8 +75,10 @@ require('@pryv/boiler').init({
       printReport(reports);
     }
 
+    // Exit: 1 if any errors, else 2 if any user could not be verified, else 0.
     const hasErrors = reports.some(r => !r.ok);
-    process.exit(hasErrors ? 1 : 0);
+    const anyUnverified = reports.some(r => !r.verified);
+    process.exit(hasErrors ? 1 : (anyUnverified ? 2 : 0));
   } catch (err) {
     console.error('Error:', err.message);
     if (process.env.DEBUG) console.error(err.stack);
@@ -87,18 +86,43 @@ require('@pryv/boiler').init({
   }
 })();
 
+/**
+ * Per-user one-line status. [OK] only when everything was actually checked and
+ * clean; [NOT VERIFIED] when a store was not checked (integrity inactive or store
+ * unavailable) but no errors; [ERRORS] on integrity mismatches.
+ */
+function userReportLine (report, userId) {
+  const name = report.username || userId;
+  const detail = `events=${storeCheckDetail(report.events)} accesses=${storeCheckDetail(report.accesses)}`;
+  if (!report.ok) {
+    const errorCount = report.events.errors.length + report.accesses.errors.length;
+    return `[ERRORS] ${name} — ${detail} (${errorCount} errors)`;
+  }
+  if (!report.verified) return `[NOT VERIFIED] ${name} — ${detail}`;
+  return `[OK] ${name} — ${detail}`;
+}
+
+/** Checked count when the store was verified, or why it was not. */
+function storeCheckDetail (store) {
+  if (store.status === 'checked') return String(store.checked);
+  if (store.status === 'inactive') return 'not verified (integrity inactive)';
+  return 'not verified (store unavailable)';
+}
+
 function printReport (reports) {
   console.log('\n--- Integrity Check Report ---\n');
 
   let totalEvents = 0;
   let totalAccesses = 0;
   let totalErrors = 0;
+  let unverified = 0;
 
   for (const r of reports) {
     totalEvents += r.events.checked;
     totalAccesses += r.accesses.checked;
     const errors = r.events.errors.length + r.accesses.errors.length;
     totalErrors += errors;
+    if (!r.verified) unverified++;
 
     if (errors > 0) {
       console.log(`User: ${r.username || r.userId} — FAILED`);
@@ -118,7 +142,11 @@ function printReport (reports) {
   console.log(`\nSummary: ${reports.length} users, ${totalEvents} events, ${totalAccesses} accesses checked`);
   if (totalErrors > 0) {
     console.log(`  ${totalErrors} integrity error(s) found`);
-  } else {
+  }
+  if (unverified > 0) {
+    console.log(`  ${unverified} of ${reports.length} user(s) NOT verified (integrity inactive or store unavailable)`);
+  }
+  if (totalErrors === 0 && unverified === 0) {
     console.log('  All integrity checks passed');
   }
 }
@@ -148,7 +176,8 @@ Options:
   --help, -h            Show this help
 
 Exit codes:
-  0   All integrity checks passed
+  0   All users verified and passed
   1   One or more integrity errors found
+  2   One or more users could not be verified (integrity inactive or store unavailable)
 `);
 }
