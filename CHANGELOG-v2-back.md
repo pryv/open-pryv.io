@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## fix(storage): access integrity-preserving update/delete are now atomic
+
+The integrity-preserving `updateOne`/`delete` on the accesses store wrote the
+row hash-less in one statement and restored the hash in a second, as two
+separate autocommitted round-trips. A concurrent full-store integrity scan on
+another connection that landed between the statements observed the row without
+its integrity hash and reported "access has no integrity property" — a
+load-dependent false alarm (e.g. a back-channel data-grant update racing a
+scan). Both statements now run inside a single transaction per engine
+(PostgreSQL and SQLite), so no other connection can observe the intermediate
+hash-less state, and a failure rolls back instead of leaving the row hash-less.
+The accesses store also now requires its integrity reference at construction
+(no silent inert fallback).
+
 ## fix(reconcile-user-cores): report names that cannot be healed due to a cross-core conflict
 
 `reconcileUserCoreMap` now returns a `conflicts` list naming each local user or
