@@ -231,6 +231,17 @@ export function handleAccept (deps: AcceptDeps) {
           error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
         });
       }
+      // The data holder (peer) refused the consent accept — e.g. the open-link
+      // capability already recorded this accepter, or a consumed / invalidated
+      // link. Client-correctable, not a server fault → 400 carrying the peer's
+      // machine-readable reason so the client can distinguish the cases.
+      if ((err as { code?: string } | null)?.code === 'cmc-accept-rejected') {
+        const cmcErrorId = (err as { cmcErrorId?: string }).cmcErrorId ?? 'cmc-accept-rejected';
+        return sendJson(res, 400, {
+          error: 'invalid_grant',
+          error_description: 'consent accept rejected: ' + cmcErrorId,
+        });
+      }
       logServerError('accept: createAccess failed', err);
       return sendJson(res, 500, {
         error: 'server_error',

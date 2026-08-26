@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## fix(cmc): clear a withdrawn subject from an open-link capability on revocation
+
+An open-link capability records each accepter in
+`clientData.cmc.capability.acceptedBy` to dedup re-clicks. Nothing cleared that
+record when the relationship was later revoked, so a withdrawn subject stayed
+listed and could not re-consent through the same link. The revoke paths now
+clear the matching accepter entry (only that one — co-accepters are preserved,
+and the capability `state` is never touched): the requester's local revoke
+(`handleRevoke`), a raw `accesses.delete` of the relationship (the delete
+post-hook, which gains an optional `mall` dep), and a new `handleIncomingRevoke`
+wired into the dispatch middleware for the peer-delivered case (local-only, no
+outbound, with a legacy bridge that recovers the capability id from the revoke's
+`offerEventId` for relationships minted before the id was stamped). The
+back-channel access now carries `capabilityId` so these paths can correlate the
+relationship to its capability.
+
 ## fix(storage): access integrity-preserving update/delete are now atomic
 
 The integrity-preserving `updateOne`/`delete` on the accesses store wrote the

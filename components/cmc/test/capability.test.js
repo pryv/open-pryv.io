@@ -19,6 +19,8 @@ const {
   gcCapability,
   findCapabilityAccess,
   markCapabilityConsumed,
+  recordAccepter,
+  clearAccepter,
   buildApiEndpoint,
   DEFAULT_TTL_SECONDS,
 } = require('../src/capability.ts');
@@ -391,6 +393,128 @@ describe('[CMCCAP] cmc/capability', () => {
       });
       assert.equal(result.ok, false);
       assert.equal(result.reason, 'capability-access-not-found');
+    });
+
+    // ---- clearAccepter: the inverse of recordAccepter, so a withdrawn
+    // subject can re-consent through the same open link. ----
+    async function mintOpenLinkWithAccepters (mall, capId, accepters) {
+      const trigger = {
+        ...VALID_REQUEST_TRIGGER,
+        content: { ...VALID_REQUEST_TRIGGER.content, capability: { mode: 'open-link' } },
+      };
+      await mintCapability({
+        userId: 'u1',
+        triggerEvent: trigger,
+        deps: { mall, idGen: () => capId, now: () => 5000 },
+      });
+      for (const a of accepters) {
+        await recordAccepter({ userId: 'u1', capabilityId: capId, accepter: a, deps: { mall, now: () => 6000 } });
+      }
+    }
+    function acceptedByOf (mall, capId) {
+      for (const acc of mall.accessesById.values()) {
+        if (acc.clientData?.cmc?.capabilityId === capId) return acc.clientData.cmc.capability.acceptedBy || [];
+      }
+      return null;
+    }
+
+    it('[CC21] clearAccepter removes exactly the matching entry, co-accepters survive verbatim', async () => {
+      const mall = fakeMall();
+      await mintOpenLinkWithAccepters(mall, 'cap-clr-1', [
+        { username: 'alice', host: 'a.example.com' },
+        { username: 'bob', host: 'b.example.com' },
+      ]);
+      const res = await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'cap-clr-1',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.equal(res.cleared, true);
+      const list = acceptedByOf(mall, 'cap-clr-1');
+      assert.equal(list.length, 1);
+      assert.equal(list[0].username, 'bob');
+      assert.equal(list[0].host, 'b.example.com');
+    });
+
+    it('[CC22] clearAccepter matches on the normalized key (case + host slug)', async () => {
+      const mall = fakeMall();
+      await mintOpenLinkWithAccepters(mall, 'cap-clr-2', [{ username: 'Alice', host: 'A.Example.com' }]);
+      const res = await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'cap-clr-2',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      assert.equal(res.cleared, true);
+      assert.equal(acceptedByOf(mall, 'cap-clr-2').length, 0);
+    });
+
+    it('[CC23] clearAccepter is a no-op (double-revoke safe) when the entry is absent', async () => {
+      const mall = fakeMall();
+      await mintOpenLinkWithAccepters(mall, 'cap-clr-3', [{ username: 'bob', host: 'b.example.com' }]);
+      const updatesBefore = mall.calls.accessesUpdated.length;
+      const res = await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'cap-clr-3',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.equal(res.cleared, false);
+      assert.equal(mall.calls.accessesUpdated.length, updatesBefore, 'no write when nothing to remove');
+    });
+
+    it('[CC24] clearAccepter is a no-op success when the capability is gone', async () => {
+      const mall = fakeMall();
+      const res = await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'never-existed',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.equal(res.cleared, false);
+    });
+
+    it('[CC25] clearAccepter never touches a single-use link (spent by design)', async () => {
+      const mall = fakeMall();
+      // single-use mint, then force an acceptedBy entry onto it directly.
+      await mintCapability({
+        userId: 'u1',
+        triggerEvent: VALID_REQUEST_TRIGGER,
+        deps: { mall, idGen: () => 'cap-clr-5', now: () => 5000 },
+      });
+      const acc = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-5');
+      acc.clientData.cmc.capability.acceptedBy = [{ username: 'alice', host: 'a.example.com', acceptedAt: 6000 }];
+      const updatesBefore = mall.calls.accessesUpdated.length;
+      const res = await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'cap-clr-5',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.equal(res.cleared, false);
+      assert.equal(mall.calls.accessesUpdated.length, updatesBefore, 'single-use must not be rewritten');
+    });
+
+    it('[CC26] clearAccepter leaves state + stateChangedAt untouched', async () => {
+      const mall = fakeMall();
+      await mintOpenLinkWithAccepters(mall, 'cap-clr-6', [{ username: 'alice', host: 'a.example.com' }]);
+      const acc = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-6');
+      const stateBefore = acc.clientData.cmc.capability.state;
+      const changedAtBefore = acc.clientData.cmc.capability.stateChangedAt;
+      await clearAccepter({
+        userId: 'u1',
+        capabilityId: 'cap-clr-6',
+        accepter: { username: 'alice', host: 'a.example.com' },
+        deps: { mall },
+      });
+      const after = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-6');
+      assert.equal(after.clientData.cmc.capability.state, stateBefore);
+      assert.equal(after.clientData.cmc.capability.stateChangedAt, changedAtBefore);
     });
   });
 });

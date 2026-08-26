@@ -221,4 +221,62 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(results[0].attempted, true);
     assert.equal(results[0].peerNotified, false);
   });
+
+  // ---- local acceptedBy clearing (optional mall dep) ----
+  function fakeMallWithCapability (capId, acceptedBy) {
+    const accessesById = new Map();
+    const calls = { accessesUpdated: [] };
+    accessesById.set('cap-acc', {
+      id: 'cap-acc',
+      clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
+    });
+    return {
+      calls,
+      accessesById,
+      accesses: {
+        async get () { return [...accessesById.values()]; },
+        async update (userId, params) {
+          const ex = accessesById.get(params.id);
+          const up = { ...ex, ...(params.update || {}) };
+          accessesById.set(params.id, up);
+          calls.accessesUpdated.push({ id: params.id, update: params.update });
+          return up;
+        },
+      },
+    };
+  }
+  const REQUESTER_SIDE_WITH_CAP = {
+    id: 'acc-back-channel-cap',
+    type: 'shared',
+    clientData: {
+      cmc: {
+        role: 'counterparty',
+        appCode: 'my-app',
+        capabilityId: 'cap-dh',
+        counterparty: { username: 'bob', host: 'peer.example.org', apiEndpoint: 'https://peer-tok@peer.example.org/' },
+      },
+    },
+  };
+
+  it('[DH12] with a mall dep, deleting a stamped relationship clears the subject from the capability acceptedBy', async () => {
+    const { fetch } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithCapability('cap-dh', [
+      { username: 'bob', host: 'peer.example.org', acceptedAt: 6000 },
+      { username: 'carol', host: 'peer.example.org', acceptedAt: 6000 },
+    ]);
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    await hook('u1', [REQUESTER_SIDE_WITH_CAP]);
+    const cap = mall.accessesById.get('cap-acc');
+    const list = cap.clientData.cmc.capability.acceptedBy;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].username, 'carol', 'only the withdrawing subject is cleared; co-accepter survives');
+  });
+
+  it('[DH13] a deleted relationship WITHOUT capabilityId does not clear anything', async () => {
+    const { fetch } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithCapability('cap-dh', [{ username: 'bob', host: 'peer.example.org', acceptedAt: 6000 }]);
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    await hook('u1', [REQUESTER_SIDE_ACCESS]); // no capabilityId on this access
+    assert.equal(mall.calls.accessesUpdated.length, 0);
+  });
 });

@@ -227,6 +227,10 @@ async function handleIncomingAccept (params: {
   // the accepter side (whose data-grant access carries the same
   // field via buildDataGrantPayload). Absent / null → permissive.
   const negotiatedFeatures: Record<string, unknown> | null = ((acceptEvent?.content as { features?: Record<string, unknown> | null } | undefined)?.features ?? null) as Record<string, unknown> | null;
+  // The open-link capability this accept consumed. Stamped on the back-channel
+  // access so a later revocation can locate the capability and clear the
+  // subject's acceptedBy entry; also used below to consume/enrich the mirror.
+  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
   const accessParams = {
     type: 'shared',
     name: accessName,
@@ -241,6 +245,10 @@ async function handleIncomingAccept (params: {
         appCode,
         // Names THIS relationship on both accounts — see relationshipKey.ts.
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
+        // Correlate back to the open-link capability so a later revocation can
+        // clear this subject's acceptedBy entry. null for legacy accepters
+        // (pre-stamp); heal-in-place rewrites clientData so it self-refreshes.
+        capabilityId: typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0 ? capabilityIdToConsume : null,
         features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
@@ -347,7 +355,6 @@ async function handleIncomingAccept (params: {
   // can read `clientData.cmc.requestEventId` (which is the original
   // invite trigger event id from `consent/request-cmc` — the one the
   // doctor's app uses with `cmc.revokeRelationship({inviteEventId})`).
-  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
   let capabilityAccess: { id?: string; token?: string; [k: string]: unknown } | null = null;
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {

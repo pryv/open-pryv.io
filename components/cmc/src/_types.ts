@@ -64,7 +64,7 @@ export type CmcClientData = {
   backChannelApiEndpoint?: string;
   capability?: { mode?: string; [k: string]: unknown };
   kind?: string;
-  capabilityId?: string;
+  capabilityId?: string | null;
   requestEventId?: string | null;
   singleUse?: boolean;
   // Stamped on data-grant accesses at build time (acceptOrchestration.

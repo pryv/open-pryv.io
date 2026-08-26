@@ -308,7 +308,30 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
           const content = trigger?.event?.content ?? {};
           if (content.status === 'failed') {
-            const failure = content.failure as { reason?: unknown } | undefined;
+            const failure = content.failure as { reason?: unknown; detail?: unknown } | undefined;
+            // A peer 4xx rejection (the capability already recorded this
+            // accepter, or a consumed / invalidated link) is a
+            // client-correctable condition, not a server fault. Surface it as a
+            // typed error so the OAuth2 accept route returns a 400 carrying the
+            // real reason instead of a bare 500. Other failure reasons (e.g. a
+            // delivery timeout) keep the generic throw → 500.
+            if (failure?.reason === 'cmc-handler-delivery-rejected') {
+              // The peer's specific CMC reason (e.g. cmc-capability-invalidated,
+              // cmc-capability-already-accepted-by-you) rides in error.data.id;
+              // error.id is only the generic Pryv error class ('invalid-operation').
+              // Prefer the specific id, then the class, then the delivery reason.
+              const errObj = (failure?.detail as { body?: { error?: { id?: unknown; data?: { id?: unknown } } } } | undefined)?.body?.error;
+              const peerErrorId =
+                typeof errObj?.data?.id === 'string'
+                  ? errObj.data.id
+                  : typeof errObj?.id === 'string'
+                    ? errObj.id
+                    : String(failure.reason);
+              const e = new Error('oauth2.createAccess: consent accept rejected by peer: ' + peerErrorId) as Error & { code?: string; cmcErrorId?: string };
+              e.code = 'cmc-accept-rejected';
+              e.cmcErrorId = peerErrorId;
+              throw e;
+            }
             throw new Error('oauth2.createAccess: consent accept failed' +
               (failure?.reason != null ? ': ' + failure.reason : ''));
           }

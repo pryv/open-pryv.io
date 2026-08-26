@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### OAuth2 accept: a peer-rejected consent accept now returns 400, not 500
+
+When the data holder rejects the consent accept during the OAuth2 authorize
+flow (for example the shareable link already recorded this accepter, or a
+single-use link was already consumed), the `/oauth2/accept` endpoint now returns
+`400 { error: 'invalid_grant', error_description: 'consent accept rejected: <id>' }`
+carrying the peer's machine-readable reason (a `cmc-capability-*` id), instead of
+a bare `500 server_error`. Delivery timeouts and other genuine server faults
+still return 500.
+
+### Consent withdrawal no longer blocks re-consent through the same shareable link
+
+A subject who withdrew consent for a relationship established through an open
+(multi-use) shareable link was left recorded as an accepter of that link, so a
+later attempt to re-consent through the same link was refused. Withdrawal now
+clears that record, so re-consent through the same link works again. Consumed
+single-use links are unaffected (they stay spent by design).
+
 ### Email verification now ships OFF by default (beta) — opt in explicitly
 
 ⚠ **Read this if your configuration does not set
