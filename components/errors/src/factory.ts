@@ -32,6 +32,7 @@ interface ErrorFactory {
   staleResource: (resourceType: string, data?: Record<string, unknown>) => APIErrorT;
   missingHeader: (headerName: string, status?: number) => APIErrorT;
   tooManyResults: (limit: number) => APIErrorT;
+  payloadTooLarge: (message: string, data?: unknown) => APIErrorT;
   unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
   unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
   unknownResource: (resourceType?: string, id?: string, innerError?: Error) => APIErrorT;
@@ -171,6 +172,13 @@ factory.tooManyResults = function (limit: number) {
         limit +
         '. Directly calling ' +
         'the API method (i.e. not batching calls), narrowing request scope or paging can help.', { data: { limit }, httpStatus: 413 });
+};
+
+factory.payloadTooLarge = function (message: string, data?: unknown) {
+  return new APIError(ErrorIds.PayloadTooLarge, message, {
+    httpStatus: 413,
+    data
+  });
 };
 
 factory.unexpectedError = function (sourceError: unknown, message?: string) {

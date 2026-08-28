@@ -43,6 +43,10 @@ const ErrorIds = {
    */
   TooManyResults: 'too-many-results',
   /**
+   * Request body / uploaded attachment exceeds the configured size limit.
+   */
+  PayloadTooLarge: 'payload-too-large',
+  /**
    * Used for removed API methods
    */
   Gone: 'removed-method',

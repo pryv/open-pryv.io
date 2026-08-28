@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Attachment uploads are now bounded by `uploads.maxSizeMb` (413 on overflow)
+
+`uploads.maxSizeMb` previously bounded only JSON request bodies; multipart
+attachment parts were unbounded at the application level, so a deployment
+without a size-limiting reverse proxy in front accepted attachments of arbitrary
+size. The configured limit now applies to the multipart path as well: both the
+uploaded file part and the non-file (JSON) part are capped at `uploads.maxSizeMb`
+(the latter previously fell under multer's silent 1 MB default). Previously an
+oversized file part was accepted outright and an oversized multipart JSON part
+surfaced as an opaque `500`; both now return a readable
+`413 { error: { id: 'payload-too-large' } }` carrying `data.limitMb`.
+
+**Operator note:** a deployment that was relying on unbounded attachment uploads
+(over 50 MB, no proxy limit) will now receive `413` until `uploads.maxSizeMb` is
+raised. Fixes #125.
+
 ### Email verification now ships OFF by default (beta) — opt in explicitly
 
 ⚠ **Read this if your configuration does not set
