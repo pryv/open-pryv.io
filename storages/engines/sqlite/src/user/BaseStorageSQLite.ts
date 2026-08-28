@@ -50,6 +50,24 @@ function colSql (name: string): string {
 }
 
 /**
+ * Decorate a better-sqlite3 write error with the same duplicate-detection
+ * contract the PostgreSQL engine sets (`isDuplicate` + `isDuplicateIndex`), so
+ * a consumer can map a primary-key / unique violation to `item-already-exists`
+ * uniformly across engines instead of leaking the raw engine error. Mirrors
+ * `DatabasePG.handleDuplicateError`; `AccessesSQLite` already shims the same
+ * shape for its JS-level pre-checks.
+ */
+function decorateSQLiteDuplicateError (err: unknown): void {
+  const e = err as { code?: string, message?: string, isDuplicate?: boolean, isDuplicateIndex?: (key: string) => boolean };
+  const isDup = e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || e.code === 'SQLITE_CONSTRAINT_UNIQUE';
+  e.isDuplicate = isDup;
+  e.isDuplicateIndex = (key: string): boolean => {
+    if (!isDup || typeof e.message !== 'string') return false;
+    return e.message.toLowerCase().includes(key.toLowerCase());
+  };
+}
+
+/**
  * SQLite implementation of the engine-agnostic UserStorage base.
  *
  * Storage shape: each user has their own SQLite file (managed by
@@ -331,7 +349,11 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 
   insertOne (userOrUserId: UserOrId, item: Partial<TItem>, callback: Callback<TItem | null>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => {
+    const duplicateAwareCallback: Callback<TItem | null> = (err, result) => {
+      if (err != null) decorateSQLiteDuplicateError(err);
+      callback(err, result);
+    };
+    this._userDbAndWrite(userOrUserId, duplicateAwareCallback, (udb) => {
       const prepared = this.applyDefaults(item);
       const { id, head_id, deleted, data } = this.itemToRow(prepared);
       const cols: string[] = ['id'];

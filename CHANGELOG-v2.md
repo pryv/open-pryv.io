@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Concurrent `streams.create` of the same id returns `item-already-exists`, not a raw DB error
+
+When two clients raced to create the same stream id, the loser could receive a
+`500 unexpected-error` leaking the storage engine's unique-constraint violation
+(e.g. `duplicate key value violates unique constraint "streams_pkey"`) instead of
+the documented `item-already-exists`. The database constraint is now mapped to a
+`409 item-already-exists` on the concurrent path too, identically to a sequential
+duplicate create, so clients no longer have to match on an unstable database
+message string. Fixes #126.
+
 ### Attachment uploads are now bounded by `uploads.maxSizeMb` (413 on overflow)
 
 `uploads.maxSizeMb` previously bounded only JSON request bodies; multipart

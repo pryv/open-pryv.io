@@ -279,8 +279,27 @@ class MallUserStreams implements MallStreams {
     if (siblingNames.includes(streamForStore.name)) {
       throw errorFactory.itemAlreadyExists('stream', { name: streamData.name });
     }
-    // 3 - Insert stream
-    const res = await streamsStore.create(userId, streamForStore);
+    // 3 - Insert stream. The pre-checks above are a fast path only: two
+    // concurrent creates can both pass them and then race on the insert, where
+    // the store's unique constraint is the real serialization point. Map that
+    // duplicate to the same item-already-exists the pre-checks return, rather
+    // than letting the raw engine error surface as an unexpected-error.
+    let res: StreamLike;
+    try {
+      res = await streamsStore.create(userId, streamForStore);
+    } catch (err) {
+      const dup = err as { isDuplicate?: boolean, isDuplicateIndex?: (key: string) => boolean };
+      if (dup.isDuplicate === true) {
+        // A sibling-name collision reports the conflicting name; a primary-key
+        // (or id-shaped path) collision reports the conflicting id. This mirrors
+        // the two pre-check errors above.
+        if (typeof dup.isDuplicateIndex === 'function' && dup.isDuplicateIndex('sibling')) {
+          throw errorFactory.itemAlreadyExists('stream', { name: streamData.name }, err as Error);
+        }
+        throw errorFactory.itemAlreadyExists('stream', { id: streamData.id ?? storeDataUtils.getFullItemId(storeId, streamForStore.id) }, err as Error);
+      }
+      throw err;
+    }
 
     if (storeId !== storeDataUtils.LocalStoreId) {
       // add Prefix

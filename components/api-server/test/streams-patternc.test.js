@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, notifications */
 
 const ErrorIds = require('errors').ErrorIds;
+const { getMall } = require('mall');
 
 describe('[STRP] streams (Pattern C)', function () {
   let username, token, basePath;
@@ -420,6 +421,89 @@ describe('[STRP] streams (Pattern C)', function () {
 
       assert.strictEqual(res.status, 409);
       assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
+    });
+  });
+
+  // A concurrent streams.create that loses the race between the existence
+  // pre-check and the insert must return item-already-exists (409), not leak
+  // the store's raw unique-constraint violation as an unexpected-error (500).
+  describe('[STDU] concurrent create (same id)', function () {
+    it('[DUPC1] must map a duplicate insert to item-already-exists even when the pre-check passed', async function () {
+      const dupId = 'dup-backstop-' + cuid();
+
+      // seed the stream normally
+      const seed = await coreRequest
+        .post(basePath)
+        .set('Authorization', token)
+        .send({ id: dupId, name: 'Backstop Seed' });
+      assert.strictEqual(seed.status, 201);
+
+      // force the pre-check to miss (simulate the racing peer inserting between
+      // our getOne and our create), so only the store constraint stops us
+      const mall = await getMall();
+      const localStore = mall.streams.streamsStores.get('local');
+      const originalGetOne = localStore.getOne;
+      localStore.getOne = async () => null;
+      try {
+        let thrown = null;
+        try {
+          await mall.streams.create(username, { id: dupId, name: 'Backstop Racer', parentId: null });
+        } catch (err) {
+          thrown = err;
+        }
+        assert.ok(thrown != null, 'create must reject on the duplicate id');
+        assert.strictEqual(thrown.id, ErrorIds.ItemAlreadyExists);
+        assert.strictEqual(thrown.httpStatus, 409);
+        assert.strictEqual(thrown.data.id, dupId);
+        assert.ok(!/unexpected/i.test(thrown.message), 'must not surface as an unexpected-error');
+      } finally {
+        localStore.getOne = originalGetOne;
+      }
+    });
+
+    it('[DUPC2] concurrent HTTP creates of the same id yield exactly one 201 and the rest 409, never 5xx', async function () {
+      const dupId = 'dup-http-' + cuid();
+      const attempts = 5;
+      const results = await Promise.allSettled(
+        Array.from({ length: attempts }, (_, i) =>
+          coreRequest
+            .post(basePath)
+            .set('Authorization', token)
+            .send({ id: dupId, name: 'HTTP Racer ' + i })));
+
+      const statuses = results.map((r) => r.status === 'fulfilled' ? r.value.status : 599);
+      const created = statuses.filter((s) => s === 201);
+      const conflicts = statuses.filter((s) => s === 409);
+      const serverErrors = statuses.filter((s) => s >= 500);
+
+      assert.strictEqual(created.length, 1, 'exactly one create should win: ' + statuses.join(','));
+      assert.strictEqual(conflicts.length, attempts - 1, 'all losers should be 409: ' + statuses.join(','));
+      assert.strictEqual(serverErrors.length, 0, 'no 5xx allowed: ' + statuses.join(','));
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.status === 409) {
+          assert.strictEqual(r.value.body.error.id, ErrorIds.ItemAlreadyExists);
+        }
+      }
+    });
+
+    it('[DUPC3] the local store raises the cross-engine duplicate contract on a second insert', async function () {
+      const dupId = 'dup-contract-' + cuid();
+      const seed = await coreRequest
+        .post(basePath)
+        .set('Authorization', token)
+        .send({ id: dupId, name: 'Contract Seed' });
+      assert.strictEqual(seed.status, 201);
+
+      const mall = await getMall();
+      const localStore = mall.streams.streamsStores.get('local');
+      let thrown = null;
+      try {
+        await localStore.create(username, { id: dupId, name: 'Contract Racer', parentId: null });
+      } catch (err) {
+        thrown = err;
+      }
+      assert.ok(thrown != null, 'second store.create must reject');
+      assert.strictEqual(thrown.isDuplicate, true, 'engine must set the isDuplicate contract flag');
     });
   });
 });
