@@ -97,6 +97,7 @@ The new event's data: see [Event](http://pryv.github.io/reference/#data-structur
 | ------ | --------------------- | ------------------------------------------------------------ |
 | 400    | `"invalid-operation"` | The referenced stream is in the trash, and we prevent the recording of new events into trashed streams. |
 | 400    | `"periods-overlap"`   | Only in `singleActivity` streams: the new event overlaps existing period events. The overlapped events' ids are listed as an array in the error's `data.overlappedIds`. |
+| 413    | `"payload-too-large"` | An uploaded attachment (or the multipart JSON part) exceeds the configured maximum size (`uploads.maxSizeMb`). The limit in megabytes is returned in the error's `data.limitMb`. |
 
 ## High Frequency Series
 
