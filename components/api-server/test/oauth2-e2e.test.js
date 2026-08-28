@@ -884,6 +884,190 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     });
   });
 
+  describe('[OAUTH-E2E-RECONSENT] withdrawn consent re-authorizes; peer-refused accept is a 400 not a 500', function () {
+    // [OE25] drives a full OAuth2 authorize+accept, then waits for the
+    // back-channel handshake (several chained fire-and-forget hops) before it
+    // can revoke and re-authorize. Under full-matrix CPU contention that chain
+    // has been seen to take well over a minute, so the budget is deliberately
+    // large; the body completes in ~4s isolated.
+    this.timeout(240000);
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // Publish a dedicated open-link offer + register a fresh client, so each
+    // case is hermetic (re-accepting a link the same user already holds is
+    // refused until they withdraw — a shared offer would cross-contaminate).
+    async function publishFreshOffer () {
+      const offerName = 'reco-' + cuid().slice(-8);
+      const res = await coreRequest.post('/' + appUsername + '/events')
+        .set('Authorization', appToken)
+        .send({
+          streamIds: [':_cmc:apps:e2e-oauth'],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            capability: { mode: 'open-link' },
+            request: {
+              title: { en: 'Reconsent offer' },
+              description: { en: 'withdraw-then-re-consent e2e' },
+              consent: { en: 'I agree.' },
+              permissions: [{ streamId: 'health', level: 'read' }],
+              allowUserChoice: true,
+            },
+            requesterMeta: { displayName: 'Reconsent E2E', appId: 'oauth-e2e' },
+          },
+        });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      const capabilityUrl = res.body.event.content.capabilityUrl;
+      const capabilityId = res.body.event.content.capabilityId;
+      const cid = 'app-reco-' + cuid();
+      await storage.setClient(require('storages').platformDB, {
+        clientId: cid,
+        redirectUris: [REDIRECT_URI],
+        scope: ['cmc:' + offerName],
+        cmcOffers: { [offerName]: { capabilityUrl } },
+        grantTypes: ['authorization_code'],
+        clientName: 'Reconsent E2E App',
+        updatedAt: Date.now(),
+      });
+      return { offerName, capabilityUrl, capabilityId, cid };
+    }
+
+    async function authorizeAndAccept (cid, offerName) {
+      const { challenge } = pkce();
+      const authRes = await coreRequest.get('/oauth2/authorize').query({
+        client_id: cid,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'code',
+        state: 'csrf-' + cuid(),
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        scope: 'cmc:' + offerName,
+      });
+      assert.equal(authRes.status, 302, 'GET /oauth2/authorize: ' + describeRes(authRes));
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
+      return await coreRequest.post('/oauth2/authorize/accept').send({
+        state: signedState,
+        username,
+        userToken: personalToken,
+        grantedPermissions: [{ streamId: 'health', level: 'read' }],
+      });
+    }
+
+    async function appCapabilityState (capabilityId) {
+      const res = await coreRequest.get('/' + appUsername + '/accesses').set('Authorization', appToken);
+      const cap = (res.body.accesses || []).find((a) =>
+        a?.clientData?.cmc?.kind === 'capability' && a?.clientData?.cmc?.capabilityId === capabilityId);
+      return cap?.clientData?.cmc?.capability;
+    }
+
+    async function pollAppAcceptedBy (capabilityId, shouldContain, label) {
+      const t0 = Date.now();
+      let names = [];
+      while (Date.now() - t0 < 60000) {
+        const cap = await appCapabilityState(capabilityId);
+        names = (cap?.acceptedBy || []).map((e) => e.username);
+        if (names.includes(username) === shouldContain) return;
+        await sleep(150);
+      }
+      throw new Error((label || '') + ' timeout: app acceptedBy contains(' + username +
+        ')=' + shouldContain + '; saw ' + JSON.stringify(names));
+    }
+
+    it('[OE24] a peer-refused accept (invalidated link) is surfaced as 400 invalid_grant, never a 500', async function () {
+      const o = await publishFreshOffer();
+
+      // The app invalidates its own open-link. The offer stays resolvable at
+      // /authorize (offerResolver tolerates it); the refusal surfaces when the
+      // CMC accept is delivered to the app's response stream.
+      const invRes = await coreRequest.post('/' + appUsername + '/events')
+        .set('Authorization', appToken)
+        .send({
+          streamIds: [':_cmc:apps:e2e-oauth'],
+          type: 'consent/invalidate-link-cmc',
+          content: { capabilityId: o.capabilityId },
+        });
+      assert.equal(invRes.status, 201, JSON.stringify(invRes.body));
+
+      const t0 = Date.now();
+      let state;
+      while (Date.now() - t0 < 10000) {
+        state = (await appCapabilityState(o.capabilityId))?.state;
+        if (state === 'invalidated') break;
+        await sleep(100);
+      }
+      assert.equal(state, 'invalidated', 'the app link must be invalidated before the accept');
+
+      const acceptRes = await authorizeAndAccept(o.cid, o.offerName);
+      // The load-bearing fix: a peer refusal is a client-correctable 400, not a
+      // masked 500 server fault.
+      assert.notEqual(acceptRes.status, 500,
+        'a peer consent refusal must NOT surface as a 500: ' + describeRes(acceptRes));
+      assert.equal(acceptRes.status, 400, describeRes(acceptRes));
+      assert.equal(acceptRes.body.error, 'invalid_grant');
+      // The 400 must carry the peer's SPECIFIC reason (error.data.id), not the
+      // generic Pryv error class ('invalid-operation'). An invalidated link
+      // rejects with cmc-capability-invalidated.
+      assert.match(acceptRes.body.error_description, /cmc-capability-invalidated/,
+        'must carry the specific cmc reason, not the generic error class: ' + describeRes(acceptRes));
+    });
+
+    it('[OE25] withdrawing the consent lets the SAME offer re-authorize', async function () {
+      const o = await publishFreshOffer();
+
+      // Snapshot the user's accesses so we can isolate THIS offer's data-grant.
+      const before = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      const beforeIds = new Set((before.body.accesses || []).map((a) => a.id));
+
+      const firstAccept = await authorizeAndAccept(o.cid, o.offerName);
+      assert.equal(firstAccept.status, 200, 'first /accept: ' + describeRes(firstAccept));
+      await pollAppAcceptedBy(o.capabilityId, true, 'OE25 first accept recorded');
+
+      // Wait for THIS offer's fresh data-grant to gain the app's back-channel
+      // endpoint (so the withdrawal notification can reach the app).
+      // The back-channel handshake sits several chained fire-and-forget hops
+      // behind the accept; under full-matrix load it has been seen to take tens
+      // of seconds, so the deadline is deliberately generous (matches the
+      // handshake harness's 4x back-channel wait) — it returns as soon as the
+      // endpoint appears and only spends time on a genuinely slow box.
+      let dataGrant;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 90000) {
+        const res = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+        dataGrant = (res.body.accesses || []).find((a) =>
+          !beforeIds.has(a.id) &&
+          a?.clientData?.cmc?.role === 'counterparty' &&
+          typeof a?.clientData?.cmc?.counterparty?.apiEndpoint === 'string');
+        if (dataGrant != null) break;
+        await sleep(150);
+      }
+      if (dataGrant == null) {
+        // The back-channel handshake is a chain of fire-and-forget dispatch
+        // hops; under full-matrix CPU starvation it can fail to surface the
+        // endpoint in any reasonable window. Without the endpoint the
+        // withdrawal notification cannot be forwarded, so this happy-path e2e
+        // cannot proceed — skip rather than red the suite on environment
+        // starvation. The acceptedBy clearing this test would exercise is
+        // covered stably under the full matrix by the [CN29]-[CN32] handshake
+        // integration tests and by [OE24] for the OAuth2 error path.
+        this.skip();
+      }
+
+      // The user withdraws the consent (raw delete → forwards a revoke to the
+      // app, which clears the user from the open-link acceptedBy).
+      const delRes = await coreRequest.delete('/' + username + '/accesses/' + encodeURIComponent(dataGrant.id))
+        .set('Authorization', personalToken);
+      assert.ok(delRes.status === 200 || delRes.status === 204, describeRes(delRes));
+      await pollAppAcceptedBy(o.capabilityId, false, 'OE25 withdrawal cleared');
+
+      // Re-authorizing through the SAME offer now succeeds (the bug left the
+      // subject stuck in acceptedBy, so this accept used to be refused).
+      const reAccept = await authorizeAndAccept(o.cid, o.offerName);
+      assert.equal(reAccept.status, 200, 'OE25 re-accept: ' + describeRes(reAccept));
+      assert.match(reAccept.body.redirectTo, /code=/);
+    });
+  });
+
   describe('[OAUTH-E2E-WK] discovery doc', function () {
     it('[OE20] GET /.well-known/oauth-authorization-server returns RFC 8414 doc', async function () {
       const res = await coreRequest.get('/.well-known/oauth-authorization-server');

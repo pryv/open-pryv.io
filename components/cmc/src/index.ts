@@ -32,6 +32,7 @@ const handleRevoke = require('./handleRevoke.ts');
 const handleInvalidateLink = require('./handleInvalidateLink.ts');
 const retryQueue = require('./retryQueue.ts');
 const handleIncomingAccept = require('./handleIncomingAccept.ts');
+const handleIncomingRevoke = require('./handleIncomingRevoke.ts');
 const anchorStreams = require('./anchorStreams.ts');
 const accessesUpdateHook = require('./accessesUpdateHook.ts');
 const accessesDeleteHook = require('./accessesDeleteHook.ts');
@@ -46,6 +47,7 @@ export {
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
   chatOrchestration, capabilityMintHook, inboxWriteHook,
   handleSystem, handleChat, handleRevoke, handleInvalidateLink, retryQueue, handleIncomingAccept,
+  handleIncomingRevoke,
   anchorStreams, accessesUpdateHook, accessesDeleteHook, retryScheduler, bootRetryLoop,
   mallAccessesAdapter, errorIds, capabilityResponseHook,
 };

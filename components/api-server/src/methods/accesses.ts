@@ -825,6 +825,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
+    // mall lets the hook also clear the withdrawn subject from an open-link
+    // capability's acceptedBy (local bookkeeping) alongside the peer notify.
+    mall,
     // Resolve globalThis.fetch lazily (per call) so in-process test
     // shims installed after registration are honoured — same pattern
     // as the events.ts cmc deps.

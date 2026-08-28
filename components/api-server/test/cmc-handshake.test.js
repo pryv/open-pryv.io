@@ -280,7 +280,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
    * back-channel pointers). Relationships are now keyed on their
    * per-request scope, so it is merely tidy isolation.
    */
-  async function runFreshHandshake (studyId, appId = 'my-app') {
+  async function runFreshHandshake (studyId, appId = 'my-app', opts = {}) {
     const appRootStreamId = ':_cmc:apps:' + appId;
     const triggerStreamId = appRootStreamId + ':' + studyId;
     await ensureStream(alice.streamsPath, alice.token, {
@@ -297,6 +297,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         content: {
           to: null,
           capabilityRequested: true,
+          // Default is single-use; open-link is opt-in (multiple accepts
+          // until the requester invalidates the link).
+          ...(opts.mode != null ? { capability: { mode: opts.mode } } : {}),
           request: {
             title: { en: studyId },
             description: { en: 'fresh handshake for in-process test' },
@@ -308,6 +311,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       });
     assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
     const capabilityUrl = reqRes.body?.event?.content?.capabilityUrl;
+    const capabilityId = reqRes.body?.event?.content?.capabilityId;
     assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0);
 
     await ensureStream(bob.streamsPath, bob.token, {
@@ -350,6 +354,8 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     const bobSlug = C.slug.counterpartySlug({ username: bob.username, host: TEST_HOST });
     return {
       triggerStreamId,
+      capabilityUrl,
+      capabilityId,
       aliceChatStreamId: C.chatStreamUnder(triggerStreamId, bobSlug),
       bobChatStreamId: C.chatStreamUnder(triggerStreamId, aliceSlug),
       aliceCollectorStreamId: C.collectorStreamUnder(triggerStreamId, bobSlug),
@@ -1157,6 +1163,193 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'a grant must still point at ' + first.triggerStreamId + '; scopes seen: ' + JSON.stringify(scopes));
       assert.ok(hasSecond,
         'a grant must point at ' + second.triggerStreamId + '; scopes seen: ' + JSON.stringify(scopes));
+    });
+  });
+
+  // Withdraw-then-re-consent through a still-open shareable link.
+  //
+  // An open-link capability records every accepter in its
+  // `acceptedBy` list and refuses a second accept from the same subject
+  // (`cmc-capability-already-accepted-by-you`). When that subject
+  // withdraws, the requester side must drop them from `acceptedBy` so a
+  // fresh consent through the SAME link is accepted again — while every
+  // OTHER accepter's entry is preserved verbatim.
+  describe('[CMCHS-RECONSENT] withdraw clears acceptedBy so the same link accepts again', function () {
+    // Each case runs a full two-party open-link handshake plus a revoke round
+    // trip (several chained fire-and-forget hops); under full-matrix CPU
+    // contention these balloon, so the bound is generous (matches the oauth2
+    // reconsent block). The bodies complete in ~1s isolated.
+    this.timeout(120_000);
+
+    async function capabilityAcceptedBy (owner, capabilityId) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      const acc = (res.body?.accesses || []).find((a) =>
+        a?.clientData?.cmc?.kind === 'capability' &&
+        a?.clientData?.cmc?.capabilityId === capabilityId);
+      return acc?.clientData?.cmc?.capability?.acceptedBy || [];
+    }
+
+    async function pollAcceptedBy (owner, capabilityId, username, shouldContain, label) {
+      const t0 = Date.now();
+      let names = [];
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const list = await capabilityAcceptedBy(owner, capabilityId);
+        names = list.map((e) => e.username);
+        if (names.includes(username) === shouldContain) return list;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error((label || '') + ' timeout: acceptedBy contains(' + username +
+        ')=' + shouldContain + '; saw ' + JSON.stringify(names));
+    }
+
+    async function postAccept (actor, capabilityUrl, tag) {
+      const res = await coreRequest.post(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl, accessName: 'cmc-grant-' + tag + '-' + Date.now() },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.event.id;
+    }
+
+    async function pollEventStatus (actor, eventId, statuses) {
+      const t0 = Date.now();
+      let last;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.eventsPath + '/' + eventId)
+          .set('Authorization', actor.token);
+        last = res.body?.event?.content;
+        if (statuses.includes(last?.status)) return res.body.event;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('event ' + eventId + ' never reached ' + JSON.stringify(statuses) +
+        '; last status=' + JSON.stringify(last?.status));
+    }
+
+    it('[CN29] helper-driven revoke of an open-link accept lets the SAME link accept again', async function () {
+      const h = await runFreshHandshake('reco-a', 'my-app', { mode: 'open-link' });
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // First accept recorded bob in the capability's acceptedBy.
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN29 pre-revoke');
+
+      // Bob withdraws via the CMC helper trigger.
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN29 withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      // The withdrawal must clear bob from acceptedBy (the reported bug:
+      // it never did, so re-consent stayed blocked).
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN29 post-revoke');
+
+      // A fresh accept through the SAME capability URL now succeeds — proven
+      // by bob reappearing in acceptedBy (a rejected accept never records).
+      await postAccept(bob, h.capabilityUrl, 'reco-a-again');
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN29 re-accept');
+    });
+
+    it('[CN30] raw accesses.delete of the accept lets the SAME link accept again', async function () {
+      const h = await runFreshHandshake('reco-b', 'my-app', { mode: 'open-link' });
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN30 pre-revoke');
+
+      // Bob withdraws by removing the relationship access directly
+      // (the delete-hook forwarding path; no CMC helper trigger).
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN30 post-revoke');
+      await postAccept(bob, h.capabilityUrl, 'reco-b-again');
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN30 re-accept');
+    });
+
+    it('[CN31] one accepter\'s withdrawal leaves a co-accepter blocked; only the withdrawer re-accepts', async function () {
+      const carol = await makeActor('carol-' + cuid().slice(-8));
+
+      // Bob handshakes the open-link; carol accepts the SAME link.
+      const h = await runFreshHandshake('reco-c', 'my-app', { mode: 'open-link' });
+      const bobGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN31 bob accepted');
+
+      await postAccept(carol, h.capabilityUrl, 'reco-c-carol');
+      await pollAcceptedBy(alice, h.capabilityId, carol.username, true, 'CN31 carol accepted');
+
+      // Bob withdraws (raw delete). Only bob must be cleared.
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + bobGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN31 bob cleared');
+
+      // Co-accepter survives verbatim.
+      const stillCarol = await capabilityAcceptedBy(alice, h.capabilityId);
+      assert.ok(stillCarol.some((e) => e.username === carol.username),
+        'CN31: carol\'s acceptedBy entry must survive bob\'s withdrawal; saw ' +
+        JSON.stringify(stillCarol.map((e) => e.username)));
+
+      // Carol's re-accept is STILL rejected — she never withdrew.
+      const carolAgain = await postAccept(carol, h.capabilityUrl, 'reco-c-carol-again');
+      const carolTrigger = await pollEventStatus(carol, carolAgain, ['failed', 'completed']);
+      assert.equal(carolTrigger.content.status, 'failed',
+        'CN31: carol\'s re-accept must be refused (she is still in acceptedBy)');
+      // The peer's typed CMC id rides in error.data.id; error.id is the
+      // generic Pryv error class ('invalid-operation').
+      const carolErr = carolTrigger.content.failure?.detail?.body?.error;
+      assert.equal(carolErr?.data?.id, 'cmc-capability-already-accepted-by-you',
+        'CN31: refusal must carry the already-accepted-by-you id; got ' +
+        JSON.stringify(carolTrigger.content.failure));
+
+      // Bob (who withdrew) can re-consent through the same link.
+      await postAccept(bob, h.capabilityUrl, 'reco-c-bob-again');
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN31 bob re-accept');
+    });
+
+    it('[CN32] requester-local revoke of the back-channel clears acceptedBy for re-consent', async function () {
+      const h = await runFreshHandshake('reco-d', 'my-app', { mode: 'open-link' });
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN32 pre-revoke');
+
+      // Locate alice's OWN back-channel access for this relationship (carries
+      // the capabilityId stamp), and tear it down locally with a raw delete —
+      // the requester-side withdrawal path.
+      let backChannel = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS && backChannel == null) {
+        const res = await coreRequest.get(alice.accessesPath).set('Authorization', alice.token);
+        backChannel = (res.body?.accesses || []).find((a) => {
+          const cmc = a?.clientData?.cmc;
+          return cmc?.role === 'counterparty' && cmc?.capabilityId === h.capabilityId &&
+                 cmc?.counterparty?.username === bob.username;
+        }) || null;
+        if (backChannel == null) await sleep(POLL_INTERVAL_MS);
+      }
+      assert.ok(backChannel != null,
+        'CN32: alice\'s back-channel access (with capabilityId stamp) must exist');
+
+      // Requester withdraws her own relationship via the CMC helper trigger
+      // (consent/revoke-cmc targeting the back-channel access by id). This is
+      // the requester-side teardown path that carries the capabilityId stamp,
+      // so it clears the accepter from the capability's acceptedBy.
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: backChannel.id, reason: { en: 'CN32 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN32 post-revoke');
+
+      // Bob re-consents through the same link.
+      await postAccept(bob, h.capabilityUrl, 'reco-d-again');
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN32 re-accept');
     });
   });
 });

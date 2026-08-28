@@ -34,6 +34,7 @@ const handleSystemMod = require('./handleSystem.ts');
 const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
 const handleIncomingAcceptMod = require('./handleIncomingAccept.ts');
+const handleIncomingRevokeMod = require('./handleIncomingRevoke.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const retryQueueMod = require('./retryQueue.ts');
@@ -184,6 +185,22 @@ async function dispatch (params: {
   if (OUTBOUND_LOOPABLE_TYPES.has(event.type)) {
     const incoming = await isPeerDeliveredEvent(userId, event.createdBy, deps);
     if (incoming) {
+      // An incoming revoke still needs one piece of LOCAL bookkeeping: clear
+      // the withdrawing subject from any open-link capability's acceptedBy so
+      // they can re-consent through the same link. It is local-only and POSTs
+      // nothing, so the loop-safety above is unaffected; a failure only logs
+      // and never blocks the skip result below.
+      if (event.type === C.ET_REVOKE) {
+        try {
+          await handleIncomingRevokeMod.handleIncomingRevoke({
+            userId, event, deps: { mall: deps.mall, logger: deps.logger },
+          });
+        } catch (err: unknown) {
+          deps.logger?.warn?.('cmc/dispatch: handleIncomingRevoke failed (non-fatal)', {
+            error: String((err as Error)?.message ?? err),
+          });
+        }
+      }
       // Mark 'completed' (not 'skipped') so the trigger event's status
       // reflects "we processed this and decided no outbound was needed."
       // Skip the markCompleted call though — incoming events typically

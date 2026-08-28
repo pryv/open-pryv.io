@@ -515,6 +515,119 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     });
   });
 
+  describe('[CMCHR-CLEAR] requester-side acceptedBy clearing on local revoke', () => {
+    // When the deleted relationship access carries the open-link
+    // capabilityId (requester/publisher side), tearing it down must also
+    // clear the withdrawing subject from that capability's acceptedBy so a
+    // re-consent through the SAME link is accepted again. On the accepter
+    // side the local access has no capabilityId → clearing is skipped.
+    const SUBJECT_ACCEPTED = { username: 'provider-a', host: 'provider.example.org', acceptedAt: 1 };
+    const CO_ACCEPTER = { username: 'bob', host: 'b.example.com', acceptedAt: 1 };
+
+    function capabilityAccess (capId, acceptedBy) {
+      return {
+        id: 'cap-acc',
+        type: 'app',
+        clientData: {
+          cmc: {
+            kind: 'capability',
+            capabilityId: capId,
+            capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy },
+          },
+        },
+      };
+    }
+
+    // Counterparty access WITH the capabilityId stamp (requester back-channel).
+    const STAMPED_COUNTERPARTY_ACCESS = {
+      id: 'acc-counterparty',
+      type: 'shared',
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          appCode: 'my-app',
+          capabilityId: 'cap-x',
+          counterparty: {
+            username: 'provider-a',
+            host: 'provider.example.org',
+            apiEndpoint: 'https://peer-tok@provider.example.org/',
+          },
+        },
+      },
+    };
+
+    function richMall (accessList) {
+      const state = { list: accessList.slice(), deleted: [], updated: [] };
+      return {
+        state,
+        accesses: {
+          async get () { return state.list; },
+          async delete (userId, params) {
+            state.deleted.push(params.id);
+            state.list = state.list.filter((a) => a.id !== params.id);
+          },
+          async update (userId, params) {
+            const a = state.list.find((x) => x.id === params.id);
+            if (a != null) Object.assign(a, params.update);
+            state.updated.push({ id: params.id, update: params.update });
+          },
+        },
+      };
+    }
+
+    function acceptedByOf (mall) {
+      const cap = mall.state.list.find((a) => a.clientData?.cmc?.kind === 'capability');
+      return cap?.clientData?.cmc?.capability?.acceptedBy || [];
+    }
+
+    it('[HR25] clears the withdrawing subject from acceptedBy when the deleted access carries capabilityId', async () => {
+      const mall = richMall([
+        STAMPED_COUNTERPARTY_ACCESS,
+        capabilityAccess('cap-x', [SUBJECT_ACCEPTED, CO_ACCEPTER]),
+      ]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.ok(r.deletedAccessIds.includes('acc-counterparty'));
+      // The co-accepter survives verbatim; only the withdrawing subject is gone.
+      const list = acceptedByOf(mall);
+      assert.equal(list.length, 1);
+      assert.equal(list[0].username, 'bob');
+    });
+
+    it('[HR26] does NOT touch acceptedBy when the deleted access has no capabilityId (accepter side)', async () => {
+      const mall = richMall([
+        // COUNTERPARTY_ACCESS (top of file) carries no capabilityId.
+        COUNTERPARTY_ACCESS,
+        capabilityAccess('cap-x', [SUBJECT_ACCEPTED, CO_ACCEPTER]),
+      ]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      // No clearAccepter path taken → capability untouched, both entries stay.
+      assert.equal(mall.state.updated.length, 0);
+      assert.equal(acceptedByOf(mall).length, 2);
+    });
+  });
+
   describe('[CMCHR-FAIL] handleRevoke failure paths', () => {
     it('[HR13] content.capabilityUrl is inert — no pre-acceptance delivery branch', async () => {
       // The former pre-acceptance branch (deliver via the capability

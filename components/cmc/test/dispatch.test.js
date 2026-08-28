@@ -413,6 +413,67 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
+  describe('[CMCDISP-IREV] incoming peer revoke: skipped AND local acceptedBy cleared', () => {
+    // A peer-delivered consent/revoke-cmc must stay a no-outbound skip
+    // (loop-safety), but still run the one piece of LOCAL bookkeeping:
+    // clear the withdrawing subject from the open-link capability's
+    // acceptedBy so a re-consent through the same link is accepted again.
+    const SUBJECT = { username: 'peer', host: 'peer.example.com' };
+
+    function mallForIncomingRevoke (capId, acceptedBy) {
+      const m = fakeMall();
+      const cpAccess = {
+        id: 'acc-peer',
+        clientData: { cmc: { role: 'counterparty', capabilityId: capId, counterparty: SUBJECT } },
+      };
+      const capAccess = {
+        id: 'cap-acc',
+        clientData: {
+          cmc: {
+            kind: 'capability',
+            capabilityId: capId,
+            capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy },
+          },
+        },
+      };
+      const list = [cpAccess, capAccess];
+      m.accesses.get = async () => list;
+      m.accesses.update = async (userId, params) => {
+        const a = list.find((x) => x.id === params.id);
+        if (a != null) Object.assign(a, params.update);
+        m.calls.accessesUpdated.push({ id: params.id, update: params.update });
+      };
+      m.calls.accessesUpdated = [];
+      m._acceptedBy = () => capAccess.clientData.cmc.capability.acceptedBy;
+      return m;
+    }
+
+    it('[CDL05] still returns skipped:cmc-incoming-from-peer AND clears the accepter', async () => {
+      const mall = mallForIncomingRevoke('cap-d', [
+        { ...SUBJECT, acceptedAt: 1 },
+        { username: 'carol', host: 'c.example.com', acceptedAt: 1 },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-incoming-revoke',
+          type: 'consent/revoke-cmc',
+          content: { from: SUBJECT },
+          streamIds: [':_cmc:inbox'],
+          createdBy: 'acc-peer',
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.handled, true);
+      assert.equal(r.status, 'skipped');
+      assert.equal(r.reason, 'cmc-incoming-from-peer');
+      // Handler ran: subject cleared, co-accepter preserved.
+      const list = mall._acceptedBy();
+      assert.equal(list.length, 1);
+      assert.equal(list[0].username, 'carol');
+    });
+  });
+
   describe('[CMCDISP-MW] createDispatchMiddleware (fire-and-forget)', () => {
     it('[CD08] kicks off dispatch without awaiting; calls next() immediately', async () => {
       const mall = fakeMall();

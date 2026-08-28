@@ -58,6 +58,7 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const capabilityMod = require('./capability.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps } from './_types.ts';
@@ -350,6 +351,32 @@ async function handleRevoke (params: {
         error: String((err as Error)?.message || err),
       });
     }
+  }
+
+  // Step 6: if this relationship was established through an open-link
+  // capability WE published (requester side), the counterparty access carries
+  // its `capabilityId`; clear the now-withdrawn subject from the capability's
+  // `acceptedBy` so they can re-consent through the same link. Best-effort. On
+  // the accepter side the local access carries no `capabilityId`, so this is a
+  // structural no-op there (no cross-relationship contamination).
+  try {
+    const cmcCd = counterpartyAccess.clientData?.cmc;
+    const capabilityId = cmcCd?.capabilityId;
+    const accepter = cmcCd?.counterparty;
+    if (typeof capabilityId === 'string' && capabilityId.length > 0 &&
+        accepter != null && typeof accepter.username === 'string' &&
+        typeof accepter.host === 'string') {
+      await capabilityMod.clearAccepter({
+        userId,
+        capabilityId,
+        accepter: { username: accepter.username, host: accepter.host },
+        deps: { mall },
+      });
+    }
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/handleRevoke: clearAccepter failed (non-fatal)', {
+      error: String((err as Error)?.message || err),
+    });
   }
 
   return {

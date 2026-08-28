@@ -491,6 +491,73 @@ async function recordAccepter (params: {
 }
 
 /**
+ * Remove an accepter (`{ username, host }`) from the capability access's
+ * `clientData.cmc.capability.acceptedBy` array — the inverse of
+ * recordAccepter, so an open-link capability stops counting a subject who
+ * has withdrawn and they can re-consent through the same link. Identical key
+ * derivation (lowercased username + slugified host); only the matching entry
+ * is dropped, so every co-accepter survives verbatim. Never writes `state` /
+ * `stateChangedAt`: a consumed single-use link stays spent — revocation does
+ * not reopen it. Idempotent: a missing entry, a missing capability, or a
+ * non-open-link mode are all no-op successes.
+ */
+async function clearAccepter (params: {
+  userId: string;
+  capabilityId: string;
+  accepter: { username: string; host: string };
+  deps: { mall: MallLike; now?: () => number };
+}): Promise<{ ok: boolean; reason?: string; cleared?: boolean }> {
+  const { userId, capabilityId, accepter, deps } = params;
+  if (accepter == null || typeof accepter.username !== 'string' ||
+      accepter.username.length === 0 || typeof accepter.host !== 'string' ||
+      accepter.host.length === 0) {
+    return { ok: false, reason: 'invalid-accepter' };
+  }
+  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  // No live capability → nothing can block a re-consent; success, nothing cleared.
+  if (acc == null) return { ok: true, cleared: false };
+  const cmcCd = acc.clientData?.cmc;
+  // Single-use / already-consumed links are spent by design; not our concern.
+  if (cmcCd?.capability?.mode !== 'open-link') {
+    return { ok: true, cleared: false };
+  }
+  if (deps.mall.accesses.update == null) {
+    return { ok: false, reason: 'mall-accesses-update-unavailable' };
+  }
+  const targetKey =
+    accepter.username.toLowerCase() + '|' + slug.slugifyHost(accepter.host);
+  const existing: AcceptedByEntry[] = Array.isArray(cmcCd?.capability?.acceptedBy)
+    ? cmcCd.capability.acceptedBy
+    : [];
+  const filtered = existing.filter((a) => {
+    if (a == null || typeof a !== 'object') return true;
+    if (typeof a.username !== 'string' || typeof a.host !== 'string') return true;
+    const key = a.username.toLowerCase() + '|' + slug.slugifyHost(a.host);
+    return key !== targetKey;
+  });
+  // Entry absent (never accepted, or already cleared) → double-revoke safe.
+  if (filtered.length === existing.length) {
+    return { ok: true, cleared: false };
+  }
+  await deps.mall.accesses.update(userId, {
+    id: acc.id,
+    update: {
+      clientData: {
+        ...(acc.clientData || {}),
+        cmc: {
+          ...cmcCd,
+          capability: {
+            ...(cmcCd?.capability || {}),
+            acceptedBy: filtered,
+          },
+        },
+      },
+    },
+  });
+  return { ok: true, cleared: true };
+}
+
+/**
  * Transition a capability access from `state: 'open'` to
  * `state: 'invalidated'`. Called by handleInvalidateLink when the
  * requester invalidates their own open-link capability. Idempotent —
@@ -575,6 +642,7 @@ export {
   findCapabilityAccess,
   markCapabilityConsumed,
   recordAccepter,
+  clearAccepter,
   markCapabilityInvalidated,
   setRequestEventIdOnAccess,
   buildApiEndpoint,
