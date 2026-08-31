@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## events: harden SQLite duplicate-id detection + add concurrent duplicate-creation coverage
+
+The SQLite events store recognised a duplicate `id` insert by an exact match on
+the driver's error message string. That is brittle: if the message shape ever
+changes, the branch would silently fall through to `unexpected-error` (a 500)
+instead of `item-already-exists` (409). It now matches on the stable SQLite
+extended result-code (`SQLITE_CONSTRAINT_UNIQUE`) scoped to the id constraint by
+substring, in both `create` and `update`. No API-facing behaviour change: a
+duplicate event id still returns 409 `item-already-exists`, on the concurrent
+path as on the sequential one. Added Pattern-C coverage (`[EDUP1..3]`: concurrent
+HTTP smoke, engine-contract, mall pass-through) exercising both engines, since
+the events chain has no existence pre-check and relies entirely on the store
+constraint mapping.
+
 ## fix(cmc): clear a withdrawn subject from an open-link capability on revocation
 
 An open-link capability records each accepter in

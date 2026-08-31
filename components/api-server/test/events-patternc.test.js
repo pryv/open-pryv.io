@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 
 const ErrorIds = require('errors').ErrorIds;
 const timestamp = require('unix-timestamp');
+const { getMall } = require('mall');
 describe('[EVPC] events (Pattern C)', function () {
   let username, token, basePath;
   let user, fixtures;
@@ -753,6 +754,60 @@ describe('[EVPC] events (Pattern C)', function () {
       assert.strictEqual(res.status, 200);
       assert.ok(res.body.eventDeletions);
       assert.ok(res.body.eventDeletions.some(d => d.id === eventId));
+    });
+  });
+
+  // A duplicate events.create on a client-supplied id must return 409
+  // item-already-exists, on the concurrent path as on the sequential one, and
+  // must never leak the storage engine's raw unique-constraint error as a 500.
+  describe('[EDUP] duplicate create (client-supplied id)', function () {
+    it('[EDUP1] concurrent HTTP creates of the same id: exactly one 201, rest 409, never 5xx', async function () {
+      const id = cuid();
+      const results = await Promise.allSettled(
+        Array.from({ length: 5 }, (_, i) =>
+          coreRequest.post(basePath).set('Authorization', token)
+            .send({ id, streamIds: [stream1Id], type: 'note/txt', content: 'racer ' + i })));
+      const statuses = results.map(r => r.status === 'fulfilled' ? r.value.status : 599);
+      const created = statuses.filter(s => s === 201);
+      const conflicts = statuses.filter(s => s === 409);
+      const serverErrors = statuses.filter(s => s >= 500);
+      assert.strictEqual(created.length, 1, 'exactly one winner: ' + statuses.join(','));
+      assert.strictEqual(conflicts.length, 4, 'all losers 409: ' + statuses.join(','));
+      assert.strictEqual(serverErrors.length, 0, 'no 5xx: ' + statuses.join(','));
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.status === 409) {
+          assert.strictEqual(r.value.body.error.id, ErrorIds.ItemAlreadyExists);
+          assert.strictEqual(r.value.body.error.data.id, id);
+        }
+      }
+    });
+
+    it('[EDUP2] the local events store maps a duplicate insert to item-already-exists', async function () {
+      const id = cuid();
+      const seed = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id, streamIds: [stream1Id], type: 'note/txt', content: 'seed' });
+      assert.strictEqual(seed.status, 201);
+      const mall = await getMall();
+      const store = mall.events.eventsStores.get('local');
+      let thrown = null;
+      try { await store.create(username, seed.body.event); } catch (e) { thrown = e; }
+      assert.ok(thrown != null, 'second store.create must reject');
+      assert.strictEqual(thrown.id, ErrorIds.ItemAlreadyExists);
+      assert.strictEqual(thrown.httpStatus, 409);
+      assert.strictEqual(thrown.data.id, id);
+    });
+
+    it('[EDUP3] mall.events.create passes the mapped duplicate through unchanged', async function () {
+      const id = cuid();
+      const seed = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id, streamIds: [stream1Id], type: 'note/txt', content: 'seed' });
+      assert.strictEqual(seed.status, 201);
+      const mall = await getMall();
+      let thrown = null;
+      try { await mall.events.create(username, seed.body.event); } catch (e) { thrown = e; }
+      assert.ok(thrown != null, 'mall.events.create must reject on duplicate');
+      assert.strictEqual(thrown.id, ErrorIds.ItemAlreadyExists);
+      assert.strictEqual(thrown.data.id, id);
     });
   });
 });

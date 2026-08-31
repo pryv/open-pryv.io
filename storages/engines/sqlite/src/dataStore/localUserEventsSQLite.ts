@@ -131,7 +131,10 @@ const userEvents = ds.createUserEvents({
       await db.createEvent(event);
       return event;
     } catch (err: unknown) {
-      if ((err as Error).message === 'UNIQUE constraint failed: events.eventid') {
+      const e = err as { code?: string, message?: string };
+      // Match on the stable SQLite extended result-code, not the exact driver
+      // message (which could change); scope to the id constraint via substring.
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' && e.message?.includes('events.eventid') === true) {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);
       }
       throw errors.unexpectedError(err);
@@ -146,9 +149,12 @@ const userEvents = ds.createUserEvents({
     const db = await this.storage.forUser(userId);
     if (!opts?.skipVersioning) await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
-      return db.updateEvent(eventData.id, eventData, opts?.onlyIfNotTrashed);
+      // await so a rejected update (e.g. a duplicate-id violation) is caught
+      // below rather than escaping this try/catch.
+      return await db.updateEvent(eventData.id, eventData, opts?.onlyIfNotTrashed);
     } catch (err: unknown) {
-      if ((err as Error).message === 'UNIQUE constraint failed: events.eventid') {
+      const e = err as { code?: string, message?: string };
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' && e.message?.includes('events.eventid') === true) {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);
       }
       throw errors.unexpectedError(err);
