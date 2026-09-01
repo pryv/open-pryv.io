@@ -13,9 +13,10 @@ const require = createRequire(import.meta.url);
  *
  * Uses the inline `secretsKey` at-rest key path (no config needed). Covers the
  * enrolment shape, that the stored secret is encrypted at rest, a happy-path
- * verify, the replay guard, and wrong-code / drift rejection. The
- * key-missing-fail-closed path and the adminAccessKey-derived path are covered
- * at the API/integration level ([MA13]) where config is controlled.
+ * verify, the replay guard, and wrong-code rejection. The key-resolution paths
+ * (valid inline key, wrong-length fail-closed) are covered in
+ * `mfa-config.test.js` ([MKEY]); the adminAccessKey-derived path needs a live
+ * config and is exercised by the api-server MFA suite.
  */
 
 const assert = require('node:assert/strict');

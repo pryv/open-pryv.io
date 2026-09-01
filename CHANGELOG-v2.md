@@ -21,9 +21,21 @@ default method when MFA is enabled. SMS continues to work unchanged.
   still honoured via an in-memory shim, so existing deployments need no change;
   the shipped default keeps MFA off.
 - TOTP secrets are stored encrypted at rest; a wrong code is rejected as
-  `invalid-mfa-code`, a used code cannot be replayed, and repeated failures
-  invalidate the pending MFA session. TOTP raises the deployment to a clean
-  NIST 800-63B AAL2 posture without any third-party service.
+  `invalid-mfa-code`, a used code cannot be replayed (guard is enforced against
+  the stored step, so concurrent sessions cannot re-use a code), and repeated
+  failures invalidate the pending MFA session. TOTP raises the deployment to a
+  clean NIST 800-63B AAL2 posture without any third-party service.
+
+**Migration note.** When enabling the new model on a deployment that used SMS
+via legacy `mode`, keep an active SMS method for already-enrolled users:
+either leave `mode` set (it shims to `methods.sms`), or set
+`methods.sms.active: true` with the endpoints. If you set only
+`services.mfa.active: true` without activating `sms`, existing SMS-enrolled
+users would log in without a second factor (a `warn` is logged per such login).
+
+**Known limitation.** The failed-attempt limiter is per MFA session (5 tries),
+not a per-user rate limit; a caller who can re-authenticate gets a fresh budget.
+Front with login/rate-limiting at the edge for high-assurance deployments.
 
 ### Concurrent `streams.create` of the same id returns `item-already-exists`, not a raw DB error
 

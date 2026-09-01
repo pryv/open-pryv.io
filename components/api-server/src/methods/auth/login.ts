@@ -21,7 +21,8 @@ const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const { getStorageLayer } = require('storage');
-const { ready } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
+const mfaLogger = getLogger('methods:auth:mfa');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
 const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
@@ -218,14 +219,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // active, so login stands as-is.
       if (!profile.isActive()) return next();
       const method = getMFAMethodForProfile(profile, mfaCfg);
-      if (method == null) return next(); // user's method not active server-side
+      if (method == null) {
+        // The user has confirmed MFA but its method is not active server-side
+        // (e.g. an operator enabled the new model without activating `sms`,
+        // stranding legacy SMS enrolments). Fail OPEN but never silently: this
+        // is a migration hazard the operator must see. See CHANGELOG migration note.
+        mfaLogger.warn(
+          `MFA-enrolled user "${context.user.username}" logged in WITHOUT a second factor: their method is not active in services.mfa. Check the methods.{sms,totp}.active config.`
+        );
+        return next();
+      }
       await method.challenge(context.user.username, profile, { headers: {}, body: params });
 
       // Stash the already-issued token in a pending session. Only release on mfa.verify.
       const mfaToken = await getMFASessionStore(mfaCfg).create(profile, {
         user: context.user,
         token: result.token,
-        apiEndpoint: result.apiEndpoint
+        apiEndpoint: result.apiEndpoint,
+        kind: 'login'
       });
 
       // Replace the response: caller must complete MFA before they see the real token.

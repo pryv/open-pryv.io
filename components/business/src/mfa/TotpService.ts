@@ -99,7 +99,7 @@ class TotpService implements MfaMethod {
   }
 
   async verify (_username: string, profile: ProfileType, clientRequest: MfaClientRequest): Promise<void> {
-    const p = profile as unknown as { totp?: { secret: string; digits: number; periodSeconds: number; lastUsedStep: number } };
+    const p = profile as unknown as { totp?: { secret: string; algorithm?: string; digits: number; periodSeconds: number; lastUsedStep: number } };
     if (!p.totp || !p.totp.secret) {
       throw errors.invalidParametersFormat('No TOTP enrolment for this user.', { id: 'invalid-mfa-code' });
     }
@@ -111,7 +111,9 @@ class TotpService implements MfaMethod {
       digits: p.totp.digits,
       periodSeconds: p.totp.periodSeconds,
       driftSteps: this.driftSteps,
-      algorithm: ALGORITHM,
+      // Use the algorithm pinned at enrolment, not the current constant, so a
+      // future default change cannot silently break existing enrolments.
+      algorithm: p.totp.algorithm ?? ALGORITHM,
       notAfterOrAtStep: p.totp.lastUsedStep
     });
     if (accepted == null) {

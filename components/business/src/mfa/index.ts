@@ -107,12 +107,12 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
       mfaLogger().warn(`services.mfa.mode="${cfg.mode}" ignored: the new services.mfa.active model takes precedence.`);
       _warnedModeConflict = true;
     }
-    const normalized: NormalizedMfaConfig = { active: true, defaultMethod, methods: { totp, sms }, sessions };
-    const chosen = (normalized.methods as Record<string, MethodCfg>)[defaultMethod];
-    if (!chosen || chosen.active !== true) {
-      throw new Error(`services.mfa.defaultMethod="${defaultMethod}" is not an active method. Enable it under services.mfa.methods.${defaultMethod}.active.`);
-    }
-    return normalized;
+    // NB: we do NOT throw here if `defaultMethod` names an inactive method.
+    // This normalizer runs on the login path too, so throwing would brick all
+    // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
+    // getMFAMethod() and returns a clean invalid-mfa-method error when it is
+    // inactive, which is the only place the default is actually used.
+    return { active: true, defaultMethod, methods: { totp, sms }, sessions };
   }
 
   // N2 — legacy `mode` shim (SMS-only, byte-for-byte behavior).
@@ -188,9 +188,9 @@ function buildSmsMethod (smsCfg: MethodCfg, sessions: NormalizedMfaConfig['sessi
   throw new Error(`Unknown SMS MFA mode "${smsCfg.mode}". Expected challenge-verify or single`);
 }
 
-function buildTotpMethod (totpCfg: MethodCfg, sessions: NormalizedMfaConfig['sessions']): MfaMethod {
+function buildTotpMethod (totpCfg: MethodCfg): MfaMethod {
   const TotpService = require('./TotpService.ts').default;
-  return new TotpService(totpCfg, sessions);
+  return new TotpService(totpCfg);
 }
 
 /**
@@ -207,7 +207,7 @@ function getMFAMethod (name: string, normalizedCfg: NormalizedMfaConfig | null |
   if (existing) return existing;
   let built: MfaMethod;
   if (name === 'sms') built = buildSmsMethod(mcfg, normalizedCfg.sessions);
-  else if (name === 'totp') built = buildTotpMethod(mcfg, normalizedCfg.sessions);
+  else if (name === 'totp') built = buildTotpMethod(mcfg);
   else throw new Error(`Unknown MFA method "${name}". Expected one of: totp, sms`);
   cache.set(name, built);
   return built;

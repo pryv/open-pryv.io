@@ -568,6 +568,21 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
         assert.strictEqual(after.status, 401);
       });
+
+      it('[MA11G] a code consumed by one login session cannot be replayed on another concurrent session', async function () {
+        // Two pending login sessions opened BEFORE any verify (the F1 attack:
+        // the replay guard must consult the stored step, not each session's
+        // login-time snapshot).
+        const a = await login();
+        const b = await login();
+        const code = totpCodeFor(secret, 0);
+        const vA = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', a.body.mfaToken).send({ code });
+        assert.strictEqual(vA.status, 200, `first verify should succeed: ${JSON.stringify(vA.body)}`);
+        const vB = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', b.body.mfaToken).send({ code });
+        assert.strictEqual(vB.status, 400, 'replay on the concurrent session must be refused');
+      });
     });
 
     describe('[MA13] deactivate', function () {

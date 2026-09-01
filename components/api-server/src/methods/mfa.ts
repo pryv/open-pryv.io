@@ -152,7 +152,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         }
         const profile = new Profile();
         const extra = await method.enroll(context.user.username, profile, params);
-        const token = await sessionStore().create(profile, { user: context.user });
+        const token = await sessionStore().create(profile, { user: context.user, kind: 'enroll' });
         result.mfaToken = token;
         Object.assign(result, extra);
         next();
@@ -172,6 +172,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       try {
         const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
+        // An enrolment session only (F4): a login token must not regenerate
+        // recovery codes / re-persist a profile via confirm.
+        if (session.context.kind && session.context.kind !== 'enroll') {
+          return next(errors.invalidAccessToken('This MFA token is not valid for enrolment confirmation.'));
+        }
         const user = session.context.user;
         const profile = session.profile;
         const method = getMFAMethodForProfile(profile, getMfaConfig());
@@ -208,8 +213,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const user = session.context.user;
         const method = getMFAMethodForProfile(session.profile, getMfaConfig());
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
-        await method.challenge(user.username, session.profile, { headers: {}, body: params });
+        const extra = await method.challenge(user.username, session.profile, { headers: {}, body: params });
         result.message = 'Please verify the MFA challenge.';
+        Object.assign(result, extra); // { method } for totp, so clients render the right prompt
         next();
       } catch (err) {
         next(err);
@@ -227,25 +233,48 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       try {
         const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
+        // A login session only (F4): an enrolment token must not release a token.
+        if (session.context.kind && session.context.kind !== 'login') {
+          return next(errors.invalidAccessToken('This MFA token is not valid for login verification.'));
+        }
         const user = session.context.user;
+        // Fail closed before any side effect (F4a): a login session must carry a
+        // stashed token, else a code-verify would persist state and then error.
+        if (!session.context.token) {
+          return next(errors.unexpectedError(new Error('MFA session has no token to release — login flow not wired')));
+        }
         const method = getMFAMethodForProfile(session.profile, getMfaConfig());
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        // TOTP replay guard must consult the AUTHORITATIVE stored enrolment, not
+        // the login-time session snapshot (F1). The enrolment must still exist
+        // AND be the same secret this session authenticated against: if it was
+        // deactivated / recovered / rotated since login, this session's factor is
+        // stale, so we reject rather than resurrect the old enrolment.
+        let storedForTotp: MFAProfile | null = null;
+        if (session.profile.method === 'totp' && session.profile.totp) {
+          const stored = await loadMFAProfile(user);
+          if (!stored.totp || stored.totp.secret !== session.profile.totp.secret) {
+            return next(errors.invalidAccessToken('MFA enrolment changed since login; please log in again.'));
+          }
+          storedForTotp = stored;
+          session.profile.totp.lastUsedStep = Math.max(stored.totp.lastUsedStep ?? -1, session.profile.totp.lastUsedStep ?? -1);
+        }
         try {
           await method.verify(user.username, session.profile, { headers: {}, body: params });
         } catch (verifyErr) {
           return next(await limitOrPassThrough(params.mfaToken, verifyErr as Error));
         }
-        // TOTP replay guard: persist the advanced lastUsedStep to the stored
-        // profile BEFORE releasing the token, so a storage failure never lets a
-        // replayable step through with the real token.
-        if (session.profile.method === 'totp') {
-          await saveMFAProfile(user, session.profile);
+        // Persist ONLY the advanced replay step onto the freshly-loaded stored
+        // enrolment (never rewrite the whole data.mfa blob from the login-time
+        // snapshot), BEFORE releasing the token so a storage failure fails closed.
+        // NB: a same-instant concurrent double-verify TOCTOU remains; closing it
+        // needs a storage-level compare-and-set (tracked follow-up).
+        if (storedForTotp && storedForTotp.totp) {
+          storedForTotp.totp.lastUsedStep = session.profile.totp.lastUsedStep;
+          await saveMFAProfile(user, storedForTotp);
         }
-        // The session.context.token is the real access token issued by auth.login
-        // and stashed by the MFA-aware login flow.
-        if (!session.context.token) {
-          return next(errors.unexpectedError(new Error('MFA session has no token to release — login flow not wired')));
-        }
+        // session.context.token is the real access token stashed by the login flow
+        // (presence already checked above, before any side effect).
         result.token = session.context.token;
         if (session.context.apiEndpoint) result.apiEndpoint = session.context.apiEndpoint;
         await sessionStore().clear(params.mfaToken);
