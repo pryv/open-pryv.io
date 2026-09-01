@@ -24,7 +24,7 @@ const { getStorageLayer } = require('storage');
 const { ready } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
-const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
+const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
 // Breach-scope reverse-index: personal accesses are created here at login (a
 // distinct site from accesses.create), so index them too. Non-fatal.
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
@@ -46,7 +46,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // factory reads is resolved per-request from the live config
   // singleton, matching the long-standing `getMfaConfig` pattern.
   const getAuth = () => config.get('auth');
-  const getMfaConfig = () => config.get('services:mfa');
+  const getMfaConfig = () => normalizeMfaConfig(config.get('services:mfa'));
   const passwordRules = await getPasswordRules();
 
   api.register('auth.login',
@@ -206,8 +206,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    */
   async function mfaCheckIfActive (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const mfaCfg = getMfaConfig();
-    const mfaService = getMFAService(mfaCfg);
-    if (mfaService == null) return next(); // MFA disabled server-wide
+    if (mfaCfg.active !== true) return next(); // MFA disabled server-wide
     try {
       const profileSet = await fromCallback((cb: (err?: unknown, res?: unknown) => void) =>
         userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb)) as { data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[] } } } | null;
@@ -217,7 +216,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         return next();
       }
       const profile = new MFAProfile(storedMfa.content, storedMfa.recoveryCodes || []);
-      await mfaService.challenge(context.user.username, profile, { headers: {}, body: params });
+      const method = getMFAMethodForProfile(profile, mfaCfg);
+      if (method == null) return next(); // user's method not active server-side
+      await method.challenge(context.user.username, profile, { headers: {}, body: params });
 
       // Stash the already-issued token in a pending session. Only release on mfa.verify.
       const mfaToken = await getMFASessionStore(mfaCfg).create(profile, {

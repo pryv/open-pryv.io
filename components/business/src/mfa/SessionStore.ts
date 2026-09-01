@@ -38,13 +38,16 @@ interface SessionStoreOpts {
 interface ProfileLike {
   content?: Record<string, unknown>;
   recoveryCodes?: string[];
+  method?: string;
+  totp?: unknown;
   [k: string]: unknown;
 }
 
 interface StoredSession {
   id: string;
-  profile: { content: Record<string, unknown>; recoveryCodes: string[] };
+  profile: { content: Record<string, unknown>; recoveryCodes: string[]; method?: string; totp?: unknown };
   context: unknown;
+  attempts: number;
 }
 
 class SessionStore {
@@ -78,8 +81,14 @@ class SessionStore {
     // through the IPC channel; `get()` rehydrates the Profile class.
     const stored: StoredSession = {
       id,
-      profile: { content: profile?.content || {}, recoveryCodes: profile?.recoveryCodes || [] },
-      context
+      profile: {
+        content: profile?.content || {},
+        recoveryCodes: profile?.recoveryCodes || [],
+        ...(profile?.method !== undefined ? { method: profile.method } : {}),
+        ...(profile?.totp !== undefined ? { totp: profile.totp } : {})
+      },
+      context,
+      attempts: 0
     };
     await this.kv.set(this.namespace + id, stored, { ttlMs: this.ttlMilliseconds });
     return id;
@@ -89,14 +98,29 @@ class SessionStore {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
-  async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown } | undefined> {
+  async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown; attempts: number } | undefined> {
     const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
     if (!session) return undefined;
     const profile = new Profile(
       session.profile?.content || {},
-      session.profile?.recoveryCodes || []
+      session.profile?.recoveryCodes || [],
+      session.profile?.method,
+      session.profile?.totp as undefined
     );
-    return { id: session.id, profile, context: session.context };
+    return { id: session.id, profile, context: session.context, attempts: session.attempts ?? 0 };
+  }
+
+  /**
+   * Record a failed verify/confirm attempt against a session and return the new
+   * count. Preserves the session (TTL is refreshed). Used by the attempt
+   * limiter, which clears the session once the count reaches its ceiling.
+   */
+  async recordFailedAttempt (id: string): Promise<number> {
+    const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+    if (!session) return 0;
+    session.attempts = (session.attempts ?? 0) + 1;
+    await this.kv.set(this.namespace + id, session, { ttlMs: this.ttlMilliseconds });
+    return session.attempts;
   }
 
   /**

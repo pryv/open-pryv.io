@@ -28,7 +28,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
 const { ready } = require('@pryv/boiler');
-const { getMFAService, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
+const { normalizeMfaConfig, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 const PROFILE_ID = 'private';
@@ -38,24 +38,21 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   const userProfileStorage = storageLayer.profile;
   const config = await ready();
 
-  // Read the MFA config block per-invocation so `config.injectTestConfig()`
-  // in tests is honored.
+  // Read + normalize the MFA config block per-invocation so
+  // `config.injectTestConfig()` in tests is honored.
   function getMfaConfig () {
-    return config.get('services:mfa');
+    return normalizeMfaConfig(config.get('services:mfa'));
   }
 
-  /**
-   * Returns the MFA service if configured, or null. Methods that require MFA
-   * to be enabled return `apiUnavailable` when this is null.
-   */
-  function maybeMFAService () {
-    return getMFAService(getMfaConfig());
+  /** True when MFA is enabled server-wide (any method active). */
+  function mfaEnabled () {
+    return getMfaConfig().active === true;
   }
   function sessionStore () {
     return getMFASessionStore(getMfaConfig());
   }
   function requireMFAEnabled (next: Next) {
-    if (maybeMFAService() == null) {
+    if (!mfaEnabled()) {
       next(errors.apiUnavailable('MFA is not enabled on this server.'));
       return false;
     }
@@ -108,12 +105,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     async function activate (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       if (!requireMFAEnabled(next)) return;
       try {
-        // Activate body is the profile content (e.g. { phone: '+41...' }) — arbitrary
-        // key/value pairs that get templated into the SMS endpoint URL/headers/body.
-        const profile = new Profile(Object.assign({}, params), []);
-        await maybeMFAService().challenge(context.user.username, profile, { headers: {}, body: params });
+        // Pick the method: explicit `method` in the body, else the operator's
+        // configured default. The method's enroll() populates the (empty)
+        // profile with its pending state (SMS: content=body; TOTP: secret) and
+        // returns any extra reply fields (TOTP: otpauthUri, secret).
+        const cfg = getMfaConfig();
+        const methodName = (params.method as string) || cfg.defaultMethod;
+        const method = getMFAMethod(methodName, cfg);
+        if (method == null) {
+          return next(errors.invalidParametersFormat(
+            `Unknown or inactive MFA method: ${methodName}`, { id: 'invalid-mfa-method' }));
+        }
+        const profile = new Profile();
+        const extra = await method.enroll(context.user.username, profile, params);
         const token = await sessionStore().create(profile, { user: context.user });
         result.mfaToken = token;
+        Object.assign(result, extra);
         next();
       } catch (err) {
         next(err);
@@ -133,7 +140,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
         const profile = session.profile;
-        await maybeMFAService().verify(user.username, profile, { headers: {}, body: params });
+        const method = getMFAMethodForProfile(profile, getMfaConfig());
+        if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        await method.verify(user.username, profile, { headers: {}, body: params });
         profile.generateRecoveryCodes();
         await saveMFAProfile(user, profile);
         await sessionStore().clear(params.mfaToken);
@@ -156,7 +165,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
-        await maybeMFAService().challenge(user.username, session.profile, { headers: {}, body: params });
+        const method = getMFAMethodForProfile(session.profile, getMfaConfig());
+        if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        await method.challenge(user.username, session.profile, { headers: {}, body: params });
         result.message = 'Please verify the MFA challenge.';
         next();
       } catch (err) {
@@ -176,7 +187,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
-        await maybeMFAService().verify(user.username, session.profile, { headers: {}, body: params });
+        const method = getMFAMethodForProfile(session.profile, getMfaConfig());
+        if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        await method.verify(user.username, session.profile, { headers: {}, body: params });
         // The session.context.token is the real access token issued by auth.login
         // and stashed by the MFA-aware login flow.
         if (!session.context.token) {

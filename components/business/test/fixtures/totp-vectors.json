@@ -1,0 +1,51 @@
+{
+  "_comment": "Golden test vectors for the in-process TOTP/HOTP primitive. Values are byte-identical to the published RFC appendices; do not edit them to match code. Sources: RFC 4226 Appendix D (HOTP), RFC 6238 Appendix B (TOTP, SHA-1 rows), RFC 4648 section 10 (Base32).",
+
+  "hotp": {
+    "_source": "RFC 4226 Appendix D",
+    "secretAscii": "12345678901234567890",
+    "digits": 6,
+    "vectors": [
+      { "counter": 0, "code": "755224" },
+      { "counter": 1, "code": "287082" },
+      { "counter": 2, "code": "359152" },
+      { "counter": 3, "code": "969429" },
+      { "counter": 4, "code": "338314" },
+      { "counter": 5, "code": "254676" },
+      { "counter": 6, "code": "287922" },
+      { "counter": 7, "code": "162583" },
+      { "counter": 8, "code": "399871" },
+      { "counter": 9, "code": "520489" }
+    ]
+  },
+
+  "totp": {
+    "_source": "RFC 6238 Appendix B (SHA-1 rows)",
+    "secretAscii": "12345678901234567890",
+    "algorithm": "sha1",
+    "t0": 0,
+    "periodSeconds": 30,
+    "digits": 8,
+    "vectors": [
+      { "time": 59, "code": "94287082" },
+      { "time": 1111111109, "code": "07081804" },
+      { "time": 1111111111, "code": "14050471" },
+      { "time": 1234567890, "code": "89005924" },
+      { "time": 2000000000, "code": "69279037" },
+      { "time": 20000000000, "code": "65353130" }
+    ]
+  },
+
+  "base32": {
+    "_source": "RFC 4648 section 10 (padded canonical form; this codec emits UNPADDED, so tests strip trailing '=')",
+    "vectors": [
+      { "plain": "", "padded": "" },
+      { "plain": "f", "padded": "MY======" },
+      { "plain": "fo", "padded": "MZXQ====" },
+      { "plain": "foo", "padded": "MZXW6===" },
+      { "plain": "foob", "padded": "MZXW6YQ=" },
+      { "plain": "fooba", "padded": "MZXW6YTB" },
+      { "plain": "foobar", "padded": "MZXW6YTBOI======" }
+    ]
+  }
+}

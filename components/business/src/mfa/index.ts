@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';
+import type { Profile as ProfileType } from './Profile.ts';
 const require = createRequire(import.meta.url);
 /**
  * MFA business module.
@@ -43,6 +45,181 @@ function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceL
   if (mfaConfig.mode === 'challenge-verify') return new ChallengeVerifyService(mfaConfig);
   if (mfaConfig.mode === 'single') return new SingleService(mfaConfig);
   throw new Error(`Unknown MFA mode "${mfaConfig.mode}". Expected one of: disabled, challenge-verify, single`);
+}
+
+// ----------------------------------------------------------------------
+// Multi-method model: config normalization + a per-method registry.
+//
+// The single-valued `mode` selector is superseded by an `active` +
+// `defaultMethod` + `methods.{totp,sms}` shape. `normalizeMfaConfig` maps both
+// the new shape and the legacy `mode` onto one normalized object so the API
+// layer only ever sees the modern form. Legacy SMS deployments keep working
+// unchanged through the shim (N2), which is why `createMFAService` above is
+// left untouched (still used by its own unit test).
+// ----------------------------------------------------------------------
+
+type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; [k: string]: unknown };
+type NormalizedMfaConfig = {
+  active: boolean;
+  defaultMethod?: string;
+  methods?: { totp?: MethodCfg; sms?: MethodCfg };
+  sessions?: { ttlSeconds?: number };
+};
+type RawMfaConfig = MFAConfig & {
+  active?: boolean;
+  defaultMethod?: string;
+  methods?: { totp?: MethodCfg; sms?: MethodCfg };
+  sms?: { endpoints?: Record<string, unknown> };
+};
+
+let _warnedLegacyMode = false;
+let _warnedModeConflict = false;
+function mfaLogger (): { warn: (...args: unknown[]) => void } {
+  try {
+    const { getLogger } = require('@pryv/boiler');
+    return getLogger('mfa');
+  } catch {
+    return { warn: (...args: unknown[]) => console.warn('[mfa]', ...args) };
+  }
+}
+
+/**
+ * Normalize a raw `services.mfa` block to the modern shape. Pure function,
+ * called per-invocation at each read site (config is re-read for test
+ * injection). Rules N1 (new model) / N2 (legacy `mode` shim) / N3 (disabled).
+ */
+function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMfaConfig {
+  const cfg = (raw || {}) as RawMfaConfig;
+  const sessions = cfg.sessions;
+
+  // N1 — explicit new model.
+  if (cfg.active === true) {
+    const methods = cfg.methods || {};
+    const totpIn = methods.totp || {};
+    const smsIn = methods.sms || {};
+    const totp: MethodCfg = { ...totpIn, active: totpIn.active !== false }; // default true
+    const smsEndpoints = (smsIn.endpoints && Object.keys(smsIn.endpoints).length > 0)
+      ? smsIn.endpoints
+      : (cfg.sms?.endpoints || {}); // fall back to the legacy endpoints location
+    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints };
+    const defaultMethod = cfg.defaultMethod || 'totp';
+    if (cfg.mode != null && cfg.mode !== 'disabled' && !_warnedModeConflict) {
+      mfaLogger().warn(`services.mfa.mode="${cfg.mode}" ignored: the new services.mfa.active model takes precedence.`);
+      _warnedModeConflict = true;
+    }
+    const normalized: NormalizedMfaConfig = { active: true, defaultMethod, methods: { totp, sms }, sessions };
+    const chosen = (normalized.methods as Record<string, MethodCfg>)[defaultMethod];
+    if (!chosen || chosen.active !== true) {
+      throw new Error(`services.mfa.defaultMethod="${defaultMethod}" is not an active method. Enable it under services.mfa.methods.${defaultMethod}.active.`);
+    }
+    return normalized;
+  }
+
+  // N2 — legacy `mode` shim (SMS-only, byte-for-byte behavior).
+  if (cfg.mode === 'single' || cfg.mode === 'challenge-verify') {
+    if (!_warnedLegacyMode) {
+      mfaLogger().warn(`services.mfa.mode="${cfg.mode}" is deprecated; migrate to services.mfa.active + methods.sms. Shimming for now.`);
+      _warnedLegacyMode = true;
+    }
+    return {
+      active: true,
+      defaultMethod: 'sms',
+      methods: {
+        sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {} },
+        totp: { active: false }
+      },
+      sessions
+    };
+  }
+
+  // N3 — disabled / absent.
+  if (cfg.mode == null || cfg.mode === 'disabled') return { active: false };
+
+  // Unknown mode keeps today's throw.
+  throw new Error(`Unknown MFA mode "${cfg.mode}". Expected one of: disabled, challenge-verify, single`);
+}
+
+/**
+ * SMS adapter: exposes the HTTP-provider `ChallengeVerifyService` /
+ * `SingleService` through the `MfaMethod` contract. Their internals and the
+ * HTTP `Service` base class are untouched.
+ */
+class SmsMethod implements MfaMethod {
+  readonly name = 'sms';
+  service: { challenge: Function; verify: Function };
+  constructor (service: { challenge: Function; verify: Function }) {
+    this.service = service;
+  }
+
+  async enroll (username: string, profile: ProfileType, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    // SMS enrolment content = the activate body (phone etc.), minus the
+    // method selector; then send the challenge, exactly as the pre-registry
+    // activate did.
+    const content = { ...params };
+    delete (content as Record<string, unknown>).method;
+    (profile as unknown as { content: Record<string, unknown> }).content = content;
+    await this.service.challenge(username, profile, { headers: {}, body: params });
+    return {};
+  }
+
+  async challenge (username: string, profile: ProfileType, clientRequest: MfaClientRequest): Promise<Record<string, unknown>> {
+    await this.service.challenge(username, profile, clientRequest);
+    return {};
+  }
+
+  async verify (username: string, profile: ProfileType, clientRequest: MfaClientRequest): Promise<void> {
+    await this.service.verify(username, profile, clientRequest);
+  }
+}
+
+// Per-method cache. The SMS `SingleService` holds a per-instance username->code
+// map spanning challenge->verify, so a method MUST be a singleton across a
+// flow (same rationale as the old `_mfaService`). Reset in tests.
+let _methodCache: Map<string, MfaMethod> | null = null;
+function methodCache (): Map<string, MfaMethod> {
+  if (_methodCache === null) _methodCache = new Map();
+  return _methodCache;
+}
+
+function buildSmsMethod (smsCfg: MethodCfg, sessions: NormalizedMfaConfig['sessions']): MfaMethod {
+  const legacyShaped = { sms: { endpoints: smsCfg.endpoints || {} }, sessions };
+  if (smsCfg.mode === 'challenge-verify') return new SmsMethod(new ChallengeVerifyService(legacyShaped));
+  if (smsCfg.mode === 'single') return new SmsMethod(new SingleService(legacyShaped));
+  throw new Error(`Unknown SMS MFA mode "${smsCfg.mode}". Expected challenge-verify or single`);
+}
+
+function buildTotpMethod (totpCfg: MethodCfg, sessions: NormalizedMfaConfig['sessions']): MfaMethod {
+  const TotpService = require('./TotpService.ts').default;
+  return new TotpService(totpCfg, sessions);
+}
+
+/**
+ * Resolve an MFA method by name against a NORMALIZED config. Returns null when
+ * MFA is off or that method is not active. Built instances are cached.
+ */
+function getMFAMethod (name: string, normalizedCfg: NormalizedMfaConfig | null | undefined): MfaMethod | null {
+  if (!normalizedCfg || normalizedCfg.active !== true) return null;
+  const methods = (normalizedCfg.methods || {}) as Record<string, MethodCfg>;
+  const mcfg = methods[name];
+  if (!mcfg || mcfg.active !== true) return null;
+  const cache = methodCache();
+  const existing = cache.get(name);
+  if (existing) return existing;
+  let built: MfaMethod;
+  if (name === 'sms') built = buildSmsMethod(mcfg, normalizedCfg.sessions);
+  else if (name === 'totp') built = buildTotpMethod(mcfg, normalizedCfg.sessions);
+  else throw new Error(`Unknown MFA method "${name}". Expected one of: totp, sms`);
+  cache.set(name, built);
+  return built;
+}
+
+/**
+ * Resolve the MFA method for a stored profile (its `method`, defaulting to
+ * 'sms' for legacy profiles). Null when that method is not active.
+ */
+function getMFAMethodForProfile (profile: { method?: string } | null | undefined, normalizedCfg: NormalizedMfaConfig | null | undefined): MfaMethod | null {
+  const name = (profile && profile.method) ? profile.method : 'sms';
+  return getMFAMethod(name, normalizedCfg);
 }
 
 // Per-worker MFA service singleton (stateless once built).
@@ -88,6 +265,8 @@ async function _resetMFASingletons (): Promise<void> {
   }
   _mfaService = null;
   _sessionStore = null;
+  _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, getMFAMethod, getMFAMethodForProfile, SmsMethod };
+export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';
