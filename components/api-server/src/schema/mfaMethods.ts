@@ -21,11 +21,16 @@ const mfaMethods = {
   // Personal access token required. Body is the profile content (e.g. { phone: '+41...' }) —
   // arbitrary key-value pairs that get templated into the SMS endpoint URL/headers/body.
   activate: {
-    params: object({}, {
-      additionalProperties: true
+    params: object({
+      method: string() // optional: 'totp' | 'sms'; defaults to services.mfa.defaultMethod
+    }, {
+      additionalProperties: true // SMS template kv pairs (e.g. phone)
     }),
     result: object({
-      mfaToken: string()
+      mfaToken: string(),
+      method: string(), // TOTP enrolments echo the method + enrolment material
+      otpauthUri: string(),
+      secret: string()
     }, {
       required: ['mfaToken'],
       additionalProperties: false
@@ -59,7 +64,8 @@ const mfaMethods = {
       additionalProperties: false
     }),
     result: object({
-      message: string()
+      message: string(),
+      method: string() // present so clients can render the right prompt
     }, {
       required: ['message'],
       additionalProperties: false

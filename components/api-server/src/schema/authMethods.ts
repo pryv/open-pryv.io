@@ -148,7 +148,12 @@ const __ex_login = {
     }),
     result: object({
       token: string(),
-      apiEndpoint: string()
+      apiEndpoint: string(),
+      // When the user has active MFA the login step returns these INSTEAD of
+      // token/apiEndpoint (the real token is released by mfa.verify). Result
+      // schemas are not runtime-enforced on this path; listed for documentation.
+      mfaToken: string(),
+      mfaMethod: string()
     }, {
       required: ['token'],
       additionalProperties: false

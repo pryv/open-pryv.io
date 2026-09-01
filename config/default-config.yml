@@ -159,12 +159,38 @@ customExtensions:
 # MFA `mode` is PLATFORM-WIDE policy — documented as YAML-only in v2, targeted for post-v2 move.
 # --- Services (external integrations) ---
 services:
-  # Multi-factor authentication
-  # mode: disabled — no MFA enforcement (default, backwards-compatible)
-  # mode: challenge-verify — separate challenge + verify SMS endpoints
-  # mode: single — combined challenge+verify in one SMS endpoint
+  # Multi-factor authentication. Pluggable + multi-method. Two config models
+  # coexist:
+  #   NEW (preferred): `active` + `defaultMethod` + `methods.{totp,sms}`.
+  #     TOTP (authenticator apps, RFC 6238) is served in-process; it is the
+  #     default method when MFA is enabled.
+  #   LEGACY: `mode` (disabled | challenge-verify | single) — an SMS-only
+  #     selector, still honored via an in-memory shim that maps it onto
+  #     methods.sms. Existing deployments need no change.
+  # Category: MIXED. Method policy (active/defaultMethod/methods.*.active +
+  # TOTP digits/period/drift/issuer) is PLATFORM-WIDE (identical across cores).
+  # `methods.totp.secretsKey` and SMS endpoint headers are SECRET-grade:
+  # YAML-only, never PlatformDB, operator-sync responsibility.
   mfa:
-    mode: disabled
+    mode: disabled            # LEGACY selector; kept for back-compat (shimmed)
+    active: false             # master switch for the multi-method model
+    defaultMethod: totp       # offered by mfa.activate when the body names none
+    methods:
+      totp:
+        active: true          # effective once services.mfa.active is true
+        issuer: ''            # otpauth issuer; '' => dns.domain, else 'Pryv.io'
+        digits: 6
+        periodSeconds: 30
+        driftSteps: 1         # accept +/- N 30s steps on verify
+        secretsKey: ''        # SECRET: base64 32-byte at-rest key for TOTP
+                              # secrets; '' => derive from auth.adminAccessKey
+      sms:
+        active: false
+        mode: single          # single | challenge-verify
+        endpoints: {}         # same shape as the legacy `sms.endpoints` below;
+                              # falls back to it when empty
+    # LEGACY endpoints location, read by the shim (and by methods.sms when its
+    # own `endpoints` is empty). SECRET: headers may carry provider API keys.
     sms:
       endpoints:
         challenge:

@@ -32,8 +32,31 @@ const nock = require('nock');
 const { getConfig } = require('@pryv/boiler');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { _resetMFASingletons } = require('business/src/mfa/index.ts');
+const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
+const crypto = require('node:crypto');
 
 const SMS_HOST = 'http://sms-mock.local';
+
+// A fixed 32-byte at-rest key (base64) for the TOTP test config, and a helper
+// that computes a code for a given step offset (0 = current 30s step).
+const TOTP_SECRETS_KEY = crypto.randomBytes(32).toString('base64');
+const totpTestConfig = {
+  services: {
+    mfa: {
+      active: true,
+      defaultMethod: 'totp',
+      methods: {
+        totp: { active: true, digits: 6, periodSeconds: 30, driftSteps: 1, secretsKey: TOTP_SECRETS_KEY },
+        sms: { active: false }
+      },
+      sessions: { ttlSeconds: 1800 }
+    }
+  }
+};
+function totpCodeFor (secretB32, offsetSteps = 0) {
+  const now = Math.floor(Date.now() / 1000);
+  return totpCode(base32Decode(secretB32), { time: now + offsetSteps * 30, periodSeconds: 30, digits: 6 });
+}
 
 const mfaConfig = {
   services: {
@@ -397,6 +420,174 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/recover`)
           .send({ username, password: 'wrong', recoveryCode: recoveryCodes[0] });
         assert.strictEqual(res.status, 401);
+      });
+    });
+  });
+
+  // --------------------------------------------------------------------
+  // TOTP (authenticator app) — the default method when MFA is enabled.
+  // In-process core: test and server share one clock, so step-offset codes
+  // are deterministic. Confirm advances the replay guard, so the login-verify
+  // setup confirms with the previous step's code (still within drift) to keep
+  // the current-step code usable without waiting for a new 30s window.
+  describe('[MA10] TOTP method', function () {
+    let restoreConfig;
+    beforeEach(async function () {
+      restoreConfig = injectTestConfigSnapshot(totpTestConfig);
+      await _resetMFASingletons();
+    });
+    afterEach(function () {
+      restoreConfig();
+    });
+
+    function activateTotp () {
+      return coreRequest
+        .post(`/${username}/mfa/activate`)
+        .set('Authorization', personalToken)
+        .send({ method: 'totp' });
+    }
+    function login () {
+      return coreRequest
+        .post(`/${username}/auth/login`)
+        .set('Origin', 'http://test.pryv.local')
+        .send({ username, password, appId: 'pryv-test' });
+    }
+
+    describe('[MA10E] enrolment', function () {
+      it('[MA10A] activate(totp)+confirm returns an otpauth URI + secret, then recovery codes', async function () {
+        const act = await activateTotp();
+        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        assert.strictEqual(act.body.method, 'totp');
+        assert.match(act.body.otpauthUri, /^otpauth:\/\/totp\//);
+        assert.match(act.body.secret, /^[A-Z2-7]+$/);
+        assert.ok(act.body.mfaToken != null);
+
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(act.body.secret, 0) });
+        assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+        assert.strictEqual(confirm.body.recoveryCodes.length, 10);
+      });
+
+      it('[MA10B] confirm with a wrong code returns 400 and persists nothing', async function () {
+        const act = await activateTotp();
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: '000000' });
+        assert.strictEqual(confirm.status, 400);
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null);
+        assert.ok(loginRes.body.mfaToken == null);
+      });
+
+      it('[MA10C] an unconfirmed secret is never usable at login', async function () {
+        await activateTotp(); // no confirm
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null);
+        assert.ok(loginRes.body.mfaToken == null);
+      });
+
+      it('[MA10D] activate without an explicit method uses the configured default (totp)', async function () {
+        const res = await coreRequest
+          .post(`/${username}/mfa/activate`)
+          .set('Authorization', personalToken)
+          .send({});
+        assert.strictEqual(res.status, 302);
+        assert.strictEqual(res.body.method, 'totp');
+        assert.ok(res.body.otpauthUri != null);
+      });
+    });
+
+    describe('[MA11] login + verify', function () {
+      let secret;
+      beforeEach(async function () {
+        const act = await activateTotp();
+        secret = act.body.secret;
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(secret, -1) });
+        assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+      });
+
+      it('[MA11A] login returns mfaToken+mfaMethod=totp; verify releases the real token', async function () {
+        const loginRes = await login();
+        assert.strictEqual(loginRes.status, 200);
+        assert.strictEqual(loginRes.body.mfaMethod, 'totp');
+        assert.ok(loginRes.body.mfaToken != null);
+        assert.ok(loginRes.body.token == null);
+
+        const verify = await coreRequest
+          .post(`/${username}/mfa/verify`)
+          .set('Authorization', loginRes.body.mfaToken)
+          .send({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(verify.status, 200, `verify failed: ${JSON.stringify(verify.body)}`);
+        assert.ok(verify.body.token != null);
+      });
+
+      it('[MA11B] verify with a wrong code returns 400', async function () {
+        const loginRes = await login();
+        const verify = await coreRequest
+          .post(`/${username}/mfa/verify`)
+          .set('Authorization', loginRes.body.mfaToken)
+          .send({ code: '000000' });
+        assert.strictEqual(verify.status, 400);
+      });
+
+      it('[MA11E] a used code cannot be replayed', async function () {
+        const loginRes = await login();
+        const code = totpCodeFor(secret, 0);
+        const first = await coreRequest
+          .post(`/${username}/mfa/verify`)
+          .set('Authorization', loginRes.body.mfaToken)
+          .send({ code });
+        assert.strictEqual(first.status, 200);
+
+        const loginRes2 = await login();
+        const replay = await coreRequest
+          .post(`/${username}/mfa/verify`)
+          .set('Authorization', loginRes2.body.mfaToken)
+          .send({ code });
+        assert.strictEqual(replay.status, 400);
+      });
+
+      it('[MA11F] five failed verifies invalidate the MFA session', async function () {
+        const loginRes = await login();
+        const token = loginRes.body.mfaToken;
+        for (let i = 0; i < 4; i++) {
+          const r = await coreRequest
+            .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+          assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+        }
+        const fifth = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+        assert.strictEqual(fifth.status, 401, 'the 5th failure should invalidate the session');
+        const after = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(after.status, 401);
+      });
+    });
+
+    describe('[MA13] deactivate', function () {
+      it('[MA13B] deactivate wipes the TOTP enrolment', async function () {
+        const act = await activateTotp();
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(act.body.secret, 0) });
+        assert.strictEqual(confirm.status, 200);
+
+        const deactivate = await coreRequest
+          .post(`/${username}/mfa/deactivate`)
+          .set('Authorization', personalToken)
+          .send({});
+        assert.strictEqual(deactivate.status, 200);
+
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null);
+        assert.ok(loginRes.body.mfaToken == null);
       });
     });
   });

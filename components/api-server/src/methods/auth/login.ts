@@ -209,13 +209,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     if (mfaCfg.active !== true) return next(); // MFA disabled server-wide
     try {
       const profileSet = await fromCallback((cb: (err?: unknown, res?: unknown) => void) =>
-        userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb)) as { data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[] } } } | null;
+        userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb)) as { data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: unknown } } } | null;
       const storedMfa = profileSet && profileSet.data && profileSet.data.mfa;
-      if (!storedMfa || !storedMfa.content || Object.keys(storedMfa.content).length === 0) {
-        // No MFA configured for this user — login response stands as-is.
-        return next();
-      }
-      const profile = new MFAProfile(storedMfa.content, storedMfa.recoveryCodes || []);
+      if (!storedMfa) return next(); // no MFA state for this user
+      const profile = new MFAProfile(storedMfa.content || {}, storedMfa.recoveryCodes || [], storedMfa.method, storedMfa.totp);
+      // Method-aware active check: TOTP requires a confirmed enrolment; SMS
+      // requires non-empty content. A pending (unconfirmed) TOTP secret is not
+      // active, so login stands as-is.
+      if (!profile.isActive()) return next();
       const method = getMFAMethodForProfile(profile, mfaCfg);
       if (method == null) return next(); // user's method not active server-side
       await method.challenge(context.user.username, profile, { headers: {}, body: params });
@@ -234,6 +235,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       delete result.passwordExpires;
       delete result.passwordCanBeChanged;
       result.mfaToken = mfaToken;
+      result.mfaMethod = method.name;
       next();
     } catch (err) {
       next(err);

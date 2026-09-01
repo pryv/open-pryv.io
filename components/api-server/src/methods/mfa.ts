@@ -14,13 +14,26 @@ const { fromCallback } = require('utils');
 type MethodContext = BaseMethodContext & {
   [key: string]: unknown;
 };
+type TotpState = {
+  secret: string;
+  algorithm: string;
+  digits: number;
+  periodSeconds: number;
+  confirmedAt: number | null;
+  lastUsedStep: number;
+};
 type MFAProfile = {
   content: Record<string, unknown>;
   recoveryCodes: string[];
+  method?: string;
+  totp?: TotpState;
   generateRecoveryCodes (): void;
   getRecoveryCodes (): string[];
   isActive (): boolean;
 };
+type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: TotpState };
+
+const MAX_MFA_ATTEMPTS = 5;
 type UserRef = { id: string; username: string };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 const errors = require('errors').factory;
@@ -60,15 +73,31 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   /**
+   * Attempt limiter (all methods, per operator sign-off S3). Records a failed
+   * verify/confirm against the session; once the ceiling is reached the session
+   * is invalidated (re-login required). Returns the error to surface: the
+   * original verify error while under the ceiling, or an
+   * invalid-access-token once the session is killed.
+   */
+  async function limitOrPassThrough (mfaToken: unknown, verifyErr: Error): Promise<Error> {
+    const attempts = await sessionStore().recordFailedAttempt(mfaToken);
+    if (attempts >= MAX_MFA_ATTEMPTS) {
+      await sessionStore().clear(mfaToken);
+      return errors.invalidAccessToken('Too many failed MFA attempts; the MFA session has been invalidated. Please log in again.');
+    }
+    return verifyErr;
+  }
+
+  /**
    * Load the MFA profile from `profile.private.data.mfa`. Returns a fresh
    * empty Profile when nothing is stored yet.
    */
   async function loadMFAProfile (user: UserRef): Promise<MFAProfile> {
-    const profileSet = await fromCallback((cb: Cb<{ data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[] } } } | null>) =>
-      userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb)) as { data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[] } } } | null;
+    const profileSet = await fromCallback((cb: Cb<{ data?: { mfa?: StoredMfa } } | null>) =>
+      userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb)) as { data?: { mfa?: StoredMfa } } | null;
     if (!profileSet || !profileSet.data || !profileSet.data.mfa) return new Profile();
     const stored = profileSet.data.mfa;
-    return new Profile(stored.content || {}, stored.recoveryCodes || []);
+    return new Profile(stored.content || {}, stored.recoveryCodes || [], stored.method, stored.totp);
   }
 
   /**
@@ -84,7 +113,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
     const mfaValue = profile == null
       ? null // null → $unset['data.mfa']
-      : { content: profile.content, recoveryCodes: profile.recoveryCodes };
+      : {
+          content: profile.content,
+          recoveryCodes: profile.recoveryCodes,
+          ...(profile.method !== undefined ? { method: profile.method } : {}),
+          ...(profile.totp !== undefined ? { totp: profile.totp } : {})
+        };
     if (!existing) {
       // If the private profile doesn't exist yet, create it with the mfa block
       // (or skip when clearing — there's nothing to clear).
@@ -142,7 +176,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const profile = session.profile;
         const method = getMFAMethodForProfile(profile, getMfaConfig());
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
-        await method.verify(user.username, profile, { headers: {}, body: params });
+        try {
+          await method.verify(user.username, profile, { headers: {}, body: params });
+        } catch (verifyErr) {
+          return next(await limitOrPassThrough(params.mfaToken, verifyErr as Error));
+        }
+        // TOTP: mark the enrolment confirmed. saveMFAProfile atomically replaces
+        // any previous enrolment (whole data.mfa is overwritten).
+        if (profile.method === 'totp' && profile.totp) profile.totp.confirmedAt = Date.now();
         profile.generateRecoveryCodes();
         await saveMFAProfile(user, profile);
         await sessionStore().clear(params.mfaToken);
@@ -189,7 +230,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const user = session.context.user;
         const method = getMFAMethodForProfile(session.profile, getMfaConfig());
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
-        await method.verify(user.username, session.profile, { headers: {}, body: params });
+        try {
+          await method.verify(user.username, session.profile, { headers: {}, body: params });
+        } catch (verifyErr) {
+          return next(await limitOrPassThrough(params.mfaToken, verifyErr as Error));
+        }
+        // TOTP replay guard: persist the advanced lastUsedStep to the stored
+        // profile BEFORE releasing the token, so a storage failure never lets a
+        // replayable step through with the real token.
+        if (session.profile.method === 'totp') {
+          await saveMFAProfile(user, session.profile);
+        }
         // The session.context.token is the real access token issued by auth.login
         // and stashed by the MFA-aware login flow.
         if (!session.context.token) {
