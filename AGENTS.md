@@ -233,7 +233,7 @@ Understand this before debugging why a setting "isn't taking effect".
 - [SSL certificate](https://pryv.github.io/customer-resources/ssl-certificate/): built-in ACME / Let's Encrypt.
 - [Backup](https://pryv.github.io/customer-resources/backup/): `bin/backup.js`.
 - [Core migration](https://pryv.github.io/customer-resources/core-migration/): moving a core to a new host.
-- [MFA](https://pryv.github.io/customer-resources/mfa/): SMS-based two-factor.
+- [MFA](https://pryv.github.io/customer-resources/mfa/): pluggable two-factor via `mfa.*` methods. An in-process authenticator-app factor (TOTP, RFC 6238) is the default when MFA is enabled; SMS (HTTP provider) is also supported. Config: `services.mfa` (`active` / `defaultMethod` / `methods.{totp,sms}`; legacy `mode` shimmed). Code in `components/business/src/mfa/` (`MfaMethod` registry + `TotpService`), wired at `components/api-server/src/methods/mfa.ts`.
 - [Emails setup](https://pryv.github.io/customer-resources/emails-setup/): in-process vs microservice.
 - [Observability](https://pryv.github.io/customer-resources/observability/): opt-in telemetry over OTLP.
 - [Healthchecks](https://pryv.github.io/customer-resources/healthchecks/) and [platform validation](https://pryv.github.io/customer-resources/platform-validation/).

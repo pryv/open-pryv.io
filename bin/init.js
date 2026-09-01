@@ -443,18 +443,33 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #         user: smtp-user
 #         pass: smtp-password
 
-# # services.mfa — SMS-based two-factor for app + personal accesses.
-# # mode: disabled | single (combined challenge+verify) | challenge-verify (two endpoints).
+# # services.mfa — two-factor for app + personal accesses.
+# # Multi-method: an authenticator app (TOTP, RFC 6238) is the default method;
+# # SMS still works. Set active: true to enable MFA (default: off).
+# # methods.totp.secretsKey is a base64 32-byte at-rest key for TOTP secrets;
+# # leave empty to derive it from auth.adminAccessKey (rotating that key then
+# # invalidates enrolments). Legacy single-valued mode is still honoured.
 # # services:
 # #   mfa:
-# #     mode: single
-# #     sms:
-# #       endpoints:
-# #         single:
-# #           url: https://sms-gateway.example.com/send
-# #           method: POST
-# #           headers: { Authorization: 'Bearer <api-token>' }
-# #           bodyTemplate: '{"to": "{{phoneNumber}}", "text": "{{message}}"}'
+# #     active: true
+# #     defaultMethod: totp        # totp | sms
+# #     methods:
+# #       totp:
+# #         active: true
+# #         issuer: ''             # otpauth issuer label; '' => dns.domain
+# #         digits: 6
+# #         periodSeconds: 30
+# #         driftSteps: 1
+# #         secretsKey: ''         # base64 32-byte; '' => derive from adminAccessKey
+# #       sms:
+# #         active: false
+# #         mode: single           # single | challenge-verify
+# #         endpoints:
+# #           single:
+# #             url: https://sms-gateway.example.com/send
+# #             method: POST
+# #             headers: { Authorization: 'Bearer <api-token>' }
+# #             body: '{"to": "{{ phone }}", "text": "code {{ code }}"}'
 
 # # sso — third-party sign-in (Pryv as an OpenID Connect relying party).
 # # Single-core / dnsLess only in this version. clientSecret is a per-core

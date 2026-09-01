@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## mfa: multi-method model + in-process TOTP (registry, config normalizer, at-rest encryption)
+
+The MFA subsystem grew a small `MfaMethod` interface + a per-method registry in
+`components/business/src/mfa/index.ts`, alongside a `normalizeMfaConfig` that maps
+both the new `active`/`defaultMethod`/`methods` shape and the legacy `mode` onto
+one normalized form (rules N1/N2/N3; a one-time deprecation WARN on legacy
+`mode`). The existing HTTP-provider SMS services are exposed through the interface
+via a thin adapter; the HTTP `Service` base class is untouched. A new in-process
+`TotpService` implements RFC 6238 over a dependency-free primitive (`totp.ts`:
+Base32 codec + HOTP + constant-time verify with a drift window and a per-user
+`lastUsedStep` replay guard), pinned by the RFC 4226/6238/4648 golden vectors.
+TOTP secrets are encrypted at rest by reusing the shipped AES-256-GCM
+`AtRestEncryption` envelope, under a key resolved from `services.mfa.methods.totp.secretsKey`
+or derived from `auth.adminAccessKey`. The MFA profile and session store now carry
+the `method`/`totp` state and a per-session attempt counter; the API layer resolves
+the method per user, sets `confirmedAt` at confirm, persists `lastUsedStep` at verify
+before releasing the token, and enforces a 5-attempt session limiter (all methods).
+
 ## events: harden SQLite duplicate-id detection + add concurrent duplicate-creation coverage
 
 The SQLite events store recognised a duplicate `id` insert by an exact match on

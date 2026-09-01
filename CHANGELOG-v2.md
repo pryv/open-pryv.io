@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### MFA: server-side TOTP (authenticator apps), the default method over SMS
+
+MFA is no longer SMS-only. A server-side TOTP factor (RFC 6238, authenticator
+apps such as Google Authenticator / 1Password) is now built in and is the
+default method when MFA is enabled. SMS continues to work unchanged.
+
+- `mfa.activate` accepts an optional `method` (`totp` | `sms`, defaulting to the
+  operator's configured `defaultMethod`). For TOTP it returns, alongside the
+  `mfaToken`, an `otpauthUri` (for a QR code) and the Base32 `secret` (for
+  manual entry). `mfa.confirm` then verifies the first code and returns the
+  recovery codes, as before.
+- `auth.login` now also returns `mfaMethod` (`totp` | `sms`) next to `mfaToken`
+  so clients can prompt for the right factor; `mfa.challenge` echoes `method`.
+- New config `services.mfa`: `active` + `defaultMethod` + `methods.{totp,sms}`
+  (TOTP `digits`/`periodSeconds`/`driftSteps`/`issuer`/`secretsKey`). The legacy
+  single-valued `services.mfa.mode` (`disabled`/`challenge-verify`/`single`) is
+  still honoured via an in-memory shim, so existing deployments need no change;
+  the shipped default keeps MFA off.
+- TOTP secrets are stored encrypted at rest; a wrong code is rejected as
+  `invalid-mfa-code`, a used code cannot be replayed, and repeated failures
+  invalidate the pending MFA session. TOTP raises the deployment to a clean
+  NIST 800-63B AAL2 posture without any third-party service.
+
 ### Concurrent `streams.create` of the same id returns `item-already-exists`, not a raw DB error
 
 When two clients raced to create the same stream id, the loser could receive a
