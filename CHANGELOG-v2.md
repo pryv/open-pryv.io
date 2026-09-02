@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-rc.14 — 2026-09-02
+
 ### MFA: server-side TOTP (authenticator apps) enabled by default, over SMS
 
 MFA is no longer SMS-only, and it is now **on by default**. A server-side TOTP
