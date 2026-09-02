@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { ready } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
+const { normalizeMfaConfig } = require('business/src/mfa/index.ts');
 
 type ServiceInfo = {
   features: { noHF?: boolean } & Record<string, unknown>;
@@ -43,6 +44,23 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     // instead of probing for a 400 on older servers.
     if (serviceInfo.features.contentQueries === undefined) {
       serviceInfo.features.contentQueries = true;
+    }
+    // Active MFA methods, default-method first. `{ methods: [] }` means MFA is
+    // off; an older core omits `features.mfa` entirely, so clients distinguish
+    // "off" from "unknown" and fall back accordingly. Lets a client (e.g. the
+    // account UI) offer only the methods the operator actually enabled rather
+    // than advertising SMS on a server with no SMS provider. Method NAMES only,
+    // no per-user state, no endpoints/keys.
+    if (serviceInfo.features.mfa === undefined) {
+      const mfaCfg = normalizeMfaConfig(config.get('services:mfa'));
+      let methods: string[] = [];
+      if (mfaCfg.active === true) {
+        const m = (mfaCfg.methods || {}) as Record<string, { active?: boolean }>;
+        methods = Object.keys(m)
+          .filter((name) => m[name] && m[name].active === true)
+          .sort((a, b) => (a === mfaCfg.defaultMethod ? -1 : b === mfaCfg.defaultMethod ? 1 : 0));
+      }
+      serviceInfo.features.mfa = { methods };
     }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to

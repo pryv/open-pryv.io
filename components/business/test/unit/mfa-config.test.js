@@ -68,6 +68,23 @@ describe('[MNORM] normalizeMfaConfig', function () {
     assert.strictEqual(n.active, true);
     assert.strictEqual(n.defaultMethod, 'sms');
   });
+
+  it('[MNORM8] a legacy `mode` TAKES PRECEDENCE over the active-by-default (upgrade-safety): SMS-only shim', function () {
+    // The default now supplies active:true; a legacy operator config (mode set,
+    // no explicit active) must keep its SMS second factor, not silently drop to
+    // a TOTP-only model where its SMS users would have no active method.
+    const n = normalizeMfaConfig({ active: true, mode: 'single', sms: { endpoints: { single: { url: 'x' } } } });
+    assert.strictEqual(n.active, true);
+    assert.strictEqual(n.defaultMethod, 'sms');
+    assert.strictEqual(n.methods.sms.active, true);
+    assert.strictEqual(n.methods.sms.mode, 'single');
+    assert.deepStrictEqual(n.methods.sms.endpoints, { single: { url: 'x' } });
+    assert.strictEqual(n.methods.totp.active, false);
+  });
+
+  it('[MNORM9] an explicit active:false wins even over a leftover legacy mode', function () {
+    assert.deepStrictEqual(normalizeMfaConfig({ active: false, mode: 'single' }), { active: false });
+  });
 });
 
 describe('[MKEY] resolveTotpKey', function () {

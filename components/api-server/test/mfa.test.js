@@ -142,7 +142,18 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   });
 
   // --------------------------------------------------------------------
-  describe('[MA1] when services.mfa.mode is "disabled" (default)', function () {
+  // MFA now ships ENABLED by default (TOTP), so the "disabled" path must be
+  // asserted against an explicitly-disabled config, not the default.
+  describe('[MA1] when services.mfa is explicitly disabled', function () {
+    let restoreConfig;
+    beforeEach(async function () {
+      restoreConfig = injectTestConfigSnapshot({ services: { mfa: { active: false } } });
+      await _resetMFASingletons();
+    });
+    afterEach(function () {
+      restoreConfig();
+    });
+
     it('[MA1A] auth.login returns the access token directly', async function () {
       const res = await coreRequest
         .post(`/${username}/auth/login`)
@@ -159,6 +170,56 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         .set('Authorization', personalToken)
         .send({ phone: '+41000' });
       assert.strictEqual(res.status, 503);
+    });
+  });
+
+  // --------------------------------------------------------------------
+  // The SHIPPED DEFAULT (no config injection): MFA active, TOTP the default
+  // method, working out of the box off the test core's adminAccessKey.
+  describe('[MA15] shipped default (TOTP enabled out of the box)', function () {
+    beforeEach(async function () { await _resetMFASingletons(); });
+    afterEach(async function () { await _resetMFASingletons(); });
+
+    it('[MA15A] an unenrolled user still logs in directly (nothing forced)', async function () {
+      const res = await coreRequest
+        .post(`/${username}/auth/login`)
+        .set('Origin', 'http://test.pryv.local')
+        .send({ username, password, appId: 'pryv-test' });
+      assert.strictEqual(res.status, 200);
+      assert.ok(res.body.token != null);
+      assert.ok(res.body.mfaToken == null);
+    });
+
+    it('[MA15B] mfa.activate returns a TOTP enrolment payload with no MFA config', async function () {
+      const res = await coreRequest
+        .post(`/${username}/mfa/activate`)
+        .set('Authorization', personalToken)
+        .send({});
+      assert.strictEqual(res.status, 302, `activate failed: ${JSON.stringify(res.body)}`);
+      assert.strictEqual(res.body.method, 'totp');
+      assert.match(res.body.otpauthUri, /^otpauth:\/\/totp\//);
+      assert.match(res.body.secret, /^[A-Z2-7]+$/);
+    });
+
+    it('[MA15C] full TOTP ceremony works under pure defaults', async function () {
+      const act = await coreRequest
+        .post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({});
+      assert.strictEqual(act.status, 302);
+      const secret = act.body.secret;
+      const confirm = await coreRequest
+        .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+        .send({ code: totpCodeFor(secret, -1) });
+      assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+      assert.strictEqual(confirm.body.recoveryCodes.length, 10);
+      const loginRes = await coreRequest
+        .post(`/${username}/auth/login`).set('Origin', 'http://test.pryv.local')
+        .send({ username, password, appId: 'pryv-test' });
+      assert.strictEqual(loginRes.body.mfaMethod, 'totp');
+      const verify = await coreRequest
+        .post(`/${username}/mfa/verify`).set('Authorization', loginRes.body.mfaToken)
+        .send({ code: totpCodeFor(secret, 0) });
+      assert.strictEqual(verify.status, 200, `verify failed: ${JSON.stringify(verify.body)}`);
+      assert.ok(verify.body.token != null);
     });
   });
 

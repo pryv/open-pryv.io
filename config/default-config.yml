@@ -172,8 +172,14 @@ services:
   # `methods.totp.secretsKey` and SMS endpoint headers are SECRET-grade:
   # YAML-only, never PlatformDB, operator-sync responsibility.
   mfa:
-    mode: disabled            # LEGACY selector; kept for back-compat (shimmed)
-    active: false             # master switch for the multi-method model
+    mode: disabled            # LEGACY selector; when set to single|challenge-verify
+                              # it TAKES PRECEDENCE (SMS-only shim) so legacy
+                              # deployments upgrade byte-identically. Deprecated;
+                              # remove it to adopt the multi-method model + TOTP.
+    active: true              # MFA endpoints live by default; TOTP works out of
+                              # the box (in-process, no external service). Users
+                              # are only challenged after they enrol; nothing is
+                              # forced. Set false to disable MFA entirely.
     defaultMethod: totp       # offered by mfa.activate when the body names none
     methods:
       totp:

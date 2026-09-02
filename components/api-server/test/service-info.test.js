@@ -88,5 +88,27 @@ describe('[SINF] Service', () => {
           'expected features.noHF=true when cluster.hfsWorkers===0');
       });
     });
+
+    it('[SN05] advertises features.mfa.methods=["totp"] under the shipped default', async () => {
+      const res = await coreRequest.get('/' + username + '/service/info');
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: ['totp'] });
+    });
+
+    it('[SN06] advertises features.mfa.methods=[] (present, empty) when MFA is disabled', async () => {
+      await withInjectedConfig({ services: { mfa: { active: false } } }, async () => {
+        const res = await coreRequest.get('/' + username + '/service/info');
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: [] });
+      });
+    });
+
+    it('[SN07] lists both methods, defaultMethod first, when SMS is also active', async () => {
+      await withInjectedConfig({ services: { mfa: { active: true, defaultMethod: 'totp', methods: { totp: { active: true }, sms: { active: true } } } } }, async () => {
+        const res = await coreRequest.get('/' + username + '/service/info');
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: ['totp', 'sms'] });
+      });
+    });
   });
 });

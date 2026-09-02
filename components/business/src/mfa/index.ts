@@ -73,7 +73,6 @@ type RawMfaConfig = MFAConfig & {
 };
 
 let _warnedLegacyMode = false;
-let _warnedModeConflict = false;
 function mfaLogger (): { warn: (...args: unknown[]) => void } {
   try {
     const { getLogger } = require('@pryv/boiler');
@@ -86,39 +85,29 @@ function mfaLogger (): { warn: (...args: unknown[]) => void } {
 /**
  * Normalize a raw `services.mfa` block to the modern shape. Pure function,
  * called per-invocation at each read site (config is re-read for test
- * injection). Rules N1 (new model) / N2 (legacy `mode` shim) / N3 (disabled).
+ * injection). Rule order: N0 (explicit active:false => off) / N2 (legacy
+ * `mode` shim, takes precedence over the active-by-default so upgrades are
+ * byte-identical) / N1 (new multi-method model) / N3 (disabled/absent).
  */
 function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMfaConfig {
   const cfg = (raw || {}) as RawMfaConfig;
   const sessions = cfg.sessions;
 
-  // N1 — explicit new model.
-  if (cfg.active === true) {
-    const methods = cfg.methods || {};
-    const totpIn = methods.totp || {};
-    const smsIn = methods.sms || {};
-    const totp: MethodCfg = { ...totpIn, active: totpIn.active !== false }; // default true
-    const smsEndpoints = (smsIn.endpoints && Object.keys(smsIn.endpoints).length > 0)
-      ? smsIn.endpoints
-      : (cfg.sms?.endpoints || {}); // fall back to the legacy endpoints location
-    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints };
-    const defaultMethod = cfg.defaultMethod || 'totp';
-    if (cfg.mode != null && cfg.mode !== 'disabled' && !_warnedModeConflict) {
-      mfaLogger().warn(`services.mfa.mode="${cfg.mode}" ignored: the new services.mfa.active model takes precedence.`);
-      _warnedModeConflict = true;
-    }
-    // NB: we do NOT throw here if `defaultMethod` names an inactive method.
-    // This normalizer runs on the login path too, so throwing would brick all
-    // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
-    // getMFAMethod() and returns a clean invalid-mfa-method error when it is
-    // inactive, which is the only place the default is actually used.
-    return { active: true, defaultMethod, methods: { totp, sms }, sessions };
-  }
+  // N0 — explicit `active: false` wins. The shipped default is now `true`, so a
+  // `false` value can only be deliberate operator intent to disable MFA, even
+  // over a leftover legacy `mode`.
+  if (cfg.active === false) return { active: false };
 
-  // N2 — legacy `mode` shim (SMS-only, byte-for-byte behavior).
+  // N2 — a legacy non-disabled `mode` takes PRECEDENCE over the new-model
+  // default (checked before N1). This is the critical upgrade-safety rule: a
+  // pre-multi-method deployment (`mode: single|challenge-verify`, no `active`
+  // key) merges over the now-`active:true` default; honouring the mode keeps
+  // its SMS second factor enforced (byte-identical to before) instead of
+  // silently dropping to a TOTP-only model where its SMS users would have no
+  // active method. Such operators gain TOTP only after migrating off `mode`.
   if (cfg.mode === 'single' || cfg.mode === 'challenge-verify') {
     if (!_warnedLegacyMode) {
-      mfaLogger().warn(`services.mfa.mode="${cfg.mode}" is deprecated; migrate to services.mfa.active + methods.sms. Shimming for now.`);
+      mfaLogger().warn(`services.mfa.mode="${cfg.mode}" takes precedence (SMS-only) and is deprecated; remove it to adopt the multi-method model and enable TOTP.`);
       _warnedLegacyMode = true;
     }
     return {
@@ -130,6 +119,25 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
       },
       sessions
     };
+  }
+
+  // N1 — new multi-method model (active:true, no legacy mode).
+  if (cfg.active === true) {
+    const methods = cfg.methods || {};
+    const totpIn = methods.totp || {};
+    const smsIn = methods.sms || {};
+    const totp: MethodCfg = { ...totpIn, active: totpIn.active !== false }; // default true
+    const smsEndpoints = (smsIn.endpoints && Object.keys(smsIn.endpoints).length > 0)
+      ? smsIn.endpoints
+      : (cfg.sms?.endpoints || {}); // fall back to the legacy endpoints location
+    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints };
+    const defaultMethod = cfg.defaultMethod || 'totp';
+    // NB: we do NOT throw here if `defaultMethod` names an inactive method.
+    // This normalizer runs on the login path too, so throwing would brick all
+    // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
+    // getMFAMethod() and returns a clean invalid-mfa-method error when it is
+    // inactive, which is the only place the default is actually used.
+    return { active: true, defaultMethod, methods: { totp, sms }, sessions };
   }
 
   // N3 — disabled / absent.
