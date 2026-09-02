@@ -110,5 +110,13 @@ describe('[SINF] Service', () => {
         assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: ['totp', 'sms'] });
       });
     });
+
+    it('[SN08] a legacy mode:single config advertises features.mfa.methods=["sms"] (upgrade path)', async () => {
+      await withInjectedConfig({ services: { mfa: { mode: 'single', sms: { endpoints: { single: { url: 'x' } } } } } }, async () => {
+        const res = await coreRequest.get('/' + username + '/service/info');
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: ['sms'] });
+      });
+    });
   });
 });

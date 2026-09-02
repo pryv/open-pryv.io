@@ -49,7 +49,10 @@ advertising SMS on a server with no SMS provider.
 keeps working unchanged: the normalizer gives `mode` precedence over the
 active-by-default, so SMS-enrolled users keep their SMS factor. To adopt the
 multi-method model (and gain TOTP), remove `mode` and use
-`active`/`defaultMethod`/`methods`. If a deployment ends up MFA-active with a
+`active`/`defaultMethod`/`methods`. **To keep MFA off after upgrading, set
+`services.mfa.active: false`** — a bare `mode: disabled` no longer suffices (it
+is indistinguishable from the shipped default, which also carries
+`mode: disabled`). If a deployment ends up MFA-active with a
 user whose enrolled method is not active server-side, that login proceeds
 without a second factor and logs a `warn` (a config mistake to catch, not a
 silent state).

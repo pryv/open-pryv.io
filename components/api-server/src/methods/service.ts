@@ -9,7 +9,7 @@ import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from './_types.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
-const { ready } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { normalizeMfaConfig } = require('business/src/mfa/index.ts');
 
@@ -52,15 +52,24 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     // than advertising SMS on a server with no SMS provider. Method NAMES only,
     // no per-user state, no endpoints/keys.
     if (serviceInfo.features.mfa === undefined) {
-      const mfaCfg = normalizeMfaConfig(config.get('services:mfa'));
-      let methods: string[] = [];
-      if (mfaCfg.active === true) {
-        const m = (mfaCfg.methods || {}) as Record<string, { active?: boolean }>;
-        methods = Object.keys(m)
-          .filter((name) => m[name] && m[name].active === true)
-          .sort((a, b) => (a === mfaCfg.defaultMethod ? -1 : b === mfaCfg.defaultMethod ? 1 : 0));
+      // Guard the normalizer: a malformed services.mfa (e.g. an unknown `mode`)
+      // must not break this UNAUTHENTICATED discovery endpoint for every client.
+      // On error, OMIT the field (absence means "unknown" per the contract, so
+      // clients fall back; `{methods:[]}` would falsely claim "off"). Login
+      // still fails loudly on the same misconfig, so the typo is not hidden.
+      try {
+        const mfaCfg = normalizeMfaConfig(config.get('services:mfa'));
+        let methods: string[] = [];
+        if (mfaCfg.active === true) {
+          const m = (mfaCfg.methods || {}) as Record<string, { active?: boolean }>;
+          methods = Object.keys(m)
+            .filter((name) => m[name] && m[name].active === true)
+            .sort((a, b) => (a === mfaCfg.defaultMethod ? -1 : b === mfaCfg.defaultMethod ? 1 : 0));
+        }
+        serviceInfo.features.mfa = { methods };
+      } catch (err: unknown) {
+        getLogger('service-info').warn('Could not derive features.mfa (malformed services.mfa?); omitting it.', { error: (err as Error)?.message });
       }
-      serviceInfo.features.mfa = { methods };
     }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to

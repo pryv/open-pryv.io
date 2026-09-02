@@ -12,7 +12,8 @@ const require = createRequire(import.meta.url);
  * Unit tests for the MFA config normalizer (the back-compat keystone) and the
  * TOTP at-rest key resolver. The normalizer maps both the new
  * active/defaultMethod/methods shape and the legacy `mode` onto one form
- * (rules N1/N2/N3); the key resolver validates the inline secret path and
+ * (rules N0 explicit-off / N2 legacy-mode-wins / N1 new-model / N3 off); the
+ * key resolver validates the inline secret path and
  * fails closed.
  */
 
