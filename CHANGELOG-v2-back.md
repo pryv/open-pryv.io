@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## mfa: TOTP enabled by default + service-info advertises active methods
+
+`config/default-config.yml` now ships `services.mfa.active: true` (TOTP default,
+SMS off) so authenticator-app MFA works out of the box. To make the flip
+upgrade-safe, `normalizeMfaConfig` (`business/src/mfa/index.ts`) precedence was
+reordered: N0 explicit `active:false` wins, then a legacy `mode` shim (N2, now
+ABOVE N1) so a `mode: single|challenge-verify` config keeps its SMS-only
+behavior byte-identically instead of silently dropping to a TOTP-only model
+where its SMS users would have no active method (a silent MFA bypass the flip
+would otherwise have caused on upgrade), then the new `active:true` model (N1).
+`service.info().features.mfa = { methods: [...] }` (`api-server/src/methods/service.ts`,
+default-method-first, `[]` when off, absent on older cores) lets clients render
+only active methods. Note: with MFA active, `login.ts mfaCheckIfActive` now does
+one profile read per login that was previously skipped when MFA was off. Tests:
+normalizer precedence `[MNORM8/9]`, disabled-vs-default `[MA1]`/`[MA15]`,
+`features.mfa` `[SN05-07]`.
+
 ## mfa: multi-method model + in-process TOTP (registry, config normalizer, at-rest encryption)
 
 The MFA subsystem grew a small `MfaMethod` interface + a per-method registry in

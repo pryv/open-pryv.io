@@ -24,7 +24,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 - **Pluggable storage engines** — PostgreSQL (default), SQLite, InfluxDB, filesystem, S3, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration. A full-PostgreSQL diskless shape (optionally with S3 attachments) keeps every durable byte off the local filesystem.
 - **Unified master process** — single `bin/master.js` manages N API workers + M HFS workers + optional previews worker. Single Docker image replaces multi-container orchestration.
 - **Built-in user registration** — no external service-register needed. Registration fully self-contained via PlatformDB.
-- **Built-in MFA** — two-factor authentication as `mfa.*` API methods: an authenticator app (TOTP, RFC 6238) by default, or SMS.
+- **Built-in MFA** — two-factor authentication as `mfa.*` API methods: an authenticator app (TOTP, RFC 6238), enabled by default and working out of the box, or SMS (opt-in).
 - **rqlite for PlatformDB** — distributed platform storage for single- and multi-core deployments with Raft consensus.
 - **Multi-core deployments** — HTTP 421 wrong-core routing, DNS-based or DNSless topology, platform-config-snapshot hash comparison for drift detection.
 - **Backup, restore & integrity** — engine-agnostic backup to JSONL+gzip, per-user integrity verification with SHA-256 hashes.

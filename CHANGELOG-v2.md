@@ -2,11 +2,30 @@
 
 ## Unreleased
 
-### MFA: server-side TOTP (authenticator apps), the default method over SMS
+### MFA: server-side TOTP (authenticator apps) enabled by default, over SMS
 
-MFA is no longer SMS-only. A server-side TOTP factor (RFC 6238, authenticator
-apps such as Google Authenticator / 1Password) is now built in and is the
-default method when MFA is enabled. SMS continues to work unchanged.
+MFA is no longer SMS-only, and it is now **on by default**. A server-side TOTP
+factor (RFC 6238, authenticator apps such as Google Authenticator / 1Password)
+is built in and works out of the box with no configuration (in-process, no
+external service). It is the default method; SMS continues to work unchanged and
+stays off until an operator configures it.
+
+**Behavior change: MFA is active by default.** `services.mfa.active` now ships
+`true`, so the `mfa.*` endpoints are live and any user can self-enrol TOTP.
+Nothing is forced: a user with no enrolled factor logs in exactly as before
+(login only challenges confirmed enrolments). To turn MFA off entirely, set
+`services.mfa.active: false`. **Legacy deployments upgrade unchanged:** a config
+with the legacy `services.mfa.mode: single|challenge-verify` takes precedence
+over the new default, so an SMS deployment keeps its SMS second factor
+(byte-identical) until it migrates off `mode`. `auth.login` now performs one
+extra profile read per login (to detect enrolment) that was previously skipped
+when MFA was off.
+
+**service-info advertises active MFA methods.** `service.info().features.mfa =
+{ methods: [...] }` lists the active methods, default-method first (`[]` when
+MFA is off; the field is absent only on older cores). Clients (e.g. the account
+UI) use it to offer only the methods the operator actually enabled rather than
+advertising SMS on a server with no SMS provider.
 
 - `mfa.activate` accepts an optional `method` (`totp` | `sms`, defaulting to the
   operator's configured `defaultMethod`). For TOTP it returns, alongside the
@@ -18,20 +37,22 @@ default method when MFA is enabled. SMS continues to work unchanged.
 - New config `services.mfa`: `active` + `defaultMethod` + `methods.{totp,sms}`
   (TOTP `digits`/`periodSeconds`/`driftSteps`/`issuer`/`secretsKey`). The legacy
   single-valued `services.mfa.mode` (`disabled`/`challenge-verify`/`single`) is
-  still honoured via an in-memory shim, so existing deployments need no change;
-  the shipped default keeps MFA off.
+  still honoured via an in-memory shim and takes precedence over the
+  active-by-default, so existing deployments need no change.
 - TOTP secrets are stored encrypted at rest; a wrong code is rejected as
   `invalid-mfa-code`, a used code cannot be replayed (guard is enforced against
   the stored step, so concurrent sessions cannot re-use a code), and repeated
   failures invalidate the pending MFA session. TOTP raises the deployment to a
   clean NIST 800-63B AAL2 posture without any third-party service.
 
-**Migration note.** When enabling the new model on a deployment that used SMS
-via legacy `mode`, keep an active SMS method for already-enrolled users:
-either leave `mode` set (it shims to `methods.sms`), or set
-`methods.sms.active: true` with the endpoints. If you set only
-`services.mfa.active: true` without activating `sms`, existing SMS-enrolled
-users would log in without a second factor (a `warn` is logged per such login).
+**Migration note.** A legacy `services.mfa.mode: single|challenge-verify` config
+keeps working unchanged: the normalizer gives `mode` precedence over the
+active-by-default, so SMS-enrolled users keep their SMS factor. To adopt the
+multi-method model (and gain TOTP), remove `mode` and use
+`active`/`defaultMethod`/`methods`. If a deployment ends up MFA-active with a
+user whose enrolled method is not active server-side, that login proceeds
+without a second factor and logs a `warn` (a config mistake to catch, not a
+silent state).
 
 **Known limitation.** The failed-attempt limiter is per MFA session (5 tries),
 not a per-user rate limit; a caller who can re-authenticate gets a fresh budget.

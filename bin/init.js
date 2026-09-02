@@ -444,8 +444,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #         pass: smtp-password
 
 # # services.mfa — two-factor for app + personal accesses.
-# # Multi-method: an authenticator app (TOTP, RFC 6238) is the default method;
-# # SMS still works. Set active: true to enable MFA (default: off).
+# # Multi-method: an authenticator app (TOTP, RFC 6238) is the default method
+# # and is ENABLED BY DEFAULT (works out of the box, no external service). SMS
+# # stays off until configured. Set active: false to disable MFA entirely.
 # # methods.totp.secretsKey is a base64 32-byte at-rest key for TOTP secrets;
 # # leave empty to derive it from auth.adminAccessKey (rotating that key then
 # # invalidates enrolments). Legacy single-valued mode is still honoured.
