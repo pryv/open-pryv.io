@@ -86,6 +86,42 @@ describe('[MNORM] normalizeMfaConfig', function () {
   it('[MNORM9] an explicit active:false wins even over a leftover legacy mode', function () {
     assert.deepStrictEqual(normalizeMfaConfig({ active: false, mode: 'single' }), { active: false });
   });
+
+  const ATTEMPTS_DEFAULTS = {
+    perSession: 5,
+    perAccount: 20,
+    perAccountWindowSeconds: 900,
+    lockoutSeconds: 900
+  };
+
+  it('[MNORM10] N1: the attempts block gets its defaults when absent', function () {
+    const n = normalizeMfaConfig({ active: true });
+    assert.deepStrictEqual(n.attempts, ATTEMPTS_DEFAULTS);
+  });
+
+  it('[MNORM11] N2: the legacy mode shim also carries the attempts defaults', function () {
+    const n = normalizeMfaConfig({ mode: 'single', sms: { endpoints: { single: { url: 'x' } } } });
+    assert.deepStrictEqual(n.attempts, ATTEMPTS_DEFAULTS);
+  });
+
+  it('[MNORM12] explicit attempts values pass through unchanged', function () {
+    const attempts = { perSession: 3, perAccount: 9, perAccountWindowSeconds: 60, lockoutSeconds: 120 };
+    assert.deepStrictEqual(normalizeMfaConfig({ active: true, attempts }).attempts, attempts);
+  });
+
+  it('[MNORM13] perAccount:0 is preserved (limiter disabled); junk values fall back per-field', function () {
+    // 0 is meaningful: it disables the per-account limiter.
+    const off = normalizeMfaConfig({ active: true, attempts: { perAccount: 0 } });
+    assert.strictEqual(off.attempts.perAccount, 0);
+    assert.strictEqual(off.attempts.perSession, 5, 'other fields keep their defaults');
+
+    // A negative / NaN / non-numeric field must not weaken anything silently.
+    const junk = normalizeMfaConfig({
+      active: true,
+      attempts: { perSession: -1, perAccount: NaN, perAccountWindowSeconds: 'abc', lockoutSeconds: null }
+    });
+    assert.deepStrictEqual(junk.attempts, ATTEMPTS_DEFAULTS);
+  });
 });
 
 describe('[MKEY] resolveTotpKey', function () {

@@ -59,18 +59,56 @@ function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceL
 // ----------------------------------------------------------------------
 
 type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; [k: string]: unknown };
+type AttemptsCfg = {
+  perSession: number;
+  perAccount: number;
+  perAccountWindowSeconds: number;
+  lockoutSeconds: number;
+};
 type NormalizedMfaConfig = {
   active: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
   sessions?: { ttlSeconds?: number };
+  attempts?: AttemptsCfg;
 };
 type RawMfaConfig = MFAConfig & {
   active?: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
   sms?: { endpoints?: Record<string, unknown> };
+  attempts?: Partial<Record<keyof AttemptsCfg, unknown>>;
 };
+
+const ATTEMPTS_DEFAULTS: AttemptsCfg = {
+  perSession: 5,
+  perAccount: 20,
+  perAccountWindowSeconds: 900,
+  lockoutSeconds: 900
+};
+
+/**
+ * Normalize the `services.mfa.attempts` block. Each field falls back to its
+ * default when absent or not a non-negative number, so a config typo weakens
+ * nothing silently and cannot brick the login path. `perAccount: 0` is
+ * meaningful and preserved: it disables the per-account limiter, leaving only
+ * the per-session ceiling (the escape hatch for deployments that throttle at
+ * the edge instead).
+ */
+function normalizeAttempts (raw: RawMfaConfig['attempts']): AttemptsCfg {
+  const out = { ...ATTEMPTS_DEFAULTS };
+  for (const key of Object.keys(ATTEMPTS_DEFAULTS) as Array<keyof AttemptsCfg>) {
+    const value = raw?.[key];
+    // `null` / absent / '' mean "not configured" and must fall back to the
+    // default. Coercing them would yield 0, which silently DISABLES the limit
+    // it governs (a zero lockout, or a zero window) rather than weakening
+    // nothing, so an unset key must never reach Number().
+    if (value == null || value === '') continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) out[key] = Math.floor(n);
+  }
+  return out;
+}
 
 let _warnedLegacyMode = false;
 function mfaLogger (): { warn: (...args: unknown[]) => void } {
@@ -92,6 +130,7 @@ function mfaLogger (): { warn: (...args: unknown[]) => void } {
 function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMfaConfig {
   const cfg = (raw || {}) as RawMfaConfig;
   const sessions = cfg.sessions;
+  const attempts = normalizeAttempts(cfg.attempts);
 
   // N0 — explicit `active: false` wins. The shipped default is now `true`, so a
   // `false` value can only be deliberate operator intent to disable MFA, even
@@ -117,7 +156,8 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
         sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {} },
         totp: { active: false }
       },
-      sessions
+      sessions,
+      attempts
     };
   }
 
@@ -137,7 +177,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
     // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
     // getMFAMethod() and returns a clean invalid-mfa-method error when it is
     // inactive, which is the only place the default is actually used.
-    return { active: true, defaultMethod, methods: { totp, sms }, sessions };
+    return { active: true, defaultMethod, methods: { totp, sms }, sessions, attempts };
   }
 
   // N3 — disabled / absent.

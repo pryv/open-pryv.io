@@ -666,5 +666,200 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.ok(loginRes.body.mfaToken == null);
       });
     });
+
+    // ------------------------------------------------------------------
+    // Per-account attempt limiter. The per-session ceiling alone is not a
+    // limit: re-authenticating used to hand out a fresh budget, so N logins
+    // bought 5N guesses. These tests pin that this is no longer true.
+    // ------------------------------------------------------------------
+    describe('[MA12] per-account attempt limiter', function () {
+      const PER_SESSION = 5;
+      const PER_ACCOUNT = 8;
+      let restoreAttempts;
+      let secret;
+
+      function withAttempts (attempts) {
+        return {
+          services: {
+            mfa: {
+              ...totpTestConfig.services.mfa,
+              attempts: {
+                perSession: PER_SESSION,
+                perAccount: PER_ACCOUNT,
+                perAccountWindowSeconds: 60,
+                lockoutSeconds: 1,
+                ...attempts
+              }
+            }
+          }
+        };
+      }
+
+      async function enrol () {
+        const act = await activateTotp();
+        secret = act.body.secret;
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(secret, -1) });
+        assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+        return confirm.body.recoveryCodes;
+      }
+
+      /** One wrong guess on a brand-new login session. Returns the status. */
+      async function guessOnFreshLogin (code = '000000') {
+        const loginRes = await login();
+        assert.strictEqual(loginRes.status, 200, 'login itself must never be blocked by the MFA lock');
+        const res = await coreRequest
+          .post(`/${username}/mfa/verify`)
+          .set('Authorization', loginRes.body.mfaToken)
+          .send({ code });
+        return res;
+      }
+
+      afterEach(function () {
+        if (restoreAttempts) restoreAttempts();
+        restoreAttempts = null;
+      });
+
+      it('[MA12A] fresh logins no longer buy a fresh budget; the account locks and even a correct code is refused', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts());
+        await _resetMFASingletons();
+        await enrol();
+
+        // The reported attack: one wrong guess per fresh login, repeatedly.
+        // The lock engages ON the perAccount-th guess (that one answers 429),
+        // so the total budget across all logins is exactly perAccount guesses
+        // rather than the perSession budget renewed on every login.
+        let guesses = 0;
+        let locked = null;
+        for (let i = 0; i < PER_ACCOUNT + 4; i++) {
+          const res = await guessOnFreshLogin();
+          guesses++;
+          if (res.status === 429) { locked = res; break; }
+          assert.ok(res.status === 400 || res.status === 401,
+            `guess ${i + 1} unexpected status ${res.status}: ${JSON.stringify(res.body)}`);
+        }
+
+        assert.ok(locked != null, 'the account must lock; it never did');
+        assert.strictEqual(guesses, PER_ACCOUNT,
+          `the lock must engage on guess ${PER_ACCOUNT}, it engaged on ${guesses}`);
+        // The point of the issue: the old behaviour would have allowed
+        // perSession guesses per login with no ceiling at all.
+        assert.ok(guesses < PER_SESSION * 3, 'three logins must not yield three full budgets');
+        assert.strictEqual(locked.body.error.id, 'too-many-attempts');
+        assert.ok(locked.headers['retry-after'] != null, 'a Retry-After header should be set');
+
+        // The reporter's "a correct code still logs in" must now be FALSE.
+        const correct = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(correct.status, 429, 'a correct code must be refused while locked');
+        assert.strictEqual(correct.body.error.id, 'too-many-attempts');
+      });
+
+      it('[MA12B] the lock lifts on its own once lockoutSeconds elapses', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 1 }));
+        await _resetMFASingletons();
+        await enrol();
+
+        for (let i = 0; i < PER_ACCOUNT; i++) await guessOnFreshLogin();
+        const stillLocked = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(stillLocked.status, 429);
+
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+
+        const after = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(after.status, 200, `login should work after the lock expires: ${JSON.stringify(after.body)}`);
+        assert.ok(after.body.token != null);
+      });
+
+      it('[MA12C] perAccount:0 disables the per-account limit (behaviour as before)', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts({ perAccount: 0 }));
+        await _resetMFASingletons();
+        await enrol();
+
+        // Well past the former ceiling: no lock, ever.
+        for (let i = 0; i < PER_ACCOUNT + 6; i++) {
+          const res = await guessOnFreshLogin();
+          assert.notStrictEqual(res.status, 429, `guess ${i + 1} must not be throttled when perAccount is 0`);
+        }
+        const correct = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(correct.status, 200, 'a correct code must still work');
+      });
+
+      it('[MA12D] the per-session ceiling is unchanged, and its failures also accrue per account', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts());
+        await _resetMFASingletons();
+        await enrol();
+
+        // Burn one whole session: 4 x 400 then a 401 that kills the session.
+        const loginRes = await login();
+        const token = loginRes.body.mfaToken;
+        for (let i = 0; i < PER_SESSION - 1; i++) {
+          const r = await coreRequest
+            .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+          assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+        }
+        const last = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+        assert.strictEqual(last.status, 401, 'the per-session ceiling still invalidates the session');
+
+        // Those 5 counted toward the account: the lock must engage on the
+        // (PER_ACCOUNT - PER_SESSION)-th further guess, not on a fresh budget.
+        let further = 0;
+        for (let i = 0; i < PER_ACCOUNT; i++) {
+          const res = await guessOnFreshLogin();
+          further++;
+          if (res.status === 429) break;
+        }
+        assert.strictEqual(further, PER_ACCOUNT - PER_SESSION,
+          'session failures must count toward the per-account tally');
+      });
+
+      it('[MA12E] mfa.recover lifts the lock along with the enrolment', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
+        await _resetMFASingletons();
+        const recoveryCodes = await enrol();
+
+        for (let i = 0; i < PER_ACCOUNT; i++) await guessOnFreshLogin();
+        const locked = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(locked.status, 429, 'precondition: the account is locked');
+
+        const recover = await coreRequest
+          .post(`/${username}/mfa/recover`)
+          .send({ username, password, recoveryCode: recoveryCodes[0] });
+        assert.strictEqual(recover.status, 200, `recover failed: ${JSON.stringify(recover.body)}`);
+
+        // MFA is gone, so login returns a real token directly; the lock did
+        // not outlive the enrolment it was guarding.
+        const loginRes = await login();
+        assert.strictEqual(loginRes.status, 200);
+        assert.ok(loginRes.body.token != null, 'login must work after recovery');
+        assert.ok(loginRes.body.mfaToken == null);
+      });
+
+      it('[MA12F] the throttle never damages the enrolment, and a real success resets the tally', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts());
+        await _resetMFASingletons();
+        await enrol();
+
+        // Stop one short of the ceiling.
+        for (let i = 0; i < PER_ACCOUNT - 1; i++) {
+          const res = await guessOnFreshLogin();
+          assert.notStrictEqual(res.status, 429, `guess ${i + 1} should not lock yet`);
+        }
+
+        // The enrolment is intact despite all those throttle writes.
+        const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(ok.status, 200, `enrolment must survive the throttle writes: ${JSON.stringify(ok.body)}`);
+
+        // And the successful factor reset the tally: the same number of wrong
+        // guesses is accepted again rather than locking on the next one.
+        for (let i = 0; i < PER_ACCOUNT - 1; i++) {
+          const res = await guessOnFreshLogin();
+          assert.notStrictEqual(res.status, 429,
+            `guess ${i + 1} after a success should not lock; the tally was not reset`);
+        }
+      });
+    });
   });
 });

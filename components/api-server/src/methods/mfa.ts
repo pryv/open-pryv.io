@@ -33,14 +33,21 @@ type MFAProfile = {
 };
 type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: TotpState };
 
-const MAX_MFA_ATTEMPTS = 5;
 type UserRef = { id: string; username: string };
+type ThrottleState = { count: number; windowStartedAt: number; lockedUntil?: number };
+type AttemptsCfg = {
+  perSession: number;
+  perAccount: number;
+  perAccountWindowSeconds: number;
+  lockoutSeconds: number;
+};
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
-const { ready } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
+const mfaLogger = getLogger('methods:mfa');
 const { normalizeMfaConfig, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
@@ -72,20 +79,119 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     return true;
   }
 
+  // --------------------------------------------------------------------
+  // Per-account attempt throttle.
+  //
+  // The per-session ceiling alone is not a limit: a caller holding the
+  // password can re-authenticate and get a fresh budget, so the second factor
+  // stays brute-forceable. The counter below therefore accrues on the USER,
+  // across logins.
+  //
+  // It lives at `data.mfaThrottle`, a SIBLING of `data.mfa`, not inside it.
+  // Two reasons: the profile store only expands one level of dot-notation
+  // (a deeper path is not portable across storage engines), and keeping it
+  // outside the enrolment blob means a routine enrolment write cannot reset
+  // an attacker's accrued count as a side effect. Every clear is explicit.
+  //
+  // The counter is per-core, and that is complete rather than a compromise: a
+  // user is pinned to one home core, so every login and every verify for that
+  // user lands here and this profile sees all of their failed attempts. No
+  // cross-core state is needed, and none is introduced.
+  // --------------------------------------------------------------------
+
+  async function readThrottle (user: UserRef): Promise<ThrottleState | null> {
+    const profileSet = await fromCallback((cb: Cb<{ data?: { mfaThrottle?: ThrottleState } } | null>) =>
+      userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb)) as { data?: { mfaThrottle?: ThrottleState } } | null;
+    return profileSet?.data?.mfaThrottle || null;
+  }
+
   /**
-   * Attempt limiter (all methods, per operator sign-off S3). Records a failed
-   * verify/confirm against the session; once the ceiling is reached the session
-   * is invalidated (re-login required). Returns the error to surface: the
-   * original verify error while under the ceiling, or an
-   * invalid-access-token once the session is killed.
+   * Persist (or clear, when `state == null`) the throttle. Uses the same
+   * one-level dot-notation contract as `saveMFAProfile`: `{ data: { mfaThrottle: X } }`
+   * sets the key, `null` unsets it, and neither touches `data.mfa`.
    */
-  async function limitOrPassThrough (mfaToken: unknown, verifyErr: Error): Promise<Error> {
-    const attempts = await sessionStore().recordFailedAttempt(mfaToken);
-    if (attempts >= MAX_MFA_ATTEMPTS) {
-      await sessionStore().clear(mfaToken);
-      return errors.invalidAccessToken('Too many failed MFA attempts; the MFA session has been invalidated. Please log in again.');
+  async function writeThrottle (user: UserRef, state: ThrottleState | null) {
+    const existing = await fromCallback((cb: Cb<unknown>) =>
+      userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
+    if (!existing) {
+      if (state == null) return; // nothing stored, nothing to clear
+      await fromCallback((cb: Cb<unknown>) =>
+        userProfileStorage.insertOne(user, { id: PROFILE_ID, data: { mfaThrottle: state } }, cb));
+      return;
     }
-    return verifyErr;
+    await fromCallback((cb: Cb<unknown>) =>
+      userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfaThrottle: state } }, cb));
+  }
+
+  /** Clear the accrual, but only when there is one (avoids a write per login). */
+  async function clearThrottleIfAny (user: UserRef) {
+    if (await readThrottle(user) == null) return;
+    await writeThrottle(user, null);
+  }
+
+  /**
+   * Refuse the second-factor step while the account is locked. Returns the
+   * error to surface, or null to proceed. An expired lock is cleared here.
+   *
+   * Deliberately returns BEFORE any verify attempt and without writing: a
+   * locked caller learns nothing about whether their code was right, and
+   * cannot drive storage writes by continuing to guess.
+   */
+  async function mfaStepLockError (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
+    if (attemptsCfg.perAccount === 0) return null;
+    const throttle = await readThrottle(user);
+    if (!throttle?.lockedUntil) return null;
+    const remainingMs = throttle.lockedUntil - Date.now();
+    if (remainingMs > 0) return errors.tooManyAttempts(Math.ceil(remainingMs / 1000));
+    await writeThrottle(user, null); // lock expired
+    return null;
+  }
+
+  /**
+   * Attempt limiter (all methods). Records a failed verify/confirm against
+   * BOTH ceilings: the pending session (which is invalidated at its ceiling,
+   * forcing a re-login) and the account (which locks the MFA step for a while
+   * once too many failures accrue within the window). Returns the error to
+   * surface.
+   */
+  async function limitOrPassThrough (mfaToken: unknown, user: UserRef, attemptsCfg: AttemptsCfg, verifyErr: Error): Promise<Error> {
+    const accountErr = await recordAccountFailure(user, attemptsCfg);
+    const attempts = await sessionStore().recordFailedAttempt(mfaToken);
+    if (attempts >= attemptsCfg.perSession) {
+      await sessionStore().clear(mfaToken);
+      // The account lock outranks the session one: it is the condition a
+      // re-login would NOT clear, so it is what the caller needs to be told.
+      return accountErr || errors.invalidAccessToken('Too many failed MFA attempts; the MFA session has been invalidated. Please log in again.');
+    }
+    return accountErr || verifyErr;
+  }
+
+  /**
+   * Accrue one failed second factor against the account. Returns the throttle
+   * error when this failure trips the ceiling, else null.
+   */
+  async function recordAccountFailure (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
+    if (attemptsCfg.perAccount === 0) return null; // per-account limiter disabled
+    const now = Date.now();
+    const windowMs = attemptsCfg.perAccountWindowSeconds * 1000;
+    const previous = await readThrottle(user);
+    const withinWindow = previous != null && now <= previous.windowStartedAt + windowMs;
+    const state: ThrottleState = withinWindow
+      ? { count: previous.count + 1, windowStartedAt: previous.windowStartedAt }
+      : { count: 1, windowStartedAt: now };
+
+    if (state.count >= attemptsCfg.perAccount) {
+      state.lockedUntil = now + attemptsCfg.lockoutSeconds * 1000;
+      await writeThrottle(user, state);
+      // Logged on the breach transition only, never per failed guess: under an
+      // attack the per-guess line would itself be the amplification.
+      mfaLogger.warn(
+        `MFA per-account attempt limit reached for user "${user.username}"; the second-factor step is locked for ${attemptsCfg.lockoutSeconds}s.`
+      );
+      return errors.tooManyAttempts(attemptsCfg.lockoutSeconds);
+    }
+    await writeThrottle(user, state);
+    return null;
   }
 
   /**
@@ -179,18 +285,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         }
         const user = session.context.user;
         const profile = session.profile;
-        const method = getMFAMethodForProfile(profile, getMfaConfig());
+        const cfg = getMfaConfig();
+        const method = getMFAMethodForProfile(profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        const lockErr = await mfaStepLockError(user, cfg.attempts);
+        if (lockErr) return next(lockErr);
         try {
           await method.verify(user.username, profile, { headers: {}, body: params });
         } catch (verifyErr) {
-          return next(await limitOrPassThrough(params.mfaToken, verifyErr as Error));
+          return next(await limitOrPassThrough(params.mfaToken, user, cfg.attempts, verifyErr as Error));
         }
         // TOTP: mark the enrolment confirmed. saveMFAProfile atomically replaces
         // any previous enrolment (whole data.mfa is overwritten).
         if (profile.method === 'totp' && profile.totp) profile.totp.confirmedAt = Date.now();
         profile.generateRecoveryCodes();
         await saveMFAProfile(user, profile);
+        await clearThrottleIfAny(user);
         await sessionStore().clear(params.mfaToken);
         result.recoveryCodes = profile.getRecoveryCodes();
         next();
@@ -211,8 +321,13 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
-        const method = getMFAMethodForProfile(session.profile, getMfaConfig());
+        const cfg = getMfaConfig();
+        const method = getMFAMethodForProfile(session.profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        // Re-sending a challenge verifies no code, so it never accrues; but a
+        // locked account must not be usable to spam challenge deliveries.
+        const lockErr = await mfaStepLockError(user, cfg.attempts);
+        if (lockErr) return next(lockErr);
         const extra = await method.challenge(user.username, session.profile, { headers: {}, body: params });
         result.message = 'Please verify the MFA challenge.';
         Object.assign(result, extra); // { method } for totp, so clients render the right prompt
@@ -243,8 +358,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         if (!session.context.token) {
           return next(errors.unexpectedError(new Error('MFA session has no token to release — login flow not wired')));
         }
-        const method = getMFAMethodForProfile(session.profile, getMfaConfig());
+        const cfg = getMfaConfig();
+        const method = getMFAMethodForProfile(session.profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        const lockErr = await mfaStepLockError(user, cfg.attempts);
+        if (lockErr) return next(lockErr);
         // TOTP replay guard must consult the AUTHORITATIVE stored enrolment, not
         // the login-time session snapshot (F1). The enrolment must still exist
         // AND be the same secret this session authenticated against: if it was
@@ -262,7 +380,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         try {
           await method.verify(user.username, session.profile, { headers: {}, body: params });
         } catch (verifyErr) {
-          return next(await limitOrPassThrough(params.mfaToken, verifyErr as Error));
+          return next(await limitOrPassThrough(params.mfaToken, user, cfg.attempts, verifyErr as Error));
         }
         // Persist ONLY the advanced replay step onto the freshly-loaded stored
         // enrolment (never rewrite the whole data.mfa blob from the login-time
@@ -273,6 +391,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           storedForTotp.totp.lastUsedStep = session.profile.totp.lastUsedStep;
           await saveMFAProfile(user, storedForTotp);
         }
+        // A real second factor succeeded: drop any accrued failures so an
+        // earlier mistyped code cannot count toward a future lock.
+        await clearThrottleIfAny(user);
         // session.context.token is the real access token stashed by the login flow
         // (presence already checked above, before any side effect).
         result.token = session.context.token;
@@ -294,6 +415,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     async function deactivate (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       try {
         await saveMFAProfile(context.user as UserRef, null);
+        await clearThrottleIfAny(context.user as UserRef);
         result.message = 'MFA deactivated.';
         next();
       } catch (err) {
@@ -322,6 +444,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           return next(errors.invalidParametersFormat('Invalid recovery code.'));
         }
         await saveMFAProfile(user, null);
+        // Recovery must also lift any lock, else the lock would outlive the
+        // enrolment it was guarding.
+        await clearThrottleIfAny(user);
         result.message = 'MFA deactivated.';
         next();
       } catch (err) {

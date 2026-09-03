@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### MFA: per-account failed-attempt limit (brute-force hardening)
+
+The failed-second-factor limiter now also accrues PER ACCOUNT, not only per pending
+MFA session. Repeated wrong codes across repeated logins no longer reset the budget:
+once an account reaches `services.mfa.attempts.perAccount` failed verifications within
+`perAccountWindowSeconds`, the MFA step is locked for `lockoutSeconds` and `mfa.verify`,
+`mfa.confirm` and `mfa.challenge` return `429 too-many-attempts` (with a `Retry-After`
+header). Password login itself is not locked, and already-issued access tokens keep
+working; only the second-factor step is throttled, so a password-holder cannot use it
+to lock a user out.
+
+- New config `services.mfa.attempts`: `perSession` (default 5, the previous fixed
+  limit), `perAccount` (default 20; set `0` to disable the per-account limit),
+  `perAccountWindowSeconds` (default 900), `lockoutSeconds` (default 900). Defaults
+  preserve existing per-session behaviour; the per-account limit is new but generous.
+- New error `too-many-attempts` (HTTP 429) on the MFA verify/confirm/challenge endpoints.
+- A locked account recovers automatically when `lockoutSeconds` elapses, or immediately
+  via `mfa.recover` (recovery code + password) or the admin `system.deactivateMfa`.
+- This supersedes the "Known limitation" noted under 2.0.0-rc.14: the per-account limit
+  described there now ships, so an edge rate-limiter is no longer the only remedy.
+
 ## 2.0.0-rc.14 — 2026-09-02
 
 ### MFA: server-side TOTP (authenticator apps) enabled by default, over SMS

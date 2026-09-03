@@ -261,7 +261,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       await fromCallback((cb: (err?: unknown, res?: unknown) => void) => userProfileStorage.findOneAndUpdate(
         context.user,
         {},
-        { $unset: { 'data.mfa': '' } },
+        // The throttle is a sibling key, so it must be cleared explicitly:
+        // an admin reset that left a lock behind would strand the user.
+        { $unset: { 'data.mfa': '', 'data.mfaThrottle': '' } },
         cb));
     } catch (err) {
       return next(err);

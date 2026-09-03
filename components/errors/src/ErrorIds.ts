@@ -43,6 +43,11 @@ const ErrorIds = {
    */
   TooManyResults: 'too-many-results',
   /**
+   * Too many failed attempts against an account-level limiter; the caller
+   * must wait before retrying (see the Retry-After header when present).
+   */
+  TooManyAttempts: 'too-many-attempts',
+  /**
    * Request body / uploaded attachment exceeds the configured size limit.
    */
   PayloadTooLarge: 'payload-too-large',

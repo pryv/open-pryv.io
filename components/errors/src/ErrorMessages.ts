@@ -39,6 +39,7 @@ const ErrorMessages = {
   [ErrorIds.ForbiddenToEditNoneditableAccountFields]: 'It is forbidden to edit non-editable acccount fields.',
   [ErrorIds.UnexpectedError]: 'Unexpected error',
   [ErrorIds.NewPasswordFieldIsRequired]: 'newPassword field is required.',
+  [ErrorIds.TooManyAttempts]: 'Too many failed MFA attempts for this account. Please try again later.',
   IndexedParameterInvalidFormat: 'Indexed parameters must be numbers or strings if required.'
 };
 Object.freeze(ErrorMessages);

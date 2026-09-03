@@ -220,6 +220,18 @@ services:
           headers: {}
     sessions:
       ttlSeconds: 1800
+    # Failed second-factor limits. `perSession` bounds one pending MFA session
+    # (the historical fixed limit); `perAccount` additionally accrues across
+    # logins, so re-authenticating no longer hands out a fresh budget. On
+    # breach the MFA STEP is locked for `lockoutSeconds` (password login and
+    # already-issued tokens are untouched) and the verify/confirm/challenge
+    # endpoints answer 429 too-many-attempts. Set perAccount: 0 to disable the
+    # per-account limit, e.g. when throttling at the edge instead.
+    attempts:
+      perSession: 5
+      perAccount: 20
+      perAccountWindowSeconds: 900
+      lockoutSeconds: 900
 
   # --- Mail delivery (welcome + reset-password) ---
   # `method` picks the transport:

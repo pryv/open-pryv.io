@@ -32,6 +32,7 @@ interface ErrorFactory {
   staleResource: (resourceType: string, data?: Record<string, unknown>) => APIErrorT;
   missingHeader: (headerName: string, status?: number) => APIErrorT;
   tooManyResults: (limit: number) => APIErrorT;
+  tooManyAttempts: (retryAfterSeconds?: number) => APIErrorT;
   payloadTooLarge: (message: string, data?: unknown) => APIErrorT;
   unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
   unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
@@ -172,6 +173,21 @@ factory.tooManyResults = function (limit: number) {
         limit +
         '. Directly calling ' +
         'the API method (i.e. not batching calls), narrowing request scope or paging can help.', { data: { limit }, httpStatus: 413 });
+};
+
+/**
+ * Account-level attempt limiter tripped. Carries no count and no ceiling so a
+ * caller learns nothing about how close it got; `Retry-After` (seconds) is set
+ * when the remaining lock time is known, so a legitimate client can back off.
+ */
+factory.tooManyAttempts = function (retryAfterSeconds?: number) {
+  const err = new APIError(ErrorIds.TooManyAttempts,
+    'Too many failed MFA attempts for this account. Please try again later.',
+    { httpStatus: 429 });
+  if (retryAfterSeconds != null && retryAfterSeconds > 0) {
+    err.httpHeaders = { 'Retry-After': String(Math.ceil(retryAfterSeconds)) };
+  }
+  return err;
 };
 
 factory.payloadTooLarge = function (message: string, data?: unknown) {

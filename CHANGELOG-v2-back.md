@@ -1,5 +1,33 @@
 # Changelog - Internal (no API impact)
 
+## mfa: per-account attempt throttle on the profile
+
+`normalizeMfaConfig` gained an `attempts` block (perSession/perAccount/
+perAccountWindowSeconds/lockoutSeconds, defaults 5/20/900/900, applied in both the
+new-model and legacy-mode branches; an absent or unusable field falls back to its
+default rather than coercing to 0, which would silently disable the limit it
+governs). The former `MAX_MFA_ATTEMPTS` constant is gone; the per-session ceiling
+reads `attempts.perSession`. A new per-account counter lives on the user's private
+profile at `data.mfaThrottle = { count, windowStartedAt, lockedUntil }`, a SIBLING of
+`data.mfa` rather than a field inside it: the profile store expands only one level of
+dot-notation, and a deeper path is not portable across storage engines, so a
+one-level sibling key is the shape that behaves identically on PostgreSQL and SQLite.
+Keeping it outside the enrolment blob also means a routine `data.mfa` rewrite cannot
+reset an accrued count as a side effect, so every clear is explicit: on a successful
+verify/confirm, and on all three recovery paths (`mfa.deactivate`, `mfa.recover`, and
+the admin `system.deactivateMfa`, whose `$unset` now covers both keys). The counter is
+per-core, which is complete rather than a compromise: a user is pinned to one home
+core, so that core's profile sees all of their failed second-factor attempts and no
+cross-core state is introduced. The verify/confirm paths gate on the lock BEFORE
+verifying (no write while locked, no code-correctness leak) and `mfa.challenge`
+honours the lock without accruing. A breach logs one `warn` (on the transition only,
+never per guess) and returns the new `too-many-attempts` (429) error, which also
+enters the anonymous telemetry error vocabulary and the existing per-user audit row.
+`[MA12A-F]` cover the reported reproduction (fresh logins no longer buy a fresh
+budget, and a correct code is refused while locked), auto-recovery, the
+`perAccount: 0` escape, per-session accrual, recovery-code unlock, and enrolment
+integrity across throttle writes; `[MNORM10-13]` pin the config normalization.
+
 ## fix(rqlite): configurable boot readiness timeout (`storages.engines.rqlite.readyTimeoutMs`) + a slow rqlited start is now visible in the log
 
 `bin/master.js` waited for rqlited's `/readyz` with a hardcoded 30 s budget, on
