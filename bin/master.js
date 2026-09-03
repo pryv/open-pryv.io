@@ -124,7 +124,7 @@ if (cluster.isPrimary) {
       const httpPort = new URL(rqliteConfig.url || 'http://localhost:4001').port || 4001;
       if (rqliteConfig.external) {
         log(`Connecting to external rqlited at ${rqliteConfig.url || 'http://localhost:4001'}`);
-        await rqliteProcess.waitForExternal(rqliteConfig.url || 'http://localhost:4001', 30000, log);
+        await rqliteProcess.waitForExternal(rqliteConfig.url || 'http://localhost:4001', rqliteConfig.readyTimeoutMs, log, warn);
       } else {
         await rqliteProcess.start({
           coreId: config.get('core:id') || 'single',
@@ -147,7 +147,13 @@ if (cluster.isPrimary) {
           nonVoter: config.get('core:nonVoter') === true,
           coreIp: config.get('core:ip') || null,
           tls: rqliteConfig.tls || null,
-          log
+          // How long to wait for rqlited's HTTP API at boot. Nodes with a
+          // large platform dataset or slow disks can need more than the
+          // default; the boot fails (and the supervisor restarts the
+          // container) when this budget is exceeded.
+          readyTimeoutMs: rqliteConfig.readyTimeoutMs,
+          log,
+          warn
         });
       }
     } else {

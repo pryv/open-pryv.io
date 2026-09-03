@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## fix(rqlite): configurable boot readiness timeout (`storages.engines.rqlite.readyTimeoutMs`) + a slow rqlited start is now visible in the log
+
+`bin/master.js` waited for rqlited's `/readyz` with a hardcoded 30 s budget, on
+both the managed path (`rqliteProcess.start()`) and the `external: true` path. A
+node where rqlited legitimately needs longer (large platform dataset, slow disk)
+failed boot with `rqlited did not become ready within 30000ms`, was restarted by
+the supervisor and crash-looped until one attempt happened to land under the
+limit; there was no config key to raise it. The budget is now
+`storages.engines.rqlite.readyTimeoutMs` (default `30000`, so existing deployments
+are unchanged; it must be a positive number of milliseconds, otherwise master
+refuses to start with a message naming the key). While waiting, master logs a
+warning at 50% and 80% of the budget, and on success it logs the elapsed time
+(`rqlited HTTP API ready in 27.8s`), so an operator can see a node running close
+to the limit before a boot fails. The timeout error now names the probed URL and
+the key to raise. The key is declared in the engine manifest, documented in
+`config/default-config.yml`, offered as a commented knob by `bin/init.js`, and
+shown in `INSTALL.md`. `[RQREADY]` unit tests drive the poll loop against a local
+HTTP stub (success with elapsed time, 50%/80% progress warnings, timeout,
+connection refused, external path) and pin the value resolution.
+(open-pryv.io#127)
+
 ## mfa: TOTP enabled by default + service-info advertises active methods
 
 `config/default-config.yml` now ships `services.mfa.active: true` (TOTP default,

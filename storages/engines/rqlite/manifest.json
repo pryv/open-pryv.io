@@ -8,6 +8,7 @@
       "raftPort": { "type": "number",  "default": 4002,                              "description": "Raft consensus port" },
       "dataDir":  { "type": "string",  "default": "var-pryv/rqlite-data",            "description": "rqlite data directory" },
       "binPath":  { "type": "string",  "default": "bin-ext/rqlited",                 "description": "rqlited binary path" },
+      "readyTimeoutMs": { "type": "number", "default": 30000, "description": "Milliseconds to wait for rqlited's HTTP API (/readyz) at boot before failing the start; applies to the managed process and to external: true" },
       "tls": {
         "type": "object",
         "default": null,

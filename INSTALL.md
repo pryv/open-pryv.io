@@ -138,6 +138,7 @@ storages:
       raftPort: 4002
       dataDir: /path/to/data/rqlite-data
       binPath: /path/to/rqlited        # default: bin-ext/rqlited
+      readyTimeoutMs: 30000            # boot budget for rqlited's HTTP API; raise on slow nodes
 ```
 
 ### Assets

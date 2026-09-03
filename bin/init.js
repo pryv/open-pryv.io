@@ -567,6 +567,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # cluster:
 # #   discoveryEnabled: false
 
+# # storages.engines.rqlite.readyTimeoutMs — how long the master waits for
+# # the embedded rqlited's HTTP API at boot (default 30000 ms). Raise it if
+# # this node logs "rqlited did not become ready" and restarts on boot.
+# # storages:
+# #   engines:
+# #     rqlite:
+# #       readyTimeoutMs: 60000
+
 # # core.url — pin this core's externally-reachable URL when 'dns.active'
 # # is false but you still want a stable identity (DNSless multi-core).
 # # core:

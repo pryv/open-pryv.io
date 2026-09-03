@@ -23,6 +23,12 @@ const fs = require('node:fs');
 
 let rqliteChild: ChildProcess | null = null;
 
+/**
+ * Default budget for rqlited's HTTP API to answer /readyz at boot.
+ * Overridden by `storages.engines.rqlite.readyTimeoutMs`.
+ */
+const DEFAULT_READY_TIMEOUT_MS = 30000;
+
 interface TlsConfig {
   caFile: string;
   certFile: string;
@@ -42,7 +48,9 @@ interface RqliteOpts {
   nonVoter?: boolean;
   coreIp?: string | null;
   tls?: TlsConfig | null;
+  readyTimeoutMs?: number;
   log?: (msg: string) => void;
+  warn?: (msg: string) => void;
 }
 
 /**
@@ -138,12 +146,28 @@ function buildArgs (opts: RqliteOpts): string[] {
   return args;
 }
 
+/**
+ * Resolve the readiness budget from config. Accepts a number or a numeric
+ * string (environment overrides arrive as strings); null / undefined fall
+ * back to the default. Anything else is a config error and must fail the
+ * boot loudly rather than produce a loop that never polls.
+ */
+function resolveReadyTimeoutMs (value: unknown): number {
+  if (value == null) return DEFAULT_READY_TIMEOUT_MS;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`storages.engines.rqlite.readyTimeoutMs must be a positive number of milliseconds (got ${JSON.stringify(value)})`);
+  }
+  return n;
+}
+
 async function start (opts: RqliteOpts): Promise<void> {
   const {
     binPath,
     dataDir,
     tls = null,
-    log = console.log
+    log = console.log,
+    warn = log
   } = opts;
 
   const absDataDir = path.isAbsolute(dataDir) ? dataDir : path.resolve(process.cwd(), dataDir);
@@ -158,6 +182,8 @@ async function start (opts: RqliteOpts): Promise<void> {
   }
 
   const httpPort = opts.httpPort || 4001;
+  // Resolved before spawn so a bad config value never orphans a child process.
+  const readyTimeoutMs = resolveReadyTimeoutMs(opts.readyTimeoutMs);
 
   log(`Starting rqlited: ${absBinPath} ${args.join(' ')}`);
 
@@ -186,8 +212,8 @@ async function start (opts: RqliteOpts): Promise<void> {
 
   // Wait for HTTP API to become ready
   const httpUrl = `http://127.0.0.1:${httpPort}`;
-  await waitForReady(httpUrl, 30000, log);
-  log('rqlited HTTP API ready');
+  const elapsedMs = await waitForReady(httpUrl, readyTimeoutMs, warn);
+  log(`rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
 /**
@@ -218,30 +244,46 @@ function isRunning (): boolean {
   return rqliteChild != null && rqliteChild.exitCode == null;
 }
 
+function formatSeconds (ms: number): string {
+  return (ms / 1000).toFixed(1) + 's';
+}
+
 /**
- * Poll rqlite HTTP readyz endpoint until it responds.
+ * Poll rqlite HTTP readyz endpoint until it responds OK.
+ * Warns once at 50% and once at 80% of the budget so a slow start is
+ * visible in the log before the boot fails. Resolves with the elapsed ms.
  */
-async function waitForReady (httpUrl: string, timeoutMs: number, log: (msg: string) => void): Promise<void> {
+async function waitForReady (httpUrl: string, timeoutMs: number, warn: (msg: string) => void, pollIntervalMs: number = 500): Promise<number> {
   const start = Date.now();
   const readyzUrl = httpUrl + '/readyz';
+  const thresholds = [0.5, 0.8];
+  let nextThreshold = 0;
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(readyzUrl);
-      if (res.ok) return;
+      if (res.ok) return Date.now() - start;
     } catch {
       // not ready yet
     }
-    await new Promise(resolve => setTimeout(resolve, 500));
+    const elapsed = Date.now() - start;
+    while (nextThreshold < thresholds.length && elapsed >= timeoutMs * thresholds[nextThreshold]) {
+      const pct = Math.round(thresholds[nextThreshold] * 100);
+      warn(`rqlited HTTP API still not ready after ${formatSeconds(elapsed)} (${pct}% of the ${timeoutMs}ms budget, storages.engines.rqlite.readyTimeoutMs)`);
+      nextThreshold++;
+    }
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
   }
-  throw new Error(`rqlited did not become ready within ${timeoutMs}ms`);
+  throw new Error(`rqlited did not become ready within ${timeoutMs}ms (${readyzUrl}). If this node needs longer to start, raise storages.engines.rqlite.readyTimeoutMs.`);
 }
 
 /**
  * Wait for an external (not managed by us) rqlite instance to be ready.
+ * `timeoutMs` may be undefined (config key absent) and is resolved the
+ * same way as for the managed process.
  */
-async function waitForExternal (url: string, timeoutMs: number, log: (msg: string) => void): Promise<void> {
-  await waitForReady(url, timeoutMs, log);
-  log('External rqlited HTTP API ready');
+async function waitForExternal (url: string, timeoutMs: number | undefined, log: (msg: string) => void, warn: (msg: string) => void = log): Promise<void> {
+  const elapsedMs = await waitForReady(url, resolveReadyTimeoutMs(timeoutMs), warn);
+  log(`External rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
-export { start, stop, isRunning, waitForExternal, buildArgs };
+export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, DEFAULT_READY_TIMEOUT_MS };
