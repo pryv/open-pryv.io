@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## mfa: recover stays exempt from the attempt limiter, and its code compare is constant-time
+
+`mfa.recover` is deliberately NOT subject to the per-account limiter, in either
+of its steps, and this is now pinned by test (`[MA12H]`, `[MA12I]`) rather than
+left as an accident of where the gate was placed. It is the last-resort path: the
+recovery codes are 122-bit random values so a ceiling buys no security against
+guessing them, while the password check is the same one `auth.login` performs
+unthrottled, so limiting it here would remove no capability from an attacker and
+would instead let anyone, with no credentials at all, lock a known user out of
+their own recovery by submitting wrong passwords. The endpoint therefore never
+reads or writes the throttle on failure and never returns `too-many-attempts`; a
+SUCCESSFUL recovery still clears it, since the enrolment it guarded is removed.
+Separately, the recovery-code comparison now runs in constant time over every
+stored code (`timingSafeEqual`, no short-circuit) instead of `Array.includes`, so
+neither the response time nor the position of a match is observable (`[MA7E]`).
+`[MA7D]` pins that a wrong password and a wrong recovery code stay uniform for an
+existing user. No new config and no new error id.
+
 ## mfa: per-account attempt throttle on the profile
 
 `normalizeMfaConfig` gained an `attempts` block (perSession/perAccount/

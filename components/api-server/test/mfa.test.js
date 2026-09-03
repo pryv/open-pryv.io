@@ -482,6 +482,50 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .send({ username, password: 'wrong', recoveryCode: recoveryCodes[0] });
         assert.strictEqual(res.status, 401);
       });
+
+      it('[MA7D] a wrong password and a wrong recovery code stay uniform for an existing user', async function () {
+        // Scope note: an unknown username is rejected earlier, by the route's
+        // context init, with 404 unknown-resource. That happens on every
+        // /:username/* route (auth/login included), so it is a property of the
+        // API surface and not of this endpoint, and it is NOT asserted here.
+        // What this pins is the part this endpoint owns: for an existing user,
+        // the two failure modes return exactly what they always have, so no
+        // limiter or lock state can start distinguishing accounts through them.
+        const wrongPwd = await coreRequest
+          .post(`/${username}/mfa/recover`)
+          .send({ username, password: 'wrong', recoveryCode: recoveryCodes[0] });
+        assert.strictEqual(wrongPwd.status, 401);
+        assert.strictEqual(wrongPwd.body.error.id, 'invalid-credentials');
+
+        const wrongCode = await coreRequest
+          .post(`/${username}/mfa/recover`)
+          .send({ username, password, recoveryCode: 'not-a-real-code' });
+        assert.strictEqual(wrongCode.status, 400);
+
+        // Neither may ever become a throttle response.
+        assert.notStrictEqual(wrongPwd.status, 429);
+        assert.notStrictEqual(wrongCode.status, 429);
+      });
+
+      it('[MA7E] the constant-time code comparison still accepts and rejects correctly', async function () {
+        const valid = recoveryCodes[2];
+        // Same length, differs only in the final character.
+        const lastChar = valid.slice(-1);
+        const nearMiss = valid.slice(0, -1) + (lastChar === 'a' ? 'b' : 'a');
+        const nearRes = await coreRequest
+          .post(`/${username}/mfa/recover`).send({ username, password, recoveryCode: nearMiss });
+        assert.strictEqual(nearRes.status, 400, 'a code differing in one character must be rejected');
+
+        // Different length.
+        const shortRes = await coreRequest
+          .post(`/${username}/mfa/recover`).send({ username, password, recoveryCode: valid.slice(0, -1) });
+        assert.strictEqual(shortRes.status, 400, 'a shorter code must be rejected');
+
+        // The exact code still works (last: it deactivates MFA).
+        const okRes = await coreRequest
+          .post(`/${username}/mfa/recover`).send({ username, password, recoveryCode: valid });
+        assert.strictEqual(okRes.status, 200, `the valid code must be accepted: ${JSON.stringify(okRes.body)}`);
+      });
     });
   });
 
@@ -686,7 +730,11 @@ describe('[MFAA] MFA acceptance (seq)', function () {
               attempts: {
                 perSession: PER_SESSION,
                 perAccount: PER_ACCOUNT,
-                perAccountWindowSeconds: 60,
+                // Long enough that the accrual window cannot expire part-way
+                // through a test on a slow run; these cases are about the
+                // ceiling, not about the window rolling over. A test that
+                // wants expiry sets its own value.
+                perAccountWindowSeconds: 3600,
                 lockoutSeconds: 1,
                 ...attempts
               }
@@ -706,14 +754,25 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         return confirm.body.recoveryCodes;
       }
 
-      /** One wrong guess on a brand-new login session. Returns the status. */
+      /**
+       * One wrong guess on a brand-new login session.
+       *
+       * Asserts that the attempt actually REACHED the limiter. Without this,
+       * a request that failed for an unrelated reason would be counted by the
+       * caller as a consumed guess while the server never accrued it, and the
+       * mismatch would surface later as a confusing off-by-one in whichever
+       * assertion happened to run next, rather than here where it happened.
+       */
       async function guessOnFreshLogin (code = '000000') {
         const loginRes = await login();
-        assert.strictEqual(loginRes.status, 200, 'login itself must never be blocked by the MFA lock');
+        assert.strictEqual(loginRes.status, 200,
+          `login itself must never be blocked by the MFA lock (got ${loginRes.status} ${JSON.stringify(loginRes.body)})`);
         const res = await coreRequest
           .post(`/${username}/mfa/verify`)
           .set('Authorization', loginRes.body.mfaToken)
           .send({ code });
+        assert.ok([200, 400, 401, 429].includes(res.status),
+          `a guess must reach the limiter; got ${res.status} ${JSON.stringify(res.body)}`);
         return res;
       }
 
@@ -803,16 +862,16 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
         assert.strictEqual(last.status, 401, 'the per-session ceiling still invalidates the session');
 
-        // Those 5 counted toward the account: the lock must engage on the
+        // Those failures counted toward the account: the lock engages on the
         // (PER_ACCOUNT - PER_SESSION)-th further guess, not on a fresh budget.
         let further = 0;
-        for (let i = 0; i < PER_ACCOUNT; i++) {
+        for (let i = 0; i < PER_ACCOUNT + 2; i++) {
           const res = await guessOnFreshLogin();
           further++;
           if (res.status === 429) break;
         }
         assert.strictEqual(further, PER_ACCOUNT - PER_SESSION,
-          'session failures must count toward the per-account tally');
+          'session failures must count toward the per-account tally, not grant a fresh budget');
       });
 
       it('[MA12E] mfa.recover lifts the lock along with the enrolment', async function () {
@@ -859,6 +918,55 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           assert.notStrictEqual(res.status, 429,
             `guess ${i + 1} after a success should not lock; the tally was not reset`);
         }
+      });
+
+      // mfa.recover is the last-resort path and is deliberately exempt from the
+      // limiter in BOTH its steps. These two pin that exemption from both
+      // sides: a recover failure must not consume the account's budget, and a
+      // locked account must not be refused recovery. The budget is checked
+      // behaviourally rather than by reading storage: if a recover attempt had
+      // accrued, the lock would arrive one guess early.
+      function recoverWith (body) {
+        return coreRequest.post(`/${username}/mfa/recover`).send(body);
+      }
+
+      it('[MA12H] a wrong password on recover neither feeds the lock nor is blocked by it', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
+        await _resetMFASingletons();
+        const codes = await enrol();
+
+        // One guess short of the ceiling.
+        for (let i = 0; i < PER_ACCOUNT - 1; i++) await guessOnFreshLogin();
+
+        const wrongPwd = await recoverWith({ username, password: 'wrong', recoveryCode: codes[0] });
+        assert.strictEqual(wrongPwd.status, 401, 'a wrong password must stay 401, never 429');
+        assert.strictEqual(wrongPwd.body.error.id, 'invalid-credentials');
+
+        // Budget untouched: the very next guess is still the one that locks.
+        const locking = await guessOnFreshLogin();
+        assert.strictEqual(locking.status, 429, 'the recover attempt must not have consumed the budget');
+
+        // And recovery stays reachable while the MFA step is locked.
+        const underLock = await recoverWith({ username, password: 'wrong', recoveryCode: codes[0] });
+        assert.strictEqual(underLock.status, 401, 'recover must never answer 429');
+        assert.strictEqual(underLock.body.error.id, 'invalid-credentials');
+      });
+
+      it('[MA12I] a wrong recovery code neither feeds the lock nor is blocked by it', async function () {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
+        await _resetMFASingletons();
+        await enrol();
+
+        for (let i = 0; i < PER_ACCOUNT - 1; i++) await guessOnFreshLogin();
+
+        const badCode = await recoverWith({ username, password, recoveryCode: 'not-a-real-code' });
+        assert.strictEqual(badCode.status, 400, 'a wrong recovery code must stay 400, never 429');
+
+        const locking = await guessOnFreshLogin();
+        assert.strictEqual(locking.status, 429, 'the recover attempt must not have consumed the budget');
+
+        const underLock = await recoverWith({ username, password, recoveryCode: 'not-a-real-code' });
+        assert.strictEqual(underLock.status, 400, 'recover must never answer 429');
       });
     });
   });
