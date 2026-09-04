@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-## 2.0.0-rc.15 — 2026-09-04
+## 2.0.0-rc.16 — 2026-09-04
+
+_(supersedes the 2.0.0-rc.15 tag, which was cut from a commit that failed CI and was never published.)_
 
 ### MFA: per-account failed-attempt limit (brute-force hardening)
 

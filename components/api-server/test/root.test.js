@@ -271,7 +271,19 @@ describe('[ROOT] root', function () {
       const expectedTime = timestamp.now();
 
       // checkUpdatedAccess
-      access = await findOneAsync(user, { token: personalAccessToken }, null);
+      //
+      // The usage-stats update is deliberately fire-and-forget: the middleware
+      // calls next() BEFORE issuing the write, so the reply can and does race
+      // ahead of it. Poll for the write instead of assuming it has already
+      // landed, otherwise this passes or fails on machine speed alone.
+      const deadline = Date.now() + 5000;
+      do {
+        access = await findOneAsync(user, { token: personalAccessToken }, null);
+        if (access.lastUsed != null &&
+            access.calls?.[calledMethodKey] === originalCallCount + 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+
       assert.ok(access.lastUsed); //
       assert.ok(Math.abs(Math.round(access.lastUsed) - Math.round(expectedTime)) <= 5);
 
