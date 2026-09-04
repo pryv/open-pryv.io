@@ -169,7 +169,10 @@ class Server {
     const config = this.config;
     const logger = this.logger;
     const port = config.get('http:port');
-    const hostname = config.get('http:ip');
+    // Fall back to loopback rather than to Node's default, which is every
+    // interface: an unset or nulled `http.ip` must not silently publish the
+    // API to the network. Mirrors the same guard on the HFS host above.
+    const hostname = (config.get('http:ip') as string) || '127.0.0.1';
     // All listen() methods can take a backlog parameter to specify the maximum
     // length of the queue of pending connections. The actual length will be
     // determined by the OS through sysctl config such as tcp_max_syn_backlog

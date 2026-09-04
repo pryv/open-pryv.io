@@ -1,20 +1,11 @@
 # Changelog - Internal (no API impact)
 
-## test: bind one server per app instead of one per request
+## api-server: bind loopback when http.ip is unset
 
-Handed a bare express app, supertest binds a fresh ephemeral port for every
-request and tears it down after. Across a full suite that was thousands of
-bind/close cycles, and the resulting port churn was a genuine source of
-cross-talk: a request could reach a port that had just been recycled and read a
-response belonging to another listener on the machine, or a desynchronised one.
-It presented as unrelated suites failing at random under load (spurious 404s,
-socket `Parse Error`, hook timeouts) while every one of them passed in
-isolation, which is why it survived so long as an apparently unfixable flake.
-The global agent, the CMC/OAuth2 fetch shim and the per-suite agents now all run
-against an already-listening server, via `listeningAgent()` which caches one
-server per app instance so a suite that builds its own application still gets
-its own. Full matrix went from 3 failing (PostgreSQL) and 5 failing (SQLite) to
-0 on both.
+`startListen` passed `config.get('http:ip')` straight to `listen`, so an unset or
+nulled value fell through to Node default of every interface, silently publishing
+the API to the network. It now falls back to `127.0.0.1`, matching the guard the
+HFS host already had.
 
 ## mfa: recover stays exempt from the attempt limiter, and its code compare is constant-time
 
