@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-rc.15 — 2026-09-04
+
 ### MFA: per-account failed-attempt limit (brute-force hardening)
 
 The failed-second-factor limiter now also accrues PER ACCOUNT, not only per pending
