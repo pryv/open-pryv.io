@@ -29,6 +29,7 @@ type MFAProfile = {
   totp?: TotpState;
   generateRecoveryCodes (): void;
   getRecoveryCodes (): string[];
+  matchesRecoveryCode (supplied: unknown): boolean;
   isActive (): boolean;
 };
 type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: TotpState };
@@ -46,7 +47,6 @@ const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
-const crypto = require('node:crypto');
 const { ready, getLogger } = require('@pryv/boiler');
 const mfaLogger = getLogger('methods:mfa');
 const { normalizeMfaConfig, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
@@ -99,26 +99,6 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // user lands here and this profile sees all of their failed attempts. No
   // cross-core state is needed, and none is introduced.
   // --------------------------------------------------------------------
-
-  /**
-   * Compare a supplied recovery code against every stored one without
-   * short-circuiting: each candidate is compared in constant time, and the
-   * loop always runs to the end, so neither the time to answer nor the
-   * position of a match is observable.
-   */
-  function matchesARecoveryCode (storedCodes: string[], supplied: unknown): boolean {
-    const suppliedBuf = Buffer.from(String(supplied ?? ''), 'utf8');
-    let matched = false;
-    for (const stored of storedCodes) {
-      const storedBuf = Buffer.from(stored, 'utf8');
-      // timingSafeEqual requires equal lengths; an unequal length is already
-      // a mismatch, and the codes are fixed-length so this leaks nothing.
-      if (storedBuf.length === suppliedBuf.length && crypto.timingSafeEqual(storedBuf, suppliedBuf)) {
-        matched = true;
-      }
-    }
-    return matched;
-  }
 
   async function readThrottle (user: UserRef): Promise<ThrottleState | null> {
     const profileSet = await fromCallback((cb: Cb<{ data?: { mfaThrottle?: ThrottleState } } | null>) =>
@@ -475,7 +455,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         if (!profile.isActive()) {
           return next(errors.invalidOperation('MFA is not active for this user.'));
         }
-        if (!matchesARecoveryCode(profile.recoveryCodes, params.recoveryCode)) {
+        if (!profile.matchesRecoveryCode(params.recoveryCode)) {
           return next(errors.invalidParametersFormat('Invalid recovery code.'));
         }
         await saveMFAProfile(user, null);
