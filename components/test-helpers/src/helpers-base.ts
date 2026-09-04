@@ -211,7 +211,29 @@ async function initCore () {
     }
   }
 
-  _global.coreRequest = supertest(_global.app.expressApp);
+  // Bind ONE server for the whole run and hand supertest the listening server
+  // rather than the bare app.
+  //
+  // Given an app that is not listening, supertest binds a fresh ephemeral port
+  // per request and tears it down afterwards. Over a full suite that is
+  // thousands of bind/close cycles, and the resulting port churn is a real
+  // source of cross-talk: a connection can land on a port that has just been
+  // recycled, so a request occasionally receives a response that belongs to
+  // some other listener on the machine, or a desynchronised one. That shows up
+  // as unrelated suites failing at random under load (spurious 404s, socket
+  // "Parse Error", hook timeouts) while every one of them passes in isolation.
+  //
+  // Passing an already-listening server makes supertest reuse it: one port for
+  // the entire run.
+  const coreServer = _global.app.expressApp.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    coreServer.once('listening', resolve);
+    coreServer.once('error', reject);
+  });
+  // Keeping the process alive is the runner's business, not this socket's.
+  coreServer.unref();
+  _global.coreServer = coreServer;
+  _global.coreRequest = supertest(coreServer);
 
   // Hook after initialization
   if (options.afterInitCore) {

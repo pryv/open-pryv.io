@@ -91,7 +91,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // in a per-call closure (so the shim installed after middleware
     // registration is picked up by the dispatch loop).
     originalFetch = globalThis.fetch;
-    globalThis.fetch = buildFetchShim(originalFetch, global.app.expressApp);
+    globalThis.fetch = buildFetchShim(originalFetch, global.coreServer || global.app.expressApp);
 
     fixtures = getNewFixture();
     alice = await makeActor('alice-' + cuid().slice(-8));

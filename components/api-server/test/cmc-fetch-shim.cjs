@@ -39,6 +39,13 @@ function resolveSupertestPath (u) {
   return null;
 }
 
+/**
+ * `target` should be the ALREADY-LISTENING test server, not a bare express
+ * app. Handed an app that is not listening, supertest binds a fresh ephemeral
+ * port for every call and tears it down again; the dispatch loop makes many
+ * such calls, and the resulting port churn is a source of cross-talk that
+ * surfaces as unrelated failures under load. A listening server is reused.
+ */
 function buildFetchShim (originalFetch, app) {
   return async function shim (url, init) {
     let u;

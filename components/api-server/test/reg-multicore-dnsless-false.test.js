@@ -21,6 +21,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const cuid = require('cuid');
 const charlatan = require('charlatan');
 
@@ -173,7 +174,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       const app = getApplication(true);
       await app.initiate();
       await require('../src/methods/auth/register.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     beforeEach(function () {
@@ -306,7 +307,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       await setupMultiCore(CORE_A);
       const app = getApplication(true);
       await app.initiate();
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     it('[MC14] POST /reg/access returns {status, key, authUrl, poll, poll_rate_ms}', async function () {
@@ -464,7 +465,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       // not in tests). Register service.info here so /reg/service/info
       // doesn't 404 with "invalid-method".
       require('../src/methods/service.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     it('[MC17] /reg/service/info has all required fields', async function () {

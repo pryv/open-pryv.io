@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const { promisify } = require('util');
 const cuid = require('cuid');
@@ -57,7 +58,7 @@ describe('[BMM2] registration: DNS-less', () => {
     pubsub.setTestNotifier(testNotifier);
     await require('api-server/src/methods/events.ts').default(app.api);
 
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
   });
 
   describe('[RD01] POST /users', () => {

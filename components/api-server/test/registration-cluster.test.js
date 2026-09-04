@@ -12,6 +12,7 @@ const { promisify } = require('util');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 
 const helpers = require('./helpers');
 const { getConfig } = require('@pryv/boiler');
@@ -60,7 +61,7 @@ describe('[REGC] registration: cluster', function () {
     app = getApplication();
     await app.initiate();
     await require('../src/methods/auth/register.ts').default(app.api);
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
     usersRepository = await getUsersRepository();
   });
 

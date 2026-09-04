@@ -22,6 +22,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const cuid = require('cuid');
 const charlatan = require('charlatan');
 
@@ -191,7 +192,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       await require('../src/methods/auth/register.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     beforeEach(function () {
@@ -300,7 +301,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       await require('../src/methods/auth/register.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
       await platform.setUserCore(GHOST, CORE_B);
     });
 
@@ -472,7 +473,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       await require('../src/methods/auth/register.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
 
       // Seed user directly via usersRepository (avoid full HTTP registration)
       const { getUsersRepository, User } = require('business/src/users/index.ts');
@@ -521,7 +522,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
 
       // Seed a user whose home core is CORE_B. The unique email row + the
       // user-core mapping are written through the hashing layer so the
@@ -592,7 +593,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       await require('../src/methods/auth/register.ts').default(app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     after(restoreSingleCore);
@@ -626,7 +627,7 @@ describe('[RGMC] register: multi-core', function () {
     before(async function () {
       const app = getApplication(true);
       await app.initiate();
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     afterEach(async () => {
@@ -788,7 +789,7 @@ describe('[RGMC] register: multi-core', function () {
       await app.initiate();
       // Register system methods (not done by initiate — done by server.registerApiMethods)
       await require('../src/methods/system.ts').default(app.systemAPI, app.api);
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
     });
 
     after(restoreSingleCore);
@@ -847,7 +848,7 @@ describe('[RGMC] register: multi-core', function () {
       await seedCore(CORE_B, { hosting: 'us-east-1' });
       const app = getApplication(true);
       await app.initiate();
-      request = supertest(app.expressApp);
+      request = await listeningAgent(app.expressApp);
       // Reset the lazy platform cache so the middleware uses the freshly
       // re-initialized singleton (multi-core mode).
       require('middleware/src/checkUserCore.ts')._resetPlatformCache();
@@ -901,7 +902,7 @@ describe('[RGMC] register: multi-core', function () {
       // Re-init the application against single-core config.
       const app = getApplication(true);
       await app.initiate();
-      const scRequest = supertest(app.expressApp);
+      const scRequest = await listeningAgent(app.expressApp);
       require('middleware/src/checkUserCore.ts')._resetPlatformCache();
       // Even if PlatformDB has the user mapped to CORE_B, single-core mode
       // must NOT return 421 — there is only one core.
@@ -983,7 +984,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      const request = supertest(app.expressApp);
+      const request = await listeningAgent(app.expressApp);
       require('middleware/src/checkUserCore.ts')._resetPlatformCache();
 
       const username = 'mc10c-' + cuid.slug();

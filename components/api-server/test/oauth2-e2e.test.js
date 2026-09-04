@@ -113,7 +113,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     // Outbound HTTP (offer resolution via capability URL + CMC
     // delivery) routes through the in-process server.
     originalFetch = globalThis.fetch;
-    globalThis.fetch = buildFetchShim(originalFetch, global.app.expressApp);
+    globalThis.fetch = buildFetchShim(originalFetch, global.coreServer || global.app.expressApp);
 
     // End user + personal token; the offer's stream permissions
     // reference streams on THIS account.

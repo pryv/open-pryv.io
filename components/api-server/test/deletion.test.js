@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const { getApplication } = require('api-server/src/application.ts');
 const SeriesRepository = require('business/src/series/repository.ts').default;
@@ -61,7 +62,7 @@ describe('[PGTD] DELETE /users/:username', () => {
     await require('api-server/src/methods/auth/login.ts').default(app.api);
     await require('api-server/src/methods/utility.ts').default(app.api);
     await require('api-server/src/methods/auth/register.ts').default(app.api);
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
     fixtures = databaseFixture(await produceStorageConnection());
     await fixtures.context.cleanEverything();
     seriesConn = await produceSeriesConnection(app.config);

@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const cuid = require('cuid');
 const charlatan = require('charlatan');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 
 const { ErrorIds } = require('errors');
 const { getApplication } = require('api-server/src/application.ts');
@@ -95,7 +96,7 @@ describe('[ACCO] Account with system streams', function () {
     pubsub.status.emit(pubsub.SERVER_READY);
     await require('api-server/src/methods/account.ts').default(app.api);
     await require('api-server/src/methods/events.ts').default(app.api);
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
     mall = await getMall();
   });
 

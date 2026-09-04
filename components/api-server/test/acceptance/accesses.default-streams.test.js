@@ -13,6 +13,7 @@ const { promisify } = require('util');
 const nock = require('nock');
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 
 const ErrorIds = require('errors').ErrorIds;
@@ -113,7 +114,7 @@ describe('[AD01] Accesses with account streams', function () {
     await require('api-server/src/methods/accesses.ts').default(app.api);
 
     await require('api-server/src/methods/events.ts').default(app.api);
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
   });
 
   after(async function () {

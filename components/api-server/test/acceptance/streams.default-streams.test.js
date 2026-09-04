@@ -11,6 +11,7 @@ const cuid = require('cuid');
 const path = require('path');
 const assert = require('node:assert');
 const supertest = require('supertest');
+const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const ErrorIds = require('errors').ErrorIds;
 const { getApplication } = require('api-server/src/application.ts');
@@ -67,7 +68,7 @@ describe('[SYSS] System streams', function () {
     pubsub.status.emit(pubsub.SERVER_READY);
     require('api-server/src/methods/streams.ts').default(app.api);
 
-    request = supertest(app.expressApp);
+    request = await listeningAgent(app.expressApp);
   });
 
   after(async function () {

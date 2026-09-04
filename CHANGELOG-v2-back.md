@@ -1,23 +1,20 @@
 # Changelog - Internal (no API impact)
 
-## storage: one shared update-path contract, so the engines cannot disagree
+## test: bind one server per app instead of one per request
 
-An update key addresses at most ONE level inside a JSON field, and both engines
-now enforce that through a single shared helper (`storages/interfaces/_shared/updatePath.ts`,
-carrying the contract as its doc comment). Previously a key with two dots meant
-different things per engine and said nothing about it: PostgreSQL split off the
-first segment and merged the remainder as a LITERAL top-level key (`data` gained
-an entry actually named `a.b`), while SQLite walked every segment and nested
-properly. The same write therefore produced different documents, and a read
-could not agree across engines. Such a key is now refused on both, through the
-normal callback error and leaving the row untouched. The object form
-(`{ data: { k: v } }`) is unchanged and still merges one level with LITERAL
-sub-keys, so an application key that legitimately contains a dot keeps working;
-PostgreSQL no longer re-encodes it into a dotted string on the way through,
-which would have made the new check reject it. PostgreSQL also gains one-level
-`$min`/`$max` support, which it silently lacked where SQLite had it. To change
-something nested deeper, read the entry, modify it, and set it back, or give it
-its own entry. `[PDOT]` covers the semantics on every engine the suite runs.
+Handed a bare express app, supertest binds a fresh ephemeral port for every
+request and tears it down after. Across a full suite that was thousands of
+bind/close cycles, and the resulting port churn was a genuine source of
+cross-talk: a request could reach a port that had just been recycled and read a
+response belonging to another listener on the machine, or a desynchronised one.
+It presented as unrelated suites failing at random under load (spurious 404s,
+socket `Parse Error`, hook timeouts) while every one of them passed in
+isolation, which is why it survived so long as an apparently unfixable flake.
+The global agent, the CMC/OAuth2 fetch shim and the per-suite agents now all run
+against an already-listening server, via `listeningAgent()` which caches one
+server per app instance so a suite that builds its own application still gets
+its own. Full matrix went from 3 failing (PostgreSQL) and 5 failing (SQLite) to
+0 on both.
 
 ## mfa: recover stays exempt from the attempt limiter, and its code compare is constant-time
 
