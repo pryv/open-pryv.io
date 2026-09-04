@@ -8,7 +8,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const { promisify } = require('util');

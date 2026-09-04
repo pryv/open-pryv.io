@@ -21,7 +21,6 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 const cuid = require('cuid');
 const charlatan = require('charlatan');

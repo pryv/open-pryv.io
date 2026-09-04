@@ -12,7 +12,6 @@ const path = require('path');
 const { promisify } = require('util');
 const nock = require('nock');
 const assert = require('node:assert');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 

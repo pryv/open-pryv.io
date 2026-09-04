@@ -11,7 +11,6 @@ const cuid = require('cuid');
 const fs = require('fs');
 const path = require('path');
 const assert = require('node:assert');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const { getApplication } = require('api-server/src/application.ts');

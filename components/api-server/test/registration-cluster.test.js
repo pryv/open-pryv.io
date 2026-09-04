@@ -11,7 +11,6 @@ const assert = require('node:assert');
 const { promisify } = require('util');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 
 const helpers = require('./helpers');

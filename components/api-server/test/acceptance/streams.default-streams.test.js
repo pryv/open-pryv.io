@@ -10,7 +10,6 @@ const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const path = require('path');
 const assert = require('node:assert');
-const supertest = require('supertest');
 const { listeningAgent } = require('test-helpers');
 const charlatan = require('charlatan');
 const ErrorIds = require('errors').ErrorIds;
