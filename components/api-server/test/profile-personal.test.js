@@ -214,4 +214,76 @@ describe('[PRFP] profile (personal)', function () {
       validation.checkErrorForbidden(res);
     });
   });
+
+  // The storage engines must agree on what an update key means. These run on
+  // every engine the suite is executed against, which is the point: a key with
+  // a dot in it used to be interpreted differently per engine, silently.
+  describe('[PDOT] update-path semantics', function () {
+    beforeEach(async function () {
+      await fixtures.context.profile(username, publicProfile);
+    });
+
+    async function profileStorage () {
+      const { getStorageLayer } = require('storage');
+      return (await getStorageLayer()).profile;
+    }
+
+    it('[PDOT1] a profile key that contains a dot is stored literally, not as a path', async function () {
+      const res = await coreRequest
+        .put(basePath + '/public')
+        .set('Authorization', personalToken)
+        .send({ 'com.example.app': { seen: true } });
+
+      assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+      // The dotted name is one literal key, and the siblings are untouched.
+      assert.deepStrictEqual(res.body.profile['com.example.app'], { seen: true });
+      assert.strictEqual(res.body.profile.keyOne, 'value One');
+      assert.strictEqual(res.body.profile['com'], undefined, 'must not have been split into a nested object');
+    });
+
+    it('[PDOT2] a dotted key can be removed again the same way', async function () {
+      await coreRequest.put(basePath + '/public')
+        .set('Authorization', personalToken).send({ 'com.example.app': { seen: true } });
+      const res = await coreRequest.put(basePath + '/public')
+        .set('Authorization', personalToken).send({ 'com.example.app': null });
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.ok(!('com.example.app' in res.body.profile), 'the literal key should be gone');
+      assert.strictEqual(res.body.profile.keyOne, 'value One', 'siblings untouched');
+    });
+
+    it('[PDOT3] a one-level update key writes one entry and leaves its siblings alone', async function () {
+      const storage = await profileStorage();
+      const user = { id: username };
+      await new Promise((resolve, reject) => {
+        storage.updateOne(user, { id: 'public' }, { $set: { 'data.keyOne': 'rewritten' } },
+          (err) => err ? reject(err) : resolve());
+      });
+      const stored = await new Promise((resolve, reject) => {
+        storage.findOne(user, { id: 'public' }, null, (err, r) => err ? reject(err) : resolve(r));
+      });
+      assert.strictEqual(stored.data.keyOne, 'rewritten');
+      assert.strictEqual(stored.data.keyTwo, 2, 'siblings must survive a one-level write');
+    });
+
+    it('[PDOT4] an update key deeper than one level is refused, identically on every engine', async function () {
+      const storage = await profileStorage();
+      const user = { id: username };
+
+      const err = await new Promise((resolve) => {
+        storage.updateOne(user, { id: 'public' }, { $set: { 'data.keyOne.nested': 'x' } },
+          (e) => resolve(e));
+      });
+
+      assert.ok(err instanceof Error, 'a two-level path must be refused, not silently interpreted');
+      assert.match(err.message, /Unsupported update path/);
+      assert.match(err.message, /data\.keyOne\.nested/);
+
+      // and the row must be untouched by the rejected update
+      const stored = await new Promise((resolve, reject) => {
+        storage.findOne(user, { id: 'public' }, null, (e, r) => e ? reject(e) : resolve(r));
+      });
+      assert.strictEqual(stored.data.keyOne, 'value One');
+    });
+  });
 });

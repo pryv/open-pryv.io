@@ -11,6 +11,7 @@ import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage
 const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
+const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
 
 // ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
 
@@ -454,8 +455,15 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
    *  See the class note on the `_<method>On` variants. */
   _findOneAndUpdateOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    const { setClauses, unsetClauses, incClauses, params, nextIdx } =
-      this._buildUpdateClauses(updatedData, 1);
+    let built;
+    try {
+      built = this._buildUpdateClauses(updatedData, 1);
+    } catch (err) {
+      // An unsupported update path is a programming error; surface it on the
+      // callback rather than throwing synchronously, and leave the row alone.
+      return callback(err as Error);
+    }
+    const { setClauses, unsetClauses, incClauses, params, nextIdx } = built;
 
     const allClauses = [...setClauses, ...unsetClauses, ...incClauses];
     if (allClauses.length === 0) {
@@ -489,8 +497,13 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
    *  See the class note on the `_<method>On` variants. */
   _updateManyOn (queryable: PgDbLike, userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    const { setClauses, unsetClauses, incClauses, params, nextIdx } =
-      this._buildUpdateClauses(updatedData, 1);
+    let built;
+    try {
+      built = this._buildUpdateClauses(updatedData, 1);
+    } catch (err) {
+      return callback(err as Error);
+    }
+    const { setClauses, unsetClauses, incClauses, params, nextIdx } = built;
 
     const allClauses = [...setClauses, ...unsetClauses, ...incClauses];
     if (allClauses.length === 0) return callback(null, { modifiedCount: 0 });
@@ -533,48 +546,49 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
       }
     }
 
-    // Auto-expand JSONB column objects to dot-notation for merge semantics.
-    // When $set has a key that maps to a JSONB column and the value is a plain object,
-    // expand it: { data: { keyOne: 'val', keyTwo: null } } → { 'data.keyOne': 'val' } + $unset { 'data.keyTwo': 1 }
-    // This replicates the MongoDB converter getKeyValueSetUpdateFn behavior.
+    // One-level merge per the shared update-path contract
+    // (interfaces/_shared/updatePath.ts). Two channels reach the same merge
+    // map: the object form { data: { k: v } }, whose sub-keys are LITERAL and
+    // may themselves contain dots, and the explicit `data.k` form, which allows
+    // exactly one dot. The object form must therefore feed the map directly and
+    // never be re-encoded as a dotted string, or a legitimate sub-key such as
+    // 'com.example.app' would be re-parsed and rejected.
+    const jsonbUpdates: Record<string, Record<string, unknown>> = {};
+
     for (const [k, v] of Object.entries($set)) {
       if (v != null && typeof v === 'object' && !Array.isArray(v)) {
         const snakeCol = this.toCol(k);
         if (this.isJsonbCol(snakeCol)) {
+          if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
           for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
-            if (subVal !== null) {
-              $set[`${k}.${subKey}`] = subVal;
-            } else {
-              $unset[`${k}.${subKey}`] = 1;
-            }
+            // null is the removal marker further down.
+            jsonbUpdates[snakeCol][subKey] = subVal;
           }
           delete $set[k];
         }
       }
     }
 
-    // Handle key-value set updates (e.g., clientData.key = val or data.key = val)
-    // These come from converters.getKeyValueSetUpdateFn and appear as dot-notation keys
+    // Explicit one-level keys (e.g. clientData.key or data.key).
     const dotSetKeys = Object.keys($set).filter((k) => k.includes('.'));
     const dotUnsetKeys = Object.keys($unset).filter((k) => k.includes('.'));
 
-    if (dotSetKeys.length > 0 || dotUnsetKeys.length > 0) {
-      const jsonbUpdates: Record<string, Record<string, unknown>> = {};
-      for (const key of dotSetKeys) {
-        const [col, ...rest] = key.split('.');
-        const snakeCol = this.toCol(col);
-        if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
-        jsonbUpdates[snakeCol][rest.join('.')] = $set[key];
-        delete $set[key];
-      }
-      for (const key of dotUnsetKeys) {
-        const [col, ...rest] = key.split('.');
-        const snakeCol = this.toCol(col);
-        if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
-        jsonbUpdates[snakeCol][rest.join('.')] = null;
-        delete $unset[key];
-      }
+    for (const key of dotSetKeys) {
+      const { field, entry } = splitUpdatePath(key);
+      const snakeCol = this.toCol(field);
+      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
+      jsonbUpdates[snakeCol][entry as string] = $set[key];
+      delete $set[key];
+    }
+    for (const key of dotUnsetKeys) {
+      const { field, entry } = splitUpdatePath(key);
+      const snakeCol = this.toCol(field);
+      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
+      jsonbUpdates[snakeCol][entry as string] = null;
+      delete $unset[key];
+    }
 
+    if (Object.keys(jsonbUpdates).length > 0) {
       for (const [snakeCol, updates] of Object.entries(jsonbUpdates)) {
         const keysToSet: Record<string, unknown> = {};
         const keysToRemove: string[] = [];
@@ -626,10 +640,10 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     const dottedByTopKey: Record<string, Array<[string, unknown]>> = {};
     const bareInc: Array<[string, unknown]> = [];
     for (const [k, v] of Object.entries($inc)) {
-      if (k.includes('.')) {
-        const [topKey, ...rest] = k.split('.');
-        if (dottedByTopKey[topKey] == null) dottedByTopKey[topKey] = [];
-        dottedByTopKey[topKey].push([rest.join('.'), v]);
+      const { field, entry } = splitUpdatePath(k);
+      if (entry != null) {
+        if (dottedByTopKey[field] == null) dottedByTopKey[field] = [];
+        dottedByTopKey[field].push([entry, v]);
       } else {
         bareInc.push([k, v]);
       }
@@ -656,20 +670,39 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
       idx++;
     }
 
-    // $min
-    for (const [k, v] of Object.entries($min)) {
-      const col = this.toCol(k);
-      setClauses.push(`${col} = LEAST(${col}, $${idx})`);
-      params.push(v);
-      idx++;
-    }
-
-    // $max
-    for (const [k, v] of Object.entries($max)) {
-      const col = this.toCol(k);
-      setClauses.push(`${col} = GREATEST(${col}, $${idx})`);
-      params.push(v);
-      idx++;
+    // $min / $max — same grammar as $inc: a one-level entry is grouped per
+    // column so the column is assigned once, a bare key acts on the column.
+    // A missing entry stores the operand, which LEAST/GREATEST over NULL gives.
+    for (const [op, source, sqlFn] of [
+      ['$min', $min, 'LEAST'] as const,
+      ['$max', $max, 'GREATEST'] as const
+    ]) {
+      void op;
+      const dottedByCol: Record<string, Array<[string, unknown]>> = {};
+      for (const [k, v] of Object.entries(source)) {
+        const { field, entry } = splitUpdatePath(k);
+        if (entry != null) {
+          if (dottedByCol[field] == null) dottedByCol[field] = [];
+          dottedByCol[field].push([entry, v]);
+        } else {
+          const col = this.toCol(k);
+          setClauses.push(`${col} = ${sqlFn}(${col}, $${idx})`);
+          params.push(v);
+          idx++;
+        }
+      }
+      for (const [topKey, entries] of Object.entries(dottedByCol)) {
+        const snakeCol = this.toCol(topKey);
+        let expr = `COALESCE(${snakeCol}, '{}'::jsonb)`;
+        for (const [jsonbKey, v] of entries) {
+          expr =
+            `jsonb_set(${expr}, ARRAY[$${idx}]::text[], ` +
+            `to_jsonb(${sqlFn}((${snakeCol}->>$${idx})::numeric, $${idx + 1}::numeric)))`;
+          params.push(jsonbKey, v);
+          idx += 2;
+        }
+        setClauses.push(`${snakeCol} = ${expr}`);
+      }
     }
 
     return { setClauses, unsetClauses, incClauses, params, nextIdx: idx };

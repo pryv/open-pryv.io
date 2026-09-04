@@ -14,6 +14,7 @@ const require = createRequire(import.meta.url);
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
+const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
 
 type Options = FindOptions;
 
@@ -519,26 +520,25 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       }
     }
 
-    // Auto-expand $set values that are plain objects targeting a
-    // JSONB-equivalent column (everything stored under SQLite's `data`
-    // TEXT column counts). Mirrors PG's `_buildUpdateClauses` logic:
-    // `{data: {keyOne: 'v', keyTwo: null}}` MUST merge with the existing
-    // `data` (treating `null` as delete), not replace it wholesale.
-    // Profile/clientData/etc updates rely on this — the test fixtures
-    // pass `{data: {...partial}}` and expect a deep merge against the
-    // currently-stored data.
+    // Object form: `{data: {keyOne: 'v', keyTwo: null}}` merges ONE level into
+    // the existing field (null removes an entry) rather than replacing it
+    // wholesale. Sub-keys are literal and may contain dots. See the shared
+    // update-path contract in interfaces/_shared/updatePath.ts.
+    // A missing or non-object field counts as `{}`, matching the other engine,
+    // so a null sub-value never stores a literal null.
     for (const [k, v] of Object.entries($set)) {
       if (v == null || typeof v !== 'object' || Array.isArray(v)) continue;
       if (COL_SET.has(k)) continue; // indexed col — value is the column value, not a nested map
       const existing = merged[k];
-      if (existing != null && typeof existing === 'object' && !Array.isArray(existing)) {
-        const mergedField = Object.assign({}, existing) as Record<string, unknown>;
-        for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
-          if (subVal === null) delete mergedField[subKey];
-          else mergedField[subKey] = subVal;
-        }
-        $set[k] = mergedField;
+      const base = (existing != null && typeof existing === 'object' && !Array.isArray(existing))
+        ? (existing as Record<string, unknown>)
+        : {};
+      const mergedField = Object.assign({}, base);
+      for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
+        if (subVal === null) delete mergedField[subKey];
+        else mergedField[subKey] = subVal;
       }
+      $set[k] = mergedField;
     }
 
     for (const [k, v] of Object.entries($set)) {
@@ -564,34 +564,33 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     return merged;
   }
 
+  // The three helpers below implement the shared update-path contract
+  // (interfaces/_shared/updatePath.ts): a bare key addresses the field itself,
+  // `<field>.<entry>` addresses exactly one entry inside it, and anything
+  // deeper is refused by splitUpdatePath rather than silently interpreted.
+
   private setNested (obj: Record<string, unknown>, path: string, val: unknown): void {
-    const parts = path.split('.');
-    let cur: Record<string, unknown> = obj;
-    for (let i = 0; i < parts.length - 1; i++) {
-      if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
-      cur = cur[parts[i]] as Record<string, unknown>;
-    }
-    cur[parts[parts.length - 1]] = val;
+    const { field, entry } = splitUpdatePath(path);
+    if (entry == null) { obj[field] = val; return; }
+    const current = obj[field];
+    if (current == null || typeof current !== 'object' || Array.isArray(current)) obj[field] = {};
+    (obj[field] as Record<string, unknown>)[entry] = val;
   }
 
   private unsetNested (obj: Record<string, unknown>, path: string): void {
-    const parts = path.split('.');
-    let cur: Record<string, unknown> = obj;
-    for (let i = 0; i < parts.length - 1; i++) {
-      if (cur[parts[i]] == null) return;
-      cur = cur[parts[i]] as Record<string, unknown>;
-    }
-    delete cur[parts[parts.length - 1]];
+    const { field, entry } = splitUpdatePath(path);
+    if (entry == null) { delete obj[field]; return; }
+    const current = obj[field];
+    if (current == null || typeof current !== 'object' || Array.isArray(current)) return;
+    delete (current as Record<string, unknown>)[entry];
   }
 
   private getNested (obj: Record<string, unknown>, path: string): unknown {
-    const parts = path.split('.');
-    let cur: unknown = obj;
-    for (const p of parts) {
-      if (cur == null) return undefined;
-      cur = (cur as Record<string, unknown>)[p];
-    }
-    return cur;
+    const { field, entry } = splitUpdatePath(path);
+    if (entry == null) return obj[field];
+    const current = obj[field];
+    if (current == null || typeof current !== 'object') return undefined;
+    return (current as Record<string, unknown>)[entry];
   }
 
   protected _writeMerged (udb: UserDb, id: string, merged: SqliteStoredItem): void {

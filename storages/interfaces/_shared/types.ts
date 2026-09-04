@@ -41,7 +41,8 @@ export type ItemList = Array<StoredItem | null>;
 /** Mongo-style query: field → scalar | operator-object | $or. */
 export type Query = Record<string, unknown>;
 
-/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set). */
+/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set).
+ *  Key grammar (one level, `<field>.<entry>`): see `./updatePath.ts`. */
 export type UpdateData = {
   $set?: Record<string, unknown>;
   $unset?: Record<string, unknown>;
