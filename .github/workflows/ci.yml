@@ -46,6 +46,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
       - name: Setup dev environment
         run: just setup-dev-env
       - name: Install InfluxDB
@@ -98,12 +99,13 @@ jobs:
 
   lint:
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
       - name: Install dependencies
         # Cannot use --omit=optional: ESLint 9's import-x plugin pulls in
         # `unrs-resolver`, which loads its platform-specific native binding
@@ -123,13 +125,14 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
       - uses: extractions/setup-just@v4
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
       - name: Install dependencies
         run: npm install --ignore-scripts
       - name: Typecheck
@@ -153,6 +156,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
       - name: Production install (--omit=dev — devDependencies pruned)
         run: npm install --omit=dev --ignore-scripts
       - name: Production boot smoke
@@ -165,12 +169,13 @@ jobs:
   # advisories are documented in the script's allowlist, not silenced.
   security-audit:
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          cache: npm
       - name: Install dependencies
         run: npm install --ignore-scripts
       - name: Audit runtime dependencies
