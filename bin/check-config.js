@@ -125,6 +125,9 @@ if (get('sso.enabled') === true) {
   if (get('dns.active') === true) {
     problems.push('sso.enabled is true but dns.active is also true — SSO is single-core / dnsLess only in this version; disable one of the two');
   }
+  if (get('sharedSecrets.enabled') === false) {
+    problems.push('sso.enabled is true but sharedSecrets.enabled is false — the sign-in callback hands the session token to the auth app via a one-time shared secret, never the URL; enable shared secrets or disable SSO');
+  }
   const callbackBaseURL = get('sso.callbackBaseURL');
   if (typeof callbackBaseURL === 'string' && callbackBaseURL !== '') {
     let cbOk = false;

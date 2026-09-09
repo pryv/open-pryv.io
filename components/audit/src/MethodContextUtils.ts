@@ -19,6 +19,7 @@ function setAuditAccessId (accessId: string) {
 
 const AuditAccessIds = {
   VALID_PASSWORD: 'valid-password',
+  VALID_SSO: 'valid-sso',
   PASSWORD_RESET_REQUEST: 'password-reset-request',
   PASSWORD_RESET_TOKEN: 'password-reset-token',
   EMAIL_VERIFICATION_TOKEN: 'email-verification-token',

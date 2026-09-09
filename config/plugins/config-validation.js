@@ -202,6 +202,19 @@ function checkSsoConfig (config, problems) {
     });
   }
 
+  // The SSO callback hands the minted (non-MFA) session token to the auth app
+  // ONLY through a one-time shared secret, never in the redirect URL. If shared
+  // secrets are disabled the callback cannot do that and MUST NOT fall back to a
+  // token-in-URL, so it would fail every non-MFA sign-in at runtime. Refuse at
+  // boot instead: sso.enabled requires sharedSecrets.enabled (default true).
+  if (config.get('sharedSecrets:enabled') === false) {
+    problems.push({
+      message: "'sso.enabled: true' requires 'sharedSecrets.enabled: true': the sign-in callback hands the session token to the auth app via a one-time shared secret and never through the URL. Enable shared secrets, or disable SSO.",
+      path: ['sso', 'enabled'],
+      payload: { 'sharedSecrets.enabled': false }
+    });
+  }
+
   // Optional callback base — when set it is the base of the IdP-registered
   // redirect URI, so a non-https / unparseable value is a misconfiguration.
   const callbackBaseURL = config.get('sso:callbackBaseURL');

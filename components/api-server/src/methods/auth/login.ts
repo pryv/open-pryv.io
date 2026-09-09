@@ -62,6 +62,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     setAdditionalInfo,
     mfaCheckIfActive);
 
+  // Third-party sign-in mint. Server-internal: NOT mapped to any route, so it
+  // is unreachable over HTTP; the SSO callback (routes/sso.ts) calls it via
+  // api.call on a synthesized context AFTER the IdP has proven the identity and
+  // the account-linking rules resolved a username. It is the auth.login chain
+  // minus the params-schema, the trusted-app/origin check (the caller is the
+  // server itself, identity already proven by the IdP), and the password check
+  // (there is no password in an SSO login). Everything else is the SAME
+  // functions, so the minted session, personal access, apiEndpoint and the MFA
+  // gate are byte-identical to a password login; auth.login above is untouched.
+  api.register('auth.ssoLogin',
+    applyPrerequisitesForLogin,
+    openSession,
+    updateOrCreatePersonalAccess,
+    addApiEndpoint,
+    setAuditAccessId(AuditAccessIds.VALID_SSO),
+    setAdditionalInfo,
+    mfaCheckIfActive);
+
   function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const fixedUsername = params.username.toLowerCase();
     if (context.user.username !== fixedUsername) {

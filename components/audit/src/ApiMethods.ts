@@ -10,6 +10,7 @@ const ALL_METHODS = [
   'getAccessInfo',
   'callBatch',
   'auth.login',
+  'auth.ssoLogin',
   'auth.logout',
   'auth.register',
   'auth.usernameCheck',

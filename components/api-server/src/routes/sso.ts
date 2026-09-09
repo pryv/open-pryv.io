@@ -27,8 +27,24 @@ import { registerRoutes, resolveAccountForIdentity, type IdentityClaims } from '
 import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { buildSsoLinkDeps } from './ssoLinkDeps.ts';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { MethodContext } = require('business');
 
 type ExpressApp = { get: (...args: unknown[]) => void };
+
+/** What `auth.ssoLogin` / `sharedSecrets.create` put on the result bag (the
+ *  subset this callback reads). MFA-active login returns `mfaToken` in place of
+ *  `token`; the handoff create returns the one-time key under `sharedSecret`. */
+type SsoMintResult = {
+  token?: string;
+  apiEndpoint?: string;
+  preferredLanguage?: string;
+  mfaToken?: string;
+  mfaMethod?: string;
+  sharedSecret?: { key?: string };
+};
 
 /**
  * Callback base = explicit `sso:callbackBaseURL` (boot-validated https), else
@@ -55,23 +71,92 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   const landingPageURL = config.get('sso:landingPageURL');
   const adminKey = config.get('auth:adminAccessKey');
 
+  // Promisified api dispatch: the dispatcher reads methodId off the context
+  // (set here, since we bypass the setMethodId route middleware), mirroring
+  // routes/oauth2.ts's apiCall.
+  function callMethod (context: unknown, params: unknown): Promise<SsoMintResult> {
+    return new Promise((resolve, reject) => {
+      app.api.call(context, params, (err: unknown, result: unknown) => {
+        if (err != null) return reject(err);
+        resolve((result ?? {}) as SsoMintResult);
+      });
+    });
+  }
+
+  // Everything SSO hands back rides the URL FRAGMENT, never the query: the
+  // fragment is not written to the landing host's access log or the Referer
+  // header (D6, § 2.6).
+  function toFragment (params: string): { location: string } {
+    const url = typeof landingPageURL === 'string' ? landingPageURL : '';
+    return { location: `${url}#${params}` };
+  }
+
   // The linking deps are resolved lazily per sign-in (getPlatform /
   // getUsersRepository are cached singletons); SSO is a low-frequency path so
   // there is no need to hoist them at mount time.
   async function onIdentity (claims: IdentityClaims): Promise<{ location: string }> {
-    const url = typeof landingPageURL === 'string' ? landingPageURL : '';
-    const sep = url.includes('?') ? '&' : '?';
     const deps = buildSsoLinkDeps(await getPlatform(), await getUsersRepository(), logger);
     const outcome = await resolveAccountForIdentity(deps, claims);
-    if (outcome.kind === 'login') {
-      // Account resolved (+ first-login binding persisted). Session mint lands
-      // in the next step; for now hand off with a pending marker. Log the
-      // provider only — never the resolved username / claims.
-      logger.info(`sso: identity via provider "${claims.provider}" resolved to an account (session mint pending)`);
-      return { location: `${url}${sep}ssoStatus=pending` };
+    if (outcome.kind !== 'login') {
+      // Coarse code only; detail stayed in the server log/audit. Never a username.
+      logger.info(`sso: sign-in refused via provider "${claims.provider}" (${outcome.code})`);
+      return toFragment(`ssoError=${encodeURIComponent(outcome.code)}`);
     }
-    logger.info(`sso: sign-in refused via provider "${claims.provider}" (${outcome.code})`);
-    return { location: `${url}${sep}ssoError=${encodeURIComponent(outcome.code)}` };
+
+    const username = outcome.username;
+    const appId = `sso-${claims.provider}`;
+    try {
+      // 1) Mint the session. Server-internal, token-less context, exactly the
+      //    shape auth.login runs on (init loads the user, no access). No custom
+      //    auth step: the identity is already proven by the IdP, and running an
+      //    operator hook here is neither needed nor wanted.
+      const mintCtx = new MethodContext({ name: 'sso', ip: null }, username, null, null, {}, {}, null);
+      await mintCtx.init();
+      mintCtx.methodId = 'auth.ssoLogin';
+      const login = await callMethod(mintCtx, { username, appId, origin: '' });
+
+      if (login.mfaToken != null) {
+        // MFA active: the real token is quarantined in the MFA session; hand off
+        // only the short-lived, second-factor-gated mfaToken. AWUA completes
+        // mfa.verify. Nothing long-lived is exposed.
+        logger.info(`sso: identity via "${claims.provider}" resolved; MFA continuation required`);
+        return toFragment(
+          `ssoStatus=mfa&ssoUser=${encodeURIComponent(username)}` +
+          `&ssoMfaToken=${encodeURIComponent(login.mfaToken)}` +
+          `&ssoMfaMethod=${encodeURIComponent(login.mfaMethod ?? '')}`);
+      }
+
+      // 2) No MFA: the 14-day token must NOT appear in a URL. Stash it in a
+      //    one-shot 60 s shared secret OWNED by the just-minted access (second
+      //    context authenticated AS that token, the oauth2.ts precedent), and
+      //    hand off only the one-time key.
+      const handoffCtx = new MethodContext({ name: 'sso', ip: null }, username, login.token, null, {}, {}, null);
+      await handoffCtx.init();
+      await handoffCtx.retrieveExpandedAccess(app.storageLayer);
+      handoffCtx.methodId = 'sharedSecrets.create';
+      const handoff = await callMethod(handoffCtx, {
+        title: 'sso-login-handoff',
+        ttl: 60,
+        onConsumed: { message: 'consumed' },
+        secret: {
+          token: login.token,
+          apiEndpoint: login.apiEndpoint,
+          preferredLanguage: login.preferredLanguage,
+          provider: claims.provider
+        }
+      });
+      const key = handoff.sharedSecret?.key;
+      if (key == null) throw new Error('sharedSecrets.create returned no key');
+
+      logger.info(`sso: identity via "${claims.provider}" resolved; session minted + one-time handoff created`);
+      return toFragment(
+        `ssoStatus=login&ssoUser=${encodeURIComponent(username)}&ssoKey=${encodeURIComponent(key)}`);
+    } catch (err) {
+      // No downgrade: a mint or handoff failure NEVER falls back to putting the
+      // token in the URL. Uniform coarse error; detail to the server trail.
+      logger.error(`sso: session mint / handoff failed for provider "${claims.provider}"`, err);
+      return toFragment('ssoError=sso-failed');
+    }
   }
 
   registerRoutes(expressApp, {
