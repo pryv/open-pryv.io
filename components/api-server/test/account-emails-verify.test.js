@@ -27,6 +27,7 @@ const constants = require('business/src/emails/constants.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const errors = require('errors').factory;
 const timestamp = require('unix-timestamp');
+const crypto = require('node:crypto');
 
 // A trusted app with a wildcard origin in the test config, so the public
 // endpoint's trusted-app check passes without a real Origin.
@@ -290,6 +291,115 @@ describe('[VEML] account email verification', function () {
         assert.strictEqual(raw.content.status, 'pending');
       } finally {
         config.set('account:emailVerification:resendCooldownMs', saved);
+      }
+    });
+  });
+
+  // Provenance upgrade: an existing account's founding email is `verified` but
+  // only `registration`-asserted (never link-proved), so it fails the SSO
+  // proved-ownership gate. resend + verify may target any NOT-proved entry and
+  // upgrade it to `email-link` proved WITHOUT flipping status, so the account
+  // can prove its own address and become linkable.
+  describe('[VEMU] provenance upgrade of an asserted email', function () {
+    it('[VEMU11] resend + verify upgrades a registration-asserted founding email to email-link proved (status stays verified)', async function () {
+      const saved = config.get('account:emailVerification:resendCooldownMs');
+      config.set('account:emailVerification:resendCooldownMs', 0);
+      try {
+        const founding = cuid() + '@founding.example.com';
+        const u = await makeUser(founding);
+        // Seed the container from the legacy primary and confirm the founding
+        // email is verified but NOT proved (registration).
+        await operations.ensureSeeded(u.userId, founding);
+        let raw = await container.findRawByValue(u.userId, founding);
+        assert.strictEqual(raw.content.status, 'verified');
+        assert.strictEqual(raw.content.verificationMethod, 'registration');
+        assert.strictEqual(constants.isProvedOwnership(raw.content), false);
+
+        // resend is allowed on the asserted entry and mints a live token
+        // without touching its status.
+        const { deps, ctx } = await opsCtx(u);
+        const { token } = await operations.resendVerification(deps, ctx, founding);
+        raw = await container.findRawByValue(u.userId, founding);
+        assert.strictEqual(raw.content.status, 'verified');
+        assert.ok(raw.content.verificationTokenHash != null);
+
+        // verifying the token upgrades provenance: still verified, now proved.
+        const value = await operations.verifyToken(u.userId, token);
+        assert.strictEqual(value, founding);
+        raw = await container.findRawByValue(u.userId, founding);
+        assert.strictEqual(raw.content.status, 'verified');
+        assert.strictEqual(raw.content.verificationMethod, 'email-link');
+        assert.ok(raw.content.verifiedAt != null);
+        assert.strictEqual(constants.isProvedOwnership(raw.content), true);
+        assert.strictEqual(raw.content.verificationTokenHash, null);
+        assert.strictEqual(raw.content.verificationTokenExpires, null);
+        assert.strictEqual(raw.content.verificationSentAt, null);
+      } finally {
+        config.set('account:emailVerification:resendCooldownMs', saved);
+      }
+    });
+
+    it('[VEMU12] resend + verify upgrades a legacy-asserted verified address to proved', async function () {
+      const saved = config.get('account:emailVerification:resendCooldownMs');
+      config.set('account:emailVerification:resendCooldownMs', 0);
+      try {
+        const u = await makeUser(cuid() + '@lg.example.com');
+        // A legacy `account.update {email}` sets an unowned address as primary:
+        // verified with method `legacy`, NOT proved.
+        const legacy = cuid() + '@unowned.example.com';
+        await coreRequest.put(accountPath(u.username)).set('Authorization', u.token)
+          .send({ email: legacy });
+        let raw = await container.findRawByValue(u.userId, legacy);
+        assert.strictEqual(raw.content.verificationMethod, 'legacy');
+        assert.strictEqual(constants.isProvedOwnership(raw.content), false);
+
+        const { deps, ctx } = await opsCtx(u);
+        ctx.legacyEmail = legacy; // the primary is now the legacy address
+        const { token } = await operations.resendVerification(deps, ctx, legacy);
+        assert.strictEqual(await operations.verifyToken(u.userId, token), legacy);
+
+        raw = await container.findRawByValue(u.userId, legacy);
+        assert.strictEqual(raw.content.status, 'verified');
+        assert.strictEqual(raw.content.verificationMethod, 'email-link');
+        assert.strictEqual(constants.isProvedOwnership(raw.content), true);
+      } finally {
+        config.set('account:emailVerification:resendCooldownMs', saved);
+      }
+    });
+
+    it('[VEMU13] verifyToken never re-stamps an already-proved entry, even if a token lingers', async function () {
+      const u = await makeUser(cuid() + '@pv.example.com');
+      const email = cuid() + '@proved2.example.com';
+      const token = await addPending(u, email);
+      assert.strictEqual(await operations.verifyToken(u.userId, token), email);
+      let raw = await container.findRawByValue(u.userId, email);
+      assert.strictEqual(raw.content.verificationMethod, 'email-link');
+      const provedAt = raw.content.verifiedAt;
+
+      // Force a live token onto the already-proved entry; verify must ignore it
+      // (the proved-ownership gate wins) and leave the provenance untouched.
+      const lingering = 'lingering-token-' + cuid();
+      const hash = crypto.createHash('sha256').update(lingering).digest('hex');
+      const ev = await container.findRawByValue(u.userId, email);
+      await container.stampVerification(u.userId, ev, hash, timestamp.now(3600), timestamp.now());
+
+      assert.strictEqual(await operations.verifyToken(u.userId, lingering), null);
+      raw = await container.findRawByValue(u.userId, email);
+      assert.strictEqual(raw.content.verificationMethod, 'email-link');
+      assert.strictEqual(raw.content.verifiedAt, provedAt);
+    });
+
+    it('[VEMU14] resend on an already-proved (email-link) email is still refused', async function () {
+      const u = await makeUser(cuid() + '@pv2.example.com');
+      const email = cuid() + '@proved3.example.com';
+      const token = await addPending(u, email);
+      await operations.verifyToken(u.userId, token);
+      const { deps, ctx } = await opsCtx(u);
+      try {
+        await operations.resendVerification(deps, ctx, email);
+        assert.fail('expected an already-proved rejection');
+      } catch (err) {
+        assert.strictEqual(err.id, 'invalid-operation');
       }
     });
   });

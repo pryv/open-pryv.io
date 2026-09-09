@@ -257,13 +257,21 @@ async function setPrimary (deps: Deps, ctx: UserContext, value: string): Promise
 }
 
 /**
- * Verify a pending email from its mailed token. Scoped to THIS user's own
- * container events (username came from the request path), so a token minted for
- * another account can never match here. Compares the sha256 of the presented
- * token, constant-time, against each pending event's stored hash; on a live
- * (non-expired) match flips it to verified and clears the token fields.
+ * Verify an email from its mailed token. Scoped to THIS user's own container
+ * events (username came from the request path), so a token minted for another
+ * account can never match here. Compares the sha256 of the presented token,
+ * constant-time, against each candidate event's stored hash; on a live
+ * (non-expired) match stamps it `email-link` proved and clears the token fields.
+ *
+ * Candidate entries are any that are NOT already proved (pending OR an asserted
+ * `verified` entry — registration/legacy/null). A pending entry flips to
+ * verified; an asserted-verified entry keeps `status:'verified'` and gains
+ * `verifiedAt` + `verificationMethod:'email-link'` (a pure provenance upgrade,
+ * so an existing account can prove its founding address). Already-proved
+ * entries are skipped (their token was cleared at proof time anyway).
+ *
  * Returns the verified address, or null for every failure mode (unknown token,
- * expired, none pending) so the caller can answer with ONE uniform error.
+ * expired, no candidate) so the caller can answer with ONE uniform error.
  */
 async function verifyToken (userId: string, token: string): Promise<string | null> {
   if (typeof token !== 'string' || token.length === 0) return null;
@@ -271,7 +279,7 @@ async function verifyToken (userId: string, token: string): Promise<string | nul
   const now = timestamp.now();
   const events = await container.getRawEvents(userId);
   for (const ev of events) {
-    if (ev.content.status !== C.STATUS_PENDING) continue;
+    if (C.isProvedOwnership(ev.content)) continue;
     const hash = ev.content.verificationTokenHash;
     if (hash == null) continue;
     if (!hashEquals(hash, presented)) continue;
@@ -284,11 +292,14 @@ async function verifyToken (userId: string, token: string): Promise<string | nul
 }
 
 /**
- * Resend the verification mail for a pending email, enforcing the resend
+ * Resend the verification mail for a not-yet-proved email, enforcing the resend
  * cooldown and ROTATING the token (the old link dies). Returns the new
- * `{ value, token }` for the caller to mail. Throws invalidOperation when the
- * email is unknown, already verified, or still within the cooldown window
- * (with `retryAfterSeconds`).
+ * `{ value, token }` for the caller to mail. Targets any NOT-proved entry
+ * (pending OR an asserted `verified` one — registration/legacy/null), so an
+ * existing account can request a link to prove its founding address and upgrade
+ * its provenance. Throws invalidOperation when the email is unknown, already
+ * PROVED (email-link/operator), or still within the cooldown window (with
+ * `retryAfterSeconds`).
  */
 async function resendVerification (deps: Deps, ctx: UserContext, value: string): Promise<MintedVerification> {
   const errors = deps.errors;
@@ -297,7 +308,7 @@ async function resendVerification (deps: Deps, ctx: UserContext, value: string):
   if (ev == null) {
     throw errors.invalidOperation('This email is not registered on the account.', { email: value });
   }
-  if (ev.content.status !== C.STATUS_PENDING) {
+  if (C.isProvedOwnership(ev.content)) {
     throw errors.invalidOperation('This email is already verified.', { email: value });
   }
   const cooldownMs = await container.getResendCooldownMs();

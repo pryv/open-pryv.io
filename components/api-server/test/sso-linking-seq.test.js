@@ -27,6 +27,8 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
 const { buildSsoLinkDeps } = require('../src/routes/ssoLinkDeps.ts');
 const { resolveAccountForIdentity } = require('sso');
+const operations = require('business/src/emails/operations.ts');
+const errors = require('errors').factory;
 const timestamp = require('unix-timestamp');
 
 describe('[SSOLI] SSO linking over the real platform', function () {
@@ -115,5 +117,34 @@ describe('[SSOLI] SSO linking over the real platform', function () {
   it('[SSOLI5] R3: email_verified:false → refuse sso-failed (before any lookup)', async function () {
     const out = await resolveAccountForIdentity(deps, identity({ email: cuid() + '@x.example.com', emailVerified: false }));
     assert.deepEqual(out, { kind: 'refuse', code: 'sso-failed' });
+  });
+
+  // The usability dependency (P5): an existing account's email is asserted, not
+  // proved, so SSO refuses at R6. Once the holder proves it through the real
+  // verify path, the SAME identity now links at R5. This is what makes SSO
+  // usable for accounts that predate provenance.
+  it('[SSOLI6] R6 → prove via verify path → R5: an asserted email links only after the holder proves it', async function () {
+    const email = cuid() + '@upgrade.example.com';
+    const u = await makeUser(cuid() + '@primary.example.com');
+    await addEmail(u, email, C.METHOD_REGISTRATION); // routes to u, NOT proved
+    const id = identity({ email });
+
+    // Before proof: the takeover gate refuses and persists no binding.
+    const before = await resolveAccountForIdentity(deps, id);
+    assert.deepEqual(before, { kind: 'refuse', code: 'email-not-verified' });
+    assert.strictEqual(await deps.getBinding(id.provider, id.sub), null);
+
+    // The holder proves ownership through the P5 upgrade path (resend + verify).
+    const usersRepository = await getUsersRepository();
+    const octx = { userId: u.userId, username: u.username, user: null, accessId: 'system', legacyEmail: null };
+    const { token } = await operations.resendVerification({ errors, usersRepository }, octx, email);
+    assert.strictEqual(await operations.verifyToken(u.userId, token), email);
+    const proved = await container.findRawByValue(u.userId, email);
+    assert.strictEqual(C.isProvedOwnership(proved.content), true);
+
+    // After proof: the same identity now links at R5 and the binding persists.
+    const after = await resolveAccountForIdentity(deps, id);
+    assert.deepEqual(after, { kind: 'login', username: u.username });
+    assert.strictEqual(await deps.getBinding(id.provider, id.sub), u.username);
   });
 });
