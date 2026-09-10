@@ -33,7 +33,6 @@ const container = require('business/src/emails/container.ts');
 const C = require('business/src/emails/constants.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
-const { getApplication } = require('../src/application.ts');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
 const timestamp = require('unix-timestamp');
@@ -89,9 +88,14 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
       auth: { adminAccessKey: ADMIN_KEY }
     });
 
-    // Mount the REAL sign-in routes on a test-local app wired to the booted core.
+    // Mount the REAL sign-in routes on a test-local app wired to the BOOTED
+    // core (the one coreRequest uses). We must NOT use getApplication(): a
+    // sibling suite (the multi-core register tests) calls getApplication(true)
+    // and replaces the module singleton with a fresh app that never registered
+    // auth.ssoLogin, so onIdentity's mint would fail with "Invalid method id".
+    // global.app is the stable booted instance whose api has every method.
     ssoApp = express();
-    require('../src/routes/sso.ts').default(ssoApp, getApplication());
+    require('../src/routes/sso.ts').default(ssoApp, global.app);
   });
 
   after(async function () {
