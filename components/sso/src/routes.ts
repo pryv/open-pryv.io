@@ -78,6 +78,15 @@ export function registerRoutes (app: ExpressLike, deps: SsoDeps): void {
   const base = deps.callbackBaseURL.replace(/\/+$/, '');
   const callbackUrl = (provider: string): string => `${base}/auth/sso/${provider}/callback`;
 
+  // Public descriptor so the auth app can render the sign-in buttons before any
+  // login: id + label only, never issuer/clientId/secret. Unauthenticated on
+  // purpose (a signed-out visitor needs it); it lists exactly the operator's
+  // allow-list. Mounted before the `:provider` routes (distinct path anyway).
+  app.get!('/auth/sso/providers',
+    ((_req: unknown, res: { status: (n: number) => { json: (b: unknown) => void } }) => {
+      res.status(200).json({ providers: registry.listPublic() });
+    }) as (...a: unknown[]) => void);
+
   app.get!('/auth/sso/:provider/start',
     handleStart({ registry, adminKey: deps.adminKey, callbackUrl, logger: deps.logger }) as (...a: unknown[]) => void);
 

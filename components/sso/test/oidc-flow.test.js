@@ -106,6 +106,19 @@ describe('[SSOC] SSO OIDC client flow', function () {
     assert.equal(lastIdentity.emailVerified, true);
   });
 
+  it('[SSOC1B] GET /auth/sso/providers lists the operator allow-list (id + label only)', async () => {
+    const res = await request(app).get('/auth/sso/providers');
+    assert.equal(res.status, 200);
+    const ids = res.body.providers.map((p) => p.id).sort();
+    assert.deepEqual(ids, ['other', 'test']);
+    const test = res.body.providers.find((p) => p.id === 'test');
+    assert.equal(test.label, 'Test');
+    // Never leaks issuer / client credentials.
+    assert.equal(test.issuer, undefined);
+    assert.equal(test.clientId, undefined);
+    assert.equal(test.clientSecret, undefined);
+  });
+
   it('[SSOC2] unknown provider → 404 at /start', async () => {
     const res = await request(app).get('/auth/sso/nope/start');
     assert.equal(res.status, 404);
