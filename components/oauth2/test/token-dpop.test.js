@@ -308,7 +308,11 @@ describe('[OAUTH-TKN-DP] /oauth2/token — DPoP key binding', () => {
     assert.equal(res.body.error, 'invalid_dpop_proof');
   });
 
-  it('[DPT11] a failing bindAccessDpop refuses issuance with 500 (no half-bound chain)', async () => {
+  it('[DPT11] a failing bindAccessDpop refuses issuance with 500 (no half-bound chain)', async function () {
+    // Raised off the 2000ms mocha default: this case has intermittently timed
+    // out purely under CI scheduling load (not a logic defect), same class as
+    // the api-server socket-hang-up flakes.
+    this.timeout(10000);
     const platform = fakePlatform();
     await seedCode(platform, 'C-DP11');
     const handler = handleToken({
