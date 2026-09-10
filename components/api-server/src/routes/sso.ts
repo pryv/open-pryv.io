@@ -31,6 +31,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { MethodContext } = require('business');
+const timestamp = require('unix-timestamp');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 
 type ExpressApp = { get: (...args: unknown[]) => void };
 
@@ -91,6 +93,37 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
     return { location: `${url}#${params}` };
   }
 
+  // Dedicated SSO audit row. onIdentity dispatches via a bare api.call that
+  // bypasses the method-wrapper audit (same as oauth2), so it must emit its own,
+  // and fail-soft: an audit-backend hiccup must never deny a sign-in (mirrors
+  // the oauth2 audit policy). `sso.login` is user-resolved (the account's trail);
+  // `sso.refused` has no resolvable user (no-account / unproved / mint error) and
+  // routes to syslog only. Payload carries the provider + coarse outcome, no PII.
+  async function emitSsoAudit (event: 'sso.login' | 'sso.refused', payload: { userId?: string | null; provider: string; code?: string; mfa?: boolean }): Promise<void> {
+    try {
+      if (config.get('audit:active') !== true) return;
+      const auditSingleton = require('audit').default;
+      const C = auditSingleton.CONSTANTS;
+      const now = timestamp.now();
+      const row = {
+        id: cuid(),
+        createdBy: 'system',
+        modifiedBy: 'system',
+        streamIds: [C.ACTION_STREAM_ID_PREFIX + event],
+        time: now,
+        endTime: now,
+        created: now,
+        modified: now,
+        trashed: false,
+        type: 'audit-log/sso',
+        content: { action: event, source: { name: 'sso', provider: payload.provider }, record: payload }
+      };
+      await auditSingleton.eventForUser(payload.userId ?? undefined, row, event);
+    } catch (err) {
+      logger.error(`sso: audit emission failed for "${event}"`, err);
+    }
+  }
+
   // The linking deps are resolved lazily per sign-in (getPlatform /
   // getUsersRepository are cached singletons); SSO is a low-frequency path so
   // there is no need to hoist them at mount time.
@@ -100,6 +133,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
     if (outcome.kind !== 'login') {
       // Coarse code only; detail stayed in the server log/audit. Never a username.
       logger.info(`sso: sign-in refused via provider "${claims.provider}" (${outcome.code})`);
+      await emitSsoAudit('sso.refused', { provider: claims.provider, code: outcome.code });
       return toFragment(`ssoError=${encodeURIComponent(outcome.code)}`);
     }
 
@@ -120,6 +154,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
         // only the short-lived, second-factor-gated mfaToken. AWUA completes
         // mfa.verify. Nothing long-lived is exposed.
         logger.info(`sso: identity via "${claims.provider}" resolved; MFA continuation required`);
+        await emitSsoAudit('sso.login', { userId: mintCtx.user.id, provider: claims.provider, mfa: true });
         return toFragment(
           `ssoStatus=mfa&ssoUser=${encodeURIComponent(username)}` +
           `&ssoMfaToken=${encodeURIComponent(login.mfaToken)}` +
@@ -149,12 +184,14 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
       if (key == null) throw new Error('sharedSecrets.create returned no key');
 
       logger.info(`sso: identity via "${claims.provider}" resolved; session minted + one-time handoff created`);
+      await emitSsoAudit('sso.login', { userId: mintCtx.user.id, provider: claims.provider, mfa: false });
       return toFragment(
         `ssoStatus=login&ssoUser=${encodeURIComponent(username)}&ssoKey=${encodeURIComponent(key)}`);
     } catch (err) {
       // No downgrade: a mint or handoff failure NEVER falls back to putting the
       // token in the URL. Uniform coarse error; detail to the server trail.
       logger.error(`sso: session mint / handoff failed for provider "${claims.provider}"`, err);
+      await emitSsoAudit('sso.refused', { provider: claims.provider, code: 'sso-failed' });
       return toFragment('ssoError=sso-failed');
     }
   }

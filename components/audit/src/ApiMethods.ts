@@ -86,7 +86,13 @@ const ALL_METHODS = [
   'oauth.token.refreshed',
   'oauth.token.reuse_detected',
   'oauth.token.dpop_mismatch',
-  'oauth.token.revoked'
+  'oauth.token.revoked',
+  // Third-party sign-in (OIDC relying party). Emitted from routes/sso.ts's
+  // onIdentity (a bare api.call bypasses the method-wrapper audit, like oauth2).
+  // sso.login is user-resolved (the signed-in account's trail); sso.refused has
+  // no resolvable user at emit time (no-account / unproved email / mint error).
+  'sso.login',
+  'sso.refused'
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -119,7 +125,9 @@ const WITHOUT_USER_METHODS = [
   // components/oauth2/src/audit.ts#USERLESS_EVENTS.
   'oauth.consent.shown',
   'oauth.consent.refused',
-  'oauth.code.reused'
+  'oauth.code.reused',
+  // SSO refusals resolve no user (no-account / unproved email / mint failure).
+  'sso.refused'
 ];
 
 const WITH_USER_METHODS = AUDITED_METHODS.filter(m => !WITHOUT_USER_METHODS.includes(m));

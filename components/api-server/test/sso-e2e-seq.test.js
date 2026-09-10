@@ -261,4 +261,22 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     const evil = (accesses.body.accesses || []).find((a) => a.name === 'sso-evil');
     assert.strictEqual(evil, undefined, 'the refused mint must not create a personal access');
   });
+
+  it('[SSOE6] a successful sign-in emits an sso.login audit row into the user trail', async function () {
+    const email = cuid() + '@ssoe6.example.com';
+    const u = await makeProvedUser(email);
+    idp.control.email = email;
+
+    const p = hashParams(await runCallback());
+    assert.strictEqual(p.ssoStatus, 'login');
+    const ret = await coreRequest.post(`/${u.username}/shared-secrets/retrieve`).send({ key: p.ssoKey });
+    const token = ret.body.secret.token;
+
+    // sso.login is user-resolved, so it lands in the account's :_audit: trail.
+    const audit = await coreRequest.get(`/${u.username}/events`).set('Authorization', token)
+      .query({ streams: [':_audit:'], limit: 200 });
+    assert.strictEqual(audit.status, 200, JSON.stringify(audit.body));
+    const actions = new Set((audit.body.events ?? []).map((e) => e.content?.action));
+    assert.ok(actions.has('sso.login'), 'expected an sso.login audit row, saw ' + JSON.stringify([...actions]));
+  });
 });
