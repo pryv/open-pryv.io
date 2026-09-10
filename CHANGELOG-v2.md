@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Third-party sign-in (OIDC relying party) — OFF by default (beta)
+
+Pryv.io can now act as an OpenID Connect **client**, letting an account holder
+sign in through an external identity provider (e.g. Google) that the operator
+configures. Inert unless enabled (`sso.enabled: true`) with at least one
+provider; a stock deployment is unaffected.
+
+- New config `sso.*`: `enabled` (default false), `landingPageURL` (the auth-app
+  page that receives the sign-in hand-off; required when enabled),
+  `callbackBaseURL` (optional; the IdP-registered redirect base), and a
+  `providers` allow-list keyed by provider id (`issuer`, `clientId`,
+  `clientSecret`, `label`). Distinct from the legacy `auth.ssoCookie*`
+  trusted-app keys (a name collision to be aware of).
+- New routes `GET /auth/sso/:provider/start` and `/callback`, plus a public
+  `GET /auth/sso/providers` descriptor (id + label only) for the sign-in buttons.
+- A first successful sign-in links `(provider, subject)` to the matching account,
+  and ONLY when that account has PROVED ownership of the IdP's verified email;
+  later sign-ins ride the link. Fail-closed: an account whose address was never
+  inbox-proved cannot be taken over by an IdP identity.
+- The minted session is handed to the auth app through a one-time shared secret,
+  so the session token never appears in a redirect URL; `sharedSecrets.enabled`
+  is therefore required (boot-refused otherwise). With MFA active, only the
+  factor-gated `mfaToken` is handed off and the real token is released after
+  `mfa.verify`.
+- Operator link management: `bin/sso-link.js` (list / show / unlink).
+- id_token authenticity relies on TLS + client-secret (openid-client default per
+  OIDC §3.1.3.7); the per-validation JWS signature check is an opt-in
+  defense-in-depth option.
+
 ## 2.0.0-rc.16 — 2026-09-04
 
 _(supersedes the 2.0.0-rc.15 tag, which was cut from a commit that failed CI and was never published.)_
@@ -356,7 +385,7 @@ the account and hands over a random key that can be redeemed exactly once.
   `maxTtl` (30 days). Read per request, so an operator toggle takes effect
   without a restart.
 
-### OAuth2: DPoP — sender-constrained tokens (RFC 9449)
+### OAuth2: DPoP — sender-constrained tokens (RFC 9449) (beta)
 
 An OAuth2 client can now bind its tokens to a key pair it holds, so a stolen
 bearer token alone is useless: every API call must also carry a `DPoP` proof —
@@ -390,7 +419,7 @@ Opt-in per session and fully backward compatible — a client that sends no
 Client support ships in the `pryv` JS library 3.10.0 (`SignedConnection`,
 `OAuth2Client` with `dpop: true`).
 
-### OAuth2: operator key-revocation (`revoke-key`) + key inventory
+### OAuth2: operator key-revocation (`revoke-key`) + key inventory (beta)
 
 When a client's key is compromised, the operator can now kill everything bound
 to it, cluster-wide, with one command: `bin/oauth-client.js revoke-key <jkt>
@@ -406,7 +435,7 @@ revoked-vs-not signal. `unrevoke-key` restores; `list-revoked-keys` and
 inventory of keys seen at token issuance, so an operator can tell what a
 revocation will hit before running it.
 
-### OAuth2: client revocation now reaches live tokens cluster-wide
+### OAuth2: client revocation now reaches live tokens cluster-wide (beta)
 
 `bin/oauth-client.js revoke <clientId>` used to stop new grants while already-
 issued access tokens lived out their TTL. Revoking a client now also writes a
@@ -419,7 +448,7 @@ revocation cannot outlive it. The revocation is a token **epoch**: re-registerin
 the same `client_id` works and its freshly-minted tokens are honoured, but the
 tombstone stays, so sessions from before the revoke can never be resurrected.
 
-### OAuth2: `private_key_jwt` client authentication (RFC 7521/7523)
+### OAuth2: `private_key_jwt` client authentication (RFC 7521/7523) (beta)
 
 A confidential client can now authenticate at the token endpoint with a signed
 JWT instead of a shared secret — no `client_secret` to distribute, store, or
