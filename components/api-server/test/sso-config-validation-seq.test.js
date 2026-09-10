@@ -63,4 +63,10 @@ describe('[SSOCFG] checkSsoConfig boot rules', () => {
     assert.ok(problems.some((p) => JSON.stringify(p).includes('dns.active')),
       'dns.active conflict must still be reported');
   });
+
+  it('[SCFG5] a landingPageURL carrying a fragment is refused (would corrupt the hand-off)', () => {
+    const problems = run({ 'sso:enabled': true, 'sso:landingPageURL': 'https://auth.example/sso-signin#/route' });
+    const hit = problems.find((p) => p.path && p.path[1] === 'landingPageURL');
+    assert.ok(hit != null, 'expected a landingPageURL fragment problem, got ' + JSON.stringify(problems));
+  });
 });

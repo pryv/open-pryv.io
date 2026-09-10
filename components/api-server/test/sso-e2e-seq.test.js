@@ -69,14 +69,15 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
 
     idp = await startFakeIdp();
     restoreConfig = injectTestConfigSnapshot({
-      // SSO is single-core / dnsLess only. Re-assert it (and shared secrets)
-      // in our own snapshot so this suite is self-contained: a sibling suite
-      // (e.g. the multi-core register tests) that leaves dnsLess off would
-      // otherwise make the account-linking resolve in multi-core mode and
-      // refuse every sign-in here.
+      // Make this suite self-contained against sibling-suite config leakage.
+      // dnsLess/dns: SSO is single-core / dnsLess only, else linking resolves
+      // in multi-core mode. sharedSecrets: the shared-secrets-config suite runs
+      // first and tightens maxSizeBytes / maxTtl to tiny values; without
+      // re-asserting the defaults, our handoff secret (token + apiEndpoint URL)
+      // exceeds them and sharedSecrets.create throws, surfacing as sso-failed.
       dnsLess: { isActive: true },
       dns: { active: false },
-      sharedSecrets: { enabled: true },
+      sharedSecrets: { enabled: true, maxSizeBytes: 4096, maxTtl: 2592000 },
       sso: {
         enabled: true,
         landingPageURL: LANDING,
@@ -159,7 +160,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     const location = await runCallback();
     assert.ok(location.startsWith(LANDING + '#'), 'must redirect to the landing page fragment: ' + location);
     const p = hashParams(location);
-    assert.strictEqual(p.ssoStatus, 'login');
+    assert.strictEqual(p.ssoStatus, 'login', 'expected login; location=' + location);
     assert.strictEqual(p.ssoUser, u.username);
     assert.ok(p.ssoKey && p.ssoKey.length > 0, 'a one-time handoff key must be present');
     assert.strictEqual(p.ssoError, undefined);
@@ -236,5 +237,28 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(verify.status, 200, 'mfa verify: ' + JSON.stringify(verify.body));
     assert.ok(verify.body.token != null, 'the real token is released only after the second factor');
     assert.strictEqual(location.includes(verify.body.token), false, 'the session token must not appear in the URL');
+  });
+
+  it('[SSOE5] auth.ssoLogin is refused when reached with an access token (callBatch), and mints nothing', async function () {
+    const u = await makeProvedUser(cuid() + '@ssoe5.example.com', { password: PASSWORD });
+    const login = await coreRequest.post(`/${u.username}/auth/login`).set('Origin', TRUSTED_ORIGIN)
+      .send({ username: u.username, password: PASSWORD, appId: TRUSTED_APP });
+    assert.strictEqual(login.status, 200, JSON.stringify(login.body));
+    const token = login.body.token;
+
+    // The generic batch dispatcher sets methodId from client input; the mint is
+    // password-less, so it must be refused for any token-bearing caller.
+    const res = await coreRequest.post(`/${u.username}`).set('Authorization', token)
+      .send([{ method: 'auth.ssoLogin', params: { username: u.username, appId: 'sso-evil' } }]);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const results = res.body.results;
+    assert.ok(Array.isArray(results) && results.length === 1, JSON.stringify(res.body));
+    assert.ok(results[0].error != null, 'auth.ssoLogin must be refused via batch, got ' + JSON.stringify(results[0]));
+    assert.strictEqual(results[0].token, undefined, 'no session token may be minted');
+
+    // No side effect: the guard runs before openSession / access creation.
+    const accesses = await coreRequest.get(`/${u.username}/accesses`).set('Authorization', token);
+    const evil = (accesses.body.accesses || []).find((a) => a.name === 'sso-evil');
+    assert.strictEqual(evil, undefined, 'the refused mint must not create a personal access');
   });
 });

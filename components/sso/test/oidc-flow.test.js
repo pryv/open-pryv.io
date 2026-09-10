@@ -138,7 +138,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
     const { cookie, callbackPath } = await startFlow('test');
     const res = await request(app).get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
-    assert.ok(res.headers.location.includes('ssoError=sign-in-failed'));
+    assert.ok(res.headers.location.includes('#ssoError=sso-failed'));
     assert.equal(lastIdentity, null);
   });
 

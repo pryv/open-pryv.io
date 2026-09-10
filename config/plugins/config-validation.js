@@ -230,6 +230,18 @@ function checkSsoConfig (config, problems) {
     }
   }
 
+  // The sign-in callback appends its result as a URL FRAGMENT to landingPageURL
+  // (`<landingPageURL>#ssoStatus=…`). A landingPageURL that already carries a
+  // fragment would double-hash and corrupt the hand-off, so forbid it at boot.
+  const landingPageURL = config.get('sso:landingPageURL');
+  if (typeof landingPageURL === 'string' && landingPageURL.includes('#')) {
+    problems.push({
+      message: 'sso.landingPageURL must not contain a URL fragment ("#..."): the sign-in callback appends its result as a fragment and an existing one would corrupt it.',
+      path: ['sso', 'landingPageURL'],
+      payload: { landingPageURL }
+    });
+  }
+
   const providers = config.get('sso:providers');
   // Empty providers is allowed: the feature soft-degrades to no routes.
   if (providers == null || typeof providers !== 'object') return;

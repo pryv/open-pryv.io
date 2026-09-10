@@ -70,11 +70,14 @@ export function handleCallback (deps: CallbackDeps) {
   return async function callback (req: CallbackReq, res: CallbackRes): Promise<void> {
     const provider = req.params.provider ?? '';
 
-    // One uniform coarse failure — no signal on which check tripped.
+    // One uniform coarse failure. The code + the FRAGMENT delivery match the
+    // success/refusal path (onIdentity): the auth app reads `location.hash`
+    // only, and nothing SSO-related must reach the landing host's access log or
+    // Referer. Using the query here would be silently swallowed client-side and
+    // would leak the marker to logs.
     const redirectFail = (): void => {
       res.clearCookie(STATE_COOKIE_NAME, { path: STATE_COOKIE_PATH });
-      const sep = deps.landingPageURL.includes('?') ? '&' : '?';
-      res.redirect(deps.landingPageURL + sep + 'ssoError=sign-in-failed');
+      res.redirect(deps.landingPageURL + '#ssoError=sso-failed');
     };
 
     try {

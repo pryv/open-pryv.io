@@ -128,6 +128,10 @@ if (get('sso.enabled') === true) {
   if (get('sharedSecrets.enabled') === false) {
     problems.push('sso.enabled is true but sharedSecrets.enabled is false — the sign-in callback hands the session token to the auth app via a one-time shared secret, never the URL; enable shared secrets or disable SSO');
   }
+  const landingPageURL = get('sso.landingPageURL');
+  if (typeof landingPageURL === 'string' && landingPageURL.includes('#')) {
+    problems.push('sso.landingPageURL must not contain a URL fragment ("#...") — the sign-in callback appends its result as a fragment and an existing one would corrupt it');
+  }
   const callbackBaseURL = get('sso.callbackBaseURL');
   if (typeof callbackBaseURL === 'string' && callbackBaseURL !== '') {
     let cbOk = false;

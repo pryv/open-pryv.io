@@ -62,16 +62,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     setAdditionalInfo,
     mfaCheckIfActive);
 
-  // Third-party sign-in mint. Server-internal: NOT mapped to any route, so it
-  // is unreachable over HTTP; the SSO callback (routes/sso.ts) calls it via
-  // api.call on a synthesized context AFTER the IdP has proven the identity and
-  // the account-linking rules resolved a username. It is the auth.login chain
-  // minus the params-schema, the trusted-app/origin check (the caller is the
-  // server itself, identity already proven by the IdP), and the password check
-  // (there is no password in an SSO login). Everything else is the SAME
-  // functions, so the minted session, personal access, apiEndpoint and the MFA
-  // gate are byte-identical to a password login; auth.login above is untouched.
+  // Third-party sign-in mint. It is the auth.login chain minus the params-schema,
+  // the trusted-app/origin check (the caller is the server itself, identity
+  // already proven by the IdP), and the PASSWORD check (there is no password in
+  // an SSO login). Everything else is the SAME functions, so the minted session,
+  // personal access, apiEndpoint and the MFA gate are byte-identical to a
+  // password login; auth.login above is untouched.
+  //
+  // Because it mints WITHOUT a password, it must run ONLY on the server-internal,
+  // token-less context the SSO callback (routes/sso.ts) builds after the IdP has
+  // proven the identity and the linking rules resolved a username. It is NOT
+  // "unreachable": the generic dispatchers (callBatch, socket.io) set methodId
+  // from client input, so any authenticated caller could otherwise reach it. The
+  // `refuseIfAuthenticated` first step is the deliberate gate that confines it to
+  // the credential-less internal context (an external call always carries an
+  // access/token), so a token-holder can never drive a no-password personal-access
+  // mint through it.
   api.register('auth.ssoLogin',
+    refuseIfAuthenticated,
     applyPrerequisitesForLogin,
     openSession,
     updateOrCreatePersonalAccess,
@@ -79,6 +87,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     setAuditAccessId(AuditAccessIds.VALID_SSO),
     setAdditionalInfo,
     mfaCheckIfActive);
+
+  // Confine auth.ssoLogin to the server-internal mint context: that context is
+  // built token-less (no access, no accessToken), whereas ANY externally
+  // dispatched call (HTTP batch, socket.io) arrives with a loaded access. Reject
+  // the latter before any side effect (session mint / personal-access create).
+  function refuseIfAuthenticated (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    if (context.access != null || context.accessToken != null) {
+      return next(errors.invalidOperation('auth.ssoLogin is server-internal and cannot be called with an access token.'));
+    }
+    next();
+  }
 
   function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const fixedUsername = params.username.toLowerCase();
