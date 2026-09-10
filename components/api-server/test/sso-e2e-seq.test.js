@@ -69,6 +69,14 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
 
     idp = await startFakeIdp();
     restoreConfig = injectTestConfigSnapshot({
+      // SSO is single-core / dnsLess only. Re-assert it (and shared secrets)
+      // in our own snapshot so this suite is self-contained: a sibling suite
+      // (e.g. the multi-core register tests) that leaves dnsLess off would
+      // otherwise make the account-linking resolve in multi-core mode and
+      // refuse every sign-in here.
+      dnsLess: { isActive: true },
+      dns: { active: false },
+      sharedSecrets: { enabled: true },
       sso: {
         enabled: true,
         landingPageURL: LANDING,
