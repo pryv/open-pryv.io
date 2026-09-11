@@ -35,7 +35,7 @@ const { TypeRepository, isSeriesType } = require('business').types;
 const { getLogger, ready } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
-const { ApiEndpoint } = require('utils');
+const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 
 const { pubsub } = require('messages');
 
@@ -137,43 +137,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const platform = await getPlatform();
   const storageLayer = await getStorageLayer();
 
-  // CMC: build a `mall.accesses` adapter backed by storageLayer.accesses.
-  // The Mall doesn't expose accesses — they live in a separate storage —
-  // but CMC handlers were written against a `mall.accesses.{create,get,
-  // update,delete}` shape. The adapter bridges the two and sets
-  // apiEndpoint on create-results so outbound delivery has its target URL.
-  const cache = require('cache').default;
-  const cmcMallAccessesAdapter = cmc.createMallAccessesAdapter({
-    storageAccesses: storageLayer.accesses,
-    apiEndpointBuild: ApiEndpoint.build.bind(ApiEndpoint),
-    resolveUsername: async (userId: string) => {
-      const u = await usersRepository.getUserById(userId);
-      return u?.username;
-    },
-    invalidateAccessCache: (userId: string, accessId: string, accessToken?: string) => {
-      const cached = cache.getAccessLogicForId(userId, accessId);
-      if (cached != null) {
-        cache.unsetAccessLogic(userId, cached);
-        return;
-      }
-      // Not cached on THIS worker — still broadcast the unset so sibling
-      // workers holding the entry drop it (cross-worker stale-read race).
-      if (accessToken != null) {
-        cache.unsetAccessLogic(userId, { id: accessId, token: accessToken });
-      }
-    },
-    logger: getLogger('cmc:mall-accesses-adapter'),
-  });
-  // Compose a mall-with-accesses for the CMC modules' deps so they
-  // see `mall.accesses.{create,get,update,delete}` alongside the real
-  // `mall.streams` + `mall.events`. Mall uses class-instance getters
-  // for streams/events so Object.assign would drop them — use a
-  // forwarding object literal instead.
-  const mallForCmc: import('cmc/src/_types.ts').MallLike = {
-    get streams () { return mall.streams; },
-    get events () { return mall.events; },
-    accesses: cmcMallAccessesAdapter,
-  };
+  // Compose a mall-with-accesses for the CMC modules' deps (adapter over
+  // storageLayer.accesses + token-auth cache invalidation). Shared by every
+  // CMC wiring site; see methods/helpers/cmcMall.ts. Passing the raw Mall (no
+  // `accesses`) would silently no-op anything the handlers do via mall.accesses.
+  const mallForCmc = await buildMallForCmc();
   await eventsGetUtils.init();
 
   // Initialise the project version as soon as we can.

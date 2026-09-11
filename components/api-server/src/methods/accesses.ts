@@ -50,6 +50,7 @@ function notifyScopedAccessChange (username: string, access: { id?: string; type
 }
 const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
+const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { getUsersRepository } = require('business/src/users/index.ts');
 
@@ -110,6 +111,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
+  // Composed CMC mall (with `.accesses`) for the accesses.delete post-hook.
+  const mallForCmc = await buildMallForCmc();
   const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
 
   // RETRIEVAL
@@ -825,9 +828,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
-    // mall lets the hook also clear the withdrawn subject from an open-link
-    // capability's acceptedBy (local bookkeeping) alongside the peer notify.
-    mall,
+    // The composed CMC mall (with `.accesses`) lets the hook clear the
+    // withdrawn subject from an open-link capability's acceptedBy (local
+    // bookkeeping) alongside the peer notify. The raw Mall has no `.accesses`,
+    // so passing it would silently no-op that clear.
+    mall: mallForCmc,
     // Resolve globalThis.fetch lazily (per call) so in-process test
     // shims installed after registration are honoured — same pattern
     // as the events.ts cmc deps.

@@ -1351,5 +1351,44 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await postAccept(bob, h.capabilityUrl, 'reco-d-again');
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN32 re-accept');
     });
+
+    it('[CN33] requester RAW accesses.delete of the back-channel clears acceptedBy locally', async function () {
+      // CN32 exercises the requester-side teardown via the CMC helper trigger
+      // (dispatch path). This drives the OTHER requester-side teardown: a raw
+      // accesses.delete of the back-channel, which runs the accesses.delete
+      // post-hook's LOCAL clearAccepter. That hook needs a mall WITH `.accesses`;
+      // wired with the raw Mall it was a silent no-op, so acceptedBy stayed stuck
+      // and re-consent through the same link was refused. Exercises the real
+      // production wiring the DH12/DH13 unit tests (fake mall) could not.
+      const h = await runFreshHandshake('reco-e', 'my-app', { mode: 'open-link' });
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 pre-revoke');
+
+      // Locate alice's OWN back-channel access for this relationship (carries the
+      // capabilityId stamp).
+      let backChannel = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS && backChannel == null) {
+        const res = await coreRequest.get(alice.accessesPath).set('Authorization', alice.token);
+        backChannel = (res.body?.accesses || []).find((a) => {
+          const cmc = a?.clientData?.cmc;
+          return cmc?.role === 'counterparty' && cmc?.capabilityId === h.capabilityId &&
+                 cmc?.counterparty?.username === bob.username;
+        }) || null;
+        if (backChannel == null) await sleep(POLL_INTERVAL_MS);
+      }
+      assert.ok(backChannel != null,
+        'CN33: alice\'s back-channel access (with capabilityId stamp) must exist');
+
+      // Raw delete (NOT the CMC helper) — drives the delete post-hook clearAccepter.
+      const delRes = await coreRequest.delete(alice.accessesPath + '/' + backChannel.id)
+        .set('Authorization', alice.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN33 post-revoke');
+
+      // Bob re-consents through the same link (blocked until acceptedBy cleared).
+      await postAccept(bob, h.capabilityUrl, 'reco-e-again');
+      await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 re-accept');
+    });
   });
 });

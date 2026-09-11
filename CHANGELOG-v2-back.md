@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## cmc: the accesses.delete post-hook gets a mall with accesses (clears acceptedBy)
+
+The accesses.delete post-hook clears a withdrawn subject from an open-link
+capability's `acceptedBy` when a stamped relationship access is removed by a
+plain accesses.delete. It was wired with the raw Mall, which exposes streams and
+events but not accesses, so that local clear was a silent no-op: after a
+requester removed a back-channel access directly, the subject stayed in
+`acceptedBy` and re-consent through the same link was refused. The hook now
+receives the composed CMC mall (an adapter over the accesses storage plus
+token-auth cache invalidation), extracted into a shared helper so every CMC
+wiring site uses it. A real-core integration test now covers the raw-delete path
+the fake-mall unit tests could not.
+
 ## oauth2: consent poll keys on the trigger outcome, closing a transient-grant race
 
 The OAuth2 authorization accept drives a CMC consent handshake and polls for the

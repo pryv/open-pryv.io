@@ -99,6 +99,12 @@ export type CmcAccessLike = {
 
 export type MallParams = Record<string, unknown>;
 
+// Contract: `update` and `delete` implementations MUST invalidate any
+// token-auth access-logic cache for the affected access (the adapter used in
+// production does this via an injected cache-bust). The CMC handlers rely on
+// that and never bust caches themselves, so a wiring site that hands the
+// handlers a mall whose accesses does NOT invalidate the cache (e.g. the raw
+// Mall, which has no `accesses` at all) leaves stale token-auth reads.
 export type MallAccessesLike = {
   create: (userId: string, params: MallParams) => Promise<CmcAccessLike>;
   get: (userId: string, params?: MallParams) => Promise<CmcAccessLike[]>;
