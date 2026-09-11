@@ -440,6 +440,45 @@ describe('[ACSF] accesses (personal)', function () {
         id: ErrorIds.InvalidRequestStructure
       });
     });
+
+    it('[08SL] must reject a creation streamId with non-forbidden junk after a valid prefix', async function () {
+      // No forbidden character (space + slash pass findForbiddenChar), so this
+      // reaches the creation regex. Before the regex was anchored at both ends
+      // it matched the `abcdef` prefix only and this id was accepted.
+      const data = {
+        name: charlatan.Lorem.word(),
+        permissions: [{ streamId: 'abcdef /', defaultName: 'x', level: 'read' }]
+      };
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidRequestStructure
+      });
+    });
+
+    it('[08SM] must reject a creation streamId longer than 100 chars', async function () {
+      // All valid characters but over length: the unanchored regex matched the
+      // first 100 and accepted a 101-char id.
+      const data = {
+        name: charlatan.Lorem.word(),
+        permissions: [{ streamId: 'a'.repeat(101), defaultName: 'x', level: 'read' }]
+      };
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidRequestStructure
+      });
+    });
   });
 
   describe('[AS03] PUT /<id>', function () {

@@ -20,7 +20,10 @@ const forbiddenCharsMap = {
   "'": true,
   '\\': true
 };
-const STREAMID_AT_CREATION_REGEXP_STR = '^[a-z0-9-]{1,100}';
+// Anchored at BOTH ends: without the trailing `$` the test matched only a
+// prefix, so `isStreamIdValidForCreation` accepted an id with non-forbidden
+// junk after a valid prefix (e.g. `abcdef /`) or an id longer than 100 chars.
+const STREAMID_AT_CREATION_REGEXP_STR = '^[a-z0-9-]{1,100}$';
 /**
  * Find forbidden character for 'streams' or 'permission.streamId'
  */
