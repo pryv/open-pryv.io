@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-rc.17 — 2026-09-11
+
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)
 
 Pryv.io can now act as an OpenID Connect **client**, letting an account holder
@@ -30,6 +32,24 @@ provider; a stock deployment is unaffected.
 - id_token authenticity relies on TLS + client-secret (openid-client default per
   OIDC §3.1.3.7); the per-validation JWS signature check is an opt-in
   defense-in-depth option.
+
+### Fixes
+
+- **Consent enforcement:** an OAuth2 authorization accept no longer mints an access
+  through a consent that is refused or via an invalidated link. The accept keys on the
+  consent handshake's terminal outcome, so a data-grant that is rolled back on a peer
+  refusal is never observed as a success.
+- **Consent revoke notification:** when several data-grants serve one relationship (a new
+  grant is minted on each re-accept), the peer back-channel is now stamped on the newest
+  grant awaiting one, and delivery/revocation resolve to the grant that knows the peer, so
+  a revoke reliably notifies the peer instead of reporting `peerNotified: false`
+  ([#129](https://github.com/pryv/open-pryv.io/issues/129)).
+- **Stream-id validation:** `accesses.create` now rejects a creation stream-id with
+  non-forbidden junk after a valid prefix, or longer than 100 characters, as its error
+  message already promised (the validation regex was unanchored)
+  ([#130](https://github.com/pryv/open-pryv.io/issues/130)).
+- **Security:** runtime dependency bumps off high-severity advisories (multer, nodemailer,
+  sharp; plus morgan).
 
 ## 2.0.0-rc.16 — 2026-09-04
 
