@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## deps: bump multer / nodemailer / sharp / morgan off high + moderate advisories
+
+Runtime-dependency security bumps, all within the existing semver ranges: `multer`
+2.2.0 → 2.3.0 (three high DoS advisories: crafted multipart field names, file-descriptor
+leak on aborted uploads, oversized array index in field names), `nodemailer` 9.0.3 →
+9.1.1 (high addressparser O(n²) DoS plus the moderate recipient-domain / punycode
+validation bypasses), `sharp` 0.35.3 → 0.35.4 (high libheif advisories), `morgan` 1.8.x →
+1.12.1 (moderate log-forging via unescaped Unicode line separators). `npm audit
+--omit=dev` is now clean (0 findings) and the `security-audit` CI gate passes.
+
 ## cmc: route the back-channel to the newest grant when several serve one relationship
 
 When an accepter holds several data-grants for the same peer and scope (a new grant is
