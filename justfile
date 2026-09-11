@@ -96,6 +96,12 @@ test component *params:
     #!/usr/bin/env bash
     set -euo pipefail
     shift
+    # Trust backloop.dev's cert for the lib-js integration suite (proxied over
+    # HTTPS on l.backloop.dev). Without a backloop secret, backloop serves a
+    # self-signed leaf that Node's built-in fetch rejects; warm + trust the
+    # bundle. Degrades to no extra CA if backloop can't provision.
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
 # Same as `test` but using the SQLite baseStorage engine
@@ -104,6 +110,9 @@ test-sqlite component *params:
     #!/usr/bin/env bash
     set -euo pipefail
     shift
+    # See `test` — trust backloop.dev's cert for the lib-js integration suite.
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
 # Run tests with detailed output (PG default)

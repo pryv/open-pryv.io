@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+/**
+ * @license
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
+ */
+
+/**
+ * Ensure backloop.dev's certificate bundle exists and print its absolute path.
+ *
+ * The lib-js integration suite proxies lib-js over HTTPS on l.backloop.dev,
+ * with the proxy's certificate coming from backloop.dev. When no backloop
+ * secret is configured (as on CI, and on a fresh clone), backloop serves its
+ * public self-signed leaf, which Node's built-in fetch (undici) rejects with
+ * DEPTH_ZERO_SELF_SIGNED_CERT. Trusting the bundle via NODE_EXTRA_CA_CERTS on
+ * the test process makes fetch accept the loopback proxy.
+ *
+ * NODE_EXTRA_CA_CERTS is read once at process start-up and the bundle is only
+ * written when backloop resolves a certificate, so the test runner warms it
+ * here and exports the printed path before spawning mocha.
+ *
+ * On success: prints the bundle's absolute path to stdout, exits 0.
+ * On any failure (no network, package missing, ...): prints nothing, exits
+ * non-zero, so the caller degrades to "no extra CA" rather than breaking
+ * test runs that do not need it.
+ */
+
+const path = require('node:path');
+const fs = require('node:fs');
+
+function fail () { process.exit(1); }
+
+let backloop, pkgDir;
+try {
+  backloop = require('backloop.dev');
+  // main = src/index.js -> package root is two levels up from the resolved main
+  pkgDir = path.resolve(path.dirname(require.resolve('backloop.dev')), '..');
+} catch (e) {
+  fail();
+}
+
+// Honour the same certs-dir override backloop itself reads.
+const certsDir = process.env.BACKLOOP_DEV_CERTS_DIR || path.join(pkgDir, 'certs');
+const bundle = path.join(certsDir, 'backloop.dev-bundle.crt');
+
+// backloop prints its provisioning notices to stdout; the caller captures our
+// stdout as the bundle path, so route everything backloop writes to stderr and
+// keep stdout for the path alone. Restore before printing it.
+const realStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = process.stderr.write.bind(process.stderr);
+
+// interactive:false — never prompt; a missing secret falls back to the public
+// pack, which is exactly what we want to trust here.
+backloop.httpsOptionsAsync({ interactive: false }, function (err) {
+  process.stdout.write = realStdoutWrite;
+  if (err) fail();
+  if (!fs.existsSync(bundle)) fail();
+  process.stdout.write(bundle);
+});

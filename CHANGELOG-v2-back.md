@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## test: trust backloop.dev's self-signed cert for the lib-js integration suite
+
+The lib-js integration suite proxies lib-js over HTTPS on `l.backloop.dev`, with
+the proxy's certificate provided by backloop.dev. When no backloop secret is
+configured (as in CI, and on a fresh clone), backloop serves its public
+self-signed leaf, which Node's built-in `fetch` rejects
+(`DEPTH_ZERO_SELF_SIGNED_CERT`) so every lib-js suite failed at its first
+request. The `test` and `test-sqlite` recipes now materialize backloop's
+certificate bundle (`scripts/backloop-ca-warm`) and trust it via
+`NODE_EXTRA_CA_CERTS` before mocha starts, so the suite passes with or without a
+secret. `NODE_EXTRA_CA_CERTS` only adds to the default trust store, so a
+secret-based cert keeps working unchanged; the step degrades to no extra CA when
+backloop cannot provision, leaving unrelated component runs unaffected.
+
 ## storage: one shared update-path contract, so the engines cannot disagree
 
 An update key addresses at most ONE level inside a JSON field, and both engines
