@@ -328,7 +328,14 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
               a?.clientData?.cmc?.role === 'counterparty' &&
               a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
           },
-          deadlineMs: 10_000,
+          // Success now waits for the FULL accept delivery round-trip (the
+          // trigger reaches `completed` only after the peer answers), so the
+          // deadline MUST exceed the outbound per-attempt delivery timeout
+          // (cmc outbound DEFAULT_TIMEOUT_MS = 15s) with margin. A shorter
+          // budget would turn a slow-but-successful peer (10-15s: cold
+          // container, cross-region) into a 500 for a consent that then
+          // completes in the background.
+          deadlineMs: 25_000,
           sleepMs: 100,
           describe: 'acceptEventId=' + acceptEventId,
         });

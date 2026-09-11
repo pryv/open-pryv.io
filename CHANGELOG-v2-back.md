@@ -26,8 +26,10 @@ minted through an invalidated link. The poll now keys on the trigger's terminal
 status (the dispatch stamps `completed` / `failed`) and resolves the data-grant only
 once the accept is completed, so the transient window is never observed. Extracted as
 a pure `awaitConsentOutcome` helper with a deterministic, load-independent regression
-test. No API-contract change: a peer-refused accept still returns 400 invalid_grant
-carrying the peer's specific reason.
+test. A peer-refused accept still returns 400 invalid_grant carrying the peer's
+specific reason; on a transient (retryable) delivery failure the accept now returns a
+server error until a background retry completes the consent, rather than optimistically
+returning 200 off a data-grant whose delivery had not yet been confirmed.
 
 ## test: trust backloop.dev's self-signed cert for the lib-js integration suite
 
