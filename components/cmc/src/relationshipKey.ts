@@ -139,8 +139,31 @@ function selectRelationshipAccess (params: SelectParams): AccessLike | null {
 
   const haveScope = typeof scopeStreamId === 'string' && scopeStreamId.length > 0;
   if (haveScope) {
-    const exact = candidates.find((a) => scopeOfAccess(a) === scopeStreamId);
-    if (exact != null) return exact;
+    const exact = candidates.filter((a) => scopeOfAccess(a) === scopeStreamId);
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) {
+      // Several grants serve the SAME relationship: the accepter mints a new
+      // data-grant on every accept, while the requester heals its single
+      // counterparty access in place. Taking the first one made every
+      // back-channel land on the oldest grant (clobbering its endpoint and
+      // leaving each newer grant with none, so its revoke could never be
+      // delivered) and routed outbound traffic through it. Newest first:
+      //   - inbound (peer-derived appCode): stamp the grant still waiting for
+      //     its back-channel; never clobber a completed one;
+      //   - outbound (our own trigger): deliver through a grant that knows
+      //     where the peer lives.
+      const stamped = (a: AccessLike): boolean => a.clientData?.cmc?.backChannelApiEndpoint != null;
+      // Newest first by the access's own `created` timestamp. `mall.accesses.get`
+      // returns rows sorted by NAME ascending, not creation order, so array
+      // order is not chronology. Reverse FIRST so that when `created` is absent
+      // (ancient rows, unit fakes) the stable sort preserves reversed order
+      // rather than the name-ascending order, never falling back to oldest.
+      const newestFirst = exact.slice().reverse().sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+      const preferred = appCodeAuthoritative
+        ? newestFirst.find(stamped)
+        : newestFirst.find((a) => !stamped(a));
+      return preferred ?? newestFirst[0];
+    }
   }
 
   const appCodeCompatible = (acc: AccessLike): boolean => {

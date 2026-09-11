@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## cmc: route the back-channel to the newest grant when several serve one relationship
+
+When an accepter holds several data-grants for the same peer and scope (a new grant is
+minted on every accept, e.g. after a revoke-and-re-invite), the relationship selector
+returned the first name-sorted match, so every inbound back-channel stamped the OLDEST
+grant: newer grants never received a peer endpoint and their revoke could not notify the
+peer (`peerNotified: false`, `cmc-revoke-no-peer-endpoint`), while outbound traffic routed
+through a grant whose token had since been deleted (403). When more than one grant has the
+exact scope, the selector now picks by `created` (newest first): an inbound back-channel
+stamps the newest grant still awaiting one (never clobbering a completed relationship), and
+outbound delivery goes through the newest grant that already knows the peer. Single-grant
+relationships are unchanged.
+
 ## cmc: the accesses.delete post-hook gets a mall with accesses (clears acceptedBy)
 
 The accesses.delete post-hook clears a withdrawn subject from an open-link

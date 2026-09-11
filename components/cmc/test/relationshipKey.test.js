@@ -27,9 +27,10 @@ const PEER = { username: 'alice', hostSlug: 'pryv-me' };
 const SCOPE_A = ':_cmc:apps:my-app:study-a';
 const SCOPE_B = ':_cmc:apps:my-app:study-b';
 
-function access (id, cmc, permissions) {
+function access (id, cmc, permissions, created) {
   return {
     id,
+    ...(created === undefined ? {} : { created }),
     ...(permissions === undefined ? {} : { permissions }),
     clientData: {
       cmc: {
@@ -211,6 +212,67 @@ describe('[CMCRK] cmc/relationshipKey', () => {
           accesses, counterparty: PEER, appCode: 'app-c', appCodeAuthoritative: false,
         })?.id,
         'pending');
+    });
+
+    it('[RK21] inbound: several grants for the same scope, the back-channel lands on the newest unstamped one', () => {
+      // The accepter minted one grant per accept (re-invite after a revoke);
+      // the requester's single access was healed in place. Every delivery used
+      // to land on 'first' — clobbering its endpoint and starving the others.
+      const accesses = [
+        access('first', { scopeStreamId: SCOPE_A, appCode: 'my-app', backChannelApiEndpoint: 'https://old/' }),
+        access('second', { scopeStreamId: SCOPE_A, appCode: 'my-app' }),
+        access('third', { scopeStreamId: SCOPE_A, appCode: 'my-app' }),
+      ];
+      assert.equal(
+        selectRelationshipAccess({
+          accesses, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app', appCodeAuthoritative: false,
+        })?.id,
+        'third');
+      // Every grant already stamped: still the newest, never a silent no-op.
+      const allStamped = accesses.map((a) => access(a.id, { scopeStreamId: SCOPE_A, appCode: 'my-app', backChannelApiEndpoint: 'https://x/' }));
+      assert.equal(
+        selectRelationshipAccess({
+          accesses: allStamped, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app', appCodeAuthoritative: false,
+        })?.id,
+        'third');
+    });
+
+    it('[RK22] outbound: several grants for the same scope, delivery goes through the newest one that knows the peer', () => {
+      const accesses = [
+        access('first', { scopeStreamId: SCOPE_A, appCode: 'my-app', backChannelApiEndpoint: 'https://old/' }),
+        access('second', { scopeStreamId: SCOPE_A, appCode: 'my-app', backChannelApiEndpoint: 'https://new/' }),
+        access('third', { scopeStreamId: SCOPE_A, appCode: 'my-app' }),
+      ];
+      assert.equal(
+        selectRelationshipAccess({ accesses, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app' })?.id,
+        'second');
+      // None stamped yet: newest, so a completed handshake on it is what gets used.
+      const none = accesses.map((a) => access(a.id, { scopeStreamId: SCOPE_A, appCode: 'my-app' }));
+      assert.equal(
+        selectRelationshipAccess({ accesses: none, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app' })?.id,
+        'third');
+    });
+
+    it('[RK23] newest is decided by `created`, not by list/name order', () => {
+      // mall.accesses.get returns rows sorted by NAME ascending, so array order
+      // is NOT chronology. Here the chronologically NEWER grant is listed FIRST
+      // (as a name-sort could place it), so a plain array-reverse would wrongly
+      // pick the older one; `created` must decide. Both unset → inbound picks the
+      // newest unstamped.
+      const accesses = [
+        access('newer', { scopeStreamId: SCOPE_A, appCode: 'my-app' }, undefined, 200),
+        access('older', { scopeStreamId: SCOPE_A, appCode: 'my-app' }, undefined, 100),
+      ];
+      assert.equal(
+        selectRelationshipAccess({
+          accesses, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app', appCodeAuthoritative: false,
+        })?.id,
+        'newer');
+      // Outbound with both stamped: newest stamped, again by `created` not order.
+      const stamped = accesses.map((a) => access(a.id, { scopeStreamId: SCOPE_A, appCode: 'my-app', backChannelApiEndpoint: 'https://x/' }, undefined, a.created));
+      assert.equal(
+        selectRelationshipAccess({ accesses: stamped, counterparty: PEER, scopeStreamId: SCOPE_A, appCode: 'my-app' })?.id,
+        'newer');
     });
 
     it('[RK13] refuses to claim a grant that demonstrably serves another relationship', () => {

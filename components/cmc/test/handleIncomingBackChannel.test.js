@@ -81,6 +81,47 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(upd.offerEventId, 'offer-1');
   });
 
+  it('[BC15] a re-accept of the same relationship stamps the new grant, not the already-completed one', async () => {
+    const grant = (id, extra) => ({
+      id,
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          appCode: 'my-app',
+          scopeStreamId: ':_cmc:apps:my-app:study-a',
+          counterparty: { username: 'alice', host: 'pryv.me' },
+          ...extra,
+        },
+      },
+    });
+    const accesses = [
+      grant('completed-grant', { backChannelApiEndpoint: 'https://old-tok@pryv.me/alice/', counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old-tok@pryv.me/alice/' } }),
+      grant('new-grant', { backChannelApiEndpoint: null }),
+    ];
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: {
+        type: 'consent/back-channel-cmc',
+        streamIds: [':_cmc:inbox'],
+        content: {
+          from: { username: 'alice', host: 'pryv.me' },
+          apiEndpoint: 'https://new-tok@pryv.me/alice/',
+          remoteChatStreamId: ':_cmc:apps:my-app:study-a:chats:bob--example-com',
+          remoteCollectorStreamId: ':_cmc:apps:my-app:study-a:collectors:bob--example-com',
+          appCode: 'my-app',
+          scopeStreamId: ':_cmc:apps:my-app:study-a',
+        },
+      },
+      deps: { mall: fakeMall(accesses, capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'new-grant');
+    assert.equal(capture.updates.length, 1);
+    assert.equal(capture.updates[0].id, 'new-grant');
+    assert.equal(capture.updates[0].update.clientData.cmc.counterparty.apiEndpoint, 'https://new-tok@pryv.me/alice/');
+  });
+
   it('[BC02] matches host by slug (port + dots normalised)', async () => {
     const accesses = [
       {
