@@ -32,6 +32,7 @@
 
 import type { Application as ExpressApp } from 'express';
 import type { AppLike } from './_types.ts';
+import type { ConsentTrigger, AwaitConsentDeps } from './consentPoll.ts';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
@@ -55,6 +56,12 @@ const { fromCallback } = require('utils');
 const WebhooksRepository = require('business').webhooks.Repository;
 // CMC back-channel revoke notify — pure DI HTTP sender, no MethodContext needed.
 const { outbound: cmcOutbound } = require('cmc');
+// Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
+// transient data-grant about to be rolled back on a peer refusal is never
+// observed as a success. See consentPoll.ts.
+const { awaitConsentOutcome } = require('./consentPoll.ts') as {
+  awaitConsentOutcome: <G>(deps: AwaitConsentDeps<G>) => Promise<G>;
+};
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -295,57 +302,36 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         if (typeof acceptEventId !== 'string') {
           throw new Error('oauth2.createAccess: consent accept trigger was not created');
         }
-        const pollStartedAt = Date.now();
-        const deadline = pollStartedAt + 10_000;
-        let polls = 0;
-        while (dataGrant == null) {
-          polls++;
-          const all = await apiCall(context, 'accesses.get', {});
-          dataGrant = (all?.accesses ?? []).find((a: DataGrant) =>
-            a?.clientData?.cmc?.role === 'counterparty' &&
-            a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
-          if (dataGrant != null) break;
-          const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
-          const content = trigger?.event?.content ?? {};
-          if (content.status === 'failed') {
-            const failure = content.failure as { reason?: unknown; detail?: unknown } | undefined;
-            // A peer 4xx rejection (the capability already recorded this
-            // accepter, or a consumed / invalidated link) is a
-            // client-correctable condition, not a server fault. Surface it as a
-            // typed error so the OAuth2 accept route returns a 400 carrying the
-            // real reason instead of a bare 500. Other failure reasons (e.g. a
-            // delivery timeout) keep the generic throw → 500.
-            if (failure?.reason === 'cmc-handler-delivery-rejected') {
-              // The peer's specific CMC reason (e.g. cmc-capability-invalidated,
-              // cmc-capability-already-accepted-by-you) rides in error.data.id;
-              // error.id is only the generic Pryv error class ('invalid-operation').
-              // Prefer the specific id, then the class, then the delivery reason.
-              const errObj = (failure?.detail as { body?: { error?: { id?: unknown; data?: { id?: unknown } } } } | undefined)?.body?.error;
-              const peerErrorId =
-                typeof errObj?.data?.id === 'string'
-                  ? errObj.data.id
-                  : typeof errObj?.id === 'string'
-                    ? errObj.id
-                    : String(failure.reason);
-              const e = new Error('oauth2.createAccess: consent accept rejected by peer: ' + peerErrorId) as Error & { code?: string; cmcErrorId?: string };
-              e.code = 'cmc-accept-rejected';
-              e.cmcErrorId = peerErrorId;
-              throw e;
+        // Key on the trigger's TERMINAL status, never on the mere presence of
+        // the data-grant. handleAccept creates the grant BEFORE delivering the
+        // accept to the peer and rolls it back on a 4xx refusal, so trusting a
+        // grant the instant it appears could mint an OAuth access against a
+        // consent that is about to be refused (an invalidated / consumed link).
+        // The dispatch stamps `status: 'completed'` (+ dataGrantAccessId) on
+        // success and `status: 'failed'` (+ failure) on refusal; resolve the
+        // grant only once the trigger says completed.
+        dataGrant = await awaitConsentOutcome<DataGrant>({
+          getTrigger: async () => {
+            const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
+            return (trigger?.event?.content ?? {}) as ConsentTrigger;
+          },
+          resolveDataGrant: async (trigger) => {
+            const all = await apiCall(context, 'accesses.get', {});
+            const list: DataGrant[] = all?.accesses ?? [];
+            // Prefer the id the dispatch stamped; fall back to the acceptEventId
+            // match for robustness if the stamp is somehow absent.
+            if (typeof trigger.dataGrantAccessId === 'string') {
+              const byId = list.find((a) => a?.id === trigger.dataGrantAccessId);
+              if (byId != null) return byId;
             }
-            throw new Error('oauth2.createAccess: consent accept failed' +
-              (failure?.reason != null ? ': ' + failure.reason : ''));
-          }
-          if (Date.now() > deadline) {
-            // Name what we actually saw: how long we waited, how many
-            // polls, and the trigger's last known status. A bare "timed
-            // out" cannot distinguish a slow dispatch from a lost one.
-            throw new Error(
-              'oauth2.createAccess: timed out waiting for the consent data-grant after ' +
-              (Date.now() - pollStartedAt) + 'ms (' + polls + ' polls, acceptEventId=' +
-              acceptEventId + ', last trigger status=' + JSON.stringify(content.status) + ')');
-          }
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+            return list.find((a) =>
+              a?.clientData?.cmc?.role === 'counterparty' &&
+              a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
+          },
+          deadlineMs: 10_000,
+          sleepMs: 100,
+          describe: 'acceptEventId=' + acceptEventId,
+        });
       } else {
         // Re-authorization: widen the data-grant if this consent grants
         // entries the current grant lacks (never narrows — the user

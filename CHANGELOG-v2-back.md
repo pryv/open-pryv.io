@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## oauth2: consent poll keys on the trigger outcome, closing a transient-grant race
+
+The OAuth2 authorization accept drives a CMC consent handshake and polls for the
+resulting data-grant. The handshake creates the data-grant BEFORE delivering the
+accept to the peer and rolls it back if the peer refuses (an invalidated or consumed
+link). The poll trusted the data-grant the instant it appeared, so under CPU
+contention it could observe the transient grant during the create-to-rollback window
+and mint a short-TTL OAuth access against a consent that was about to be refused: a
+200 with a valid code where a 400 invalid_grant was due, leaving an orphan access
+minted through an invalidated link. The poll now keys on the trigger's terminal
+status (the dispatch stamps `completed` / `failed`) and resolves the data-grant only
+once the accept is completed, so the transient window is never observed. Extracted as
+a pure `awaitConsentOutcome` helper with a deterministic, load-independent regression
+test. No API-contract change: a peer-refused accept still returns 400 invalid_grant
+carrying the peer's specific reason.
+
 ## test: trust backloop.dev's self-signed cert for the lib-js integration suite
 
 The lib-js integration suite proxies lib-js over HTTPS on `l.backloop.dev`, with

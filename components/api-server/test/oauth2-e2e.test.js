@@ -1010,6 +1010,17 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       // rejects with cmc-capability-invalidated.
       assert.match(acceptRes.body.error_description, /cmc-capability-invalidated/,
         'must carry the specific cmc reason, not the generic error class: ' + describeRes(acceptRes));
+
+      // Consent-gap guard: a refused accept must leave NO OAuth access on the
+      // user account. handleAccept creates the data-grant before delivery and
+      // rolls it back on refusal; a poll that trusted the transient grant would
+      // mint an orphan `oauth:<cid>` access against an invalidated link. The
+      // outcome-driven poll keys on the trigger's terminal status, so nothing
+      // is minted. This assertion fails on the racy pre-fix behaviour.
+      const userAccesses = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      const orphan = (userAccesses.body.accesses || []).find((a) => a?.name === 'oauth:' + o.cid);
+      assert.ok(orphan == null,
+        'a refused accept must not mint an OAuth access on the user account: ' + JSON.stringify(orphan));
     });
 
     it('[OE25] withdrawing the consent lets the SAME offer re-authorize', async function () {
