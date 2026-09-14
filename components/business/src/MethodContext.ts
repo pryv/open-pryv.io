@@ -234,10 +234,15 @@ class MethodContext {
    * Generic retrieve access
    */
   async _retrieveAccess (storage: StorageLike, query: Record<string, unknown>) {
+    // Capture the cache-invalidation epoch BEFORE the storage read: if a
+    // concurrent unset (local or cross-process synchro) lands during the await,
+    // setAccessLogic will skip re-inserting this now-stale AccessLogic. `this.access`
+    // stays the request's own fresh read (authoritative for this request).
+    const cacheEpoch = cache.getAccessLogicEpoch(this.user.id);
     const access = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, query, null, cb));
     if (access == null) { throw errors.invalidAccessToken('Cannot find access from token.', 403); }
     this.access = new AccessLogic(this.user.id, access);
-    cache.setAccessLogic(this.user.id, this.access);
+    cache.setAccessLogic(this.user.id, this.access, cacheEpoch);
   }
 
   /**

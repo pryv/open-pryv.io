@@ -12,6 +12,7 @@ const timestamp = require('unix-timestamp');
 const sinon = require('sinon');
 const assert = require('node:assert');
 const MethodContext = require('../../src/MethodContext.ts').default;
+const cache = require('cache').default;
 
 const contextSource = {
   name: 'test',
@@ -62,6 +63,66 @@ describe('[MCTX] MethodContext', () => {
         caught = true;
       }
       assert.strictEqual(caught, true);
+    });
+  });
+
+  describe('[MC03] #_retrieveAccess set-after-unset cache fence', () => {
+    const username = 'USERNAME';
+    const customAuthStep = null;
+    let mc, userId, staleAccess;
+
+    before(async () => {
+      // Guarantee the cache is active so the fence is actually exercised.
+      await cache.loadConfiguration();
+    });
+    let seq = 0;
+    beforeEach(() => {
+      userId = 'mcuser-' + (++seq) + '-' + process.pid; // unique: avoid cross-test cache state
+      staleAccess = { id: 'aid-' + userId, token: 'tok-' + userId };
+      mc = new MethodContext(contextSource, username, staleAccess.token, customAuthStep);
+      mc.user = { id: userId, username };
+    });
+    afterEach(() => {
+      cache.unsetAccessLogic(userId, staleAccess);
+    });
+
+    it('[MCEF] skips the cache insert when an unset lands during the storage read', async () => {
+      const storage = {
+        accesses: {
+          findOne: (user, query, options, cb) => {
+            // concurrent invalidation lands mid-read (local or cross-process)
+            cache.unsetAccessLogic(userId, { id: staleAccess.id, token: staleAccess.token });
+            cb(null, staleAccess);
+          }
+        }
+      };
+      await mc.retrieveAccessFromToken(storage);
+      // the request's own read stays authoritative for THIS request
+      assert.ok(mc.access != null);
+      assert.strictEqual(mc.access.id, staleAccess.id);
+      // but the shared cache must NOT have been poisoned for later requests
+      assert.ok(cache.getAccessLogicForToken(userId, staleAccess.token) == null, 'stale entry must not be cached');
+    });
+
+    it('[MCED] same fence via unsetUserData landing mid-read', async () => {
+      const storage = {
+        accesses: {
+          findOne: (user, query, options, cb) => {
+            cache.unsetUserData(userId);
+            cb(null, staleAccess);
+          }
+        }
+      };
+      await mc.retrieveAccessFromToken(storage);
+      assert.ok(cache.getAccessLogicForToken(userId, staleAccess.token) == null, 'stale entry must not be cached');
+    });
+
+    it('[MCEC] control: caches the access when no unset intervenes', async () => {
+      const storage = { accesses: { findOne: sinon.fake.yields(null, staleAccess) } };
+      await mc.retrieveAccessFromToken(storage);
+      const cached = cache.getAccessLogicForToken(userId, staleAccess.token);
+      assert.ok(cached != null, 'entry should be cached');
+      assert.strictEqual(cached.id, staleAccess.id);
     });
   });
 });

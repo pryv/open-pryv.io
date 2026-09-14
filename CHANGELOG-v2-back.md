@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## cache: fence a set-after-unset race that could re-cache a stale access
+
+When an access is loaded from storage and inserted into the per-user access-logic
+cache, a concurrent invalidation (a local access update/delete, or a cross-process
+cache-invalidation broadcast) landing during the storage read could have its
+continuation re-insert the now-stale entry, which then served stale authorization
+state until the next eviction. A per-user monotonic "unset epoch" now fences the
+insert: the caller captures the epoch before the read and the cache skips the
+insert if any invalidation moved it meanwhile. The request's own freshly-read
+access is unaffected; only the shared cache is guarded.
+
+## cache: document that cross-process cache invalidation is always on
+
+The cross-process cache-invalidation channel is a correctness requirement whenever
+API workers are forked (a cache bust in one process must propagate), so it has no
+configuration gate. Removed a dead always-true conditional and documented the
+always-on intent.
+
 ## deps: bump multer / nodemailer / sharp / morgan off high + moderate advisories
 
 Runtime-dependency security bumps, all within the existing semver ranges: `multer`
