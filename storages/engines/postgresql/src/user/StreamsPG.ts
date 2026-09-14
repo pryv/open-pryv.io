@@ -71,14 +71,21 @@ class StreamsPG extends BaseStoragePG<StreamLike> {
 
   insertOne (userOrUserId: UserOrId, stream: StreamLike, callback: Callback<StreamLike | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    _internals.cache.unsetUserData(userId);
+    // Bust AFTER the write completes (unconditionally, including ambiguous
+    // failures) so a concurrent read landing during the write cannot re-cache a
+    // pre-mutation tree past the invalidation. Pairs with the streams-cache
+    // epoch fence: pre-commit reads are epoch-skipped or removed by this bust.
+    const cb: Callback<StreamLike | null> = (err, res) => {
+      _internals.cache.unsetUserData(userId);
+      callback(err, res);
+    };
     if (!stream.path) {
       this._computePath(userId, stream)
-        .then(() => super.insertOne(userOrUserId, stream, callback))
-        .catch(callback);
+        .then(() => super.insertOne(userOrUserId, stream, cb))
+        .catch(cb);
       return;
     }
-    super.insertOne(userOrUserId, stream, callback);
+    super.insertOne(userOrUserId, stream, cb);
   }
 
   async _computePath (userId: string, stream: StreamLike): Promise<void> {
@@ -96,17 +103,23 @@ class StreamsPG extends BaseStoragePG<StreamLike> {
 
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<StreamLike | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    if (typeof updatedData.parentId !== 'undefined') {
-      _internals.cache.unsetUserData(userId);
-    } else {
-      _internals.cache.unsetStreams(userId, 'local');
-    }
-    super.updateOne(userOrUserId, query, updatedData, callback);
+    // Capture the branch choice BEFORE delegating (super may mutate updatedData),
+    // then bust after the write completes (see insertOne).
+    const parentIdTouched = typeof updatedData.parentId !== 'undefined';
+    const cb: Callback<StreamLike | null> = (err, res) => {
+      if (parentIdTouched) { _internals.cache.unsetUserData(userId); } else { _internals.cache.unsetStreams(userId, 'local'); }
+      callback(err, res);
+    };
+    super.updateOne(userOrUserId, query, updatedData, cb);
   }
 
   delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     const userId = (typeof userOrUserId === 'string') ? userOrUserId : userOrUserId.id;
-    _internals.cache.unsetUserData(userId);
+    // Bust after the soft-delete write completes (see insertOne).
+    const cb: Callback<{ modifiedCount: number }> = (err, res) => {
+      _internals.cache.unsetUserData(userId);
+      callback(err, res);
+    };
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
@@ -119,7 +132,7 @@ class StreamsPG extends BaseStoragePG<StreamLike> {
         modified: 1,
         modifiedBy: 1
       }
-    }, callback);
+    }, cb);
   }
 
   insertMany (userOrUserId: UserOrId, items: StreamLike[], callback: Callback<void>): void {

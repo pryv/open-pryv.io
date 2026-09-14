@@ -67,26 +67,33 @@ class StreamsSQLite extends BaseStorageSQLite<StreamItem> {
 
   insertOne (userOrUserId: UserOrId, stream: StreamItem, callback: Callback<StreamItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    if (_internals.cache) _internals.cache.unsetUserData(userId);
+    // Bust AFTER the write completes (unconditionally) so a concurrent read
+    // landing during the write cannot re-cache a pre-mutation tree past the
+    // invalidation. Pairs with the streams-cache epoch fence.
+    const cb: Callback<StreamItem | null> = (err, res) => {
+      if (_internals.cache) _internals.cache.unsetUserData(userId);
+      callback(err, res);
+    };
     if (!stream.path) {
       this._computePath(userId, stream)
-        .then(() => super.insertOne(userOrUserId, stream, callback))
-        .catch(callback);
+        .then(() => super.insertOne(userOrUserId, stream, cb))
+        .catch(cb);
       return;
     }
-    super.insertOne(userOrUserId, stream, callback);
+    super.insertOne(userOrUserId, stream, cb);
   }
 
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<StreamItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    if (_internals.cache) {
-      if (typeof updatedData.parentId !== 'undefined') {
-        _internals.cache.unsetUserData(userId);
-      } else {
-        _internals.cache.unsetStreams(userId, 'local');
+    // Capture the branch choice before delegating, bust after the write (see insertOne).
+    const parentIdTouched = typeof updatedData.parentId !== 'undefined';
+    const cb: Callback<StreamItem | null> = (err, res) => {
+      if (_internals.cache) {
+        if (parentIdTouched) { _internals.cache.unsetUserData(userId); } else { _internals.cache.unsetStreams(userId, 'local'); }
       }
-    }
-    super.updateOne(userOrUserId, query, updatedData, callback);
+      callback(err, res);
+    };
+    super.updateOne(userOrUserId, query, updatedData, cb);
   }
 
   async _computePath (userId: string, stream: StreamItem): Promise<void> {
@@ -109,14 +116,18 @@ class StreamsSQLite extends BaseStorageSQLite<StreamItem> {
 
   delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    if (_internals.cache) _internals.cache.unsetUserData(userId);
+    // Bust after the soft-delete write completes (see insertOne).
+    const cb: Callback<{ modifiedCount: number }> = (err, res) => {
+      if (_internals.cache) _internals.cache.unsetUserData(userId);
+      callback(err, res);
+    };
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
         name: 1, parentId: 1, clientData: 1, trashed: 1,
         created: 1, createdBy: 1, modified: 1, modifiedBy: 1
       }
-    }, callback);
+    }, cb);
   }
 
   insertMany (userOrUserId: UserOrId, items: StreamItem[], callback: Callback<void>): void {

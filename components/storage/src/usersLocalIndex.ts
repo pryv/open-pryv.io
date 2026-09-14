@@ -80,9 +80,11 @@ class UsersLocalIndex {
 
   /** Rename the canonical (primary) username; leaves aliases intact. */
   async renameUser (oldUsername: string, newUsername: string): Promise<void> {
+    await this.db.renameUser(oldUsername, newUsername);
+    // Bust AFTER the write so a concurrent getUserId cannot re-cache the stale
+    // name->userId mapping past the rename.
     cache.unsetUser(oldUsername);
     cache.unsetUser(newUsername);
-    await this.db.renameUser(oldUsername, newUsername);
     logger.debug('renameUser', oldUsername, newUsername);
   }
 
@@ -129,15 +131,15 @@ class UsersLocalIndex {
   }
 
   async deleteAlias (alias: string): Promise<void> {
-    cache.unsetUser(alias);
     await this.db.deleteAlias(alias);
+    cache.unsetUser(alias); // bust AFTER the write (see renameUser)
     logger.debug('deleteAlias', alias);
   }
 
   async deleteAliasesForId (userId: string): Promise<void> {
     const aliases = await this.db.getAliasesForId(userId);
-    for (const alias of aliases) { cache.unsetUser(alias); }
     await this.db.deleteAliasesForId(userId);
+    for (const alias of aliases) { cache.unsetUser(alias); } // bust AFTER the write
     logger.debug('deleteAliasesForId', userId, aliases.length);
   }
 

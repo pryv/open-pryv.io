@@ -941,13 +941,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (result.relatedDeletions != null) {
       idsToDelete = idsToDelete.concat(result.relatedDeletions);
     }
-    // remove from cache
-    for (const idToDelete of idsToDelete) {
-      const accessToDelete = cache.getAccessLogicForId(context.user.id, idToDelete.id);
-      if (accessToDelete != null) {
-        cache.unsetAccessLogic(context.user.id, accessToDelete);
-      }
-    }
+    // Cache invalidation is deferred until AFTER the delete commits (below):
+    // busting before the write let a concurrent auth re-cache the row mid-delete
+    // and keep resolving a deleted token. Collect the {id, token} to unset from
+    // the authoritative rows fetched in the loop below.
+    const logicsToUnset: Array<{ id: string; token: string }> = [];
     // Collect any aliases carried by the accesses being deleted, so their
     // platform reservation + routing entries can be released afterwards. The
     // same pass captures the authoritative access rows (still live here) so
@@ -959,6 +957,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
       if (access != null) { rowsToTombstone.push(access as IndexAccessInput); }
       else if (idToDelete.id != null) { rowsToTombstone.push({ id: idToDelete.id }); }
+      // Authoritative source for the post-delete cache unset (id + token); fall
+      // back to a locally-cached logic when the row is already gone.
+      if (access != null && typeof access.id === 'string' && typeof access.token === 'string') {
+        logicsToUnset.push({ id: access.id, token: access.token });
+      } else {
+        const cached = cache.getAccessLogicForId(context.user.id, idToDelete.id);
+        if (cached != null) { logicsToUnset.push({ id: cached.id, token: cached.token }); }
+      }
     }
     // Cascade webhook deletion BEFORE access deletion. On partial failure,
     // the access still exists so a retry re-runs the cascade.
@@ -969,13 +975,23 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
+    let deleteErr: unknown = null;
     try {
       await fromCallback((cb: NodeCallback) => {
         accessesRepository.delete(context.user, { $or: idsToDelete }, cb);
       });
     } catch (err) {
-      return next(errors.unexpectedError(err));
+      deleteErr = err;
     }
+    // Bust the cache AFTER the delete attempt (unconditionally, including an
+    // ambiguous failure where the row may have been removed): a concurrent auth
+    // that re-cached the row during the delete window must not keep resolving a
+    // deleted token. unsetAccessLogic bumps the epoch and broadcasts to sibling
+    // workers even when nothing is cached locally (closes the cross-worker hole).
+    for (const logic of logicsToUnset) {
+      cache.unsetAccessLogic(context.user.id, logic);
+    }
+    if (deleteErr != null) { return next(errors.unexpectedError(deleteErr)); }
     if (aliasesToRelease.length > 0) {
       const usersRepository = await getUsersRepository();
       for (const alias of aliasesToRelease) {

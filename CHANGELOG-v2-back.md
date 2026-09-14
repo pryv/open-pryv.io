@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## cache: invalidate after the write commits, not before (closes a stale re-cache race)
+
+The streams and access caches were invalidated BEFORE their backing DB write
+committed, in the engine stream mutators (`insertOne`/`updateOne`/`delete`), the
+`accesses.delete` method, and the local user-index rename/alias operations. That
+left a window where a concurrent read of pre-commit data could re-populate the
+cache with a stale entry that no later invalidation removed (the epoch fences
+close the invalidation-during-read half of the race but not this one). Each
+invalidation now fires AFTER its write completes. For `accesses.delete` the cache
+unset is also now built from the authoritative access rows and issued even when
+the entry is not cached on the current worker, so a deleted token can no longer
+keep validating on a sibling worker until eviction (it is dropped cluster-wide via
+the existing broadcast). Behavioural fix only; no API surface change.
+
 ## cache: fence the same set-after-unset race in the streams cache
 
 The streams cache had the same race as the access-logic cache: a stream tree is
