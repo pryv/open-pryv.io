@@ -29,7 +29,16 @@ cd "$(dirname "$0")/.."
 # clientData, deviceName, etc.) which it intentionally never touches.
 # Enumerating would misrepresent a partial view as a closed shape; the openness
 # is load-bearing, so the ratchet is raised by one per the rule above.
-MAX=222
+# 222->226: four open-by-design partial views landed with shipped features
+# without bumping this ratchet, leaving `just lint` red on master. The MFA
+# multi-method registry + TOTP config normalizer (mfa/index.ts MethodCfg,
+# mfa/totpKeys.ts TotpCfg, plus one MFA and one CMC wire-shape context in
+# cmc/handleIncomingRevoke.ts) are pluggable configs / middleware contexts over
+# the open-by-design event + clientData model; each carries method- or
+# payload-specific fields, so the openness is load-bearing and enumerating would
+# misrepresent partial views as closed shapes. Raised by the four additions per
+# the rule above.
+MAX=226
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \
