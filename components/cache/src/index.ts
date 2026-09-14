@@ -77,6 +77,7 @@ function clear (namespace?: string) {
     // Counter stays monotonic (NOT reset), so clearing the map is safe: any
     // epoch captured before this clear stays strictly below all future bumps.
     accessLogicEpochByUserId.clear();
+    streamsEpochByKey.clear();
   } else {
     delete _caches[namespace];
   }
@@ -117,15 +118,36 @@ function unsetUserData (userId: string, notifyOtherProcesses = true) {
   _clearAccessLogics(userId);
 }
 // --------------- Streams ---------------//
+// Per-(user, store) "streams unset epoch": the same set-after-unset fence as the
+// access-logic epoch above, for the streams cache. A producer captures the epoch
+// on a cache miss before its storage read and passes it back to setStreams, which
+// skips re-inserting a now-stale stream tree if an invalidation (local unset or a
+// cross-process synchro bust) moved it meanwhile. Monotonic counter, same ABA-safe
+// reasoning as the access epoch.
+let streamsEpochCounter = 0;
+const streamsEpochByKey = new Map<string, number>();
+function _streamsEpochKey (userId: string, storeId: string): string {
+  return storeId + ' ' + userId;
+}
+function getStreamsEpoch (userId: string, storeId = 'local'): number {
+  return streamsEpochByKey.get(_streamsEpochKey(userId, storeId)) ?? 0;
+}
+function _bumpStreamsEpoch (userId: string, storeId: string): void {
+  streamsEpochByKey.set(_streamsEpochKey(userId, storeId), ++streamsEpochCounter);
+}
 function getStreams (userId: string, storeId = 'local') {
   return get(NS.STREAMS_FOR_USERID + storeId, userId);
 }
-function setStreams (userId: string, storeId = 'local', streams?: unknown) {
+function setStreams (userId: string, storeId = 'local', streams?: unknown, expectedEpoch?: number) {
   if (!isActive) { return; }
+  // set-after-unset fence: skip the insert if an invalidation bumped the epoch
+  // since the caller captured it (a stale read must not re-poison the cache).
+  if (expectedEpoch != null && expectedEpoch !== getStreamsEpoch(userId, storeId)) { return; }
   if (isSynchroActive) { synchro!.registerListenerForUserId(userId); } // follow this user
   set(NS.STREAMS_FOR_USERID + storeId, userId, streams);
 }
 function _unsetStreams (userId: string, storeId = 'local') {
+  _bumpStreamsEpoch(userId, storeId);
   unset(NS.STREAMS_FOR_USERID + storeId, userId);
 }
 function unsetStreams (userId: string, _storeId = 'local') {
@@ -211,6 +233,7 @@ const cache = {
   unsetUserData,
   setStreams,
   getStreams,
+  getStreamsEpoch,
   unsetStreams,
   getAccessLogicForId,
   getAccessLogicForToken,

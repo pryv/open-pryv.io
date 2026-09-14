@@ -66,13 +66,17 @@ const userStreams = ds.createUserStreams({
   },
 
   async _getAllFromAccountAndCache (this: Store, userId: string): Promise<StoredStream[]> {
+    let cacheEpoch: number | undefined;
     if (_internals.cache) {
       const cached = _internals.cache.getStreams(userId, 'local');
       if (cached != null) return cached;
+      // Capture the cache epoch before the storage read so a concurrent invalidation
+      // landing during the await does not get a stale tree re-inserted.
+      cacheEpoch = _internals.cache.getStreamsEpoch(userId, 'local');
     }
     const all = await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb));
-    if (_internals.cache) _internals.cache.setStreams(userId, 'local', all);
+    if (_internals.cache) _internals.cache.setStreams(userId, 'local', all, cacheEpoch);
     return all as StoredStream[];
   },
 

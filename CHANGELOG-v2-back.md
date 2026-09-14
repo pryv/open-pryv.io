@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## cache: fence the same set-after-unset race in the streams cache
+
+The streams cache had the same race as the access-logic cache: a stream tree is
+loaded from storage on a cache miss and inserted with `setStreams`, and a
+concurrent invalidation (a local stream mutation, or a cross-process
+cache-invalidation broadcast) landing during the read could have its continuation
+re-insert the pre-mutation tree, served until the next bust. The per-(user, store)
+monotonic unset epoch now fences the insert the same way: the producer captures the
+epoch before the storage read and the cache skips the insert if any invalidation
+moved it meanwhile.
+
 ## cache: fence a set-after-unset race that could re-cache a stale access
 
 When an access is loaded from storage and inserted into the per-user access-logic

@@ -90,9 +90,12 @@ const userStreams = ds.createUserStreams({
     let allStreamsForAccount = _internals.cache.getStreams(userId, 'local');
     if (allStreamsForAccount != null) return allStreamsForAccount;
 
+    // Capture the cache epoch before the storage read so a concurrent invalidation
+    // landing during the await does not get a stale tree re-inserted (setAccessLogic-style fence).
+    const cacheEpoch = _internals.cache.getStreamsEpoch(userId, 'local');
     allStreamsForAccount = (await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb))) as StoredStream[];
-    _internals.cache.setStreams(userId, 'local', allStreamsForAccount);
+    _internals.cache.setStreams(userId, 'local', allStreamsForAccount, cacheEpoch);
     return allStreamsForAccount;
   },
 
