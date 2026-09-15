@@ -118,5 +118,38 @@ describe('[SINF] Service', () => {
         assert.deepStrictEqual(res.body.features && res.body.features.mfa, { methods: ['sms'] });
       });
     });
+
+    it('[SN09] always advertises features.emailVerification { atRegistration, onAccount } from live config', async () => {
+      const path = '/' + username + '/service/info';
+      // Test config ships the gate off and verifyEmail explicitly false.
+      const base = await coreRequest.get(path);
+      assert.deepStrictEqual(base.body.features.emailVerification, {
+        atRegistration: false,
+        onAccount: false
+      });
+      // Flag on: the test config has the page URL and a complete mail setup.
+      await withInjectedConfig({ services: { email: { enabled: { verifyEmail: true } } } }, async () => {
+        const on = await coreRequest.get(path);
+        assert.deepStrictEqual(on.body.features.emailVerification, {
+          atRegistration: false,
+          onAccount: true
+        });
+      });
+      // Flag on but no landing page: the holder could not act on the link.
+      await withInjectedConfig({
+        services: { email: { enabled: { verifyEmail: true } } },
+        auth: { emailVerificationPageURL: '' }
+      }, async () => {
+        const noUrl = await coreRequest.get(path);
+        assert.strictEqual(noUrl.body.features.emailVerification.onAccount, false);
+      });
+      // The registration gate is advertised independently of the mail predicate.
+      await withInjectedConfig({
+        account: { emailVerification: { requireAtRegistration: true } }
+      }, async () => {
+        const gate = await coreRequest.get(path);
+        assert.strictEqual(gate.body.features.emailVerification.atRegistration, true);
+      });
+    });
   });
 });

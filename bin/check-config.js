@@ -110,6 +110,34 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
+// account.emailVerification.requireAtRegistration: the registration email
+// gate mails a code on every sign-up, so it needs a complete mail config.
+// This script reads the override standalone, without the default merge, so a
+// missing `services.email.method` means "inherits the default (in-process)"
+// and cannot be checked further here; the boot-time validator sees the merged
+// config and catches that case.
+if (get('account.emailVerification.requireAtRegistration') === true) {
+  const method = get('services.email.method');
+  if (get('services.email.enabled') === false) {
+    problems.push('account.emailVerification.requireAtRegistration is true but services.email.enabled is false');
+  }
+  if (method === 'in-process') {
+    for (const key of ['smtp.host', 'from.address']) {
+      if (isMissingOrSentinel(get(`services.email.${key}`))) {
+        problems.push(`services.email.${key} missing or unset (required by the registration email gate with method in-process)`);
+      }
+    }
+  } else if (method === 'microservice' || method === 'mandrill') {
+    for (const key of ['url', 'key']) {
+      if (isMissingOrSentinel(get(`services.email.${key}`))) {
+        problems.push(`services.email.${key} missing or unset (required by the registration email gate with method ${method})`);
+      }
+    }
+  } else if (method != null) {
+    problems.push(`services.email.method="${method}" but only in-process, microservice or mandrill are supported`);
+  }
+}
+
 // letsEncrypt.* — required when letsEncrypt.enabled is true
 if (get('letsEncrypt.enabled') === true) {
   for (const key of ['atRestKey', 'email']) {

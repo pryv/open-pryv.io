@@ -292,6 +292,23 @@ function checkSsoConfig (config, problems) {
   }
 }
 
+// Registration email gate. When `account.emailVerification.requireAtRegistration`
+// is true every registration needs a mailed code, so an incomplete mail
+// configuration would block all sign-ups platform-wide. Refuse the boot instead
+// of discovering it from the first failed registration.
+function checkEmailVerificationGate (config, problems) {
+  if (config.get('account:emailVerification:requireAtRegistration') !== true) return;
+  const { describeMailCapability } = require('../../components/business/src/emails/mailCapability.ts');
+  const capability = describeMailCapability(config);
+  if (capability.ok) return;
+  problems.push({
+    message: "'account.emailVerification.requireAtRegistration: true' requires a complete mail configuration (every registration needs a mailed code): " +
+      capability.problems.join('; ') + '. Fix services.email or set the gate to false.',
+    path: ['account', 'emailVerification', 'requireAtRegistration'],
+    payload: { method: capability.method, problems: capability.problems }
+  });
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -314,6 +331,7 @@ async function validate (config) {
   checkDnsTopologyConsistency(config, problems);
   checkPlatformEngineTopology(config, problems);
   checkSsoConfig(config, problems);
+  checkEmailVerificationGate(config, problems);
 
   return problems;
 }
@@ -414,6 +432,7 @@ module.exports = {
   checkDnsTopologyConsistency,
   checkPlatformEngineTopology,
   checkSsoConfig,
+  checkEmailVerificationGate,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES

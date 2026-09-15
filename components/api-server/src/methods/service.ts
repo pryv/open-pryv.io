@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from './_types.ts';
+import { describeVerificationMail } from 'business/src/emails/mailCapability.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { ready, getLogger } = require('@pryv/boiler');
@@ -70,6 +71,19 @@ export default function (api: { register: (...args: unknown[]) => void }) {
       } catch (err: unknown) {
         getLogger('service-info').warn('Could not derive features.mfa (malformed services.mfa?); omitting it.', { error: (err as Error)?.message });
       }
+    }
+    // Email verification surface, always advertised so clients can hide what
+    // this platform cannot do: `onAccount` = the verification-link flow for
+    // addresses on an account is live (flag on, page URL set, mail configured),
+    // `atRegistration` = a verified address is required to create an account.
+    // `atRegistration` deliberately does NOT consult the mail predicate: boot
+    // already refused an incapable config when the gate is on, so the advertised
+    // value must equal what registration actually enforces.
+    if (serviceInfo.features.emailVerification === undefined) {
+      serviceInfo.features.emailVerification = {
+        atRegistration: config.get('account:emailVerification:requireAtRegistration') === true,
+        onAccount: describeVerificationMail(config).enabled
+      };
     }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to

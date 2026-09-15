@@ -85,6 +85,19 @@ export const DEFAULT_TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Default resend cooldown when config is unset: 5 minutes (ms). */
 export const DEFAULT_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
+/**
+ * Registration email challenge defaults (see `account.emailVerification.*`).
+ * The code is short and human-typable, so its lifetime is minutes rather than
+ * the link token's hours, and the attempt budgets carry the brute-force
+ * argument.
+ */
+export const DEFAULT_REGISTRATION_CODE_MAX_AGE_MS = 10 * 60 * 1000;
+export const DEFAULT_REGISTRATION_CODE_MAX_ATTEMPTS = 5;
+export const DEFAULT_REGISTRATION_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+export const DEFAULT_REGISTRATION_CODE_DAILY_LIMIT = 10;
+export const DEFAULT_REGISTRATION_CODE_FAILURES_PER_DAY = 20;
+export const DEFAULT_REGISTRATION_PROOF_MAX_AGE_MS = 30 * 60 * 1000;
+
 /** True for the container stream (with or without the trailing marker). */
 export function isEmailStreamId (streamId: unknown): boolean {
   if (typeof streamId !== 'string') return false;
