@@ -47,12 +47,14 @@ export const STATUS_VERIFIED = 'verified';
  * data (read-only, never written again) and counts as NOT proved.
  *
  *   email-link    proved: the holder clicked a mailed one-time token.
+ *   email-code    proved: the holder pasted a mailed one-time code at registration.
  *   operator      proved: set by the root-trusted operator seam.
  *   registration  asserted: the account's founding email (today's trust level,
  *                 never link-proved) — see the D2 policy decision.
  *   legacy        asserted: set by legacy `account.update {email}` with no proof.
  */
 export const METHOD_EMAIL_LINK = 'email-link';
+export const METHOD_EMAIL_CODE = 'email-code';
 export const METHOD_OPERATOR = 'operator';
 export const METHOD_REGISTRATION = 'registration';
 export const METHOD_LEGACY = 'legacy';
@@ -64,7 +66,7 @@ export const METHOD_LEGACY = 'legacy';
  * must trust ownership (e.g. SSO email matching) MUST gate on
  * {@link isProvedOwnership}, never on `status` alone.
  */
-export const PROVED_METHODS = Object.freeze([METHOD_EMAIL_LINK, METHOD_OPERATOR]);
+export const PROVED_METHODS = Object.freeze([METHOD_EMAIL_LINK, METHOD_EMAIL_CODE, METHOD_OPERATOR]);
 
 /** True only when the email's ownership was actually proved (see PROVED_METHODS). */
 export function isProvedOwnership (content: { status?: unknown; verificationMethod?: unknown }): boolean {

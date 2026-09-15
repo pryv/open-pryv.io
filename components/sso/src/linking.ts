@@ -19,7 +19,8 @@
  *         If the current email maps to a DIFFERENT account, warn — sub wins.
  *   R8  binding exists but its account is gone        → release it, re-evaluate
  *   R5  no binding; email resolves to U AND U proved  → LOG IN + persist binding
- *       ownership of that address (isProvedOwnership on the home core)
+ *       ownership of that address (isProvedOwnership on the home core:
+ *       email-link, email-code or operator)
  *   R6  no binding; email resolves to U but NOT proved→ refuse `email-not-verified`
  *       (the account-takeover gate: a Pryv account that merely ASSERTED a
  *        victim's address, never proving it, must not receive that victim's

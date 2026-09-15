@@ -19,7 +19,7 @@ interface ErrorFactory {
   unsupportedOperation: (message: string) => APIErrorT;
   apiUnavailable: (message: string) => APIErrorT;
   corruptedData: (message: string, innerError?: Error) => APIErrorT;
-  forbidden: (message?: string) => APIErrorT;
+  forbidden: (message?: string, data?: unknown) => APIErrorT;
   invalidAccessToken: (message: string, status?: number) => APIErrorT;
   invalidCredentials: (message?: string) => APIErrorT;
   invalidEventType: (type: string) => APIErrorT;
@@ -32,7 +32,7 @@ interface ErrorFactory {
   staleResource: (resourceType: string, data?: Record<string, unknown>) => APIErrorT;
   missingHeader: (headerName: string, status?: number) => APIErrorT;
   tooManyResults: (limit: number) => APIErrorT;
-  tooManyAttempts: (retryAfterSeconds?: number) => APIErrorT;
+  tooManyAttempts: (retryAfterSeconds?: number, options?: { message?: string; data?: unknown }) => APIErrorT;
   payloadTooLarge: (message: string, data?: unknown) => APIErrorT;
   unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
   unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
@@ -71,13 +71,14 @@ factory.corruptedData = function (message: string, innerError?: Error) {
   });
 };
 
-factory.forbidden = function (message?: string) {
+factory.forbidden = function (message?: string, data?: unknown) {
   if (message == null) {
     message =
             "The given token's access permissions do not allow this operation.";
   }
   return new APIError(ErrorIds.Forbidden, message, {
-    httpStatus: 403
+    httpStatus: 403,
+    data
   });
 };
 
@@ -180,10 +181,12 @@ factory.tooManyResults = function (limit: number) {
  * caller learns nothing about how close it got; `Retry-After` (seconds) is set
  * when the remaining lock time is known, so a legitimate client can back off.
  */
-factory.tooManyAttempts = function (retryAfterSeconds?: number) {
+factory.tooManyAttempts = function (retryAfterSeconds?: number, options?: { message?: string; data?: unknown }) {
+  // The MFA wording is the default for back-compatibility; other throttled
+  // flows (the registration email challenge) pass their own.
   const err = new APIError(ErrorIds.TooManyAttempts,
-    'Too many failed MFA attempts for this account. Please try again later.',
-    { httpStatus: 429 });
+    options?.message ?? 'Too many failed MFA attempts for this account. Please try again later.',
+    { httpStatus: 429, data: options?.data });
   if (retryAfterSeconds != null && retryAfterSeconds > 0) {
     err.httpHeaders = { 'Retry-After': String(Math.ceil(retryAfterSeconds)) };
   }
