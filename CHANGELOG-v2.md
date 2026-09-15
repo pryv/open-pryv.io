@@ -26,6 +26,15 @@ stop a working configuration from booting:**
   `verifyEmail: false` to turn the feature off without the warning.
 - If your configuration sets `verifyEmail: false`, nothing changes.
 
+"Mail is configured" is decided from config alone, with no SMTP probe: for
+`method: in-process` it means `services.email.smtp.host` is set; for
+`microservice` and `mandrill` it means `services.email.url` and
+`services.email.key` are set. The sender (`services.email.from`) is NOT part of
+that test — it matters for deliverability, but a deployment that was sending
+mail without one keeps sending mail. The same predicate now answers for the boot
+check, `bin/check-config.js`, the runtime send path and `service.info`, so those
+four can no longer disagree about whether a verification mail would go out.
+
 `GET /service/info` now always carries `features.emailVerification:
 { atRegistration, onAccount }`. `onAccount` is `true` only when the
 verification-link flow is live on this platform (flag on, page URL set, mail
@@ -62,7 +71,15 @@ created. Off by default; a stock deployment is unchanged.
   attempts are exhausted). Both answer `403 forbidden` with
   `data.emailVerificationRequired: false` while the gate is off. The code is
   never stored, only its hash; a proof is bound to the address it was issued
-  for and to one registration. Per-IP limiting is left to the edge.
+  for and to one registration.
+- **Rate limits are keyed on the target address**, because the endpoint is public
+  and carries no caller identity. That is a deliberate trade-off with a
+  consequence worth knowing before you enable the gate: someone who knows an
+  address that has no account yet can spend its daily budget, which both mails
+  that address a few codes and keeps it from signing up until the window rolls.
+  The caps are sized to stop bulk abuse, not a targeted nuisance. Put a per-IP
+  rate limit in front of the registration endpoints at your edge if that matters
+  to you.
 - `GET /service/info` `features.emailVerification.atRegistration` is `true`
   while the gate is on (the field itself is always present, see the general
   availability entry above).
