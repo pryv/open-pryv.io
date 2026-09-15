@@ -35,6 +35,7 @@ components/       Source code split by domain
   previews-server/  Image preview renderer
   dns-server/       Embedded DNS server for multi-core DNS-based topology
   mail/             In-process email renderer (Pug templates in PlatformDB)
+                    templates/ bundled Pug set seeded on first boot
   middleware/       Express middleware (auth, wrong-core, regSubdomainPathMap, ...)
   mall/             Data access layer (events, streams, engine-agnostic)
   cache/            Caching layer
@@ -43,6 +44,7 @@ components/       Source code split by domain
   audit/            Audit logging (uses SQLite directly)
   business/         Cross-domain logic:
     accesses/  acme/  auth/  backup/  bootstrap/  integrity/
+    emails/  multi-email container, verification-mail policy, registration email challenge
     mfa/  notifications/  observability/  series/  system-streams/  users/  webhooks/
   webhooks/         Outbound event delivery (optional named `scopes` filter)
   cmc/              Cross-account messaging & consent (namespace plugin, `:_cmc:`)
@@ -234,7 +236,7 @@ Understand this before debugging why a setting "isn't taking effect".
 - [Backup](https://pryv.github.io/customer-resources/backup/): `bin/backup.js`.
 - [Core migration](https://pryv.github.io/customer-resources/core-migration/): moving a core to a new host.
 - [MFA](https://pryv.github.io/customer-resources/mfa/): pluggable two-factor via `mfa.*` methods. An in-process authenticator-app factor (TOTP, RFC 6238) is **enabled by default** and works out of the box (no external service); SMS (HTTP provider) stays off until configured. Nothing is forced (login only challenges enrolled users). Config: `services.mfa` (`active` default true / `defaultMethod` / `methods.{totp,sms}`; legacy `mode` takes precedence when set, for byte-identical upgrades). `service.info().features.mfa.methods` advertises the active methods. Code in `components/business/src/mfa/` (`MfaMethod` registry + `TotpService` + `normalizeMfaConfig`), wired at `components/api-server/src/methods/mfa.ts`.
-- [Emails setup](https://pryv.github.io/customer-resources/emails-setup/): in-process vs microservice.
+- [Emails setup](https://pryv.github.io/customer-resources/emails-setup/): in-process vs microservice. Templates for welcome, password-reset, verify-email and registration-code mails ship with the server and seed into PlatformDB on first boot. `services.email.enabled.verifyEmail` is **on by default**: an address added to an account gets a verification link. Soft landing — when `auth.emailVerificationPageURL` or the mail setup is missing AND the flag was never set explicitly, the core boots, warns once per start and keeps the feature off; setting the flag explicitly makes the page URL required at boot. `account.emailVerification.requireAtRegistration` (default false) additionally requires a code-proved address before `POST /users` will create an account, and DOES refuse the boot when mail is incomplete. `service.info().features.emailVerification` advertises both as `{ atRegistration, onAccount }`. Code in `components/business/src/emails/`.
 - [Observability](https://pryv.github.io/customer-resources/observability/): opt-in telemetry over OTLP.
 - [Healthchecks](https://pryv.github.io/customer-resources/healthchecks/) and [platform validation](https://pryv.github.io/customer-resources/platform-validation/).
 - [Change log](https://pryv.github.io/change-log/).

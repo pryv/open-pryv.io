@@ -149,9 +149,49 @@ Options:
 - Use the public Pryv assets: `https://pryv.github.io/assets-pryv.me/index.json`
 - Host your own and set the URL in config
 
-### Email (optional)
+### Email
 
-For password resets and welcome emails, deploy `service-mail` and configure:
+Transactional mails (password reset, welcome, email verification, registration
+code) are rendered in-process and sent over your SMTP relay. Point the server at
+a relay and a sender address:
+
+```yaml
+services:
+  email:
+    enabled:
+      resetPassword: true
+      welcome: true
+      # verifyEmail is ON by default — see below. Set false to turn it off.
+    method: in-process
+    defaultLang: en
+    from: { name: 'Example', address: 'no-reply@example.com' }
+    smtp: { host: smtp.example.com, port: 587, auth: { user: '...', pass: '...' } }
+auth:
+  # Where the verification link lands: the /verify-email page of your auth UI.
+  emailVerificationPageURL: https://auth.example.com/verify-email
+```
+
+**Email verification is on by default.** An address added to an account is sent a
+verification link, so the server needs `auth.emailVerificationPageURL` and a
+working mail setup. If either is missing the server still starts — it logs one
+warning per boot and keeps verification off until you fill them in. Set
+`services.email.enabled.verifyEmail: false` to turn the feature off without the
+warning; set it to `true` explicitly and the page URL becomes required at boot.
+
+"A working mail setup" means: for `in-process`, `services.email.smtp.host`; for
+`microservice` or `mandrill`, `services.email.url` and `key`. The sender
+(`services.email.from`) is recommended for deliverability but is not required
+for the server to consider mail configured.
+
+Run `node bin/check-config.js <your-config.yml>` to see both as warnings before
+you boot.
+
+Templates for all four mail types ship with the server (English and French) and
+are seeded into PlatformDB the first time a core boots with an empty template
+set. Edit them afterwards with `bin/mail.js templates set`, or point
+`services.email.templatesRootDir` at your own Pug directory to seed that instead.
+
+Legacy alternative: the external `service-mail` process.
 
 ```yaml
 services:

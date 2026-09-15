@@ -602,7 +602,7 @@ async function markCapabilityInvalidated (params: {
 }
 
 async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<unknown> {
-  if (typeof mall.streams.delete === 'function') return mall.streams.delete(userId, { id: streamId });
+  if (typeof mall.streams.delete === 'function') return mall.streams.delete(userId, streamId);
   // The MallUserStreams class exposes deleteStream / removeStream / etc. in
   // different repo versions; tolerate missing method (tests inject minimal
   // streams.create only).

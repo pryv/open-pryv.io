@@ -4,9 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 /**
  * CMC plugin — handleIncomingRevoke.
  *
@@ -29,8 +26,8 @@ const require = createRequire(import.meta.url);
  * `:_cmc:_internal:offer:<capId>`). Unresolvable → no-op success.
  */
 
-const C = require('./constants.ts');
-const capabilityMod = require('./capability.ts');
+import * as C from './constants.ts';
+import * as capabilityMod from './capability.ts';
 
 import type { LogFn } from '@pryv/boiler';
 import type { MallLike, CmcAccessLike } from './_types.ts';

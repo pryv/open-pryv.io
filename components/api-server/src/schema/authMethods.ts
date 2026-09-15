@@ -33,7 +33,11 @@ const registrationSchema = {
       minLength: 1,
       maxLength: 99
     }),
-    language: helpers.language
+    language: helpers.language,
+    emailProof: string({
+      minLength: 1,
+      maxLength: 200
+    })
   }, {
     required: ['password'],
     messages: {
@@ -208,6 +212,41 @@ const __ex_emailCheck = {
     })
   };
 export { __ex_emailCheck as emailCheck };
+const __ex_emailChallenge = {
+  params: object({
+    email: helpers.email,
+    language: helpers.language
+  }, {
+    required: ['email'],
+    additionalProperties: false
+  }),
+  result: object({
+    sent: helpers.boolean()
+  }, {
+    required: ['sent'],
+    additionalProperties: false
+  })
+};
+export { __ex_emailChallenge as emailChallenge };
+const __ex_emailChallengeVerify = {
+  params: object({
+    email: helpers.email,
+    code: string({
+      minLength: 1,
+      maxLength: 32
+    })
+  }, {
+    required: ['email', 'code'],
+    additionalProperties: false
+  }),
+  result: object({
+    emailProof: string()
+  }, {
+    required: ['emailProof'],
+    additionalProperties: false
+  })
+};
+export { __ex_emailChallengeVerify as emailChallengeVerify };
 /**
  * Append validation of custom system streams for registration method
  */

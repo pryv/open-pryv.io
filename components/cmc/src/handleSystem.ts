@@ -23,7 +23,7 @@ const require = createRequire(import.meta.url);
  *   2. Resolve the user's counterparty-access by (app-code, username, host).
  *   3. Look up the remote system stream-id stored on the access's
  *      clientData.cmc.counterparty.remoteCollectorStreamId (filled at
- *      acceptance time — Phase E slice 2). For now, callers may pass it
+ *      acceptance time). For now, callers may pass it
  *      explicitly via the access.
  *   4. POST `notification/alert-cmc` or `notification/ack-cmc` to the peer.
  */
@@ -299,8 +299,8 @@ async function handleSystemScopeRequest (params: {
 /**
  * Handle a `consent/scope-update-cmc` trigger.
  *
- * Issued AFTER the local accesses.update post-hook fires (Phase G slice 3)
- * to inform the peer that an access they hold has had its permissions
+ * Issued AFTER the local accesses.update post-hook fires, to inform the
+ * peer that an access they hold has had its permissions
  * adjusted. Content typically carries:
  *   - the new permissions
  *   - the new compositeId/version (composite-id access versioning)

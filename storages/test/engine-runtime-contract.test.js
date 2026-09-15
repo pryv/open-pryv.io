@@ -21,10 +21,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * crash. This test exercises every engine in isolation so a regression in
  * any single engine's public API is caught at unit-tier.
  *
- * Why Phase 5a: today engines are loaded via dynamic `require()` from
- * pluginLoader.js. After Phase 5 (ESM + dynamic `import()`), the loaded
+ * Why this exists: today engines are loaded via dynamic `require()` from
+ * pluginLoader.js. Once they move to ESM + dynamic `import()`, the loaded
  * module shape can differ — ESM `export { foo }` is exposed differently
- * than CJS `module.exports = { foo }`. If a Phase 5 conversion silently
+ * than CJS `module.exports = { foo }`. If such a conversion silently
  * shifts an engine's exports under a `default` namespace (typical CJS-to-ESM
  * trap), every consumer of pluginLoader breaks at runtime, not at compile
  * time. This test pins the current contract so the regression is loud.

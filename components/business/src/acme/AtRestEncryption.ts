@@ -4,8 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import crypto from 'node:crypto';
 /**
  * At-rest encryption helper for PlatformDB-stored TLS certificate and ACME
  * account private keys.
@@ -37,8 +36,6 @@ const require = createRequire(import.meta.url);
  *   tag:      16 bytes (GCM auth tag)
  *   ct:       N bytes  (ciphertext of the plaintext)
  */
-
-const crypto = require('node:crypto');
 
 const ENVELOPE_VERSION = 1;
 const KEY_BYTES = 32;

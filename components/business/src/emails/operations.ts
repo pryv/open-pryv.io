@@ -23,7 +23,7 @@ import * as storages from 'storages';
 import { getPlatform } from 'platform';
 import { getLogger } from '@pryv/boiler';
 import timestamp from 'unix-timestamp';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { mintToken, hashToken, hashEquals } from './tokens.ts';
 
 /**
  * Re-reserve a platform row released by the legacy swap, warning if it fails.
@@ -96,24 +96,6 @@ type UserContext = { userId: string; username: string; user: unknown; accessId: 
  *  plaintext token lives only in memory long enough for the caller to email it;
  *  only its hash is ever persisted. */
 type MintedVerification = { value: string; token: string };
-
-/** Mint a 256-bit URL-safe verification token (a secret, not an id). */
-function mintToken (): string {
-  return randomBytes(32).toString('base64url');
-}
-
-/** Hex sha256 of a token — the only form ever stored. */
-function hashToken (token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-/** Constant-time compare of two hex sha256 digests. */
-function hashEquals (a: string, b: string): boolean {
-  const ba = Buffer.from(a, 'hex');
-  const bb = Buffer.from(b, 'hex');
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
-}
 
 /** Seed the container from the legacy primary on first use (existing users). */
 async function ensureSeeded (userId: string, legacyEmail: string | null): Promise<void> {
@@ -298,7 +280,7 @@ async function verifyToken (userId: string, token: string): Promise<string | nul
  * (pending OR an asserted `verified` one — registration/legacy/null), so an
  * existing account can request a link to prove its founding address and upgrade
  * its provenance. Throws invalidOperation when the email is unknown, already
- * PROVED (email-link/operator), or still within the cooldown window (with
+ * PROVED (see PROVED_METHODS), or still within the cooldown window (with
  * `retryAfterSeconds`).
  */
 async function resendVerification (deps: Deps, ctx: UserContext, value: string): Promise<MintedVerification> {

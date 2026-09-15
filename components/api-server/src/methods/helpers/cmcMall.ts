@@ -5,16 +5,13 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const cmc = require('cmc');
-const cache = require('cache').default;
-const { ApiEndpoint } = require('utils');
-const { getMall } = require('mall');
-const { getStorageLayer } = require('storage');
-const { getUsersRepository } = require('business/src/users/index.ts');
-const { getLogger } = require('@pryv/boiler');
+import * as cmc from 'cmc';
+import cache from 'cache';
+import { ApiEndpoint } from 'utils';
+import { getMall } from 'mall';
+import { getStorageLayer } from 'storage';
+import { getUsersRepository } from 'business/src/users/index.ts';
+import { getLogger } from '@pryv/boiler';
 
 import type { MallLike } from 'cmc/src/_types.ts';
 
@@ -70,12 +67,13 @@ async function buildMallForCmc (): Promise<MallLike> {
 
   // Mall uses class-instance getters for streams/events, so a plain
   // Object.assign would drop them — forward them via getters instead.
-  cached = {
+  const composed: MallLike = {
     get streams () { return mall.streams; },
     get events () { return mall.events; },
     accesses: cmcMallAccessesAdapter,
   };
-  return cached;
+  cached = composed;
+  return composed;
 }
 
 export { buildMallForCmc };

@@ -68,9 +68,9 @@ See [SINGLE-TO-MULTIPLE.md](./SINGLE-TO-MULTIPLE.md) for the full upgrade proced
 
 ## Email integration
 
-Welcome + password-reset emails ship with two delivery paths — pick one via `services.email.method`:
+Transactional emails ship with two delivery paths — pick one via `services.email.method`:
 
-- **`in-process`** (recommended) — renders Pug templates inside the api-server workers; templates live in PlatformDB (rqlite, cluster-wide). Edit without a deploy via `bin/mail.js` or `POST /system/admin/mail/*`.
+- **`in-process`** (recommended) — renders Pug templates inside the api-server workers; templates live in PlatformDB (rqlite, cluster-wide). Templates for welcome, password-reset, email-verification and registration-code mails ship with the server and are seeded into PlatformDB on first boot; override with `templatesRootDir` or edit them afterwards with `bin/mail.js`. Edit without a deploy via `bin/mail.js` or `POST /system/admin/mail/*`.
 - **`microservice`** — the legacy external [service-mail](https://github.com/pryv/service-mail) process bound to `127.0.0.1:9000` on each core. Default today for back-compat.
 
 ```yaml
@@ -81,8 +81,7 @@ services:
     defaultLang: en
     from: { name: 'Pryv Lab', address: 'no-reply@example.com' }
     smtp: { host: smtp.example.com, port: 587, auth: { user: '...', pass: '...' } }
-    # optional — seed on first boot when PlatformDB is empty:
-    templatesRootDir: /opt/open-pryv.io/mail-templates
+    # templatesRootDir: /opt/...   # optional: your own Pug set instead of the bundled one
 ```
 
 Full operator guide: [Email configuration](https://pryv.github.io/customer-resources/emails-setup/).

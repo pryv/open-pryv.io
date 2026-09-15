@@ -33,6 +33,111 @@ control.
   controlled account, on both same-core and cross-core issuance).
 - New config `delegation:active` (default true); when off, the methods are not
   registered and the feature is inert.
+### Email verification is now on by default (general availability)
+
+This supersedes the 2.0.0-rc.17 entry "Email verification now ships OFF by
+default (beta)": that entry stays as the record of what rc.17 did, but its
+guidance no longer applies. The "(beta)" qualifier on the rc.17 entry "Multiple
+emails per account (beta)" is likewise lifted: the feature, its templates, its
+verification page in the reference account app and its API surface are now
+general availability.
+
+`services.email.enabled.verifyEmail` defaults to `true`. **Upgrading does not
+stop a working configuration from booting:**
+
+- If your configuration sets `verifyEmail: true` explicitly, nothing changes:
+  `auth.emailVerificationPageURL` remains required and the core refuses to boot
+  without it, as before.
+- If your configuration does not mention `verifyEmail`, the default now applies.
+  When `auth.emailVerificationPageURL` is set and mail is configured,
+  verification links are sent for addresses added to an account. When the URL
+  is missing, or `services.email` is incomplete, the core boots, logs one
+  warning at every start, and keeps the feature off until the missing keys are
+  set (`bin/check-config.js` reports the same warning). Set
+  `verifyEmail: false` to turn the feature off without the warning.
+- If your configuration sets `verifyEmail: false`, nothing changes.
+
+"Mail is configured" is decided from config alone, with no SMTP probe: for
+`method: in-process` it means `services.email.smtp.host` is set; for
+`microservice` and `mandrill` it means `services.email.url` and
+`services.email.key` are set. The sender (`services.email.from`) is NOT part of
+that test — it matters for deliverability, but a deployment that was sending
+mail without one keeps sending mail. The same predicate now answers for the boot
+check, `bin/check-config.js`, the runtime send path and `service.info`, so those
+four can no longer disagree about whether a verification mail would go out.
+
+`GET /service/info` now always carries `features.emailVerification:
+{ atRegistration, onAccount }`. `onAccount` is `true` only when the
+verification-link flow is live on this platform (flag on, page URL set, mail
+configured); clients use it to show or hide "send verification link" actions.
+`atRegistration` is `true` when a verified address is required to create an
+account (see the registration gate entry).
+
+### Email verification at sign-up (optional)
+
+Operators can now require a verified email address before an account is
+created. Off by default; a stock deployment is unchanged.
+
+- New config `account.emailVerification.requireAtRegistration` (default
+  `false`). When `true`, `POST /users` refuses a registration that does not
+  carry an `emailProof` obtained through the two new public endpoints below
+  (`403 forbidden`, `data.emailVerificationRequired: true`), and refuses an
+  empty email address (`400 invalid-parameters-format`). Admin-created
+  accounts (`system.createUser`) are never gated. The core refuses to boot when
+  the gate is on and `services.email` is incomplete, and a mail delivery
+  failure at request time blocks that registration rather than letting an
+  unverified account through. Tuning keys, all under
+  `account.emailVerification`: `registrationCodeMaxAgeMs` (10 min),
+  `registrationCodeMaxAttempts` (5), `registrationCodeResendCooldownMs`
+  (60 s), `registrationCodeDailyLimit` (10), `registrationCodeFailuresPerDay`
+  (20), `registrationProofMaxAgeMs` (30 min).
+- `POST {register}/email-challenge` `{ email, language? }` mails a one-time
+  8-character code to the address (`200 { sent: true }`; `409
+  item-already-exists` when an account already owns the address; `429
+  too-many-attempts` with `data.retryAfterSeconds` on the per-address
+  cooldown, daily cap or failure budget). `POST
+  {register}/email-challenge/verify` `{ email, code }` exchanges a correct code
+  for a single-use `emailProof` (`401 invalid-access-token` with
+  `data.attemptsRemaining` on a wrong or expired code; `429` once the code's
+  attempts are exhausted). Both answer `403 forbidden` with
+  `data.emailVerificationRequired: false` while the gate is off. The code is
+  never stored, only its hash; a proof is bound to the address it was issued
+  for and to one registration.
+- **Rate limits are keyed on the target address**, because the endpoint is public
+  and carries no caller identity. That is a deliberate trade-off with a
+  consequence worth knowing before you enable the gate: someone who knows an
+  address that has no account yet can spend its daily budget, which both mails
+  that address a few codes and keeps it from signing up until the window rolls.
+  The caps are sized to stop bulk abuse, not a targeted nuisance. Put a per-IP
+  rate limit in front of the registration endpoints at your edge if that matters
+  to you.
+- `GET /service/info` `features.emailVerification.atRegistration` is `true`
+  while the gate is on (the field itself is always present, see the general
+  availability entry above).
+- An address proved this way is recorded with `verificationMethod:
+  'email-code'`, a new proved value alongside `'email-link'` and `'operator'`
+  (it counts as proved ownership for third-party sign-in linking). Accounts
+  created while the gate is off keep `'registration'`, as before.
+- The mailed verification link for addresses added to an existing account now
+  also carries `username` (`<emailVerificationPageURL>?verifyToken=…&username=…`)
+  so a landing page can address `/:username/account/verify-email` without an
+  email lookup. Existing links keep working. The parameters are appended with
+  the right separator, so a page URL that already carries a query keeps its own
+  parameters intact.
+- New template key `services.email.emailChallengeTemplate` (default
+  `email-challenge`).
+
+### Mail templates now ship with the server
+
+In-process mail (`services.email.method: in-process`) previously relied on an
+operator-provided Pug directory; the documented "bundled default set" did not
+exist, so a fresh deployment could not send any mail until templates were
+added by hand. The server now ships `welcome-email`, `reset-password`,
+`verify-email` and `email-challenge` templates in English and French and seeds
+them into PlatformDB on first boot when `services.email.templatesRootDir` is
+empty. Deployments that already hold templates are untouched (seeding only
+runs on an empty store). `bin/mail.js templates seed` defaults to the bundled
+set when `--from` is omitted.
 
 ## 2.0.0-rc.17 — 2026-09-11
 

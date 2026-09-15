@@ -218,20 +218,23 @@ async function releaseRow (username: string, value: string): Promise<boolean> {
 
 // ---------------- Seeding / verification ------------------------------------
 
+type SeedProvenance = { verificationMethod: string; verifiedAt: number | null };
+
 /**
  * Seed the initial container event at registration: the account's first email
- * is primary and verified at today's trust level (no verification method).
+ * is primary and verified at registration trust unless the registration gate
+ * proved it, in which case the caller passes the provenance it established.
  * The PlatformDB row for the value is already owned by the user (created by the
  * registration insert), so this reserves nothing.
  */
-async function seedInitial (userId: string, value: string, byAccessId?: string): Promise<void> {
+async function seedInitial (userId: string, value: string, byAccessId?: string, provenance?: SeedProvenance): Promise<void> {
   await ensureContainerStream(userId);
   await createEmailEvent(userId, {
     value,
     primary: true,
     status: C.STATUS_VERIFIED,
-    verifiedAt: null,
-    verificationMethod: C.METHOD_REGISTRATION
+    verifiedAt: provenance?.verifiedAt ?? null,
+    verificationMethod: provenance?.verificationMethod ?? C.METHOD_REGISTRATION
   }, byAccessId);
 }
 

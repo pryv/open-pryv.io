@@ -27,12 +27,9 @@ import { registerRoutes, resolveAccountForIdentity, type IdentityClaims } from '
 import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { buildSsoLinkDeps } from './ssoLinkDeps.ts';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const { MethodContext } = require('business');
-const timestamp = require('unix-timestamp');
-const { createId: cuid } = require('@paralleldrive/cuid2');
+import { MethodContext } from 'business';
+import timestamp from 'unix-timestamp';
+import { createId as cuid } from '@paralleldrive/cuid2';
 
 type ExpressApp = { get: (...args: unknown[]) => void };
 
@@ -102,7 +99,9 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   async function emitSsoAudit (event: 'sso.login' | 'sso.refused', payload: { userId?: string | null; provider: string; code?: string; mfa?: boolean }): Promise<void> {
     try {
       if (config.get('audit:active') !== true) return;
-      const auditSingleton = require('audit').default;
+      // Loaded on demand, not at module scope: the audit singleton must not be
+      // pulled in before storages have initialised it.
+      const auditSingleton = (await import('audit')).default;
       const C = auditSingleton.CONSTANTS;
       const now = timestamp.now();
       const row = {

@@ -1,0 +1,18 @@
+p Hi #{USERNAME},
+p
+  | Please confirm that
+  |
+  strong #{EMAIL}
+  |
+  | belongs to you by opening the link below.
+p
+  a(href=VERIFY_LINK target="_blank" rel="noopener") Verify this email address
+p
+  | If the link does not open, go to
+  |
+  a(href=VERIFY_URL target="_blank" rel="noopener") #{VERIFY_URL}
+  |
+  | and paste this code:
+p
+  code #{VERIFY_TOKEN}
+p The link expires after a while; if it has, request a new one from your account page. If you did not add this address to an account, you can ignore this email.

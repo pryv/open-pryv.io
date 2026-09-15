@@ -4,15 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
+import { getConfig } from '@pryv/boiler';
+import { factory as errors } from 'errors';
 import type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';
 import type { Profile as ProfileType } from './Profile.ts';
-const require = createRequire(import.meta.url);
-const crypto = require('node:crypto');
-const errors = require('errors').factory;
-const { base32Encode, base32Decode, totpVerify } = require('./totp.ts');
-const { encrypt, decrypt } = require('../acme/AtRestEncryption.ts');
-const { resolveTotpKey } = require('./totpKeys.ts');
+import { base32Encode, base32Decode, totpVerify } from './totp.ts';
+import { encrypt, decrypt } from '../acme/AtRestEncryption.ts';
+import { resolveTotpKey } from './totpKeys.ts';
 
 /**
  * Server-side TOTP (RFC 6238) as an in-process `MfaMethod`. The secret is
@@ -63,7 +62,6 @@ class TotpService implements MfaMethod {
   async #issuer (): Promise<string> {
     if (typeof this.cfg.issuer === 'string' && this.cfg.issuer.length > 0) return this.cfg.issuer;
     try {
-      const { getConfig } = require('@pryv/boiler');
       const config = await getConfig();
       const domain = config.get('dns:domain');
       if (typeof domain === 'string' && domain.length > 0) return domain;

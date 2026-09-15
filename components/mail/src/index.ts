@@ -23,10 +23,9 @@ const require = createRequire(import.meta.url);
  *   - `refresh()` re-materialises the tmp template dir from PlatformDB
  *     (admin CLI / admin API write path calls this on invalidation).
  *
- * Phase A scope: façade + ports only. Callers still go through the
+ * Current scope: façade + ports only. Callers still go through the
  * microservice HTTP path; flipping `services.email.method` to `in-process`
- * lands in a later phase once PlatformDB template wiring + the admin
- * surface ship.
+ * lands later, once PlatformDB template wiring + the admin surface ship.
  */
 
 const { Sender } = require('./Sender.ts');

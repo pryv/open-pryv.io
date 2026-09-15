@@ -249,16 +249,14 @@ services:
     enabled:
       welcome: true
       resetPassword: true
-      # OFF by default while the multiple-emails / verify-email flow is beta.
-      # Turning it on makes `auth.emailVerificationPageURL` a REQUIRED key, so
-      # a default of `true` would invalidate every previously-valid config that
-      # does not define it and stop the core booting on upgrade. Opt in with
-      # BOTH of these in your override:
-      #   services: { email: { enabled: { verifyEmail: true } } }
-      #   auth: { emailVerificationPageURL: 'https://<your-app>/verify-email' }
-      # While off, `account.emails.add` still records a pending address but no
-      # verification mail is sent and `resend` succeeds without delivering.
-      verifyEmail: false
+      # Email verification for addresses added to an account (verification
+      # link mailed to the address). Needs `auth.emailVerificationPageURL` (the
+      # /verify-email page of your auth UI) and a working `services.email`
+      # setup; when either is missing and this key is left at its default the
+      # feature stays off and the core logs a warning at boot (it does not
+      # refuse to boot). Setting this key to true EXPLICITLY makes the page URL
+      # required at boot. Set false to turn the feature off silently.
+      verifyEmail: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -273,12 +271,17 @@ services:
     # link carries a one-time token bound to (account, address); clicking it
     # marks that address verified. Requires `auth.emailVerificationPageURL`.
     verifyEmailTemplate: verify-email
+    # Sent by the registration email challenge (see account.emailVerification.
+    # requireAtRegistration): carries the copy/paste code, not a link.
+    emailChallengeTemplate: email-challenge
     defaultLang: en
     # --- in-process mode only ---
-    # Pug source directory to seed into PlatformDB on first boot (when
-    # PlatformDB has no templates yet). After seeding, subsequent edits
-    # flow through the admin CLI / admin API. Leave empty to rely on the
-    # default template set bundled with the mail component.
+    # Pug source directory seeded into PlatformDB on first boot, when PlatformDB
+    # holds no templates yet. Leave empty to seed the template set bundled with
+    # the mail component (components/mail/templates: welcome-email,
+    # reset-password, verify-email, email-challenge; en + fr). After the first
+    # boot, edits go through `bin/mail.js templates set` or the admin API; a
+    # later change of this key does not re-seed.
     templatesRootDir: ''
     smtp:
       host: ''
@@ -327,14 +330,48 @@ account:
   # Maximum number of emails an account may hold (primary included). The value
   # is clamped to a hard ceiling of 20 regardless of what is configured here.
   maxEmails: 5
-  # Email-verification token policy. `tokenMaxAgeMs` is how long a verification
-  # link stays valid (default 24h — the user is not sitting waiting like a
-  # password reset). `resendCooldownMs` is the minimum delay between two
-  # verification sends for the same address (default 5min), the rate limit on
+  # Email-verification policy. `tokenMaxAgeMs` is how long a verification link
+  # stays valid (default 24h, the user is not sitting waiting like a password
+  # reset). `resendCooldownMs` is the minimum delay between two verification
+  # sends for the same address (default 5min), the rate limit on
   # verification-mail spam.
   emailVerification:
     tokenMaxAgeMs: 86400000
     resendCooldownMs: 300000
+    # Registration gate. When true, creating an account requires proving the
+    # email address first: the client requests a one-time code
+    # (POST {register}/email-challenge), the holder pastes it back
+    # (POST {register}/email-challenge/verify) and the resulting proof is sent
+    # with the registration. Independent of services.email.enabled.verifyEmail
+    # (that flag only governs the post-creation verification mail).
+    # Requires a working mail configuration: the core refuses to boot when this
+    # is true and services.email is incomplete. A mail delivery failure at
+    # request time blocks the registration (fail closed) rather than letting an
+    # unverified account through. In a multi-core cluster set the same value on
+    # every core. Admin-created accounts (system.createUser) are never gated.
+    requireAtRegistration: false
+    # With `microservice` or `mandrill` delivery the `email-challenge` template
+    # lives on that external service, not in PlatformDB: add it there before
+    # turning this on, or the first registration fails closed on a send error.
+    #
+    # Code policy: lifetime of a code, wrong tries before it is discarded,
+    # minimum delay between two codes for the same address, codes per address
+    # per day, wrong tries per address per day (across codes), and how long the
+    # proof returned by a successful verification stays valid for registering.
+    #
+    # These budgets are keyed on the TARGET ADDRESS, because the endpoint is
+    # public and has no caller identity to key on. That means someone who knows
+    # an address that has no account yet can spend its daily budget and lock it
+    # out of sign-up until the window rolls (and mail it a code each time). The
+    # caps are deliberately soft, sized to stop bulk abuse rather than a
+    # targeted nuisance; put a per-IP rate limit in front of the registration
+    # endpoints at the edge if that matters to you.
+    registrationCodeMaxAgeMs: 600000
+    registrationCodeMaxAttempts: 5
+    registrationCodeResendCooldownMs: 60000
+    registrationCodeDailyLimit: 10
+    registrationCodeFailuresPerDay: 20
+    registrationProofMaxAgeMs: 1800000
 
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.

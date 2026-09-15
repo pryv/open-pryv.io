@@ -32,9 +32,9 @@ const require = createRequire(import.meta.url);
  * marked 'failed-permanent' and stops getting picked up; operator can
  * decide whether to delete or hand-process.
  *
- * The loop is run by master workers on an interval (Phase H wires the
- * actual scheduling). This module is pure: it depends only on mall and
- * an injected dispatch function.
+ * The loop is run by master workers on an interval; the actual
+ * scheduling is wired separately. This module is pure: it depends only
+ * on mall and an injected dispatch function.
  */
 
 const C = require('./constants.ts');

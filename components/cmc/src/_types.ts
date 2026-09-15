@@ -114,19 +114,21 @@ export type MallAccessesLike = {
 
 export type MallEventsLike = {
   create: (userId: string, params: MallParams) => Promise<{ id?: string; [k: string]: unknown }>;
-  get: (userId: string, params?: MallParams) => Promise<Array<Record<string, unknown>>>;
+  get: (userId: string, params: MallParams) => Promise<Array<Record<string, unknown>>>;
   update: (userId: string, params: MallParams) => Promise<unknown>;
 };
 
 export type MallStreamsLike = {
-  create: (userId: string, params: MallParams) => Promise<unknown>;
+  create: (userId: string, params: MallParams & { id: string }) => Promise<unknown>;
   getOne?: (userId: string, params?: MallParams) => Promise<unknown>;
   // The real mall's single-stream read (MallUserStreams). Used as the
   // cheap "do the reserved parents already exist?" probe on read paths,
   // where the lazy-provisioning hook now also runs. Optional so unit
   // fakes may omit it (callers then fall back to an idempotent create).
   getOneWithNoChildren?: (userId: string, streamId: string, storeId?: string | null) => Promise<unknown>;
-  delete?: (userId: string, params: MallParams) => Promise<unknown>;
+  // Takes the stream id itself, like the real mall (MallUserStreams.delete),
+  // not a params object: the mall parses the id to route it to its store.
+  delete?: (userId: string, streamId: string) => Promise<unknown>;
 };
 
 /** Full view — modules needing fewer groups compose their own deps type

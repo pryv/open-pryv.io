@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { deriveKey, KEY_BYTES } = require('../acme/AtRestEncryption.ts');
+import { getConfig } from '@pryv/boiler';
+import { deriveKey, KEY_BYTES } from '../acme/AtRestEncryption.ts';
 
 /**
  * Resolve the 32-byte key that encrypts TOTP secrets at rest (operator
@@ -34,7 +33,6 @@ async function resolveTotpKey (totpCfg: TotpCfg | null | undefined): Promise<Buf
     }
     return buf;
   }
-  const { getConfig } = require('@pryv/boiler');
   const config = await getConfig();
   const adminKey = config.get('auth:adminAccessKey');
   if (typeof adminKey === 'string' && adminKey.length > 0) {

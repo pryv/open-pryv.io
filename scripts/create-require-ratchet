@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MAX=339   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
+MAX=332   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
           # converting 10 oauth2 files to real ESM imports. The remaining oauth2
           # shims are legitimate: lazy in-function require() (init-order safety),
           # bcrypt (ships no type declarations), or files whose typed imports
@@ -25,15 +25,13 @@ MAX=339   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
           # keeps an in-function lazy require of the platform barrel (./index.ts)
           # to break a circular dependency (the sanctioned lazy-require exception
           # above, which still counts one file toward MAX).
-          # 330->339: the account-delegation feature added 3 api-server wiring
-          # files (methods/delegations.ts, routes/delegations.ts,
+          # 329->332: merged with master (329 after the oauth2 conversions); the
+          # account-delegation feature adds 3 api-server wiring files
+          # (methods/delegations.ts, routes/delegations.ts,
           # methods/helpers/delegationAccounts.ts) that require workspace packages
-          # via the established createRequire convention used by every other
-          # api-server method file (delegationAccounts.ts also avoids a circular
-          # import with the business component); the remaining rise from the
-          # previous lock is pre-existing shim drift accumulated across sessions.
-          # Re-baselined here; convert back down where feasible during the
-          # TS-migration.
+          # via the established createRequire convention (delegationAccounts.ts also
+          # avoids a business/api-server circular import). Convert down where
+          # feasible during the TS-migration.
 
 COUNT=$(grep -rl --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \
