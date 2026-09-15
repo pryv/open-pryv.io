@@ -8,7 +8,12 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { errorHandling } = require('errors');
+const errors = require('errors').factory;
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
+const challenge = require('business/src/emails/challenge.ts');
+const policy = require('business/src/emails/registrationPolicy.ts');
+const C = require('business/src/emails/constants.ts');
+const timestamp = require('unix-timestamp');
 const { getPlatform } = require('platform');
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
@@ -40,6 +45,7 @@ type NewUserLike = {
 type MethodContext = {
   newUser: NewUserLike;
   user: { id: string; username: string };
+  emailProofVerified?: boolean;
   [k: string]: unknown;
 };
 type RegisterParams = {
@@ -50,6 +56,7 @@ type RegisterParams = {
   email?: string;
   hosting?: unknown;
   invitationToken?: unknown;
+  emailProof?: string;
   [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
@@ -73,11 +80,11 @@ class Registration {
     this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
     // Accept either a literal settings object (legacy) or a 0-arg getter
-// function. When a getter is passed, services config is resolved per-use
-// from the live config singleton — config.set() and injectTestConfig()
-// reach the welcome-mail send path without a restart, and a plugin or
-// override that adds keys later becomes visible.
-this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSettings : () => servicesSettings;
+    // function. When a getter is passed, services config is resolved per-use
+    // from the live config singleton — config.set() and injectTestConfig()
+    // reach the welcome-mail send path without a restart, and a plugin or
+    // override that adds keys later becomes visible.
+    this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSettings : () => servicesSettings;
   }
 
   async init () {
@@ -99,6 +106,30 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       username: context.newUser.username
     };
     next();
+  }
+
+  /**
+   * Registration email gate. When the operator requires a verified address at
+   * sign-up, the request must carry the proof issued by the email-challenge
+   * verify step for the SAME address. Non-consuming: the proof is consumed
+   * only after the user row is committed (createUser), so a username conflict
+   * or a cross-core forward never burns it. Runs before forwardIfCrossCore.
+   */
+  async requireEmailProof (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
+    try {
+      if (!(await policy.isRegistrationVerificationRequired())) return next();
+      if (typeof params.email !== 'string' || params.email.trim() === '') {
+        return next(errors.invalidParametersFormat('An email address is required to create an account on this platform.', { emailVerificationRequired: true }));
+      }
+      const proof = params.emailProof;
+      if (typeof proof !== 'string' || !(await challenge.checkProof(params.email, proof))) {
+        return next(errors.forbidden('Email address not verified: request a verification code and verify it first.', { emailVerificationRequired: true }));
+      }
+      context.emailProofVerified = true;
+      next();
+    } catch (err) {
+      next(err);
+    }
   }
 
   /**
@@ -211,19 +242,28 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       const usersRepository = await getUsersRepository();
       // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);
+      // Gate: the proof is consumed only now that the user row exists; the
+      // founding email is then proved by code, not merely asserted.
+      let provenance: { verificationMethod: string; verifiedAt: number | null } | undefined;
+      if (context.emailProofVerified === true && context.newUser.email != null) {
+        await challenge.consumeProof(context.newUser.email as string);
+        provenance = { verificationMethod: C.METHOD_EMAIL_CODE, verifiedAt: timestamp.now() };
+      }
       // Seed the multi-email container: the initial email is primary and
-      // verified at today's trust level (no verification method). The
-      // PlatformDB row is already owned by the user (created by insertOne), so
-      // this reserves nothing. Best-effort: a container-seed failure must not
-      // fail an otherwise-successful registration; existing users without a
-      // container are handled by account.get's synthesize fallback anyway.
+      // verified at today's trust level (no verification method) unless the
+      // registration gate proved it by code. The PlatformDB row is already
+      // owned by the user (created by insertOne), so this reserves nothing.
+      // Best-effort: a container-seed failure must not fail an
+      // otherwise-successful registration; existing users without a container
+      // are handled by account.get's synthesize fallback anyway.
       if (context.newUser.id != null && context.newUser.email != null) {
         try {
-          await emailsContainer.seedInitial(context.newUser.id, context.newUser.email);
+          await emailsContainer.seedInitial(context.newUser.id, context.newUser.email, undefined, provenance);
         } catch (seedErr) {
           getLogger('registration').warn('failed to seed emails container', {
             username: context.newUser.username,
-            error: seedErr instanceof Error ? seedErr.message : String(seedErr)
+            error: seedErr instanceof Error ? seedErr.message : String(seedErr),
+            ...(provenance != null ? { lostProvenance: provenance.verificationMethod } : {})
           });
         }
       }
@@ -280,7 +320,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
     }
     const emailSettings = this.getServicesSettings()?.email;
     // No email service configured → skip welcome mail silently.
-    // Phase D: on a fresh bundle-bootstrapped core, `services.email` may
+    // On a fresh bundle-bootstrapped core, `services.email` may
     // be absent entirely; the previous code threw
     // "Cannot read properties of undefined (reading 'enabled')" and
     // failed the whole registration response even though createUser had

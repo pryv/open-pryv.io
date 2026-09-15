@@ -270,6 +270,86 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(coreId, null,
         'user-core/' + username + ' must not exist when forward fails');
     });
+
+    // The registration email gate must be decided on the LANDING core, before
+    // the forward: the landing core never proxies a request the target would
+    // reject, and it never consumes a proof the target still needs.
+    describe('[EMCX] registration email gate across cores', function () {
+      const challenge = require('business/src/emails/challenge.ts');
+      const { injectTestConfigSnapshot } = require('test-helpers');
+      // Snapshot/restore rather than config.set: a set() outranks the injected
+      // test scope and would leave the gate forced off for later suites.
+      let restoreGate;
+
+      before(function () {
+        restoreGate = injectTestConfigSnapshot({
+          account: {
+            emailVerification: {
+              requireAtRegistration: true,
+              registrationCodeResendCooldownMs: 0
+            }
+          }
+        });
+      });
+
+      after(function () {
+        restoreGate();
+      });
+
+      it('[EMCX1] refuses an unproved registration before forwarding it', async function () {
+        const username = 'emcx1' + cuid.slug().toLowerCase();
+        forwardHandler = async () => { throw new Error('must not forward'); };
+        const res = await request.post('/users').send({
+          appId: 'test-app',
+          username,
+          email: charlatan.Internet.email(),
+          password: 'testpassword',
+          hosting: 'us-east-1',
+          insurancenumber: charlatan.Number.number(3)
+        });
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'forbidden');
+        assert.strictEqual(forwardCalls.length, 0,
+          'an unproved registration must never reach the target core');
+      });
+
+      it('[EMCX2] forwards the proof and leaves it unconsumed on the landing core', async function () {
+        const username = 'emcx2' + cuid.slug().toLowerCase();
+        const email = 'emcx2-' + cuid.slug().toLowerCase() + '@test.com';
+        const created = await challenge.createChallenge(email);
+        assert.strictEqual(created.ok, true);
+        const verified = await challenge.verifyChallenge(email, created.code);
+        assert.strictEqual(verified.ok, true, JSON.stringify(verified));
+        const proof = verified.proof;
+
+        const fakeTargetApiEndpoint = 'https://tok@' + username + '.' + DOMAIN + '/';
+        forwardHandler = async () => ({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            meta: { apiVersion: '2.0.0-pre.2', serverTime: 1.0 },
+            username,
+            apiEndpoint: fakeTargetApiEndpoint
+          })
+        });
+
+        const res = await request.post('/users').send({
+          appId: 'test-app',
+          username,
+          email,
+          emailProof: proof,
+          password: 'testpassword',
+          hosting: 'us-east-1',
+          insurancenumber: charlatan.Number.number(3)
+        });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        assert.strictEqual(forwardCalls.length, 1);
+        assert.strictEqual(JSON.parse(forwardCalls[0].options.body).emailProof, proof,
+          'the proof must travel with the forwarded body');
+        assert.strictEqual(await challenge.checkProof(email, proof), true,
+          'the landing core must leave the proof for the target core to consume');
+      });
+    });
   });
 
   // ----------------------------------------------------------------

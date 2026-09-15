@@ -18,8 +18,13 @@ const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUti
 const { ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { getPasswordRules, getUsersRepository } = require('business').users;
+const challenge = require('business/src/emails/challenge.ts');
+const policy = require('business/src/emails/registrationPolicy.ts');
+const mailing = require('./../helpers/mailing.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
+type EmailChallengeParams = { email: string; language?: string };
+type EmailChallengeVerifyParams = { email: string; code: string };
 type CheckUsernameParams = { username: string };
 type CheckUniqueParams = Record<string, string>;
 type CoresParams = { username?: string; email?: string };
@@ -62,6 +67,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.getParamsValidation(methodsSchema.register.params),
     enforcePasswordRules,
     registration.prepareUserData.bind(registration),
+    // Registration email gate: refuse an unproved address BEFORE any cross-core
+    // forward, so the landing core never proxies a request the target would reject.
+    registration.requireEmailProof.bind(registration),
     // in multi-core mode, if the selected hosting maps
     // to a different core, transparently HTTPS-proxy the POST to the
     // target core and return its response. Atomic on target; clients
@@ -120,6 +128,118 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       return next(errors.itemAlreadyExists('user', { [field]: params[field] }));
     }
     next();
+  }
+
+  // Registration email challenge: issue a one-time code to an address, then
+  // exchange a correct code for a short-lived proof that `auth.register`
+  // requires. Both are public and inert unless the operator turned the gate on.
+  api.register('auth.emailChallenge',
+    setAuditAccessId(AuditAccessIds.PUBLIC),
+    commonFns.getParamsValidation(methodsSchema.emailChallenge.params),
+    requireGateOn,
+    refuseTakenAddress,
+    createAndMailChallenge);
+
+  api.register('auth.emailChallengeVerify',
+    setAuditAccessId(AuditAccessIds.PUBLIC),
+    commonFns.getParamsValidation(methodsSchema.emailChallengeVerify.params),
+    requireGateOn,
+    verifyChallengeCode);
+
+  // Operator-facing text for each throttle outcome. The reason is also returned
+  // as data so a client can tell "wait a moment" from "come back tomorrow".
+  const THROTTLE_MESSAGES: Record<string, string> = {
+    cooldown: 'Please wait before requesting another verification code.',
+    'daily-limit': 'Too many verification codes were requested for this address today. Please try again later.',
+    'failure-budget': 'Too many failed verification attempts for this address. Please try again later.'
+  };
+
+  async function requireGateOn (_context: MethodContext, _params: unknown, _result: ResultBag, next: MethodNext) {
+    try {
+      if (!(await policy.isRegistrationVerificationRequired())) {
+        return next(errors.forbidden('Email verification at registration is not enabled on this platform.', { emailVerificationRequired: false }));
+      }
+      next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  // Do not mint a code for an address that already belongs to an account: the
+  // challenge only exists to prove an address on the way to creating one.
+  async function refuseTakenAddress (_context: MethodContext, params: EmailChallengeParams, _result: ResultBag, next: MethodNext) {
+    try {
+      if ((await platform.getUsersUniqueField('email', params.email)) != null) {
+        return next(errors.itemAlreadyExists('user', { email: params.email }));
+      }
+      next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  async function createAndMailChallenge (_context: MethodContext, params: EmailChallengeParams, result: ResultBag, next: MethodNext) {
+    try {
+      const outcome = await challenge.createChallenge(params.email);
+      if (!outcome.ok) {
+        return next(errors.tooManyAttempts(outcome.retryAfterSeconds, {
+          message: THROTTLE_MESSAGES[outcome.reason],
+          data: { reason: outcome.reason, retryAfterSeconds: outcome.retryAfterSeconds }
+        }));
+      }
+      try {
+        await deliverEmailChallenge(params.email, params.language, outcome.code, outcome.expiresAt);
+      } catch (err) {
+        // The code was minted but never reached the address: release the row
+        // and the cooldown slot so the caller can retry immediately.
+        await challenge.discardChallenge(params.email);
+        return next(err);
+      }
+      result.sent = true;
+      next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  // Deliver one challenge mail. The plaintext code lives only in this call; it
+  // is never logged and (unlike the link flow) never put in the subject.
+  function deliverEmailChallenge (email: string, lang: string | undefined, code: string, expiresAt: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const emailSettings = config.get('services:email');
+      const recipient = { email, name: email, type: 'to' };
+      const substitutions = {
+        CODE: challenge.formatCode(code),
+        EMAIL: email,
+        CODE_MAX_AGE_MINUTES: String(Math.max(1, Math.round((expiresAt - Date.now()) / 60000)))
+      };
+      mailing.sendmail(emailSettings, emailSettings.emailChallengeTemplate || 'email-challenge', recipient, substitutions,
+        lang || emailSettings.defaultLang || 'en',
+        (err?: Error | null) => (err != null ? reject(err) : resolve()));
+    });
+  }
+
+  async function verifyChallengeCode (_context: MethodContext, params: EmailChallengeVerifyParams, result: ResultBag, next: MethodNext) {
+    try {
+      const outcome = await challenge.verifyChallenge(params.email, params.code);
+      if (outcome.ok) {
+        result.emailProof = outcome.proof;
+        return next();
+      }
+      if (outcome.reason === 'exhausted') {
+        return next(errors.tooManyAttempts(undefined, {
+          message: 'Too many failed attempts for this code. Request a new code.',
+          data: { reason: 'exhausted' }
+        }));
+      }
+      // Uniform answer for "no challenge" and "wrong code" so the endpoint does
+      // not disclose whether a challenge is pending for the address.
+      const err = errors.invalidAccessToken('The verification code is invalid or expired.');
+      err.data = { attemptsRemaining: outcome.attemptsRemaining };
+      return next(err);
+    } catch (err) {
+      return next(err);
+    }
   }
 
   // Core discovery — find which core hosts a given user

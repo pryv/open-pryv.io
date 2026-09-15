@@ -15,6 +15,8 @@ const ALL_METHODS = [
   'auth.register',
   'auth.usernameCheck',
   'auth.emailCheck',
+  'auth.emailChallenge',
+  'auth.emailChallengeVerify',
   'auth.cores',
   'auth.delete',
   'mfa.activate',
@@ -114,6 +116,8 @@ const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m)
 // doesnt include non-audited ones
 const WITHOUT_USER_METHODS = [
   'auth.register',
+  'auth.emailChallenge',
+  'auth.emailChallengeVerify',
   'auth.delete',
   'system.createUser',
   'system.deactivateMfa',
