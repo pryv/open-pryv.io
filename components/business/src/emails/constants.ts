@@ -47,12 +47,14 @@ export const STATUS_VERIFIED = 'verified';
  * data (read-only, never written again) and counts as NOT proved.
  *
  *   email-link    proved: the holder clicked a mailed one-time token.
+ *   email-code    proved: the holder pasted a mailed one-time code at registration.
  *   operator      proved: set by the root-trusted operator seam.
  *   registration  asserted: the account's founding email (today's trust level,
  *                 never link-proved) — see the D2 policy decision.
  *   legacy        asserted: set by legacy `account.update {email}` with no proof.
  */
 export const METHOD_EMAIL_LINK = 'email-link';
+export const METHOD_EMAIL_CODE = 'email-code';
 export const METHOD_OPERATOR = 'operator';
 export const METHOD_REGISTRATION = 'registration';
 export const METHOD_LEGACY = 'legacy';
@@ -64,7 +66,7 @@ export const METHOD_LEGACY = 'legacy';
  * must trust ownership (e.g. SSO email matching) MUST gate on
  * {@link isProvedOwnership}, never on `status` alone.
  */
-export const PROVED_METHODS = Object.freeze([METHOD_EMAIL_LINK, METHOD_OPERATOR]);
+export const PROVED_METHODS = Object.freeze([METHOD_EMAIL_LINK, METHOD_EMAIL_CODE, METHOD_OPERATOR]);
 
 /** True only when the email's ownership was actually proved (see PROVED_METHODS). */
 export function isProvedOwnership (content: { status?: unknown; verificationMethod?: unknown }): boolean {
@@ -84,6 +86,19 @@ export const DEFAULT_TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Default resend cooldown when config is unset: 5 minutes (ms). */
 export const DEFAULT_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Registration email challenge defaults (see `account.emailVerification.*`).
+ * The code is short and human-typable, so its lifetime is minutes rather than
+ * the link token's hours, and the attempt budgets carry the brute-force
+ * argument.
+ */
+export const DEFAULT_REGISTRATION_CODE_MAX_AGE_MS = 10 * 60 * 1000;
+export const DEFAULT_REGISTRATION_CODE_MAX_ATTEMPTS = 5;
+export const DEFAULT_REGISTRATION_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+export const DEFAULT_REGISTRATION_CODE_DAILY_LIMIT = 10;
+export const DEFAULT_REGISTRATION_CODE_FAILURES_PER_DAY = 20;
+export const DEFAULT_REGISTRATION_PROOF_MAX_AGE_MS = 30 * 60 * 1000;
 
 /** True for the container stream (with or without the trailing marker). */
 export function isEmailStreamId (streamId: unknown): boolean {

@@ -23,6 +23,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const C = require('cmc');
+const { getMall } = require('mall');
 
 describe('[CMCNS] cmc namespace + write-hook integration', function () {
   let username, token, basePath, eventsPath;
@@ -478,6 +479,80 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         .set('Authorization', v.token)
         .send({ id: appScope, parentId: C.NS_APPS, name: 'After read' });
       assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+    });
+  });
+
+  describe('[CMCNS-INTERNAL] the plugin-internal subtree is never leaked by client reads', function () {
+    // Seed an internal event exactly as the plugin's retry queue does — via the
+    // mall, bypassing the api-server route (user code cannot write here). Then
+    // assert no client read path surfaces it. The content carries a canary plus
+    // a controlApiEndpoint-shaped field to mirror the credential-leak concern.
+    let iv;
+    const CANARY = 'CMC-INTERNAL-LEAK-CANARY-' + cuid();
+
+    before(async function () {
+      const mall = await getMall();
+      const uname = cuid();
+      const utoken = cuid();
+      const u = await fixtures.user(uname);
+      await u.access({ token: utoken, type: 'personal' });
+      await u.session(utoken);
+      iv = { username: uname, token: utoken };
+      // Provision the reserved parents (incl. the internal subtree) the same way
+      // the plugin does, then write the internal canary event under it.
+      await C.provisionUserStreams({ mall, userId: uname });
+      await mall.events.create(uname, {
+        streamIds: [C.NS_INTERNAL_RETRIES],
+        type: C.ET_RETRY,
+        content: { canary: CANARY, controlApiEndpoint: 'https://leak.invalid/control' },
+      });
+    });
+
+    function leaks (events) {
+      return (events || []).filter((e) =>
+        JSON.stringify(e.content ?? '').includes(CANARY) ||
+        (e.streamIds || []).some((s) => String(s).startsWith(C.NS_INTERNAL)));
+    }
+
+    it('[CI01] default `*` events.get never expands into :_cmc:_internal', async function () {
+      const res = await coreRequest.get('/' + iv.username + '/events')
+        .set('Authorization', iv.token).query({ limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(leaks(res.body.events).length, 0, 'default `*` leaked an internal event');
+    });
+
+    it('[CI02] explicit `[*]` events.get never expands into :_cmc:_internal', async function () {
+      const res = await coreRequest.get('/' + iv.username + '/events')
+        .set('Authorization', iv.token).query({ streams: ['*'], limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(leaks(res.body.events).length, 0, 'explicit `*` leaked an internal event');
+    });
+
+    it('[CI03] a single-value direct-target internal read returns nothing', async function () {
+      const res = await coreRequest.get('/' + iv.username + '/events')
+        .set('Authorization', iv.token)
+        .query({ streams: C.NS_INTERNAL_RETRIES, limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(leaks(res.body.events).length, 0, 'single-value internal target leaked');
+    });
+
+    it('[CI04] a logical-query targeting an internal id has it scrubbed', async function () {
+      // Mix a legit stream so the query stays valid after the internal id is
+      // scrubbed — this exercises the logical-query hardening (any/all/not).
+      const res = await coreRequest.get('/' + iv.username + '/events')
+        .set('Authorization', iv.token)
+        .query({ streams: JSON.stringify([{ any: [C.NS_INBOX, C.NS_INTERNAL_RETRIES] }]), limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(leaks(res.body.events).length, 0, 'logical-query internal target leaked');
+    });
+
+    it('[CI05] streams.get does not expose the :_cmc:_internal subtree', async function () {
+      const sg = await coreRequest.get('/' + iv.username + '/streams').set('Authorization', iv.token);
+      assert.strictEqual(sg.status, 200);
+      const flat = [];
+      (function walk (nodes) { for (const n of (nodes || [])) { flat.push(n.id); walk(n.children); } })(sg.body.streams);
+      assert.ok(!flat.some((s) => String(s).startsWith(C.NS_INTERNAL)),
+        'streams.get must not expose :_cmc:_internal');
     });
   });
 });

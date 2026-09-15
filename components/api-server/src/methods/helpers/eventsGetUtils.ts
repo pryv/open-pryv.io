@@ -23,6 +23,13 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const SHARED_SECRETS_NS_ROOT = ':_shared-secrets:';
 /** Multiple-emails container — excluded from wildcard queries (surfaces only when named). */
 const EMAILS_NS_ROOT = ':_emails:';
+// Hidden plugin-internal namespace roots, sourced from the owning plugins so a
+// namespace rename can never silently reopen the wildcard hole. Their internal
+// subtrees hold plugin-private records — including a cross-account control
+// credential — and must never answer a wildcard "give me everything" read.
+// Excluded from `*` expansion the same way shared-secrets / emails are.
+const DELEGATION_INTERNAL_NS_ROOT = require('delegation').NS_INTERNAL;
+const CMC_INTERNAL_NS_ROOT = require('cmc').NS_INTERNAL;
 const integrity = require('business/src/integrity/index.ts').default;
 import type { MethodNext } from '../_types.ts';
 import type { Readable as ReadableStream } from 'node:stream';
@@ -366,6 +373,16 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
       // its verified/pending status must never leak into a "give me everything"
       // sweep. Personal tokens read it by naming :_emails: directly.
       streamQuery.not.push(EMAILS_NS_ROOT);
+      // Hidden plugin-internal subtrees never answer a wildcard read. A `*`
+      // survives here for a personal token (or any token granted `*` read), and
+      // the account-scoped exclusions below do NOT cover these plugin roots — so
+      // without this a "give me everything" read would sweep up the delegation
+      // A-side mirror (a bearer onto another account) and CMC internal state.
+      // The plugins reach their own subtrees via the data-access layer, so this
+      // narrows only the client-facing `*` expansion. Named/direct reads are
+      // closed by the per-plugin internal read guards.
+      streamQuery.not.push(DELEGATION_INTERNAL_NS_ROOT);
+      streamQuery.not.push(CMC_INTERNAL_NS_ROOT);
     }
 
     // ------------- NOT ------------- //

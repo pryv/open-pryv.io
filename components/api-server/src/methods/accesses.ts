@@ -49,7 +49,8 @@ function notifyScopedAccessChange (username: string, access: { id?: string; type
   });
 }
 const cmc = require('cmc');
-const { getLogger } = require('@pryv/boiler');
+const delegation = require('delegation');
+const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -109,6 +110,7 @@ type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?:
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
+  const config = await ready();
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
   // Composed CMC mall (with `.accesses`) for the accesses.delete post-hook.
@@ -266,12 +268,31 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     logger: getLogger('cmc:access-provision-app-scope'),
   });
 
+  // Account-delegation guard hooks. Gated on `delegation:active` (default
+  // true). When inactive each slot is a passthrough so the register chains
+  // below stay structurally identical.
+  const delegationActive = config.get('delegation:active') !== false;
+  const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
+  const delegationAccessCreateForgePreventionHook = delegationActive
+    ? delegation.createAccessCreateForgePreventionHook({ errors })
+    : delegationPassthrough;
+  const delegationAccessUpdateForgePreventionHook = delegationActive
+    ? delegation.createAccessUpdateForgePreventionHook({ errors })
+    : delegationPassthrough;
+  const delegationAccessesUpdateGuardHook = delegationActive
+    ? delegation.createAccessesUpdateGuardHook({ errors })
+    : delegationPassthrough;
+  const delegationAccessesDeleteGuardHook = delegationActive
+    ? delegation.createAccessesDeleteGuardHook({ errors })
+    : delegationPassthrough;
+
   api.register(
     'accesses.create',
     commonFns.basicAccessAuthorizationCheck,
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcAccessCreateForgePreventionHook,
+    delegationAccessCreateForgePreventionHook,
     dpopBindingCreateGuard,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
     createDataStructureFromPermissions,
@@ -525,7 +546,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
     cmcAccessUpdateForgePreventionHook,
+    delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
+    delegationAccessesUpdateGuardHook,
     dpopBindingUpdateGuard,
     oauthNameUpdateGuard,
     enforceUpdateChainRules,
@@ -591,9 +614,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
-    // findOne filters head_id IS NULL + deleted IS NULL (Phase A), so a
-    // soft-deleted access also returns null — Q12.2=a treats it as
-    // unknownResource. No info leak via differentiated error.
+    // findOne filters head_id IS NULL + deleted IS NULL, so a soft-deleted
+    // access also returns null and is reported as unknownResource, the same
+    // as one that never existed. No info leak via differentiated error.
     if (access == null) {
       return next(errors.unknownResource('access', params.id));
     }
@@ -846,6 +869,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkAccessForDeletion,
     findRelatedAccesses,
+    delegationAccessesDeleteGuardHook,
     deleteAccesses,
     cmcAccessesDeletePostHookMiddleware
   );

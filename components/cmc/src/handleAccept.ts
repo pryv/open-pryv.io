@@ -378,7 +378,7 @@ async function handleAccept (params: {
       } catch (_e) {
         // Best-effort rollback. If the rollback fails, operator cleanup
         // will catch the orphan via the standard "access without paired
-        // back-channel" pruning script (planned in Phase J).
+        // back-channel" pruning script (not shipped yet).
       }
       return {
         ok: false,
@@ -573,8 +573,8 @@ async function handleRefuse (params: {
  *   1. offer.content.requesterMeta.username (if app sets it)
  *   2. offer.content.requesterMeta.from.username (alternate shape)
  *   3. null — operator-side schema enforcement should ensure one of the
- *      above. Future Phase E may stamp the username server-side as the
- *      access's owner.
+ *      above. A future revision may stamp the username server-side as
+ *      the access's owner.
  *
  * The host comes from the capability URL.
  */

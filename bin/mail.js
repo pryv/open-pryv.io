@@ -20,7 +20,7 @@
 //   node bin/mail.js templates get <type> <lang> <part>
 //   node bin/mail.js templates set <type> <lang> <part> --file <path>
 //   node bin/mail.js templates delete <type> <lang> [part]
-//   node bin/mail.js templates seed --from <dir>
+//   node bin/mail.js templates seed [--from <dir>]
 //   node bin/mail.js send-test <type> <lang> <recipient-email>
 
 const path = require('node:path');
@@ -161,8 +161,9 @@ async function runDelete (platformDB, args) {
 }
 
 async function runSeed (platformDB, args) {
-  if (!args.from) throw new Error('templates seed: --from <dir> is required');
-  const root = path.resolve(args.from);
+  const root = args.from
+    ? path.resolve(args.from)
+    : path.resolve(__dirname, '../components/mail/templates');
   try { await fs.access(root); } catch (_) {
     throw new Error(`templates seed: directory not readable at ${root}`);
   }
@@ -255,10 +256,10 @@ function printUsage (stream) {
   stream.write('  node bin/mail.js templates get <type> <lang> <part>\n');
   stream.write('  node bin/mail.js templates set <type> <lang> <part> --file <path>\n');
   stream.write('  node bin/mail.js templates delete <type> <lang> [part]\n');
-  stream.write('  node bin/mail.js templates seed --from <dir>\n');
+  stream.write('  node bin/mail.js templates seed [--from <dir>]   (default: the bundled template set)\n');
   stream.write('  node bin/mail.js send-test <type> <lang> <recipient-email>\n');
   stream.write('\n');
   stream.write('<part> is "html" or "subject" (without the .pug suffix).\n');
-  stream.write('The seed subcommand OVERWRITES existing rows; for empty-only seeding\n');
-  stream.write('point services.email.templatesRootDir at the dir and restart master.\n');
+  stream.write('The seed subcommand OVERWRITES existing rows; for empty-only seeding,\n');
+  stream.write('leave services.email.templatesRootDir empty and restart master.\n');
 }

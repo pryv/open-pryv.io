@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
  *
  * This module exposes those steps as separate, unit-testable functions.
  * The full orchestration loop wires them together with retry + status
- * updates (deferred to a higher-level dispatch loop in Phase E).
+ * updates (deferred to a higher-level dispatch loop).
  *
  * Refuse is the same shape minus the data-grant creation: just deliver
  * the refusal via the capability connection.

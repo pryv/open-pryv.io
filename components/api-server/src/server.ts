@@ -146,6 +146,7 @@ class Server {
     await require('./methods/profile.ts').default(app.api);
     await require('./methods/streams.ts').default(app.api);
     await require('./methods/events.ts').default(app.api);
+    await require('./methods/delegations.ts').default(app.api);
     this.logger.debug('api methods registered');
     // Telemetry starts HERE, not in Application.initiate(): the registry is
     // only complete once the lines above have run, and those method ids are

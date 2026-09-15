@@ -35,6 +35,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), (req: PryvRequest, res: Response, next: NextFunction) => {
     api.call(req.context, req.params, methodCallback(res, next, 200));
   });
+  // Registration email challenge (public, inert unless the gate is on).
+  expressApp.post(path.join(regPath, '/email-challenge'), setMinimalMethodContext, setMethodId('auth.emailChallenge'), (req: PryvRequest, res: Response, next: NextFunction) => {
+    api.call(req.context, req.body, methodCallback(res, next, 200));
+  });
+  expressApp.post(path.join(regPath, '/email-challenge/verify'), setMinimalMethodContext, setMethodId('auth.emailChallengeVerify'), (req: PryvRequest, res: Response, next: NextFunction) => {
+    api.call(req.context, req.body, methodCallback(res, next, 200));
+  });
   expressApp.post(path.join(regPath, '/user'), setMinimalMethodContext, setMethodId('auth.register'), function (req: PryvRequest, res: Response, next: NextFunction) {
     (req.context as { host?: string }).host = req.headers.host;
     if (req.body) { req.body.appId = req.body.appid; }

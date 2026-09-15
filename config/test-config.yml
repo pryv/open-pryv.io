@@ -7,8 +7,9 @@ auth:
   # `services.email.enabled = true` (e.g. [G1VN], [HZCU] in account-seq).
   # The URL itself doesn't matter for tests — they mock the SMTP transport.
   passwordResetPageURL: 'http://test.pryv.local/reset-password'
-  # Same, for the verify-email REQUIRED_WHEN when a test sets
-  # `services.email.enabled.verifyEmail = true` (e.g. [VEML*]).
+  # The feature ships on by default; the test config keeps it OFF explicitly so
+  # mail-sending paths stay opt-in per test. This URL backs the verify-email
+  # REQUIRED_WHEN for the tests that opt in (e.g. [VEML*]).
   emailVerificationPageURL: 'http://test.pryv.local/verify-email'
 logs:
   console:

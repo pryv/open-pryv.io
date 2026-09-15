@@ -147,4 +147,21 @@ describe('[SSOLI] SSO linking over the real platform', function () {
     assert.deepEqual(after, { kind: 'login', username: u.username });
     assert.strictEqual(await deps.getBinding(id.provider, id.sub), u.username);
   });
+
+  it('[SSOLI7] R5: an address proved by registration code links like a link-proved one', async function () {
+    // An account created through the registration email gate has its founding
+    // address proved by a mailed code, so it must satisfy the same takeover
+    // gate as a link-proved address. This is the SSO-visible consequence of
+    // adding email-code to PROVED_METHODS.
+    const email = cuid() + '@bycode.example.com';
+    const u = await makeUser(cuid() + '@primary.example.com');
+    await addEmail(u, email, C.METHOD_EMAIL_CODE);
+    const entry = await container.findRawByValue(u.userId, email);
+    assert.strictEqual(C.isProvedOwnership(entry.content), true, 'email-code must count as proved');
+
+    const id = identity({ email });
+    const out = await resolveAccountForIdentity(deps, id);
+    assert.deepEqual(out, { kind: 'login', username: u.username });
+    assert.strictEqual(await deps.getBinding(id.provider, id.sub), u.username);
+  });
 });

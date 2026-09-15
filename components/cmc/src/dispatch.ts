@@ -282,7 +282,7 @@ async function dispatch (params: {
         break;
       case C.ET_REQUEST:
         // request triggers are handled separately by a capability-mint
-        // middleware (Phase D slice 2). Dispatch loop is a no-op here.
+        // middleware. Dispatch loop is a no-op here.
         return { handled: false, eventType: event.type, status: 'skipped', reason: 'request-handled-elsewhere' };
       case C.ET_SYSTEM_ALERT:
         result = await handleSystemMod.handleSystemAlert({

@@ -20,7 +20,7 @@ const contextSource = {
 };
 
 describe('[MCTX] MethodContext', () => {
-  describe('[MC01] #parseAuth', () => {
+  describe('[MCTX1] #parseAuth', () => {
     const username = 'USERNAME';
     const customAuthStep = null;
     it('[ZRW8] should parse token out', () => {
@@ -35,7 +35,7 @@ describe('[MCTX] MethodContext', () => {
     });
   });
 
-  describe('[MC02] #retrieveAccessFromId', () => {
+  describe('[MCTX2] #retrieveAccessFromId', () => {
     const username = 'USERNAME';
     const customAuthStep = null;
     let access;
@@ -66,7 +66,7 @@ describe('[MCTX] MethodContext', () => {
     });
   });
 
-  describe('[MC03] #_retrieveAccess set-after-unset cache fence', () => {
+  describe('[MCTX3] #_retrieveAccess set-after-unset cache fence', () => {
     const username = 'USERNAME';
     const customAuthStep = null;
     let mc, userId, staleAccess;

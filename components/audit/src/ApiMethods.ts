@@ -15,6 +15,8 @@ const ALL_METHODS = [
   'auth.register',
   'auth.usernameCheck',
   'auth.emailCheck',
+  'auth.emailChallenge',
+  'auth.emailChallengeVerify',
   'auth.cores',
   'auth.delete',
   'mfa.activate',
@@ -63,6 +65,24 @@ const ALL_METHODS = [
   'events.delete',
   'events.getAttachment',
   'events.deleteAttachment',
+  // Account-delegation method family. Client-facing handshake + lists plus the
+  // core-to-core controlled-side responses. Declared so the audit filter and
+  // the method-registration gate recognise them.
+  'delegations.requestAttach',
+  'delegations.acceptAttach',
+  'delegations.refuseAttach',
+  'delegations.cancelInvite',
+  'delegations.detachDelegate',
+  'delegations.dismissControlled',
+  'delegations.createAccount',
+  'delegations.listDelegates',
+  'delegations.listControlled',
+  'delegations.getToken',
+  'delegations.acceptResponse',
+  'delegations.refuseResponse',
+  'delegations.acceptComplete',
+  'delegations.issueToken',
+  'delegations.notifyDetach',
   'system.checkPlatformIntegrity',
   'system.createUser',
   'system.deactivateMfa',
@@ -114,6 +134,8 @@ const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m)
 // doesnt include non-audited ones
 const WITHOUT_USER_METHODS = [
   'auth.register',
+  'auth.emailChallenge',
+  'auth.emailChallengeVerify',
   'auth.delete',
   'system.createUser',
   'system.deactivateMfa',

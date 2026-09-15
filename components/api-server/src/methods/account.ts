@@ -10,6 +10,7 @@ import type { MethodContext as BaseMethodContext } from 'business/src/MethodCont
 
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
+const { describeVerificationMail } = require('business/src/emails/mailCapability.ts');
 
 /** The user business object loaded from the users repository — the slice
  *  this pipeline touches. */
@@ -365,21 +366,29 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // Mirror sendPasswordResetMail's gating: the whole email feature off, or the
   // verifyEmail class specifically off, means no verification mail is sent.
   function isVerifyMailEnabled (): boolean {
-    const enabled = getEmail().enabled;
-    if (enabled === false) return false;
-    if (enabled != null && typeof enabled === 'object' && enabled.verifyEmail === false) return false;
-    return true;
+    return describeVerificationMail(config).enabled;
   }
 
   // Deliver one verification mail. The plaintext token is used only here, to
   // build the link and substitutions; it is never persisted (only its hash is).
   // The REQUIRED_WHEN boot check guarantees `auth.emailVerificationPageURL` is
   // populated when the verification mail is enabled.
+  //
+  // The link carries the username as well as the token: the landing page has to
+  // address `/:username/account/verify-email`, and it cannot derive the username
+  // from the address, because PlatformDB stores emails hashed when the operator
+  // enables that mode.
   function deliverVerifyEmail (recipientEmail: string, username: string, lang: string, token: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const emailSettings = getEmail();
       const pageURL = getAuth().emailVerificationPageURL;
-      const verifyLink = pageURL + '?verifyToken=' + encodeURIComponent(token);
+      // The operator's page URL may already carry a query (the reference app
+      // needs `pryvServiceInfoUrl` on it), so pick the separator rather than
+      // always appending '?', which would fold our parameters into the value
+      // of the operator's last one.
+      const separator = pageURL.includes('?') ? '&' : '?';
+      const verifyLink = pageURL + separator + 'verifyToken=' + encodeURIComponent(token) +
+        '&username=' + encodeURIComponent(username);
       const recipient = { email: recipientEmail, name: username, type: 'to' };
       const substitutions = {
         VERIFY_TOKEN: token,

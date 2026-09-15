@@ -401,6 +401,63 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
+  // --------------------- account delegation (cross-core invite) ----------------- //
+  // B's core delivers (or cancels) a delegation invite to A's core. Admin-key
+  // gated by the /system/* guard above. Writes the A-side mirror through the
+  // plugin's data-access layer (never the guarded routes). Idempotent per relId.
+  expressApp.post(Paths.System + '/delegation/invite', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+    try {
+      if (config.get('delegation:active') === false) {
+        return next(errors.unknownResource());
+      }
+      const { buildMallForCmc } = require('../methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const delegation = require('delegation');
+      const mall = await buildMallForCmc();
+      const usersRepository = await getUsersRepository();
+      const payload = Object.assign({ action: 'create' }, req.body);
+      const result = await delegation.handleSystemInvite({
+        mall,
+        now: () => Math.floor(Date.now() / 1000),
+        resolveLocalUserId: async (username: string) => {
+          try { return (await usersRepository.getUserIdForUsername(username)) ?? null; } catch (_e) { return null; }
+        }
+      }, payload);
+      res.status(200).json(result);
+    } catch (err) {
+      if (err != null && typeof (err as { id?: string }).id === 'string' && (err as { httpStatus?: number }).httpStatus != null) {
+        const e = err as { id: string; message: string; httpStatus: number };
+        return res.status(e.httpStatus).json({ error: { id: e.id, message: e.message } });
+      }
+      logger.error('delegation/invite handler failed: ' + errMessage(err));
+      next(err);
+    }
+  });
+  // --------------------- account delegation (cross-core create) ----------------- //
+  // A's core → the target core: create a brand-new controlled account, active at
+  // birth (optional email, optional password → random hash). Admin-key gated by
+  // the /system/* guard above. Claims the username platform-wide + creates the
+  // user through the repository path, then writes the active anchor + mints the
+  // control access; any failure after the claim rolls the whole account back.
+  expressApp.post(Paths.System + '/delegation/create-account', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+    try {
+      if (config.get('delegation:active') === false) {
+        return next(errors.unknownResource());
+      }
+      const { buildSystemCreateAccountDeps } = require('../methods/helpers/delegationAccounts.ts');
+      const delegation = require('delegation');
+      const deps = await buildSystemCreateAccountDeps();
+      const result = await delegation.handleSystemCreateAccount(deps, req.body);
+      res.status(200).json(result);
+    } catch (err) {
+      if (err != null && typeof (err as { id?: string }).id === 'string' && (err as { httpStatus?: number }).httpStatus != null) {
+        const e = err as { id: string; message: string; httpStatus: number };
+        return res.status(e.httpStatus).json({ error: { id: e.id, message: e.message } });
+      }
+      logger.error('delegation/create-account handler failed: ' + errMessage(err));
+      next(err);
+    }
+  });
   // --------------------- health checks ----------------- //
   expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));

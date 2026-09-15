@@ -244,17 +244,21 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
   // predicates expect, so they see exactly what boiler would hand them for a
   // deployment that overrides nothing.
   function defaultConfig () {
+    const get = (key) => key.split(':').reduce(
+      (node, seg) => (node == null ? undefined : node[seg]), defaults);
     return {
-      get: (key) => key.split(':').reduce(
-        (node, seg) => (node == null ? undefined : node[seg]), defaults)
+      get,
+      // The soft-landing rule asks WHERE a value came from: everything here is
+      // the shipped file, so the page URL must not become required.
+      getScopeAndValue: (key) => ({ value: get(key), scope: 'default-file', info: '' })
     };
   }
 
-  it('[CV-DEF-01] verifyEmail ships OFF (beta sub-feature)', () => {
-    assert.strictEqual(defaults.services.email.enabled.verifyEmail, false,
-      'services.email.enabled.verifyEmail must ship false: turning it on makes ' +
-      'auth.emailVerificationPageURL required, which breaks the boot of every ' +
-      'previously-valid config that does not define it');
+  it('[CV-DEF-01] verifyEmail ships ON', () => {
+    assert.strictEqual(defaults.services.email.enabled.verifyEmail, true,
+      'services.email.enabled.verifyEmail must ship true: the feature is general ' +
+      'availability. The page URL is only required when an operator sets this key ' +
+      'explicitly, so a config that never mentions it still boots');
   });
 
   it('[CV-DEF-02] the shipped defaults do not make emailVerificationPageURL required', () => {
@@ -272,6 +276,80 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
     // Deliberately NOT asserting zero problems: default-config legitimately
     // leaves adminAccessKey / filesReadTokenSecret / passwordResetPageURL for
     // the operator to supply, and those SHOULD refuse to boot when unset.
+  });
+
+  // The soft landing: on by default, but only an operator who asked for the
+  // feature explicitly is held to supplying the page URL.
+  describe('[CV-GA] default-on email verification', () => {
+    let collectWarnings;
+
+    before(() => {
+      ({ collectWarnings } = require('../../../config/plugins/config-validation.js'));
+    });
+
+    /** A config whose every value reports the given scope. */
+    function scopedConfig (values, scope) {
+      const get = (key) => key.split(':').reduce(
+        (node, seg) => (node == null ? undefined : node[seg]), values);
+      return {
+        get,
+        getScopeAndValue: (key) => ({ value: get(key), scope, info: '' })
+      };
+    }
+
+    const GATE_VALUES = {
+      services: { email: { enabled: { verifyEmail: true }, method: 'mandrill', url: 'https://mail.example.com/send', key: 'k' } },
+      auth: {}
+    };
+
+    it('[CV-GA1] an inherited default with no page URL warns instead of refusing the boot', () => {
+      const config = scopedConfig(GATE_VALUES, 'default-file');
+      const problems = [];
+      checkRequiredWhen(config, problems);
+      assert.strictEqual(
+        problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL'),
+        undefined,
+        'a value inherited from the shipped file must not make the URL required');
+
+      const warnings = collectWarnings(config);
+      assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0], /emailVerificationPageURL/);
+    });
+
+    it('[CV-GA2] an operator who set the flag is held to supplying the page URL', () => {
+      const config = scopedConfig(GATE_VALUES, 'override-file');
+      const problems = [];
+      checkRequiredWhen(config, problems);
+      assert.ok(
+        problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL'),
+        'an explicitly-set flag must still require the URL');
+      assert.deepStrictEqual(collectWarnings(config), [],
+        'a hard problem must not also be reported as a warning');
+    });
+
+    it('[CV-GA3] an explicitly-off platform is neither a problem nor a warning', () => {
+      const config = scopedConfig({
+        services: { email: { enabled: { verifyEmail: false }, method: 'mandrill', url: 'u', key: 'k' } },
+        auth: {}
+      }, 'override-file');
+      const problems = [];
+      checkRequiredWhen(config, problems);
+      assert.strictEqual(
+        problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL'),
+        undefined);
+      assert.deepStrictEqual(collectWarnings(config), []);
+    });
+
+    it('[CV-GA4] a default-on platform with an incomplete mail setup says which keys are missing', () => {
+      const config = scopedConfig({
+        services: { email: { enabled: { verifyEmail: true }, method: 'in-process' } },
+        auth: { emailVerificationPageURL: 'https://app.example.com/verify-email' }
+      }, 'default-file');
+      const warnings = collectWarnings(config);
+      assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0], /services\.email' is incomplete/);
+      assert.match(warnings[0], /smtp\.host/);
+    });
   });
 });
 

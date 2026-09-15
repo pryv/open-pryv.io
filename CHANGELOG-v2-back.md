@@ -17,6 +17,77 @@ counterparty-marked, so an inbox arrival is peer-delivered by construction.
 Dispatch also keeps its in-memory copy of the event content in step with the
 `status: 'delivered'` stamp it writes, so a handler that rewrites `content`
 afterwards carries the status forward instead of dropping it.
+## delegation: account-delegation plugin + internal read/namespace hardening
+
+New `components/delegation/` plugin owning the `:_delegation:*` namespace:
+forge-prevention on `clientData.delegation` (create + update), lifecycle protection
+(delegation-marker accesses and `:_delegation:*` events are undeletable/unupdatable
+via the generic APIs by any token, including personal), reserved-namespace write
+protection, and internal-subtree read guards. The delegate token is a session-backed
+personal access minted like the login flow, discriminated by a forge-protected
+`clientData.delegation` marker whose ABSENCE is exactly what the genuine-login detach
+gate checks. Post-invite handshake delivery is modeled as marker-authenticated
+controlled-side method calls (not stream writes) so the namespace write-guard stays
+blanket; activation is synchronous with idempotent re-accept, holding an
+at-most-one-control-access-per-relationship invariant.
+
+Hardening shipped alongside: the hidden plugin-internal namespaces
+(`:_delegation:_internal` and `:_cmc:_internal`) are now excluded from wildcard `*`
+event reads via the same seam that hides shared-secrets and emails — closing a leak
+where a `*` read could return the delegation A-side mirror event (which carries a
+control-channel bearer onto another account) and the equivalent pre-existing CMC
+internal state. The CMC internal-read guard was also hardened for single-value and
+logical-query forms. Fixed a latent production crash: relationship-id generation
+required `cuid`, a devDependency pruned from production builds — switched to the
+standard `@paralleldrive/cuid2`.
+## emails: registration challenge module, shared token helpers, mail-capability predicates
+
+- `business/src/emails/tokens.ts` now owns `mintToken` / `hashToken` /
+  `hashEquals` (moved out of `operations.ts`, no behaviour change) so the
+  registration challenge and the container verification share one
+  implementation.
+- `business/src/emails/challenge.ts`: PlatformDB access-state rows keyed by the
+  sha256 of the lower-cased address (`email-challenge/<hash>` for the code and
+  then the proof, `email-challenge-sent/`, `-daily/`, `-fails/` for the
+  throttles). Attempt accounting is exact under concurrency: the row is
+  consumed atomically and re-installed with `setAccessStateIfAbsent`, so
+  parallel guesses cannot share a counter read. Rows expire by TTL and are
+  removed by the master's existing access-state sweep.
+- `business/src/emails/mailCapability.ts`: `describeMailCapability` (static,
+  method-aware "is mail configured", no SMTP probe by design) and
+  `describeVerificationMail` (`{ enabled, reason, explicit }`), the single
+  predicate behind the boot validator, `isVerifyMailEnabled` and
+  `service.info`, so the three cannot disagree. `explicit` uses boiler's
+  `getScopeAndValue` to tell an operator-set `verifyEmail` from the shipped
+  default (`default-file` scope).
+- `config/plugins/config-validation.js`: the `auth:emailVerificationPageURL`
+  REQUIRED_WHEN now fires only for an explicit `verifyEmail: true`; new
+  `collectWarnings` logs non-fatal findings at every boot (default-on
+  verification with missing keys).
+- `business/src/emails/registrationPolicy.ts`: config getters for the gate.
+- `errors.factory.forbidden(message, data?)` and
+  `tooManyAttempts(retryAfterSeconds?, { message?, data? })` gained optional
+  trailing parameters; existing callers unchanged.
+- `bin/master.js` seeds `components/mail/templates` when `templatesRootDir` is
+  empty and warns when the gate is on but the challenge template is missing.
+- Registration chain: `requireEmailProof` runs before `forwardIfCrossCore`
+  (non-consuming), the proof is consumed after `insertOne`, and the founding
+  container event is seeded with the `email-code` provenance.
+- `schema/accountMethods.ts`: the `emails[].verificationMethod` response enum
+  now lists `email-code`. Result schemas are asserted by the tests
+  (`account.test.js` validates `account.update` against this one), so the new
+  provenance value had to land there as well as in `PROVED_METHODS`.
+- `cmc`: the composed mall handed to the CMC modules is now fully typed, which
+  surfaced a live defect — `streams.delete` was declared and called with a
+  params object where the mall takes the stream id itself.
+- Test codes: the `[MC01]`-`[MC09]` range was shared by three unrelated suites;
+  the mail CLI moved to `[MCL0x]` and method-context to `[MCTX1-3]`, leaving
+  `MC` to the multi-core suite.
+- New suites: `[EMCH]` (challenge), `[EMCR]` (registration gate over HTTP),
+  `[EMCX]` (cross-core forward ordering), `[EMCG]`/`[MLCP]`/`[VMPL]` (config),
+  `[CV-GA]`/`[CKCF]` (soft-landing validator), `[EMLK]` (link format),
+  `[MSEED5]`/`[MFCD5]`/`[MFCD6]`/`[MCLI7]` (bundled templates), `[AS18]` (platform
+  conformance), `[SN09]` (service-info), `[SSOLI7]` (email-code links).
 
 ## cache: invalidate after the write commits, not before (closes a stale re-cache race)
 

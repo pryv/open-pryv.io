@@ -58,6 +58,11 @@ function parseStoreIdAndStoreItemId (fullItemId: string): [string, string] {
   // ordinary events living beside the user's other data.
   if (storeId === '_shared-secrets') return [LOCAL_STORE_ID, fullItemId];
 
+  // Account-delegation streams route to the local store on the same terms as
+  // CMC: a namespace-owning plugin (not a storage engine) whose :_delegation:*
+  // anchors/mirrors are ordinary events living beside the user's other data.
+  if (storeId === '_delegation') return [LOCAL_STORE_ID, fullItemId];
+
   // The multiple-emails container routes to the local store on the same terms.
   // The `:_system:` prefix cannot host it: every :_system: / :system: stream
   // routes to the single-field account adapter, which stores one value per

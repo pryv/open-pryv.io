@@ -184,19 +184,29 @@ if (cluster.isPrimary) {
     });
 
     // --- Mail template seed ---
-    // First-boot bootstrap: when `services.email.method === 'in-process'` and
-    // `templatesRootDir` points at a Pug directory, populate PlatformDB from
-    // disk if empty. Idempotent — subsequent boots are a no-op (the admin
-    // CLI / admin API that ship later own the edit path).
+    // First-boot bootstrap: when `services.email.method === 'in-process'`,
+    // populate PlatformDB from a Pug directory if it holds no templates yet.
+    // Idempotent — subsequent boots are a no-op (the admin CLI / admin API
+    // own the edit path).
     if (config.get('services:email:method') === 'in-process') {
       try {
         const platformDB = require('../storages/index.ts').platformDB;
         const { seedIfEmpty } = require('../components/mail/src/TemplateSeeder.ts');
-        const result = await seedIfEmpty({
-          platformDB,
-          templatesRootDir: config.get('services:email:templatesRootDir') || null
-        });
-        if (result.seeded) log(`Mail templates seeded (${result.count} row(s))`);
+        // Empty `templatesRootDir` means "the template set bundled with the mail component".
+        const bundledTemplatesDir = path.resolve(__dirname, '../components/mail/templates');
+        const templatesRootDir = config.get('services:email:templatesRootDir') || bundledTemplatesDir;
+        const result = await seedIfEmpty({ platformDB, templatesRootDir });
+        if (result.seeded) log(`Mail templates seeded (${result.count} row(s) from ${templatesRootDir})`);
+        // The registration gate mails a code on every sign-up. If an operator
+        // deleted that template through the CLI, every registration would fail
+        // at delivery time with nothing pointing at the cause.
+        if (config.get('account:emailVerification:requireAtRegistration') === true) {
+          const type = config.get('services:email:emailChallengeTemplate') || 'email-challenge';
+          const lang = config.get('services:email:defaultLang') || 'en';
+          if ((await platformDB.getMailTemplate(type, lang, 'html')) == null) {
+            warn(`registration email gate is on but mail template ${type}/${lang}/html is missing from PlatformDB; every registration will fail until it is added (bin/mail.js templates set)`);
+          }
+        }
       } catch (e) {
         log(`Mail template seed skipped: ${e.message}`);
       }

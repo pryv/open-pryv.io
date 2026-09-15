@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
 const cmc = require('cmc');
+const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const fs = require('fs');
@@ -164,6 +165,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // permission-system bugs) leaking plugin internals via read paths.
   const cmcEventsGetInternalGuard = cmc.createEventsGetInternalGuardHook();
   const cmcEventGetOneInternalGuard = cmc.createEventGetOneInternalGuardHook({ errors });
+  // Account-delegation read guards mirror the CMC ones: strip the plugin's
+  // hidden `:_delegation:_internal:*` subtree from direct-target reads so the
+  // A-side mirror (which carries a cross-account control credential) never
+  // reaches a client. Gated on `delegation:active` (default true); passthrough
+  // when inactive so the register chains stay structurally identical.
+  const delegationActive = config.get('delegation:active') !== false;
+  const delegationReadPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
+  const delegationEventsGetInternalGuard = delegationActive
+    ? delegation.createEventsGetInternalGuardHook()
+    : delegationReadPassthrough;
+  const delegationEventGetOneInternalGuard = delegationActive
+    ? delegation.createEventGetOneInternalGuardHook({ errors })
+    : delegationReadPassthrough;
   // Shared by the read (events.get) and write (events.create)
   // registrations below — declared here because `events.get` registers
   // first and `api.register` captures the value eagerly.
@@ -195,8 +209,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   api.register(
     'events.get',
     sharedSecretsEnsureOnRead,
-    cmcEventsGetInternalGuard,
     eventsGetUtils.coerceStreamsParam,
+    // BOTH internal read-guards sit AFTER coerceStreamsParam so params.streams is
+    // always an array — a single-value `streams=<id>` arrives as a bare string
+    // and would slip past an array filter placed earlier.
+    cmcEventsGetInternalGuard,
+    delegationEventsGetInternalGuard,
     eventsGetUtils.coerceAndValidateContentQueryParams,
     commonFns.getParamsValidation(methodsSchema.get.params),
     eventsGetUtils.applyDefaultsForRetrieval,
@@ -237,6 +255,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.getOne.params),
     findEvent,
     cmcEventGetOneInternalGuard,
+    delegationEventGetOneInternalGuard,
     checkIfAuthorized,
     includeHistoryIfRequested
   );
@@ -313,6 +332,20 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
+  // Account-delegation namespace + lifecycle guards. Gated on the same
+  // `delegationActive` flag resolved in the RETRIEVAL section above; when
+  // inactive each slot is a passthrough so the register chains stay
+  // structurally identical.
+  const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
+  const delegationEventsWriteGuardHook = delegationActive
+    ? delegation.createEventsWriteGuardHook({ errors })
+    : delegationPassthrough;
+  const delegationEventsUpdateGuardHook = delegationActive
+    ? delegation.createEventsUpdateGuardHook({ errors })
+    : delegationPassthrough;
+  const delegationEventsDeleteGuardHook = delegationActive
+    ? delegation.createEventsDeleteGuardHook({ errors })
+    : delegationPassthrough;
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   // Gate Bucket-1 CMC trigger writes (accept / scope-update / revoke) to
   // require a personal token. Non-personal tokens hand off to
@@ -410,6 +443,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,
+    // Reject user writes into the account-delegation namespace (streams or
+    // delegation/* types) before any stream resolution runs.
+    delegationEventsWriteGuardHook,
     // Auto-provision the five reserved :_cmc:* parents on first CMC op
     // for users who pre-date the CMC deploy. Idempotent. Must fire
     // BEFORE verifyCanCreateEventsOnStream so the stream check finds
@@ -724,6 +760,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForUpdate,
     // after the prerequisites, which is what loads the event being updated
+    delegationEventsUpdateGuardHook,
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,
@@ -965,6 +1002,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     sharedSecretsDeleteGuard,
     emailsDeleteGuard,
     blockAccountEventDeletion,
+    delegationEventsDeleteGuardHook,
     function (context: MethodContext, params: EventsDeleteParams, result: EventsDeleteResult, next: MethodNext) {
       // Invariant: checkEventForDelete landed context.oldEvent.
       if (!context.oldEvent!.trashed) {

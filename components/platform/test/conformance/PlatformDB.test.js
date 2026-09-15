@@ -791,6 +791,24 @@ export default function conformanceTests (getDB) {
         assert.ok((await db.getAccessState(key)) != null);
       });
 
+      it('[AS18] a consumed key can be re-installed with setIfAbsent under the SAME key', async () => {
+        // Backs the consume-then-reinstall pattern used by attempt counters:
+        // a consumer that decrements a budget must be able to put the row
+        // back atomically, and a racer that consumed nothing must lose. This
+        // is not implied by [AS09] + [AS12]: those use fresh keys, so an
+        // engine leaving a tombstone behind on consume would keep both green
+        // while breaking key reuse.
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { attempts: 0 }, future());
+        const consumed = await db.consumeAccessState(key);
+        assert.deepStrictEqual(consumed.value, { attempts: 0 });
+        // The key is gone, so a first-writer-wins install succeeds ...
+        assert.strictEqual(await db.setAccessStateIfAbsent(key, { attempts: 1 }, future()), true);
+        // ... and a second install is refused while the re-installed row is live.
+        assert.strictEqual(await db.setAccessStateIfAbsent(key, { attempts: 2 }, future()), false);
+        assert.deepStrictEqual((await db.getAccessState(key)).value, { attempts: 1 });
+      });
+
       it('[AS07] sweepExpiredAccessStates removes only expired rows and reports count', async () => {
         const live1 = 'live1-' + cuid();
         const live2 = 'live2-' + cuid();
