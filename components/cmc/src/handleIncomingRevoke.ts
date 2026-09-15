@@ -239,12 +239,18 @@ async function enrichArrival (params: {
 
   const cmc = createdByAccess.clientData?.cmc ?? {};
   const added: Record<string, unknown> = {};
-  // Which side are we on? Only the requester's back-channel access carries a
-  // capabilityId; a data-grant carries the offer/accept trigger ids.
-  const isRequesterSide = typeof cmc.capabilityId === 'string' && cmc.capabilityId.length > 0;
+  // Which side are we on? The requester's back-channel access carries a
+  // `capabilityId` KEY (null for a non-open-link relationship, so its presence
+  // and not its value is the signal), and a data-grant carries the accept
+  // trigger id. A relationship minted before either stamp existed answers to
+  // neither: label nothing rather than guess, since a wrong label is worse than
+  // a missing one in a shape apps match on. The scope and the revoked ids below
+  // are still resolvable and still carried.
+  const isRequesterSide = Object.prototype.hasOwnProperty.call(cmc, 'capabilityId');
+  const isAccepterSide = !isRequesterSide && typeof cmc.acceptEventId === 'string';
   if (isRequesterSide) {
     added.backChannelAccessId = createdByAccess.id;
-  } else {
+  } else if (isAccepterSide) {
     added.dataGrantAccessId = createdByAccess.id;
   }
   if (typeof cmc.inviteEventId === 'string') added.inviteEventId = cmc.inviteEventId;
@@ -255,7 +261,8 @@ async function enrichArrival (params: {
 
   // Requester side, relationship minted before the invite stamp: fall back to
   // the capability access, which is where that id has always lived.
-  if (added.inviteEventId == null && isRequesterSide) {
+  if (added.inviteEventId == null && isRequesterSide &&
+      typeof cmc.capabilityId === 'string' && cmc.capabilityId.length > 0) {
     try {
       const list = await mall.accesses.get(userId, {});
       const capAccess = (Array.isArray(list) ? list : []).find((a) =>

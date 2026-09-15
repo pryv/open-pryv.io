@@ -428,6 +428,51 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(cmc.inviteEventId, 'orig-invite-trigger-1');
     });
 
+    it('[IA13] heal-in-place refreshes the stamps on a relationship minted without them', async () => {
+      // A re-accept heals the existing access rather than minting a second one.
+      // It must rewrite these stamps, or a legacy relationship would never
+      // acquire them and its forwarded revokes would stay unmatchable.
+      const legacy = {
+        id: 'acc-legacy',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            // The peer identity the selector keys on; no offerEventId /
+            // inviteEventId / capabilityId, as a pre-stamp relationship.
+            counterparty: { username: 'alice', host: 'pryv.me' },
+          },
+        },
+        permissions: [{ streamId: ':_cmc:apps:my-app:campaign-2026:chats:alice--pryv-me', level: 'contribute' }],
+      };
+      const mall = fakeMall({
+        requestEvent: ORIGINAL_REQUEST_EVENT,
+        capabilityAccess: CAP_ACCESS,
+      });
+      const updated = [];
+      const baseGet = mall.accesses.get;
+      mall.accesses.get = async (u, p) => [legacy, ...(await baseGet(u, p))];
+      mall.accesses.update = async (_userId, params) => {
+        updated.push(params);
+        return { ...legacy, ...params.update };
+      };
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: ACCEPT_WITH_CAP,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesCreated.length, 0,
+        'the existing access must be healed, not duplicated');
+      // The capability state-flip also updates, so pick the heal by its target.
+      const heal = updated.find((u) => u.id === 'acc-legacy');
+      assert.ok(heal != null, 'the legacy access must be the one healed');
+      const cmc = heal.update.clientData.cmc;
+      assert.equal(cmc.offerEventId, 'orig-req-1');
+      assert.equal(cmc.inviteEventId, 'orig-invite-trigger-1');
+    });
+
     it('[IA12] both ids are null rather than absent when nothing resolves them', async () => {
       // No capability on the accept and no originalEventId: the relationship
       // simply has no invite-level ids to carry. They must still be written,

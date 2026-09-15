@@ -379,7 +379,7 @@ One write; the local access is destroyed server-side, which is what actually cut
 
 A field that could not be resolved is absent rather than null. Against an older peer you may see only `accessId`, `appCode` and `offerEventId`.
 
-> Delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is only logged, not retried. A revoke that never arrives also means the peer never ran its teardown, so their access on your account is still standing. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
+> Delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is only logged, not retried. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 

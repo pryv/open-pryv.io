@@ -194,13 +194,16 @@ async function dispatch (params: {
     const peerDelivered = await isPeerDeliveredEvent(userId, event.createdBy, deps);
     // A revoke sitting on `:_cmc:inbox` is peer-delivered by construction:
     // `inboxWriteHook` refuses any write there that does not come from a
-    // counterparty-marked access. Routing on the stream as well as on
+    // counterparty-marked access. The test is that stream exactly, not
+    // `isOnInbox`, which also matches the per-capability responses streams
+    // where that guarantee does not hold. Routing on the stream as well as on
     // `createdBy` matters because the incoming handler DELETES that access, so
     // a later re-dispatch of the same event (retry loop, operator
     // re-processing) would otherwise fall through to `handleRevoke` with the
     // peer's foreign `content.accessId` and mark the withdrawal 'failed' —
     // which an app reads as "the revocation did not work".
-    const incoming = peerDelivered || (event.type === C.ET_REVOKE && isOnInbox(event));
+    const incoming = peerDelivered ||
+      (event.type === C.ET_REVOKE && (event.streamIds ?? []).includes(C.NS_INBOX));
     if (incoming) {
       // An incoming revoke is where the revocation is ENFORCED on this side:
       // the handler deletes the relationship access the peer holds here, then

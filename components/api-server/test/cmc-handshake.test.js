@@ -1561,6 +1561,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const bcToken = tokenOf(backChannelEvent.content.apiEndpoint);
       assert.equal(await tokenLivesOn(alice, bcToken), true,
         'CN35 premise: the accepter back-channel token must authenticate before the revoke');
+      // Assert bob IS recorded before asserting he is cleared: without this the
+      // post-revoke poll passes instantly if the accept never recorded him.
+      await pollAcceptedByLocal(alice, h.capabilityId, bob.username, true, 'CN35 pre-revoke');
 
       const revRes = await coreRequest.post(bob.eventsPath)
         .set('Authorization', bob.token)
@@ -1685,6 +1688,13 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'CN39: the arrival must name the accepter-side grant');
       assert.equal(arrival.content.scopeStreamId, h.triggerStreamId);
       assert.deepEqual(arrival.content.revokedAccessIds, [dataGrant.id]);
+      // The trigger ids must equal what bob's own grant was stamped with, which
+      // is what his app matched the relationship by in the first place.
+      const grantCmc = dataGrant.clientData?.cmc || {};
+      assert.equal(arrival.content.offerEventId, grantCmc.offerEventId,
+        'CN39: offerEventId must match the accepter\'s own grant');
+      assert.equal(arrival.content.acceptEventId, grantCmc.acceptEventId,
+        'CN39: acceptEventId must match the accepter\'s own grant');
     });
   });
 

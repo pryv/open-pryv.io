@@ -428,6 +428,50 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       assert.equal('scopeStreamId' in written, false);
     });
 
+    it('[CIR19] a relationship too old to carry either stamp gets no side label', async () => {
+      // A back-channel minted before capabilityId was stamped has neither key.
+      // Guessing "accepter" there would put a dataGrantAccessId naming the
+      // requester's OWN back-channel into a public arrival shape: a field that
+      // is not merely missing but false. Label nothing; the scope and the
+      // revoked ids still carry.
+      const event = {
+        id: 'evt-revoke-5',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'legacy-19',
+        content: { from: SUBJECT },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'legacy-19', {
+        counterparty: SUBJECT,
+        scopeStreamId: ':_cmc:apps:my-app:study-a',
+      });
+      await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal('dataGrantAccessId' in written, false);
+      assert.equal('backChannelAccessId' in written, false);
+      assert.equal(written.scopeStreamId, ':_cmc:apps:my-app:study-a');
+      assert.deepEqual(written.revokedAccessIds, ['legacy-19']);
+    });
+
+    it('[CIR20] a non-open-link back-channel is still the requester side', async () => {
+      // capabilityId is present but null for a relationship that did not come
+      // through a capability. The key is the signal, not its value.
+      const event = {
+        id: 'evt-revoke-6',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'bc-20',
+        content: { from: SUBJECT },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'bc-20', { capabilityId: null, counterparty: SUBJECT });
+      await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.backChannelAccessId, 'bc-20');
+      assert.equal('dataGrantAccessId' in written, false);
+    });
+
     it('[CIR18] the invite id falls back to the capability access for a legacy relationship', async () => {
       const event = {
         id: 'evt-revoke-4',
