@@ -433,8 +433,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #       # wizard) and a working mail setup; set false to turn it off.
 #       verifyEmail: true
 #     method: in-process
-#     fromName: 'My Pryv'
-#     fromEmail: 'no-reply@example.com'
+#     from:
+#       name: 'My Pryv'
+#       address: 'no-reply@example.com'
 #     smtp:
 #       host: smtp.example.com
 #       port: 587

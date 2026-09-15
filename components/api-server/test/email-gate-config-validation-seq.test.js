@@ -49,6 +49,19 @@ describe('[MLCP] mail capability predicate', () => {
     });
   });
 
+  it('[MLCP7] in-process without a from address is still capable', () => {
+    // The sender is optional at the transport. This predicate decides whether
+    // verification mail runs at all, so requiring a key the runtime does not
+    // require would silently stop a deployment that was sending mail.
+    const map = Object.assign({}, inProcessOk);
+    delete map['services:email:from:address'];
+    assert.deepStrictEqual(describeMailCapability(fakeConfig(map)), {
+      ok: true,
+      method: 'in-process',
+      problems: []
+    });
+  });
+
   it('[MLCP2] in-process without smtp.host is not capable and says which key', () => {
     const map = Object.assign({}, inProcessOk);
     delete map['services:email:smtp:host'];

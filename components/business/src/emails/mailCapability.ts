@@ -81,12 +81,16 @@ export function describeMailCapability (config: ConfigReader): MailCapability {
   if (method == null) {
     problems.push('services.email.method must be one of in-process, microservice, mandrill');
   } else if (method === 'in-process') {
-    // SMTP delivery: we need somewhere to send and something to send as.
+    // SMTP delivery: we need somewhere to send. `services.email.from` is
+    // deliberately NOT required here, because the sender is optional at the
+    // transport (the renderer omits the header when it is unset) and this
+    // predicate now decides whether the verification feature runs at all:
+    // demanding a key the runtime never demanded would turn a deployment that
+    // was sending mail into one that silently stops. A missing sender is a
+    // deliverability concern for the relay to raise, not a reason to declare
+    // this platform incapable of mail.
     if (isMissingOrSentinel(config.get('services:email:smtp:host'))) {
       problems.push('services.email.smtp.host missing or unset');
-    }
-    if (isMissingOrSentinel(config.get('services:email:from:address'))) {
-      problems.push('services.email.from.address missing or unset');
     }
   } else {
     // HTTP delivery (external mail service or Mandrill): endpoint plus key.
