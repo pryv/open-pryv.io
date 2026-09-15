@@ -247,6 +247,24 @@ jobs:
           tags: |
             pryvio/open-pryv.io:${{ github.ref_name }}
             pryvio/open-pryv.io:2.0.0-pre
+      # Encryption-at-rest variant: layers the container-encrypted-volume payload
+      # onto the stock image just pushed above (base image unchanged; encryption
+      # opt-in via CEV_ENABLED at runtime). The payload is pulled from Docker Hub
+      # (pryvio/container-encrypted-volume), public + same registry as this image.
+      # Pushed here, BEFORE the Sigstore steps, so a transient keyless-signing /
+      # OIDC hiccup can never leave this variant unpushed: both images are
+      # available in the registry regardless of the signing outcome.
+      - name: Build + push encryption-at-rest variant
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.encrypted
+          push: true
+          build-args: |
+            IMAGE_TAG=${{ github.ref_name }}
+          tags: |
+            pryvio/open-pryv.io-encrypted:${{ github.ref_name }}
+            pryvio/open-pryv.io-encrypted:2.0.0-pre
       # Container-image SBOM (CycloneDX) for the released image, published as a
       # build artifact so downstream consumers / procurement can ingest the
       # exact shipped composition (base image layers + npm tree).
@@ -263,8 +281,23 @@ jobs:
       #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
+      # Retry the keyless signature: the ambient-OIDC fetch from
+      # token.actions.githubusercontent.com occasionally returns a non-JSON error
+      # body, which cosign surfaces as "fetching ambient OIDC credentials: invalid
+      # character ... looking for beginning of value". The image is already pushed,
+      # so this only re-attempts the signature over the same digest.
       - name: Sign image (keyless)
-        run: cosign sign --yes pryvio/open-pryv.io@${{ steps.build_stock.outputs.digest }}
+        run: |
+          digest='${{ steps.build_stock.outputs.digest }}'
+          for attempt in 1 2 3; do
+            if cosign sign --yes "pryvio/open-pryv.io@${digest}"; then
+              exit 0
+            fi
+            echo "::warning::cosign sign attempt ${attempt} failed; retrying in 15s"
+            sleep 15
+          done
+          echo "::error::cosign sign failed after 3 attempts"
+          exit 1
       # SLSA build provenance attestation for the released image, signed keyless
       # and recorded so consumers can verify how + where the image was built.
       - name: Attest build provenance
@@ -273,18 +306,3 @@ jobs:
           subject-name: docker.io/pryvio/open-pryv.io
           subject-digest: ${{ steps.build_stock.outputs.digest }}
           push-to-registry: true
-      # Encryption-at-rest variant: layers the container-encrypted-volume payload
-      # onto the stock image just pushed above (base image unchanged; encryption
-      # opt-in via CEV_ENABLED at runtime). The payload is pulled from Docker Hub
-      # (pryvio/container-encrypted-volume), public + same registry as this image.
-      - name: Build + push encryption-at-rest variant
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.encrypted
-          push: true
-          build-args: |
-            IMAGE_TAG=${{ github.ref_name }}
-          tags: |
-            pryvio/open-pryv.io-encrypted:${{ github.ref_name }}
-            pryvio/open-pryv.io-encrypted:2.0.0-pre
