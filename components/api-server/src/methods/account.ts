@@ -375,11 +375,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // build the link and substitutions; it is never persisted (only its hash is).
   // The REQUIRED_WHEN boot check guarantees `auth.emailVerificationPageURL` is
   // populated when the verification mail is enabled.
+  //
+  // The link carries the username as well as the token: the landing page has to
+  // address `/:username/account/verify-email`, and it cannot derive the username
+  // from the address, because PlatformDB stores emails hashed when the operator
+  // enables that mode.
   function deliverVerifyEmail (recipientEmail: string, username: string, lang: string, token: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const emailSettings = getEmail();
       const pageURL = getAuth().emailVerificationPageURL;
-      const verifyLink = pageURL + '?verifyToken=' + encodeURIComponent(token);
+      const verifyLink = pageURL + '?verifyToken=' + encodeURIComponent(token) +
+        '&username=' + encodeURIComponent(username);
       const recipient = { email: recipientEmail, name: username, type: 'to' };
       const substitutions = {
         VERIFY_TOKEN: token,

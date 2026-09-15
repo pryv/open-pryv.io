@@ -28,6 +28,8 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const errors = require('errors').factory;
 const timestamp = require('unix-timestamp');
 const crypto = require('node:crypto');
+const nock = require('nock');
+const { withInjectedConfig } = require('test-helpers');
 
 // A trusted app with a wildcard origin in the test config, so the public
 // endpoint's trusted-app check passes without a real Origin.
@@ -401,6 +403,29 @@ describe('[VEML] account email verification', function () {
       } catch (err) {
         assert.strictEqual(err.id, 'invalid-operation');
       }
+    });
+  });
+
+  describe('[EMLK] verification link', function () {
+    before(() => { if (!nock.isActive()) nock.activate(); });
+    after(() => { nock.cleanAll(); nock.restore(); });
+
+    it('[EMLK1] the mailed VERIFY_LINK carries the username so the landing page can address the account', async function () {
+      const u = await makeUser(cuid() + '@lk.example.com');
+      const email = cuid() + '@link.example.com';
+      const captured = [];
+      nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
+        .reply(200, (uri, body) => { captured.push(body); return {}; });
+      await withInjectedConfig({ services: { email: { enabled: { verifyEmail: true } } } }, async () => {
+        const res = await coreRequest.put(accountPath(u.username)).set('Authorization', u.token)
+          .send({ emails: { add: [email] } });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      });
+      assert.strictEqual(captured.length, 1);
+      const link = captured[0].message.global_merge_vars.find((v) => v.name === 'VERIFY_LINK').content;
+      const url = new URL(link);
+      assert.strictEqual(url.searchParams.get('username'), u.username);
+      assert.ok(url.searchParams.get('verifyToken'));
     });
   });
 });
