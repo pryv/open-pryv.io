@@ -384,7 +384,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     return new Promise((resolve, reject) => {
       const emailSettings = getEmail();
       const pageURL = getAuth().emailVerificationPageURL;
-      const verifyLink = pageURL + '?verifyToken=' + encodeURIComponent(token) +
+      // The operator's page URL may already carry a query (the reference app
+      // needs `pryvServiceInfoUrl` on it), so pick the separator rather than
+      // always appending '?', which would fold our parameters into the value
+      // of the operator's last one.
+      const separator = pageURL.includes('?') ? '&' : '?';
+      const verifyLink = pageURL + separator + 'verifyToken=' + encodeURIComponent(token) +
         '&username=' + encodeURIComponent(username);
       const recipient = { email: recipientEmail, name: username, type: 'to' };
       const substitutions = {

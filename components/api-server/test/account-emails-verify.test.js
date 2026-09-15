@@ -427,5 +427,32 @@ describe('[VEML] account email verification', function () {
       assert.strictEqual(url.searchParams.get('username'), u.username);
       assert.ok(url.searchParams.get('verifyToken'));
     });
+
+    it('[EMLK2] a page URL that already carries a query keeps its own parameters intact', async function () {
+      const u = await makeUser(cuid() + '@lk2.example.com');
+      const email = cuid() + '@link2.example.com';
+      const captured = [];
+      nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
+        .reply(200, (uri, body) => { captured.push(body); return {}; });
+      const pageURL = 'https://app.example.com/verify-email?pryvServiceInfoUrl=https%3A%2F%2Fcore.example.com%2Freg%2Fservice%2Finfo';
+      await withInjectedConfig({
+        services: { email: { enabled: { verifyEmail: true } } },
+        auth: { emailVerificationPageURL: pageURL }
+      }, async () => {
+        const res = await coreRequest.put(accountPath(u.username)).set('Authorization', u.token)
+          .send({ emails: { add: [email] } });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      });
+      assert.strictEqual(captured.length, 1);
+      const link = captured[0].message.global_merge_vars.find((v) => v.name === 'VERIFY_LINK').content;
+      const url = new URL(link);
+      // The operator's own parameter must survive unchanged: appending a second
+      // '?' would swallow our parameters into its value.
+      assert.strictEqual(
+        url.searchParams.get('pryvServiceInfoUrl'),
+        'https://core.example.com/reg/service/info');
+      assert.strictEqual(url.searchParams.get('username'), u.username);
+      assert.ok(url.searchParams.get('verifyToken'));
+    });
   });
 });
