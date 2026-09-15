@@ -685,3 +685,11 @@ sharedSecrets:
   enabled: true
   maxSizeBytes: 4096               # cap on the serialized `secret` payload
   maxTtl: 2592000                  # seconds (30 days); `ttl` is mandatory, no default
+
+# Account delegation — reserved stream-id namespace owner + guard hooks that
+# protect the delegation namespace and its managed accesses/events. Inert
+# unless the plugin writes the namespace; the guards only reject user attempts
+# to reach it, so it is on by default. Set `active: false` to disable the
+# guard wiring entirely.
+delegation:
+  active: true

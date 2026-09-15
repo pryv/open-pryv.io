@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const cmc = require('cmc');
+const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
@@ -182,6 +183,16 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   // CREATION
   const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
+  // Account-delegation reserved-namespace guards. Gated on `delegation:active`
+  // (default true); passthrough when inactive so the chains stay identical.
+  const delegationActive = config.get('delegation:active') !== false;
+  const delegationPassthrough = (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) => next();
+  const delegationStreamCreateHook = delegationActive
+    ? delegation.createStreamCreateReservedRootHook({ errors })
+    : delegationPassthrough;
+  const delegationStreamDeleteHook = delegationActive
+    ? delegation.createStreamDeleteReservedRootHook({ errors })
+    : delegationPassthrough;
   const sharedSecretsStreamUpdateGuard = sharedSecrets.createStreamUpdateGuard({ errors });
   const sharedSecretsStreamCreateGuard = sharedSecrets.createStreamCreateGuard({ errors });
   const emailsStreamCreateGuard = emailsGuards.createStreamCreateGuard({ errors });
@@ -196,6 +207,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcEnsureReservedParentsHook,
     cmcStreamCreateHook,
+    delegationStreamCreateHook,
     sharedSecretsStreamCreateGuard,
     emailsStreamCreateGuard,
     applyDefaultsForCreation,
@@ -334,7 +346,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // owned (not permission-shaped) and surfaces a stable error id.
   const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
   const sharedSecretsStreamDeleteGuard = sharedSecrets.createStreamDeleteGuard({ errors });
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, delegationStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id!, null);
