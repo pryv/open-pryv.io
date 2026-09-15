@@ -33,6 +33,64 @@ configured); clients use it to show or hide "send verification link" actions.
 `atRegistration` is `true` when a verified address is required to create an
 account (see the registration gate entry).
 
+### Email verification at sign-up (optional)
+
+Operators can now require a verified email address before an account is
+created. Off by default; a stock deployment is unchanged.
+
+- New config `account.emailVerification.requireAtRegistration` (default
+  `false`). When `true`, `POST /users` refuses a registration that does not
+  carry an `emailProof` obtained through the two new public endpoints below
+  (`403 forbidden`, `data.emailVerificationRequired: true`), and refuses an
+  empty email address (`400 invalid-parameters-format`). Admin-created
+  accounts (`system.createUser`) are never gated. The core refuses to boot when
+  the gate is on and `services.email` is incomplete, and a mail delivery
+  failure at request time blocks that registration rather than letting an
+  unverified account through. Tuning keys, all under
+  `account.emailVerification`: `registrationCodeMaxAgeMs` (10 min),
+  `registrationCodeMaxAttempts` (5), `registrationCodeResendCooldownMs`
+  (60 s), `registrationCodeDailyLimit` (10), `registrationCodeFailuresPerDay`
+  (20), `registrationProofMaxAgeMs` (30 min).
+- `POST {register}/email-challenge` `{ email, language? }` mails a one-time
+  8-character code to the address (`200 { sent: true }`; `409
+  item-already-exists` when an account already owns the address; `429
+  too-many-attempts` with `data.retryAfterSeconds` on the per-address
+  cooldown, daily cap or failure budget). `POST
+  {register}/email-challenge/verify` `{ email, code }` exchanges a correct code
+  for a single-use `emailProof` (`401 invalid-access-token` with
+  `data.attemptsRemaining` on a wrong or expired code; `429` once the code's
+  attempts are exhausted). Both answer `403 forbidden` with
+  `data.emailVerificationRequired: false` while the gate is off. The code is
+  never stored, only its hash; a proof is bound to the address it was issued
+  for and to one registration. Per-IP limiting is left to the edge.
+- `GET /service/info` `features.emailVerification.atRegistration` is `true`
+  while the gate is on (the field itself is always present, see the general
+  availability entry above).
+- An address proved this way is recorded with `verificationMethod:
+  'email-code'`, a new proved value alongside `'email-link'` and `'operator'`
+  (it counts as proved ownership for third-party sign-in linking). Accounts
+  created while the gate is off keep `'registration'`, as before.
+- The mailed verification link for addresses added to an existing account now
+  also carries `username` (`<emailVerificationPageURL>?verifyToken=…&username=…`)
+  so a landing page can address `/:username/account/verify-email` without an
+  email lookup. Existing links keep working. The parameters are appended with
+  the right separator, so a page URL that already carries a query keeps its own
+  parameters intact.
+- New template key `services.email.emailChallengeTemplate` (default
+  `email-challenge`).
+
+### Mail templates now ship with the server
+
+In-process mail (`services.email.method: in-process`) previously relied on an
+operator-provided Pug directory; the documented "bundled default set" did not
+exist, so a fresh deployment could not send any mail until templates were
+added by hand. The server now ships `welcome-email`, `reset-password`,
+`verify-email` and `email-challenge` templates in English and French and seeds
+them into PlatformDB on first boot when `services.email.templatesRootDir` is
+empty. Deployments that already hold templates are untouched (seeding only
+runs on an empty store). `bin/mail.js templates seed` defaults to the bundled
+set when `--from` is omitted.
+
 ## 2.0.0-rc.17 — 2026-09-11
 
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)
