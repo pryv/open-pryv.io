@@ -1391,4 +1391,235 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 re-accept');
     });
   });
+
+  /**
+   * [CMCHS-TEARDOWN] a received revocation destroys the access it arrived
+   * through.
+   *
+   * Each side deletes the access the PEER holds against its own account: the
+   * withdrawing side does its half locally, and the receiving side does the
+   * other half when the revoke lands. Before that second half existed, the
+   * withdrawing side kept a live token on the peer's data after both sides
+   * considered the relationship over.
+   *
+   * Destructive by nature (every case tears a relationship down), so this
+   * describe runs last and each case builds its own fresh handshake.
+   */
+  describe('[CMCHS-TEARDOWN] a received revoke deletes the access it arrived through', function () {
+    // The requester's back-channel access for ONE relationship, identified by
+    // the channel permissions it holds (scope-keyed, so it works in every
+    // capability mode and with several relationships per peer).
+    async function backChannelFor (actor, triggerStreamId) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.accessesPath).set('Authorization', actor.token);
+        const hit = (res.body?.accesses || []).find((a) => {
+          if (a?.clientData?.cmc?.role !== 'counterparty') return false;
+          return (a.permissions || []).some((p) =>
+            typeof p?.streamId === 'string' && p.streamId.startsWith(triggerStreamId + ':'));
+        });
+        if (hit != null) return hit;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('no counterparty access found under ' + triggerStreamId);
+    }
+
+    // The token the REQUESTER received for the peer's data, taken from the
+    // accept mirror that names this relationship's back-channel access.
+    async function requesterGrantToken (h) {
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const mirror = await pollInboxFor(
+        alice.eventsPath, alice.token, 'consent/accept-cmc',
+        (e) => e.content?.backChannelAccessId === bc.id
+      );
+      const apiEndpoint = mirror.content?.grantedAccess?.apiEndpoint;
+      assert.ok(typeof apiEndpoint === 'string' && apiEndpoint.length > 0,
+        'accept mirror must carry grantedAccess.apiEndpoint: ' + JSON.stringify(mirror.content));
+      return { token: tokenOf(apiEndpoint), backChannel: bc };
+    }
+
+    function tokenOf (apiEndpoint) {
+      return apiEndpoint.replace(/^https?:\/\//, '').split('@')[0];
+    }
+
+    // Is `token` still a live access on `owner`'s account? access-info answers
+    // that without depending on any stream existing.
+    async function tokenLivesOn (owner, token) {
+      const res = await coreRequest.get('/' + owner.username + '/access-info')
+        .set('Authorization', token);
+      return res.status === 200;
+    }
+
+    async function pollTokenDead (owner, token, label) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        if (!await tokenLivesOn(owner, token)) return;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ': the token still authenticates on ' + owner.username +
+        ' after the revoke was delivered');
+    }
+
+    async function accessExists (owner, accessId) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      return (res.body?.accesses || []).some((a) => a.id === accessId);
+    }
+
+    async function countInboxRevokes (actor) {
+      const res = await coreRequest.get(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 });
+      return (res.body?.events || []).length;
+    }
+
+    // Local copies of the re-consent describe's helpers: that one's postAccept
+    // hardcodes the `my-app` scope, and these cases each run under their own
+    // app code.
+    async function pollAcceptedByLocal (owner, capabilityId, username, shouldContain, label) {
+      const t0 = Date.now();
+      let names = [];
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+        const acc = (res.body?.accesses || []).find((a) =>
+          a?.clientData?.cmc?.kind === 'capability' &&
+          a?.clientData?.cmc?.capabilityId === capabilityId);
+        names = (acc?.clientData?.cmc?.capability?.acceptedBy || []).map((e) => e.username);
+        if (names.includes(username) === shouldContain) return;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ' timeout: acceptedBy contains(' + username + ')=' +
+        shouldContain + '; saw ' + JSON.stringify(names));
+    }
+
+    async function postAcceptUnder (actor, appId, capabilityUrl, tag) {
+      const res = await coreRequest.post(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .send({
+          streamIds: [':_cmc:apps:' + appId],
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl, accessName: 'cmc-grant-' + tag + '-' + Date.now() },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.event.id;
+    }
+
+    it('[CN34] requester withdraws: her own token on the accepter dies with the relationship', async function () {
+      const h = await runFreshHandshake('td-a', 'td-app-a', { mode: 'open-link' });
+      const { token: grantToken, backChannel } = await requesterGrantToken(h);
+
+      // Premise: the grant works before the revoke. Without this the test
+      // could pass on a token that never worked at all.
+      assert.equal(await tokenLivesOn(bob, grantToken), true,
+        'CN34 premise: the requester grant must authenticate before the revoke');
+      // Resolve the grant's id NOW: after the teardown there is nothing left to
+      // look it up by, and an id resolved then would be undefined, making the
+      // "is it gone" assertion vacuously true.
+      const grantOnBob = (await coreRequest.get(bob.accessesPath)
+        .set('Authorization', bob.token)).body?.accesses?.find((a) => a.token === grantToken);
+      assert.ok(grantOnBob?.id, 'CN34 premise: the grant must be listed on the accepter account');
+      const revokesOnAliceBefore = await countInboxRevokes(alice);
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: backChannel.id, reason: { en: 'CN34 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      // The accepter observes the withdrawal ...
+      await pollInboxFor(bob.eventsPath, bob.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === alice.username);
+      // ... and acts on it: the requester's token is dead and the access gone.
+      await pollTokenDead(bob, grantToken, 'CN34');
+
+      assert.equal(await accessExists(bob, grantOnBob.id), false,
+        'CN34: the grant must be gone from the accepter account');
+
+      // Loop-safety: the receiving side enforces locally and POSTs nothing,
+      // so no revoke bounces back to the withdrawing side.
+      assert.equal(await countInboxRevokes(alice), revokesOnAliceBefore,
+        'CN34: the teardown must not deliver anything back to the requester');
+    });
+
+    it('[CN35] accepter withdraws: the requester-side back-channel access dies too', async function () {
+      const h = await runFreshHandshake('td-b', 'td-app-b', { mode: 'open-link' });
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // The token the ACCEPTER holds on the requester account travels in the
+      // back-channel event the requester sent him.
+      const backChannelEvent = await pollInboxFor(
+        bob.eventsPath, bob.token, 'consent/back-channel-cmc',
+        (e) => e.content?.from?.username === alice.username &&
+               typeof e.content?.apiEndpoint === 'string'
+      );
+      const bcToken = tokenOf(backChannelEvent.content.apiEndpoint);
+      assert.equal(await tokenLivesOn(alice, bcToken), true,
+        'CN35 premise: the accepter back-channel token must authenticate before the revoke');
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN35 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      await pollInboxFor(alice.eventsPath, alice.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === bob.username);
+      await pollTokenDead(alice, bcToken, 'CN35');
+      assert.equal(await accessExists(alice, bc.id), false,
+        'CN35: the back-channel access must be gone from the requester account');
+
+      // The bookkeeping half still runs, and re-consent through the same link
+      // still works even though the back-channel access was deleted.
+      await pollAcceptedByLocal(alice, h.capabilityId, bob.username, false, 'CN35 post-revoke');
+      await postAcceptUnder(bob, 'td-app-b', h.capabilityUrl, 'td-b-again');
+      await pollAcceptedByLocal(alice, h.capabilityId, bob.username, true, 'CN35 re-accept');
+    });
+
+    it('[CN36] raw accesses.delete by the requester tears the accepter side down as well', async function () {
+      const h = await runFreshHandshake('td-c', 'td-app-c', { mode: 'open-link' });
+      const { token: grantToken, backChannel } = await requesterGrantToken(h);
+      assert.equal(await tokenLivesOn(bob, grantToken), true, 'CN36 premise');
+
+      // The generic "connected apps" path: a plain delete, not the CMC helper.
+      const delRes = await coreRequest.delete(alice.accessesPath + '/' + backChannel.id)
+        .set('Authorization', alice.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+
+      await pollInboxFor(bob.eventsPath, bob.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === alice.username);
+      await pollTokenDead(bob, grantToken, 'CN36');
+    });
+
+    it('[CN37] revoking one relationship leaves a second one with the same peer untouched', async function () {
+      // Two relationships, one app code, one peer: the isolation the
+      // scope-keying work established must survive the teardown too.
+      const h1 = await runFreshHandshake('td-d1', 'td-app-d', { mode: 'open-link' });
+      const h2 = await runFreshHandshake('td-d2', 'td-app-d', { mode: 'open-link' });
+      const r1 = await requesterGrantToken(h1);
+      const r2 = await requesterGrantToken(h2);
+      assert.notEqual(r1.token, r2.token, 'CN37 premise: two distinct grants');
+      assert.equal(await tokenLivesOn(bob, r1.token), true, 'CN37 premise r1');
+      assert.equal(await tokenLivesOn(bob, r2.token), true, 'CN37 premise r2');
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h1.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: r1.backChannel.id, reason: { en: 'CN37 withdraw one' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      await pollTokenDead(bob, r1.token, 'CN37');
+      assert.equal(await tokenLivesOn(bob, r2.token), true,
+        'CN37: the untouched relationship must keep its grant');
+    });
+  });
+
 });
