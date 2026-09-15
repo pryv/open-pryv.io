@@ -10,7 +10,7 @@
  *
  * Reads and writes the delegation relationship substrate through the mall
  * (streams + events + accesses), NEVER through the api-server routes. This is
- * deliberate: the Phase-1 guard hooks reject every `:_delegation:*` write that
+ * deliberate: the guard hooks reject every `:_delegation:*` write that
  * arrives over the generic routes, so the ONLY legitimate writer is the plugin
  * itself, reaching storage directly here — exactly the pattern the
  * cross-account-messaging plugin uses for its own internal namespace.
@@ -195,7 +195,7 @@ async function deleteMirror (mall: MallLike, userId: string, mirror: EventLike):
  * Mint a plugin-managed marker access. The access carries NO stream
  * permissions: authorization for the controlled-side methods keys entirely on
  * the forge-protected `clientData.delegation` marker plus the anchor state, not
- * on stream reach (§ the controlled-side method authorizes on the marker).
+ * on stream reach (the controlled-side method authorizes on the marker).
  * Returns the storage row (with token + apiEndpoint attached by the mall
  * accesses adapter).
  */

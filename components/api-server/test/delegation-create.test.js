@@ -23,7 +23,7 @@ const require = createRequire(import.meta.url);
  *   4. The owner-equivalent credential path sets B's password (here the same
  *      repository call account.setPassword / account.resetPassword ultimately
  *      make — the password-SET HTTP method is orthogonal pre-existing plumbing;
- *      what Phase 5 delivers is the create + the genuine-login handover).
+ *      what this delivers is the create + the genuine-login handover).
  *   5. B logs in GENUINELY (auth.login → a clean personal token, no delegation
  *      marker).
  *   6. B, genuinely logged in, detaches A → SUCCEEDS; the parent's PAT is dead on

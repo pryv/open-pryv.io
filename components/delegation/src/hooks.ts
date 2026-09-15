@@ -30,6 +30,7 @@ import { DelegationErrorIds } from './errorIds.ts';
 type ApiError = Error & { id?: string; data?: unknown };
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => ApiError;
+  unknownResource?: (resource: string, id?: unknown) => ApiError;
 };
 type Deps = {
   errors: ErrorFactory;
@@ -49,9 +50,17 @@ type EventLike = {
 type MethodContext = {
   newEvent?: EventLike;
   oldEvent?: EventLike;
+  // events.getOne stages the resolved event here; the getOne guard reads its
+  // streamIds (the event carries more fields at runtime — only streamIds is read).
+  event?: EventLike;
 };
+// streams.get response node: the guard reads only id + children; runtime nodes
+// carry more fields (name, parentId, …) that survive the pass untouched.
+type StreamNode = { id?: string; children?: StreamNode[] };
 type HookParams = {
   id?: unknown;
+  // events.get stream queries: ids and/or {streamId} query objects
+  streams?: Array<string | { streamId?: string } | null>;
   clientData?: ClientDataLike | null;
   update?: { id?: unknown; clientData?: ClientDataLike | null } | null;
   targetAccess?: AccessLike;
@@ -110,6 +119,101 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
         'clientData.delegation is reserved for the account-delegation plugin and may not be supplied by user code',
         { id: DelegationErrorIds.CLIENTDATA_FORBIDDEN }
       ));
+    }
+    next();
+  };
+}
+
+// ------------------------------------------------------- INTERNAL READ PROTECTION
+
+/**
+ * events.get hook — defense-in-depth: strip every explicit `:_delegation:_internal:*`
+ * stream-id from a caller's `params.streams` before the query reaches the store.
+ *
+ * The internal subtree holds the plugin's private records — including the
+ * A-side mirror, whose payload carries a control credential onto another
+ * account. It is personal-visibility only and must never reach a client, so a
+ * direct-target read must return nothing.
+ *
+ * MUST be wired AFTER `coerceStreamsParam` — that step normalises the wire
+ * forms (a single-value `streams=<id>` arrives as a bare string, not an array)
+ * into an array, so running before it would let a single-value internal query
+ * slip past the array filter. Handles all post-coerce shapes: bare id strings,
+ * `{streamId}` query objects, and logical `{any|all|not:[ids]}` queries (the
+ * internal ids are scrubbed from each list). A wildcard `'*'` is NOT a
+ * direct-target read and is left untouched (it is governed by access
+ * permissions, and is the residual this hook cannot close on its own).
+ */
+function createEventsGetInternalGuardHook (): Middleware {
+  function scrubList (list: unknown): unknown {
+    if (!Array.isArray(list)) return list;
+    return list.filter((id) => !(typeof id === 'string' && C.isDelegationInternalStreamId(id)));
+  }
+  return function delegationEventsGetInternalGuard (_context, params, _result, next) {
+    if (params == null || !Array.isArray(params.streams)) return next();
+    params.streams = params.streams.filter((s: unknown) => {
+      if (typeof s === 'string') return !C.isDelegationInternalStreamId(s);
+      if (s != null && typeof s === 'object') {
+        const obj = s as { streamId?: unknown; any?: unknown; all?: unknown; not?: unknown };
+        if (typeof obj.streamId === 'string' && C.isDelegationInternalStreamId(obj.streamId)) return false;
+        // Logical-query form: scrub internal ids out of any/all/not in place.
+        if (obj.any !== undefined) obj.any = scrubList(obj.any);
+        if (obj.all !== undefined) obj.all = scrubList(obj.all);
+        if (obj.not !== undefined) obj.not = scrubList(obj.not);
+      }
+      return true;
+    });
+    next();
+  };
+}
+
+/**
+ * events.getOne hook — defense-in-depth: if the fetched event lives in
+ * `:_delegation:_internal:*`, return 404 instead of leaking its existence.
+ *
+ * Wired AFTER the existing findEvent middleware (which loads `context.event`)
+ * so this hook sees the resolved event. Any presence of an internal id means
+ * the event should not be visible at all.
+ */
+function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
+  return function delegationEventGetOneInternalGuard (context, params, _result, next) {
+    const event = context?.event;
+    if (event == null) return next();
+    const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
+    if (streamIds.some((id: string) => C.isDelegationInternalStreamId(id))) {
+      // Drop the staged event so downstream middleware doesn't render it, then
+      // surface 404 (info-leak parity with the hidden-system-stream pattern).
+      delete context.event;
+      return next(deps.errors.unknownResource?.('event', params?.id) ??
+        deps.errors.invalidOperation('Event not found', { id: 'unknown-resource' }));
+    }
+    next();
+  };
+}
+
+/**
+ * streams.get hook — defense-in-depth: prune the `:_delegation:_internal`
+ * subtree from the response tree. The tree returned by findAccessibleStreams is
+ * a forest of `{id, children}` nodes; we recursively drop any node whose id is
+ * in the internal region.
+ *
+ * Wired AFTER findAccessibleStreams populates `result.streams`.
+ */
+function createStreamsGetInternalGuardHook (): Middleware {
+  function prune (nodes: StreamNode[]): StreamNode[] {
+    if (!Array.isArray(nodes)) return nodes;
+    const kept: StreamNode[] = [];
+    for (const n of nodes) {
+      if (n != null && typeof n.id === 'string' && C.isDelegationInternalStreamId(n.id)) continue;
+      if (Array.isArray(n?.children)) n.children = prune(n.children);
+      kept.push(n);
+    }
+    return kept;
+  }
+  return function delegationStreamsGetInternalGuard (_context, _params, result, next) {
+    const r = result as { streams?: StreamNode[] } | null | undefined;
+    if (r != null && Array.isArray(r.streams)) {
+      r.streams = prune(r.streams);
     }
     next();
   };
@@ -270,4 +374,7 @@ export {
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,
   createEventsUpdateGuardHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 };

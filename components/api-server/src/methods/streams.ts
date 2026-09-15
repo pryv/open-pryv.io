@@ -77,7 +77,14 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     logger: getLogger('shared-secrets:ensure-on-read')
   });
   const cmcStreamsGetInternalGuard = cmc.createStreamsGetInternalGuardHook();
-  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), sharedSecretsEnsureOnRead, checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard);
+  // Account-delegation streams.get guard mirrors the CMC one: prune the hidden
+  // `:_delegation:_internal` subtree from the response tree. Gated on
+  // `delegation:active` (default true); passthrough when inactive.
+  const delegationStreamsGetActive = config.get('delegation:active') !== false;
+  const delegationStreamsGetInternalGuard = delegationStreamsGetActive
+    ? delegation.createStreamsGetInternalGuardHook()
+    : (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) => next();
+  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), sharedSecretsEnsureOnRead, checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard, delegationStreamsGetInternalGuard);
   function applyDefaultsForRetrieval (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.parentId ??= null;
     params.includeDeletionsSince ??= null;

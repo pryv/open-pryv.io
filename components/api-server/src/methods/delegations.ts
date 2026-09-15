@@ -34,6 +34,9 @@ const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildSystemCreateAccountDeps } = require('./helpers/delegationAccounts.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
+// Production id generator (the legacy `cuid` package is dev-only and is pruned
+// from production builds; `@paralleldrive/cuid2` is the shipped dependency).
+const { createId: createCuid } = require('@paralleldrive/cuid2');
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
@@ -44,7 +47,7 @@ type MethodContext = BaseMethodContext & {
 const DEFAULT_INVITE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 function nowSeconds (): number { return Math.floor(Date.now() / 1000); }
-function newRelId (): string { return require('cuid')(); }
+function newRelId (): string { return createCuid(); }
 
 /** Duck-typed guard for the plugin's DelegationError (crosses an untyped CJS boundary). */
 function isDelegationErr (e: unknown): e is { id: string; message: string; httpStatus: number; data?: unknown } {
@@ -79,6 +82,47 @@ export default async function produceDelegationsApiMethods (api: { register (...
   const slugifyHost: (h: string) => string = cmc.slug.slugifyHost;
   const postToPeer = cmc.postToPeer;
   const thisCoreId = config.get('core:id');
+
+  // Audit singleton (only when auditing is on). Used to record a
+  // controlled-side token issuance on the SAME-CORE dispatch path, which does
+  // not pass through the audited method wrapper (the cross-core path does, so
+  // its issuance is audited automatically). Kept behind the flag so the direct
+  // dispatch stays audit-parity with cross-core.
+  const isAuditActive = config.get('audit:active') === true;
+  const audit = isAuditActive ? require('audit').default : null;
+  const noopTracing = {
+    startSpan (_n: string): void {},
+    finishSpan (_n: string): void {},
+    logForSpan (_n: string, _ctx: Record<string, unknown>): void {},
+  };
+
+  /**
+   * Record a `delegations.issueToken` audit event on the controlled account (B)
+   * for a SAME-CORE issuance. Mirrors the record the cross-core method wrapper
+   * writes: same methodId, attributed to B's control access (so the delegate
+   * identity is stamped from its marker). Best-effort — a failed audit-write
+   * must not fail the token issuance the caller already completed.
+   */
+  async function recordSameCoreIssueTokenAudit (bUserId: string, relId: string): Promise<void> {
+    if (audit == null) return;
+    try {
+      const controlAccess = await delegation.store.findMarkerAccess(mall, bUserId, relId, 'control');
+      if (controlAccess == null) return;
+      const context = {
+        methodId: 'delegations.issueToken',
+        user: { id: bUserId },
+        access: { id: controlAccess.id, clientData: controlAccess.clientData },
+        tracing: noopTracing,
+        source: { name: 'delegation-same-core' },
+        originalQuery: {},
+      };
+      await audit.validApiCall(context, {});
+    } catch (err) {
+      logger.warn('same-core issueToken audit-write failed (continuing)', {
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
 
   /**
    * Reuse-or-generate a session for {username, appId} and return its id — the
@@ -331,6 +375,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
           const res = await delegation.handleIssueToken(
             { mall, now: nowSeconds, mintSession },
             { bUserId: target.userId, bUsername: controlledUsername, relId, expectDelegateUsername: aUsername });
+          // Same-core issuance skips the audited method wrapper the cross-core
+          // path goes through; record the issuance on B so both paths leave one
+          // issuance audit record attributed to the delegate.
+          await recordSameCoreIssueTokenAudit(target.userId, relId);
           return { ok: true, status: 200, body: res };
         } catch (err) {
           if (isDelegationErr(err)) return { ok: false, status: err.httpStatus, body: { id: err.id } };

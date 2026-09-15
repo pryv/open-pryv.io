@@ -17,7 +17,7 @@
  *     token. It validates the requested username, picks the target core (the
  *     `core` param, validated against the platform core list; default = A's own
  *     core), pre-provisions the A-side notify access (its endpoint is the
- *     Phase-4 teardown mirror-sync channel), then calls the target core's system
+ *     teardown mirror-sync channel), then calls the target core's system
  *     endpoint. On success it writes A's immediately-active mirror. The relId is
  *     minted on A and echoed by the target — the same discipline the invite path
  *     uses (B mints the relId there), so the notify marker can carry it before
@@ -164,7 +164,7 @@ async function createAccount (deps: CreateAccountDeps, params: {
   const relId = idGen();
 
   // Pre-provision the A-side notify access — its endpoint is handed to the target
-  // core and stored on B's anchor for the Phase-4 teardown mirror-sync channel.
+  // core and stored on B's anchor for the teardown mirror-sync channel.
   await store.ensureParents(mall, params.aUserId);
   const notify = await store.mintMarkerAccess(mall, params.aUserId, {
     name: '__deleg-ntf-' + relId.substring(0, 8),

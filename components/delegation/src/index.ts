@@ -69,6 +69,9 @@ export const {
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,
   createEventsUpdateGuardHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 } = hooks;
 
 // Flat constants re-exports for convenience.

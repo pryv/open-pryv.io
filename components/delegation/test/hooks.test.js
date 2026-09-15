@@ -25,6 +25,9 @@ const {
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,
   createEventsUpdateGuardHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 } = require('../src/hooks.ts');
 
 function fakeErrors () {
@@ -323,6 +326,165 @@ describe('[DELHOOK] delegation/hooks', () => {
       const { factory } = fakeErrors();
       const mw = createEventsUpdateGuardHook({ errors: factory });
       assert.equal(await runMiddleware(mw, {}, {}, {}), undefined);
+    });
+  });
+
+  // Defense-in-depth read guards for the hidden `:_delegation:_internal:*`
+  // subtree — mirror the cross-account-messaging plugin's internal-read guards.
+  describe('[DELHOOK-IG] :_delegation:_internal:* read-path guard hooks', () => {
+    describe('[DELHOOK-EG] createEventsGetInternalGuardHook (events.get)', () => {
+      it('[DEG01] passes through when params.streams absent', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = { sortAscending: true };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.equal(params.streams, undefined);
+      });
+
+      it('[DEG02] strips :_delegation:_internal:* string ids, keeps others', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: ['fertility', ':_delegation:_internal:controlled', 'health', ':_delegation:_internal', '*'],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.deepEqual(params.streams, ['fertility', 'health', '*']);
+      });
+
+      it('[DEG03] strips :_delegation:_internal:* object-form streamId queries', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: [
+            { streamId: 'fertility', and: [] },
+            { streamId: ':_delegation:_internal:delegates' },
+            { streamId: ':_delegation:_internal' },
+            { streamId: 'health' },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.equal(params.streams.length, 2);
+        assert.deepEqual(params.streams.map((s) => s.streamId), ['fertility', 'health']);
+      });
+
+      it('[DEG04] scrubs internal ids out of logical any/all/not query lists', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: [
+            {
+              any: ['fertility', ':_delegation:_internal:controlled'],
+              all: [':_delegation:_internal'],
+              not: ['health', ':_delegation:_internal:delegates'],
+            },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        const q = params.streams[0];
+        assert.deepEqual(q.any, ['fertility']);
+        assert.deepEqual(q.all, []);
+        assert.deepEqual(q.not, ['health']);
+      });
+    });
+
+    describe('[DELHOOK-EO] createEventGetOneInternalGuardHook (events.getOne)', () => {
+      function deps () {
+        return {
+          errors: {
+            unknownResource (resource, id) {
+              const e = new Error('unknown ' + resource + ' ' + id);
+              e.details = { id: 'unknown-resource', resource, missing: id };
+              return e;
+            },
+            invalidOperation (msg, details) {
+              const e = new Error(msg);
+              e.details = details;
+              return e;
+            },
+          },
+        };
+      }
+
+      it('[DEO01] passes through when no context.event', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const err = await runMiddleware(mw, {}, { id: 'e1' }, {});
+        assert.equal(err, undefined);
+      });
+
+      it('[DEO02] passes through when event has only non-internal streamIds', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: ['fertility', 'health'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.equal(err, undefined);
+        assert.ok(ctx.event, 'event should be left on context for next middleware');
+      });
+
+      it('[DEO03] returns 404 (unknownResource) when event has an internal streamId', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: [':_delegation:_internal:controlled'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.ok(err instanceof Error);
+        assert.equal(err.details.id, 'unknown-resource');
+        assert.equal(ctx.event, undefined, 'event must be dropped from context');
+      });
+
+      it('[DEO04] returns 404 even on mixed streamIds (internal presence is fatal)', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: ['fertility', ':_delegation:_internal:delegates'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.ok(err instanceof Error);
+        assert.equal(err.details.id, 'unknown-resource');
+      });
+    });
+
+    describe('[DELHOOK-SG] createStreamsGetInternalGuardHook (streams.get)', () => {
+      it('[DSG01] passes through when result.streams absent', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {};
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+      });
+
+      it('[DSG02] prunes top-level :_delegation:_internal node', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {
+          streams: [
+            { id: 'fertility', children: [] },
+            { id: ':_delegation:_internal', children: [{ id: ':_delegation:_internal:controlled' }] },
+            { id: 'health', children: [] },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+        assert.deepEqual(result.streams.map((s) => s.id), ['fertility', 'health']);
+      });
+
+      it('[DSG03] prunes nested :_delegation:_internal:* descendants', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {
+          streams: [
+            {
+              id: ':_delegation:',
+              children: [
+                {
+                  id: ':_delegation:_internal',
+                  children: [
+                    { id: ':_delegation:_internal:delegates' },
+                    { id: ':_delegation:_internal:controlled' },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+        // The whole :_delegation:_internal node under :_delegation: is pruned,
+        // leaving the :_delegation: root with no children.
+        assert.equal(result.streams.length, 1);
+        assert.equal(result.streams[0].id, ':_delegation:');
+        assert.deepEqual(result.streams[0].children, []);
+      });
     });
   });
 });

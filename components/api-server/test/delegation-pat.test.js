@@ -172,4 +172,58 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     assert.ok((stamped.streamIds || []).includes('access-' + patAccessId),
       'the audited action lands under the PAT access audit stream (per-delegate attribution)');
   });
+
+  it('[DPAT-06] same-core token issuance is audited on B, attributed to the delegate', async function () {
+    // Cross-core, issueToken is a real method call on B and is audited by the
+    // method wrapper. Same-core it dispatches directly, so the direct path must
+    // emit the equivalent issuance record itself — one per getToken call.
+    const auditStorage = require('storages').auditStorage;
+    if (auditStorage == null) { this.skip(); return; }
+    const userDb = await auditStorage.forUser(bob.username);
+    const issuanceRecords = async () => {
+      const events = await userDb.getEvents({ query: [] });
+      return events.filter((e) => e.content?.action === 'delegations.issueToken');
+    };
+
+    const before = await issuanceRecords();
+    // Exactly one more issuance.
+    const tokRes = await coreRequest.post(alice.delegationsPath + '/controlled/' + bob.username + '/token')
+      .set('Authorization', alice.token)
+      .send({});
+    assert.strictEqual(tokRes.status, 200, JSON.stringify(tokRes.body));
+
+    const after = await issuanceRecords();
+    assert.strictEqual(after.length, before.length + 1,
+      'the same-core getToken call left exactly one issuance audit record on B');
+    assert.ok(after.length >= 1, 'at least one issuance audit record on B');
+    assert.ok(after.every((e) => e.content?.delegation?.delegateUsername === alice.username),
+      'every issuance audit record attributes to the named delegate');
+  });
+
+  it('[DPAT-07] the internal subtree is not readable by direct-target reads (mirror control endpoint stays server-side)', async function () {
+    // A holds the controlled-account mirror at :_delegation:_internal:controlled;
+    // its payload carries the control endpoint, which must never reach a client.
+    // A direct-target events.get for the internal stream returns nothing (single
+    // value AND array forms), and streams.get does not expose the internal subtree.
+    const single = await coreRequest.get(alice.eventsPath)
+      .set('Authorization', alice.token)
+      .query({ streams: ':_delegation:_internal:controlled' });
+    assert.strictEqual(single.status, 200, JSON.stringify(single.body));
+    assert.strictEqual((single.body.events || []).filter((e) => e.type === 'delegation/controlled').length, 0,
+      'single-value internal query returns no mirror event');
+
+    const arr = await coreRequest.get(alice.eventsPath)
+      .set('Authorization', alice.token)
+      .query({ streams: [':_delegation:_internal:controlled', ':_delegation:_internal'] });
+    assert.strictEqual(arr.status, 200, JSON.stringify(arr.body));
+    assert.strictEqual((arr.body.events || []).filter((e) => e.type === 'delegation/controlled').length, 0,
+      'array-form internal query returns no mirror event');
+
+    const sg = await coreRequest.get(alice.streamsPath).set('Authorization', alice.token);
+    assert.strictEqual(sg.status, 200);
+    const flat = [];
+    (function walk (nodes) { for (const n of (nodes || [])) { flat.push(n.id); walk(n.children); } })(sg.body.streams);
+    assert.ok(!flat.some((s) => String(s).startsWith(':_delegation:_internal')),
+      'streams.get does not expose the :_delegation:_internal subtree');
+  });
 });

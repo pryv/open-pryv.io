@@ -165,6 +165,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // permission-system bugs) leaking plugin internals via read paths.
   const cmcEventsGetInternalGuard = cmc.createEventsGetInternalGuardHook();
   const cmcEventGetOneInternalGuard = cmc.createEventGetOneInternalGuardHook({ errors });
+  // Account-delegation read guards mirror the CMC ones: strip the plugin's
+  // hidden `:_delegation:_internal:*` subtree from direct-target reads so the
+  // A-side mirror (which carries a cross-account control credential) never
+  // reaches a client. Gated on `delegation:active` (default true); passthrough
+  // when inactive so the register chains stay structurally identical.
+  const delegationActive = config.get('delegation:active') !== false;
+  const delegationReadPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
+  const delegationEventsGetInternalGuard = delegationActive
+    ? delegation.createEventsGetInternalGuardHook()
+    : delegationReadPassthrough;
+  const delegationEventGetOneInternalGuard = delegationActive
+    ? delegation.createEventGetOneInternalGuardHook({ errors })
+    : delegationReadPassthrough;
   // Shared by the read (events.get) and write (events.create)
   // registrations below — declared here because `events.get` registers
   // first and `api.register` captures the value eagerly.
@@ -198,6 +211,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     sharedSecretsEnsureOnRead,
     cmcEventsGetInternalGuard,
     eventsGetUtils.coerceStreamsParam,
+    // AFTER coerceStreamsParam so params.streams is always an array — a
+    // single-value `streams=<id>` arrives as a bare string and would slip past
+    // an array filter placed earlier.
+    delegationEventsGetInternalGuard,
     eventsGetUtils.coerceAndValidateContentQueryParams,
     commonFns.getParamsValidation(methodsSchema.get.params),
     eventsGetUtils.applyDefaultsForRetrieval,
@@ -238,6 +255,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.getOne.params),
     findEvent,
     cmcEventGetOneInternalGuard,
+    delegationEventGetOneInternalGuard,
     checkIfAuthorized,
     includeHistoryIfRequested
   );
@@ -314,10 +332,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
-  // Account-delegation namespace + lifecycle guards. Gated on
-  // `delegation:active` (default true); when inactive each slot is a
-  // passthrough so the register chains stay structurally identical.
-  const delegationActive = config.get('delegation:active') !== false;
+  // Account-delegation namespace + lifecycle guards. Gated on the same
+  // `delegationActive` flag resolved in the RETRIEVAL section above; when
+  // inactive each slot is a passthrough so the register chains stay
+  // structurally identical.
   const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
   const delegationEventsWriteGuardHook = delegationActive
     ? delegation.createEventsWriteGuardHook({ errors })

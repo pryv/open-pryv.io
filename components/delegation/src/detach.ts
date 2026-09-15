@@ -166,8 +166,8 @@ async function detachDelegate (deps: DetachDeps, params: {
   const control = await store.findMarkerAccess(mall, params.bUserId, relId, C.CLIENTDATA_KIND.CONTROL);
   if (control != null) await store.deleteAccessById(mall, params.bUserId, control.id);
 
-  // (3) sweep any lingering invite capability (the § recovery rule leaves it
-  // TTL-bounded post-activation; detach is its final GC).
+  // (3) sweep any lingering invite capability (the idempotent-re-accept
+  // recovery rule leaves it TTL-bounded post-activation; detach is its final GC).
   const capability = await store.findMarkerAccess(mall, params.bUserId, relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY);
   if (capability != null) await store.deleteAccessById(mall, params.bUserId, capability.id);
 
@@ -208,7 +208,7 @@ async function handleDetachNotify (deps: NotifyDeps, params: {
 
 /**
  * dismissControlledMirror — A locally removes a `stale` mirror row (lazy
- * reconciliation housekeeping, § the list UI's Dismiss action). This is NOT a
+ * reconciliation housekeeping, as in the list UI's Dismiss action). This is NOT a
  * detach: it removes no authority (all authority lives on B) and touches B not
  * at all. Only a `stale` mirror may be dismissed; an `invite`/`active` mirror is
  * refused so a live relationship is never silently dropped from A's view.

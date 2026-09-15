@@ -17,17 +17,17 @@
  * Delivery design note (execution ruling): the spec sketches the post-invite
  * exchange as capability writes into a per-relationship "responses" stream that
  * a dispatch-style hook reacts to. That mechanism is incompatible with the
- * Phase-1 blanket write-guard, which rejects EVERY write into `:_delegation:*`
+ * blanket write-guard, which rejects EVERY write into `:_delegation:*`
  * (and every `delegation/*`-typed event) by ANY token, capability tokens
  * included. Rather than punch a hole in that guard, the post-invite exchange is
  * modelled as controlled-side METHOD calls authenticated by the marker access
- * (the same shape § the control access authorizes exactly one method): the
+ * (the same shape as the control access authorizes exactly one method): the
  * bearer calls a method, the method authorizes on the forge-protected marker,
  * and it mutates state through the mall — never over the guarded routes. This
- * keeps the Phase-1 guards fully intact. Activation is returned synchronously
+ * keeps the write-guards fully intact. Activation is returned synchronously
  * from B to A (A holds the invite capability and calls B), so A learns the
  * control endpoint from the response; the notify channel is still provisioned
- * and its endpoint stored on B for the Phase-4 teardown mirror-sync.
+ * and its endpoint stored on B for the teardown mirror-sync.
  *
  * Pure module: all storage + cross-core delivery arrives via injected deps, so
  * the whole handshake is unit-testable with a fake mall and a fake peer.
@@ -308,7 +308,7 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
   }
 
   // Provision the notify access on A (its endpoint is handed to B for the
-  // Phase-4 teardown mirror-sync channel). Reused idempotently on re-accept.
+  // teardown mirror-sync channel). Reused idempotently on re-accept.
   let notifyAccess = await store.findMarkerAccess(mall, params.aUserId, content.relId, C.CLIENTDATA_KIND.NOTIFY);
   if (notifyAccess == null) {
     notifyAccess = await store.mintMarkerAccess(mall, params.aUserId, {
@@ -355,7 +355,7 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
   // mirror commit has landed. Swallowed on failure — the capability's TTL bounds
   // any lingering, and B's detach sweep GCs it as a backstop. The invite
   // capability MUST survive B's activation commit (recovery via idempotent
-  // re-accept, § 5.4) — this call, not the activation, is what retires it.
+  // re-accept) — this call, not the activation, is what retires it.
   try {
     await deps.callControlledSide(capabilityUrl, 'accept-complete', { relId: content.relId });
   } catch (_e) { /* capability TTL / detach sweep bound any lingering */ }
@@ -375,7 +375,7 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
  * capability. Mints the control access (if not already present), flips the
  * anchor to active, and returns the control endpoint SYNCHRONOUSLY.
  *
- * At-most-once invariant (§ 5.4): for a relId, at most one control access is
+ * At-most-once invariant: for a relId, at most one control access is
  * ever live; every successful accept returns the SAME controlApiEndpoint; the
  * anchor flips invite→active exactly once. Enforcement:
  *   - D2 control-access-first lookup (idempotency keyed on the control access,
