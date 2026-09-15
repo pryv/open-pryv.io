@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
  *
  * NOTE on the schema gap: the recipient's chats stream-id needs to be
  * stored on the requester's back-channel access at acceptance time. That
- * write happens in the requester-side accept-response handler (Phase E).
+ * write happens in the requester-side accept-response handler.
  * For now, callers pass remoteChatStreamId explicitly.
  */
 

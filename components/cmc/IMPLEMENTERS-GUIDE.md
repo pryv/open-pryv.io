@@ -285,17 +285,17 @@ access goes through TWO states observable from the patient's side:
 
 | State | `clientData.cmc.role` | `counterparty.apiEndpoint` | `counterparty.remoteChatStreamId` |
 |---|---|---|---|
-| **Phase 1**: right after step 2 (sync w.r.t. the accept events.create response) | `'data-grant'` | absent | absent |
-| **Phase 2**: after step 5 (typically ~50-200 ms later, when the requester's plugin POSTs back `consent/back-channel-cmc` to the patient's `:_cmc:inbox`) | `'data-grant'` | present | present |
+| **Stage 1**: right after step 2 (sync w.r.t. the accept events.create response) | `'data-grant'` | absent | absent |
+| **Stage 2**: after step 5 (typically ~50-200 ms later, when the requester's plugin POSTs back `consent/back-channel-cmc` to the patient's `:_cmc:inbox`) | `'data-grant'` | present | present |
 
 Naive client code that polls `accesses.get` and waits only for the
 access to exist will see chat/collectors stream-ids as `null` during
-Phase 1 and then suddenly populated. If your app intends to send chat
+stage 1 and then suddenly populated. If your app intends to send chat
 or system messages back to the requester right after acceptance, wait
 for `counterparty.remoteChatStreamId` to be populated, not just the
 access itself. The simplest signal is the trigger event's
 `content.status` transition to `'completed'`, which only fires after
-Phase 2 lands.
+stage 2 lands.
 
 ## Step 5: Provider sees the acceptance
 

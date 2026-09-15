@@ -1006,7 +1006,7 @@ async function main () {
   if (!dnsLess) {
     warnings.push('dns-active mode requires port 53/udp published + (for non-docker hosts) `setcap cap_net_bind_service=+ep $(which node)`.');
 
-    // ── Phase C: dns-active DNS-chain preflight (best-effort, never blocks) ──
+    // ── dns-active DNS-chain preflight (best-effort, never blocks) ──
     // Catches the three most common reasons LE DNS-01 issuance fails on first
     // boot: (1) parent zone never delegated the domain, (2) the delegation
     // points at an IP other than this host, (3) UDP/53 isn't reachable. All

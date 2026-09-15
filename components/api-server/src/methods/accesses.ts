@@ -591,9 +591,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
-    // findOne filters head_id IS NULL + deleted IS NULL (Phase A), so a
-    // soft-deleted access also returns null — Q12.2=a treats it as
-    // unknownResource. No info leak via differentiated error.
+    // findOne filters head_id IS NULL + deleted IS NULL, so a soft-deleted
+    // access also returns null and is reported as unknownResource, the same
+    // as one that never existed. No info leak via differentiated error.
     if (access == null) {
       return next(errors.unknownResource('access', params.id));
     }
