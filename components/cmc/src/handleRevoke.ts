@@ -29,12 +29,12 @@ const require = createRequire(import.meta.url);
  *      still hold accesses minted under the old model.
  *   3. Delete that data-grant access locally, if one was found.
  *   4. Deliver `consent/revoke-cmc` to the peer via the counterparty-access's
- *      stored apiEndpoint. This is a NOTIFICATION ONLY: the receiving
- *      side classifies it as peer-delivered and skips dispatch entirely,
- *      so the peer's own access is NOT deleted by us and its token keeps
- *      working until that side's app removes it. Server-side teardown on
- *      the receiving side is planned; do not read this step as a dual
- *      delete (the docs used to claim one — they were wrong).
+ *      stored apiEndpoint. The receiving side classifies it as peer-delivered
+ *      and runs `handleIncomingRevoke`, which deletes the access the revoke
+ *      arrived through — i.e. OUR access on their account, the token this side
+ *      was using against them. So both halves do die, but each is deleted by
+ *      the server that hosts it: we never delete anything on the peer, and the
+ *      peer-side teardown depends on delivery succeeding (see below).
  *   5. Delete our counterparty-access — this is the step that actually
  *      enforces the revocation on our side (it destroys the token the
  *      peer was using against this account).
@@ -50,8 +50,11 @@ const require = createRequire(import.meta.url);
  *
  * Delivery failures DO NOT roll back the local deletes — local revocation
  * is the authoritative signal; peer eventual-consistency is the retry
- * loop's job. The orphan back-channel on the peer (if delivery never
- * succeeds) gets pruned by the peer's own operator script.
+ * loop's job. When delivery never succeeds, the peer never runs its own
+ * teardown either, so our access on THEIR account outlives the relationship
+ * until their operator script prunes it. That is the residual cost of
+ * best-effort delivery, not a second policy: on this side the revocation is
+ * complete the moment step 5 returns.
  */
 
 const C = require('./constants.ts');
@@ -235,9 +238,11 @@ async function handleRevoke (params: {
   // App-token created the target: passes (createdBy match).
   // Otherwise: rejected with cmc-revoke-forbidden.
   //
-  // Plugin-managed peer-delivered revokes never reach this handler — the
-  // dispatch's `isPeerDeliveredEvent` short-circuit on OUTBOUND_LOOPABLE_TYPES
-  // returns 'skipped' before this code runs. So we don't need to special-case
+  // Plugin-managed peer-delivered revokes never reach this handler — dispatch
+  // routes them to `handleIncomingRevoke` and returns 'skipped' before this
+  // code runs, on `isPeerDeliveredEvent` OR on the event sitting on
+  // `:_cmc:inbox` (the latter keeps holding once the incoming handler has
+  // deleted the access `createdBy` named). So we don't need to special-case
   // counterparty/capability accesses here.
   const triggerAccess = (deps as { triggerAccess?: { canDeleteAccess?: (access: { type: string; id?: string; createdBy?: string }) => boolean | Promise<boolean> } })?.triggerAccess;
   async function canTriggerDelete (target: { type?: string; id?: string; createdBy?: string }): Promise<boolean> {

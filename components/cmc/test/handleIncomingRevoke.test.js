@@ -10,19 +10,26 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleIncomingRevoke tests.
  *
- * [CMCIR] the local bookkeeping that runs when a peer's consent/revoke-cmc is
- * received: clear the withdrawing subject from an open-link capability's
- * acceptedBy so they can re-consent through the same link. Local-only; the
- * handler issues no outbound calls.
+ * [CMCIR] what runs when a peer's consent/revoke-cmc is received:
+ *   - enforcement: delete the relationship access the revoke arrived through
+ *     (the token the withdrawing peer holds against this account), plus any
+ *     sibling access serving the same relationship;
+ *   - bookkeeping: clear the withdrawing subject from an open-link
+ *     capability's acceptedBy so they can re-consent through the same link.
+ *
+ * Local-only throughout: the handler issues no outbound calls.
  */
 
 const assert = require('node:assert/strict');
 const { handleIncomingRevoke } = require('../src/handleIncomingRevoke.ts');
 
-function fakeMall () {
+function fakeMall (opts = {}) {
   const accessesById = new Map();
   const eventsById = new Map();
-  const calls = { accessesUpdated: [] };
+  // `calls.order` records the sequence of mutating calls, so a test can assert
+  // that enforcement (delete) precedes bookkeeping (update) and not just that
+  // both happened.
+  const calls = { accessesUpdated: [], accessesDeleted: [], order: [] };
   return {
     calls,
     accessesById,
@@ -34,7 +41,15 @@ function fakeMall () {
         const up = { ...ex, ...(params.update || {}) };
         accessesById.set(params.id, up);
         calls.accessesUpdated.push({ id: params.id, update: params.update });
+        calls.order.push('update:' + params.id);
         return up;
+      },
+      async delete (userId, params) {
+        if (opts.deleteThrowsFor === params.id) throw new Error('unknown resource');
+        calls.accessesDeleted.push(params.id);
+        calls.order.push('delete:' + params.id);
+        accessesById.delete(params.id);
+        return { id: params.id, deleted: true };
       },
     },
     events: {
@@ -167,6 +182,148 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       deps: { mall, fetch },
     });
     assert.equal(res.cleared, true);
+    // The delete path runs here too (bc-7 is torn down), so this covers the
+    // whole handler and not just the bookkeeping half.
+    assert.deepEqual(mall.calls.accessesDeleted, ['bc-7']);
     assert.equal(fetchCalls, 0);
+  });
+
+  it('[CIR8] deletes the access the revoke arrived through, with no capability to clear', async () => {
+    const mall = fakeMall();
+    // Direction "accepter withdraws": the grant this account minted for the
+    // peer carries no capabilityId, so there is no acceptedBy bookkeeping —
+    // the teardown must happen anyway.
+    seedBackChannel(mall, 'grant-8', {
+      counterparty: SUBJECT,
+      scopeStreamId: ':_cmc:apps:my-app:study-a',
+    });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'grant-8', content: {} },
+      deps: { mall },
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.cleared, false);
+    assert.equal(res.reason, 'no-capability');
+    assert.deepEqual(res.deletedAccessIds, ['grant-8']);
+    assert.equal(mall.accessesById.has('grant-8'), false);
+  });
+
+  it('[CIR9] deletes first, then clears the accepter', async () => {
+    const mall = fakeMall();
+    seedCapability(mall, 'cap-9', [{ ...SUBJECT, acceptedAt: 6000 }]);
+    seedBackChannel(mall, 'bc-9', {
+      capabilityId: 'cap-9',
+      counterparty: SUBJECT,
+      scopeStreamId: ':_cmc:apps:my-app:study-a',
+    });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'bc-9', content: {} },
+      deps: { mall },
+    });
+    assert.equal(res.cleared, true);
+    assert.deepEqual(res.deletedAccessIds, ['bc-9']);
+    assert.equal(acceptedByOf(mall, 'cap-9').length, 0);
+    // Order matters: a crash between the two must leave a stale acceptedBy
+    // (recoverable), never a live token.
+    assert.deepEqual(mall.calls.order, ['delete:bc-9', 'update:cap-acc']);
+  });
+
+  it('[CIR10] sweeps siblings of the same relationship, and only those', async () => {
+    const mall = fakeMall();
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    seedBackChannel(mall, 'grant-a', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    // Same peer, same scope, minted by an earlier accept: its token is live too.
+    seedBackChannel(mall, 'grant-a2', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    // Same peer, DIFFERENT relationship: must survive.
+    seedBackChannel(mall, 'grant-b', {
+      counterparty: SUBJECT, scopeStreamId: ':_cmc:apps:my-app:study-b',
+    });
+    // Same peer, no scope at all: unattributable, so never swept.
+    seedBackChannel(mall, 'grant-legacy', { counterparty: SUBJECT });
+    // Another peer entirely, same scope string: must survive.
+    seedBackChannel(mall, 'grant-other', {
+      counterparty: { username: 'carol', host: 'c.example.com' }, scopeStreamId: SCOPE,
+    });
+
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'grant-a', content: {} },
+      deps: { mall },
+    });
+    assert.deepEqual(res.deletedAccessIds.sort(), ['grant-a', 'grant-a2']);
+    assert.equal(mall.accessesById.has('grant-b'), true);
+    assert.equal(mall.accessesById.has('grant-legacy'), true);
+    assert.equal(mall.accessesById.has('grant-other'), true);
+  });
+
+  it('[CIR11] peer-supplied scope never selects the target; a mismatch only warns', async () => {
+    const mall = fakeMall();
+    const warns = [];
+    seedBackChannel(mall, 'grant-11', {
+      counterparty: SUBJECT, scopeStreamId: ':_cmc:apps:my-app:study-a',
+    });
+    // A grant of a DIFFERENT relationship, named by the peer's content. If the
+    // handler selected on content it would delete this one instead.
+    seedBackChannel(mall, 'grant-11-other', {
+      counterparty: SUBJECT, scopeStreamId: ':_cmc:apps:my-app:study-z',
+    });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: {
+        type: 'consent/revoke-cmc',
+        createdBy: 'grant-11',
+        content: { scopeStreamId: ':_cmc:apps:my-app:study-z' },
+      },
+      deps: { mall, logger: { warn: (msg) => warns.push(msg) } },
+    });
+    assert.deepEqual(res.deletedAccessIds, ['grant-11']);
+    assert.equal(mall.accessesById.has('grant-11-other'), true);
+    assert.equal(warns.some((m) => String(m).includes('peer-supplied scope differs')), true);
+  });
+
+  it('[CIR12] createdBy access already gone → no delete attempted, no-op success', async () => {
+    const mall = fakeMall();
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'vanished', content: {} },
+      deps: { mall },
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.reason, 'created-by-access-gone');
+    assert.deepEqual(res.deletedAccessIds, []);
+    assert.deepEqual(mall.calls.accessesDeleted, []);
+  });
+
+  it('[CIR13] a sibling delete that races a local delete is tolerated', async () => {
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    const mall = fakeMall({ deleteThrowsFor: 'grant-13b' });
+    seedBackChannel(mall, 'grant-13a', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    seedBackChannel(mall, 'grant-13b', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'grant-13a', content: {} },
+      deps: { mall },
+    });
+    assert.equal(res.ok, true);
+    // The one that threw is reported as not deleted rather than claimed.
+    assert.deepEqual(res.deletedAccessIds, ['grant-13a']);
+  });
+
+  it('[CIR14] a mall without accesses.delete cannot enforce, and says so', async () => {
+    // Guards against a wiring site handing the handler a mall that silently
+    // skips the teardown while the result still looks successful.
+    const mall = fakeMall();
+    delete mall.accesses.delete;
+    const warns = [];
+    seedBackChannel(mall, 'grant-14', { counterparty: SUBJECT, scopeStreamId: ':s' });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'grant-14', content: {} },
+      deps: { mall, logger: { warn: (msg) => warns.push(msg) } },
+    });
+    assert.deepEqual(res.deletedAccessIds, []);
+    assert.equal(warns.some((m) => String(m).includes('was NOT torn down')), true);
   });
 });

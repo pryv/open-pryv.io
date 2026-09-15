@@ -443,8 +443,15 @@ describe('[CMCDISP] cmc/dispatch', () => {
         if (a != null) Object.assign(a, params.update);
         m.calls.accessesUpdated.push({ id: params.id, update: params.update });
       };
+      m.accesses.delete = async (userId, params) => {
+        const i = list.findIndex((x) => x.id === params.id);
+        if (i >= 0) list.splice(i, 1);
+        m.calls.accessesDeleted.push(params.id);
+      };
       m.calls.accessesUpdated = [];
+      m.calls.accessesDeleted = [];
       m._acceptedBy = () => capAccess.clientData.cmc.capability.acceptedBy;
+      m._accessIds = () => list.map((a) => a.id);
       return m;
     }
 
@@ -471,6 +478,53 @@ describe('[CMCDISP] cmc/dispatch', () => {
       const list = mall._acceptedBy();
       assert.equal(list.length, 1);
       assert.equal(list[0].username, 'carol');
+      // ... and the peer's access on this account is gone, which is what
+      // actually enforces the withdrawal.
+      assert.deepEqual(mall.calls.accessesDeleted, ['acc-peer']);
+      assert.equal(mall._accessIds().includes('acc-peer'), false);
+    });
+
+    it('[CDL06] an inbox revoke keeps taking the incoming path once its createdBy access is gone', async () => {
+      // Re-dispatch of the same inbox event after the teardown (retry loop,
+      // operator re-processing). `createdBy` no longer resolves, so the
+      // peer-delivered test alone would let it fall through to handleRevoke
+      // with the peer's foreign content.accessId and mark the withdrawal
+      // 'failed' — which an app reads as "the revocation did not work".
+      const mall = mallForIncomingRevoke('cap-e', [{ ...SUBJECT, acceptedAt: 1 }]);
+      await mall.accesses.delete('u1', { id: 'acc-peer' });
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-incoming-revoke-again',
+          type: 'consent/revoke-cmc',
+          content: { from: SUBJECT, accessId: 'peer-side-id-we-do-not-hold' },
+          streamIds: [':_cmc:inbox'],
+          createdBy: 'acc-peer',
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.status, 'skipped');
+      assert.equal(r.reason, 'cmc-incoming-from-peer');
+      assert.notEqual(r.status, 'failed');
+    });
+
+    it('[CDL07] a user-originated revoke on an app-scope stream still reaches handleRevoke', async () => {
+      // Regression guard for the inbox routing above: it must not swallow the
+      // ordinary case where the account holder revokes through the helper.
+      const mall = fakeMall();
+      mall.accesses.get = async () => [{ id: 'acc-app', type: 'app', clientData: {} }];
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-user-revoke',
+          type: 'consent/revoke-cmc',
+          content: {},
+          streamIds: [':_cmc:apps:my-app:study-a:collectors:peer--peer-com'],
+          createdBy: 'acc-app',
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.notEqual(r.reason, 'cmc-incoming-from-peer');
     });
   });
 

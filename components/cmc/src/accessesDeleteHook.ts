@@ -36,6 +36,11 @@
  * the access is already deleted (the authoritative signal); a delivery
  * failure only delays the peer's bookkeeping — mirroring handleRevoke's
  * "local revocation is authoritative" semantics.
+ *
+ * What the peer does with the delivery: `handleIncomingRevoke` deletes the
+ * access the revoke arrived through, which is our access on their account. So
+ * a raw `accesses.delete` here ends both halves of the relationship, each
+ * deleted by the server hosting it — as long as delivery succeeds.
  */
 
 import * as C from './constants.ts';

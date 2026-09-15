@@ -182,14 +182,29 @@ async function dispatch (params: {
   // the incoming variants do real protocol work (mint back-channel,
   // update data-grant). Only chat / system / revoke handlers POST
   // unconditionally back out, so only they need the guard.
+  //
+  // Revoke is the one type whose incoming variant also does real protocol
+  // work — it enforces the revocation locally — so it is routed on the inbox
+  // stream as well, see below.
   if (OUTBOUND_LOOPABLE_TYPES.has(event.type)) {
-    const incoming = await isPeerDeliveredEvent(userId, event.createdBy, deps);
+    const peerDelivered = await isPeerDeliveredEvent(userId, event.createdBy, deps);
+    // A revoke sitting on `:_cmc:inbox` is peer-delivered by construction:
+    // `inboxWriteHook` refuses any write there that does not come from a
+    // counterparty-marked access. Routing on the stream as well as on
+    // `createdBy` matters because the incoming handler DELETES that access, so
+    // a later re-dispatch of the same event (retry loop, operator
+    // re-processing) would otherwise fall through to `handleRevoke` with the
+    // peer's foreign `content.accessId` and mark the withdrawal 'failed' —
+    // which an app reads as "the revocation did not work".
+    const incoming = peerDelivered || (event.type === C.ET_REVOKE && isOnInbox(event));
     if (incoming) {
-      // An incoming revoke still needs one piece of LOCAL bookkeeping: clear
-      // the withdrawing subject from any open-link capability's acceptedBy so
-      // they can re-consent through the same link. It is local-only and POSTs
-      // nothing, so the loop-safety above is unaffected; a failure only logs
-      // and never blocks the skip result below.
+      // An incoming revoke is where the revocation is ENFORCED on this side:
+      // the handler deletes the relationship access the peer holds here, then
+      // clears the withdrawing subject from any open-link capability's
+      // acceptedBy so they can re-consent through the same link. It POSTs
+      // nothing (its deletes go through the mall, not the api-server route, so
+      // they do not fire the accesses-delete hook), so the loop-safety above is
+      // unaffected; a failure only logs and never blocks the skip result below.
       if (event.type === C.ET_REVOKE) {
         try {
           await handleIncomingRevokeMod.handleIncomingRevoke({
@@ -478,6 +493,11 @@ const SYNC_DISPATCH_TYPES = new Set<string>([
  * here: their incoming variants do real protocol work (mint back-channel,
  * update data-grant). Routing for those is direction-aware via
  * `isOnInbox` already.
+ *
+ * `consent/revoke-cmc` is in here because its OUTBOUND handler POSTs, but its
+ * incoming variant is not a no-op either: it tears down the access the peer
+ * holds here. It is therefore additionally routed on `isOnInbox`, so that an
+ * inbox revoke keeps taking the incoming path once that access is gone.
  */
 const OUTBOUND_LOOPABLE_TYPES = new Set<string>([
   'message/chat-cmc',
