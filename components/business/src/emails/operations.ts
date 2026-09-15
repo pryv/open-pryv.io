@@ -280,7 +280,7 @@ async function verifyToken (userId: string, token: string): Promise<string | nul
  * (pending OR an asserted `verified` one — registration/legacy/null), so an
  * existing account can request a link to prove its founding address and upgrade
  * its provenance. Throws invalidOperation when the email is unknown, already
- * PROVED (email-link/operator), or still within the cooldown window (with
+ * PROVED (see PROVED_METHODS), or still within the cooldown window (with
  * `retryAfterSeconds`).
  */
 async function resendVerification (deps: Deps, ctx: UserContext, value: string): Promise<MintedVerification> {

@@ -23,8 +23,9 @@ const emailEntry = helpers.object({
   status: helpers.string({ enum: ['pending', 'verified'] }),
   verifiedAt: helpers.number({ nullable: true }),
   // Explicit provenance. `null` is grandfathered pre-provenance data (read-only);
-  // only 'email-link' / 'operator' count as proved ownership.
-  verificationMethod: helpers.string({ nullable: true, enum: ['email-link', 'operator', 'registration', 'legacy', null] })
+  // only 'email-link' / 'email-code' / 'operator' count as proved ownership
+  // (the source of truth is PROVED_METHODS in business/src/emails/constants.ts).
+  verificationMethod: helpers.string({ nullable: true, enum: ['email-link', 'email-code', 'operator', 'registration', 'legacy', null] })
 }, {
   required: ['value', 'primary', 'status', 'verifiedAt', 'verificationMethod'],
   additionalProperties: false

@@ -33,6 +33,10 @@
 - Registration chain: `requireEmailProof` runs before `forwardIfCrossCore`
   (non-consuming), the proof is consumed after `insertOne`, and the founding
   container event is seeded with the `email-code` provenance.
+- `schema/accountMethods.ts`: the `emails[].verificationMethod` response enum
+  now lists `email-code`. Result schemas are asserted by the tests
+  (`account.test.js` validates `account.update` against this one), so the new
+  provenance value had to land there as well as in `PROVED_METHODS`.
 - `cmc`: the composed mall handed to the CMC modules is now fully typed, which
   surfaced a live defect — `streams.delete` was declared and called with a
   params object where the mall takes the stream id itself.
