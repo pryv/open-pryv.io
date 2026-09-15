@@ -44,8 +44,14 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.get(Paths.Delegations + '/controlled', setMethodId('delegations.listControlled'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, {}, methodCallback(res, next, 200));
   });
+  expressApp.post(Paths.Delegations + '/controlled/:controlled/token', setMethodId('delegations.getToken'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, { username: req.params.controlled }, methodCallback(res, next, 200));
+  });
 
-  // ---- controlled-side (core-to-core, capability bearer) ----
+  // ---- controlled-side (core-to-core, capability / control bearer) ----
+  expressApp.post(Paths.Delegations + '/controlled-side/token', setMethodId('delegations.issueToken'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, req.body, methodCallback(res, next, 200));
+  });
   expressApp.post(Paths.Delegations + '/controlled-side/accept-response', setMethodId('delegations.acceptResponse'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });

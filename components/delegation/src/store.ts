@@ -36,6 +36,7 @@ type EventLike = {
 type AccessCreateParams = {
   type: string;
   name: string;
+  token?: string;
   permissions?: Array<{ streamId: string; level: string }>;
   clientData?: Record<string, unknown>;
   expires?: number | null;
@@ -44,6 +45,8 @@ type AccessRow = {
   id: string;
   token?: string;
   apiEndpoint?: string;
+  name?: string;
+  type?: string;
   expires?: number | null;
   clientData?: { delegation?: Record<string, unknown> } | null;
 };
@@ -95,7 +98,7 @@ async function ensureParents (mall: MallLike, userId: string): Promise<void> {
 /** All anchor events (B-side) for a user. */
 async function listAnchors (mall: MallLike, userId: string): Promise<EventLike[]> {
   const events = await mall.events.get(userId, {
-    streams: [C.delegatesStreamId()],
+    streams: [{ any: [C.delegatesStreamId()] }],
     types: [C.ET_ANCHOR],
     limit: 1000,
   });
@@ -134,14 +137,16 @@ async function updateAnchorContent (mall: MallLike, userId: string, anchor: Even
 
 async function deleteAnchor (mall: MallLike, userId: string, anchor: EventLike): Promise<void> {
   if (mall.events.delete == null || anchor?.id == null) return;
-  await ignoreNotFound(mall.events.delete(userId, { id: anchor.id }));
+  // The mall's events.delete derives the store from the ORIGINAL event (its id
+  // + streamIds), so pass the whole anchor, not just { id }.
+  await ignoreNotFound(mall.events.delete(userId, anchor));
 }
 
 // --------------------------------------------------------------------- mirrors
 
 async function listMirrors (mall: MallLike, userId: string): Promise<EventLike[]> {
   const events = await mall.events.get(userId, {
-    streams: [C.controlledStreamId()],
+    streams: [{ any: [C.controlledStreamId()] }],
     types: [C.ET_MIRROR],
     limit: 1000,
   });
@@ -180,7 +185,8 @@ async function updateMirrorContent (mall: MallLike, userId: string, mirror: Even
 
 async function deleteMirror (mall: MallLike, userId: string, mirror: EventLike): Promise<void> {
   if (mall.events.delete == null || mirror?.id == null) return;
-  await ignoreNotFound(mall.events.delete(userId, { id: mirror.id }));
+  // See deleteAnchor: pass the whole mirror so the mall can resolve its store.
+  await ignoreNotFound(mall.events.delete(userId, mirror));
 }
 
 // -------------------------------------------------------------------- accesses
@@ -220,6 +226,48 @@ async function findMarkerAccess (mall: MallLike, userId: string, relId: string, 
 async function deleteAccessById (mall: MallLike, userId: string, accessId: string): Promise<void> {
   if (mall.accesses.delete == null) return;
   await ignoreNotFound(mall.accesses.delete(userId, { id: accessId }));
+}
+
+/** Find an access by its exact (name, type) pair — the login-flow lookup key. */
+async function findAccessByNameType (mall: MallLike, userId: string, name: string, type: string): Promise<AccessRow | null> {
+  const list = await mall.accesses.get(userId, {});
+  for (const a of (list || [])) {
+    if (a?.name === name && a?.type === type) return a;
+  }
+  return null;
+}
+
+/**
+ * Mint a session-backed personal access — the delegate PAT. Mirrors the
+ * login-flow personal-access creation: an explicit session-id token, a
+ * deterministic `name` (the login appId), and the forge-protected
+ * `clientData.delegation` marker. The mall accesses adapter stamps the returned
+ * row's `apiEndpoint` (the controlled account's endpoint carrying this token).
+ */
+async function mintPersonalAccess (mall: MallLike, userId: string, params: {
+  name: string;
+  token: string;
+  clientDataDelegation: Record<string, unknown>;
+}): Promise<AccessRow> {
+  return mall.accesses.create(userId, {
+    type: 'personal',
+    name: params.name,
+    token: params.token,
+    permissions: [],
+    clientData: { delegation: params.clientDataDelegation },
+    expires: null,
+  });
+}
+
+/**
+ * Update an existing access in place (token rotation + marker refresh on PAT
+ * re-issue). Returns the persisted row with a freshly stamped `apiEndpoint`.
+ */
+async function updateAccessFields (mall: MallLike, userId: string, accessId: string, update: Record<string, unknown>): Promise<AccessRow> {
+  if (mall.accesses.update == null) {
+    throw new Error('delegation-store: mall.accesses.update not available');
+  }
+  return (await mall.accesses.update(userId, { id: accessId, update })) as AccessRow;
 }
 
 // -------------------------------------------------------------------- helpers
@@ -268,4 +316,7 @@ export {
   mintMarkerAccess,
   findMarkerAccess,
   deleteAccessById,
+  findAccessByNameType,
+  mintPersonalAccess,
+  updateAccessFields,
 };

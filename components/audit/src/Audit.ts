@@ -22,7 +22,7 @@ const timestamp = require('unix-timestamp');
  * EventEmitter interface is just for tests syncing for now
  */
 type Tracing = { startSpan (n: string): void; finishSpan (n: string): void; logForSpan (n: string, ctx: Record<string, unknown>): void };
-type AccessRef = { id: string; serial?: string | null };
+type AccessRef = { id: string; serial?: string | null; clientData?: { delegation?: { kind?: string; delegate?: { username?: string; hostSlug?: string } } } | null };
 type MethodContext = {
   methodId: string;
   user?: { id?: string };
@@ -48,7 +48,7 @@ type AuditEventLike = {
   modified?: number;
   trashed?: boolean;
   type?: string;
-  content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number };
+  content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number; delegation?: { delegateUsername?: string; delegateHostSlug?: string } };
 };
 type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
@@ -211,6 +211,18 @@ function buildDefaultEvent (context: MethodContext): AuditEventLike {
   };
   if (context.callerId != null) {
     event.content.callerId = context.callerId;
+  }
+  // Delegation attribution — when the acting access is a delegate PAT (or the
+  // control access itself), stamp the delegate identity onto the audit event.
+  // Per-delegate attribution is already automatic (each delegate has its own
+  // access, so records land under `access-<its-id>`); this makes the acting
+  // delegate legible on the record itself. Additive.
+  const delMarker = context.access != null ? context.access.clientData?.delegation : undefined;
+  if (delMarker != null && (delMarker.kind === 'delegate-pat' || delMarker.kind === 'control')) {
+    event.content.delegation = {
+      delegateUsername: delMarker.delegate?.username,
+      delegateHostSlug: delMarker.delegate?.hostSlug
+    };
   }
   // Breach-scope read enrichment (present only on read methods that landed it).
   if (context.auditRecordCount != null) {

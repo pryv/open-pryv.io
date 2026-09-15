@@ -14,8 +14,9 @@ import * as hooks from './hooks.ts';
 import * as errorIds from './errorIds.ts';
 import * as store from './store.ts';
 import * as attach from './attach.ts';
+import * as patMint from './patMint.ts';
 
-export { constants, hooks, errorIds, store, attach };
+export { constants, hooks, errorIds, store, attach, patMint };
 
 // Handshake orchestration at top-level for api-server integration.
 export const {
@@ -31,6 +32,12 @@ export const {
   listDelegates,
   listControlled,
 } = attach;
+
+// Delegate PAT mint (B-side) + getToken wrapper (A-side).
+export const {
+  handleIssueToken,
+  getToken,
+} = patMint;
 
 export const DelegationErrorIds = errorIds.DelegationErrorIds;
 

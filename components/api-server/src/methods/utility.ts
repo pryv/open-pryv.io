@@ -71,6 +71,27 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       const expirationAndChangeTimes = await passwordRules.getPasswordExpirationAndChangeTimes(context.user.id);
       Object.assign(result.user, expirationAndChangeTimes);
     }
+    // Delegation surfacing — an additive, first-class field derived from the
+    // forge-protected `clientData.delegation` marker so clients need not parse
+    // clientData. For a delegate PAT the token acts AS the controlled account,
+    // so `result.user.username` stays the controlled account; for a control
+    // access the shape names the relationship it operates. Additive only.
+    const delMarker = (context.access as { clientData?: { delegation?: { kind?: string; delegate?: { username?: string; hostSlug?: string } } } }).clientData?.delegation;
+    if (delMarker != null) {
+      if (delMarker.kind === 'delegate-pat') {
+        result.delegation = {
+          isDelegatedAccess: true,
+          controlledUsername: context.user.username,
+          delegate: delMarker.delegate,
+        };
+      } else if (delMarker.kind === 'control') {
+        result.delegation = {
+          kind: 'control',
+          controlledUsername: context.user.username,
+          delegate: delMarker.delegate,
+        };
+      }
+    }
     next();
   }
   api.register('callBatch', commonFns.getParamsValidation(methodsSchema.callBatch.params), callBatchApiFn, updateAccessUsage);

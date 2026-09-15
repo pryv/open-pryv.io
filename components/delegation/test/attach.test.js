@@ -61,7 +61,11 @@ function makeFakeMall () {
       },
       async get (userId, params = {}) {
         let list = userEvents(userId).slice();
-        if (Array.isArray(params.streams)) list = list.filter((e) => (e.streamIds || []).some((s) => params.streams.includes(s)));
+        if (Array.isArray(params.streams)) {
+          // Accept both the normalized mall shape [{ any: [id] }] and a bare id list.
+          const wanted = params.streams.flatMap((q) => (typeof q === 'string' ? [q] : (q?.any || [])));
+          list = list.filter((e) => (e.streamIds || []).some((s) => wanted.includes(s)));
+        }
         if (Array.isArray(params.types)) list = list.filter((e) => params.types.includes(e.type));
         return list;
       },

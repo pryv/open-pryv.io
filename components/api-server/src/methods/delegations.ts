@@ -28,6 +28,8 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
+const { getStorageLayer } = require('storage');
+const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
@@ -35,7 +37,7 @@ const delegation = require('delegation');
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 type MethodContext = BaseMethodContext & {
-  access?: { isPersonal?: () => boolean; clientData?: { delegation?: { kind?: string; relId?: string } } | null } | null;
+  access?: { isPersonal?: () => boolean; clientData?: { delegation?: { kind?: string; relId?: string; delegate?: { username?: string; hostSlug?: string } } } | null } | null;
 };
 
 const DEFAULT_INVITE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -70,10 +72,25 @@ export default async function produceDelegationsApiMethods (api: { register (...
   const mall = await buildMallForCmc();
   const usersRepository = await getUsersRepository();
   const platform = await getPlatform();
+  const storageLayer = await getStorageLayer();
+  const sessionsStorage = storageLayer.sessions;
   const adminAccessKey = config.get('auth:adminAccessKey');
   const slugifyHost: (h: string) => string = cmc.slug.slugifyHost;
   const postToPeer = cmc.postToPeer;
   const thisCoreId = config.get('core:id');
+
+  /**
+   * Reuse-or-generate a session for {username, appId} and return its id — the
+   * exact login-flow behaviour (sessionsStorage.getMatching else generate). The
+   * returned id becomes the delegate PAT token, so a re-issue for the same
+   * delegate returns the SAME token while the session is alive.
+   */
+  async function mintSession (username: string, appId: string): Promise<string> {
+    const sessionData = { username, appId };
+    const existing = await fromCallback((cb: (e: unknown, id: string | null) => void) => sessionsStorage.getMatching(sessionData, cb)) as string | null;
+    if (existing != null) return existing;
+    return await fromCallback((cb: (e: unknown, id: string) => void) => sessionsStorage.generate(sessionData, null, cb)) as string;
+  }
 
   // ---- identity -----------------------------------------------------------
 
@@ -201,6 +218,37 @@ export default async function produceDelegationsApiMethods (api: { register (...
     };
   }
 
+  /**
+   * Build the control-side caller for a controlled account — the token-mint
+   * channel. Same-core dispatches directly to the PAT-mint handler (no HTTP,
+   * relId taken from A's mirror + A's own identity); cross-core posts to the
+   * controlled account's core via the control bearer endpoint.
+   */
+  function makeCallControl (controlledUsername: string, aUsername: string) {
+    return async function callControl (controlApiEndpoint: string, relId: string) {
+      const target = await resolveTarget(controlledUsername);
+      if (target.isSelf && target.userId != null) {
+        try {
+          const res = await delegation.handleIssueToken(
+            { mall, now: nowSeconds, mintSession },
+            { bUserId: target.userId, bUsername: controlledUsername, relId, expectDelegateUsername: aUsername });
+          return { ok: true, status: 200, body: res };
+        } catch (err) {
+          if (isDelegationErr(err)) return { ok: false, status: err.httpStatus, body: { id: err.id } };
+          throw err;
+        }
+      }
+      const r = await postToPeer({
+        apiEndpoint: controlApiEndpoint,
+        path: 'delegations/controlled-side/token',
+        body: {},
+        deps: { fetch, logger: getLogger('delegations:outbound') },
+      });
+      if (r.ok) return { ok: true, status: r.status, body: r.body };
+      return { ok: false, status: r.status, body: (r as { body?: unknown }).body ?? null };
+    };
+  }
+
   // ---- marker gate for controlled-side methods ----------------------------
 
   function requireMarker (kind: string) {
@@ -309,7 +357,46 @@ export default async function produceDelegationsApiMethods (api: { register (...
       } catch (err) { next(toApiError(err)); }
     });
 
+  // getToken (A) — issue a delegate PAT for an active controlled account. The
+  // control endpoint is loaded server-side (never sent to A's client); the PAT +
+  // B's apiEndpoint are returned so A's client can talk to B's core directly.
+  api.register('delegations.getToken',
+    commonFns.requirePersonalAccess,
+    async function (context: MethodContext, params: { username?: string }, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const controlledUsername = String(params.username || '');
+        const deps = {
+          mall, now: nowSeconds,
+          callControl: makeCallControl(controlledUsername, context.user.username),
+        };
+        const res = await delegation.getToken(deps, { aUserId: context.user.id, controlledUsername });
+        Object.assign(result, res);
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
   // ======================================================= controlled-side
+
+  // issueToken — A's core → B's core (bearer = control access). Mints/refreshes
+  // the delegate PAT on B (session-backed personal access). Also reachable as a
+  // direct public call by a control bearer — that is fine, it IS the credential.
+  api.register('delegations.issueToken',
+    requireMarker('control'),
+    async function (context: MethodContext, _params: unknown, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const marker = context.access?.clientData?.delegation;
+        const res = await delegation.handleIssueToken(
+          { mall, now: nowSeconds, mintSession },
+          {
+            bUserId: context.user.id,
+            bUsername: context.user.username,
+            relId: String(marker?.relId),
+            expectDelegateUsername: marker?.delegate?.username,
+          });
+        Object.assign(result, res);
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
 
   // acceptResponse — A's core → B's core (bearer = invite capability)
   api.register('delegations.acceptResponse',
