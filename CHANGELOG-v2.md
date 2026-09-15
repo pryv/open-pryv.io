@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 2.0.0-rc.19 — 2026-09-15
+## 2.0.0-rc.20 — 2026-09-15
 
 ### CMC: a revocation now ends both halves of the relationship
 
