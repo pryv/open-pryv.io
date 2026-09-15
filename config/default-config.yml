@@ -350,10 +350,22 @@ account:
     # unverified account through. In a multi-core cluster set the same value on
     # every core. Admin-created accounts (system.createUser) are never gated.
     requireAtRegistration: false
+    # With `microservice` or `mandrill` delivery the `email-challenge` template
+    # lives on that external service, not in PlatformDB: add it there before
+    # turning this on, or the first registration fails closed on a send error.
+    #
     # Code policy: lifetime of a code, wrong tries before it is discarded,
     # minimum delay between two codes for the same address, codes per address
     # per day, wrong tries per address per day (across codes), and how long the
     # proof returned by a successful verification stays valid for registering.
+    #
+    # These budgets are keyed on the TARGET ADDRESS, because the endpoint is
+    # public and has no caller identity to key on. That means someone who knows
+    # an address that has no account yet can spend its daily budget and lock it
+    # out of sign-up until the window rolls (and mail it a code each time). The
+    # caps are deliberately soft, sized to stop bulk abuse rather than a
+    # targeted nuisance; put a per-IP rate limit in front of the registration
+    # endpoints at the edge if that matters to you.
     registrationCodeMaxAgeMs: 600000
     registrationCodeMaxAttempts: 5
     registrationCodeResendCooldownMs: 60000

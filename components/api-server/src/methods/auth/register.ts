@@ -232,8 +232,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           data: { reason: 'exhausted' }
         }));
       }
-      // Uniform answer for "no challenge" and "wrong code" so the endpoint does
-      // not disclose whether a challenge is pending for the address.
+      // Same status and message whether no challenge is pending or the code is
+      // simply wrong. `attemptsRemaining` still differs (0 when nothing is
+      // pending), which clients use to say "expired" rather than "wrong"; that
+      // tells an attacker nothing they could not learn by minting a challenge
+      // for the address themselves.
       const err = errors.invalidAccessToken('The verification code is invalid or expired.');
       err.data = { attemptsRemaining: outcome.attemptsRemaining };
       return next(err);

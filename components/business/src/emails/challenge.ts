@@ -102,7 +102,12 @@ export function formatCode (code: string): string {
   return code.slice(0, 4) + '-' + code.slice(4);
 }
 
-/** Hashed so no cleartext address lands in a cluster-wide key. */
+/**
+ * Hashed so no cleartext address lands in a cluster-wide key. This is a
+ * pseudonym, not a secret: an email hash is reversible by dictionary. What it
+ * buys is that a key listing does not hand over an address book; the rows are
+ * short-lived, which is what keeps the exposure small.
+ */
 export function challengeKey (email: string): string {
   return 'email-challenge/' + hashToken(normalizeEmail(email));
 }

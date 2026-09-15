@@ -246,8 +246,19 @@ class Registration {
       // founding email is then proved by code, not merely asserted.
       let provenance: { verificationMethod: string; verifiedAt: number | null } | undefined;
       if (context.emailProofVerified === true && context.newUser.email != null) {
-        await challenge.consumeProof(context.newUser.email as string);
         provenance = { verificationMethod: C.METHOD_EMAIL_CODE, verifiedAt: timestamp.now() };
+        // Best-effort, like the seed below: the account row is already
+        // committed, so failing the response here would tell the caller the
+        // registration failed and send them into a username conflict on retry.
+        // The proof expires on its own TTL, and consuming it is idempotent.
+        try {
+          await challenge.consumeProof(context.newUser.email as string);
+        } catch (consumeErr) {
+          getLogger('registration').warn('failed to consume the registration email proof', {
+            username: context.newUser.username,
+            error: consumeErr instanceof Error ? consumeErr.message : String(consumeErr)
+          });
+        }
       }
       // Seed the multi-email container: the initial email is primary and
       // verified at today's trust level (no verification method) unless the
