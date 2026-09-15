@@ -95,6 +95,31 @@ describe('[MAILFCD] mail façade', () => {
     );
   });
 
+  it('[MFCD6] the registration code never reaches the mail subject', async () => {
+    // The code is the sole proof of inbox control for a flow that gates account
+    // creation, so it must not be readable from a notification preview or a
+    // mail-subject log. [MFCD5] asserts the code is SOMEWHERE in the message and
+    // would stay green if it were put back in the subject, so pin it here.
+    const rows = await loadBundledRows();
+    await mail.init({
+      getAllMailTemplates: async () => rows,
+      smtp: { jsonTransport: true },
+      from: { name: 'T', address: 't@example.com' },
+      defaultLang: 'en'
+    });
+    for (const lang of ['en', 'fr']) {
+      const res = await mail.send({
+        type: 'email-challenge',
+        lang,
+        recipient: { name: 'x', email: 'x@example.com' },
+        substitutions: { CODE: 'ABCD-EFGH', EMAIL: 'a@example.com', CODE_MAX_AGE_MINUTES: '10' }
+      });
+      const message = JSON.parse(res.result.message);
+      assert.ok(!String(message.subject).includes('ABCD-EFGH'), `${lang} subject must not carry the code`);
+      assert.ok(String(message.html).includes('ABCD-EFGH'), `${lang} body must carry the code`);
+    }
+  });
+
   it('[MFCD5] every bundled template renders with its documented substitutions', async () => {
     const rows = await loadBundledRows();
     await mail.init({
