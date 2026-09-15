@@ -49,7 +49,7 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
 
   afterEach(async () => { await cleanup(); });
 
-  it('[MC01] --help prints usage and exits 0', () => {
+  it('[MCL01] --help prints usage and exits 0', () => {
     const res = runCli(['--help']);
     assert.strictEqual(res.status, 0, res.stderr);
     assert.match(res.stdout, /Usage:/);
@@ -57,13 +57,13 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.match(res.stdout, /send-test/);
   });
 
-  it('[MC02] templates list on empty PlatformDB reports "(no templates ...)"', () => {
+  it('[MCL02] templates list on empty PlatformDB reports "(no templates ...)"', () => {
     const res = runCli(['templates', 'list']);
     assert.strictEqual(res.status, 0, res.stderr);
     assert.match(res.stdout, /no templates/);
   });
 
-  it('[MC03] templates set writes a Pug source and get returns it', async () => {
+  it('[MCL03] templates set writes a Pug source and get returns it', async () => {
     const type = 'welcome-' + cuid();
     const tmpFile = path.join(os.tmpdir(), 'pryv-mailcli-' + cuid() + '.pug');
     const src = '| Hello from MAILCLI ' + cuid();
@@ -80,7 +80,7 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     await fs.unlink(tmpFile);
   });
 
-  it('[MC04] templates list after write shows the new row in tab-separated shape', async () => {
+  it('[MCL04] templates list after write shows the new row in tab-separated shape', async () => {
     const type = 'list-' + cuid();
     await platformDB.setMailTemplate(type, 'fr', 'html', 'p bonjour');
     const listRes = runCli(['templates', 'list']);
@@ -89,7 +89,7 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.match(listRes.stdout, new RegExp(type + '\\tfr\\thtml\\t\\d+'));
   });
 
-  it('[MC05] templates delete removes the targeted row only', async () => {
+  it('[MCL05] templates delete removes the targeted row only', async () => {
     const type = 'del-' + cuid();
     await platformDB.setMailTemplate(type, 'en', 'subject', 'S');
     await platformDB.setMailTemplate(type, 'en', 'html', 'H');
@@ -99,7 +99,7 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'html'), 'H');
   });
 
-  it('[MC06] templates delete without part wipes both html + subject for that lang', async () => {
+  it('[MCL06] templates delete without part wipes both html + subject for that lang', async () => {
     const type = 'del-lang-' + cuid();
     await platformDB.setMailTemplate(type, 'en', 'subject', 'S');
     await platformDB.setMailTemplate(type, 'en', 'html', 'H');
@@ -111,7 +111,7 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.strictEqual(await platformDB.getMailTemplate(type, 'fr', 'html'), 'HF');
   });
 
-  it('[MC07] templates seed --from overwrites rows from disk', async () => {
+  it('[MCL07] templates seed --from overwrites rows from disk', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mail-seed-cli-'));
     const type = 'seed-' + cuid();
     const writeAt = async (rel, content) => {
@@ -133,14 +133,14 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it('[MC08] templates get on missing row exits non-zero with a diagnostic', () => {
+  it('[MCL08] templates get on missing row exits non-zero with a diagnostic', () => {
     const type = 'missing-' + cuid();
     const res = runCli(['templates', 'get', type, 'en', 'subject']);
     assert.notStrictEqual(res.status, 0);
     assert.match(res.stderr, /no row for/);
   });
 
-  it('[MC09] templates set without --file is rejected', () => {
+  it('[MCL09] templates set without --file is rejected', () => {
     const res = runCli(['templates', 'set', 'welcome', 'en', 'subject']);
     assert.notStrictEqual(res.status, 0);
     assert.match(res.stderr, /--file <path> is required/);
