@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Account-stream permissions: clearer error, corrected docs
+
+- **BREAKING (error contract)**: `accesses.create` with a permission on an
+  account stream id that is not defined on the platform (`:_system:...` or
+  `:system:...`) now returns `400 invalid-operation`, with a message stating the
+  prefix rule and `data.param` set to the offending id, instead of a bare
+  `403 forbidden`. The request failed identically for the account owner's own
+  personal token, so it was never an authorization failure. A permission on a
+  hidden account field still returns `400 invalid-operation` with the
+  `denied-stream-access` message, so the two cases stay distinguishable, now by
+  message and `param` rather than by status. Reported via
+  [#131](https://github.com/pryv/open-pryv.io/issues/131).
+
+### Docs corrected
+
+**Correction to the "System streams refactor" notes further down:** they listed
+`:_system:email` among unchanged system stream ids. That id does not exist. The
+email account field is platform-defined and its id is `:system:email` (customer
+prefix); only built-in fields such as `language`, `appId`, `invitationToken`,
+`referer` and `storageUsed` take `:_system:`. The original line is annotated in
+place. The same wrong spelling has been corrected in the CMC README, in the
+email constants module header, and in the account datastore's field-name
+examples. Reported via
+[#131](https://github.com/pryv/open-pryv.io/issues/131).
+
 ## 2.0.0-rc.17 — 2026-09-11
 
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)
@@ -1563,7 +1588,7 @@ See `components/cmc/README.md` for the canonical design, `IMPLEMENTERS-GUIDE.md`
 ## System streams refactor
 
 - **REMOVED**: `:_system:helpers` stream and its children (`:_system:active`, `:_system:unique`) — these internal marker streams are no longer part of the system streams tree. Account field uniqueness and indexing are now enforced directly by the platform coordination layer.
-- **No other API changes**: All other system stream IDs (`:_system:email`, `:_system:language`, `:system:email`, etc.) remain unchanged. Events, permissions, and stream queries work identically.
+- **No other API changes**: All other system stream IDs (`:_system:language`, `:system:email`, etc.) remain unchanged. Events, permissions, and stream queries work identically. *(Corrected 2026-09-15: this line originally also listed `:_system:email`, which has never been a valid id; on a default configuration the email field is `:system:email`. See the correction note in the Unreleased section.)*
 
 ## Removed: `openSource:isActive` flag
 

@@ -366,7 +366,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     for (const permission of params.permissions) {
       if (isStreamBasedPermission(permission)) {
         if (isUnknownSystemStream(permission.streamId)) {
-          return next(errors.forbidden('Forbidden'));
+          return next(errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId }));
         }
         // don't allow user to give access to not visible stream
         if (notVisibleAccountStreamsIds.includes(permission.streamId)) {

@@ -13,9 +13,11 @@
  *   :_emails:      reserved container stream (server-managed)
  *
  * The container holds one ordinary event per email address (the primary
- * included). The legacy singular account field `:_system:email` stays
+ * included). The legacy singular account field `:system:email` stays
  * authoritative as the PRIMARY email; the container is a parallel record that
- * also carries pending (not yet verified) addresses.
+ * also carries pending (not yet verified) addresses. That field takes the
+ * `:system:` (custom) prefix rather than `:_system:`, because the address ships
+ * as a custom account stream and not as a built-in one.
  *
  * The `:_system:` prefix cannot be used for this container: every `:_system:`
  * / `:system:` stream routes to the single-field account datastore adapter,

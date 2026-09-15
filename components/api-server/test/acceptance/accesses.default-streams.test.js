@@ -279,13 +279,39 @@ describe('[AD01] Accesses with account streams', function () {
         });
       });
       describe('[AD15] to create an access for unexisting system streams', () => {
+        let streamId;
         before(async function () {
-          const streamId = ':system:' + charlatan.Lorem.characters(10);
+          streamId = ':system:' + charlatan.Lorem.characters(10);
           await createUserAndAccess('read', streamId);
         });
-        it('[KKKS] should return 403 forbidden', async () => {
-          assert.strictEqual(createAccessResponse.status, 403);
-          assert.strictEqual(createAccessResponse.body.error.id, ErrorIds.Forbidden);
+        it('[R7WQ] should return 400', async () => {
+          assert.strictEqual(createAccessResponse.status, 400);
+        });
+        it('[V3HD] should return the correct error', async () => {
+          assert.deepStrictEqual(createAccessResponse.body.error, {
+            id: ErrorIds.InvalidOperation,
+            message: ErrorMessages[ErrorIds.UnknownAccountStream],
+            data: { param: streamId }
+          });
+        });
+      });
+      describe('[AD16] to create an access for a known account field under the wrong prefix', () => {
+        let streamId;
+        before(async function () {
+          // The email is a platform-defined field, so it carries the customer
+          // prefix; the private prefix names nothing.
+          streamId = addPrivatePrefixToStreamId('email');
+          await createUserAndAccess('read', streamId);
+        });
+        it('[N8KC] should return 400', async () => {
+          assert.strictEqual(createAccessResponse.status, 400);
+        });
+        it('[T2PX] should return an error naming the stream and the prefix rule', async () => {
+          assert.deepStrictEqual(createAccessResponse.body.error, {
+            id: ErrorIds.InvalidOperation,
+            message: ErrorMessages[ErrorIds.UnknownAccountStream],
+            data: { param: streamId }
+          });
         });
       });
     });

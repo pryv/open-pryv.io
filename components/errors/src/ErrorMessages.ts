@@ -30,6 +30,7 @@ const ErrorMessages = {
   [ErrorIds.MissingRequiredField]: 'Missing required field',
   [ErrorIds.DeniedStreamAccess]: 'It is forbidden to access this stream.',
   [ErrorIds.TooHighAccessForSystemStreams]: 'Only read, create-only and contribute accesses are allowed for system streams',
+  [ErrorIds.UnknownAccountStream]: "Unknown account stream: no account field with this id is defined on this platform. Built-in account fields use the ':_system:' prefix, platform-defined fields (such as the email, when present) use the ':system:' prefix.",
   [ErrorIds.EmailRequired]: 'Email is required',
   [ErrorIds.PasswordRequired]: 'Password is required',
   [ErrorIds.InvalidPassword]: 'Password should have between 5 and 23 characters',

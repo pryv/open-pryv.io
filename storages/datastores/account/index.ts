@@ -117,7 +117,7 @@ function buildFieldStreamMap (streamTree: SystemStream[]): Map<string, SystemStr
       }
       if (s.type !== 'none/none') {
         // Extract unprefixed field name from stream id
-        // ':_system:email' → 'email', ':system:phone' → 'phone'
+        // ':_system:language' → 'language', ':system:email' → 'email'
         const fieldName = extractFieldName(s.id);
         map.set(fieldName, s);
       }
@@ -127,8 +127,8 @@ function buildFieldStreamMap (streamTree: SystemStream[]): Map<string, SystemStr
 
 /**
  * Extract the unprefixed field name from a system stream ID.
- * ':_system:email' → 'email'
- * ':system:phone' → 'phone'
+ * ':_system:language' → 'language'
+ * ':system:email' → 'email'
  * 'email' → 'email' (already unprefixed)
  */
 function extractFieldName (streamId: string): string {
