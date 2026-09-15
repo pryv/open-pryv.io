@@ -683,7 +683,7 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
 
     for (const streamId of targets) {
       const appCode = C.getAppCode(streamId);
-      const payload: Record<string, unknown> = {
+      const payload: Record<string, unknown> & { id: string } = {
         id: streamId,
         parentId: C.NS_APPS,
         name: appCode,

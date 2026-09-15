@@ -37,8 +37,9 @@ function fakeMall () {
         calls.streamsCreated.push({ userId, ...params });
         return { id: params.id };
       },
-      async delete (userId, params) {
-        calls.deletes.push({ kind: 'stream', userId, id: params.id });
+      // Takes the stream id itself, like the real mall does.
+      async delete (userId, streamId) {
+        calls.deletes.push({ kind: 'stream', userId, id: streamId });
       },
     },
     events: {
