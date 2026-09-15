@@ -72,6 +72,7 @@ const ALL_METHODS = [
   'delegations.cancelInvite',
   'delegations.detachDelegate',
   'delegations.dismissControlled',
+  'delegations.createAccount',
   'delegations.listDelegates',
   'delegations.listControlled',
   'delegations.getToken',

@@ -31,6 +31,7 @@ const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildSystemCreateAccountDeps } = require('./helpers/delegationAccounts.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 
@@ -171,6 +172,70 @@ export default async function produceDelegationsApiMethods (api: { register (...
       // cross-core: admin-key gated system endpoint.
       const base = String(target.coreBaseUrl).replace(/\/$/, '');
       const res = await fetch(base + '/system/delegation/invite', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: String(adminAccessKey) },
+        body: JSON.stringify(payload),
+      });
+      let body: unknown = null;
+      try { body = await res.json(); } catch (_e) { body = null; }
+      return { ok: res.ok, status: res.status, body };
+    };
+  }
+
+  /**
+   * Validate + resolve the target core for a create-from-delegate request. An
+   * absent/empty `core` param defaults to A's own core. A provided `core` is
+   * validated against the platform core registry (its id or URL); an unknown
+   * value → delegation-unknown-core (400). Single-core accepts only its own core
+   * id/url.
+   */
+  async function resolveTargetCore (core: string | undefined): Promise<{ isSelf: boolean; hostSlug: string; host: string; coreBaseUrl?: string }> {
+    const self = await selfHost();
+    const selfRes = { isSelf: true, hostSlug: slugifyHost(self), host: self };
+    const wanted = String(core ?? '').trim();
+    if (wanted.length === 0) return selfRes;
+
+    if (platform.isSingleCore) {
+      if (wanted === thisCoreId || wanted === platform.coreId || wanted === platform.coreIdToUrl(platform.coreId)) {
+        return selfRes;
+      }
+      throw delegation.attach.delegationError(
+        delegation.errorIds.DelegationErrorIds.UNKNOWN_CORE,
+        'Unknown target core "' + wanted + '"', 400);
+    }
+
+    const cores = (await platform.getAllCoreInfos()) as Array<{ id: string }>;
+    const match = cores.find((c) => c.id === wanted || platform.coreIdToUrl(c.id) === wanted);
+    if (match == null) {
+      throw delegation.attach.delegationError(
+        delegation.errorIds.DelegationErrorIds.UNKNOWN_CORE,
+        'Unknown target core "' + wanted + '"', 400);
+    }
+    if (thisCoreId != null && match.id === thisCoreId) return selfRes;
+    const coreBaseUrl = platform.coreIdToUrl(match.id);
+    const host = safeHost(coreBaseUrl) ?? self;
+    return { isSelf: false, hostSlug: slugifyHost(host), host, coreBaseUrl };
+  }
+
+  /**
+   * Build the create-account deliverer. Same-core dispatches directly to the
+   * plugin's target-core handler (no HTTP), reusing this core's provision/rollback
+   * deps; cross-core posts to the admin-key-gated system endpoint.
+   */
+  function makeCallCreateAccount () {
+    return async function callCreateAccount (target: { isSelf: boolean; coreBaseUrl?: string }, payload: Record<string, unknown>) {
+      if (target.isSelf) {
+        try {
+          const sysDeps = await buildSystemCreateAccountDeps();
+          const res = await delegation.handleSystemCreateAccount(sysDeps, payload);
+          return { ok: true, status: 200, body: res };
+        } catch (err) {
+          if (isDelegationErr(err)) return { ok: false, status: err.httpStatus, body: { id: err.id } };
+          throw err;
+        }
+      }
+      const base = String(target.coreBaseUrl).replace(/\/$/, '');
+      const res = await fetch(base + '/system/delegation/create-account', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: String(adminAccessKey) },
         body: JSON.stringify(payload),
@@ -425,6 +490,36 @@ export default async function produceDelegationsApiMethods (api: { register (...
           callControl: makeCallControl(controlledUsername, context.user.username),
         };
         const res = await delegation.getToken(deps, { aUserId: context.user.id, controlledUsername });
+        Object.assign(result, res);
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // createAccount (A) — create a brand-new controlled account, active at birth.
+  // A picks the target core (default = A's own core), pre-provisions the notify
+  // channel, and calls the target core (same-core direct / cross-core system
+  // endpoint); on success A stores the active mirror. Optional email + optional
+  // password (random hash → reachable only via delegates until one sets a real
+  // password). Personal token (delegate PATs count → chains).
+  api.register('delegations.createAccount',
+    commonFns.requirePersonalAccess,
+    async function (context: MethodContext, params: { username?: string; email?: string; password?: string; core?: string; language?: string }, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const self = await selfIdentity(context.user.username);
+        const deps = {
+          mall, now: nowSeconds, idGen: newRelId, self,
+          resolveTargetCore,
+          callCreateAccount: makeCallCreateAccount(),
+        };
+        const res = await delegation.createControlledAccount(deps, {
+          aUserId: context.user.id,
+          aUsername: context.user.username,
+          username: String(params.username || ''),
+          email: params.email,
+          password: params.password,
+          core: params.core,
+          language: params.language,
+        });
         Object.assign(result, res);
         next();
       } catch (err) { next(toApiError(err)); }

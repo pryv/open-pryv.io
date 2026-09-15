@@ -44,6 +44,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.get(Paths.Delegations + '/controlled', setMethodId('delegations.listControlled'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // Create-from-delegate: a brand-new controlled account, active at birth.
+  expressApp.post(Paths.Delegations + '/controlled', setMethodId('delegations.createAccount'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, req.body, methodCallback(res, next, 201));
+  });
   expressApp.post(Paths.Delegations + '/controlled/:controlled/token', setMethodId('delegations.getToken'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { username: req.params.controlled }, methodCallback(res, next, 200));
   });

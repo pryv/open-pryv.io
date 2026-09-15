@@ -16,8 +16,9 @@ import * as store from './store.ts';
 import * as attach from './attach.ts';
 import * as patMint from './patMint.ts';
 import * as detach from './detach.ts';
+import * as createAccountMod from './createAccount.ts';
 
-export { constants, hooks, errorIds, store, attach, patMint, detach };
+export { constants, hooks, errorIds, store, attach, patMint, detach, createAccountMod as createAccount };
 
 // Handshake orchestration at top-level for api-server integration.
 export const {
@@ -48,6 +49,12 @@ export const {
   handleDetachNotify,
   dismissControlledMirror,
 } = detach;
+
+// Create-from-delegate: A-side orchestration + target-core account provisioning.
+export const {
+  createAccount: createControlledAccount,
+  handleSystemCreateAccount,
+} = createAccountMod;
 
 export const DelegationErrorIds = errorIds.DelegationErrorIds;
 
