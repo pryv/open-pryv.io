@@ -15,8 +15,9 @@ import * as errorIds from './errorIds.ts';
 import * as store from './store.ts';
 import * as attach from './attach.ts';
 import * as patMint from './patMint.ts';
+import * as detach from './detach.ts';
 
-export { constants, hooks, errorIds, store, attach, patMint };
+export { constants, hooks, errorIds, store, attach, patMint, detach };
 
 // Handshake orchestration at top-level for api-server integration.
 export const {
@@ -38,6 +39,15 @@ export const {
   handleIssueToken,
   getToken,
 } = patMint;
+
+// Authoritative teardown (B-side), the genuine-login gate predicate, the
+// A-side detach-notify handler, and local stale-mirror dismissal.
+export const {
+  isGenuineLoginAccess,
+  detachDelegate,
+  handleDetachNotify,
+  dismissControlledMirror,
+} = detach;
 
 export const DelegationErrorIds = errorIds.DelegationErrorIds;
 

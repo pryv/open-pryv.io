@@ -47,6 +47,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.post(Paths.Delegations + '/controlled/:controlled/token', setMethodId('delegations.getToken'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { username: req.params.controlled }, methodCallback(res, next, 200));
   });
+  // Authoritative detach (B, genuine login only) + local stale-mirror dismiss (A).
+  expressApp.delete(Paths.Delegations + '/delegates/:delegate', setMethodId('delegations.detachDelegate'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, { username: req.params.delegate }, methodCallback(res, next, 200));
+  });
+  expressApp.delete(Paths.Delegations + '/controlled/:controlled', setMethodId('delegations.dismissControlled'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, { username: req.params.controlled }, methodCallback(res, next, 200));
+  });
 
   // ---- controlled-side (core-to-core, capability / control bearer) ----
   expressApp.post(Paths.Delegations + '/controlled-side/token', setMethodId('delegations.issueToken'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
@@ -59,6 +66,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Delegations + '/controlled-side/accept-complete', setMethodId('delegations.acceptComplete'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, req.body, methodCallback(res, next, 200));
+  });
+  expressApp.post(Paths.Delegations + '/controlled-side/detach-notify', setMethodId('delegations.notifyDetach'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
 };

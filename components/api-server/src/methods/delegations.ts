@@ -219,6 +219,40 @@ export default async function produceDelegationsApiMethods (api: { register (...
   }
 
   /**
+   * Build the detach-notify caller for a controlled account's B→A mirror-sync.
+   * Same-core dispatches directly to the A-side handler; cross-core posts to A's
+   * notify endpoint (bearer = the notify marker access). Best-effort: the caller
+   * swallows failure and A reconciles the mirror lazily.
+   */
+  function makeNotifyDetach (delegateUsername: string) {
+    return async function notifyDetach (notifyApiEndpoint: string, relId: string) {
+      const target = await resolveTarget(delegateUsername);
+      if (target.isSelf && target.userId != null) {
+        try {
+          const res = await delegation.handleDetachNotify({ mall, now: nowSeconds }, { aUserId: target.userId, relId });
+          return { ok: true, status: 200, body: res };
+        } catch (err) {
+          if (isDelegationErr(err)) return { ok: false, status: err.httpStatus, body: { id: err.id } };
+          throw err;
+        }
+      }
+      const r = await postToPeer({
+        apiEndpoint: notifyApiEndpoint,
+        path: 'delegations/controlled-side/detach-notify',
+        body: {},
+        deps: { fetch, logger: getLogger('delegations:outbound') },
+      });
+      if (r.ok) return { ok: true, status: r.status, body: r.body };
+      return { ok: false, status: r.status, body: (r as { body?: unknown }).body ?? null };
+    };
+  }
+
+  /** Destroy a session by its id (the delegate PAT token IS the session id). */
+  async function destroySession (token: string): Promise<void> {
+    await fromCallback((cb: (e: unknown) => void) => sessionsStorage.destroy(token, cb));
+  }
+
+  /**
    * Build the control-side caller for a controlled account — the token-mint
    * channel. Same-core dispatches directly to the PAT-mint handler (no HTTP,
    * relId taken from A's mirror + A's own identity); cross-core posts to the
@@ -259,6 +293,25 @@ export default async function produceDelegationsApiMethods (api: { register (...
       }
       next();
     };
+  }
+
+  /**
+   * THE SECURITY CRUX — genuine-login gate for detach + invite-cancel. Accepts
+   * ONLY a clean B login: a `type:'personal'` access carrying NO forge-protected
+   * `clientData.delegation` marker. A delegate PAT is also personal, so the type
+   * check alone is insufficient — the marker's ABSENCE is the discriminator, and
+   * the marker is forge-protected (create + update, all token classes), so a
+   * clean personal token provably came from B's own login flow. A control access
+   * (shared) is rejected by the type check. Violation → 403.
+   */
+  function requireGenuineLogin (context: MethodContext, _params: unknown, _result: unknown, next: MethodNext) {
+    if (!delegation.isGenuineLoginAccess(context?.access)) {
+      return next(new APIError(
+        delegation.errorIds.DelegationErrorIds.GENUINE_LOGIN_REQUIRED,
+        'This operation requires a direct login to this account; a delegated session cannot remove a delegation relationship',
+        { httpStatus: 403 }));
+    }
+    next();
   }
 
   // ======================================================= client-facing
@@ -320,9 +373,11 @@ export default async function produceDelegationsApiMethods (api: { register (...
       } catch (err) { next(toApiError(err)); }
     });
 
-  // cancelInvite (B) — invite-status only
+  // cancelInvite (B) — invite-status only. Cancelling a pending invite removes a
+  // relationship record, so it is genuine-login-gated like detach (a delegate
+  // PAT cannot cancel B's invites).
   api.register('delegations.cancelInvite',
-    commonFns.requirePersonalAccess,
+    requireGenuineLogin,
     async function (context: MethodContext, params: { username?: string }, result: Record<string, unknown>, next: MethodNext) {
       try {
         const self = await selfIdentity(context.user.username);
@@ -371,6 +426,40 @@ export default async function produceDelegationsApiMethods (api: { register (...
         };
         const res = await delegation.getToken(deps, { aUserId: context.user.id, controlledUsername });
         Object.assign(result, res);
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // detachDelegate (B) — THE authoritative teardown, genuine-login-gated. Active
+  // relationship → full B-side teardown (PAT session + access, control access,
+  // capability sweep, anchor) then best-effort A-notify; pending invite → cancel.
+  api.register('delegations.detachDelegate',
+    requireGenuineLogin,
+    async function (context: MethodContext, params: { username?: string }, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const delegateUsername = String(params.username || '');
+        const self = await selfIdentity(context.user.username);
+        const deps = {
+          mall, now: nowSeconds, self,
+          destroySession,
+          resolveTarget,
+          deliverInvite: makeDeliverInvite(),
+          notifyDetach: makeNotifyDetach(delegateUsername),
+        };
+        await delegation.detachDelegate(deps, {
+          bUserId: context.user.id, bUsername: context.user.username, delegateUsername,
+        });
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // dismissControlled (A) — local housekeeping: drop a `stale` mirror row. NOT a
+  // detach (removes no authority, never touches B). Personal token (PATs count).
+  api.register('delegations.dismissControlled',
+    commonFns.requirePersonalAccess,
+    async function (context: MethodContext, params: { username?: string }, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        await delegation.dismissControlledMirror(mall, context.user.id, String(params.username || ''));
         next();
       } catch (err) { next(toApiError(err)); }
     });
@@ -438,6 +527,21 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const relId = context.access?.clientData?.delegation?.relId ?? params.relId;
         const res = await delegation.handleAcceptComplete({ mall, now: nowSeconds }, {
           bUserId: context.user.id, relId: String(relId),
+        });
+        Object.assign(result, res);
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // notifyDetach — B's core → A's core (bearer = notify marker). Best-effort
+  // teardown mirror-sync: drops A's mirror + notify access for the relationship.
+  api.register('delegations.notifyDetach',
+    requireMarker('notify'),
+    async function (context: MethodContext, params: { relId?: string }, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const relId = context.access?.clientData?.delegation?.relId ?? params.relId;
+        const res = await delegation.handleDetachNotify({ mall, now: nowSeconds }, {
+          aUserId: context.user.id, relId: String(relId),
         });
         Object.assign(result, res);
         next();

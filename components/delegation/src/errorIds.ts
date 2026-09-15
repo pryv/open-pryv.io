@@ -78,6 +78,11 @@ const DelegationErrorIds = {
   // The operation requires a personal token (provably present + authenticated
   // user) but was attempted with an app / shared token.
   PERSONAL_TOKEN_REQUIRED: 'delegation-personal-token-required',
+  // A local mirror-dismissal (Dismiss) was attempted on a mirror that is not in
+  // the `stale` state. Only a stale mirror is locally deletable housekeeping; a
+  // live (invite/active) relationship must not be dropped from the delegate's
+  // view this way.
+  MIRROR_NOT_STALE: 'delegation-mirror-not-stale',
 } as const;
 
 type DelegationErrorId = (typeof DelegationErrorIds)[keyof typeof DelegationErrorIds];
