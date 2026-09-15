@@ -516,6 +516,18 @@ does three things, in this order:
    place, and each of those handed out a live token. Scope-less legacy accesses
    are never swept: without a scope, one relationship with a peer cannot be
    told from another under the same app code.
+
+   **The bound on the sweep.** "Same counterparty" means the identity stamped on
+   the access at accept time, which on the accepter side comes from the offer
+   (`inferCounterparty` prefers the offer's asserted requester username / host
+   over the capability URL's host). The sweep therefore trusts exactly the
+   requester identity the accept already trusted, and no more: an accepted
+   offer that lied about who the requester is could see a revoke tear down
+   another grant stamped with that same claimed identity and scope. That is the
+   identity model's existing limit, which previously showed up as misrouted
+   deliveries; it is not widened here, but it does become a deletion rather than
+   a misroute. A deployment that cares about this should care about it at the
+   accept, which is the only point where the claim can still be refused.
 2. **Bookkeep** — clear the withdrawing subject from any open-link capability's
    `acceptedBy`, so the same link accepts them again.
 3. **Enrich** — add this side's own handles to the inbox event, see below.
