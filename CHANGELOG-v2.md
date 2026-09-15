@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Email verification is now on by default (general availability)
+
+This supersedes the 2.0.0-rc.17 entry "Email verification now ships OFF by
+default (beta)": that entry stays as the record of what rc.17 did, but its
+guidance no longer applies. The "(beta)" qualifier on the rc.17 entry "Multiple
+emails per account (beta)" is likewise lifted: the feature, its templates, its
+verification page in the reference account app and its API surface are now
+general availability.
+
+`services.email.enabled.verifyEmail` defaults to `true`. **Upgrading does not
+stop a working configuration from booting:**
+
+- If your configuration sets `verifyEmail: true` explicitly, nothing changes:
+  `auth.emailVerificationPageURL` remains required and the core refuses to boot
+  without it, as before.
+- If your configuration does not mention `verifyEmail`, the default now applies.
+  When `auth.emailVerificationPageURL` is set and mail is configured,
+  verification links are sent for addresses added to an account. When the URL
+  is missing, or `services.email` is incomplete, the core boots, logs one
+  warning at every start, and keeps the feature off until the missing keys are
+  set (`bin/check-config.js` reports the same warning). Set
+  `verifyEmail: false` to turn the feature off without the warning.
+- If your configuration sets `verifyEmail: false`, nothing changes.
+
+`GET /service/info` now always carries `features.emailVerification:
+{ atRegistration, onAccount }`. `onAccount` is `true` only when the
+verification-link flow is live on this platform (flag on, page URL set, mail
+configured); clients use it to show or hide "send verification link" actions.
+`atRegistration` is `true` when a verified address is required to create an
+account (see the registration gate entry).
+
 ## 2.0.0-rc.17 — 2026-09-11
 
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)

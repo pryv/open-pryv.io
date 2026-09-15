@@ -92,12 +92,11 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// auth.emailVerificationPageURL — required only when the checked file EXPLICITLY
-// enables the verify-email sub-feature. Unlike passwordResetPageURL above, this
-// one is opt-in: the shipped default is `verifyEmail: false` (beta), and this
-// script reads the override standalone, without the default merge. Defaulting
-// to "needed" here would flag every minimal override that never mentions
-// `services.email.enabled` — configs that boot fine.
+// auth.emailVerificationPageURL — a PROBLEM only when the checked file
+// EXPLICITLY enables the verify-email sub-feature. The shipped default is now
+// `verifyEmail: true`, but this script reads the override standalone, without
+// the default merge: a file that never mentions the key inherits the default,
+// where a missing page URL is a warning (see below) rather than a refusal.
 // The scalar case matters: `enabled: true` (not an object) enables every message
 // class at runtime, so it does require the URL.
 {
@@ -107,6 +106,18 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === true) verifyEmailNeeded = true;
   if (verifyEmailNeeded && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
     problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.enabled.verifyEmail is true)');
+  }
+}
+
+// Default-on email verification: when the checked file does not mention
+// verifyEmail, the shipped default (true) applies. A missing page URL then
+// degrades the feature to off with a boot warning rather than a refusal.
+{
+  const emailEnabled = get('services.email.enabled');
+  const explicit = emailEnabled === true ||
+    (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail !== undefined);
+  if (emailEnabled !== false && !explicit && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
+    warnings.push('auth.emailVerificationPageURL missing or unset: email verification is on by default and stays off (with a warning at every boot) until this URL is set. Set it to the /verify-email page of your auth UI, or set services.email.enabled.verifyEmail: false.');
   }
 }
 

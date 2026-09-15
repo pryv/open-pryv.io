@@ -10,6 +10,7 @@ import type { MethodContext as BaseMethodContext } from 'business/src/MethodCont
 
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
+const { describeVerificationMail } = require('business/src/emails/mailCapability.ts');
 
 /** The user business object loaded from the users repository — the slice
  *  this pipeline touches. */
@@ -365,10 +366,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // Mirror sendPasswordResetMail's gating: the whole email feature off, or the
   // verifyEmail class specifically off, means no verification mail is sent.
   function isVerifyMailEnabled (): boolean {
-    const enabled = getEmail().enabled;
-    if (enabled === false) return false;
-    if (enabled != null && typeof enabled === 'object' && enabled.verifyEmail === false) return false;
-    return true;
+    return describeVerificationMail(config).enabled;
   }
 
   // Deliver one verification mail. The plaintext token is used only here, to

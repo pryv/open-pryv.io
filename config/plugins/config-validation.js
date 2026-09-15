@@ -45,16 +45,19 @@ const REQUIRED_WHEN = [
       return true;
     }
   },
-  // `auth.emailVerificationPageURL` backs the verify-email link — same gating
-  // as passwordResetPageURL but keyed on the `verifyEmail` kill-switch. Mirror
-  // the runtime gate in `methods/account.ts` (isVerifyMailEnabled) exactly.
+  // `auth.emailVerificationPageURL` backs the verify-email link.
+  //
+  // Required only when the operator turned the sub-feature on explicitly.
+  // The shipped default is ON; a default-on deployment that never set the
+  // page URL must keep booting: the feature degrades to off with a boot
+  // warning (see collectWarnings) instead of refusing the boot on upgrade.
   {
     path: 'auth:emailVerificationPageURL',
     when: c => {
-      const enabled = c.get('services:email:enabled');
-      if (enabled === false) return false;
-      if (enabled != null && typeof enabled === 'object' && enabled.verifyEmail === false) return false;
-      return true;
+      const { describeVerificationMail } = require('../../components/business/src/emails/mailCapability.ts');
+      const status = describeVerificationMail(c);
+      if (status.reason === 'disabled') return false;
+      return status.explicit;
     }
   },
   // Admin keys & secrets — always required at boot. Multi-core bootstrap
@@ -415,9 +418,39 @@ function reportProblems (problems) {
   }
 }
 
+/**
+ * Non-fatal configuration findings. Logged at every boot; never stop the boot.
+ *
+ * These are settings that leave a shipped-on feature unable to work. The
+ * operator did not ask for the feature, so refusing the boot would punish an
+ * upgrade; saying nothing would leave the feature silently dead.
+ */
+function collectWarnings (config) {
+  const warnings = [];
+  const {
+    describeVerificationMail,
+    describeMailCapability
+  } = require('../../components/business/src/emails/mailCapability.ts');
+  const status = describeVerificationMail(config);
+  if (!status.enabled && status.reason !== 'disabled' &&
+      !(status.explicit && status.reason === 'missing-page-url')) {
+    const why = status.reason === 'missing-page-url'
+      ? "'auth.emailVerificationPageURL' is not set"
+      : "'services.email' is incomplete (" + describeMailCapability(config).problems.join('; ') + ')';
+    warnings.push('email verification is on by default but ' + why +
+      ': verification mails are not sent and account email addresses cannot be proved. ' +
+      'Set the missing keys (the page is the /verify-email route of your auth UI), or set ' +
+      "'services.email.enabled.verifyEmail: false' to turn the feature off explicitly.");
+  }
+  return warnings;
+}
+
 module.exports = {
   load: async function (store) {
     logger = getLogger('validate-config');
+    for (const warning of collectWarnings(store)) {
+      logger.warn(warning);
+    }
     const problems = await validate(store);
     if (problems.length === 0) return;
     reportProblems(problems);
@@ -427,6 +460,7 @@ module.exports = {
   // exercise the validator without booting the boiler init lifecycle.
   validate,
   reportProblems,
+  collectWarnings,
   checkRequiredWhen,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,

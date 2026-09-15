@@ -429,9 +429,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #     enabled:
 #       welcome: true
 #       resetPassword: true
-#       # Beta, ships OFF. Turning it on makes auth.emailVerificationPageURL
-#       # a required key — set both or the core refuses to boot.
-#       verifyEmail: false
+#       # On by default. Needs auth.emailVerificationPageURL (asked by the
+#       # wizard) and a working mail setup; set false to turn it off.
+#       verifyEmail: true
 #     method: in-process
 #     fromName: 'My Pryv'
 #     fromEmail: 'no-reply@example.com'
@@ -917,10 +917,9 @@ async function main () {
   const defaultPasswordResetPageURL = `${authUiUrl}/reset-password`;
   const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL);
 
-  // emailVerificationPageURL: sibling page under the same auth UI. Backs the
-  // verify-email link; required once services.email.enabled.verifyEmail is
-  // turned on (it ships off, beta). Collected up front so opting in later is a
-  // one-line change rather than a failed boot.
+  // emailVerificationPageURL: sibling page under the same auth UI. Email
+  // verification is on by default and this URL is what the mailed link opens;
+  // without it the feature stays off with a boot warning.
   const defaultEmailVerificationPageURL = `${authUiUrl}/verify-email`;
   const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL);
 
@@ -959,7 +958,7 @@ async function main () {
   let emailConfig = null;
   if (emailEnabled) {
     emailConfig = {
-      enabled: { resetPassword: true, welcome: true },
+      enabled: { resetPassword: true, welcome: true, verifyEmail: true },
       method: 'microservice',
       url: await ask('  service-mail URL', 'http://service-mail:9000/sendmail/'),
       key: await askNonEmpty('  Shared secret with service-mail')
