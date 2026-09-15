@@ -151,7 +151,28 @@ Options:
 
 ### Email (optional)
 
-For password resets and welcome emails, deploy `service-mail` and configure:
+Transactional mails (password reset, welcome, email verification, registration
+code) are rendered in-process and sent over your SMTP relay. Point the server at
+a relay and a sender address:
+
+```yaml
+services:
+  email:
+    enabled:
+      resetPassword: true
+      welcome: true
+    method: in-process
+    defaultLang: en
+    from: { name: 'Example', address: 'no-reply@example.com' }
+    smtp: { host: smtp.example.com, port: 587, auth: { user: '...', pass: '...' } }
+```
+
+Templates for all four mail types ship with the server (English and French) and
+are seeded into PlatformDB the first time a core boots with an empty template
+set. Edit them afterwards with `bin/mail.js templates set`, or point
+`services.email.templatesRootDir` at your own Pug directory to seed that instead.
+
+Legacy alternative: the external `service-mail` process.
 
 ```yaml
 services:
