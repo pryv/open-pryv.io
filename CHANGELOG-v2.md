@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-rc.18 — 2026-09-15
+
 ### Account delegation — guardian/caregiver-controlled accounts (`delegation:active`, default on)
 
 An account can now be controlled by one or more other accounts ("delegates") — for
