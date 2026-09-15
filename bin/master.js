@@ -184,19 +184,19 @@ if (cluster.isPrimary) {
     });
 
     // --- Mail template seed ---
-    // First-boot bootstrap: when `services.email.method === 'in-process'` and
-    // `templatesRootDir` points at a Pug directory, populate PlatformDB from
-    // disk if empty. Idempotent — subsequent boots are a no-op (the admin
-    // CLI / admin API that ship later own the edit path).
+    // First-boot bootstrap: when `services.email.method === 'in-process'`,
+    // populate PlatformDB from a Pug directory if it holds no templates yet.
+    // Idempotent — subsequent boots are a no-op (the admin CLI / admin API
+    // own the edit path).
     if (config.get('services:email:method') === 'in-process') {
       try {
         const platformDB = require('../storages/index.ts').platformDB;
         const { seedIfEmpty } = require('../components/mail/src/TemplateSeeder.ts');
-        const result = await seedIfEmpty({
-          platformDB,
-          templatesRootDir: config.get('services:email:templatesRootDir') || null
-        });
-        if (result.seeded) log(`Mail templates seeded (${result.count} row(s))`);
+        // Empty `templatesRootDir` means "the template set bundled with the mail component".
+        const bundledTemplatesDir = path.resolve(__dirname, '../components/mail/templates');
+        const templatesRootDir = config.get('services:email:templatesRootDir') || bundledTemplatesDir;
+        const result = await seedIfEmpty({ platformDB, templatesRootDir });
+        if (result.seeded) log(`Mail templates seeded (${result.count} row(s) from ${templatesRootDir})`);
       } catch (e) {
         log(`Mail template seed skipped: ${e.message}`);
       }

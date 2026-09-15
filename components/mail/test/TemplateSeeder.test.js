@@ -16,6 +16,11 @@ require('test-helpers/src/api-server-tests-config.ts');
 
 const { seedIfEmpty } = require('../src/TemplateSeeder.ts');
 
+/** The template set shipped with the mail component, seeded when no
+ *  `templatesRootDir` is configured. */
+const BUNDLED = path.resolve(import.meta.dirname, '../templates');
+const EXPECTED_TYPES = ['welcome-email', 'reset-password', 'verify-email', 'email-challenge'];
+
 function fakePlatformDB () {
   const rows = new Map();
   return {
@@ -86,5 +91,19 @@ describe('[MAILSEED] TemplateSeeder', () => {
     });
     assert.strictEqual(result.seeded, false);
     assert.strictEqual(result.reason, 'root-unreadable');
+  });
+
+  it('[MSEED5] the bundled template set seeds every type in en and fr, subject and html', async () => {
+    const platformDB = fakePlatformDB();
+    const result = await seedIfEmpty({ platformDB, templatesRootDir: BUNDLED });
+    assert.strictEqual(result.seeded, true);
+    assert.strictEqual(result.count, EXPECTED_TYPES.length * 2 * 2);
+    for (const type of EXPECTED_TYPES) {
+      for (const lang of ['en', 'fr']) {
+        for (const part of ['subject', 'html']) {
+          assert.ok(platformDB.rows.has(`${type}/${lang}/${part}`), `${type}/${lang}/${part} missing`);
+        }
+      }
+    }
   });
 });

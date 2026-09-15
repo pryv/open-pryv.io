@@ -273,12 +273,17 @@ services:
     # link carries a one-time token bound to (account, address); clicking it
     # marks that address verified. Requires `auth.emailVerificationPageURL`.
     verifyEmailTemplate: verify-email
+    # Sent by the registration email challenge (see account.emailVerification.
+    # requireAtRegistration): carries the copy/paste code, not a link.
+    emailChallengeTemplate: email-challenge
     defaultLang: en
     # --- in-process mode only ---
-    # Pug source directory to seed into PlatformDB on first boot (when
-    # PlatformDB has no templates yet). After seeding, subsequent edits
-    # flow through the admin CLI / admin API. Leave empty to rely on the
-    # default template set bundled with the mail component.
+    # Pug source directory seeded into PlatformDB on first boot, when PlatformDB
+    # holds no templates yet. Leave empty to seed the template set bundled with
+    # the mail component (components/mail/templates: welcome-email,
+    # reset-password, verify-email, email-challenge; en + fr). After the first
+    # boot, edits go through `bin/mail.js templates set` or the admin API; a
+    # later change of this key does not re-seed.
     templatesRootDir: ''
     smtp:
       host: ''

@@ -145,4 +145,11 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.notStrictEqual(res.status, 0);
     assert.match(res.stderr, /--file <path> is required/);
   });
+
+  it('[MCLI7] templates seed without --from seeds the bundled set', async () => {
+    const res = runCli(['templates', 'seed']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const rows = await platformDB.getAllMailTemplates();
+    assert.strictEqual(rows.length, 16);
+  });
 });
