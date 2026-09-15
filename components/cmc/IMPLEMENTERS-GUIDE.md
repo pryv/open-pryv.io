@@ -364,9 +364,22 @@ Patient's plugin:
 
 One write; the local access is destroyed server-side, which is what actually cuts the doctor's read.
 
-> ⚠️ **The peer's own access is NOT deleted for them.** The revoke arrives in the doctor's `:_cmc:inbox` as a notification; the receiving server runs no teardown handler, so the doctor's back-channel access survives until the doctor's app deletes it. **If you observe a `consent/revoke-cmc` arrival, delete your half yourself** (`accesses.delete` on the access you hold for that relationship). Server-side teardown on the receiving side is planned; earlier revisions of these docs described it as already implemented, which was incorrect.
->
-> Note also that delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is currently only logged, not retried. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
+**The peer's half is deleted too, by their own server.** When the revoke lands in the doctor's `:_cmc:inbox`, the receiving server deletes the access the revoke arrived through, which is the access the withdrawing side held on that account. You do not have to delete your half yourself, and a build that made you do so is older than this behaviour. What you SHOULD do on observing a `consent/revoke-cmc` arrival is drop your cached endpoints for that relationship: the tokens in them are dead.
+
+**What the arrival tells you.** `content.accessId` is the SENDER's access id on their own account, so it will not match anything you hold. Match on the ids your own server adds instead:
+
+| Field | Present for | Meaning |
+|---|---|---|
+| `backChannelAccessId` | the requester | the access on YOUR account that served this relationship, the same id your accept mirror carried |
+| `dataGrantAccessId` | the accepter | the grant you minted for the peer |
+| `inviteEventId` | the requester (where resolvable) | your original `consent/request-cmc` trigger |
+| `offerEventId` / `acceptEventId` | the accepter | the ids your accept trigger was stamped with |
+| `scopeStreamId` | both | which relationship, derived by your server rather than claimed by the peer |
+| `revokedAccessIds` | both | every local access the teardown destroyed, so you can drop them all |
+
+A field that could not be resolved is absent rather than null. Against an older peer you may see only `accessId`, `appCode` and `offerEventId`.
+
+> Delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is only logged, not retried. A revoke that never arrives also means the peer never ran its teardown, so their access on your account is still standing. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 

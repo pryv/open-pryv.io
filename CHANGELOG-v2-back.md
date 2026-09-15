@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## cmc: dispatch routes an inbox revoke on the stream, not only on createdBy
+
+`handleIncomingRevoke` now deletes the access named by the arrival's `createdBy`,
+so that access is gone by the time the handler returns. The loop-avoidance test
+resolves `createdBy` to a counterparty access, which then no longer resolves: a
+re-dispatch of the same inbox event (retry loop, operator re-processing) would
+fall through to the outbound `handleRevoke` with the peer's foreign
+`content.accessId`, fail `cmc-revoke-counterparty-access-not-found` and rewrite
+the arrival's `status` to `failed` -- which an app reads as "the withdrawal did
+not work". A `consent/revoke-cmc` sitting on `:_cmc:inbox` therefore always takes
+the incoming path now, whether or not `createdBy` still resolves. Sound because
+`inboxWriteHook` refuses any write to that stream from an access that is not
+counterparty-marked, so an inbox arrival is peer-delivered by construction.
+
+Dispatch also keeps its in-memory copy of the event content in step with the
+`status: 'delivered'` stamp it writes, so a handler that rewrites `content`
+afterwards carries the status forward instead of dropping it.
+
 ## cache: invalidate after the write commits, not before (closes a stale re-cache race)
 
 The streams and access caches were invalidated BEFORE their backing DB write

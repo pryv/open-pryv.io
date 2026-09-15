@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### CMC: a revocation now ends both halves of the relationship
+
+Withdrawing consent was only half enforced. Each side deleted the access the
+PEER was using against its own account, but the access the withdrawing side
+itself held on the peer's account survived, because the receiving server ran no
+teardown. So after a withdrawal both parties considered the relationship over
+while a live token still read the counterparty's data, until that side's app got
+around to deleting it. The implementers' guide documented this and asked
+integrators to delete their own half; that is no longer necessary.
+
+- When a `consent/revoke-cmc` arrives, the receiving server deletes the access it
+  arrived through, plus any sibling access serving the same relationship (same
+  stamped counterparty and same `scopeStreamId`). A relationship can be served by
+  several grants, and each of those handed out a working token.
+- Identity comes only from the access the arrival authenticated with, never from
+  the event's content, so a peer can only ever destroy what it already holds on
+  that account. Legacy accesses that carry no scope are never swept.
+- ⚑ **Behaviour change for integrators:** an access you hold for a relationship
+  is deleted out from under you when the peer withdraws. Drop cached endpoints on
+  seeing a `consent/revoke-cmc` arrival; a request with such a token now fails
+  authentication rather than returning data. Deleting your own half is still
+  harmless (it is idempotent) but no longer required.
+- Unchanged: anchor streams are preserved, delivery stays best-effort, and a
+  revocation that cannot be delivered leaves the peer's half standing.
+
+### CMC: forwarded revocations carry ids the receiving side can match
+
+`content.accessId` on a revoke arrival is the sender's access id on the sender's
+own account, so it matches nothing the receiver holds. The receiving server now
+adds the receiver's own handles for the relationship, using the names each side's
+app already knows: `backChannelAccessId` + `inviteEventId` on the requester side,
+`dataGrantAccessId` + `offerEventId` + `acceptEventId` on the accepter side, and
+on both `scopeStreamId` (derived from the receiver's own state, not the peer's
+claim) plus `revokedAccessIds`, the accesses the teardown destroyed.
+
+Ids that cannot be resolved are absent rather than null, a value the peer supplied
+is never overwritten, and `accessId` keeps its meaning. The requester's
+back-channel access is also stamped with `offerEventId` / `inviteEventId` at mint,
+so a peer running an older build still receives something matchable.
+
 ## 2.0.0-rc.17 — 2026-09-11
 
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)

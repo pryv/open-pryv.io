@@ -489,24 +489,53 @@ sequenceDiagram
 
 # 13. Revoke teardown: local delete + peer notification
 
-> ⚠️ **Current behaviour is NOT a dual delete.** This section previously
-> described the peer deleting its half of the pair. That has never been
-> implemented: a revoke tears down only the accesses on the account where the
-> trigger was written, and the forwarded `consent/revoke-cmc` is classified as
-> a peer-delivered event, so the dispatch loop **skips it and runs no handler**
-> on the receiving side (`dispatch.ts` `OUTBOUND_LOOPABLE_TYPES` +
-> `isPeerDeliveredEvent`). The peer's access therefore survives the revoke and
-> its token keeps working until that side's app deletes it.
->
-> Consequence, stated plainly: **revocation is advisory in the
-> trigger-writer → peer direction.** The direction that does enforce is the
-> local one, an accepter revoking destroys the data-grant on their own
-> account, which is what actually cuts the requester's read. Server-side
-> teardown of the peer's access is planned; until it lands, an app that
-> observes a `consent/revoke-cmc` arrival is responsible for deleting its own
-> half.
+**Both halves of the pair die, each deleted by the server that hosts it.** The
+side writing the trigger deletes the access the peer was using against its own
+account, and the receiving side deletes the access the revoke arrived through,
+which is the withdrawing side's access on the receiver. Neither server ever
+deletes anything on the other; each acts on its own data, in response to an
+event the peer authenticated with the very access being destroyed.
+
+> **Earlier behaviour, for anyone reading an older deployment.** Until the
+> peer-side teardown landed, the receiving side ran no handler at all and the
+> withdrawing side's token kept working until that side's app deleted it. If
+> you are running a build without `handleIncomingRevoke`'s teardown, revocation
+> is enforced only in the local direction and an app that observes a
+> `consent/revoke-cmc` arrival is responsible for deleting its own half.
 
 Either party writes `consent/revoke-cmc`. Their plugin deletes their local access(es) and notifies the peer. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
+
+**What the receiving side does with the arrival.** `handleIncomingRevoke`
+(reached because dispatch routes a revoke on `:_cmc:inbox` to the incoming path)
+does three things, in this order:
+
+1. **Enforce** — delete the access the revoke arrived through, plus any sibling
+   access with the same stamped counterparty and the same non-null
+   `scopeStreamId`. Several grants can serve one relationship, since the
+   accepter mints a new one on every accept while the requester heals one in
+   place, and each of those handed out a live token. Scope-less legacy accesses
+   are never swept: without a scope, one relationship with a peer cannot be
+   told from another under the same app code.
+2. **Bookkeep** — clear the withdrawing subject from any open-link capability's
+   `acceptedBy`, so the same link accepts them again.
+3. **Enrich** — add this side's own handles to the inbox event, see below.
+
+The order is deliberate. A failure between 1 and 2 leaves a stale `acceptedBy`,
+which refuses a re-consent until it is cleared and is recoverable; the reverse
+order would leave a live token. The handler issues no outbound call, and its
+deletes go through the mall rather than the api-server route, so they do not
+fire the accesses-delete hook and cannot loop.
+
+**Correlation ids on the arrival.** `content.accessId` is the SENDER's access id
+and means nothing on the receiving account, so the receiver adds the ids its own
+app already holds: `backChannelAccessId` + `inviteEventId` on the requester
+side, `dataGrantAccessId` + `offerEventId` + `acceptEventId` on the accepter
+side, and on both `scopeStreamId` (server-derived, not the peer's claim) plus
+`revokedAccessIds`, the local accesses the teardown destroyed. An id that cannot
+be resolved is left out rather than written as null, and a value the peer
+supplied is never overwritten. The requester's back-channel access is also
+stamped with `offerEventId` / `inviteEventId` at mint, so a peer on an older
+build still receives something matchable.
 
 ```mermaid
 sequenceDiagram
@@ -521,12 +550,17 @@ sequenceDiagram
     APIServer-->>Plugin: access record
     Plugin->>APIServer: accesses.delete <accessId>
     Plugin->>Peer: POST /events :_cmc:inbox<br/>type: consent/revoke-cmc
-    Note over Peer: dispatch SKIPS peer-delivered revokes:<br/>no handler runs, peer's half is NOT deleted
+    Note over Peer: incoming handler runs: deletes the access<br/>the revoke arrived through, clears acceptedBy,<br/>enriches the arrival. No outbound call.
     Peer-->>Plugin: 201 (event stored in inbox)
     Plugin->>APIServer: events.update trigger status='completed'
 ```
 
-Note that `status: 'completed'` on the trigger means "local teardown done and the notification was accepted by the peer", **not** that the peer tore anything down.
+Note that `status: 'completed'` on the trigger means "local teardown done and the
+notification was accepted by the peer". The peer's own teardown runs after it
+answers 201 and is not reported back, so `completed` is not a receipt for it. A
+delivery that never succeeds leaves the peer's half standing: on that side the
+relationship access outlives the relationship until an operator prunes it, which
+is the residual cost of best-effort delivery.
 
 **Anchor stream history preservation:** chat + collector streams are NOT deleted on revoke. They become orphan-but-readable; the user can still scroll history. If the two parties later re-accept, the plugin re-creates the access pair pointing at the existing streams. (Re-acceptance is exercised by the handshake suite's revoke and re-accept cases.)
 
