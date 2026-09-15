@@ -67,7 +67,12 @@ type EventLike = {
   createdBy?: string;
   [k: string]: unknown;
 };
-type Deps = { mall: MallLike; logger?: LoggerLike; now?: () => number };
+type Deps = {
+  mall: MallLike;
+  logger?: LoggerLike;
+  now?: () => number;
+  notifyEventChanged?: (userId: string, event: EventLike) => void;
+};
 
 async function handleIncomingRevoke (params: {
   userId: string;
@@ -77,6 +82,7 @@ async function handleIncomingRevoke (params: {
   ok: boolean;
   cleared?: boolean;
   deletedAccessIds?: string[];
+  enriched?: boolean;
   reason?: string;
 }> {
   const { userId, event, deps } = params;
@@ -148,39 +154,134 @@ async function handleIncomingRevoke (params: {
   });
 
   // Step 2 — BOOKKEEP. From here on a failure only costs a stale `acceptedBy`.
+  let cleared = false;
+  let reason: string | undefined;
   if (accepter == null || typeof accepter.username !== 'string' ||
       typeof accepter.host !== 'string') {
-    return { ok: true, cleared: false, deletedAccessIds, reason: 'no-counterparty-identity' };
+    reason = 'no-counterparty-identity';
+  } else {
+    // Correlate to the open-link capability we published.
+    let capabilityId: string | null =
+      typeof cmcCd.capabilityId === 'string' && cmcCd.capabilityId.length > 0
+        ? cmcCd.capabilityId
+        : null;
+    // Legacy bridge for relationships minted before the stamp.
+    if (capabilityId == null) {
+      capabilityId = await resolveCapabilityIdFromOffer(userId, event, mall, logger);
+    }
+    if (capabilityId == null) {
+      logger?.debug?.('cmc/handleIncomingRevoke: no capability to clear (non-open-link or unresolvable)', {});
+      reason = 'no-capability';
+    } else {
+      try {
+        const res = await capabilityMod.clearAccepter({
+          userId,
+          capabilityId,
+          accepter: { username: accepter.username, host: accepter.host },
+          deps: { mall },
+        });
+        cleared = res?.cleared === true;
+      } catch (err: unknown) {
+        logger?.warn?.('cmc/handleIncomingRevoke: clearAccepter failed', {
+          capabilityId,
+          error: String((err as Error)?.message || err),
+        });
+        reason = 'clear-failed';
+      }
+    }
   }
 
-  // Correlate to the open-link capability we published.
-  let capabilityId: string | null =
-    typeof cmcCd.capabilityId === 'string' && cmcCd.capabilityId.length > 0
-      ? cmcCd.capabilityId
-      : null;
-  // Legacy bridge for relationships minted before the stamp.
-  if (capabilityId == null) {
-    capabilityId = await resolveCapabilityIdFromOffer(userId, event, mall, logger);
+  // Step 3 — ENRICH. The arrival names the SENDER's access id, which this
+  // account has never seen. Add the ids this side already holds for the
+  // relationship, resolved from the access the revoke came through, so an app
+  // can join the withdrawal to the invite it knows about. Runs last: it is a
+  // convenience, and neither of the steps above should wait on it.
+  const enriched = await enrichArrival({
+    userId, event, createdByAccess, scopeStreamId, deletedAccessIds, mall, logger,
+    notifyEventChanged: deps.notifyEventChanged,
+  });
+
+  return { ok: true, cleared, deletedAccessIds, enriched, ...(reason != null ? { reason } : {}) };
+}
+
+/**
+ * Add this account's own handles for the relationship to the inbox arrival.
+ *
+ * Which ids exist depends on the direction, and each side gets the names its
+ * app already uses:
+ *   - requester (the revoke arrived through the back-channel access): the
+ *     back-channel's id and the invite event id, the same pair the accept
+ *     mirror carries;
+ *   - accepter (it arrived through the data-grant): the grant's id and the
+ *     offer / accept event ids its accept trigger was stamped with.
+ * Both directions also get the server-derived scope (never the peer's claim)
+ * and the ids of the accesses the teardown actually destroyed.
+ *
+ * An id that cannot be resolved is left out rather than written as null, and a
+ * value the peer supplied is never overwritten with nothing. Best-effort
+ * throughout: the revocation is already enforced by the time this runs.
+ */
+async function enrichArrival (params: {
+  userId: string;
+  event: EventLike;
+  createdByAccess: CmcAccessLike;
+  scopeStreamId: string | null;
+  deletedAccessIds: string[];
+  mall: MallLike;
+  logger?: LoggerLike;
+  notifyEventChanged?: (userId: string, event: EventLike) => void;
+}): Promise<boolean> {
+  const {
+    userId, event, createdByAccess, scopeStreamId, deletedAccessIds, mall, logger,
+    notifyEventChanged,
+  } = params;
+  if (event.id == null || mall.events?.update == null) return false;
+
+  const cmc = createdByAccess.clientData?.cmc ?? {};
+  const added: Record<string, unknown> = {};
+  // Which side are we on? Only the requester's back-channel access carries a
+  // capabilityId; a data-grant carries the offer/accept trigger ids.
+  const isRequesterSide = typeof cmc.capabilityId === 'string' && cmc.capabilityId.length > 0;
+  if (isRequesterSide) {
+    added.backChannelAccessId = createdByAccess.id;
+  } else {
+    added.dataGrantAccessId = createdByAccess.id;
   }
-  if (capabilityId == null) {
-    logger?.debug?.('cmc/handleIncomingRevoke: no capability to clear (non-open-link or unresolvable)', {});
-    return { ok: true, cleared: false, deletedAccessIds, reason: 'no-capability' };
+  if (typeof cmc.inviteEventId === 'string') added.inviteEventId = cmc.inviteEventId;
+  if (typeof cmc.offerEventId === 'string') added.offerEventId = cmc.offerEventId;
+  if (typeof cmc.acceptEventId === 'string') added.acceptEventId = cmc.acceptEventId;
+  if (scopeStreamId != null) added.scopeStreamId = scopeStreamId;
+  if (deletedAccessIds.length > 0) added.revokedAccessIds = deletedAccessIds;
+
+  // Requester side, relationship minted before the invite stamp: fall back to
+  // the capability access, which is where that id has always lived.
+  if (added.inviteEventId == null && isRequesterSide) {
+    try {
+      const list = await mall.accesses.get(userId, {});
+      const capAccess = (Array.isArray(list) ? list : []).find((a) =>
+        a?.clientData?.cmc?.kind === 'capability' &&
+        a?.clientData?.cmc?.capabilityId === cmc.capabilityId);
+      const requestEventId = capAccess?.clientData?.cmc?.requestEventId;
+      if (typeof requestEventId === 'string') added.inviteEventId = requestEventId;
+    } catch (err: unknown) {
+      logger?.debug?.('cmc/handleIncomingRevoke: capability lookup for inviteEventId failed', {
+        error: String((err as Error)?.message || err),
+      });
+    }
   }
 
   try {
-    const res = await capabilityMod.clearAccepter({
-      userId,
-      capabilityId,
-      accepter: { username: accepter.username, host: accepter.host },
-      deps: { mall },
-    });
-    return { ok: true, cleared: res?.cleared === true, deletedAccessIds };
+    const content = { ...(event.content || {}), ...added };
+    await mall.events.update(userId, { ...event, content });
+    event.content = content;
+    try { notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
+    return true;
   } catch (err: unknown) {
-    logger?.warn?.('cmc/handleIncomingRevoke: clearAccepter failed', {
-      capabilityId,
+    logger?.warn?.('cmc/handleIncomingRevoke: could not enrich the revoke arrival', {
+      eventId: event.id,
       error: String((err as Error)?.message || err),
     });
-    return { ok: true, cleared: false, deletedAccessIds, reason: 'clear-failed' };
+    return false;
   }
 }
 

@@ -69,9 +69,18 @@ export type CmcClientData = {
   singleUse?: boolean;
   // Stamped on data-grant accesses at build time (acceptOrchestration.
   // buildDataGrantPayload); acceptEventId keys the idempotent reuse on
-  // accept re-dispatch.
+  // accept re-dispatch. `offerEventId` is also stamped on the requester's
+  // back-channel access (handleIncomingAccept) so a revoke forwarded from
+  // that side carries it too.
   offerEventId?: string | null;
   acceptEventId?: string | null;
+  // The requester's original `consent/request-cmc` trigger event id — the
+  // invite the whole relationship descends from. Distinct from
+  // `requestEventId`, which is the same value but lives on the CAPABILITY
+  // access; this is its copy on a relationship access, so a revoke can carry
+  // it without a capability lookup. Absent on relationships minted before the
+  // stamp existed, and on the accepter side it is an opaque correlation id.
+  inviteEventId?: string | null;
   // The relationship's per-request scope stream (e.g.
   // `:_cmc:apps:my-app:study-a`). Both sides anchor their chat / collector
   // streams under it, so it is the one identifier that names a single

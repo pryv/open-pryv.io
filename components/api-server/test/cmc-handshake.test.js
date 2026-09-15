@@ -356,6 +356,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       triggerStreamId,
       capabilityUrl,
       capabilityId,
+      // The invite trigger itself: what a revoke arrival's `inviteEventId`
+      // must match, from the requester's point of view.
+      requestEventId: reqRes.body?.event?.id,
       aliceChatStreamId: C.chatStreamUnder(triggerStreamId, bobSlug),
       bobChatStreamId: C.chatStreamUnder(triggerStreamId, aliceSlug),
       aliceCollectorStreamId: C.collectorStreamUnder(triggerStreamId, bobSlug),
@@ -1619,6 +1622,69 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await pollTokenDead(bob, r1.token, 'CN37');
       assert.equal(await tokenLivesOn(bob, r2.token), true,
         'CN37: the untouched relationship must keep its grant');
+    });
+
+    it('[CN38] the requester\'s arrival is enriched with ids her app already holds', async function () {
+      // Direction: the accepter withdraws, the requester receives. Her app knows
+      // the relationship by the accept mirror it stored, so the arrival is
+      // joined to that by the back-channel access id and the invite event id.
+      const h = await runFreshHandshake('td-e', 'td-app-e', { mode: 'open-link' });
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN38 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      // Poll until the enrichment lands: it runs after the teardown, so the
+      // arrival is observable before it is enriched.
+      const arrival = await pollInboxFor(
+        alice.eventsPath, alice.token, 'consent/revoke-cmc',
+        // Scope the match: the inbox accumulates arrivals from the earlier
+        // cases in this describe, all of them also from bob and also enriched.
+        (e) => e.content?.from?.username === bob.username &&
+               e.content?.scopeStreamId === h.triggerStreamId &&
+               e.content?.backChannelAccessId != null
+      );
+      assert.equal(arrival.content.backChannelAccessId, bc.id,
+        'CN38: the arrival must name the requester-side access, not the sender\'s');
+      assert.equal(arrival.content.inviteEventId, h.requestEventId,
+        'CN38: the arrival must name the invite the relationship descends from');
+      assert.equal(arrival.content.scopeStreamId, h.triggerStreamId);
+      assert.deepEqual(arrival.content.revokedAccessIds, [bc.id]);
+      // The sender's own id is still there, unchanged, as the schema requires.
+      assert.equal(arrival.content.accessId, dataGrant.id);
+    });
+
+    it('[CN39] the accepter\'s arrival is enriched with his own grant and trigger ids', async function () {
+      const h = await runFreshHandshake('td-f', 'td-app-f', { mode: 'open-link' });
+      const { backChannel } = await requesterGrantToken(h);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: backChannel.id, reason: { en: 'CN39 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      const arrival = await pollInboxFor(
+        bob.eventsPath, bob.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === alice.username &&
+               e.content?.scopeStreamId === h.triggerStreamId &&
+               e.content?.dataGrantAccessId != null
+      );
+      assert.equal(arrival.content.dataGrantAccessId, dataGrant.id,
+        'CN39: the arrival must name the accepter-side grant');
+      assert.equal(arrival.content.scopeStreamId, h.triggerStreamId);
+      assert.deepEqual(arrival.content.revokedAccessIds, [dataGrant.id]);
     });
   });
 

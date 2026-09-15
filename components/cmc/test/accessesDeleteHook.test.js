@@ -279,4 +279,30 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     await hook('u1', [REQUESTER_SIDE_ACCESS]); // no capabilityId on this access
     assert.equal(mall.calls.accessesUpdated.length, 0);
   });
+
+  it('[DH14] forwards inviteEventId on a raw delete, and omits it when absent', async () => {
+    // Parity with the helper path: a withdrawal from a generic connected-apps
+    // screen must carry the same correlation ids as one through the helper,
+    // or the peer can match one kind of revocation and not the other.
+    const withInvite = {
+      ...REQUESTER_SIDE_ACCESS,
+      clientData: {
+        cmc: {
+          ...REQUESTER_SIDE_ACCESS.clientData.cmc,
+          inviteEventId: 'invite-evt-1',
+        },
+      },
+    };
+    const { fetch, calls } = fakeFetch([{ status: 201, body: {} }, { status: 201, body: {} }]);
+    const hook = createAccessesDeletePostHook({ fetch });
+    await hook('u1', [withInvite]);
+    await hook('u1', [REQUESTER_SIDE_ACCESS]);
+
+    assert.equal(calls.length, 2);
+    const first = JSON.parse(calls[0].init.body).content;
+    const second = JSON.parse(calls[1].init.body).content;
+    assert.equal(first.inviteEventId, 'invite-evt-1');
+    assert.equal('inviteEventId' in second, false);
+  });
+
 });

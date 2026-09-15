@@ -694,4 +694,73 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(r.reason, 'cmc-revoke-counterparty-access-not-found');
     });
   });
+
+  describe('[CMCHR-CORR] the forwarded revoke carries the invite id', () => {
+    // The peer cannot match on our access id, which it has never seen. It CAN
+    // match on the invite the relationship descends from, so we forward that
+    // when the access carries it.
+    const WITH_INVITE = {
+      id: 'acc-counterparty',
+      type: 'shared',
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          appCode: 'my-app',
+          inviteEventId: 'invite-evt-1',
+          offerEventId: 'offer-evt-1',
+          counterparty: {
+            username: 'provider-a',
+            host: 'provider.example.org',
+            apiEndpoint: 'https://peer-tok@provider.example.org/',
+          },
+        },
+      },
+    };
+
+    function mallWith (accessList) {
+      const state = { list: accessList.slice(), deleted: [] };
+      return {
+        state,
+        accesses: {
+          async get () { return state.list; },
+          async delete (userId, params) {
+            state.deleted.push(params.id);
+            state.list = state.list.filter((a) => a.id !== params.id);
+          },
+          async update () { return null; },
+        },
+        events: { async get () { return []; }, async update () { return null; } },
+      };
+    }
+
+    async function revokeWith (access) {
+      const mall = mallWith([access]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1, 'expected exactly one delivery');
+      return JSON.parse(calls[0].init.body).content;
+    }
+
+    it('[HR27] forwards inviteEventId when the relationship access carries it', async () => {
+      const content = await revokeWith(WITH_INVITE);
+      assert.equal(content.inviteEventId, 'invite-evt-1');
+      assert.equal(content.offerEventId, 'offer-evt-1');
+    });
+
+    it('[HR28] omits inviteEventId rather than sending null when it is absent', async () => {
+      const content = await revokeWith(COUNTERPARTY_ACCESS);
+      assert.equal('inviteEventId' in content, false);
+    });
+  });
+
 });

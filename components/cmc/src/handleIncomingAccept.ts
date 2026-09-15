@@ -231,6 +231,38 @@ async function handleIncomingAccept (params: {
   // access so a later revocation can locate the capability and clear the
   // subject's acceptedBy entry; also used below to consume/enrich the mirror.
   const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+
+  // Look up the local capability access once. Three consumers below: the
+  // back-channel access's `inviteEventId` stamp, the inbox-mirror enrichment,
+  // and the state-flip block. The accepter's plugin only knows `capabilityId`
+  // from the URL/cap-id; only the requester (here) can read
+  // `clientData.cmc.requestEventId`, which is the original invite trigger event
+  // id from `consent/request-cmc` — the one the doctor's app uses with
+  // `cmc.revokeRelationship({inviteEventId})`.
+  let capabilityAccess: { id?: string; token?: string; [k: string]: unknown } | null = null;
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    try {
+      capabilityAccess = await capabilityMod.findCapabilityAccess({
+        userId, capabilityId: capabilityIdToConsume, deps: { mall },
+      });
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability access lookup failed (non-fatal)', {
+        capabilityId: capabilityIdToConsume,
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
+  const inviteEventId: string | null =
+    ((capabilityAccess?.clientData as { cmc?: { requestEventId?: string } } | undefined)?.cmc?.requestEventId ?? null) as string | null;
+  // The offer copy this accept answers, already on the wire from the accepter
+  // (`acceptOrchestration` sends it as `originalEventId`). Stamping it here is
+  // what lets a revoke forwarded from THIS side carry an id the accepter's app
+  // can match against its own accept trigger.
+  const offerEventId: string | null =
+    typeof acceptEvent?.content?.originalEventId === 'string'
+      ? acceptEvent.content.originalEventId
+      : null;
+
   const accessParams = {
     type: 'shared',
     name: accessName,
@@ -249,6 +281,13 @@ async function handleIncomingAccept (params: {
         // clear this subject's acceptedBy entry. null for legacy accepters
         // (pre-stamp); heal-in-place rewrites clientData so it self-refreshes.
         capabilityId: typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0 ? capabilityIdToConsume : null,
+        // Correlation ids a revoke forwarded from this side can carry, so the
+        // peer's app can match the arrival to the invite it already holds
+        // instead of to our local access id, which it never saw. Null for
+        // relationships whose accept predates the stamp; the heal-in-place
+        // path rewrites clientData, so they self-refresh on the next accept.
+        offerEventId,
+        inviteEventId,
         features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
@@ -348,28 +387,6 @@ async function handleIncomingAccept (params: {
       access = existing;
     }
   }
-
-  // Look up the local capability access once for the inbox-mirror
-  // enrichment + the state-flip block below. The accepter's plugin only
-  // knows `capabilityId` from the URL/cap-id; only the requester (here)
-  // can read `clientData.cmc.requestEventId` (which is the original
-  // invite trigger event id from `consent/request-cmc` — the one the
-  // doctor's app uses with `cmc.revokeRelationship({inviteEventId})`).
-  let capabilityAccess: { id?: string; token?: string; [k: string]: unknown } | null = null;
-  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
-    try {
-      capabilityAccess = await capabilityMod.findCapabilityAccess({
-        userId, capabilityId: capabilityIdToConsume, deps: { mall },
-      });
-    } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/handleIncomingAccept: capability access lookup failed (non-fatal)', {
-        capabilityId: capabilityIdToConsume,
-        error: String((err as Error)?.message || err),
-      });
-    }
-  }
-  const inviteEventId: string | null =
-    ((capabilityAccess?.clientData as { cmc?: { requestEventId?: string } } | undefined)?.cmc?.requestEventId ?? null) as string | null;
 
   // Mirror the accept to :_cmc:inbox so the requester's app sees it via
   // standard inbox subscription (per INTERNALS.md flow 3 step 11). The

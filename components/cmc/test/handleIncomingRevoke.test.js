@@ -326,4 +326,135 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.deepEqual(res.deletedAccessIds, []);
     assert.equal(warns.some((m) => String(m).includes('was NOT torn down')), true);
   });
+
+  describe('[CMCIR-ENRICH] the arrival is enriched with ids this side holds', () => {
+    // The revoke names the SENDER's access id, which this account never saw.
+    // The receiver adds its own handles for the relationship so an app can
+    // join the withdrawal to the invite it knows about.
+    function mallWithEvent (event) {
+      const m = fakeMall();
+      m.eventsById.set(event.id, event);
+      m.calls.eventsUpdated = [];
+      m.events.update = async (userId, params) => {
+        m.eventsById.set(params.id, params);
+        m.calls.eventsUpdated.push(params);
+        return params;
+      };
+      return m;
+    }
+
+    it('[CIR15] requester side: back-channel id, invite id, own scope, revoked ids', async () => {
+      const event = {
+        id: 'evt-revoke-1',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'bc-15',
+        content: { from: SUBJECT, accessId: 'sender-side-id', status: 'delivered' },
+      };
+      const mall = mallWithEvent(event);
+      seedCapability(mall, 'cap-15', [{ ...SUBJECT, acceptedAt: 1 }]);
+      seedBackChannel(mall, 'bc-15', {
+        capabilityId: 'cap-15',
+        counterparty: SUBJECT,
+        scopeStreamId: ':_cmc:apps:my-app:study-a',
+        inviteEventId: 'invite-evt-1',
+      });
+      let notified = 0;
+      const res = await handleIncomingRevoke({
+        userId: 'u1',
+        event,
+        deps: { mall, notifyEventChanged: () => { notified++; } },
+      });
+      assert.equal(res.enriched, true);
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.backChannelAccessId, 'bc-15');
+      assert.equal(written.inviteEventId, 'invite-evt-1');
+      assert.equal(written.scopeStreamId, ':_cmc:apps:my-app:study-a');
+      assert.deepEqual(written.revokedAccessIds, ['bc-15']);
+      // The sender's own id and the delivery status survive untouched.
+      assert.equal(written.accessId, 'sender-side-id');
+      assert.equal(written.status, 'delivered');
+      assert.equal(notified, 1);
+    });
+
+    it('[CIR16] accepter side: data-grant id and the offer / accept trigger ids', async () => {
+      const event = {
+        id: 'evt-revoke-2',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'grant-16',
+        content: { from: SUBJECT },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'grant-16', {
+        counterparty: SUBJECT,
+        scopeStreamId: ':_cmc:apps:my-app:study-a',
+        offerEventId: 'offer-evt-1',
+        acceptEventId: 'accept-evt-1',
+      });
+      const res = await handleIncomingRevoke({
+        userId: 'u1', event, deps: { mall },
+      });
+      assert.equal(res.enriched, true);
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.dataGrantAccessId, 'grant-16');
+      assert.equal(written.offerEventId, 'offer-evt-1');
+      assert.equal(written.acceptEventId, 'accept-evt-1');
+      // No capability on this side, so no back-channel id is claimed.
+      assert.equal('backChannelAccessId' in written, false);
+    });
+
+    it('[CIR17] unresolvable ids are left out, and peer-supplied values are not erased', async () => {
+      const event = {
+        id: 'evt-revoke-3',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'grant-17',
+        // The peer sent an offerEventId; ours is unknown. Overwriting theirs
+        // with nothing would lose the only correlation the arrival had.
+        content: { from: SUBJECT, offerEventId: 'peer-supplied-offer' },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'grant-17', { counterparty: SUBJECT });
+      const res = await handleIncomingRevoke({
+        userId: 'u1', event, deps: { mall },
+      });
+      assert.equal(res.enriched, true);
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.offerEventId, 'peer-supplied-offer');
+      assert.equal('inviteEventId' in written, false);
+      assert.equal('acceptEventId' in written, false);
+      // No scope on the access, so none is claimed.
+      assert.equal('scopeStreamId' in written, false);
+    });
+
+    it('[CIR18] the invite id falls back to the capability access for a legacy relationship', async () => {
+      const event = {
+        id: 'evt-revoke-4',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'bc-18',
+        content: { from: SUBJECT },
+      };
+      const mall = mallWithEvent(event);
+      // Back-channel minted before the invite stamp existed: no inviteEventId
+      // on the access, but the capability it points at still has it.
+      seedBackChannel(mall, 'bc-18', { capabilityId: 'cap-18', counterparty: SUBJECT });
+      mall.accessesById.set('cap-acc-18', {
+        id: 'cap-acc-18',
+        clientData: {
+          cmc: {
+            kind: 'capability',
+            capabilityId: 'cap-18',
+            requestEventId: 'legacy-invite-1',
+            capability: { mode: 'open-link', state: 'open', acceptedBy: [] },
+          },
+        },
+      });
+      await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.inviteEventId, 'legacy-invite-1');
+    });
+  });
+
 });

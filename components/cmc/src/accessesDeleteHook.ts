@@ -149,6 +149,9 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
       if (typeof cmc.appCode === 'string') content.appCode = cmc.appCode;
       if (typeof cmc.offerEventId === 'string') content.offerEventId = cmc.offerEventId;
       if (typeof cmc.acceptEventId === 'string') content.acceptEventId = cmc.acceptEventId;
+      // Parity with handleRevoke: the invite the relationship descends from,
+      // for a peer running a build older than the receiver-side enrichment.
+      if (typeof cmc.inviteEventId === 'string') content.inviteEventId = cmc.inviteEventId;
       // Which relationship is being withdrawn — parity with handleRevoke, so
       // a peer holding several relationships with us under one app can tell
       // which one this raw-delete revocation refers to (the sender's

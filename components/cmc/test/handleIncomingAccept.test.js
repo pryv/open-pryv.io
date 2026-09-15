@@ -388,4 +388,70 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(r.scopeStreamId, null);
     });
   });
+
+  describe('[CMCIA-CORR] correlation ids stamped on the back-channel access', () => {
+    // A revoke forwarded from this side names OUR access id, which the peer
+    // has never seen. These stamps are what let the forwarded revoke also
+    // carry ids the peer can match against the invite it already holds.
+    const CAP_ACCESS = {
+      id: 'cap-access-1',
+      clientData: {
+        cmc: {
+          kind: 'capability',
+          capabilityId: 'cap-xyz',
+          requestEventId: 'orig-invite-trigger-1',
+          capability: { mode: 'open-link', state: 'open' },
+        },
+      },
+    };
+    const ACCEPT_WITH_CAP = {
+      ...ACCEPT_FROM_INBOX,
+      content: { ...ACCEPT_FROM_INBOX.content, capabilityId: 'cap-xyz' },
+    };
+
+    it('[IA11] a new back-channel access carries offerEventId + inviteEventId', async () => {
+      const mall = fakeMall({
+        requestEvent: ORIGINAL_REQUEST_EVENT,
+        capabilityAccess: CAP_ACCESS,
+      });
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: ACCEPT_WITH_CAP,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(r.ok, true);
+      const cmc = mall.calls.accessesCreated[0].clientData.cmc;
+      // The offer copy this accept answers, as the accepter sent it.
+      assert.equal(cmc.offerEventId, 'orig-req-1');
+      // The invite the relationship descends from, read from the capability.
+      assert.equal(cmc.inviteEventId, 'orig-invite-trigger-1');
+    });
+
+    it('[IA12] both ids are null rather than absent when nothing resolves them', async () => {
+      // No capability on the accept and no originalEventId: the relationship
+      // simply has no invite-level ids to carry. They must still be written,
+      // so the heal-in-place path can overwrite a stale value later.
+      const mall = fakeMall({ requestEvent: ORIGINAL_REQUEST_EVENT });
+      const bare = {
+        ...ACCEPT_FROM_INBOX,
+        content: {
+          grantedAccess: ACCEPT_FROM_INBOX.content.grantedAccess,
+          from: ACCEPT_FROM_INBOX.content.from,
+          requesterOriginStreamId: ':_cmc:apps:my-app:campaign-2026',
+        },
+      };
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: bare,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(r.ok, true);
+      const cmc = mall.calls.accessesCreated[0].clientData.cmc;
+      assert.equal(cmc.offerEventId, null);
+      assert.equal(cmc.inviteEventId, null);
+    });
+  });
+
 });

@@ -151,6 +151,10 @@ async function dispatch (params: {
         ...event,
         content: { ...(event.content || {}), status: 'delivered' },
       });
+      // Keep the in-memory event in step with what was just written, so a
+      // later handler that rewrites `content` (the incoming-revoke enrichment)
+      // carries the status forward instead of dropping it.
+      event.content = { ...(event.content || {}), status: 'delivered' };
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as delivered', {
@@ -208,7 +212,13 @@ async function dispatch (params: {
       if (event.type === C.ET_REVOKE) {
         try {
           await handleIncomingRevokeMod.handleIncomingRevoke({
-            userId, event, deps: { mall: deps.mall, logger: deps.logger },
+            userId,
+            event,
+            deps: {
+              mall: deps.mall,
+              logger: deps.logger,
+              notifyEventChanged: deps.notifyEventChanged,
+            },
           });
         } catch (err: unknown) {
           deps.logger?.warn?.('cmc/dispatch: handleIncomingRevoke failed (non-fatal)', {

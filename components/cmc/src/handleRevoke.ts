@@ -323,6 +323,10 @@ async function handleRevoke (params: {
     if (typeof revokedScope === 'string') revokeContent.scopeStreamId = revokedScope;
     if (typeof cpCmc?.offerEventId === 'string') revokeContent.offerEventId = cpCmc.offerEventId;
     if (typeof cpCmc?.acceptEventId === 'string') revokeContent.acceptEventId = cpCmc.acceptEventId;
+    // The invite the relationship descends from. Carried so the peer can match
+    // the arrival against the request it already holds even when it is running
+    // a build older than the receiver-side enrichment.
+    if (typeof cpCmc?.inviteEventId === 'string') revokeContent.inviteEventId = cpCmc.inviteEventId;
     const delivery = await deliverRevokeWithRetry({
       apiEndpoint: remoteApiEndpoint,
       content: revokeContent,
