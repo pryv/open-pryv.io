@@ -25,6 +25,7 @@ const Account = makePath(username, 'account');
 const Auth = makePath(username, 'auth');
 const Streams = makePath(username, 'streams');
 const Events = makePath(username, 'events');
+const Delegations = makePath(username, 'delegations');
 const Profile = makePath(username, 'profile');
 const Service = makePath(username, 'service');
 const Webhooks = makePath(username, 'webhooks');
@@ -41,6 +42,7 @@ export {
   WWW,
   UserRoot,
   Accesses,
+  Delegations,
   Account,
   Auth,
   Streams,

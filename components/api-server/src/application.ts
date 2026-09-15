@@ -267,6 +267,7 @@ class Application {
     require('./routes/root.ts').default(this.expressApp, this);
 
     require('./routes/accesses.ts').default(this.expressApp, this);
+    require('./routes/delegations.ts').default(this.expressApp, this);
     require('./routes/account.ts').default(this.expressApp, this);
     require('./routes/auth/login.ts').default(this.expressApp, this);
     require('./routes/mfa.ts').default(this.expressApp, this);

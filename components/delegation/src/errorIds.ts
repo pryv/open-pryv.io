@@ -53,6 +53,9 @@ const DelegationErrorIds = {
   UNKNOWN_USERNAME: 'delegation-unknown-username',
   // An account may not delegate to (or be controlled by) itself.
   SELF_NOT_ALLOWED: 'delegation-self-not-allowed',
+  // The delegate identity supplied on an accept response does not match the one
+  // recorded on the controlled account's anchor for that relationship.
+  DELEGATE_MISMATCH: 'delegation-delegate-mismatch',
   // A delegation relationship for this pair already exists.
   ALREADY_EXISTS: 'delegation-already-exists',
   // Delivery of a delegation message to the counterparty core failed.

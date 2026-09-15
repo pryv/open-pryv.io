@@ -12,8 +12,25 @@
 import * as constants from './constants.ts';
 import * as hooks from './hooks.ts';
 import * as errorIds from './errorIds.ts';
+import * as store from './store.ts';
+import * as attach from './attach.ts';
 
-export { constants, hooks, errorIds };
+export { constants, hooks, errorIds, store, attach };
+
+// Handshake orchestration at top-level for api-server integration.
+export const {
+  DelegationError,
+  requestAttach,
+  handleSystemInvite,
+  acceptAttach,
+  handleAcceptResponse,
+  handleAcceptComplete,
+  refuseAttach,
+  handleRefuseResponse,
+  cancelInvite,
+  listDelegates,
+  listControlled,
+} = attach;
 
 export const DelegationErrorIds = errorIds.DelegationErrorIds;
 
@@ -37,9 +54,6 @@ export const {
   RESERVED_PARENT_STREAM_IDS,
   delegatesStreamId,
   controlledStreamId,
-  responsesStreamIdFor,
-  notifyStreamIdFor,
-  ctlStreamIdFor,
   isDelegationStreamId,
   isDelegationInternalStreamId,
   ET_PREFIX,

@@ -63,6 +63,18 @@ const ALL_METHODS = [
   'events.delete',
   'events.getAttachment',
   'events.deleteAttachment',
+  // Account-delegation method family. Client-facing handshake + lists plus the
+  // core-to-core controlled-side responses. Declared so the audit filter and
+  // the method-registration gate recognise them.
+  'delegations.requestAttach',
+  'delegations.acceptAttach',
+  'delegations.refuseAttach',
+  'delegations.cancelInvite',
+  'delegations.listDelegates',
+  'delegations.listControlled',
+  'delegations.acceptResponse',
+  'delegations.refuseResponse',
+  'delegations.acceptComplete',
   'system.checkPlatformIntegrity',
   'system.createUser',
   'system.deactivateMfa',

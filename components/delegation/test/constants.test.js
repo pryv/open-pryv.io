@@ -20,9 +20,11 @@ describe('[DELCONST] delegation/constants', () => {
   it('[DC02] stream-id builders compose under the internal namespace', () => {
     assert.equal(C.delegatesStreamId(), ':_delegation:_internal:delegates');
     assert.equal(C.controlledStreamId(), ':_delegation:_internal:controlled');
-    assert.equal(C.responsesStreamIdFor('rel1'), ':_delegation:_internal:responses:rel1');
-    assert.equal(C.notifyStreamIdFor('rel1'), ':_delegation:_internal:notify:rel1');
-    assert.equal(C.ctlStreamIdFor('rel1'), ':_delegation:_internal:ctl:rel1');
+    // The vestigial per-relationship builders (responses/notify/ctl) are gone:
+    // marker accesses carry no permissions and no per-relationship streams exist.
+    assert.equal(C.responsesStreamIdFor, undefined);
+    assert.equal(C.notifyStreamIdFor, undefined);
+    assert.equal(C.ctlStreamIdFor, undefined);
   });
 
   it('[DC03] isDelegationStreamId matches the namespace + bare root', () => {

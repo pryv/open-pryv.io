@@ -54,6 +54,13 @@ export {
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
 
+// Federation primitives made available at the top level for sibling plugins
+// that reuse the cross-core plumbing (delivery + capability lifecycle) without
+// touching the consent-relationship handlers. These are pure re-exports — no
+// logic change to the modules themselves.
+export const { postToPeer, isRetryableFailure, parseApiEndpoint } = outbound;
+export const { mintCapability, gcCapability } = capability;
+
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
 export const { createAccessesDeletePostHook } = accessesDeleteHook;
 export const { RetryScheduler } = retryScheduler;

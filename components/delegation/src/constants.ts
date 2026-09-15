@@ -17,9 +17,10 @@
  *                                              account controls (anchors)
  *       :_delegation:_internal:controlled      A-side: the accounts this
  *                                              account is controlled by (mirrors)
- *       :_delegation:_internal:responses:<rel> per-relationship handshake responses
- *       :_delegation:_internal:notify:<rel>    per-relationship notification channel
- *       :_delegation:_internal:ctl:<rel>       per-relationship control channel
+ *
+ * The handshake and control channels carry no per-relationship streams: the
+ * marker accesses (invite-capability / control / notify) hold NO permissions,
+ * so there is nothing to reach and no per-relationship stream-id to build.
  *
  * The WHOLE `:_delegation:*` namespace is plugin-owned end-to-end. Unlike the
  * cross-account messaging namespace, there is no user-creatable region: user
@@ -52,21 +53,6 @@ function delegatesStreamId (): string {
 /** `:_delegation:_internal:controlled` — A-side mirror parent. */
 function controlledStreamId (): string {
   return NS_INTERNAL + ':controlled';
-}
-
-/** `:_delegation:_internal:responses:<relId>` */
-function responsesStreamIdFor (relId: string): string {
-  return NS_INTERNAL + ':responses:' + relId;
-}
-
-/** `:_delegation:_internal:notify:<relId>` */
-function notifyStreamIdFor (relId: string): string {
-  return NS_INTERNAL + ':notify:' + relId;
-}
-
-/** `:_delegation:_internal:ctl:<relId>` */
-function ctlStreamIdFor (relId: string): string {
-  return NS_INTERNAL + ':ctl:' + relId;
 }
 
 // The two parents auto-provisioned per delegation-using account.
@@ -142,9 +128,6 @@ export {
   // stream-id builders
   delegatesStreamId,
   controlledStreamId,
-  responsesStreamIdFor,
-  notifyStreamIdFor,
-  ctlStreamIdFor,
 
   // classification predicates
   isDelegationStreamId,

@@ -43,6 +43,7 @@ type AnchorContent = {
   notifyApiEndpoint?: string;
   controlAccessId?: string;
   patAccessId?: string;
+  lastTokenIssuedAt?: number;
 };
 
 /**
@@ -55,6 +56,8 @@ type MirrorContent = {
   status: DelegationStatus;
   capabilityUrl?: string;
   controlApiEndpoint?: string;
+  requestedAt?: number;
+  activatedAt?: number;
 };
 
 /**
