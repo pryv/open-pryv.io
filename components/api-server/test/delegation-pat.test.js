@@ -226,4 +226,38 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     assert.ok(!flat.some((s) => String(s).startsWith(':_delegation:_internal')),
       'streams.get does not expose the :_delegation:_internal subtree');
   });
+
+  it('[DPAT-08] a wildcard events.get never expands into the internal subtree', async function () {
+    // The A-side mirror lives at :_delegation:_internal:controlled and carries
+    // controlApiEndpoint (a bearer onto the controlled account). A `*` read must
+    // NOT sweep it up — neither the personal-token default (streams omitted) nor
+    // an explicit `['*']`. Regression pin for the wildcard-expansion hole.
+    function leaks (events) {
+      const arr = events || [];
+      const mirror = arr.filter((e) => e.type === 'delegation/controlled');
+      const internal = arr.filter((e) => (e.streamIds || []).some((s) => String(s).startsWith(':_delegation:_internal')));
+      const bearer = arr.filter((e) => e.content != null && typeof e.content === 'object' && e.content.controlApiEndpoint != null);
+      return { mirror, internal, bearer };
+    }
+
+    // Personal-token default: `streams` omitted resolves to `*`.
+    const def = await coreRequest.get(alice.eventsPath)
+      .set('Authorization', alice.token)
+      .query({ limit: 1000 });
+    assert.strictEqual(def.status, 200, JSON.stringify(def.body));
+    let l = leaks(def.body.events);
+    assert.strictEqual(l.mirror.length, 0, 'default `*` returns no mirror event');
+    assert.strictEqual(l.internal.length, 0, 'default `*` returns no :_delegation:_internal event');
+    assert.strictEqual(l.bearer.length, 0, 'default `*` leaks no controlApiEndpoint bearer');
+
+    // Explicit `['*']`.
+    const star = await coreRequest.get(alice.eventsPath)
+      .set('Authorization', alice.token)
+      .query({ streams: ['*'], limit: 1000 });
+    assert.strictEqual(star.status, 200, JSON.stringify(star.body));
+    l = leaks(star.body.events);
+    assert.strictEqual(l.mirror.length, 0, 'explicit `*` returns no mirror event');
+    assert.strictEqual(l.internal.length, 0, 'explicit `*` returns no :_delegation:_internal event');
+    assert.strictEqual(l.bearer.length, 0, 'explicit `*` leaks no controlApiEndpoint bearer');
+  });
 });

@@ -209,11 +209,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   api.register(
     'events.get',
     sharedSecretsEnsureOnRead,
-    cmcEventsGetInternalGuard,
     eventsGetUtils.coerceStreamsParam,
-    // AFTER coerceStreamsParam so params.streams is always an array — a
-    // single-value `streams=<id>` arrives as a bare string and would slip past
-    // an array filter placed earlier.
+    // BOTH internal read-guards sit AFTER coerceStreamsParam so params.streams is
+    // always an array — a single-value `streams=<id>` arrives as a bare string
+    // and would slip past an array filter placed earlier.
+    cmcEventsGetInternalGuard,
     delegationEventsGetInternalGuard,
     eventsGetUtils.coerceAndValidateContentQueryParams,
     commonFns.getParamsValidation(methodsSchema.get.params),

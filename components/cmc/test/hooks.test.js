@@ -598,6 +598,25 @@ describe('[CMCHOOK] cmc/hooks', () => {
         assert.equal(params.streams.length, 2);
         assert.deepEqual(params.streams.map((s) => s.streamId), ['fertility', ':_cmc:apps:foo']);
       });
+
+      it('[CH-EG04] scrubs :_cmc:_internal:* ids out of logical any/all/not query lists', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: [
+            {
+              any: ['fertility', ':_cmc:_internal:offer:abc'],
+              all: [':_cmc:_internal'],
+              not: ['health', ':_cmc:_internal:retries'],
+            },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        const q = params.streams[0];
+        assert.deepEqual(q.any, ['fertility']);
+        assert.deepEqual(q.all, []);
+        assert.deepEqual(q.not, ['health']);
+      });
     });
 
     describe('[CMCHOOK-EO] createEventGetOneInternalGuardHook (events.getOne)', () => {

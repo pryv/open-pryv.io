@@ -392,16 +392,33 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
  *
  * Behaviour: walks `params.streams`. If a string id is internal,
  * drops it. If an object has `.streamId` that's internal, drops the
- * object. Leaves wildcard `'*'` queries untouched (those are governed
- * by access permissions, NOT direct stream-id targeting).
+ * object. Logical-query objects (`{any|all|not:[ids]}`) have their
+ * internal ids scrubbed from each list in place. Leaves wildcard `'*'`
+ * queries untouched (those are governed by access permissions, NOT
+ * direct stream-id targeting; the wildcard residual is closed at the
+ * `*`-expansion seam, not here).
+ *
+ * MUST be wired AFTER `coerceStreamsParam` — that step normalises the
+ * wire forms (a single-value `streams=<id>` arrives as a bare string,
+ * not an array) into an array, so running before it would let a
+ * single-value internal query slip past the array filter.
  */
 function createEventsGetInternalGuardHook (): Middleware {
+  function scrubList (list: unknown): unknown {
+    if (!Array.isArray(list)) return list;
+    return list.filter((id) => !(typeof id === 'string' && C.isCmcInternalStreamId(id)));
+  }
   return function cmcEventsGetInternalGuard (_context, params, _result, next) {
     if (params == null || !Array.isArray(params.streams)) return next();
-    params.streams = params.streams.filter((s: string | { streamId?: string } | null) => {
+    params.streams = params.streams.filter((s: unknown) => {
       if (typeof s === 'string') return !C.isCmcInternalStreamId(s);
-      if (s != null && typeof s === 'object' && typeof s.streamId === 'string') {
-        return !C.isCmcInternalStreamId(s.streamId);
+      if (s != null && typeof s === 'object') {
+        const obj = s as { streamId?: unknown; any?: unknown; all?: unknown; not?: unknown };
+        if (typeof obj.streamId === 'string' && C.isCmcInternalStreamId(obj.streamId)) return false;
+        // Logical-query form: scrub internal ids out of any/all/not in place.
+        if (obj.any !== undefined) obj.any = scrubList(obj.any);
+        if (obj.all !== undefined) obj.all = scrubList(obj.all);
+        if (obj.not !== undefined) obj.not = scrubList(obj.not);
       }
       return true;
     });
