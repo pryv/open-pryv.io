@@ -42,7 +42,21 @@ try {
 
 // Honour the same certs-dir override backloop itself reads.
 const certsDir = process.env.BACKLOOP_DEV_CERTS_DIR || path.join(pkgDir, 'certs');
-const bundle = path.join(certsDir, 'backloop.dev-bundle.crt');
+
+// Where the bundle lands depends on the backloop version: 5.2.0 moved the
+// certificates into a `private/` subdirectory (it caches the public and the
+// private material separately). Accept either, newest layout first, so this
+// keeps working across a version bump in both directions. Resolved AFTER
+// provisioning below, because neither path exists until backloop has written
+// the certificate.
+const BUNDLE_CANDIDATES = [
+  path.join(certsDir, 'private', 'backloop.dev-bundle.crt'),
+  path.join(certsDir, 'backloop.dev-bundle.crt')
+];
+
+function findBundle () {
+  return BUNDLE_CANDIDATES.find((p) => fs.existsSync(p)) ?? null;
+}
 
 // backloop prints its provisioning notices to stdout; the caller captures our
 // stdout as the bundle path, so route everything backloop writes to stderr and
@@ -55,6 +69,7 @@ process.stdout.write = process.stderr.write.bind(process.stderr);
 backloop.httpsOptionsAsync({ interactive: false }, function (err) {
   process.stdout.write = realStdoutWrite;
   if (err) fail();
-  if (!fs.existsSync(bundle)) fail();
+  const bundle = findBundle();
+  if (bundle == null) fail();
   process.stdout.write(bundle);
 });

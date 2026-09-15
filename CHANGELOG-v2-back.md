@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## test: backloop.dev 5.2.1, and the CA warm now finds the bundle in either layout
+
+The dev-only HTTPS test proxy moves to backloop.dev 5.2.1, which keeps the proxy
+alive when a reply lands after the response was already answered — the failure
+mode that can take the proxy down mid-suite.
+
+5.2.0 also began caching the public and private certificate material
+separately, which moved the bundle from `certs/backloop.dev-bundle.crt` to
+`certs/private/backloop.dev-bundle.crt`. `scripts/backloop-ca-warm` looked only
+at the old path, so on the new version it exited non-zero, `test` and
+`test-sqlite` silently degraded to "no extra CA", and the lib-js integration
+suite was back to failing its first request with
+`DEPTH_ZERO_SELF_SIGNED_CERT`. The warm step now resolves the bundle from
+either location, newest layout first, so it works across the bump in both
+directions.
+
+Note that the certificate itself does NOT come from the pinned tag: backloop
+fetches it in a `postinstall` step, so any install gets the current one
+regardless of the version pinned here.
+
 ## Tests wait for writes the server makes after answering
 
 The audit record of a successful call and the access usage counters (`calls`, `lastUsed`) are
