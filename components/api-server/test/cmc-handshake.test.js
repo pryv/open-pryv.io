@@ -1697,5 +1697,4 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'CN39: acceptEventId must match the accepter\'s own grant');
     });
   });
-
 });

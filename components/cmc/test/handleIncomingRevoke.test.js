@@ -525,5 +525,4 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       assert.equal(written.inviteEventId, 'legacy-invite-1');
     });
   });
-
 });

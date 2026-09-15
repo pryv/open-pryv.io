@@ -762,5 +762,4 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal('inviteEventId' in content, false);
     });
   });
-
 });

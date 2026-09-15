@@ -498,5 +498,4 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(cmc.inviteEventId, null);
     });
   });
-
 });

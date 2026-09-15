@@ -304,5 +304,4 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(first.inviteEventId, 'invite-evt-1');
     assert.equal('inviteEventId' in second, false);
   });
-
 });
