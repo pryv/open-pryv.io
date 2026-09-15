@@ -278,7 +278,15 @@ async function enrichArrival (params: {
   }
 
   try {
-    const content = { ...(event.content || {}), ...added };
+    // Strip the keys this step owns before merging: they describe the RECEIVING
+    // account, so a value the peer put there is meaningless at best. Without
+    // this, a relationship we cannot label (neither stamp present) would keep a
+    // peer-supplied `backChannelAccessId` and an app would read it as ours.
+    const base: Record<string, unknown> = { ...(event.content || {}) };
+    for (const owned of ['backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds']) {
+      delete base[owned];
+    }
+    const content = { ...base, ...added };
     await mall.events.update(userId, { ...event, content });
     event.content = content;
     try { notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }

@@ -454,6 +454,31 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       assert.deepEqual(written.revokedAccessIds, ['legacy-19']);
     });
 
+    it('[CIR21] peer-supplied values for the fields we own are dropped, not kept', async () => {
+      // These describe the RECEIVING account, so a value the peer put there is
+      // meaningless. On a relationship we cannot label, a merge would otherwise
+      // leave the peer's claim standing and an app would read it as ours.
+      const event = {
+        id: 'evt-revoke-7',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'legacy-21',
+        content: {
+          from: SUBJECT,
+          backChannelAccessId: 'peer-made-this-up',
+          dataGrantAccessId: 'peer-made-this-up-too',
+          revokedAccessIds: ['not-ours'],
+        },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'legacy-21', { counterparty: SUBJECT });
+      await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal('backChannelAccessId' in written, false);
+      assert.equal('dataGrantAccessId' in written, false);
+      assert.deepEqual(written.revokedAccessIds, ['legacy-21']);
+    });
+
     it('[CIR20] a non-open-link back-channel is still the requester side', async () => {
       // capabilityId is present but null for a relationship that did not come
       // through a capability. The key is the signal, not its value.
