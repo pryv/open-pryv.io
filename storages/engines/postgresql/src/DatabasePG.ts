@@ -14,7 +14,21 @@ const { _internals } = require('./_internals.ts');
 
 interface PgClient {
   query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
-  release: () => void;
+  // An argument marks the client as broken so the pool discards it instead of
+  // returning it to the idle set. queryIterable passes one only for a cursor
+  // failure, never for a consumer that walked away.
+  release: (err?: unknown) => void;
+}
+
+interface PgCursor {
+  read: (rowCount: number) => Promise<Array<Record<string, unknown>>>;
+  close: () => Promise<void>;
+}
+
+// A pooled client viewed through the cursor API: pg's client.query(cursor)
+// returns the cursor object rather than a result promise.
+interface CursorClient {
+  query: (cursor: unknown) => PgCursor;
 }
 
 interface PgPool {
@@ -22,6 +36,12 @@ interface PgPool {
   connect: () => Promise<PgClient>;
   on: (event: string, handler: (err: Error) => void) => void;
   end: () => Promise<void>;
+  // Live pool counters. Checked-out clients are `totalCount - idleCount`, which
+  // is how a leaked cursor client is observed; `waitingCount` above zero means
+  // callers are already queued behind an exhausted pool.
+  readonly totalCount: number;
+  readonly idleCount: number;
+  readonly waitingCount: number;
 }
 
 interface PgQueryResult {
@@ -148,6 +168,63 @@ class DatabasePG {
     await this.ensureConnect();
     this.logger.debug('Query:', text.replace(/\s+/g, ' ').trim());
     return this.pool!.query(text, params);
+  }
+
+  /**
+   * Stream a query's rows through a server-side cursor, a batch at a time, so
+   * memory is the batch rather than the whole result set.
+   *
+   * ⚑ The generator OWNS a pooled client for as long as it is alive. The caller
+   * must guarantee the generator is closed — `for await` and `Readable.from`
+   * both do, the latter only if whatever consumes the readable propagates
+   * destroy to it. Abandon it and the client is never returned.
+   *
+   * On the way out the client is released clean unless the CURSOR itself
+   * failed. A consumer that stops early — an aborted HTTP response injects its
+   * error at the `yield` — leaves a perfectly healthy connection, and
+   * discarding it would make a burst of aborts churn the pool instead of
+   * leaking it: better than a leak, still wrong.
+   */
+  async * queryIterable (text: string, params: unknown[] = [], batchSize: number = 1000): AsyncGenerator<Record<string, unknown>> {
+    const Cursor = require('pg-cursor');
+    await this.ensureConnect();
+    this.logger.debug('Query (cursor):', text.replace(/\s+/g, ' ').trim());
+    const client = await this.pool!.connect();
+
+    let cursor: PgCursor;
+    try {
+      // Inside the try: if opening the cursor throws, the client must still go
+      // back, and it is the cursor that is suspect, not the consumer.
+      cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
+    } catch (err) {
+      client.release(err);
+      throw err;
+    }
+
+    let cursorFailed = false;
+    try {
+      for (;;) {
+        let rows: Array<Record<string, unknown>>;
+        try {
+          rows = await cursor.read(batchSize);
+        } catch (err) {
+          // Only a read failure means the connection is in an unknown state.
+          cursorFailed = true;
+          throw err;
+        }
+        if (rows.length === 0) break;
+        // Deliberately NOT `yield * rows`. Delegating to the array's iterator
+        // parks the generator inside that delegation, and an array iterator has
+        // no `throw` method — so a consumer abort (which arrives as
+        // `iterator.throw`) is converted into a TypeError instead of the real
+        // error. Yielding row by row keeps the generator suspended at its OWN
+        // yield, so the abort lands in the try/finally below unchanged.
+        for (const row of rows) yield row;
+      }
+    } finally {
+      try { await cursor.close(); } catch (e) { /* best-effort cursor cleanup */ }
+      client.release(cursorFailed ? new Error('queryIterable: cursor read failed; discarding client') : undefined);
+    }
   }
 
   /**
