@@ -1588,7 +1588,7 @@ See `components/cmc/README.md` for the canonical design, `IMPLEMENTERS-GUIDE.md`
 ## System streams refactor
 
 - **REMOVED**: `:_system:helpers` stream and its children (`:_system:active`, `:_system:unique`) — these internal marker streams are no longer part of the system streams tree. Account field uniqueness and indexing are now enforced directly by the platform coordination layer.
-- **No other API changes**: All other system stream IDs (`:_system:language`, `:system:email`, etc.) remain unchanged. Events, permissions, and stream queries work identically. *(Corrected 2026-09-15: this line originally also listed `:_system:email`, which has never been a valid id; on a default configuration the email field is `:system:email`. See the correction note in the Unreleased section.)*
+- **No other API changes**: All other system stream IDs (`:_system:language`, `:system:email`, etc.) remain unchanged. Events, permissions, and stream queries work identically. *(Corrected 2026-09-15: this line originally also listed `:_system:email`, which has never been a valid id; on a default configuration the email field is `:system:email`. See the "Account-stream permissions: clearer error, corrected docs" entry, in the first release after 2.0.0-rc.17.)*
 
 ## Removed: `openSource:isActive` flag
 
