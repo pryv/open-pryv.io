@@ -1,5 +1,29 @@
 # Changelog - Internal (no API impact)
 
+## delegation: account-delegation plugin + internal read/namespace hardening
+
+New `components/delegation/` plugin owning the `:_delegation:*` namespace:
+forge-prevention on `clientData.delegation` (create + update), lifecycle protection
+(delegation-marker accesses and `:_delegation:*` events are undeletable/unupdatable
+via the generic APIs by any token, including personal), reserved-namespace write
+protection, and internal-subtree read guards. The delegate token is a session-backed
+personal access minted like the login flow, discriminated by a forge-protected
+`clientData.delegation` marker whose ABSENCE is exactly what the genuine-login detach
+gate checks. Post-invite handshake delivery is modeled as marker-authenticated
+controlled-side method calls (not stream writes) so the namespace write-guard stays
+blanket; activation is synchronous with idempotent re-accept, holding an
+at-most-one-control-access-per-relationship invariant.
+
+Hardening shipped alongside: the hidden plugin-internal namespaces
+(`:_delegation:_internal` and `:_cmc:_internal`) are now excluded from wildcard `*`
+event reads via the same seam that hides shared-secrets and emails — closing a leak
+where a `*` read could return the delegation A-side mirror event (which carries a
+control-channel bearer onto another account) and the equivalent pre-existing CMC
+internal state. The CMC internal-read guard was also hardened for single-value and
+logical-query forms. Fixed a latent production crash: relationship-id generation
+required `cuid`, a devDependency pruned from production builds — switched to the
+standard `@paralleldrive/cuid2`.
+
 ## cache: invalidate after the write commits, not before (closes a stale re-cache race)
 
 The streams and access caches were invalidated BEFORE their backing DB write

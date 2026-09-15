@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Account delegation — guardian/caregiver-controlled accounts (`delegation:active`, default on)
+
+An account can now be controlled by one or more other accounts ("delegates") — for
+example a parent managing a child's account until majority, or a trusted adult
+managing a dependent person's account. A delegate holds a personal-class token over
+the controlled account that is owner-equivalent for data and account management,
+with one reserved exception: it cannot remove a delegation. Removing a delegation
+("detach") requires a genuine login on the controlled account (a personal token
+obtained from that account's own credentials), so the owner always keeps ultimate
+control.
+
+- New `delegations.*` methods (routes under `/<username>/delegations`):
+  `requestAttach`, `acceptAttach`, `refuseAttach`, `cancelInvite`, `listDelegates`,
+  `listControlled`, `getToken`, `createAccount`, `detachDelegate`,
+  `dismissControlled`. `detachDelegate` and `cancelInvite` require a genuine
+  (non-delegated) personal login; `getToken` and `createAccount` are delegate-side.
+- Attaching an existing account is controlled-account-initiated: the account that
+  wants to be controlled requests attachment (status `invite`); the prospective
+  delegate accepts (`active`). An account may have multiple delegates.
+- Create-from-delegate: a delegate can create a brand-new controlled account, active
+  immediately, with optional email and optional password (an email is not required;
+  without a password the account is reachable only through its delegates until a
+  credential is set).
+- Cross-core (same platform): a delegate and the controlled account may live on
+  different cores; the two core-to-core steps are admin-key gated.
+- `access-info` gains an additive `delegation` field describing a delegated access
+  (controlled username + delegate identity); the audit trail attributes each
+  delegate's actions (each delegate acts through its own token, audited on the
+  controlled account, on both same-core and cross-core issuance).
+- New config `delegation:active` (default true); when off, the methods are not
+  registered and the feature is inert.
+
 ## 2.0.0-rc.17 — 2026-09-11
 
 ### Third-party sign-in (OIDC relying party) — OFF by default (beta)
