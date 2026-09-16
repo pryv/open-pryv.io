@@ -321,6 +321,72 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     });
   });
 
+  describe('[OAUTH-ACCEPT-OPTIN] the optIn display annotation changes no verdict', () => {
+    // An opt-in entry opens unselected on the consent screen. Whether the
+    // user ticks it or not, the accept path must behave exactly as it does
+    // for any other optional entry: granted keeps it, or granted omits it,
+    // and both are accepted under allowUserChoice.
+    const OPTIN_OFFER = {
+      ...SAMPLE_PAYLOAD,
+      offer: {
+        ...SAMPLE_PAYLOAD.offer,
+        permissions: [
+          { streamId: 'health', level: 'read', mandatory: true },
+          { streamId: 'diary', level: 'contribute' },
+          { streamId: 'location', level: 'read', optIn: true },
+        ],
+      },
+    };
+
+    it('[OAC-O1] an opt-in entry may be granted or left out, both 200', async () => {
+      const handler = mkHandler();
+      const ticked = fakeRes();
+      await handler({
+        body: validBody({
+          state: signState(ADMIN_KEY, OPTIN_OFFER),
+          grantedPermissions: [
+            { streamId: 'health', level: 'read' },
+            { streamId: 'location', level: 'read' },
+          ],
+        }),
+      }, ticked);
+      assert.equal(ticked.statusCode, 200, JSON.stringify(ticked.body));
+
+      const unticked = fakeRes();
+      await handler({
+        body: validBody({
+          state: signState(ADMIN_KEY, OPTIN_OFFER),
+          grantedPermissions: [{ streamId: 'health', level: 'read' }],
+        }),
+      }, unticked);
+      assert.equal(unticked.statusCode, 200, JSON.stringify(unticked.body));
+    });
+
+    it('[OAC-O2] an offer whose entry is both mandatory and optIn → clean 400, never a 500', async () => {
+      // resolveOffer refuses this at /authorize, so a signed state carrying
+      // it is stale or forged. It must land on the same fail-closed branch
+      // as any other invalid offer.
+      const contradictory = {
+        ...SAMPLE_PAYLOAD,
+        offer: {
+          ...SAMPLE_PAYLOAD.offer,
+          permissions: [{ streamId: 'health', level: 'read', mandatory: true, optIn: true }],
+        },
+      };
+      const handler = mkHandler();
+      const res = fakeRes();
+      await handler({
+        body: validBody({
+          state: signState(ADMIN_KEY, contradictory),
+          grantedPermissions: [{ streamId: 'health', level: 'read' }],
+        }),
+      }, res);
+      assert.equal(res.statusCode, 400, JSON.stringify(res.body));
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /consent offer is invalid.*contradict/);
+    });
+  });
+
   describe('[OAUTH-ACCEPT-CREATE] createAccess failure path', () => {
     it('[OAC-CR1] createAccess throws → 500 server_error', async () => {
       const handler = require('../src/routes/accept.ts').handleAccept({

@@ -44,8 +44,9 @@ export type ResolvedOffer = {
    * re-authorization by the same user. */
   offerEventId: string | null;
   /** Consent form: full lexicon (stream + feature entries), with the
-   * per-entry `mandatory` annotation preserved for display + grant
-   * validation. */
+   * per-entry annotations preserved: `mandatory` for display + grant
+   * validation, `optIn` for display only (it decides whether the entry
+   * opens selected, never what may be granted). */
   permissions: Array<Record<string, unknown>>;
   /** Default FALSE — the consent is ALL OR NOTHING; true lets the user
    * cherry-pick entries (mandatory ones stay locked). */

@@ -388,6 +388,45 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       ]);
     });
 
+    it('[AO09J] an optIn entry is grantable or droppable and never reaches the payload', () => {
+      // opt-in means the consent screen opens the entry unticked. It is an
+      // ordinary optional entry to the grant rule, and like `mandatory` the
+      // annotation is stripped before the data-grant access is minted.
+      const offer = offerWithChoice(VALID_OFFER, {
+        permissions: [
+          { streamId: 'fertility', level: 'read', mandatory: true },
+          { streamId: 'symptom', level: 'read', optIn: true },
+        ],
+      });
+      const unticked = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ streamId: 'fertility', level: 'read' }],
+      });
+      assert.deepEqual(unticked.permissions, [{ streamId: 'fertility', level: 'read' }]);
+      const ticked = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [
+          { streamId: 'fertility', level: 'read' },
+          { streamId: 'symptom', level: 'read' },
+        ],
+      });
+      assert.deepEqual(ticked.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: 'symptom', level: 'read' },
+      ]);
+      // no grantedPermissions → whole offer, both annotations STRIPPED
+      const full = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.deepEqual(full.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: 'symptom', level: 'read' },
+      ]);
+    });
+
     it('[AO09G] mangled offer permissions throw cmc-offer-invalid-permissions (not silent coercion)', () => {
       assert.throws(
         () => permissionsFromOffer({

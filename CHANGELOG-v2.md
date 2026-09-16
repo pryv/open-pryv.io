@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Consent offers: an `optIn` annotation beside `mandatory`
+
+A permission entry in a consent request or offer (`consent/request-cmc`,
+`consent/scope-request-cmc`, and the offer embedded in an OAuth2 authorization)
+may now carry `optIn: true` beside the existing `mandatory: true`. The two
+annotations give a requester three ways to present an entry to the user:
+
+| annotation | meaning on the consent screen |
+|---|---|
+| `mandatory: true` | required: the user cannot leave it out, the screen locks it |
+| neither | optional, shown pre-selected (unchanged: what every optional entry does today) |
+| `optIn: true` | optional, shown NOT pre-selected |
+
+`optIn` is display-only. It decides how the screen opens, never what may be
+granted, so the accept check returns the same verdict with or without it: an
+opt-in entry the user leaves unticked is simply an entry that is not in the
+grant. Setting both annotations on one entry is a contradiction and is rejected
+where the offer is read (`400 invalid_scope` on the OAuth2 path,
+`cmc-offer-invalid-permissions` on the CMC path).
+
+Nothing changes for a request that carries no annotation, and neither annotation
+ever reaches a minted access: both are stripped before the access is created.
+Cherry-picking still requires the offer's `allowUserChoice`; without it a consent
+remains all-or-nothing.
+
 ### Account-stream permissions: clearer error, corrected docs
 
 - **BREAKING (error contract)**: `accesses.create` with a permission on an
