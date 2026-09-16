@@ -74,6 +74,18 @@ ENV NODE_ENV=production
 ARG IMAGE_TAG=dev
 ENV PRYV_IMAGE_TAG=${IMAGE_TAG}
 
+# Stamp the runtime version file from the released tag. `service/info.version`,
+# the `API-Version` response header and `meta.apiVersion` all read `.api-version`
+# (via components/middleware project_version); the committed file tracks the
+# dev line, so without this a released image reports that dev value forever.
+# Release builds pass the git tag as IMAGE_TAG and overwrite the file with it
+# (leading `v` stripped, no trailing newline to match the checked-in format).
+# Local/dev builds keep IMAGE_TAG=dev and leave the checked-in `.api-version`
+# untouched, so a git checkout still advertises its honest dev-line value.
+RUN if [ "${IMAGE_TAG}" != "dev" ]; then \
+      printf '%s' "${IMAGE_TAG#v}" > /app/.api-version; \
+    fi
+
 # 3000: API. 4000: HFS (multi-worker). 3001: previews. 443: native HTTPS
 # (when http.ssl.* set). 80: ACME HTTP-01 (DNS-01 is the default). 53/udp:
 # embedded DNS (when dns.enabled). EXPOSE is informational only — Dokku and

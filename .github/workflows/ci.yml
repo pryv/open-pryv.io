@@ -234,6 +234,43 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Prove the release image reports its own tag BEFORE anything is pushed.
+      # Build the stock image locally (single-arch, loaded into the daemon) with
+      # the release build-arg, then assert the stamped `.api-version` equals the
+      # tag. A dropped build-arg, a refactored Dockerfile, or a renamed version
+      # file fails the tag build here instead of publishing a frozen
+      # `service/info.version`. The encryption variant is `FROM` this image, so
+      # it inherits the same stamped file — verifying the stock build covers both.
+      - name: Build stock image for version verification
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          build-args: |
+            IMAGE_TAG=${{ github.ref_name }}
+          tags: open-pryv-verify:candidate
+      - name: Assert stamped version equals the release tag
+        # The ref is passed through `env` (never interpolated into the shell
+        # body) so a crafted tag name cannot inject shell.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          stamped="$(docker run --rm --entrypoint cat open-pryv-verify:candidate /app/.api-version)"
+          expected="${TAG#v}"
+          # The docker job fires on ANY tag push. A non-semver tag would stamp
+          # itself verbatim and pass the equality check below, publishing an
+          # image whose service/info.version breaks SDK version comparison.
+          # Refuse to publish unless the tag is a semantic version.
+          semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if ! printf '%s' "$expected" | grep -Eq "$semver"; then
+            echo "::error::release tag '$expected' is not a semantic version; refusing to publish an image whose service/info.version would break SDK version comparison"
+            exit 1
+          fi
+          if [ "$stamped" != "$expected" ]; then
+            echo "::error::.api-version baked into the image ('$stamped') does not equal the release tag ('$expected'); refusing to publish a mis-versioned image"
+            exit 1
+          fi
+          echo "verified: image .api-version = $stamped"
       - uses: docker/build-push-action@v7
         id: build_stock
         with:

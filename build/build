@@ -26,7 +26,11 @@ then
   release=true
 
   # Copy the release version to the project root, so we can later display it to
-  # clients:
+  # clients.
+  # NOTE: this legacy manual build path is not used by CI releases — the CI
+  # docker job builds from the root Dockerfile, which stamps .api-version from
+  # the IMAGE_TAG build-arg. This copy is kept only for ad-hoc local builds via
+  # this script; if this script is retired, its stamping goes with it.
   cp ./build_tag ./.api-version
 else ## test
   version=test
