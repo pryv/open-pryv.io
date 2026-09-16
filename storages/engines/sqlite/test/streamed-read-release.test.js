@@ -32,9 +32,10 @@ const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLi
  * the assertion window only, which makes the leaked iterator observable without
  * pretending the product is in a state it never runs in.
  *
- * This also bounds the real-world consequence: in `unsafeMode` an abandoned
- * iterator does NOT block that user's subsequent writes. What it costs is the
- * statement's own resources, held until the connection closes.
+ * The real consequence is not blocked writes. `close()` keeps the open-iterator
+ * check whatever the mode, so a leaked iterator made the user's handle
+ * unclosable, which is what account deletion and the handle cache's eviction
+ * both need, and the un-reset statement pinned the WAL read mark.
  */
 describe('[SQIR] userSQLite streamed reads release their statement iterator', function () {
   this.timeout(20_000);

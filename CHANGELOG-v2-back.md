@@ -64,9 +64,12 @@ holding its resource, as did the elements queued behind one that failed while
 being collected; both are now released. And on SQLite, the wrapper around a
 statement iterator gained the `return()` that `Readable.from` needs in order to
 close it, so destroying a streamed read now reaches the iterator instead of
-stopping one hop short. Note that user databases run in better-sqlite3's unsafe
-mode, which disables its open-iterator guard, so the cost of that leak was the
-statement's own resources rather than blocked writes.
+stopping one hop short. Writes were not affected by that leak, because user
+databases run in better-sqlite3's unsafe mode, which disables its open-iterator
+guard; closing the database is checked whatever the mode, so a leaked iterator
+made that user's handle unclosable, which is what account deletion and the
+handle cache's eviction both need, and the un-reset statement held back WAL
+checkpointing for as long as it lived.
 
 `handleIncomingRevoke` now deletes the access named by the arrival's `createdBy`,
 so that access is gone by the time the handler returns. The loop-avoidance test

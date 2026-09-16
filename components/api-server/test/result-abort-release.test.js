@@ -232,6 +232,25 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     assert.strictEqual(uncaught, null);
   });
 
+  it('[RSAB8] release() reaches concat sources that were added but never closed', async function () {
+    const result = new Result({ isStreamResult: true });
+    // This is the shape events.get builds while walking the stores: one stream
+    // added per store, the group closed only after the last one. A store that
+    // fails part-way leaves these added-but-not-closed, and they are NOT in
+    // streamsArray, so a release that only walks that array misses them.
+    const a = resourceSource(1000);
+    const b = resourceSource(1000);
+    result.addToConcatArrayStream('events', countingStream2(a.stream));
+    result.addToConcatArrayStream('events', countingStream2(b.stream));
+    // deliberately NO closeConcatArrayStream
+
+    result.release();
+
+    const ok = await until(() => a.released && b.released);
+    assert.ok(ok, 'an unclosed concat group must still be released');
+    assert.strictEqual(uncaught, null);
+  });
+
   // Production wraps a store stream in ConvertEventFromStoreStream and then the
   // audit counter; reproduce both hops through the real class.
   function countingStream2 (source) {

@@ -181,6 +181,42 @@ describe('[PGQI] DatabasePG.queryIterable', function () {
     const res = await db.query('SELECT count(*)::int AS c FROM audit_events WHERE user_id = $1', [userId]);
     assert.strictEqual(res.rows[0].c, 25);
   });
+
+  // The sibling of [PGQI7], and the one the obvious implementation gets wrong.
+  // There, the loss is discovered BY a `cursor.read`, which sets the failed flag
+  // and tells the cleanup to skip the close. Here nothing is mid-read: the
+  // generator is parked at a yield when the connection dies, and the consumer
+  // then walks away, which is what an aborted HTTP response does. Unless the
+  // client's own 'error' is treated as knowledge of the loss, the cleanup
+  // believes the connection is healthy and waits forever on a close that cannot
+  // complete, losing the pool slot for good.
+  it('[PGQI8] a consumer aborting AFTER the connection died still releases the slot', async function () {
+    const pool = db.pool;
+    await settle(pool);
+
+    const it = db.queryIterable('SELECT * FROM audit_events WHERE user_id = $1 ORDER BY time', [userId], 5);
+    const first = await it.next();
+    assert.strictEqual(first.done, false, 'generator must be parked at a yield');
+
+    const held = pool._clients.find((c) => !pool._idle.some((i) => i.client === c));
+    assert.ok(held != null, 'the checked-out client must be findable on the pool');
+    held.connection.stream.destroy(new Error('[PGQI8] connection lost while parked'));
+    // Let the 'error' reach the client before we abandon the generator.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Abandon it WITHOUT another read — `return()` is what Readable.from calls
+    // on a plain destroy, and it goes straight to the generator's finally.
+    await it.return();
+
+    await settle(pool, 3000);
+    assert.strictEqual(pool.waitingCount, 0, 'nobody left queued for a client');
+    assert.strictEqual(
+      pool.totalCount, pool.idleCount,
+      'the slot must come back rather than park inside cursor.close() on a dead connection');
+
+    const res = await db.query('SELECT count(*)::int AS c FROM audit_events WHERE user_id = $1', [userId]);
+    assert.strictEqual(res.rows[0].c, 25);
+  });
 });
 
 // Client release happens in the generator's `finally`, which the runtime may

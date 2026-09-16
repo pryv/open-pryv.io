@@ -204,7 +204,20 @@ class DatabasePG {
     // failover, `pg_terminate_backend`) emits `'error'` on a client nobody
     // listens to, which is an unhandled `'error'` event and takes the process
     // down. There is no process-level handler to catch it.
-    const swallowClientError = (): void => {};
+    //
+    // The listener is also how we LEARN the connection died. `cursor.read` only
+    // reports a loss to a caller that is mid-read; a consumer that aborts while
+    // the generator is parked at a `yield` would otherwise reach the `finally`
+    // believing the connection is healthy and wait on a close that can never
+    // complete. `connectionLost` records what the listener saw, and `lost`
+    // lets the close race it.
+    let connectionLost = false;
+    let markLost: () => void;
+    const lost = new Promise<void>((resolve) => { markLost = resolve; });
+    const swallowClientError = (): void => {
+      connectionLost = true;
+      markLost();
+    };
     client.on('error', swallowClientError);
 
     let cursor: PgCursor;
@@ -239,18 +252,29 @@ class DatabasePG {
         for (const row of rows) yield row;
       }
     } finally {
-      // ⚑ Only close the portal on a HEALTHY connection. `cursor.close()` waits
-      // for a `readyForQuery` that a dead backend will never send, so on the
-      // connection-loss path this `await` never settles: the release below
-      // would never run (pool slot gone until restart) and the generator would
-      // never finish, so `Readable.from`'s destroy never completes and the
-      // response chain never settles either. A failed cursor means the client
-      // is discarded anyway, so there is no portal worth closing.
-      if (!cursorFailed) {
-        try { await cursor.close(); } catch (e) { /* best-effort cursor cleanup */ }
+      // ⚑ Only close the portal on a connection that can still answer.
+      // `cursor.close()` waits for a `readyForQuery` that a dead backend will
+      // never send, so closing on a lost connection never settles: the release
+      // below would never run (pool slot gone until restart) and the generator
+      // would never finish, so `Readable.from`'s destroy never completes and
+      // the response chain never settles either. A discarded client has no
+      // portal worth closing anyway.
+      //
+      // Two ways to know it is not worth trying: `cursor.read` threw
+      // (`cursorFailed`), or the client reported the loss to our listener while
+      // the generator was parked at a yield (`connectionLost`) — the second is
+      // the path an aborting consumer takes, where nothing was mid-read. The
+      // race covers the remainder, a backend that dies during an otherwise
+      // healthy close's round trip.
+      if (!cursorFailed && !connectionLost) {
+        try { await Promise.race([cursor.close(), lost]); } catch (e) { /* best-effort cursor cleanup */ }
       }
       client.removeListener('error', swallowClientError);
-      client.release(cursorFailed ? new Error('queryIterable: cursor read failed; discarding client') : undefined);
+      // Re-read `connectionLost`: the race above exists precisely because it can
+      // become true while we are waiting on the close.
+      client.release(cursorFailed || connectionLost
+        ? new Error('queryIterable: connection lost or cursor read failed; discarding client')
+        : undefined);
     }
   }
 

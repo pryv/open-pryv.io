@@ -163,6 +163,17 @@ class Result {
   release () {
     destroyRegisteredSources(this._private.streamsArray);
     this._private.streamsArray = [];
+    // ⚑ Concat streams that were ADDED but not yet closed are not in
+    // `streamsArray` at all: a concat group only reaches it in
+    // `closeConcatArrayStream`. `events.get` adds one stream per store and
+    // closes the group after the LAST one, so a store failing part-way through
+    // leaves the earlier stores' streams flowing and holding their clients with
+    // nothing registered to release. Destroying the multistream reaches both
+    // the current source and the ones still queued behind it.
+    for (const concat of Object.values(this._private.streamsConcatArrays)) {
+      try { concat.getStream().destroy(); } catch (err) { logger.debug('failed to destroy a concat stream', err); }
+    }
+    this._private.streamsConcatArrays = {};
   }
 
   // Execute the following when result has been fully sent

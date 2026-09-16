@@ -240,7 +240,7 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
       const elapsed = Date.now() - started;
 
       assert.ok(landed,
-        'an audit write must still land while the read pool is full — it did not, ' +
+        'an audit write must still land while the read pool is full; it did not, ' +
         `which is the audit-loss failure the split exists to prevent (${elapsed}ms)`);
       assert.ok(elapsed < 20000,
         `the audited call took ${elapsed}ms with the read pool full; it must not wait on readers`);
