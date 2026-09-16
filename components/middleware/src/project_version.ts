@@ -16,22 +16,35 @@ const fs = require('fs');
 const API_VERSION_FILENAME = '.api-version';
 const DEFAULT_VERSION = 'unset';
 const { execSync } = require('child_process');
-// The method '#version' returns a version string for this project; it
-// determines it using the following:
+// The method '#version' returns a version string for this project. Resolution
+// order:
 //
-//   If the project contains a file called '.api-version' at its root,
-//   the contents of the file are returned as version string.
-//   Take care to strip newlines from the file.
+//   1. The '.api-version' file at the project root: its contents are returned
+//      as the version string, UNLESS they equal the literal placeholder
+//      '1.2.3' (the un-provisioned sentinel). In every real deployment this
+//      file is present and non-placeholder, so this branch wins.
+//   2. `git describe --tags`: a fallback for git checkouts only. It is
+//      structurally UNREACHABLE in a released container: '.git' is excluded by
+//      '.dockerignore' and the image ships no 'git' binary. Do not rely on it
+//      to make a release self-describe.
+//   3. 'unset'.
 //
-// The way we find the project root is as follows: Look at the paths in
-// 'process.mainModule' - and try to find the first one which does exist. This
-// is where we load our modules from ('node_modules') and we'll expect the
-// .api-version file to be a sibling.
+// Because of (2), the file is effectively the single source of truth for the
+// API version. Docker release builds stamp '.api-version' at build time from
+// the image tag (see the Dockerfile), so a released image reports its own tag;
+// git checkouts and local builds keep the committed dev-line value.
+//
+// The project root is located by looking at the paths in 'process.mainModule'
+// (or 'require.main'), trying the first that exists: that is where modules load
+// from ('node_modules'), with the '.api-version' file expected as a sibling. An
+// ESM fallback walks upward from this source file whenever that search yields
+// no '.api-version' sibling, which includes the case where neither is set (as
+// under ESM entry points).
 //
 // Example:
 //
 //  const pv = new ProjectVersion();
-//  pv.version(); // => 1.2.3
+//  pv.version(); // => 2.0.0-rc.20
 //
 
 class ProjectVersion {

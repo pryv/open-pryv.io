@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### `service/info.version` now reports the released build, not a frozen value
+
+`GET /service/info` returned `version: "2.0.0-pre.4"` on every Docker release, and
+the same stale value went out as the `API-Version` response header and as
+`meta.apiVersion` on every response body. The value is there for capability
+negotiation (SDKs branch on `>= 1.6.0`), so a version that never advanced meant a
+client could not tell which build a core was running, and any future version gate
+would have compared against a frozen number.
+
+- Docker release images now stamp their version file from the image tag at build
+  time, so the three surfaces above report the released tag (e.g. `2.0.0-rc.21`).
+  Local and from-source runs are unchanged: they keep the checked-in dev-line
+  value, which is honest for a non-release build.
+- No API shape change: the fields are the same, they now carry an accurate value.
+  Operators who read `service/info.version` (or the `API-Version` header) to
+  identify a deployed build can now trust it on released images.
+
 ## 2.0.0-rc.20 — 2026-09-15
 
 ### CMC: a revocation now ends both halves of the relationship

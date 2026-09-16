@@ -6,7 +6,10 @@
  */
 
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 /* global initTests, initCore, coreRequest, getNewFixture, cuid */
 
 const assert = require('node:assert');
@@ -57,6 +60,25 @@ describe('[SINF] Service', () => {
       const { version, meta, features, ...rest } = res.body;
       assert.deepStrictEqual(rest, mockInfo);
       assert.ok(version, 'expected version field to be populated');
+    });
+
+    it('[SN10] version, API-Version header and meta.apiVersion all agree with .api-version', async () => {
+      // The three version surfaces must never diverge: all read the same
+      // `.api-version` file (via project_version). Pins that a change to one
+      // source does not silently leave the others reporting a different value,
+      // and that the file the release build stamps is the value clients see.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const versionFilePath = path.join(__dirname, '../../../', '.api-version');
+      const fileVersion = fs.readFileSync(versionFilePath, { encoding: 'utf-8' });
+      const res = await coreRequest.get('/' + username + '/service/info');
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.version, fileVersion,
+        'service/info.version must equal the .api-version file content');
+      assert.strictEqual(res.headers['api-version'], fileVersion,
+        'the API-Version response header must equal the .api-version file content');
+      assert.strictEqual(res.body.meta && res.body.meta.apiVersion, fileVersion,
+        'meta.apiVersion must equal the .api-version file content');
     });
 
     it('[SN03] advertises features.contentQueries=true', async () => {
