@@ -20,6 +20,7 @@
 describe('[ASFL] audit stream filter', function () {
   this.timeout(60000);
   let fixtures, eventsPath, personal, appAccess, engine;
+  let otherEventsPath, otherPersonal;
 
   before(async function () {
     await initTests();
@@ -35,10 +36,19 @@ describe('[ASFL] audit stream filter', function () {
     })).attrs;
     eventsPath = '/' + user.attrs.username + '/events';
 
+    // A SECOND user. The filter is also what keeps one user's audit trail out
+    // of another's: the query is AND-ed with `user_id`, and a malformed
+    // disjunction can drop that predicate.
+    const other = await fixtures.user(charlatan.Lorem.characters(7), { password: cuid() });
+    otherPersonal = (await other.access({ type: 'personal', token: cuid() })).attrs;
+    await other.session(otherPersonal.token);
+    otherEventsPath = '/' + other.attrs.username + '/events';
+
     // Audit rows under BOTH accesses, so "everything" and "only mine" differ.
     for (let i = 0; i < 3; i++) {
       await coreRequest.get(eventsPath).set('Authorization', personal.token).query({ limit: 1 });
       await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ limit: 1 });
+      await coreRequest.get(otherEventsPath).set('Authorization', otherPersonal.token).query({ limit: 1 });
     }
   });
 
@@ -46,9 +56,13 @@ describe('[ASFL] audit stream filter', function () {
     if (fixtures) await fixtures.clean();
   });
 
-  async function auditQuery (token, streams) {
-    const res = await coreRequest.get(eventsPath).set('Authorization', token).query({ streams });
-    assert.strictEqual(res.status, 200);
+  async function auditQuery (token, streams, path = eventsPath) {
+    // A logical (multi-block) query has to travel as a JSON string; the
+    // bracket-serialised form is rejected as an invalid `streams` parameter.
+    const value = streams.some((s) => typeof s === 'object') ? JSON.stringify(streams) : streams;
+    const res = await coreRequest.get(path).set('Authorization', token).query({ streams: value });
+    assert.strictEqual(res.status, 200,
+      'query rejected: ' + JSON.stringify(res.body && res.body.error));
     return res.body.events;
   }
 
@@ -82,6 +96,45 @@ describe('[ASFL] audit stream filter', function () {
     assert.ok(events.length > 0, 'the action stream matched something');
     assert.ok(events.every((e) => e.streamIds.includes(':_audit:action-events.get')),
       'no row from another action came back');
+  });
+
+  it('[ASFL5] a MULTI-BLOCK query never reaches another user\'s rows', async function () {
+    // Two stream filters become an OR of blocks. AND binds tighter than OR, so
+    // a disjunction that is not parenthesised as a whole leaves the second
+    // branch with no user_id predicate — matching every user's audit rows.
+    // Two query OBJECTS, not two ids in one `any`: a plain `streams: [a, b]`
+    // is a single OR-block and would never exercise the disjunction.
+    // Names a shared action stream, which needs no knowledge of the other user.
+    const events = await auditQuery(personal.token, [
+      { any: [':_audit:access-' + appAccess.id] },
+      { any: [':_audit:action-events.get'] }
+    ]);
+    const foreign = addAccessStreamIdPrefix(otherPersonal.id);
+    const leaked = events.filter((e) => e.streamIds.includes(foreign)).length;
+    assert.strictEqual(leaked, 0,
+      `[${engine}] CROSS-USER DISCLOSURE: ${leaked} row(s) from another user came back`);
+  });
+
+  it('[ASFL6] a match-all block alongside a constrained one does not break the query', async function () {
+    // The match-all exit returns "no filter"; values bound by the earlier block
+    // must be rewound or the placeholders misalign and the request never
+    // returns (PG: "bind message supplies N parameters, but ... requires M").
+    const events = await auditQuery(personal.token, [
+      { any: [':_audit:access-' + appAccess.id] },
+      { any: [':_audit:'] }
+    ]);
+    assert.ok(Array.isArray(events), 'the request completed instead of hanging');
+    const foreign = addAccessStreamIdPrefix(otherPersonal.id);
+    assert.strictEqual(events.filter((e) => e.streamIds.includes(foreign)).length, 0,
+      'still no other user rows');
+  });
+
+  it('[ASFL7] a LIKE wildcard in a stream id matches nothing, not everything', async function () {
+    // '%' and '_' are wildcards; unescaped, 'access-%' would return every
+    // access's rows.
+    const events = await auditQuery(personal.token, [':_audit:access-%']);
+    assert.strictEqual(events.length, 0,
+      `[${engine}] a wildcard id must be matched literally, not expanded`);
   });
 
   it('[ASFL4] a stream id that is a suffix of a real one does not match it', async function () {

@@ -434,8 +434,11 @@ function convertCondition (item: QueryItem, idx: number, values: unknown[]): { c
       // `access-1` from matching a row holding `other-access-1`, and it matches
       // the first and last terms, which have no separator on one side.
       const likeTerm = (sid: string, negated: boolean): string => {
-        values.push('% ' + sid + ' %');
-        return `(' ' || stream_ids || ' ') ${negated ? 'NOT LIKE' : 'LIKE'} $${idx++}`;
+        // `%` and `_` inside a stream id are LIKE wildcards. Unescaped, asking
+        // for `access-%` matches every access — the same disclosure by another
+        // route. Escaped the way the events store does it.
+        values.push('% ' + sid.replace(/[\\%_]/g, (m) => '\\' + m) + ' %');
+        return `(' ' || stream_ids || ' ') ${negated ? 'NOT LIKE' : 'LIKE'} $${idx++} ESCAPE '\\'`;
       };
 
       const orParts: string[] = [];
@@ -467,14 +470,31 @@ function convertCondition (item: QueryItem, idx: number, values: unknown[]): { c
           }
         }
 
-        // No constraint in this block means it matches everything, so the whole
-        // OR matches everything and no filter is needed.
-        if (andParts.length === 0) return null;
+        // A block with NO items at all is not "match everything", it is input
+        // we cannot read — deny, per the rule above.
+        if (andItems.length === 0) return deny();
+
+        // A block whose items are all unconstrained (e.g. `any: ['*']`) does
+        // mean everything, so the whole OR means everything and no filter is
+        // needed. Rewind first: earlier blocks may already have bound values,
+        // and returning null leaves them in the array with no $n referencing
+        // them, which shifts every later condition onto the wrong value.
+        if (andParts.length === 0) {
+          values.length = valuesAtEntry;
+          return null;
+        }
         orParts.push(andParts.join(' AND '));
       }
 
       if (orParts.length === 0) return deny();
-      return { condition: '(' + orParts.join(') OR (') + ')', nextIdx: idx };
+      // ⚑ The WHOLE disjunction must be parenthesised, not just its members.
+      // The caller AND-joins this with `user_id = $1`, and AND binds tighter
+      // than OR: `user_id = $1 AND (X) OR (Y)` parses as
+      // `(user_id = $1 AND X) OR (Y)`, so the second branch matches rows of
+      // EVERY user. That is a cross-user disclosure, worse than the
+      // cross-access one this function exists to prevent.
+      const disjunction = orParts.map((part) => '(' + part + ')').join(' OR ');
+      return { condition: '(' + disjunction + ')', nextIdx: idx };
     }
     default:
       return null;
