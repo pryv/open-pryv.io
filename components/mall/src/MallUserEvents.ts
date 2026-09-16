@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
-const { deepMerge } = require('utils');
+const { deepMerge, pipeThrough } = require('utils');
 const assert = require('assert');
 // Typed handle so `throwAPIError: never` flows into return-type inference.
 const storeDataUtils: typeof import('./helpers/storeDataUtils.ts') = require('./helpers/storeDataUtils.ts');
@@ -186,7 +186,9 @@ class MallUserEvents implements MallEvents {
       const options = eventsQueryUtils.getStoreOptionsFromParams(params);
 
       const eventsStreamFromDB = await eventsStore.getStreamed(userId, query, options);
-      return eventsStreamFromDB.pipe(new eventsUtils.ConvertEventFromStoreStream(storeId));
+      // pipeThrough, not pipe: the store's stream may own a pooled DB client, and
+      // an aborted response has to reach it through every wrap on the way out.
+      return pipeThrough(eventsStreamFromDB, new eventsUtils.ConvertEventFromStoreStream(storeId));
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
     }
