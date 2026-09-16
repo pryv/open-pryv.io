@@ -154,6 +154,14 @@ class Audit {
         cause: { userId, event }
       });
     }
+    // An audit record has to be identifiable: without an id it cannot be read
+    // back by `getOneEvent`, updated, or chained into a history. The audited
+    // API path already assigns one in buildDefaultEvent; a caller handing us an
+    // event directly may not, and the engines then disagree — PostgreSQL
+    // rejects the write with a NOT NULL violation while SQLite quietly stores a
+    // null-id row, which is the worse of the two. Assign it here, above both.
+    if (event.id == null) event.id = cuid();
+
     const isAudited = this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
     if (this.syslog && isAudited.syslog) {
       this.syslog.eventForUser(userId, event);
