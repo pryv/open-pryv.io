@@ -214,7 +214,11 @@ describe('[AD01] Accesses with account streams', function () {
           let streamId;
           const permissionLevel = AccessLogic.PERMISSION_LEVEL_CONTRIBUTE;
           before(async function () {
-            streamId = addCustomerPrefixToStreamId('email');
+            // phoneNumber (visible, editable, not platform-coordinated): the
+            // email account field is no longer writable through the events API,
+            // so this "contribute lets you write the event" coverage uses a
+            // non-coordinated visible field.
+            streamId = addCustomerPrefixToStreamId('phoneNumber');
             await createUserAndAccess(permissionLevel, streamId);
           });
           it('[R0M1] should return 201', async () => {
