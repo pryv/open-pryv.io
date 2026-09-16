@@ -133,6 +133,54 @@ describe('[PGQI] DatabasePG.queryIterable', function () {
     const res = await db.query('SELECT count(*)::int AS c FROM audit_events WHERE user_id = $1', [userId]);
     assert.strictEqual(res.rows[0].c, 25);
   });
+
+  // The connection-loss path, which [PGQI4] does NOT cover: that one fails the
+  // query server-side on a LIVE connection, where `readyForQuery` still
+  // arrives. Here the socket dies under the cursor, which is what a PostgreSQL
+  // restart, a failover or a DBA `pg_terminate_backend` looks like from here.
+  // Two distinct defects are pinned:
+  //   - the held client has no `'error'` listener (the pool removes its own
+  //     when it hands the client out), so the loss is an unhandled `'error'`
+  //     event and the process dies;
+  //   - `cursor.close()` waits for a `readyForQuery` that will never come, so
+  //     the release never runs and the slot is gone until restart.
+  it('[PGQI7] a connection lost mid-cursor releases the slot and does not crash the process', async function () {
+    const pool = db.pool;
+    await settle(pool);
+    const totalBefore = pool.totalCount;
+
+    const it = db.queryIterable('SELECT * FROM audit_events WHERE user_id = $1 ORDER BY time', [userId], 5);
+    const first = await it.next();
+    assert.strictEqual(first.done, false, 'generator must have yielded before we kill the connection');
+
+    // The client this generator holds is the one the pool has checked out.
+    const held = pool._clients.find((c) => !pool._idle.some((i) => i.client === c));
+    assert.ok(held != null, 'the checked-out client must be findable on the pool');
+
+    // An unhandled `'error'` on the client would take the process down, so a
+    // surviving assertion below IS the proof that one was handled.
+    held.connection.stream.destroy(new Error('[PGQI7] connection lost'));
+
+    await assert.rejects(async () => {
+      // Keep pulling until the generator rejects: the loss surfaces on the next
+      // batch read, not on the row already buffered.
+      let next = await it.next();
+      while (next.done !== true) next = await it.next();
+    });
+
+    await settle(pool, 3000);
+    assert.strictEqual(pool.waitingCount, 0, 'nobody left queued for a client');
+    assert.strictEqual(
+      pool.totalCount, pool.idleCount,
+      'the slot must be released, not parked forever inside cursor.close()');
+    assert.ok(
+      pool.totalCount <= totalBefore,
+      'the dead client is discarded, never handed back to another caller');
+
+    // The pool recovers: a fresh query opens a new connection and works.
+    const res = await db.query('SELECT count(*)::int AS c FROM audit_events WHERE user_id = $1', [userId]);
+    assert.strictEqual(res.rows[0].c, 25);
+  });
 });
 
 // Client release happens in the generator's `finally`, which the runtime may

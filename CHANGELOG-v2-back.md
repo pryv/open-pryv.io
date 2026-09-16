@@ -1,6 +1,55 @@
 # Changelog - Internal (no API impact)
 
-## cmc: dispatch routes an inbox revoke on the stream, not only on createdBy
+## audit reads on PostgreSQL stream for real, and an aborted response releases the pool client
+
+`UserAuditDatabasePG.getEventsStreamed` and `getEventDeletionsStreamed` looked
+like streams and were not: on the first `read()` they ran one `SELECT`, held the
+whole result set in memory and handed rows out one at a time. Memory was the
+size of the matching audit set, not of a batch. They now read through
+`DatabasePG.queryIterable`, a server-side cursor that yields fixed-size batches,
+so an audit query over a large trail costs a batch rather than the trail.
+
+Making the read a real stream is only safe once "the response went away" reaches
+whatever holds the resource. A cursor-backed stream owns a checked-out pool
+client for as long as it lives, and `.pipe()` does not propagate `destroy`
+upstream: the client going away destroyed the response and the outermost
+Transform while every boundary below swallowed it, leaving the source suspended
+and its client checked out forever. A handful of aborted requests was enough to
+starve the pool, which is why an earlier attempt at this had to be reverted.
+
+Every wrap site on the response path therefore goes through one helper,
+`utils/streams.ts` `pipeThrough`, which builds the chain with
+`stream.pipeline()` instead of `.pipe()` so destroy is forwarded end to end.
+`Result.writeStreams` destroys the chain when the response closes early. Keeping
+the call in a single helper is what makes "no `.pipe()` on the response path" a
+checkable property rather than a convention.
+
+Proven at the pool, not at the stream: `[AUAB]` aborts an audit query mid-flight
+and asserts the pool's checked-out count returns to its baseline, and
+`[PGQI]`/`[RSAB]` cover the cursor's own release paths and the abort hook.
+`pg-cursor` is a new dependency of the PostgreSQL engine.
+
+Holding a client for the length of a response rather than a few milliseconds
+also made two connection-loss paths matter that did not before. A checked-out
+client has no `'error'` listener of its own, because the pool removes its idle
+one while the client is out, so a backend that went away mid-read (restart,
+failover, an administrator terminating the session) raised an unhandled
+`'error'` event and ended the process; the cursor holder now listens for the
+length of the hold. And `cursor.close()` waits for a `readyForQuery` that a dead
+backend never sends, so closing the portal on that path parked the release
+forever and cost the pool slot permanently; the portal is now closed only on a
+healthy connection, which is the only case where there is one to close.
+`[PGQI7]` covers both.
+
+Two smaller release gaps close with them. A method that failed after registering
+a stream but before the response was written left that stream flowing and
+holding its resource, as did the elements queued behind one that failed while
+being collected; both are now released. And on SQLite, the wrapper around a
+statement iterator gained the `return()` that `Readable.from` needs in order to
+close it, so destroying a streamed read now reaches the iterator instead of
+stopping one hop short. Note that user databases run in better-sqlite3's unsafe
+mode, which disables its open-iterator guard, so the cost of that leak was the
+statement's own resources rather than blocked writes.
 
 `handleIncomingRevoke` now deletes the access named by the arrival's `createdBy`,
 so that access is gone by the time the handler returns. The loop-avoidance test

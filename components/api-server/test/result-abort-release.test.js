@@ -188,6 +188,50 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     assert.strictEqual(uncaught, null);
   });
 
+  // The failure paths that come BEFORE the response, where a registered source
+  // is already flowing and holding its resource but nothing will ever drain it.
+  // [RSAB2..5] all assume the response path runs; these two do not.
+
+  it('[RSAB6] a later element failing releases the sources registered behind it', async function () {
+    const limit = 5;
+    const result = new Result({ isStreamResult: true, arrayLimit: limit });
+    // Element one overflows arrayLimit and fails the walk; element two is
+    // registered, flowing, and would never be looked at again.
+    const first = resourceSource(limit + 50);
+    // Big enough that it CANNOT run to completion on its own: a short source
+    // fits in the wrappers' buffers, finishes unaided and makes this test pass
+    // whether or not anything released it.
+    const second = resourceSource(1000);
+    result.addStream('events', countingStream2(first.stream));
+    result.addStream('deletions', countingStream2(second.stream));
+
+    let sawError = null;
+    await new Promise((resolve) => {
+      result.toObject((err) => { sawError = err; resolve(); });
+    });
+
+    assert.ok(sawError != null, 'overflowing arrayLimit must report an error');
+    const ok = await until(() => first.released && second.released);
+    assert.ok(ok, 'BOTH sources must be released, not just the one that failed');
+    assert.strictEqual(uncaught, null);
+  });
+
+  it('[RSAB7] release() frees a registered source for a caller that abandons the Result', async function () {
+    const result = new Result({ isStreamResult: true });
+    const a = resourceSource(1000);
+    result.addStream('events', countingStream2(a.stream));
+
+    // What API.finalize does when the method rejects after registering.
+    result.release();
+
+    const ok = await until(() => a.released);
+    assert.ok(ok, 'an abandoned Result must not leave its source holding a resource');
+    assert.strictEqual(uncaught, null);
+    // Idempotent: a second release must not throw.
+    result.release();
+    assert.strictEqual(uncaught, null);
+  });
+
   // Production wraps a store stream in ConvertEventFromStoreStream and then the
   // audit counter; reproduce both hops through the real class.
   function countingStream2 (source) {

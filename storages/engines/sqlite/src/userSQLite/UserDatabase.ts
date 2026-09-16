@@ -171,6 +171,20 @@ function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): No
       }
       return res;
     },
+    /**
+     * ⚑ Without this, destroying the readable never closes the underlying
+     * statement iterator: `Readable.from` closes its iterator through
+     * `return()` when one exists and does nothing otherwise, so an aborted read
+     * left the iterator open. An un-returned iterator keeps this connection's
+     * iterator count raised, and every write on the same connection then throws
+     * "This database connection is busy executing a query". The per-user handle
+     * is cached, so one abandoned read could stop that user's writes until the
+     * process restarted.
+     */
+    return: function (): IteratorResult<DomainEvent> {
+      if (typeof iterateSource.return === 'function') iterateSource.return();
+      return { value: undefined, done: true };
+    },
     [Symbol.iterator]: function (): IterableIterator<DomainEvent> {
       return iterateTransform;
     }

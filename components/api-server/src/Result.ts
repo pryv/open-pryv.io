@@ -149,6 +149,22 @@ class Result {
     return this._private.isStreamResult;
   }
 
+  /**
+   * Release every source registered on this Result, for a caller that is
+   * abandoning it without writing a response.
+   *
+   * ⚑ A registered source is ALREADY FLOWING and already holds its resource (a
+   * pooled database client, a file descriptor) from the moment the method
+   * wrapped it, not from the moment the response starts. So a method that fails
+   * after registering one and before the response is written leaks it unless
+   * somebody destroys it. Idempotent: destroying an already-destroyed stream is
+   * a no-op.
+   */
+  release () {
+    destroyRegisteredSources(this._private.streamsArray);
+    this._private.streamsArray = [];
+  }
+
   // Execute the following when result has been fully sent
   // If already sent callback is called right away
   onEnd (callback: () => void) {
@@ -218,7 +234,7 @@ class Result {
       streams.push(serializedStream);
     }
 
-    // Fact 8: pipeline() onto an already-destroyed response throws
+    // pipeline() onto an already-destroyed response throws
     // ERR_STREAM_UNABLE_TO_PIPE synchronously. writeToHttpResponse guards the
     // normal path; this keeps a direct caller from hitting it.
     if (res.destroyed) {
@@ -264,7 +280,14 @@ class Result {
     const resultObj: Record<string, unknown> = {};
     let i = 0;
     function nextElement (err?: unknown) {
-      if (err) return callback(err as Error);
+      if (err) {
+        // The elements after this one were registered and are flowing, so they
+        // hold their resources; nothing will ever drain them now. Release them
+        // before handing the error up, or the failure of element one leaks
+        // element two's client.
+        destroyRegisteredSources(streamsArray.slice(i));
+        return callback(err as Error);
+      }
       if (i >= streamsArray.length) return callback(null, resultObj);
       const elementDef = streamsArray[i++];
       const drain = new DrainStream({ limit: _private.arrayLimit, isArray: elementDef.isArray }, (err: unknown, list: unknown) => {
