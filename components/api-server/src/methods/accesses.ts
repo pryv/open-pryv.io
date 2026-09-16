@@ -380,27 +380,30 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   }
 
   /**
-   * If user is creating an access for system streams, apply some validations
+   * Shared account/system-stream permission validation used by both
+   * accesses.create and accesses.update. Returns the first violating permission
+   * as an APIError (identical shape on both paths) or null when the whole set is
+   * acceptable. `access` is the caller's access (for the contribute-level cap).
    */
-  function applyAccountStreamsValidation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
-    if (params.permissions == null) { return next(); }
-    for (const permission of params.permissions) {
+  function validateAccountStreamPermissions (access: MethodContext['access'], permissions: StreamPermission[]) {
+    for (const permission of permissions) {
       if (isStreamBasedPermission(permission)) {
         if (isUnknownSystemStream(permission.streamId)) {
-          return next(errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId }));
+          return errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId });
         }
         // don't allow user to give access to not visible stream
         if (notVisibleAccountStreamsIds.includes(permission.streamId)) {
-          return next(errors.invalidOperation(ErrorMessages[ErrorIds.DeniedStreamAccess], { param: permission.streamId }));
+          return errors.invalidOperation(ErrorMessages[ErrorIds.DeniedStreamAccess], { param: permission.streamId });
         }
         // don't allow user to give anything higher than contribute or read access
         // to visible stream
         if (visibleAccountStreamsIds.includes(permission.streamId) &&
-                    !context.access.canCreateAccessForAccountStream(permission.level)) {
-          return next(errors.invalidOperation(ErrorMessages[ErrorIds.TooHighAccessForSystemStreams], { param: permission.streamId }));
+                    !access.canCreateAccessForAccountStream(permission.level)) {
+          return errors.invalidOperation(ErrorMessages[ErrorIds.TooHighAccessForSystemStreams], { param: permission.streamId });
         }
       }
     }
+    return null;
 
     function isStreamBasedPermission (permission: StreamPermission) {
       return permission.streamId != null;
@@ -410,6 +413,30 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return ((streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
                 accountStreams.toFieldName(streamId) === streamId);
     }
+  }
+
+  /**
+   * If user is creating an access for system streams, apply some validations.
+   */
+  function applyAccountStreamsValidation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    if (params.permissions == null) { return next(); }
+    const err = validateAccountStreamPermissions(context.access, params.permissions);
+    if (err != null) { return next(err); }
+    return next();
+  }
+
+  /**
+   * The same account/system-stream validation as accesses.create, applied to
+   * accesses.update. `update.permissions` replaces the stored array wholesale,
+   * so when the key is present the whole submitted set is validated (exact
+   * create-parity); when it is absent the stored permissions are untouched and
+   * left as-is. Registered before enforceUpdateChainRules so a statically
+   * invalid set never reaches the DB-heavy chain rules or the write.
+   */
+  function applyAccountStreamsValidationForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    if (!Array.isArray(params.update?.permissions)) { return next(); }
+    const err = validateAccountStreamPermissions(context.access, params.update.permissions);
+    if (err != null) { return next(err); }
     return next();
   }
 
@@ -551,6 +578,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     delegationAccessesUpdateGuardHook,
     dpopBindingUpdateGuard,
     oauthNameUpdateGuard,
+    applyAccountStreamsValidationForUpdate,
     enforceUpdateChainRules,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
@@ -560,8 +588,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   );
 
   // Mirror of `cleanupPermissions` for the update path. UPDATE accepts the
-  // same {defaultName, name} extras as CREATE (B-2026-05-14-4 symmetry fix)
-  // so callers can pipe `checkApp.checkedPermissions` straight in. The
+  // same {defaultName, name} extras as CREATE (the defaultName/name symmetry
+  // fix) so callers can pipe `checkApp.checkedPermissions` straight in. The
   // server still doesn't want those app-authorization-UI fields in the
   // stored permission — strip before snapshotAndApplyUpdate persists.
   function cleanupUpdatePermissions (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### `accesses.update` now validates account-stream permissions like `accesses.create`
+
+- **BREAKING**: `accesses.update` now applies the same account/system-stream
+  permission validation as `accesses.create` — an unknown system stream, a
+  non-visible account stream, or a level higher than `contribute` on a visible
+  account stream is refused with `400 invalid-operation` (same messages and
+  `data.param` as create). Previously the update path accepted permission
+  changes without these checks, so a permission that create refuses could be set
+  via `PUT`. The request fails identically for the account owner's own personal
+  token, so this is a validation gap rather than an authorization change. An
+  update that omits `permissions` leaves the stored permissions untouched; when
+  `permissions` is present the whole submitted set is validated.
+
 ### Account-stream permissions: clearer error, corrected docs
 
 - **BREAKING (error contract)**: `accesses.create` with a permission on an
