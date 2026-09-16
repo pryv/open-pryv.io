@@ -23,7 +23,8 @@ type ComparisonContent = { field?: string; value?: unknown };
 type QueryItem =
   | { type: 'equal' | 'greater' | 'greaterOrEqual' | 'lowerOrEqual' | 'greaterOrEqualOrNull'; content: ComparisonContent }
   | { type: 'typesList'; content: string[] }
-  | { type: 'streamsQuery'; content: StreamsQuery[] };
+  // The NORMALISED shape every store receives: an OR of AND-blocks.
+  | { type: 'streamsQuery'; content: StreamsQuery[][] };
 type Params = { query: QueryItem[]; options?: { sort?: Record<string, number>; limit?: number | string; skip?: number | string }; streams?: unknown };
 
 type LoggerLike = { getLogger (name: string): unknown };
@@ -404,24 +405,76 @@ function convertCondition (item: QueryItem, idx: number, values: unknown[]): { c
       return { condition: `(${parts.join(' OR ')})`, nextIdx: idx };
     }
     case 'streamsQuery': {
-      const parts: string[] = [];
-      for (const sq of item.content) {
-        if (sq.any && sq.any.length > 0) {
-          const anyParts = sq.any.map((sid: string) => {
-            values.push('%' + sid + ' %');
-            return `stream_ids LIKE $${idx++}`;
-          });
-          parts.push('(' + anyParts.join(' OR ') + ')');
-        }
-        if (sq.not && sq.not.length > 0) {
-          for (const sid of sq.not as string[]) {
-            values.push('%' + sid + ' %');
-            parts.push(`stream_ids NOT LIKE $${idx++}`);
+      // ⚑ This is an AUTHORIZATION boundary: it is what keeps one access from
+      // reading another access's audit trail. Two rules follow from that.
+      //
+      // 1. The shape is the NORMALISED one every store receives: an OR of
+      //    AND-blocks, `[[{any:[…]},{not:[…]}], …]` — not a flat `{any,not}[]`.
+      //    Reading it as flat made `any` undefined, produced no conditions, and
+      //    returned null, which here means NO FILTER: the caller got every
+      //    audit row of the user.
+      // 2. Anything not understood must DENY, never fall through to "no
+      //    filter". A filter that degrades to "return everything" is the wrong
+      //    failure mode for this code.
+      // Denying part-way through has to undo the placeholders bound so far:
+      // parameters are positional, so a value left in the array with no $n
+      // referencing it would shift every later condition onto the wrong value.
+      const valuesAtEntry = values.length;
+      const idxAtEntry = idx;
+      const deny = (): { condition: string, nextIdx: number } => {
+        values.length = valuesAtEntry;
+        return { condition: 'FALSE', nextIdx: idxAtEntry };
+      };
+
+      const blocks = item.content as unknown;
+      if (!Array.isArray(blocks) || blocks.length === 0) return deny();
+
+      // Terms are stored space-separated (`a b ..`), so both sides are padded
+      // before matching: that anchors each id between separators and stops
+      // `access-1` from matching a row holding `other-access-1`, and it matches
+      // the first and last terms, which have no separator on one side.
+      const likeTerm = (sid: string, negated: boolean): string => {
+        values.push('% ' + sid + ' %');
+        return `(' ' || stream_ids || ' ') ${negated ? 'NOT LIKE' : 'LIKE'} $${idx++}`;
+      };
+
+      const orParts: string[] = [];
+      for (const block of blocks) {
+        // A bare object (the pre-normalisation shape) is treated as a
+        // single-item block rather than rejected.
+        const andItems = Array.isArray(block) ? block : [block];
+        const andParts: string[] = [];
+
+        for (const entry of andItems) {
+          if (typeof entry === 'string') { // a plain stream id
+            andParts.push(likeTerm(entry, false));
+            continue;
+          }
+          if (entry == null || typeof entry !== 'object') return deny();
+
+          const any = (entry as StreamsQuery).any;
+          const not = (entry as StreamsQuery).not;
+
+          if (Array.isArray(any) && any.length > 0) {
+            // '*' means every stream: no constraint from this item.
+            if (!any.includes('*')) {
+              andParts.push('(' + any.map((sid) => likeTerm(sid, false)).join(' OR ') + ')');
+            }
+          } else if (Array.isArray(not) && not.length > 0) {
+            for (const sid of not) andParts.push(likeTerm(sid, true));
+          } else {
+            return deny(); // an item shape we do not understand
           }
         }
+
+        // No constraint in this block means it matches everything, so the whole
+        // OR matches everything and no filter is needed.
+        if (andParts.length === 0) return null;
+        orParts.push(andParts.join(' AND '));
       }
-      if (parts.length === 0) return null;
-      return { condition: parts.join(' AND '), nextIdx: idx };
+
+      if (orParts.length === 0) return deny();
+      return { condition: '(' + orParts.join(') OR (') + ')', nextIdx: idx };
     }
     default:
       return null;

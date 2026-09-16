@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### SECURITY — the PostgreSQL audit engine returned audit rows across accesses
+
+Reading the audit trail applied **no stream filter** when `storages.audit.engine`
+is `postgresql`. Any access could therefore retrieve the account's audit rows for
+**other** accesses: an app granted one narrow permission could see which API
+methods the account owner called, when, and with what query. Accounts on the
+default `sqlite` audit engine were never affected, and no data outside the audit
+trail was exposed.
+
+⚑ **Who is affected:** deployments where `storages.audit.engine` is
+`postgresql`. The install wizard selects that engine whenever PostgreSQL is
+chosen, so a platform installed with PostgreSQL through the wizard is affected
+unless the setting was changed. Check `storages.audit.engine` in your
+configuration; if it is `sqlite` (the default), you were not affected.
+
+The filter was read as a flat list while every store is handed the normalised
+nested form, so no condition was built — and the code treated "no condition" as
+"no filter" rather than as an error. Fixed by reading the normalised form, and by
+making an unreadable filter **deny** instead of returning everything: a filter
+that degrades to "return all rows" is the wrong failure mode for an
+authorization boundary.
+
+The same change anchors stream-id matching between separators. Before it, a
+stream id that was a suffix of another could match it.
+
+**No action is required beyond upgrading**; no stored data is altered.
+
 ## 2.0.0-rc.20 — 2026-09-15
 
 ### CMC: a revocation now ends both halves of the relationship
