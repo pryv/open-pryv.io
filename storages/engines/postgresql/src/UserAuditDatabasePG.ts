@@ -36,11 +36,19 @@ type DbLike = DatabasePG;
 
 class UserAuditDatabasePG {
   db: DbLike; // DatabasePG — not yet typed externally
+  /**
+   * The STREAMED-read pool. `_streamRows` uses this and nothing else does:
+   * every other method here runs a query that returns in milliseconds and
+   * belongs on the write pool with the writes. See the note in the engine's
+   * `createAuditStorage` for why the two are kept apart.
+   */
+  readDb: DbLike;
   userId: string;
   logger: unknown;
 
-  constructor (db: DbLike, userId: string, logger: LoggerLike) {
+  constructor (db: DbLike, userId: string, logger: LoggerLike, readDb?: DbLike) {
     this.db = db;
+    this.readDb = readDb ?? db;
     this.userId = userId;
     this.logger = logger.getLogger('audit-user-pg');
   }
@@ -85,7 +93,7 @@ class UserAuditDatabasePG {
    * the client never comes back, and the audit pool is small.
    */
   _streamRows (sql: string, values: unknown[]): ReadableType {
-    const db = this.db;
+    const db = this.readDb;
     async function * rows (): AsyncGenerator<AuditEvent> {
       for await (const row of db.queryIterable(sql, values, STREAM_BATCH_SIZE)) {
         yield fromDB(row as AuditRow);

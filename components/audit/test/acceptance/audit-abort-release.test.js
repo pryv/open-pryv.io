@@ -23,7 +23,10 @@ const http = require('http');
 describe('[AUAB] aborted audit queries release their pooled client', function () {
   this.timeout(120 * 1000);
 
-  let fixtures, username, token, userId, pool, poolMax, eventsPath;
+  // `pool` is the STREAMED-READ pool, which is what an aborted audit query
+  // holds; `writePool` is the one audit writes use. They are deliberately two
+  // different pools, so a reader can never queue a write behind it.
+  let fixtures, username, token, userId, pool, poolMax, writePool, eventsPath;
   const SEEDED = 20000; // far beyond any socket buffer: the server is provably mid-cursor
 
   before(async function () {
@@ -54,8 +57,11 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
     token = access.token;
     eventsPath = '/' + username + '/events';
 
-    pool = audit.storage.db.pool;
+    pool = audit.storage.readDb.pool;
     poolMax = pool.options.max;
+    writePool = audit.storage.db.pool;
+    assert.notStrictEqual(pool, writePool,
+      'streamed reads must run on their own pool, or a slow reader can stall audit writes');
 
     // One audited call first, so we can copy a REAL row's stream_ids rather
     // than guessing how audit encodes them.
@@ -205,6 +211,75 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
 
     assert.ok(abortGrew, 'the aborted call must still have produced an audit record');
   });
+
+  // The reason the pools are split. A streamed read holds its connection for as
+  // long as the HTTP client takes to drain it, and there is no response
+  // timeout, so readers can hold every connection of their pool indefinitely.
+  // On ONE pool, the audit write of every request on the core then queues
+  // behind them and is dropped after the connection timeout. This asserts the
+  // property that makes that impossible: with the read pool pinned at its
+  // ceiling, an audit write still lands promptly.
+  it('[AUAB4] readers holding the read pool at its ceiling do not delay an audit write', async function () {
+    const held = [];
+    try {
+      // Occupy every connection of the READ pool with paused readers.
+      for (let i = 0; i < poolMax; i++) {
+        held.push(await startPausedRead());
+      }
+      const occupied = await until(() => checkedOut() >= poolMax, 10000);
+      assert.ok(occupied,
+        `the read pool should be at its ceiling: ${checkedOut()}/${poolMax} checked out`);
+
+      // Now make an audited call and require its record to land quickly. On a
+      // shared pool this waits for a reader to finish, i.e. forever, and the
+      // write is dropped at the connection timeout.
+      const before = await countAuditRows();
+      const started = Date.now();
+      await coreRequest.get(eventsPath).set('Authorization', token).query({ limit: 1 });
+      const landed = await countGrewFrom(before);
+      const elapsed = Date.now() - started;
+
+      assert.ok(landed,
+        'an audit write must still land while the read pool is full — it did not, ' +
+        `which is the audit-loss failure the split exists to prevent (${elapsed}ms)`);
+      assert.ok(elapsed < 20000,
+        `the audited call took ${elapsed}ms with the read pool full; it must not wait on readers`);
+    } finally {
+      for (const h of held) h.abort();
+    }
+
+    // Both pools come back afterwards.
+    const drained = await until(() => checkedOut() === 0 && pool.waitingCount === 0, 5000);
+    assert.ok(drained, `read pool did not drain: ${checkedOut()} checked out`);
+    const writeDrained = await until(
+      () => writePool.totalCount - writePool.idleCount === 0 && writePool.waitingCount === 0, 5000);
+    assert.ok(writeDrained, 'write pool did not drain');
+  });
+
+  /**
+   * Open a streamed audit read and STOP consuming it once the first bytes
+   * arrive, leaving the server mid-cursor holding a connection. Returns a
+   * handle that releases it.
+   */
+  async function startPausedRead () {
+    return await new Promise((resolve, reject) => {
+      const { port } = coreServer.address();
+      const req = http.get({
+        host: '127.0.0.1',
+        port,
+        // Same explicit limit as abortMidResponse: without it the page is small
+        // enough to finish before we can stop reading, and nothing is held.
+        path: eventsPath + '?streams[]=' + encodeURIComponent(':_audit:') + '&limit=' + SEEDED,
+        headers: { Authorization: token }
+      }, (res) => {
+        res.once('data', () => {
+          res.pause(); // stop reading: the server stays parked mid-response
+          resolve({ abort: () => req.destroy() });
+        });
+      });
+      req.once('error', reject);
+    });
+  }
 
   async function countAuditRows () {
     const res = await audit.storage.db.query(

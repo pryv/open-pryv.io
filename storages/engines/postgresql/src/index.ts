@@ -209,15 +209,27 @@ function createAuditStorage (): unknown {
   // Dedicated pool for audit: same DB, smaller pool size to avoid
   // contending with event/stream queries on the main pool.
   const pgConfig = _internals.config;
-  const auditDb = new DatabasePG({
+  const connection = {
     host: pgConfig.host,
     port: pgConfig.port,
     database: pgConfig.database,
     user: pgConfig.user,
-    password: pgConfig.password,
-    max: pgConfig.auditPoolSize || 5
-  });
-  return new AuditStoragePG(auditDb);
+    password: pgConfig.password
+  };
+  const auditDb = new DatabasePG({ ...connection, max: pgConfig.auditPoolSize || 5 });
+  // ⚑ A SECOND pool, for streamed audit reads only.
+  //
+  // A streamed read holds its connection for as long as the HTTP client takes
+  // to drain the response, and there is no server-side response timeout, so a
+  // slow or hostile reader holds one for as long as it likes. Every access gets
+  // read permission on its own audit trail by default, so any app token can
+  // open such a read. On a single pool, enough of them queue the audit WRITE of
+  // every request behind them, and a queued write is dropped after the
+  // connection timeout: a handful of readers could silence the audit trail of a
+  // whole core. Two pools make the worst case "readers starve readers", which
+  // is a cost to the reader rather than a hole in the record.
+  const auditReadDb = new DatabasePG({ ...connection, max: pgConfig.auditReadPoolSize || 5 });
+  return new AuditStoragePG(auditDb, auditReadDb);
 }
 
 // -- FileStorage (PostgreSQL) -------------------------------------------

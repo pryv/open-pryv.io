@@ -33,10 +33,18 @@ class AuditStoragePG {
   initialized: boolean = false;
   userDBsCache: UserDbsLRU;
   db: DbLike;
+  /**
+   * Pool for STREAMED reads only, which hold a connection for the whole
+   * response. Separate from `db` so a slow reader can never queue an audit
+   * write behind it. Falls back to `db` when a caller builds this storage with
+   * one pool (tests, and any embedder that predates the split).
+   */
+  readDb: DbLike;
   logger: Logger;
 
-  constructor (db: DbLike) {
+  constructor (db: DbLike, readDb?: DbLike) {
     this.db = db;
+    this.readDb = readDb ?? db;
     this.logger = _internals.getLogger('audit-storage-pg');
     this.userDBsCache = new LRU({
       max: CACHE_SIZE,
@@ -48,6 +56,7 @@ class AuditStoragePG {
     if (this.initialized) throw new Error('Database already initialized');
     this.initialized = true;
     await this.db.ensureConnect();
+    if (this.readDb !== this.db) await this.readDb.ensureConnect();
     this.logger.info('Audit storage (PG) initialized');
     return this;
   }
@@ -64,7 +73,7 @@ class AuditStoragePG {
     this.checkInitialized();
     let userDb = this.userDBsCache.get(userId);
     if (!userDb) {
-      const fresh: UserAuditDbLike = new UserAuditDatabasePG(this.db, userId, this.logger);
+      const fresh: UserAuditDbLike = new UserAuditDatabasePG(this.db, userId, this.logger, this.readDb);
       await fresh.init();
       this.userDBsCache.set(userId, fresh);
       userDb = fresh;
@@ -82,6 +91,7 @@ class AuditStoragePG {
     this.checkInitialized();
     this.userDBsCache.clear();
     if (this.db) this.db.close().catch(() => {});
+    if (this.readDb && this.readDb !== this.db) this.readDb.close().catch(() => {});
   }
 }
 

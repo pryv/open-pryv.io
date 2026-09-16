@@ -29,6 +29,23 @@ and asserts the pool's checked-out count returns to its baseline, and
 `[PGQI]`/`[RSAB]` cover the cursor's own release paths and the abort hook.
 `pg-cursor` is a new dependency of the PostgreSQL engine.
 
+Streamed audit reads run on their **own connection pool**, separate from the one
+audit writes use. New PostgreSQL engine setting
+`storages.engines.postgresql.auditReadPoolSize` (default 5);
+`auditPoolSize` keeps its name, its default and its meaning, and now serves
+writes and short reads only. This is not tuning, it is the condition that makes
+the change above safe to run: a streamed read holds its connection for as long
+as the client takes to drain the response, there is no server-side response
+timeout, and every access can read its own audit trail by default. On a single
+pool, enough slow or deliberately stalled readers would queue the audit write of
+every request behind them, and a queued write is dropped once it times out, so a
+handful of readers could silence a core's audit trail. With two pools the worst
+a reader can do is deny audit READS to other readers for as long as it holds
+them, which costs visibility rather than the record itself. Operators who raised
+`auditPoolSize` for read throughput should raise `auditReadPoolSize` instead.
+`[AUAB4]` holds the read pool at its ceiling and asserts an audit write still
+lands.
+
 Holding a client for the length of a response rather than a few milliseconds
 also made two connection-loss paths matter that did not before. A checked-out
 client has no `'error'` listener of its own, because the pool removes its idle
