@@ -195,6 +195,21 @@ describe('[ATER] attachment download error paths', function () {
     assert.deepStrictEqual(rejections.map(String), [], 'no unhandled rejection');
   });
 
+  it('[ATER5] a file that cannot be opened answers a plain JSON error, not the attachment headers', async function () {
+    // getAttachment itself rejects (a missing file does, before any stream exists).
+    sourceFactory = () => { throw new Error('simulated open rejection'); };
+    const before = await auditCounts();
+    const outcome = await download();
+    assert.strictEqual(outcome.ending, 'end', JSON.stringify(outcome));
+    assert.strictEqual(outcome.status, 500);
+    assert.match(outcome.headers['content-type'], /application\/json/);
+    assert.strictEqual(outcome.headers['content-disposition'], undefined, 'the error must not be presented as the attachment');
+    assert.strictEqual(outcome.headers.digest, undefined, 'the error must not carry the attachment digest');
+    assert.ok(await until(async () => (await auditCounts()).error === before.error + 1),
+      'the failed download must be audited as an error once');
+    assert.deepStrictEqual(rejections.map(String), [], 'no unhandled rejection');
+  });
+
   it('[ATER4] a failing error audit still answers the error and rejects nothing', async function () {
     audit.errorApiCall = async function () { throw new Error('simulated error-audit write failure'); };
     const outcome = await download(3000, '/' + username + '/events/' + cuid());

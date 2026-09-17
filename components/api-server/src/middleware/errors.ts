@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const errors = require('errors');
 const errorsFactory = errors.factory;
@@ -23,10 +24,7 @@ export { produceHandleErrorMiddleware };
 /**
  * Error route handling.
  */
-type LogFnLike = (message: string, ...meta: unknown[]) => void;
-type LoggerLike = { debug: LogFnLike; info: LogFnLike; warn: LogFnLike; error: LogFnLike };
-
-function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => LoggerLike }) {
+function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => Logger }) {
   const logger = logging.getLogger('error-middleware');
   const config = getConfigSync();
   const isAuditActive = config.get('audit:active');

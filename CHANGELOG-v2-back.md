@@ -15,10 +15,11 @@ and the rejection was unhandled. The audit failure is now logged and the error
 answered.
 
 On the download path, a failure while writing the success audit record after the
-file was served was also left to reject unhandled; it is now logged. A file read
-failing before the first byte answers with a JSON error status and an error audit
-record, and no longer carries the attachment's `Content-Disposition` and `Digest`
-headers, so a browser does not save the error as the file.
+file was served was also left to reject unhandled; it is now logged. A file that
+cannot be opened (a missing file) or whose read fails before the first byte answers
+with a JSON error status and an error audit record, and no longer carries the
+attachment's `Content-Type`, `Content-Disposition` and `Digest` headers, so a browser
+does not save the error as the file.
 
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 

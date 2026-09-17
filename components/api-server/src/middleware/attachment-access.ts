@@ -87,21 +87,11 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     if (!canReadEvent) {
       return next(errors.forbidden());
     }
-    // set response content type (we can't rely on the filename)
     const attachment = event.attachments
       ? event.attachments.find((att: AttachmentLike) => att.id === req.params.fileId)
       : null;
     if (!attachment) {
       return next(errors.unknownResource('attachment', req.params.fileId));
-    }
-    res.header('Content-Type', attachment.type);
-    res.header('Content-Length', String(attachment.size));
-    res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
-    if (attachment.integrity != null) {
-      const digest = getHTTPDigestHeaderForAttachment(attachment.integrity);
-      if (digest != null) {
-        res.header('Digest', digest);
-      }
     }
     const fileReadStream = await mall!.events.getAttachment(req.context.user.id, event, req.params.fileId);
     // for Audit
@@ -114,6 +104,19 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     if (res.destroyed) {
       fileReadStream.destroy();
       return;
+    }
+    // Attachment headers only once there is a file to serve: an error before
+    // this point (a missing file rejects getAttachment above) must go out as a
+    // plain JSON error, not presented as the attachment. Content type comes
+    // from the attachment metadata, we can't rely on the filename.
+    res.header('Content-Type', attachment.type);
+    res.header('Content-Length', String(attachment.size));
+    res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
+    if (attachment.integrity != null) {
+      const digest = getHTTPDigestHeaderForAttachment(attachment.integrity);
+      if (digest != null) {
+        res.header('Digest', digest);
+      }
     }
     // `.pipe()` is deliberate here, not pipeline(): a source error before any
     // byte was written must leave `res` usable so the error middleware can still
