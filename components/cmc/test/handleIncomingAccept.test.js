@@ -390,6 +390,19 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(r.scopeStreamId, ':_cmc:apps:my-app:campaign-2026');
     });
 
+    it('[IA09B] resolves the scope from a capability offer (which sits on an internal stream)', async () => {
+      const offer = {
+        id: 'orig-req-1',
+        type: 'consent/request-cmc',
+        streamIds: [':_cmc:_internal:offer:cap-1'],
+        content: { originStreamId: ':_cmc:apps:my-app:campaign-2026', requesterMeta: { appId: 'my-app' } },
+      };
+      const mall = fakeMall({ requestEvent: offer });
+      const r = await resolveRequestScope({ userId: 'u1', acceptEvent: ACCEPT_FROM_INBOX, mall });
+      assert.equal(r.appCode, 'my-app');
+      assert.equal(r.scopeStreamId, ':_cmc:apps:my-app:campaign-2026');
+    });
+
     it('[IA10] returns nulls when the request event is not findable', async () => {
       const mall = fakeMall({ requestEvent: null });
       const r = await resolveRequestScope({

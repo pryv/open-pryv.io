@@ -545,14 +545,22 @@ async function resolveRequestScope (params: {
   try {
     // getOne, not get({ id }): the events query does not filter on `id`, so
     // get() would hand back the newest event of any kind.
-    const ev = await mall.events.getOne(userId, reqId) as { type?: string; streamIds?: string[] } | null;
+    const ev = await mall.events.getOne(userId, reqId) as { type?: string; streamIds?: string[]; content?: Record<string, unknown> } | null;
     if (ev == null || ev.type !== C.ET_REQUEST) return { scopeStreamId: null, appCode: null };
+    // The requester's trigger sits on its app-scope stream.
     const reqStreamIds: string[] = Array.isArray(ev.streamIds) ? ev.streamIds : [];
     for (const sid of reqStreamIds) {
       const appCode = C.getAppCode(sid);
       if (appCode != null) {
         return { scopeStreamId: sid, appCode };
       }
+    }
+    // The capability offer only sits on `:_cmc:_internal:offer:<capId>`, but it
+    // carries the requester's scope stamped at mint.
+    const origin = ev.content?.originStreamId;
+    if (typeof origin === 'string') {
+      const appCode = C.getAppCode(origin);
+      if (appCode != null) return { scopeStreamId: origin, appCode };
     }
   } catch (_e) {
     // Lookup failure → fall back.

@@ -53,11 +53,6 @@ function fakeMall (opts = {}) {
       },
     },
     events: {
-      // Like the real mall: `get` does not filter on `id` (newest first),
-      // `getOne` looks the id up.
-      async get () {
-        return [...eventsById.values()].reverse();
-      },
       async getOne (userId, id) {
         return eventsById.get(id) ?? null;
       },
