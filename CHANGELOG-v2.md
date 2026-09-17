@@ -80,6 +80,79 @@ Nothing changes for a request that carries no annotation, and neither annotation
 ever reaches a minted access: both are stripped before the access is created.
 Cherry-picking still requires the offer's `allowUserChoice`; without it a consent
 remains all-or-nothing.
+### SECURITY — the PostgreSQL audit engine returned audit rows across accesses
+
+Reading the audit trail applied **no stream filter** when `storages.audit.engine`
+is `postgresql`. Any access could therefore retrieve the account's audit rows for
+**other** accesses: an app granted one narrow permission could see which API
+methods the account owner called, when, and with what query. Accounts on the
+default `sqlite` audit engine were never affected, and no data outside the audit
+trail was exposed.
+
+⚑ **Who is affected:** deployments where `storages.audit.engine` is
+`postgresql`. The install wizard selects that engine whenever PostgreSQL is
+chosen, so a platform installed with PostgreSQL through the wizard is affected
+unless the setting was changed. Check `storages.audit.engine` in your
+configuration; if it is `sqlite` (the default), you were not affected.
+
+The filter was read as a flat list while every store is handed the normalised
+nested form, so no condition was built — and the code treated "no condition" as
+"no filter" rather than as an error. Fixed by reading the normalised form, and by
+making an unreadable filter **deny** instead of returning everything: a filter
+that degrades to "return all rows" is the wrong failure mode for an
+authorization boundary.
+
+The same change anchors stream-id matching between separators. Before it, a
+stream id that was a suffix of another could match it.
+
+**No action is required beyond upgrading**; no stored data is altered.
+
+### Cross-core delegation no longer requires an explicit `core.url`
+
+On a multi-core platform, every cross-core `delegations.*` call failed with
+`400 delegation-unknown-core` ("Could not resolve the delegate account core
+endpoint") unless the operator had configured an explicit `core.url` on each
+core. Resolving the delegate's core read the peer's registry entry directly,
+where a URL is recorded only when that peer was given an explicit `core.url` —
+which neither the configuration wizard nor the bootstrap bundle writes. So on a
+dns-active platform the lookup could not succeed, and the relationship could
+never be created. Same-core delegation was unaffected.
+
+Resolution now goes through the same helper the rest of the API uses, which
+prefers a peer's advertised URL and otherwise derives it from the core id and
+the platform DNS domain. Deployments that had set `core.url` as a workaround
+keep working unchanged and may now drop it. Where neither an advertised URL nor
+a domain is available the call is still refused with `delegation-unknown-core`,
+rather than being delivered to the calling core itself. Reported via
+[#134](https://github.com/pryv/open-pryv.io/issues/134).
+
+### Account email can no longer be written through the events API
+
+- **BREAKING**: `events.create` and `events.update` targeting the account email
+  stream (`:system:email`) are now refused with `400 invalid-operation`
+  (`forbidden-account-email-event`, `data.streamId` set to the stream id). The
+  primary email carries account-wide coordination — platform uniqueness, the
+  multi-email container lockstep, the verification lifecycle and format
+  validation — that only `account.update` performs. Writing it through the
+  events API bypassed that coordination; a delegated (app/shared) access holding
+  `contribute` on the visible email stream could change the login email and,
+  with it, where a password-reset mail is sent. Use `account.update` (its
+  `email` field, or the `emails` operations object) to change the address.
+  **Reading** `:system:email` is unchanged. Refused for all access types,
+  personal included, so `account.update` is the single coordinated writer.
+
+### `accesses.update` now validates account-stream permissions like `accesses.create`
+
+- **BREAKING**: `accesses.update` now applies the same account/system-stream
+  permission validation as `accesses.create` — an unknown system stream, a
+  non-visible account stream, or a level higher than `contribute` on a visible
+  account stream is refused with `400 invalid-operation` (same messages and
+  `data.param` as create). Previously the update path accepted permission
+  changes without these checks, so a permission that create refuses could be set
+  via `PUT`. The request fails identically for the account owner's own personal
+  token, so this is a validation gap rather than an authorization change. An
+  update that omits `permissions` leaves the stored permissions untouched; when
+  `permissions` is present the whole submitted set is validated.
 
 ### Account-stream permissions: clearer error, corrected docs
 

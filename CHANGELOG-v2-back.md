@@ -1,6 +1,101 @@
 # Changelog - Internal (no API impact)
 
-## cmc: dispatch routes an inbox revoke on the stream, not only on createdBy
+## backup export streams end to end, so its memory is a batch rather than the account
+
+`bin/backup` materialised every collection before writing it, and walked the
+events array a second time to find attachments. Peak memory was therefore the
+size of the largest collection, which is the wrong shape for exactly the
+accounts a backup matters most for.
+
+Events and audit now flow through a lazy pipeline: the export source, the
+snapshot/incremental timestamp filter and sanitize run one item at a time on the
+way to the writer, and attachment references are collected during that same
+single pass instead of a second full iteration. Both stores gained a streaming
+producer next to the array one (`events.exportAllStreamed`, and
+`exportAllEventsStreamed` on the audit interface) on PostgreSQL through a
+server-side cursor and on SQLite through a statement iterator.
+
+The streaming producer is **optional and feature-detected**, so this is additive:
+the audit interface's required-method set is unchanged, an engine that does not
+implement it keeps the array path, and the import/restore contracts stay
+array-based. The backup file format does not change.
+
+On PostgreSQL the audit export runs on the streamed-read pool
+(`auditReadPoolSize`), not the audit write pool, because exporting one account's
+audit set holds a cursor for the whole collection. `bin/backup` is a separate
+process today, so nothing can be starved by it; keeping it on the read pool
+means an in-process backup trigger added later cannot regress that.
+
+## audit reads on PostgreSQL stream for real, and an aborted response releases the pool client
+
+`UserAuditDatabasePG.getEventsStreamed` and `getEventDeletionsStreamed` looked
+like streams and were not: on the first `read()` they ran one `SELECT`, held the
+whole result set in memory and handed rows out one at a time. Memory was the
+size of the matching audit set, not of a batch. They now read through
+`DatabasePG.queryIterable`, a server-side cursor that yields fixed-size batches,
+so an audit query over a large trail costs a batch rather than the trail.
+
+Making the read a real stream is only safe once "the response went away" reaches
+whatever holds the resource. A cursor-backed stream owns a checked-out pool
+client for as long as it lives, and `.pipe()` does not propagate `destroy`
+upstream: the client going away destroyed the response and the outermost
+Transform while every boundary below swallowed it, leaving the source suspended
+and its client checked out forever. A handful of aborted requests was enough to
+starve the pool, which is why an earlier attempt at this had to be reverted.
+
+Every wrap site on the response path therefore goes through one helper,
+`utils/streams.ts` `pipeThrough`, which builds the chain with
+`stream.pipeline()` instead of `.pipe()` so destroy is forwarded end to end.
+`Result.writeStreams` destroys the chain when the response closes early. Keeping
+the call in a single helper is what makes "no `.pipe()` on the response path" a
+checkable property rather than a convention.
+
+Proven at the pool, not at the stream: `[AUAB]` aborts an audit query mid-flight
+and asserts the pool's checked-out count returns to its baseline, and
+`[PGQI]`/`[RSAB]` cover the cursor's own release paths and the abort hook.
+`pg-cursor` is a new dependency of the PostgreSQL engine.
+
+Streamed audit reads run on their **own connection pool**, separate from the one
+audit writes use. New PostgreSQL engine setting
+`storages.engines.postgresql.auditReadPoolSize` (default 5);
+`auditPoolSize` keeps its name, its default and its meaning, and now serves
+writes and short reads only. This is not tuning, it is the condition that makes
+the change above safe to run: a streamed read holds its connection for as long
+as the client takes to drain the response, there is no server-side response
+timeout, and every access can read its own audit trail by default. On a single
+pool, enough slow or deliberately stalled readers would queue the audit write of
+every request behind them, and a queued write is dropped once it times out, so a
+handful of readers could silence a core's audit trail. With two pools the worst
+a reader can do is deny audit READS to other readers for as long as it holds
+them, which costs visibility rather than the record itself. Operators who raised
+`auditPoolSize` for read throughput should raise `auditReadPoolSize` instead.
+`[AUAB4]` holds the read pool at its ceiling and asserts an audit write still
+lands.
+
+Holding a client for the length of a response rather than a few milliseconds
+also made two connection-loss paths matter that did not before. A checked-out
+client has no `'error'` listener of its own, because the pool removes its idle
+one while the client is out, so a backend that went away mid-read (restart,
+failover, an administrator terminating the session) raised an unhandled
+`'error'` event and ended the process; the cursor holder now listens for the
+length of the hold. And `cursor.close()` waits for a `readyForQuery` that a dead
+backend never sends, so closing the portal on that path parked the release
+forever and cost the pool slot permanently; the portal is now closed only on a
+healthy connection, which is the only case where there is one to close.
+`[PGQI7]` covers both.
+
+Two smaller release gaps close with them. A method that failed after registering
+a stream but before the response was written left that stream flowing and
+holding its resource, as did the elements queued behind one that failed while
+being collected; both are now released. And on SQLite, the wrapper around a
+statement iterator gained the `return()` that `Readable.from` needs in order to
+close it, so destroying a streamed read now reaches the iterator instead of
+stopping one hop short. Writes were not affected by that leak, because user
+databases run in better-sqlite3's unsafe mode, which disables its open-iterator
+guard; closing the database is checked whatever the mode, so a leaked iterator
+made that user's handle unclosable, which is what account deletion and the
+handle cache's eviction both need, and the un-reset statement held back WAL
+checkpointing for as long as it lived.
 
 `handleIncomingRevoke` now deletes the access named by the arrival's `createdBy`,
 so that access is gone by the time the handler returns. The loop-avoidance test

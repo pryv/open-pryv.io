@@ -22,7 +22,10 @@ const { _internals } = require('./_internals.ts');
 /**
  * Receive host internals from the barrel.
  */
-type PgConnection = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+type PgConnection = {
+  query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+  queryIterable (sql: string, params?: unknown[], batchSize?: number): AsyncGenerator<Record<string, unknown>>;
+};
 type StorageLayer = {
   connection?: unknown;
   passwordResetRequests?: unknown;
@@ -31,7 +34,7 @@ type StorageLayer = {
   profile?: unknown;
   streams?: unknown;
   webhooks?: unknown;
-  events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
+  events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; exportAllStreamed?: (u: UserOrId) => AsyncGenerator<unknown>; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
   getAllUserIdsFromCollection?: (col: string) => Promise<string[]>;
   clearCollection?: (col: string) => Promise<void>;
@@ -85,6 +88,23 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
         // forwarding it instead of `.rows` crashed bin/backup.js on every PG platform.
         .then((res: { rows: Array<Record<string, unknown>> }) => callback(null, res.rows.map(rowToEvent)))
         .catch(callback);
+    },
+    /**
+     * Streaming counterpart of exportAll for bounded-memory backup: yields
+     * canonical (camelCase) events one at a time through a server-side cursor,
+     * so backup memory is a batch rather than the whole collection. Optional by
+     * design: the orchestrator feature-detects it and falls back to exportAll,
+     * so an engine can adopt streaming independently.
+     *
+     * Stays on the main pool. The read/write split exists on the AUDIT store
+     * only, and the backup process is the sole holder of this connection.
+     */
+    async * exportAllStreamed (userOrUserId: UserOrId): AsyncGenerator<unknown> {
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      const { rowToEvent } = require('./dataStore/localUserEventsPG.ts');
+      for await (const row of connection.queryIterable('SELECT * FROM events WHERE user_id = $1', [userId])) {
+        yield rowToEvent(row);
+      }
     },
     importAll (userOrUserId: UserOrId, items: EventRow[], callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
@@ -209,15 +229,27 @@ function createAuditStorage (): unknown {
   // Dedicated pool for audit: same DB, smaller pool size to avoid
   // contending with event/stream queries on the main pool.
   const pgConfig = _internals.config;
-  const auditDb = new DatabasePG({
+  const connection = {
     host: pgConfig.host,
     port: pgConfig.port,
     database: pgConfig.database,
     user: pgConfig.user,
-    password: pgConfig.password,
-    max: pgConfig.auditPoolSize || 5
-  });
-  return new AuditStoragePG(auditDb);
+    password: pgConfig.password
+  };
+  const auditDb = new DatabasePG({ ...connection, max: pgConfig.auditPoolSize || 5 });
+  // ⚑ A SECOND pool, for streamed audit reads only.
+  //
+  // A streamed read holds its connection for as long as the HTTP client takes
+  // to drain the response, and there is no server-side response timeout, so a
+  // slow or hostile reader holds one for as long as it likes. Every access gets
+  // read permission on its own audit trail by default, so any app token can
+  // open such a read. On a single pool, enough of them queue the audit WRITE of
+  // every request behind them, and a queued write is dropped after the
+  // connection timeout: a handful of readers could silence the audit trail of a
+  // whole core. Two pools make the worst case "readers starve readers", which
+  // is a cost to the reader rather than a hole in the record.
+  const auditReadDb = new DatabasePG({ ...connection, max: pgConfig.auditReadPoolSize || 5 });
+  return new AuditStoragePG(auditDb, auditReadDb);
 }
 
 // -- FileStorage (PostgreSQL) -------------------------------------------

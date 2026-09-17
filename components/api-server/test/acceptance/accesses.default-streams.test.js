@@ -84,10 +84,16 @@ describe('[AD01] Accesses with account streams', function () {
     accountAccessData = createAccessResponse.body.access;
   }
 
+  // ⚑ Query by `id`, not `_id`. The PostgreSQL storage maps both to its id
+  // column (`BaseStoragePG.toCol`), so an `_id` query works there and silently
+  // matches nothing on SQLite, whose user storage has no such mapping. That
+  // made every assertion below read `null` and fail on the SQLite engine while
+  // passing on PostgreSQL, so these checks had no coverage on the default
+  // audit engine at all. `id` is understood by both.
   async function getAccessInDb (id) {
     const findOneAsync = promisify((userId, query, opts, cb) =>
       user.storage.accesses.findOne(userId, query, opts, cb));
-    return await findOneAsync({ id: user.attrs.id }, { _id: id }, null);
+    return await findOneAsync({ id: user.attrs.id }, { id }, null);
   }
 
   let savedIntegrityCheck;
@@ -214,7 +220,11 @@ describe('[AD01] Accesses with account streams', function () {
           let streamId;
           const permissionLevel = AccessLogic.PERMISSION_LEVEL_CONTRIBUTE;
           before(async function () {
-            streamId = addCustomerPrefixToStreamId('email');
+            // phoneNumber (visible, editable, not platform-coordinated): the
+            // email account field is no longer writable through the events API,
+            // so this "contribute lets you write the event" coverage uses a
+            // non-coordinated visible field.
+            streamId = addCustomerPrefixToStreamId('phoneNumber');
             await createUserAndAccess(permissionLevel, streamId);
           });
           it('[R0M1] should return 201', async () => {
@@ -320,6 +330,140 @@ describe('[AD01] Accesses with account streams', function () {
             data: { param: streamId }
           });
         });
+      });
+    });
+  });
+
+  describe('[ASUP] PUT /accesses applies the same account-stream validation as create', () => {
+    const emailStreamId = () => addCustomerPrefixToStreamId('email');
+
+    async function putPermissions (accessId, permissions) {
+      return await request.put(basePath + '/' + accessId)
+        .send({ permissions })
+        .set('authorization', access.token);
+    }
+
+    describe('[ASU1] rejects an unknown system stream added via update', () => {
+      let unknownStreamId, originalAccess, putRes;
+      before(async function () {
+        await createUserAndAccess('read', emailStreamId());
+        originalAccess = accountAccessData;
+        unknownStreamId = ':system:' + charlatan.Lorem.characters(10);
+        putRes = await putPermissions(originalAccess.id, [{ streamId: unknownStreamId, level: 'read' }]);
+      });
+      it('[AV1E] returns 400 with the UnknownAccountStream error', () => {
+        assert.strictEqual(putRes.status, 400);
+        assert.deepStrictEqual(putRes.body.error, {
+          id: ErrorIds.InvalidOperation,
+          message: ErrorMessages[ErrorIds.UnknownAccountStream],
+          data: { param: unknownStreamId }
+        });
+      });
+      it('[AV1D] leaves the stored permissions unchanged', async () => {
+        const dbAccess = await getAccessInDb(originalAccess.id);
+        assert.deepStrictEqual(dbAccess.permissions, originalAccess.permissions);
+      });
+    });
+
+    describe('[ASU2] rejects a not-visible account stream added via update', () => {
+      let hiddenStreamId, originalAccess, putRes;
+      before(async function () {
+        await createUserAndAccess('read', emailStreamId());
+        originalAccess = accountAccessData;
+        hiddenStreamId = addPrivatePrefixToStreamId('invitationToken');
+        putRes = await putPermissions(originalAccess.id, [{ streamId: hiddenStreamId, level: 'read' }]);
+      });
+      it('[AV2E] returns 400 with the DeniedStreamAccess error', () => {
+        assert.strictEqual(putRes.status, 400);
+        assert.deepStrictEqual(putRes.body.error, {
+          id: ErrorIds.InvalidOperation,
+          message: ErrorMessages[ErrorIds.DeniedStreamAccess],
+          data: { param: hiddenStreamId }
+        });
+      });
+      it('[AV2D] leaves the stored permissions unchanged', async () => {
+        const dbAccess = await getAccessInDb(originalAccess.id);
+        assert.deepStrictEqual(dbAccess.permissions, originalAccess.permissions);
+      });
+    });
+
+    describe('[ASU3] rejects an over-cap level on a visible account stream added via update', () => {
+      let originalAccess, putRes;
+      before(async function () {
+        await createUserAndAccess('read', emailStreamId());
+        originalAccess = accountAccessData;
+        putRes = await putPermissions(originalAccess.id, [{ streamId: emailStreamId(), level: AccessLogic.PERMISSION_LEVEL_MANAGE }]);
+      });
+      it('[AV3E] returns 400 with the TooHighAccessForSystemStreams error', () => {
+        assert.strictEqual(putRes.status, 400);
+        assert.deepStrictEqual(putRes.body.error, {
+          id: ErrorIds.InvalidOperation,
+          message: ErrorMessages[ErrorIds.TooHighAccessForSystemStreams],
+          data: { param: emailStreamId() }
+        });
+      });
+      it('[AV3D] leaves the stored permissions unchanged', async () => {
+        const dbAccess = await getAccessInDb(originalAccess.id);
+        assert.deepStrictEqual(dbAccess.permissions, originalAccess.permissions);
+      });
+    });
+
+    describe('[ASU4] accepts a within-cap account-stream permission via update', () => {
+      let accessId, putRes;
+      before(async function () {
+        await createUserAndAccess('read', emailStreamId());
+        accessId = accountAccessData.id;
+        putRes = await putPermissions(accessId, [{ streamId: emailStreamId(), level: 'contribute' }]);
+      });
+      it('[AV4S] returns 200', () => {
+        assert.strictEqual(putRes.status, 200);
+      });
+      it('[AV4D] stores the updated permission', async () => {
+        const dbAccess = await getAccessInDb(accessId);
+        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: emailStreamId(), level: 'contribute' }]);
+      });
+    });
+
+    describe('[ASU5] leaves account-stream permissions untouched when update omits permissions', () => {
+      let accessId, putRes;
+      before(async function () {
+        await createUserAndAccess('contribute', emailStreamId());
+        accessId = accountAccessData.id;
+        putRes = await request.put(basePath + '/' + accessId)
+          .send({ name: charlatan.Lorem.characters(8) })
+          .set('authorization', access.token);
+      });
+      it('[AV5S] returns 200', () => {
+        assert.strictEqual(putRes.status, 200);
+      });
+      it('[AV5D] keeps the pre-existing account-stream permission', async () => {
+        const dbAccess = await getAccessInDb(accessId);
+        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: emailStreamId(), level: 'contribute' }]);
+      });
+    });
+
+    describe('[ASU6] validates every element of the submitted set, not just the first', () => {
+      let unknownStreamId, originalAccess, putRes;
+      before(async function () {
+        await createUserAndAccess('read', emailStreamId());
+        originalAccess = accountAccessData;
+        unknownStreamId = ':system:' + charlatan.Lorem.characters(10);
+        putRes = await putPermissions(originalAccess.id, [
+          { streamId: emailStreamId(), level: 'read' },
+          { streamId: unknownStreamId, level: 'read' }
+        ]);
+      });
+      it('[AV6E] returns 400 naming the second (invalid) permission', () => {
+        assert.strictEqual(putRes.status, 400);
+        assert.deepStrictEqual(putRes.body.error, {
+          id: ErrorIds.InvalidOperation,
+          message: ErrorMessages[ErrorIds.UnknownAccountStream],
+          data: { param: unknownStreamId }
+        });
+      });
+      it('[AV6D] leaves the stored permissions unchanged', async () => {
+        const dbAccess = await getAccessInDb(originalAccess.id);
+        assert.deepStrictEqual(dbAccess.permissions, originalAccess.permissions);
       });
     });
   });

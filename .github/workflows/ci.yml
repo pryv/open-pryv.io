@@ -96,6 +96,31 @@ jobs:
           storages__engines__postgresql__user: pryv
           storages__engines__postgresql__password: pryv
           storages__engines__postgresql__database: pryv-node-test
+      - name: Run the audit suite on the PostgreSQL AUDIT engine
+        # storages.audit.engine defaults to sqlite INDEPENDENTLY of the
+        # baseStorage engine, so the step above — PostgreSQL in every other
+        # respect — still exercises the SQLite audit code. Nothing ran the
+        # PostgreSQL audit engine, while the install wizard selects it for every
+        # PostgreSQL platform. That blind spot hid a stream-filter defect that
+        # returned audit rows across accounts, and its existing failing tests
+        # went unseen because no job ran them.
+        run: just clean-test-data && just test-pg-audit audit
+        env:
+          PGPASSWORD: pryv
+          storages__engines__postgresql__host: localhost
+          storages__engines__postgresql__port: 5432
+          storages__engines__postgresql__user: pryv
+          storages__engines__postgresql__password: pryv
+          storages__engines__postgresql__database: pryv-node-test
+      - name: Run the SQLite engine suite
+        # The step above runs with STORAGE_ENGINE=postgresql, and the component
+        # runner skips a primary storage engine that does not match it, so
+        # nothing in this workflow was executing storages/engines/sqlite/test at
+        # all. SQLite is a supported baseStorage engine and is the DEFAULT audit
+        # engine, so its own suite needs a job, for the same reason the
+        # PostgreSQL audit step above exists: an engine nothing runs is an
+        # engine whose failures nobody sees.
+        run: just clean-test-data && just test-sqlite storages:sqlite
 
   lint:
     runs-on: ubuntu-22.04

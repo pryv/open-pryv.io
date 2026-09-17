@@ -253,6 +253,10 @@ class API {
     }
     function finalize (err: unknown) {
       if (err != null) {
+        // The method failed. Anything it already registered on the Result is
+        // flowing and holding its resource, and no response will ever consume
+        // it, so release it here rather than leave it suspended for good.
+        try { result.release(); } catch (e) { logger.debug('failed to release result sources', e); }
         tracing.setError(apiSpanName, err);
         tracing.finishSpan(apiSpanName);
         const apiError = err instanceof APIError ? err : errors.unexpectedError(err);

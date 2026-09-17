@@ -604,12 +604,20 @@ describe('[VERS] Versioning', function () {
       return hostname.split('@')[0];
     }
 
-    it('[4ETL] must allow reusing unique values after they are in history', async () => {
+    it('[4ETL] must retain a replaced primary email until it is explicitly removed, while keeping it in history', async () => {
       /**
-       * 1. create user
-       * 2. change unique field value
-       * 3. ensure it is there in history
-       * 4. create user with same unique value - must pass
+       * The account email is coordinated only by account.update, which re-reserves
+       * the old primary as a verified secondary on change — so it is RETAINED, not
+       * released, until explicitly removed. This pins both sides: retention on a
+       * primary change, and reuse only after a genuine (sanctioned) release, with
+       * the old value surviving in the versioned account event's history.
+       * 1. register user1 with email A
+       * 2. account.update the email to B (200); A stays in history
+       * 3. A is in the :system:email event history
+       * 4. another user cannot claim A yet — it is retained (409)
+       * 5. explicitly remove A (now a non-primary secondary) — releases its row
+       * 6. A still in history (removal touches only the :_emails: container)
+       * 7. A is now genuinely free — a fresh user can reuse it
        */
 
       // 1.
@@ -624,32 +632,59 @@ describe('[VERS] Versioning', function () {
         .query({ streams: [addCustomerPrefixToStreamId('email')] });
       const oldEmailEvent = resEvents.body.events[0];
 
-      // 2.
-      await req
-        .put(buildPath(`/${user1.username}/events/${oldEmailEvent.id}`))
+      // 2. Change the email through the sanctioned account.update path (the
+      // events API no longer writes the account email). Under forceKeepHistory
+      // the old value A is kept in the account event's history.
+      const resUpdate = await req
+        .put(buildPath(`/${user1.username}/account`))
         .set('Authorization', token)
-        .send({
-          content: charlatan.Internet.email()
-        });
+        .send({ email: charlatan.Internet.email() });
+      assert.strictEqual(resUpdate.status, 200);
 
-      // 3.
+      // 3. A is preserved in the :system:email event's history.
       const resGet = await req
         .get(buildPath(`/${user1.username}/events/${oldEmailEvent.id}`))
         .set('Authorization', token)
         .query({ includeHistory: true });
       assert.strictEqual(resGet.body.history[0].content, oldEmailEvent.content);
 
-      // 4.
+      // 4. A is RETAINED as user1's verified non-primary secondary (account.update
+      // re-reserves the old primary), so another user cannot claim it yet. The
+      // release-and-reclaim the events path used to leak was the bug this closes.
       const user2 = _.merge(generateRegisterBody(), { email: oldEmailEvent.content });
-      const res2 = await req
+      const resRetained = await req
         .post(buildPath('/users'))
-        .send(user2);
-      const token2 = extractToken(res2.body.apiEndpoint);
-      const resEvents2 = await req
-        .get(buildPath(`/${user2.username}/events`))
-        .set('Authorization', token2)
+        .send(user2)
+        .ok(() => true);
+      assert.strictEqual(resRetained.status, 409);
+
+      // 5. Explicitly remove A (a non-primary secondary now): this releases its
+      // platform reservation through the sanctioned path.
+      const resRemove = await req
+        .put(buildPath(`/${user1.username}/account`))
+        .set('Authorization', token)
+        .send({ emails: { remove: [oldEmailEvent.content] } });
+      assert.strictEqual(resRemove.status, 200);
+
+      // 6. Removal touches only the :_emails: container, never the versioned
+      // account event, so A is still in history.
+      const resGetAfterRemove = await req
+        .get(buildPath(`/${user1.username}/events/${oldEmailEvent.id}`))
+        .set('Authorization', token)
+        .query({ includeHistory: true });
+      assert.strictEqual(resGetAfterRemove.body.history[0].content, oldEmailEvent.content);
+
+      // 7. A is now genuinely free: a fresh user can reuse it.
+      const user3 = _.merge(generateRegisterBody(), { email: oldEmailEvent.content });
+      const res3 = await req
+        .post(buildPath('/users'))
+        .send(user3);
+      const token3 = extractToken(res3.body.apiEndpoint);
+      const resEvents3 = await req
+        .get(buildPath(`/${user3.username}/events`))
+        .set('Authorization', token3)
         .query({ streams: [addCustomerPrefixToStreamId('email')] });
-      const emailEvent = resEvents2.body.events[0];
+      const emailEvent = resEvents3.body.events[0];
       assert.strictEqual(emailEvent.content, oldEmailEvent.content);
     });
   });

@@ -14,7 +14,8 @@ const DrainStream = require('./methods/streams/DrainStream.ts').default;
 const ArraySerializationStream = require('./methods/streams/ArraySerializationStream.ts').default;
 const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream.ts').default;
 
-const { Transform } = require('stream');
+const { Transform, pipeline } = require('stream');
+const { pipeThrough } = require('utils');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('result');
@@ -32,6 +33,22 @@ const { DummyTracing } = require('tracing');
 // The result can be sent back to the caller using writeToHttpResponse or
 // recovered as a JS object through the toObject() function.
 //
+
+/**
+ * Release every source the Result was handed, for the case where there is no
+ * response left to pipe them into. Destroying a registered source reaches the
+ * resource holder because every wrap on the way down now forwards destroy; for
+ * a concat stream it also reaches the sources still queued behind the current
+ * one (see ConcatMultiStream).
+ */
+function destroyRegisteredSources (streamsArray: StreamDescriptor[], extra: Readable[] = []): void {
+  for (const s of streamsArray) {
+    try { s.stream.destroy(); } catch (err) { logger.debug('failed to destroy a registered source', err); }
+  }
+  for (const s of extra) {
+    try { s.destroy(); } catch (err) { logger.debug('failed to destroy a serialized stream', err); }
+  }
+}
 
 class Result {
   _private!: ResultPrivate;
@@ -132,6 +149,33 @@ class Result {
     return this._private.isStreamResult;
   }
 
+  /**
+   * Release every source registered on this Result, for a caller that is
+   * abandoning it without writing a response.
+   *
+   * ⚑ A registered source is ALREADY FLOWING and already holds its resource (a
+   * pooled database client, a file descriptor) from the moment the method
+   * wrapped it, not from the moment the response starts. So a method that fails
+   * after registering one and before the response is written leaks it unless
+   * somebody destroys it. Idempotent: destroying an already-destroyed stream is
+   * a no-op.
+   */
+  release () {
+    destroyRegisteredSources(this._private.streamsArray);
+    this._private.streamsArray = [];
+    // ⚑ Concat streams that were ADDED but not yet closed are not in
+    // `streamsArray` at all: a concat group only reaches it in
+    // `closeConcatArrayStream`. `events.get` adds one stream per store and
+    // closes the group after the LAST one, so a store failing part-way through
+    // leaves the earlier stores' streams flowing and holding their clients with
+    // nothing registered to release. Destroying the multistream reaches both
+    // the current source and the ones still queued behind it.
+    for (const concat of Object.values(this._private.streamsConcatArrays)) {
+      try { concat.getStream().destroy(); } catch (err) { logger.debug('failed to destroy a concat stream', err); }
+    }
+    this._private.streamsConcatArrays = {};
+  }
+
   // Execute the following when result has been fully sent
   // If already sent callback is called right away
   onEnd (callback: () => void) {
@@ -162,6 +206,16 @@ class Result {
           }
         };
     if (this.isStreamResult()) {
+      // The client may already be gone before we get here. Attaching 'close' to
+      // a destroyed response never fires, so the callback that AUDITS the call
+      // would be lost, and building the chain would throw. Release the sources
+      // and run the callback by hand instead.
+      if (res.destroyed) {
+        destroyRegisteredSources(this._private.streamsArray);
+        if (onEndCallBack) { onEndCallBack(); }
+        this.closeTracing();
+        return;
+      }
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId!);
       const stream = this.writeStreams(res, successCode);
       stream.on('close', () => {
@@ -187,13 +241,31 @@ class Result {
     const streams: Readable[] = [];
     for (let i = 0; i < streamsArray.length; i++) {
       const s = streamsArray[i];
-      const serializedStream = s.stream.pipe(s.isArray ? new ArraySerializationStream(s.name) : new SingleObjectSerializationStream(s.name));
+      const serializedStream = pipeThrough(s.stream, s.isArray ? new ArraySerializationStream(s.name) : new SingleObjectSerializationStream(s.name));
       streams.push(serializedStream);
     }
 
-    return new MultiStream(streams)
-      .pipe(new ResultStream(this._private.tracing, this._private.tracingId!))
-      .pipe(res);
+    // pipeline() onto an already-destroyed response throws
+    // ERR_STREAM_UNABLE_TO_PIPE synchronously. writeToHttpResponse guards the
+    // normal path; this keeps a direct caller from hitting it.
+    if (res.destroyed) {
+      destroyRegisteredSources(streamsArray, streams);
+      return res;
+    }
+
+    const resultStream = new ResultStream(this._private.tracing, this._private.tracingId!);
+    // The ONE place errors on this chain are reported. Inner wraps use a no-op
+    // callback precisely because the same error arrives here.
+    pipeline(new MultiStream(streams), resultStream, res, (err: NodeJS.ErrnoException | null) => {
+      if (err == null) return;
+      // A client that hangs up mid-response is ordinary traffic, not a fault.
+      if (err.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        logger.debug('streamed response ended early (client went away)', err.code);
+        return;
+      }
+      logger.warn('streamed response failed', err);
+    });
+    return res;
   }
 
   writeSingle (res: Response, successCode: number) {
@@ -219,7 +291,14 @@ class Result {
     const resultObj: Record<string, unknown> = {};
     let i = 0;
     function nextElement (err?: unknown) {
-      if (err) return callback(err as Error);
+      if (err) {
+        // The elements after this one were registered and are flowing, so they
+        // hold their resources; nothing will ever drain them now. Release them
+        // before handing the error up, or the failure of element one leaks
+        // element two's client.
+        destroyRegisteredSources(streamsArray.slice(i));
+        return callback(err as Error);
+      }
       if (i >= streamsArray.length) return callback(null, resultObj);
       const elementDef = streamsArray[i++];
       const drain = new DrainStream({ limit: _private.arrayLimit, isArray: elementDef.isArray }, (err: unknown, list: unknown) => {
@@ -227,7 +306,12 @@ class Result {
         resultObj[elementDef.name] = list;
         nextElement();
       });
-      elementDef.stream.pipe(drain);
+      // DrainStream reports through the callback it was given (including the
+      // arrayLimit overflow), so the pipeline callback is a no-op here; what
+      // matters is that hitting the limit destroys the chain and releases the
+      // source instead of leaving it suspended.
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      pipeline(elementDef.stream, drain, () => {});
     }
     nextElement();
   }
@@ -278,6 +362,33 @@ class ResultStream extends Transform {
 }
 export default Result;
 export { Result };
+/**
+ * A factory-mode MultiStream that also tears down the streams still WAITING to
+ * become current.
+ *
+ * multistream's own `_destroy` reaches `_current` only when it is driven by a
+ * factory, but `events.get` across several stores queues the other stores'
+ * streams behind the current one and they are already flowing — each can
+ * already hold its own pooled client. Without this they would be abandoned on
+ * an aborted response exactly like the pre-pipeline sources were.
+ */
+class ConcatMultiStream extends MultiStream {
+  owner: StreamConcatArray;
+
+  constructor (factory: unknown, options: unknown, owner: StreamConcatArray) {
+    super(factory, options);
+    this.owner = owner;
+  }
+
+  _destroy (err: Error | null, callback: (err?: Error | null) => void) {
+    const pending = this.owner.streamsToAdd.splice(0);
+    for (const stream of pending) {
+      try { stream.destroy(); } catch (e) { logger.debug('failed to destroy a pending concat source', e); }
+    }
+    super._destroy(err, callback);
+  }
+}
+
 class StreamConcatArray {
   streamsToAdd: Readable[];
 
@@ -302,7 +413,10 @@ class StreamConcatArray {
       streamConcact.nextFactoryCallBack = callback;
       streamConcact._next();
     }
-    this.multistream = new MultiStream(factory, { objectMode: true });
+    // `multistream` is untyped CJS, so extending it gives TypeScript a base of
+    // `any` and the subclass does not structurally satisfy Readable. It is one
+    // at runtime; the cast says so once, here.
+    this.multistream = new ConcatMultiStream(factory, { objectMode: true }, this) as unknown as Readable;
   }
 
   /**

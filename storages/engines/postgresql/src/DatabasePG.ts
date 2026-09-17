@@ -11,10 +11,31 @@ const require = createRequire(import.meta.url);
 const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
 const { _internals } = require('./_internals.ts');
+const Cursor = require('pg-cursor');
 
 interface PgClient {
   query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
-  release: () => void;
+  // An argument marks the client as broken so the pool discards it instead of
+  // returning it to the idle set. queryIterable passes one only for a cursor
+  // failure, never for a consumer that walked away.
+  release: (err?: unknown) => void;
+  // A checked-out client emits 'error' when its backend goes away, and the pool
+  // removes its OWN listener while the client is out. A holder that keeps the
+  // client for more than a moment has to listen, or the emit is an unhandled
+  // 'error' event that ends the process.
+  on: (event: string, handler: (err: Error) => void) => void;
+  removeListener: (event: string, handler: (err: Error) => void) => void;
+}
+
+interface PgCursor {
+  read: (rowCount: number) => Promise<Array<Record<string, unknown>>>;
+  close: () => Promise<void>;
+}
+
+// A pooled client viewed through the cursor API: pg's client.query(cursor)
+// returns the cursor object rather than a result promise.
+interface CursorClient {
+  query: (cursor: unknown) => PgCursor;
 }
 
 interface PgPool {
@@ -22,6 +43,12 @@ interface PgPool {
   connect: () => Promise<PgClient>;
   on: (event: string, handler: (err: Error) => void) => void;
   end: () => Promise<void>;
+  // Live pool counters. Checked-out clients are `totalCount - idleCount`, which
+  // is how a leaked cursor client is observed; `waitingCount` above zero means
+  // callers are already queued behind an exhausted pool.
+  readonly totalCount: number;
+  readonly idleCount: number;
+  readonly waitingCount: number;
 }
 
 interface PgQueryResult {
@@ -148,6 +175,107 @@ class DatabasePG {
     await this.ensureConnect();
     this.logger.debug('Query:', text.replace(/\s+/g, ' ').trim());
     return this.pool!.query(text, params);
+  }
+
+  /**
+   * Stream a query's rows through a server-side cursor, a batch at a time, so
+   * memory is the batch rather than the whole result set.
+   *
+   * ⚑ The generator OWNS a pooled client for as long as it is alive. The caller
+   * must guarantee the generator is closed — `for await` and `Readable.from`
+   * both do, the latter only if whatever consumes the readable propagates
+   * destroy to it. Abandon it and the client is never returned.
+   *
+   * On the way out the client is released clean unless the CURSOR itself
+   * failed. A consumer that stops early — an aborted HTTP response injects its
+   * error at the `yield` — leaves a perfectly healthy connection, and
+   * discarding it would make a burst of aborts churn the pool instead of
+   * leaking it: better than a leak, still wrong.
+   */
+  async * queryIterable (text: string, params: unknown[] = [], batchSize: number = 1000): AsyncGenerator<Record<string, unknown>> {
+    await this.ensureConnect();
+    this.logger.debug('Query (cursor):', text.replace(/\s+/g, ' ').trim());
+    const client = await this.pool!.connect();
+
+    // ⚑ The pool removes its own idle `'error'` listener when it hands a client
+    // out and re-attaches it on release. For the millisecond-long holds
+    // elsewhere in this file that gap is theoretical; here the client is held
+    // for the whole response, so a backend that goes away mid-read (restart,
+    // failover, `pg_terminate_backend`) emits `'error'` on a client nobody
+    // listens to, which is an unhandled `'error'` event and takes the process
+    // down. There is no process-level handler to catch it.
+    //
+    // The listener is also how we LEARN the connection died. `cursor.read` only
+    // reports a loss to a caller that is mid-read; a consumer that aborts while
+    // the generator is parked at a `yield` would otherwise reach the `finally`
+    // believing the connection is healthy and wait on a close that can never
+    // complete. `connectionLost` records what the listener saw, and `lost`
+    // lets the close race it.
+    let connectionLost = false;
+    let markLost: () => void;
+    const lost = new Promise<void>((resolve) => { markLost = resolve; });
+    const swallowClientError = (): void => {
+      connectionLost = true;
+      markLost();
+    };
+    client.on('error', swallowClientError);
+
+    let cursor: PgCursor;
+    try {
+      // Inside the try: if opening the cursor throws, the client must still go
+      // back, and it is the cursor that is suspect, not the consumer.
+      cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
+    } catch (err) {
+      client.removeListener('error', swallowClientError);
+      client.release(err);
+      throw err;
+    }
+
+    let cursorFailed = false;
+    try {
+      for (;;) {
+        let rows: Array<Record<string, unknown>>;
+        try {
+          rows = await cursor.read(batchSize);
+        } catch (err) {
+          // Only a read failure means the connection is in an unknown state.
+          cursorFailed = true;
+          throw err;
+        }
+        if (rows.length === 0) break;
+        // Deliberately NOT `yield * rows`. Delegating to the array's iterator
+        // parks the generator inside that delegation, and an array iterator has
+        // no `throw` method — so a consumer abort (which arrives as
+        // `iterator.throw`) is converted into a TypeError instead of the real
+        // error. Yielding row by row keeps the generator suspended at its OWN
+        // yield, so the abort lands in the try/finally below unchanged.
+        for (const row of rows) yield row;
+      }
+    } finally {
+      // ⚑ Only close the portal on a connection that can still answer.
+      // `cursor.close()` waits for a `readyForQuery` that a dead backend will
+      // never send, so closing on a lost connection never settles: the release
+      // below would never run (pool slot gone until restart) and the generator
+      // would never finish, so `Readable.from`'s destroy never completes and
+      // the response chain never settles either. A discarded client has no
+      // portal worth closing anyway.
+      //
+      // Two ways to know it is not worth trying: `cursor.read` threw
+      // (`cursorFailed`), or the client reported the loss to our listener while
+      // the generator was parked at a yield (`connectionLost`) — the second is
+      // the path an aborting consumer takes, where nothing was mid-read. The
+      // race covers the remainder, a backend that dies during an otherwise
+      // healthy close's round trip.
+      if (!cursorFailed && !connectionLost) {
+        try { await Promise.race([cursor.close(), lost]); } catch (e) { /* best-effort cursor cleanup */ }
+      }
+      client.removeListener('error', swallowClientError);
+      // Re-read `connectionLost`: the race above exists precisely because it can
+      // become true while we are waiting on the close.
+      client.release(cursorFailed || connectionLost
+        ? new Error('queryIterable: connection lost or cursor read failed; discarding client')
+        : undefined);
+    }
   }
 
   /**

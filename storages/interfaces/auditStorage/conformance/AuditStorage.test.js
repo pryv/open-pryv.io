@@ -175,6 +175,26 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
           const countAfter = await userDb.countEvents();
           assert.strictEqual(countAfter, countBefore);
         });
+
+        it('[SQ18] exportAllEventsStreamed() (when present) must yield the same raw rows as exportAllEvents()', async function () {
+          if (typeof userDb.exportAllEventsStreamed !== 'function') return this.skip();
+          const arrayRows = await userDb.exportAllEvents();
+          const streamedRows = [];
+          for await (const row of userDb.exportAllEventsStreamed()) streamedRows.push(row);
+          // Both run the same SELECT with no ORDER BY, so compare as sets keyed
+          // by eventid: an incidental scan-order difference is not a defect and
+          // must not flake this.
+          const byEventid = (a, b) => String(a.eventid).localeCompare(String(b.eventid));
+          assert.deepStrictEqual([...streamedRows].sort(byEventid), [...arrayRows].sort(byEventid));
+        });
+
+        it('[SQ19] exportAllEventsStreamed() (when present) on an empty store must yield nothing', async function () {
+          const emptyDb = await storage.forUser(getUserId() + '-empty-streamed');
+          if (typeof emptyDb.exportAllEventsStreamed !== 'function') return this.skip();
+          const rows = [];
+          for await (const row of emptyDb.exportAllEventsStreamed()) rows.push(row);
+          assert.strictEqual(rows.length, 0);
+        });
       });
 
       it('[SQ16] deleteUser() must remove the user database', async () => {

@@ -182,11 +182,21 @@ export default async function produceDelegationsApiMethods (api: { register (...
       const id = await localUserId(username);
       return { found: id != null, isSelf: true, userId: id ?? undefined, hostSlug: slugifyHost(self), host: self };
     }
-    // Cross-core: derive the peer core's base URL + host from the registry.
-    const info = (await platform.getCoreInfo(coreId)) as { baseUrl?: string; url?: string; host?: string } | null;
-    const coreBaseUrl = info?.baseUrl || info?.url || null;
-    const host = info?.host || (coreBaseUrl != null ? safeHost(coreBaseUrl) : null);
-    if (coreBaseUrl == null || host == null) {
+    // Cross-core: resolve the peer core's public URL through the platform
+    // helper, which knows the explicit `core.url` a peer advertises through its
+    // registry row and otherwise derives the URL from `core.id + dns.domain`.
+    // Reading the registry row here instead would only ever see an explicit
+    // `core.url`, which neither the config wizard nor the bootstrap bundle
+    // writes — that made every cross-core call fail on a normal dns-active
+    // deployment. `resolveTargetCore()` below already went through the helper.
+    const coreBaseUrl = platform.coreIdToUrl(coreId);
+    const host = safeHost(coreBaseUrl);
+    // The helper falls back to THIS core's own URL when it can resolve neither
+    // (no cached peer url, no domain). Delivering a cross-core invite to
+    // ourselves would be worse than refusing it, so "resolved to self" counts
+    // as unresolved: we already know coreId is not this core.
+    const selfBaseUrl = thisCoreId != null ? platform.coreIdToUrl(thisCoreId) : null;
+    if (host == null || (selfBaseUrl != null && coreBaseUrl === selfBaseUrl)) {
       throw delegation.attach.delegationError(
         delegation.errorIds.DelegationErrorIds.UNKNOWN_CORE,
         'Could not resolve the delegate account core endpoint', 400);

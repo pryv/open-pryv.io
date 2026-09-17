@@ -39,6 +39,14 @@ export interface CoreInfo {
   cname?: string;
   hosting?: string;
   available?: boolean;
+  /**
+   * The core's public base URL, written by `Platform.registerSelf()` only when
+   * that core has an explicit `core.url` configured. Absent on a deployment
+   * that lets the URL be derived from `core.id + dns.domain`, so a consumer
+   * must never treat "no url here" as "unknown core" — resolve through
+   * `Platform.coreIdToUrl()` instead.
+   */
+  url?: string;
   [key: string]: unknown;
 }
 

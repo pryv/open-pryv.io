@@ -82,6 +82,7 @@ const ErrorIds = {
   ForbiddenAccountEventModification: 'forbidden-none-editable-account-streams',
   ForbiddenToChangeAccountStreamId: 'forbidden-change-account-streams-id',
   ForbiddenToEditNoneditableAccountFields: 'forbidden-to-edit-noneditable-account-fields',
+  ForbiddenAccountEmailEvent: 'forbidden-account-email-event',
   MissingRequiredField: 'missing-required-field',
   NewPasswordFieldIsRequired: 'newPassword-required'
 };

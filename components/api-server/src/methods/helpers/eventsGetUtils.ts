@@ -556,7 +556,10 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
         cb();
       }
     });
-    return stream.pipe(counter);
+    // pipeThrough, not pipe — see the store-side wrap in MallUserEvents: this is
+    // one of the boundaries that used to swallow an abort on its way to the
+    // client-holding source.
+    return utils.pipeThrough(stream, counter);
   }
   if (params.arrayOfStreamQueriesWithStoreId?.length === 0) {
     result.events = [];
@@ -589,7 +592,7 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
     const ss = storeSettings as { attachments?: { setFileReadToken?: boolean } } | null;
     let stream = eventsStream;
     if (ss?.attachments?.setFileReadToken) {
-      stream = stream.pipe(new SetFileReadTokenStream({
+      stream = utils.pipeThrough(stream, new SetFileReadTokenStream({
         access: context.access,
         filesReadTokenSecret
       }));

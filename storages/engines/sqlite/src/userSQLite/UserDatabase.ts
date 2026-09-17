@@ -171,6 +171,24 @@ function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): No
       }
       return res;
     },
+    /**
+     * ⚑ Without this, destroying the readable never closes the underlying
+     * statement iterator: `Readable.from` closes its iterator through
+     * `return()` when one exists and does nothing otherwise, so an aborted read
+     * left the iterator open forever.
+     *
+     * What that cost is worth being precise about. Writes were NOT blocked:
+     * better-sqlite3 refuses them while an iterator is open, but user databases
+     * run in `unsafeMode` (see `concurrentSafeWrite.ts`), which disables that
+     * guard. `close()` however keeps the check whatever the mode, so a leaked
+     * iterator made this user's handle unclosable, which is what account
+     * deletion and the handle cache's eviction both need. The un-reset
+     * statement also pins the WAL read mark, holding back checkpointing.
+     */
+    return: function (): IteratorResult<DomainEvent> {
+      if (typeof iterateSource.return === 'function') iterateSource.return();
+      return { value: undefined, done: true };
+    },
     [Symbol.iterator]: function (): IterableIterator<DomainEvent> {
       return iterateTransform;
     }
@@ -298,6 +316,19 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
  */
 UserDatabase.prototype.exportAllEvents = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getAll.all();
+};
+
+/**
+ * Stream all raw event rows from the database, one at a time, for backup.
+ * Async generator so every export producer presents a uniform AsyncIterable;
+ * it wraps better-sqlite3's `.iterate()`, whose read lock is released when the
+ * consumer exhausts or breaks out of the iteration (the generator forwards
+ * `return()` to the inner iterator). Memory stays O(1) in the row count.
+ */
+UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDatabaseInstance): AsyncGenerator<EventRow> {
+  for (const row of this.eventQueries.getAll.iterate()) {
+    yield row;
+  }
 };
 
 /**
