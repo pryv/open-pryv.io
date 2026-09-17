@@ -73,7 +73,7 @@ test/             Integration test entry, see `just test …` in justfile
 
 ## Running locally
 
-Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite, bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 24.x below 24.19.0 (see [INSTALL.md](./INSTALL.md): later 24.x releases abort on SQLite), PostgreSQL 14+ (or SQLite, bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env     # prepares var-pryv/ layout + launches PG/rqlite binaries

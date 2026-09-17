@@ -2,8 +2,9 @@
 
 ## Prerequisites
 
-- **Node.js** 24.x **below 24.19.0** (matches `engines.node` in `package.json`). Node 24.19.0 and
-  later abort the process when a SQLite statement is garbage-collected
+- **Node.js** 24.x **below 24.19.0** (matches `engines.node` in `package.json`). Once the SQLite
+  driver is built against Node 24.19+ headers, which is what installing on 24.19 or later does, the
+  process aborts when a SQLite statement is garbage-collected
   ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)); SQLite is the default audit
   engine, so this hits every native install. The Docker image is not affected (it pins Node
   24.18.0). See "Node major bumps" below for pinning the version.
@@ -642,7 +643,7 @@ been upgraded by a routine `apt upgrade`):
 
 ```bash
 apt-cache madison nodejs                      # pick a 24.18.x (or earlier 24.x) entry
-sudo apt-get install -y nodejs=24.18.0-1nodesource1
+sudo apt-get install -y nodejs=24.18.1-1nodesource1
 sudo apt-mark hold nodejs
 ```
 

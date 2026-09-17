@@ -6,6 +6,8 @@
 # Slim (Debian bookworm-slim) carries far fewer OS-package CVEs than the full
 # bookworm variant (Grype 2026-07 base scan: Critical 60 -> 8, High 248 -> 21)
 # while still apt-installing the build deps the native modules need below.
+# Do NOT re-pin past Node 24.18.x until nodejs/node#65446 is fixed: better-sqlite3
+# rebuilt against 24.19+ headers aborts the process on statement garbage collection.
 FROM node:24-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
 
 WORKDIR /app
