@@ -58,6 +58,16 @@ and `INSTALL.md` shows how to install and hold a suitable version.
 so the SQLite driver is rebuilt against the older headers. A NodeSource `setup_24.x` install or a routine `apt upgrade` lands on the
 latest 24.x. The Docker image is not affected (it pins Node 24.18.0).
 
+### Fixed
+
+- **Concurrent logins with the same `appId` no longer hand back a dead token.**
+  When two `auth.login` calls for the same user and app raced while the app's
+  previous session had expired, both minted a fresh session and each overwrote
+  the personal access token, so the losing call returned a token that was on no
+  access and its first API request answered `403 Cannot find access from token`.
+  The token rotation is now a compare-and-swap: the concurrent logins converge on
+  a single live token, and the losing call drops its orphan session.
+
 ## 2.0.0-rc.21 — 2026-09-17
 
 ### CMC: an invite reports its outcome, and a refusal reaches the requester
