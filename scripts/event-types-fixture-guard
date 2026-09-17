@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# Event-types fixture drift guard — run via `just lint` (lint-event-types).
+#
+# `test/event-types-flat.json` is a hand-copied snapshot of the published
+# event-type catalogue. `test/service-info.json` serves it as
+# `"eventTypes": "file://test/event-types-flat.json"`, and the business unit
+# tests load it directly, so every suite that validates event content validates
+# against that copy. Nothing tied the copy to its source: it was refreshed only
+# when somebody remembered, and it had drifted by 20 types and two months when
+# this guard was written.
+#
+# The drift is silent in BOTH directions, which is why it needs a gate rather
+# than a habit: a type added upstream is exercised by no test until the copy is
+# refreshed, and a suite can pass against a catalogue no deployed client is
+# served.
+#
+# The `version` field does NOT detect it — the catalogue is republished under
+# the same version — so the guard compares content, canonicalised (key order
+# and whitespace ignored) so a reformat of the published file is not reported
+# as drift.
+#
+# Refresh with:  just update-event-types-fixture
+#
+# Network policy: this guard FAILS on drift and SKIPS when the catalogue cannot
+# be reached. A github.io outage must not redden every build; an unnoticed
+# two-month drift is the thing worth failing on.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
+FIXTURE=test/event-types-flat.json
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+if ! curl -sS -L --fail --max-time 30 -o "$TMP" "$SCHEMA_URL"; then
+  echo "event-types fixture guard: SKIPPED — could not fetch $SCHEMA_URL" >&2
+  exit 0
+fi
+
+node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+
+const [fixturePath, publishedPath, url] = process.argv.slice(1);
+
+// Canonical form: sorted keys, no insignificant whitespace. Compares the
+// CATALOGUE, not the serialization.
+const canonical = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+const digest = (path) => {
+  const parsed = JSON.parse(readFileSync(path, "utf-8"));
+  return { parsed, sha: createHash("sha256").update(canonical(parsed)).digest("hex") };
+};
+
+let fixture, published;
+try {
+  fixture = digest(fixturePath);
+} catch (err) {
+  console.error(`event-types fixture guard: cannot read ${fixturePath}: ${err.message}`);
+  process.exit(1);
+}
+try {
+  published = digest(publishedPath);
+} catch (err) {
+  // Unparseable download: same class as an unreachable one (a captive portal
+  // or an error page served with 200), so skip rather than fail.
+  console.error(`event-types fixture guard: SKIPPED — ${url} did not return valid JSON (${err.message})`);
+  process.exit(0);
+}
+
+if (fixture.sha === published.sha) {
+  console.log(`event-types fixture guard: OK (${Object.keys(published.parsed.types ?? {}).length} types, version ${published.parsed.version})`);
+  process.exit(0);
+}
+
+const fixtureTypes = new Set(Object.keys(fixture.parsed.types ?? {}));
+const publishedTypes = new Set(Object.keys(published.parsed.types ?? {}));
+const missing = [...publishedTypes].filter((t) => !fixtureTypes.has(t));
+const extra = [...fixtureTypes].filter((t) => !publishedTypes.has(t));
+
+console.error(`event-types fixture guard: DRIFT — ${fixturePath} differs from ${url}`);
+console.error(`  fixture:   ${fixtureTypes.size} types, version ${fixture.parsed.version}`);
+console.error(`  published: ${publishedTypes.size} types, version ${published.parsed.version}`);
+if (missing.length > 0) console.error(`  types published but absent from the fixture: ${missing.join(", ")}`);
+if (extra.length > 0) console.error(`  types in the fixture but no longer published: ${extra.join(", ")}`);
+if (missing.length === 0 && extra.length === 0) console.error("  same type names; a definition changed (description, properties or constraints)");
+console.error("");
+console.error("  Re-vendor it deliberately and run the suites against it:");
+console.error("    just update-event-types-fixture");
+process.exit(1);
+' "$FIXTURE" "$TMP" "$SCHEMA_URL"
