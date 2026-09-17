@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### CMC: two legacy lookups read the wrong event
+
+Two fallback paths looked an event up by id with a query that does not filter
+on id, so they read the account's newest event instead:
+- a peer accept that carries neither the requester's origin stream nor its app
+  code (older accepters) could be anchored under an unrelated app scope;
+- a withdrawal on an open link for a relationship minted before the capability
+  id was recorded could fail to clear the subject from that link (so they could
+  not consent again through it), or clear them from another offer.
+Both now read exactly the event named, and only when it is a
+`consent/request-cmc`.
+
 ### CMC: approving a collector's scope request now changes the grant
 
 A user answering a collector's `consent/scope-request-cmc` with

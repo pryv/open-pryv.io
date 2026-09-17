@@ -385,10 +385,10 @@ async function resolveCapabilityIdFromOffer (
 ): Promise<string | null> {
   const offerEventId = event.content?.offerEventId;
   if (typeof offerEventId !== 'string' || offerEventId.length === 0) return null;
-  if (mall.events?.get == null) return null;
+  if (mall.events?.getOne == null) return null;
   try {
-    const list = await mall.events.get(userId, { id: offerEventId });
-    const offer = Array.isArray(list) ? list[0] : null;
+    // getOne, not get({ id }): the events query does not filter on `id`.
+    const offer = await mall.events.getOne(userId, offerEventId);
     if (offer == null) return null;
     // `offerEventId` is peer-supplied. The blast radius is already bounded — the
     // accepter we clear is the SERVER-stamped counterparty of the createdBy

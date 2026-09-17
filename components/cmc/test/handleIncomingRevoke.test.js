@@ -53,12 +53,13 @@ function fakeMall (opts = {}) {
       },
     },
     events: {
-      async get (userId, params) {
-        if (params && params.id) {
-          const e = eventsById.get(params.id);
-          return e ? [e] : [];
-        }
-        return [...eventsById.values()];
+      // Like the real mall: `get` does not filter on `id` (newest first),
+      // `getOne` looks the id up.
+      async get () {
+        return [...eventsById.values()].reverse();
+      },
+      async getOne (userId, id) {
+        return eventsById.get(id) ?? null;
       },
     },
   };
@@ -67,6 +68,12 @@ function fakeMall (opts = {}) {
 function seedCapability (mall, capId, acceptedBy) {
   mall.accessesById.set('cap-acc', {
     id: 'cap-acc',
+    clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
+  });
+}
+function seedCapability2 (mall, capId, acceptedBy) {
+  mall.accessesById.set('cap-acc-2', {
+    id: 'cap-acc-2',
     clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
   });
 }
@@ -126,6 +133,24 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     });
     assert.equal(res.cleared, true);
     assert.equal(acceptedByOf(mall, 'cap-3').length, 0);
+  });
+
+  it('[CIR3B] legacy bridge reads the offer the revoke names, not the newest event', async () => {
+    const mall = fakeMall();
+    seedCapability(mall, 'cap-3b', [{ ...SUBJECT, acceptedAt: 6000 }]);
+    seedCapability2(mall, 'cap-other', [{ ...SUBJECT, acceptedAt: 7000 }]);
+    seedBackChannel(mall, 'bc-3b', { counterparty: SUBJECT });
+    mall.eventsById.set('offer-3b', { id: 'offer-3b', type: 'consent/request-cmc', content: { capabilityId: 'cap-3b' } });
+    // A newer, unrelated offer: a lookup that ignores the id would pick it.
+    mall.eventsById.set('offer-newer', { id: 'offer-newer', type: 'consent/request-cmc', content: { capabilityId: 'cap-other' } });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'bc-3b', content: { offerEventId: 'offer-3b' } },
+      deps: { mall },
+    });
+    assert.equal(res.cleared, true);
+    assert.equal(acceptedByOf(mall, 'cap-3b').length, 0);
+    assert.equal(acceptedByOf(mall, 'cap-other').length, 1, 'the other capability must keep its accepter');
   });
 
   it('[CIR4] unresolvable capability → no-op success, no throw, no write', async () => {

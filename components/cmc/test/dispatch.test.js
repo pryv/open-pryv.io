@@ -202,13 +202,11 @@ describe('[CMCDISP] cmc/dispatch', () => {
   describe('[CMCDISP-INB] dispatch routes consent/accept-cmc on :_cmc:inbox → handleIncomingAccept', () => {
     it('[CD11] inbox-direction routes to handleIncomingAccept (mints back-channel + provisions anchors)', async () => {
       const mall = fakeMall();
-      // Stub events.get so handleIncomingAccept's resolveRequestScope
+      // Stub events.getOne so handleIncomingAccept's resolveRequestScope
       // can find the request event by id.
-      mall.events.get = async () => [{
-        id: 'orig-req-1',
-        type: 'consent/request-cmc',
-        streamIds: [':_cmc:apps:my-app:campaign-2026'],
-      }];
+      mall.events.getOne = async (_userId, id) => (id === 'orig-req-1'
+        ? { id: 'orig-req-1', type: 'consent/request-cmc', streamIds: [':_cmc:apps:my-app:campaign-2026'] }
+        : null);
       const { fetch } = fakeFetch({ status: 200, body: {} });
       const r = await dispatch({
         userId: 'u1',

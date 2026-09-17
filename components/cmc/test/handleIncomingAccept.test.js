@@ -42,9 +42,15 @@ function fakeMall (opts = {}) {
       },
     },
     events: {
+      // Like the real mall: `get` does not filter on `id` (newest first, here
+      // an unrelated event under another app), `getOne` looks the id up.
       async get (_userId, _params) {
         calls.eventsGot += 1;
-        return requestEvent ? [requestEvent] : [];
+        return requestEvent ? [NEWEST_UNRELATED_EVENT, requestEvent] : [NEWEST_UNRELATED_EVENT];
+      },
+      async getOne (_userId, id) {
+        calls.eventsGot += 1;
+        return requestEvent != null && requestEvent.id === id ? requestEvent : null;
       },
       async create (_userId, params) {
         calls.eventsCreated.push(params);
@@ -86,6 +92,13 @@ const ORIGINAL_REQUEST_EVENT = {
   type: 'consent/request-cmc',
   streamIds: [':_cmc:apps:my-app:campaign-2026'],
   content: { request: {} },
+};
+
+const NEWEST_UNRELATED_EVENT = {
+  id: 'newest-1',
+  type: 'message/chat-cmc',
+  streamIds: [':_cmc:apps:other-app:chats:bob--example-com'],
+  content: { content: 'hi' },
 };
 
 describe('[CMCIA] cmc/handleIncomingAccept', () => {

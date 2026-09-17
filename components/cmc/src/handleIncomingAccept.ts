@@ -541,10 +541,13 @@ async function resolveRequestScope (params: {
   if (typeof reqId !== 'string' || reqId.length === 0) {
     return { scopeStreamId: null, appCode: null };
   }
+  if (mall.events?.getOne == null) return { scopeStreamId: null, appCode: null };
   try {
-    const events = await mall.events.get(userId, { id: reqId, limit: 1 });
-    const ev = events?.[0] as { streamIds?: string[] } | undefined;
-    const reqStreamIds: string[] = Array.isArray(ev?.streamIds) ? ev.streamIds : [];
+    // getOne, not get({ id }): the events query does not filter on `id`, so
+    // get() would hand back the newest event of any kind.
+    const ev = await mall.events.getOne(userId, reqId) as { type?: string; streamIds?: string[] } | null;
+    if (ev == null || ev.type !== C.ET_REQUEST) return { scopeStreamId: null, appCode: null };
+    const reqStreamIds: string[] = Array.isArray(ev.streamIds) ? ev.streamIds : [];
     for (const sid of reqStreamIds) {
       const appCode = C.getAppCode(sid);
       if (appCode != null) {
