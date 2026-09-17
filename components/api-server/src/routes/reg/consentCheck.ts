@@ -110,7 +110,11 @@ const TOKEN_FAILURE_IDS = new Set([
 async function loadLocalAccess (
   app: AppLike, username: string, token: string
 ): Promise<{ access: LoadedAccess } | { failure: ConsentCheckOutcome }> {
-  const source = { name: 'http', ip: null };
+  // Named so an operator's custom auth step can tell this apart from a real
+  // client request: it runs the same loader, but with no request headers of
+  // its own, so a step that inspects headers would otherwise refuse every
+  // annotated sign-in.
+  const source = { name: 'consent-check', ip: null };
   let context;
   try {
     // Constructed inside the try: MethodContext parses the authorization
@@ -167,10 +171,21 @@ async function loadRemoteAccess (
       }
     };
   }
-  // 401/403/404 are the token's verdict and belong to the page. Anything
-  // else that is not a success (a 421 from a stale core mapping, a 5xx, a
-  // proxy error page) means this core could not get an answer.
+  // 401/403/404 are the token's verdict and belong to the page. A 404 is
+  // ambiguous on its own, because a reverse proxy in front of the other
+  // core answers the same way for a misrouted path, so when the body
+  // carries an API error id we believe it rather than the status.
   if (response.status === 401 || response.status === 403 || response.status === 404) {
+    if (response.status === 404 && !(await hasApiErrorId(response))) {
+      return {
+        failure: {
+          ok: false,
+          kind: 'unavailable',
+          reason: 'core-unreachable',
+          detail: 'a 404 that carries no API error, so probably not this core answering'
+        }
+      };
+    }
     return { failure: { ok: false, kind: 'grant', reason: 'token-invalid' } };
   }
   if (!response.ok) {
@@ -217,6 +232,17 @@ async function loadRemoteAccess (
       permissions: (body.permissions as Permission[] | undefined) ?? null
     }
   };
+}
+
+/** Did this error response come from a Pryv core, rather than from
+ * something in front of it? A core always names the error. */
+async function hasApiErrorId (response: { json: () => Promise<unknown> }): Promise<boolean> {
+  try {
+    const body = await response.json() as { error?: { id?: unknown } };
+    return typeof body?.error?.id === 'string';
+  } catch {
+    return false;
+  }
 }
 
 /** Is `url` something we can actually send a request to? `coreIdToUrl`

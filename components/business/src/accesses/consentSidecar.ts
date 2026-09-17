@@ -37,7 +37,7 @@
  * input; the route maps that to `400 invalid-parameters`.
  */
 
-import { normalizePermissions, stripConsentAnnotations, isStreamPermission } from './permissionSet.ts';
+import { normalizePermissions, isStreamPermission } from './permissionSet.ts';
 
 import type { Permission, StreamPermission, FeaturePermission } from '../types/public.ts';
 
@@ -121,11 +121,16 @@ export function resolveConsentSidecar (requestedPermissions: unknown, sidecar: u
 
   let permissions: ConsentFormPermission[];
   try {
-    // Consent-form normalization for its guards (lexicon + exclusion mask),
-    // then stripped: the sidecar annotates, nothing else does.
-    permissions = stripConsentAnnotations(
-      normalizePermissions(requestedPermissions, { consent: true })
-    ) as ConsentFormPermission[];
+    // Plain normalization first, which drops any annotation written inside
+    // an entry: the sidecar is the only source of those, so an inline pair
+    // must not be reported as a contradiction on a field that does not
+    // count here.
+    const plain = normalizePermissions(requestedPermissions);
+    // Then the consent-form pass purely for its exclusion-mask guard: a
+    // `level: 'none'` entry may not be offered, because dropping a mask
+    // WIDENS access instead of narrowing it.
+    normalizePermissions(plain, { consent: true });
+    permissions = plain as ConsentFormPermission[];
   } catch (e: unknown) {
     throw new ConsentSidecarError((e as Error)?.message ?? String(e));
   }

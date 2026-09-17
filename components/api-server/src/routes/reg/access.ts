@@ -99,7 +99,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // both read. A request without it runs no new validation and is
       // processed exactly as it was before consent forms existed.
       let consentForm;
-      if (req.body.consent !== undefined) {
+      // `!= null`, not `!== undefined`: a client that serialises an absent
+      // option as `null` degrades on an older core (which ignores the
+      // unknown field) and must not fail here instead.
+      if (req.body.consent != null) {
         try {
           consentForm = resolveConsentSidecar(requestedPermissions, req.body.consent);
         } catch (err: unknown) {

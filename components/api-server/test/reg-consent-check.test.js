@@ -102,7 +102,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
 
   it('[RC03] must tell a rejected token apart from a core it could not reach', async () => {
     // The page's fault: the token is no good. 400 territory.
-    for (const status of [401, 403, 404]) {
+    for (const status of [401, 403]) {
       const outcome = await checkAcceptedGrant(
         { app: APP, username: 'alice', token: 'tok-1', consentForm: CONSENT_FORM },
         { platform: remotePlatform('https://core-b.example.com/'), fetch: accessInfoFetch(status, {}) }
@@ -110,6 +110,26 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
       assert.strictEqual(outcome.kind, 'grant', 'status ' + status);
       assert.strictEqual(outcome.reason, 'token-invalid', 'status ' + status);
     }
+    // A 404 is the token's verdict only when a core answered it. A core
+    // always names its error; a reverse proxy in front of one does not, and
+    // blaming the page for a misrouted path would make it destroy a good
+    // access.
+    const fromCore = await checkAcceptedGrant(
+      { app: APP, username: 'alice', token: 'tok-1', consentForm: CONSENT_FORM },
+      {
+        platform: remotePlatform('https://core-b.example.com/'),
+        fetch: accessInfoFetch(404, { error: { id: 'unknown-resource' } })
+      }
+    );
+    assert.strictEqual(fromCore.kind, 'grant');
+    assert.strictEqual(fromCore.reason, 'token-invalid');
+
+    const fromProxy = await checkAcceptedGrant(
+      { app: APP, username: 'alice', token: 'tok-1', consentForm: CONSENT_FORM },
+      { platform: remotePlatform('https://core-b.example.com/'), fetch: accessInfoFetch(404, {}) }
+    );
+    assert.strictEqual(fromProxy.kind, 'unavailable');
+    assert.strictEqual(fromProxy.reason, 'core-unreachable');
     // The operator's or the network's fault: no verdict was obtained. 503
     // territory, and crucially NOT a signal for the page to delete the
     // access it just minted.
@@ -169,9 +189,10 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
         fetch: fetchFn
       }
     );
-    // It went local, where this fake app has no real storage layer, so the
-    // outcome is a storage error. What matters is that nothing was fetched.
+    // It went local, where the real loader runs and finds no such user, so
+    // the verdict is about the token. What matters most is that nothing was
+    // fetched: a single-core platform has no other core to ask.
     assert.strictEqual(fetchFn.calls.length, 0);
-    assert.strictEqual(outcome.ok, false);
+    assert.deepStrictEqual(outcome, { ok: false, kind: 'grant', reason: 'token-invalid' });
   });
 });
