@@ -20,7 +20,7 @@ SCRIPT_FOLDER=$(cd "$(dirname "$0")"; pwd)
 cd "$SCRIPT_FOLDER/.."
 
 TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
+trap 'rm -f "$TMP" test/event-types-flat.json.tmp components/business/src/types/event-types.default.json.tmp' EXIT
 
 echo ""
 echo "Downloading $SCHEMA_URL ..."
