@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## the in-process HFS ingress proxy tears its worker request down when the client goes away
+
+On raw deploys the API process forwards HF series traffic to the co-located HFS
+worker by piping the client request into the worker request and the worker answer
+back into the client response, and `.pipe()` forwards destroy in neither direction.
+A client aborting mid-upload left the worker request half-open until the worker's
+request timeout (300 s). A client leaving before or during the answer left the proxy
+consuming the worker's answer into the void to its end, holding the worker
+connection for as long as the answer lasted, indefinitely for a long streamed
+query. Each hop now propagates the close of the stream it forwards: a client request
+that closes before its body completed destroys the worker request, the response hop
+runs under `pipeline()`, and a client already gone when the worker answers gets
+nothing piped. A teardown the proxy caused itself is logged at debug, not as an
+upstream failure. nginx-fronted deploys never ran this code.
+
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 
 An attachment download pipes the file read stream into the HTTP response, and
