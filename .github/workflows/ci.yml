@@ -121,6 +121,16 @@ jobs:
         # PostgreSQL audit step above exists: an engine nothing runs is an
         # engine whose failures nobody sees.
         run: just clean-test-data && just test-sqlite storages:sqlite
+        env:
+          # `just clean-test-data` still resets the PostgreSQL databases; without
+          # PGPASSWORD, dropdb waits on a password prompt until its 30 s timeout
+          # and the recipe reports PostgreSQL as unreachable.
+          PGPASSWORD: pryv
+          storages__engines__postgresql__host: localhost
+          storages__engines__postgresql__port: 5432
+          storages__engines__postgresql__user: pryv
+          storages__engines__postgresql__password: pryv
+          storages__engines__postgresql__database: pryv-node-test
 
   lint:
     runs-on: ubuntu-22.04
