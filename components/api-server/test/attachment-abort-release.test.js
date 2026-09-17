@@ -24,6 +24,9 @@ const fs = require('node:fs');
 //   file read stream 'close' is emitted only after the fd was closed, so this is
 //   an assertion at the resource, not at the response.
 // - the process fd count, as a cross-check that nothing else is left behind.
+//   Written for the filesystem file engine, the default of both matrices; on the
+//   PostgreSQL file engine the `closed` observable still holds but there is no
+//   per-download fd, so the count cross-check says nothing there.
 // - the attachment is 16 MiB. A file that fits in the loopback and socket
 //   buffers is fully read before the abort lands and closes its fd unaided,
 //   which makes the test pass against the leak. Keep it large.
@@ -34,7 +37,7 @@ describe('[ATAB] attachment downloads release the file when the client goes away
 
   const SIZE = 16 * 1024 * 1024;
 
-  let fixtures, mall, originalGetAttachment;
+  let fixtures, mall, originalGetAttachment, spyShadowsOwnProperty;
   let username, token, eventId, fileId;
   let captured = [];
   let gate = null;
@@ -64,6 +67,7 @@ describe('[ATAB] attachment downloads release the file when the client goes away
 
     mall = await require('mall').getMall();
     originalGetAttachment = mall.events.getAttachment;
+    spyShadowsOwnProperty = Object.hasOwn(mall.events, 'getAttachment');
     mall.events.getAttachment = async function (...args) {
       const stream = await originalGetAttachment.apply(this, args);
       captured.push(stream);
@@ -75,7 +79,11 @@ describe('[ATAB] attachment downloads release the file when the client goes away
 
   after(async function () {
     if (mall != null && originalGetAttachment != null) {
-      mall.events.getAttachment = originalGetAttachment;
+      if (spyShadowsOwnProperty) {
+        mall.events.getAttachment = originalGetAttachment;
+      } else {
+        delete mall.events.getAttachment; // back to the prototype method
+      }
     }
     if (fixtures != null) {
       try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
@@ -141,17 +149,28 @@ describe('[ATAB] attachment downloads release the file when the client goes away
     return fs.readdirSync('/dev/fd').length;
   }
 
+  function serverConnections () {
+    return new Promise((resolve, reject) => {
+      global.coreServer.getConnections((err, count) => err ? reject(err) : resolve(count));
+    });
+  }
+
   it('[ATAB1] aborting mid-transfer closes the attachment file', async function () {
     await abortOnFirstChunk();
     assert.strictEqual(captured.length, 1);
     assert.ok(await until(() => captured[0].closed),
       'source fd must be released after the client aborted');
     assert.strictEqual(captured[0].destroyed, true);
+    assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+  });
 
-    // Cross-check at the process level: repeated aborts leave no fd behind.
+  it('[ATAB5] repeated aborts leave no file descriptor behind', async function () {
+    // Control download first, so every handle a download opens once (audit
+    // database, pooled clients) is already in the baseline.
     await coreRequest.get('/' + username + '/events/' + eventId + '/' + fileId)
       .set('Authorization', token);
-    await until(() => captured.every((s) => s.closed));
+    assert.ok(await until(() => captured.every((s) => s.closed)),
+      'control download must close its source before the baseline is taken');
     const baseline = fdCount();
     for (let i = 0; i < 8; i++) {
       await abortOnFirstChunk();
@@ -168,14 +187,19 @@ describe('[ATAB] attachment downloads release the file when the client goes away
     gate = release.promise;
     onEntered = entered.resolve;
 
+    const connectionsBefore = await serverConnections();
     const req = rawGet();
     req.on('error', () => { /* the abort we caused */ });
     await entered.promise;
     req.destroy();
-    // No server-side signal is observable from here, so give the server socket
-    // time to see the close and mark the response destroyed before the stream
-    // is released to the middleware. Loopback close delivery is sub-millisecond.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Wait for the SERVER socket to be torn down before releasing the stream to
+    // the middleware: the server decrements its connection count when the socket
+    // is destroyed, and marks the response destroyed one tick later. Releasing
+    // earlier would let the close listener carry the test green without the
+    // already-gone branch being exercised.
+    assert.ok(await until(async () => (await serverConnections()) <= connectionsBefore),
+      'server must observe the client close before the stream is released');
+    await new Promise((resolve) => setImmediate(resolve));
     release.resolve();
 
     assert.strictEqual(captured.length, 1);
@@ -214,6 +238,7 @@ describe('[ATAB] attachment downloads release the file when the client goes away
     const afterAbort = await counts();
     assert.strictEqual(afterAbort.valid, afterFull.valid, 'an abort must not be audited as a success');
     assert.strictEqual(afterAbort.error, afterFull.error, 'an abort must not be audited as an error');
+    assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
   });
 
   it('[ATAB4] a full download serves every byte and closes the file', async function () {
