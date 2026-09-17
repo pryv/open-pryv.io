@@ -29,6 +29,7 @@ const require = createRequire(import.meta.url);
  */
 
 const nock = require('nock');
+const { useNock } = require('test-helpers/src/nockScope.ts');
 const { getConfig } = require('@pryv/boiler');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { _resetMFASingletons } = require('business/src/mfa/index.ts');
@@ -90,13 +91,7 @@ const mfaConfig = {
 };
 
 describe('[MFAA] MFA acceptance (seq)', function () {
-  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
-  // suite leaves it active, later suites' REAL requests flow through the
-  // mock socket and intermittently die ("socket hang up"). Activate on
-  // entry (restore() in a previous suite deactivates globally), fully
-  // restore on exit.
-  before(() => { if (!nock.isActive()) nock.activate(); });
-  after(() => { nock.cleanAll(); nock.restore(); });
+  useNock();
 
   this.timeout(20000);
 

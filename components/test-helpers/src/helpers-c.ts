@@ -143,14 +143,19 @@ const baseHooks = base.getMochaHooks(disableIntegrityCheck || isParallelMode);
 // tests (e.g. reg-multicore restoreSingleCore) call
 // `config.injectTestConfig({})` to wipe the 'test' scope mid-suite —
 // `config.set()` survives that (memory scope > test scope).
+const { nockMochaHooks } = require('./nockScope.ts');
 const mochaHooks = {
   ...baseHooks,
   async beforeAll (this: any) {
+    nockMochaHooks.beforeAll();
     if (typeof baseHooks.beforeAll === 'function') {
       await baseHooks.beforeAll.call(this);
     }
     const { dependencies } = require('./dependencies.ts');
     await dependencies.init();
-  }
+  },
+  beforeEach: [nockMochaHooks.beforeEach, ...(baseHooks.beforeEach ? [baseHooks.beforeEach] : [])],
+  afterEach: [...(baseHooks.afterEach ? [baseHooks.afterEach] : []), nockMochaHooks.afterEach],
+  afterAll: [...(baseHooks.afterAll ? [baseHooks.afterAll] : []), nockMochaHooks.afterAll]
 };
 export { mochaHooks };
