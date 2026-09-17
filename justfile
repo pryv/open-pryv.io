@@ -104,6 +104,24 @@ test component *params:
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
+# Same as `test` but with the PostgreSQL AUDIT engine.
+#
+# ⚑ `storages.audit.engine` defaults to sqlite independently of the baseStorage
+# engine, so a plain `just test audit` never exercises the PostgreSQL audit code
+# — while the install wizard selects that engine for every PostgreSQL platform.
+# That gap is how a stream-filter defect that returned audit rows across
+# accounts stayed invisible. Run this before touching anything under
+# storages/engines/postgresql/src/UserAuditDatabasePG.ts.
+[positional-arguments]
+test-pg-audit component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
+    STORAGE_ENGINE=postgresql NODE_ENV=test storages__audit__engine=postgresql \
+        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+
 # Same as `test` but using the SQLite baseStorage engine
 [positional-arguments]
 test-sqlite component *params:
