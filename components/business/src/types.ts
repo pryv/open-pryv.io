@@ -12,6 +12,7 @@ const { fileURLToPath } = require('node:url');
 // components/business/src → repo root (anchor for repo-root-relative file:// URLs)
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const { deepMerge, fromCallback, jsonValidator } = require('utils');
+const { getLogger } = require('@pryv/boiler');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors.ts');
 const SeriesRowType = require('./types/series_row_type.ts').default;
@@ -27,8 +28,25 @@ type EventTypeInstance = {
 type Validator = {
   validate (content: unknown, schema: JsonSchema, cb: (err: Error | null) => void): void;
   validateSchema (s: unknown): boolean;
+  schemaShapeError (s: unknown): string | null;
   lastReport?: unknown;
 };
+
+// The whole-catalogue `validateSchema` check does not look inside `types`, so a
+// type whose own schema is malformed loads silently, and its validator then
+// fails to build: every event of that type is refused. Name each such type in
+// the log so the refusal has a visible cause. Behaviour is unchanged.
+let bundledTypesChecked = false;
+function warnAboutInvalidTypeSchemas (types: Record<string, unknown> | null | undefined, source: string): void {
+  if (types == null || typeof types !== 'object') return;
+  const validator = jsonValidator() as Validator;
+  for (const [name, schema] of Object.entries(types)) {
+    const problem = validator.schemaShapeError(schema);
+    if (problem != null) {
+      getLogger('event-types').warn(`Event type "${name}" from ${source} has an invalid schema, so every event of this type will be refused: ${problem}`);
+    }
+  }
+}
 
 // Returns true if the name given refers to a series type. Currently this means
 // that the name starts with SERIES_PREFIX.
@@ -86,6 +104,10 @@ class TypeRepository {
   _validator: Validator;
   constructor () {
     this._validator = jsonValidator() as Validator;
+    if (!bundledTypesChecked) {
+      bundledTypesChecked = true;
+      warnAboutInvalidTypeSchemas(defaultTypes.types, 'the bundled default event types');
+    }
   }
 
   /**
@@ -205,6 +227,7 @@ class TypeRepository {
     }
     const validator = this._validator;
     if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }
+    warnAboutInvalidTypeSchemas((eventTypesDefinition as { types?: Record<string, unknown> })?.types, sourceURL);
     // Overwrite defaultTypes with the merged list of type schemata.
     defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
   }

@@ -45,6 +45,45 @@ describe('[TYPR] business.types.TypeRepository', function () {
       await repository.tryUpdate(LIVE_SOURCE_URL);
       assert.strictEqual(repository.isKnown('mass/kg'), true);
     });
+    describe('[TYIS] invalid type schemas are named in the log', function () {
+      // A type whose own schema is malformed loads silently and every event of
+      // it is refused; the repository must say so. Loggers are created per call,
+      // so the warn method is intercepted on their shared prototype.
+      const fs = require('node:fs');
+      const os = require('node:os');
+      let warnings, loggerProto, originalWarn, catalogueDir;
+      beforeEach(function () {
+        warnings = [];
+        loggerProto = Object.getPrototypeOf(require('@pryv/boiler').getLogger('event-types'));
+        originalWarn = loggerProto.warn;
+        loggerProto.warn = function (msg) { warnings.push(String(msg)); };
+        catalogueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tyis-'));
+      });
+      afterEach(function () {
+        loggerProto.warn = originalWarn;
+        fs.rmSync(catalogueDir, { recursive: true, force: true });
+      });
+
+      it('[TYIS1] a downloaded catalogue with a malformed type schema warns naming that type', async function () {
+        const file = path.join(catalogueDir, 'catalogue.json');
+        fs.writeFileSync(file, JSON.stringify({
+          version: '0.0.0',
+          types: {
+            'tyis/broken': { type: 'object', additionalProperties: 'true' },
+            'tyis/fine': { type: 'number' }
+          }
+        }));
+        await repository.tryUpdate('file://' + file);
+        const mine = warnings.filter((w) => w.includes('tyis/'));
+        assert.strictEqual(mine.length, 1, JSON.stringify(warnings));
+        assert.match(mine[0], /"tyis\/broken"/);
+      });
+
+      it('[TYIS2] the vendored catalogue produces no such warning', async function () {
+        await repository.tryUpdate(VENDORED_SOURCE_URL);
+        assert.deepStrictEqual(warnings.filter((w) => w.includes('has an invalid schema')), []);
+      });
+    });
     it('[6VL6] should fail gracefully', async function () {
       try {
         await repository.tryUpdate('bahbahblacksheep');
