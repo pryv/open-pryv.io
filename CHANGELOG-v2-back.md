@@ -7,20 +7,24 @@ event content against until its startup download of the catalogue lands, and for
 as long as it runs when that download fails (the failure only logs a warning). It
 was last refreshed in October 2023: 23 published types were missing (among them
 the `consent/*-cmc`, `concentration/*` and `encrypted/aes-256-gcm` types) and 5
-definitions were behind. A core that could not reach the catalogue at boot served
+descriptions were behind. A core that could not reach the catalogue at boot served
 on that list, and every core did so during its startup window.
 
-The seed is now the published catalogue merged into the previous seed, with the
-same additive merge a running core applies to its download. That makes a core that
-cannot reach the catalogue validate exactly like one that can, and it keeps the
-three legacy `density/g-dl`, `density/mmol-l` and `density/mg-dl` types, which the
-catalogue renamed to `concentration/*` but which every running core still accepts
-through that merge. Dropping them would refuse new `series:density/*` events and is
-left as a separate decision.
+The seed is now the published catalogue applied onto the previous seed entry by
+entry: every published type (and extras, classes and sets entry) replaces the
+seed's, and entries no longer published are kept. A running core merges its
+download into the seed additively, so it still accepts types removed upstream;
+keeping them makes a core that cannot reach the catalogue validate exactly like one
+that can. That keeps the three legacy `density/g-dl`, `density/mmol-l` and
+`density/mg-dl` types, which the catalogue renamed to `concentration/*`. Dropping
+them would refuse new `series:density/*` events and is left as a separate decision.
 
-`just update-event-types` now performs that merge (it used to overwrite the seed)
-and re-checks it, and the catalogue guard in `just lint` and CI fails when merging
-the published catalogue into the seed would still change it.
+`just update-event-types` now re-vendors both the test fixture and the runtime seed
+(it used to overwrite the seed with the download) and re-checks them;
+`just update-event-types-fixture` is kept as an alias. The catalogue guard in
+`just lint` and CI fails when a published entry is missing from the seed or differs
+there, and it checks the seed against the test fixture when the published catalogue
+cannot be fetched, so that part no longer depends on the network.
 
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 

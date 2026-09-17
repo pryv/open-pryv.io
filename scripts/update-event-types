@@ -1,46 +1,44 @@
 #!/bin/bash
 
-# This script updates the default event types JSON schema file, the seed a core
-# validates incoming event content against until (and unless) its startup
-# download of the catalogue succeeds.
+# Re-vendors both copies of the published event-type catalogue, then checks them:
+# - `test/event-types-flat.json`, the test fixture: the published catalogue
+#   verbatim;
+# - `components/business/src/types/event-types.default.json`, the runtime seed a
+#   core validates against until (and unless) its startup download succeeds: the
+#   published catalogue applied onto the previous seed, keeping entries no longer
+#   published (see `scripts/event-types-catalogue.mjs` for why).
 #
-# The published catalogue is MERGED into the existing seed with the same
-# `deepMerge` a running core applies to its download, rather than replacing it:
-# the running merge is additive, so types removed upstream stay valid on every
-# core, and the seed must match that or an offline core would refuse types an
-# online one accepts. `scripts/event-types-fixture-guard` (in `just lint`)
-# checks the result.
+# Run the suites afterwards: these files are what tests and cores validate
+# event content against.
 
 set -euo pipefail
 
 SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
-LOCAL_PATH=components/business/src/types/event-types.default.json
 
 # working dir fix
 SCRIPT_FOLDER=$(cd "$(dirname "$0")"; pwd)
 cd "$SCRIPT_FOLDER/.."
 
 TMP=$(mktemp)
-trap 'rm -f "$TMP" "$LOCAL_PATH.tmp"' EXIT
+trap 'rm -f "$TMP"' EXIT
 
 echo ""
-echo "Downloading schema file from $SCHEMA_URL, merging into $LOCAL_PATH..."
-echo ""
-
+echo "Downloading $SCHEMA_URL ..."
 curl -sS -L --fail --connect-timeout 5 --max-time 30 -o "$TMP" "$SCHEMA_URL"
 
 node --input-type=module -e '
-import { readFileSync, writeFileSync } from "node:fs";
-import { deepMerge } from "./components/utils/src/deepMerge.ts";
-const [seedPath, publishedPath, outPath] = process.argv.slice(1);
-const published = JSON.parse(readFileSync(publishedPath, "utf-8"));
-if (published === null || typeof published !== "object" || typeof published.types !== "object") {
-  throw new Error("downloaded file is not an event-types catalogue");
-}
-const merged = deepMerge(JSON.parse(readFileSync(seedPath, "utf-8")), published);
-writeFileSync(outPath, JSON.stringify(merged, null, 2));
-' "$LOCAL_PATH" "$TMP" "$LOCAL_PATH.tmp"
-mv "$LOCAL_PATH.tmp" "$LOCAL_PATH"
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { FIXTURE_PATH, SEED_PATH, parseCatalogue, loadCatalogue, applyToSeed, serialize } from "./scripts/event-types-catalogue.mjs";
+const publishedText = readFileSync(process.argv[1], "utf-8");
+const published = parseCatalogue(publishedText);
+const writeAtomically = (path, content) => {
+  writeFileSync(path + ".tmp", content);
+  renameSync(path + ".tmp", path);
+};
+writeAtomically(FIXTURE_PATH, publishedText);
+writeAtomically(SEED_PATH, serialize(applyToSeed(loadCatalogue(SEED_PATH), published)));
+console.log(`Wrote ${FIXTURE_PATH} and ${SEED_PATH} (${Object.keys(published.types).length} published types, version ${published.version}).`);
+' "$TMP"
 
-echo "Done. Run the suites: this seed is what every core validates against first."
 echo ""
+EVENT_TYPES_URL="$SCHEMA_URL" ./scripts/event-types-fixture-guard

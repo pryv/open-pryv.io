@@ -3,7 +3,7 @@
 # Event-types catalogue drift guard — run via `just lint` (lint-event-types).
 #
 # Two vendored copies of the published event-type catalogue live in this repo,
-# and nothing tied either to its source:
+# and nothing tied either to its source (rules in `scripts/event-types-catalogue.mjs`):
 #
 # 1. `test/event-types-flat.json`, the TEST fixture. `test/service-info.json`
 #    serves it as `"eventTypes": "file://test/event-types-flat.json"`, and the
@@ -15,47 +15,34 @@
 # 2. `components/business/src/types/event-types.default.json`, the RUNTIME
 #    seed. A core validates against it until the catalogue download at startup
 #    lands, and indefinitely when that download fails (it only logs a warning).
-#    The download is merged INTO the seed additively (`deepMerge`), so types
-#    since removed upstream stay valid on every running core. The seed must
-#    therefore be what that merge produces: merging the published catalogue
-#    into it must change nothing. That keeps a core that cannot reach the
-#    catalogue identical to one that can, without silently dropping the legacy
-#    types running cores still accept. It was last refreshed in October 2023
-#    (23 published types missing, 5 definitions behind) when it joined this
-#    guard.
+#    Every published entry must be in it unchanged; entries no longer published
+#    are kept on purpose. It was last refreshed in October 2023 (23 published
+#    types missing, 5 descriptions behind) when it joined this guard.
 #
 # The `version` field does NOT detect drift (the catalogue is republished under
 # the same version), so the guard compares content, canonicalised (key order and
 # whitespace ignored). Array order IS significant (`required`, `enum`):
 # conservative, a reordering upstream is reported and costs one re-vendor.
 #
-# Refresh with:  just update-event-types-fixture   (test fixture)
-#                just update-event-types           (runtime seed)
+# Refresh both with:  just update-event-types
 #
-# Network policy: this guard FAILS on drift, and on a 404/410 (the catalogue
-# moved: the URL here is wrong, which is a real signal). It SKIPS when the
-# catalogue cannot be reached or returns something that is not a catalogue: a
-# github.io outage must not redden every build, an unnoticed drift is the thing
-# worth failing on. Under GitHub Actions a skip is raised as a workflow warning
-# so it is visible on the run, not buried in a green step.
+# Network policy: the seed is always checked, against the published catalogue
+# when it can be fetched and against the test fixture otherwise, so that part
+# never depends on the network. The fixture itself needs the published file: the
+# guard FAILS on drift, and on a 404/410 (the catalogue moved: the URL here is
+# wrong, which is a real signal), and SKIPS that part when the catalogue cannot be
+# reached or returns something that is not a catalogue. A github.io outage must
+# not redden every build. Under GitHub Actions a skip is raised as a workflow
+# warning so it is visible on the run, not buried in a green step.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
-FIXTURE=test/event-types-flat.json
-RUNTIME_SEED=components/business/src/types/event-types.default.json
-
-skip () {
-  echo "event-types catalogue guard: SKIPPED — $1" >&2
-  if [ -n "${GITHUB_ACTIONS:-}" ]; then
-    echo "::warning title=event-types catalogue guard skipped::$1"
-  fi
-  exit 0
-}
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
+SKIP_REASON=""
 HTTP_CODE=$(curl -sS -L --connect-timeout 5 --max-time 30 -o "$TMP" -w '%{http_code}' "$SCHEMA_URL")
 CURL_EXIT=$?
 case "$HTTP_CODE" in
@@ -65,98 +52,77 @@ case "$HTTP_CODE" in
     ;;
 esac
 if [ "$CURL_EXIT" -ne 0 ] || { [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" -ge 400 ]; }; then
-  skip "could not fetch $SCHEMA_URL (curl exit $CURL_EXIT, HTTP $HTTP_CODE)"
+  SKIP_REASON="could not fetch $SCHEMA_URL (curl exit $CURL_EXIT, HTTP $HTTP_CODE)"
 fi
 
 node --input-type=module -e '
-import { readFileSync } from "node:fs";
-import { deepMerge } from "./components/utils/src/deepMerge.ts";
+import { FIXTURE_PATH, SEED_PATH, canonical, loadCatalogue, applyToSeed, describeDifference } from "./scripts/event-types-catalogue.mjs";
 
-const [fixturePath, seedPath, publishedPath, url] = process.argv.slice(1);
-
-// Canonical form: sorted keys, no insignificant whitespace. Compares the
-// CATALOGUE, not the serialization.
-const canonical = (value) => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-};
-const load = (path) => {
-  const parsed = JSON.parse(readFileSync(path, "utf-8"));
-  if (parsed === null || typeof parsed !== "object" || parsed.types === null || typeof parsed.types !== "object") {
-    throw new Error("not an event-types catalogue (no \"types\" object)");
-  }
-  return parsed;
+const [publishedPath, url, fetchSkipReason] = process.argv.slice(1);
+const warnSkip = (message) => {
+  console.error(`event-types catalogue guard: SKIPPED the fixture check — ${message}`);
+  if (process.env.GITHUB_ACTIONS) console.log(`::warning title=event-types catalogue guard skipped::${message}`);
 };
 
-// What differs between a vendored copy and what it should be, by type and by
-// top-level section.
-const describe = (actual, expected) => {
-  const missing = Object.keys(expected.types).filter((t) => !(t in actual.types));
-  const extra = Object.keys(actual.types).filter((t) => !(t in expected.types));
-  const changed = Object.keys(expected.types)
-    .filter((t) => t in actual.types && canonical(expected.types[t]) !== canonical(actual.types[t]));
-  const sections = [...new Set([...Object.keys(actual), ...Object.keys(expected)])]
-    .filter((k) => k !== "types" && canonical(actual[k]) !== canonical(expected[k]));
-  return { missing, extra, changed, sections };
-};
-
-let fixture, seed, published;
-for (const [path, assign] of [[fixturePath, (v) => { fixture = v; }], [seedPath, (v) => { seed = v; }]]) {
+let fixture, seed;
+for (const [path, assign] of [[FIXTURE_PATH, (v) => { fixture = v; }], [SEED_PATH, (v) => { seed = v; }]]) {
   try {
-    assign(load(path));
+    assign(loadCatalogue(path));
   } catch (err) {
     console.error(`event-types catalogue guard: cannot read ${path}: ${err.message}`);
     process.exit(1);
   }
 }
-try {
-  published = load(publishedPath);
-} catch (err) {
-  // Unusable download: same class as an unreachable one (a captive portal or an
-  // error page served with 200), so skip rather than fail.
-  const message = `${url} did not return a valid catalogue (${err.message})`;
-  console.error(`event-types catalogue guard: SKIPPED — ${message}`);
-  if (process.env.GITHUB_ACTIONS) console.log(`::warning title=event-types catalogue guard skipped::${message}`);
-  process.exit(0);
+
+let published = null;
+if (fetchSkipReason) {
+  warnSkip(fetchSkipReason);
+} else {
+  try {
+    published = loadCatalogue(publishedPath);
+  } catch (err) {
+    // Unusable download: same class as an unreachable one (a captive portal or
+    // an error page served with 200).
+    warnSkip(`${url} did not return a valid catalogue (${err.message})`);
+  }
 }
 
 let drift = false;
-const report = (label, path, diff, lines, recipe) => {
+const report = (label, path, reference, diff, counts) => {
   drift = true;
-  console.error(`event-types catalogue guard: DRIFT — ${label} ${path} is behind ${url}`);
-  for (const line of lines) console.error(`  ${line}`);
+  console.error(`event-types catalogue guard: DRIFT — ${label} ${path} is behind ${reference}`);
+  for (const line of counts) console.error(`  ${line}`);
   if (diff.missing.length > 0) console.error(`  types published but absent: ${diff.missing.join(", ")}`);
   if (diff.extra.length > 0) console.error(`  types present but no longer published: ${diff.extra.join(", ")}`);
   if (diff.changed.length > 0) console.error(`  types whose definition differs: ${diff.changed.join(", ")}`);
   if (diff.sections.length > 0) console.error(`  other top-level sections that differ: ${diff.sections.join(", ")}`);
-  console.error(`  Re-vendor it deliberately and run the suites against it:  ${recipe}`);
+  console.error("  Re-vendor deliberately and run the suites against it:  just update-event-types");
   console.error("");
 };
+const typeCount = (c) => Object.keys(c.types).length;
 
-// 1. The test fixture must equal the published catalogue.
-if (canonical(fixture) !== canonical(published)) {
-  report("test fixture", fixturePath, describe(fixture, published), [
-    `fixture:   ${Object.keys(fixture.types).length} types, version ${fixture.version}`,
-    `published: ${Object.keys(published.types).length} types, version ${published.version}`
-  ], "just update-event-types-fixture");
+// 1. The test fixture must equal the published catalogue (needs the network).
+if (published != null && canonical(fixture) !== canonical(published)) {
+  report("test fixture", FIXTURE_PATH, url, describeDifference(fixture, published), [
+    `fixture:   ${typeCount(fixture)} types, version ${fixture.version}`,
+    `published: ${typeCount(published)} types, version ${published.version}`
+  ]);
 }
 
-// 2. The runtime seed must already contain the published catalogue merged the
-// way a running core merges it: merging again changes nothing. Legacy types
-// kept by the additive merge are expected, not drift.
-const merged = deepMerge(structuredClone(seed), structuredClone(published));
-if (canonical(merged) !== canonical(seed)) {
-  const diff = describe(seed, merged);
-  report("runtime seed", seedPath, { ...diff, extra: [] }, [
-    `seed:      ${Object.keys(seed.types).length} types, version ${seed.version}`,
-    `published: ${Object.keys(published.types).length} types, version ${published.version}`
-  ], "just update-event-types");
+// 2. The runtime seed must already contain every entry of the reference
+// unchanged: applying it again changes nothing. The reference is the published
+// catalogue, or the test fixture when that could not be fetched.
+const reference = published ?? fixture;
+const referenceLabel = published != null ? url : FIXTURE_PATH;
+const expectedSeed = applyToSeed(seed, reference);
+if (canonical(expectedSeed) !== canonical(seed)) {
+  report("runtime seed", SEED_PATH, referenceLabel, { ...describeDifference(seed, expectedSeed), extra: [] }, [
+    `seed:      ${typeCount(seed)} types, version ${seed.version}`,
+    `reference: ${typeCount(reference)} types, version ${reference.version}`
+  ]);
 }
 
 if (drift) process.exit(1);
-const legacy = Object.keys(seed.types).filter((t) => !(t in published.types));
-console.log(`event-types catalogue guard: OK (${Object.keys(published.types).length} types, version ${published.version}; runtime seed keeps ${legacy.length} legacy type(s)${legacy.length > 0 ? ": " + legacy.join(", ") : ""})`);
-' "$FIXTURE" "$RUNTIME_SEED" "$TMP" "$SCHEMA_URL"
+const legacy = Object.keys(seed.types).filter((t) => !(t in reference.types));
+console.log(`event-types catalogue guard: OK against ${published != null ? "the published catalogue" : "the test fixture only"} (${typeCount(reference)} types, version ${reference.version}; runtime seed keeps ${legacy.length} legacy type(s)${legacy.length > 0 ? ": " + legacy.join(", ") : ""})`);
+' "$TMP" "$SCHEMA_URL" "$SKIP_REASON"
