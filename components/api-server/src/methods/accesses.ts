@@ -106,7 +106,7 @@ type AccessesDeleteParams = {
   relatedAccessesToDelete?: AccessLike[];
 };
 type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] };
-type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown> };
+type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown>; expireAfter?: number; token?: string };
 type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?: AccessLike; checkedPermissions?: StreamPermission[]; error?: unknown };
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {

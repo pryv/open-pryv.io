@@ -792,6 +792,26 @@ describe('[ACSF] accesses (personal)', function () {
       validation.checkErrorInvalidParams(res);
     });
 
+    it('[CHKE] must accept the access-creation parameters an auth page forwards (expireAfter, token)', async function () {
+      // The /reg/access poll hands these to the auth page, which sends the
+      // whole auth request to check-app before accesses.create.
+      const data = {
+        requestingAppId: 'auth-request-params',
+        deviceName: 'phone',
+        requestedPermissions: [{ streamId: stream0.attrs.id, level: 'read', defaultName: 'S0' }],
+        expireAfter: 3600,
+        token: 'app-chosen-token-' + cuid()
+      };
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
+    });
+
     it('[U5KD] must be forbidden to non-personal accesses', async function () {
       const data = {
         requestingAppId: appAccess.attrs.name,

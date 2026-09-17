@@ -41,6 +41,9 @@ upgrade every core.
   `token` when the app sent them, so the auth page applies them when it creates the
   access (it read them from the poll, which did not carry them, so the access was
   created without a lifetime, device name or requested token). Absent when not sent.
+- **Fixed.** `accesses.checkApp` now accepts `expireAfter` and `token`, which auth pages forward
+  from the auth request before creating the access. They do not affect the match. Without this,
+  sign-in for an app that sends `expireAfter` or `token` stopped at `check-app failed (400)`.
 
 ### Native installs: use Node.js 24 below 24.19.0
 
