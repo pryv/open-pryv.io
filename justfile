@@ -376,6 +376,14 @@ clean-test-data-parallel WORKERS='':
       DROPDB=$(command -v dropdb || true)
       CREATEDB=$(command -v createdb || true)
     fi
+    # PG host/port as in `clean-test-data`: env override, then the test
+    # config file (parallel checkouts run PG on offset ports), then default.
+    # A hardcoded port here dropped another checkout's worker databases.
+    TCFG=./config/test-config.yml
+    PG_HOST_CFG=$(awk '/[[:space:]]postgresql:/{f=1} f&&/host:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    PG_PORT_CFG=$(awk '/[[:space:]]postgresql:/{f=1} f&&/port:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    PG_HOST="${storages__engines__postgresql__host:-${PG_HOST_CFG:-127.0.0.1}}"
+    PG_PORT="${storages__engines__postgresql__port:-${PG_PORT_CFG:-5432}}"
     # Parallelize the per-worker cleanup. Each iteration is independent
     # (different DB name + dir paths), so they can fan out via background
     # jobs + `wait`. Wall time on the dev box dropped from ~13s to ~3s
@@ -395,8 +403,8 @@ clean-test-data-parallel WORKERS='':
         rm -f "$PID"
       fi
       if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
-        "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
-        "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
+        "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists "$DB" 2>/dev/null || true
+        "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv "$DB" 2>/dev/null || true
       fi
       rm -rf "$USR" "$PRV" "$RQD" "$CEX"
     }
@@ -406,7 +414,8 @@ clean-test-data-parallel WORKERS='':
     wait
     # Sweep any rqlited processes pointing at the worker data dirs but
     # missing/stale pidfiles (covers SIGKILL'd or crashed workers).
-    pkill -f 'rqlited.*var-pryv/rqlite-data-w' 2>/dev/null || true
+    # Scoped to THIS checkout's path so a parallel checkout's workers survive.
+    pkill -f "rqlited.*$(pwd)/var-pryv/rqlite-data-w" 2>/dev/null || true
     echo "Parallel worker test data cleaned (workers 0..$(( WORKERS - 1 )))"
 
 # Cleanup users data in `var-pryv/`
