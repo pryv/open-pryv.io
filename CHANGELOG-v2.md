@@ -42,6 +42,8 @@ upgrade every core.
   access (it read them from the poll, which did not carry them, so the access was
   created without a lifetime, device name or requested token). Absent when not sent.
 
+## 2.0.0-rc.21 — 2026-09-17
+
 ### CMC: an invite reports its outcome, and a refusal reaches the requester
 
 - **Added.** The `consent/request-cmc` trigger now reports what happened to the
