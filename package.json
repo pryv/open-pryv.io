@@ -95,7 +95,7 @@
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=24.0.0 <24.19.0"
   },
   "overrides": {
     "minimatch@3.1.5": {
