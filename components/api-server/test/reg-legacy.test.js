@@ -161,15 +161,24 @@ describe('[RGLG] Legacy register routes + invitations', () => {
       assert.ok(res.body.data[0].createdAt, 'Token must have createdAt');
     });
 
-    it('[LG42] generated tokens must appear in invitations list', async () => {
-      const genRes = await coreRequest.get('/reg/admin/invitations/post?count=1')
+    it('[LG42] generated token is stored hashed: the raw token is not exposed in the listing, the entry appears under its hash', async () => {
+      const crypto = require('node:crypto');
+      const genRes = await coreRequest.get('/reg/admin/invitations/post?count=1&message=lg42-marker')
         .set('Authorization', adminAccessKey);
-      const token = genRes.body.data[0].id;
+      const token = genRes.body.data[0].id; // raw token, shown once to the admin
 
       const listRes = await coreRequest.get('/reg/admin/invitations')
         .set('Authorization', adminAccessKey);
-      const found = listRes.body.invitations.find(t => t.id === token);
-      assert.ok(found, `Generated token ${token} should appear in list`);
+      // PlatformDB is replicated to every core, so the listing must never carry
+      // a usable token. The raw token is not an id here.
+      const rawLeak = listRes.body.invitations.find(t => t.id === token);
+      assert.ok(!rawLeak, `raw token ${token} must not appear in the invitations listing`);
+      // It is stored under its SHA-256, still discoverable by that key + metadata.
+      const hashed = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+      const found = listRes.body.invitations.find(t => t.id === hashed);
+      assert.ok(found, 'token must be listed under its hash');
+      assert.strictEqual(found.description, 'lg42-marker');
+      assert.strictEqual(found.keyHashed, undefined, 'internal keyHashed marker must not be exposed');
     });
 
     it('[LG43] generated tokens must be valid for registration check', async () => {

@@ -87,6 +87,11 @@ export interface InvitationTokenInfo {
   description: string;
   consumedAt?: number;
   consumedBy?: string;
+  // True when the row's KEY is the SHA-256 of the token rather than the token
+  // itself. Set on every token written by a current core; used by the boot
+  // migration to tell already-hashed rows from legacy raw-keyed ones. Not part
+  // of the public listing (Platform.getAllInvitationTokens strips it).
+  keyHashed?: boolean;
 }
 
 export interface InvitationTokenEntry extends InvitationTokenInfo {

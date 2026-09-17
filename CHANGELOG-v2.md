@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security
+
+- **Invitation tokens are no longer stored as usable keys in PlatformDB.** They
+  were keyed by their raw value, so every core's replicated PlatformDB (and its
+  backups) held live invitation tokens, and `GET /reg/admin/invitations` returned
+  each token as the entry `id`. Tokens are now stored under their SHA-256; the
+  admin listing exposes the hash plus the description and creation info, never a
+  usable token (the token is shown once, to the admin, at generation). Existing
+  tokens keep working: a one-time boot migration re-keys them to their hash.
+
 ## 2.0.0-rc.21 — 2026-09-17
 
 ### CMC: an invite reports its outcome, and a refusal reaches the requester
