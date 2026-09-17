@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### `contact/facebook`, `audiogram/data` and `clinical/fhir` events are accepted again
+
+The schemas of these three event types in the event-types catalogue were malformed
+(a string where a boolean belongs, and misnested properties), so the validator could
+not compile them and every event of these types was refused with
+`invalid-parameters-format`, whatever its content. The published catalogue is repaired
+and both copies bundled with the server are refreshed from it: valid events of these
+types are now accepted, and their content is validated (`contact/facebook` requires
+`id`; `audiogram/data` requires `sensitivityPoints`, `start` and `end`, each point a
+`frequency`; `clinical/fhir` requires `displayName` and `clinicalType`, and its `fhir`
+object `identifier` and `resourceType`). Cores that load the published catalogue at
+startup pick up the fix from it too. The catalogue's `numset/*` format description was
+also corrected; `numset/...` types remain unvalidated, as before.
+
 ### HF series requests on raw deploys answer 504 when the HFS worker stalls
 
 On deployments where the API process itself routes HF series traffic to the
