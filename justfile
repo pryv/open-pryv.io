@@ -14,8 +14,10 @@ setup-dev-env:
     scripts/setup-dev-env
 
 # Install node modules afresh (no optionals)
+# No --omit=optional: sharp ships its native binaries as optional dependencies
+# (@img/sharp-<platform>), so omitting them breaks previews-server at load.
 install *params: clean
-    npm install --omit=optional {{params}}
+    npm install {{params}}
 
 # Clean up node modules
 clean:
