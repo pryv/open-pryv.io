@@ -44,6 +44,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
   let config;
   let savedIntegrityCheck;
   let savedPlatformData;
+  let preExistingUserIds;
   let savedService;
   let savedCoreUrl;
   let savedCoreId;
@@ -72,6 +73,10 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     savedIsSingleCore = config.get('core:isSingleCore');
     const allData = await getPlatformDB().exportAll();
     savedPlatformData = allData.filter(e => e.username != null);
+    // Users present before this suite keep their platform entries (restored
+    // in `after`), so they must also keep their account data.
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    preExistingUserIds = new Set((await (await getUsersRepository()).getAllUsersIdAndName()).map(u => u.id));
     await getPlatformDB().clearAll();
     if (savedPlatformData.length > 0) {
       await getPlatformDB().importAll(savedPlatformData);
@@ -81,7 +86,10 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
   after(async function () {
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
-    await usersRepository.deleteAll();
+    // Only the users this suite created: see reg-multicore.test.js.
+    for (const u of await usersRepository.getAllUsersIdAndName()) {
+      if (!preExistingUserIds.has(u.id)) await usersRepository.deleteOne(u.id, u.username);
+    }
     await getPlatformDB().clearAll();
     if (savedPlatformData && savedPlatformData.length > 0) {
       await getPlatformDB().importAll(savedPlatformData);

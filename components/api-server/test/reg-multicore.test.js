@@ -51,6 +51,7 @@ describe('[RGMC] register: multi-core', function () {
   }
 
   let savedPlatformData;
+  let preExistingUserIds;
 
   before(async function () {
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
@@ -64,6 +65,10 @@ describe('[RGMC] register: multi-core', function () {
     // entries which parseEntry misinterprets — filter those out (username=undefined)
     const allData = await getPlatformDB().exportAll();
     savedPlatformData = allData.filter(e => e.username != null);
+    // Users present before this suite keep their platform entries (restored
+    // in `after`), so they must also keep their account data.
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    preExistingUserIds = new Set((await (await getUsersRepository()).getAllUsersIdAndName()).map(u => u.id));
     // Clear stale core-info and user-core entries from previous test runs
     await getPlatformDB().clearAll();
     if (savedPlatformData.length > 0) {
@@ -72,10 +77,14 @@ describe('[RGMC] register: multi-core', function () {
   });
 
   after(async function () {
-    // Clean up users created during multi-core tests
+    // Clean up users created during multi-core tests, and only those: deleting
+    // a pre-existing user here while restoring its platform entries below
+    // left the platform DB and the users repository out of step.
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
-    await usersRepository.deleteAll();
+    for (const u of await usersRepository.getAllUsersIdAndName()) {
+      if (!preExistingUserIds.has(u.id)) await usersRepository.deleteOne(u.id, u.username);
+    }
     // Restore PlatformDB to pre-test state (user entries only, no core entries)
     await getPlatformDB().clearAll();
     if (savedPlatformData && savedPlatformData.length > 0) {
