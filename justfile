@@ -139,45 +139,76 @@ test-sqlite component *params:
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
+# The recipes below pass params with positional-arguments + "$@" for the same
+# reason as `test` (an unquoted {{params}} hands `--grep "A|B"` to the shell).
+
 # Run tests with detailed output (PG default)
+[positional-arguments]
 test-detailed component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --reporter=spec {{params}}
+        npx mocha -- --reporter=spec "$@"
 
 # Run tests with detailed output for debugging (PG default)
+[positional-arguments]
 test-debug component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --timeout 3600000 --reporter=spec --inspect-brk=40000 {{params}}
+        npx mocha -- --timeout 3600000 --reporter=spec --inspect-brk=40000 "$@"
 
 # Run tests with parallel file execution (PG default; excludes tests that can't parallelize)
 # Uses MOCHA_PARALLEL=1 to enable parallel mode in .mocharc.js
+[positional-arguments]
 test-parallel component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
+        npx mocha -- "$@"
 
 # Run parallel tests first, then sequential tests (PG default)
+[positional-arguments]
 test-fast component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}} && \
+        npx mocha -- "$@"
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
+        npx mocha -- "$@"
 
 # Run only non-parallel tests (PG default; use after test-parallel to run the remaining tests sequentially)
+[positional-arguments]
 test-non-parallel component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
+        npx mocha -- "$@"
 
 # ⚠️  OBSOLETE?: Run tests for profiling (PG default)
+[positional-arguments]
 test-profile component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --profile=true {{params}} && \
-    tick-processor > profiling-output.txt && \
+        npx mocha -- --profile=true "$@"
+    tick-processor > profiling-output.txt
     open profiling-output.txt
 
 # Run tests and generate HTML coverage report for a single component (PG default)
+[positional-arguments]
 test-cover component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} nyc \
-        scripts/components-run npx mocha -- {{params}}
+        scripts/components-run npx mocha -- "$@"
 
 # Run all tests across supported engines (PG + SQLite) and generate coverage report
 test-cover-all:

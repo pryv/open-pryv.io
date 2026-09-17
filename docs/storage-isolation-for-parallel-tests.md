@@ -31,19 +31,21 @@ Each row: the config key, today's default fallback (if any), what it owns, and t
 | `storages:engines:postgresql:password` | `pryv` | PG password | unchanged |
 | `storages:engines:sqlite:path` | `var-pryv/users` (default-config; per-user dirs nest under this root) | SQLite user-dirs root | `var-pryv/users-test-w${id}/` |
 | `storages:engines:filesystem:previewsDirPath` | unset by default; required when previews are on | Previews disk store | `var-pryv/previews-test-w${id}/` |
-| `storages:engines:rqlite:url` | `http://localhost:4001` (fallback in `bin/master.js:88`) | rqlite HTTP endpoint | `http://localhost:${4011 + id*10}` (worker 0 → 4011 so host rqlited at 4001 can keep serving sequential runs) |
-| `storages:engines:rqlite:raftPort` | `4002` (fallback in `bin/master.js:98`) | rqlite Raft port | `${4012 + id*10}` |
+| `storages:engines:rqlite:url` | `http://localhost:4001` (fallback in `bin/master.js:88`) | rqlite HTTP endpoint | `http://localhost:${P(id) + 4}` (see the port band below) |
+| `storages:engines:rqlite:raftPort` | `4002` (fallback in `bin/master.js:98`) | rqlite Raft port | `${P(id) + 5}` |
 | `storages:engines:rqlite:dataDir` | `var-pryv/rqlite-data` (fallback in `bin/master.js:96`) | rqlite data dir | `var-pryv/rqlite-data-w${id}/` |
 | `storages:engines:rqlite:external` | `false` | tells master to spawn (false) vs. connect (true) | leave unchanged; workers spawn their own rqlited |
-| `http:port` | unset by default; must be set | api-server primary HTTP port | `${3000 + id*10}` |
+| `http:port` | unset by default; must be set | api-server primary HTTP port | `${P(id)}` |
 | `http:ip` | `127.0.0.1` | api-server bind address | unchanged |
-| `http:hfsPort` | `4000` (fallback in `components/api-server/src/server.ts:64`) | HFS in-process dispatcher target port | `${4000 + id*10}` |
-| `http:previewsPort` | unset by default; must be set if previews enabled | Previews worker port | `${3001 + id*10}` |
-| `tcpBroker:port` | `4222` (fallback in `components/messages/src/tcp_pubsub.ts:231`) | TCP pub/sub broker (single-core cross-worker messaging) | `${4222 + id*10}` |
+| `http:hfsPort` | `4000` (fallback in `components/api-server/src/server.ts:64`) | HFS in-process dispatcher target port | `${P(id) + 2}` |
+| `http:previewsPort` | unset by default; must be set if previews enabled | Previews worker port | `${P(id) + 1}` |
+| `tcpBroker:port` | `4222` (fallback in `components/messages/src/tcp_pubsub.ts:231`) | TCP pub/sub broker (single-core cross-worker messaging) | `${P(id) + 3}` |
 | `cluster:tokens:path` | unset; only meaningful for multi-core bootstrap | Multi-core join-token files | `var-pryv/tokens-test-w${id}/` (only if the test exercises bootstrap) |
 | `core:id` | `'single'` (fallback in `bin/master.js:94`) | Core identity | `single-w${id}` (or skip — distinct rqlite per worker already isolates this) |
 | `auth:adminAccessKey` | `'some_key_yo'` (`test-config.yml`) | Admin API key | unchanged (shared across workers in tests is fine) |
 | `auth:filesReadTokenSecret` | `'some_token'` (`test-config.yml`) | File-read-token HMAC seed | unchanged (workers don't cross-validate file tokens) |
+
+**Port band.** `P(id) = 20000 + checkout * 1000 + id * 10`, where `checkout` is the index of this checkout among parallel checkouts on the machine (0 for the first). It comes from `PRYV_TEST_CHECKOUT_INDEX`, or from the rqlite port in `config/test-config.yml` (4001 for the first checkout, plus 100 for each further one). Worker ports stay clear of the host services a checkout runs for sequential tests, and of the bands of other checkouts, up to 99 workers per checkout. (Earlier fixed bases, rqlite `4011 + id*10`, tcpBroker `4222 + id*10`, hfs `4000 + id*10`, overlapped the host ports of the next checkout.)
 
 Where "unchanged" appears, the key is either truly worker-shareable (read-only secrets, shared PG instance) or test-specific to a single test scenario.
 
@@ -63,13 +65,13 @@ const config = await ready();
 config.set('storages:engines:postgresql:database', `pryv-node-test-w${id}`);
 config.set('storages:engines:sqlite:path', `var-pryv/users-test-w${id}/`);
 config.set('storages:engines:filesystem:previewsDirPath', `var-pryv/previews-test-w${id}/`);
-config.set('storages:engines:rqlite:url', `http://localhost:${4011 + id * 10}`);
-config.set('storages:engines:rqlite:raftPort', 4012 + id * 10);
+config.set('storages:engines:rqlite:url', `http://localhost:${P(id) + 4}`);
+config.set('storages:engines:rqlite:raftPort', P(id) + 5);
 config.set('storages:engines:rqlite:dataDir', `var-pryv/rqlite-data-w${id}/`);
-config.set('http:port', 3000 + id * 10);
-config.set('http:hfsPort', 4000 + id * 10);
-config.set('http:previewsPort', 3001 + id * 10);
-config.set('tcpBroker:port', 4222 + id * 10);
+config.set('http:port', P(id));
+config.set('http:hfsPort', P(id) + 2);
+config.set('http:previewsPort', P(id) + 1);
+config.set('tcpBroker:port', P(id) + 3);
 ```
 
 Then a `just clean-test-data-parallel` recipe (same future work) drops the N PG databases, removes the N user-dir trees, and resets each rqlited.
