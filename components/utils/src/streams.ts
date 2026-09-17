@@ -21,11 +21,8 @@
  * "no `.pipe()` on the response path" checkable.
  */
 
-import { createRequire } from 'node:module';
+import { pipeline } from 'node:stream';
 import type { Readable, Writable } from 'node:stream';
-const require = createRequire(import.meta.url);
-
-const { pipeline } = require('stream');
 
 type AnyStream = Readable | Writable;
 
@@ -45,7 +42,9 @@ export function pipeThrough<T extends AnyStream> (source: Readable, ...transform
   if (transforms.length === 0) {
     throw new Error('pipeThrough needs at least one transform');
   }
+  // The ARRAY form, not the variadic one: the variadic overloads are fixed-arity
+  // tuples, so a spread of unknown length does not match any of them.
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  pipeline(source, ...transforms, () => {});
+  pipeline([source, ...transforms] as [Readable, ...AnyStream[]], () => {});
   return transforms[transforms.length - 1] as T;
 }
