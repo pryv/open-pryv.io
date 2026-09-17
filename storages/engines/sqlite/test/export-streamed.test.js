@@ -61,7 +61,7 @@ describe('[SQXS] userSQLite exportAllEventsStreamed', () => {
     assert.ok(streamedRows.length >= 5);
   });
 
-  it('[SQXS2] releasing the iterator mid-stream leaves the db writable (no lingering read lock)', async () => {
+  it('[SQXS2] breaking out mid-stream closes the underlying statement iterator', async () => {
     let seen = 0;
     for await (const row of userDb.exportAllEventsStreamed()) {
       assert.ok(row.eventid != null);
@@ -69,8 +69,18 @@ describe('[SQXS] userSQLite exportAllEventsStreamed', () => {
       if (seen === 2) break; // abort mid-iteration → generator return() → inner iterator release
     }
     assert.strictEqual(seen, 2);
-    // If the better-sqlite3 iterator were still open, this write would fail on a
-    // busy connection. It must succeed.
+
+    // ⚑ Assert on the STATEMENT, not on a subsequent write. The obvious check
+    // ("a write would fail while an iterator is open") cannot fail here:
+    // `initWALAndConcurrentSafeWriteCapabilities` puts every user database in
+    // better-sqlite3's `unsafeMode`, which disables exactly that guard, so the
+    // write succeeds whether or not the iterator leaked. `Statement.busy` is
+    // true for as long as the statement has an open iterator and is unaffected
+    // by unsafe mode, so it reports the thing this test is about.
+    assert.strictEqual(userDb.eventQueries.getAll.busy, false,
+      'the statement must have no open iterator after the consumer broke out');
+
+    // The connection is of course still usable.
     await userDb.createEvent(makeEvent(99));
     assert.strictEqual(userDb.countEvents(), 6);
   });

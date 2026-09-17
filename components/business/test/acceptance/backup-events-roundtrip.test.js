@@ -108,6 +108,27 @@ describe('[BKEV] backup events store round-trip (storageLayer.events)', function
     }
   });
 
+  // ⚑ The streaming producer is what keeps backup memory bounded, and it is
+  // OPTIONAL and feature-detected: if it is renamed, or if its row conversion
+  // drifts from exportAll's, the orchestrator silently falls back to
+  // materialising the whole events collection and every other test still
+  // passes. That makes this test the only thing standing between a refactor and
+  // a silent return to the behaviour this work removed.
+  it('[BKEV-06] exportAllStreamed yields exactly what exportAll returns', async function () {
+    assert.strictEqual(typeof eventsStore.exportAllStreamed, 'function',
+      'the engine must implement exportAllStreamed; without it backup buffers the whole collection');
+
+    const arrayOut = await fromCallback((cb) => eventsStore.exportAll(user, cb));
+    const streamedOut = [];
+    for await (const event of eventsStore.exportAllStreamed(user)) streamedOut.push(event);
+
+    // Neither path applies an ORDER BY, so compare as sets keyed by id.
+    const byId = (a, b) => String(a.id).localeCompare(String(b.id));
+    assert.deepStrictEqual([...streamedOut].sort(byId), [...arrayOut].sort(byId),
+      'the streamed producer must yield the same canonical events as exportAll');
+    assert.strictEqual(streamedOut.length, 2);
+  });
+
   it('[BKEV-04] iterateAllEvents (integrity final-check path) sees the imported events', async function () {
     if (typeof storageLayer.iterateAllEvents !== 'function') this.skip();
     // Key on event ids (cuid-unique): the yielded shape is engine-flavoured

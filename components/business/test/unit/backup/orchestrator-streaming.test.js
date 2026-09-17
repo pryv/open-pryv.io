@@ -44,15 +44,45 @@ describe('[BKP-STREAM] BackupOrchestrator streaming pipeline', function () {
       const N = 500;
       let produced = 0;
       async function * source () {
-        // raw audit rows: no camelCase timestamps → always included
-        for (let i = 0; i < N; i++) { produced++; yield { eventid: 'a' + i, type: 'audit/log' }; }
+        // Real audit row shape. The audit INSERT names its columns `time`,
+        // `created` and `modified`, which ARE the fields the filter reads, so
+        // rows without them (as an earlier version of this test used) exercise
+        // a shape audit never produces and skip the filter entirely.
+        for (let i = 0; i < N; i++) {
+          produced++;
+          yield { eventid: 'a' + i, type: 'audit/log', time: 100 + i, created: 100 + i, modified: 100 + i };
+        }
       }
-      const pipeline = orch._exportPipeline(source(), 1000, null, 'audit');
+      const pipeline = orch._exportPipeline(source(), 10000, null, 'audit');
       let received = 0;
       let maxGap = 0;
       for await (const item of pipeline) { assert.ok(item.eventid); received++; maxGap = Math.max(maxGap, produced - received); }
-      assert.strictEqual(received, N, 'raw audit rows are full-snapshot (no timestamp filter)');
+      assert.strictEqual(received, N, 'every row is within the snapshot bound, so all are included');
       assert.ok(maxGap <= 2, `audit pipeline must not materialize — gap was ${maxGap}`);
+    });
+
+    // The incremental branch had no test anywhere, on either path, which is how
+    // the comment claiming audit is never filtered survived: nothing exercised
+    // the case that would have contradicted it.
+    it('[BKP-STREAM-09] audit rows ARE filtered by `since` and by the snapshot bound', async function () {
+      const orch = Object.create(BackupOrchestrator.prototype);
+      const rows = [
+        { eventid: 'old', type: 'audit/log', time: 100, created: 100, modified: 100 },
+        { eventid: 'kept', type: 'audit/log', time: 500, created: 500, modified: 500 },
+        { eventid: 'future', type: 'audit/log', time: 9000, created: 9000, modified: 9000 }
+      ];
+      async function * source () { for (const r of rows) yield r; }
+
+      // snapshotBefore = 1000 excludes 'future'; since = 200 excludes 'old'.
+      const out = [];
+      for await (const item of orch._exportPipeline(source(), 1000, 200, 'audit')) out.push(item.eventid);
+      assert.deepStrictEqual(out, ['kept'],
+        'audit is bounded by snapshotBefore and by since, exactly like every other collection');
+
+      // And the array path must agree, or an incremental backup would contain
+      // different audit rows depending on which producer the engine offers.
+      const viaArray = orch._filterByTimestamp(rows, 1000, 200, 'audit').map((r) => r.eventid);
+      assert.deepStrictEqual(viaArray, ['kept'], 'the array path must select the same rows');
     });
   });
 

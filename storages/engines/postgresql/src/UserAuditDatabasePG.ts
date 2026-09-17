@@ -223,7 +223,8 @@ class UserAuditDatabasePG {
 
   /**
    * Streaming counterpart of exportAllEvents for bounded-memory backup: yields
-   * the same raw rows (converters bypassed), in the same order, one at a time.
+   * the same raw rows (converters bypassed), one at a time. Same SELECT, and
+   * like it no ORDER BY, so the order is whatever the scan gives.
    *
    * ⚑ On `readDb`, the streamed-read pool, not `db`. Exporting one user's audit
    * set holds a cursor open for the whole collection, which is exactly the

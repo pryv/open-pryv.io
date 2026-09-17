@@ -233,21 +233,22 @@ class BackupOrchestrator {
     // default. A silent warn here is how the missing-await regression
     // hid from 464ce266 onward.)
     //
-    // exportAllEvents returns raw engine rows (snake_case on PG per the
-    // UserAuditDatabase interface contract) — converters are bypassed for
-    // round-trip parity with importAllEvents. _filterByTimestamp therefore
-    // sees no camelCase modified/created/time on audit rows and falls to
-    // the "no timestamp — always include" branch: audit data is effectively
-    // non-incremental, full-snapshot per backup. Acceptable for now;
-    // promoting audit to incremental needs a parallel camelCase export
-    // surface on the audit interface.
+    // The audit export returns raw engine rows: converters are bypassed for
+    // round-trip parity with importAllEvents.
+    //
+    // ⚑ Those raw rows ARE timestamp-filtered, contrary to what this comment
+    // claimed until 2026-09-17. The columns are named `time`, `created` and
+    // `modified` on both engines (see the audit INSERT), which are exactly the
+    // fields the filter reads, so audit is bounded by `snapshotBefore` and, on
+    // an incremental run, by `since` like everything else. It is NOT the
+    // full snapshot per backup that was documented here. The behaviour has
+    // always been this; only the description was wrong.
     if (this.auditStorage) {
       const userAudit = await this.auditStorage.forUser(userId);
       // Prefer the streamed producer (bounded memory) when the audit engine
       // offers it; otherwise fall back to the full array. Either way the rows
-      // flow through the same lazy filter+sanitize pipeline. Audit rows are raw
-      // (no camelCase timestamps), so the filter's "no timestamp — always
-      // include" branch keeps audit a full snapshot, as before.
+      // flow through the same lazy filter+sanitize pipeline, and through the
+      // same timestamp predicate as every other collection.
       const auditSource = typeof userAudit.exportAllEventsStreamed === 'function'
         ? userAudit.exportAllEventsStreamed()
         : await userAudit.exportAllEvents();
