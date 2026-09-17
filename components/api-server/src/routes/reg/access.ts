@@ -19,6 +19,30 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
+const { checkAcceptedGrant } = require('./consentCheck.ts');
+const { getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('routes:reg:access');
+
+/** Operator- and developer-facing wording for each grant refusal. The
+ * reason id in `data.reason` is the machine-readable form; this is what a
+ * person reads in a console. */
+function consentGrantMessage (reason: string): string {
+  switch (reason) {
+    case 'token-invalid':
+      return 'The posted token does not resolve to an access on this platform.';
+    case 'not-app-access':
+      return 'The posted token must belong to an app access created for this request.';
+    case 'empty-grant':
+      return 'The access grants nothing that was offered; refuse the request instead.';
+    case 'choice-not-allowed':
+      return 'This consent is all-or-nothing: the access must carry every offered permission.';
+    case 'mandatory-refused':
+      return 'Permissions the app marked as mandatory are missing from the access.';
+    default:
+      return 'The access carries permissions that were not offered to the user.';
+  }
+}
 
 /**
  * Whether `candidate` (a caller-supplied auth-page URL) matches one of the
@@ -257,6 +281,53 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           return res.status(400).json({
             error: { id: 'invalid-parameters', message: 'REDIRECTED requires redirectUrl' }
           });
+        }
+      }
+
+      // A request created with a consent form is the only one whose
+      // ACCEPTED is checked: the server reads the access the page just
+      // minted and asks whether it matches what the user was offered.
+      // Without a form there is nothing to check against (the rule would
+      // be "grant everything"), so the endpoint keeps its long-standing
+      // opaque-token contract for every other integrator UI.
+      if (status === 'ACCEPTED') {
+        const pending = await accessState.get(req.params.key);
+        if (pending?.consent != null) {
+          const outcome = await checkAcceptedGrant({
+            app,
+            username: req.body.username,
+            token: req.body.token,
+            consentForm: pending.consent
+          });
+          if (!outcome.ok && outcome.kind === 'grant') {
+            // The state is deliberately left untouched: still NEED_SIGNIN,
+            // so the page can correct the grant and post again.
+            return res.status(400).json({
+              error: {
+                id: 'invalid-consent-grant',
+                message: consentGrantMessage(outcome.reason),
+                data: {
+                  reason: outcome.reason,
+                  ...(outcome.offending != null ? { offending: outcome.offending } : {})
+                }
+              }
+            });
+          }
+          if (!outcome.ok) {
+            // Could not perform the check. Never a pass (that would be a
+            // consent bypass) and never an opaque 500: the operator is
+            // told which of the three it was, in the log and in the body.
+            logger.error('consent check unavailable on access request ' + req.params.key +
+              ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
+            return res.status(503).json({
+              error: {
+                id: 'consent-check-unavailable',
+                message: 'The consent grant could not be verified by this server. ' +
+                  'The access request is unchanged; retry shortly.',
+                data: { reason: outcome.reason }
+              }
+            });
+          }
         }
       }
 

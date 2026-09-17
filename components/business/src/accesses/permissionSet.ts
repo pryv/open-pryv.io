@@ -24,6 +24,9 @@
  *   - cmc acceptOrchestration (offer permissions normalization)
  *   - oauth2 route mount (granted ⊆ offered consent-downgrade check,
  *     injected as a dep)
+ *   - api-server routes/reg/consentCheck (the same check on the auth
+ *     request's ACCEPTED post, against the form resolved from its
+ *     `consent` sidecar)
  *
  * Keep this module pure (no config, no I/O) so any component can load it.
  */

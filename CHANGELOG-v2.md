@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Auth requests: a `consent` sidecar, and the grant is now checked
+
+`POST /reg/access` accepts one new optional top-level object:
+
+```json
+{
+  "requestingAppId": "my-app",
+  "requestedPermissions": [
+    { "streamId": "diary",  "level": "read", "defaultName": "Journal" },
+    { "streamId": "weight", "level": "read", "defaultName": "Weight" }
+  ],
+  "consent": { "allowUserChoice": true, "mandatory": ["diary"], "optIn": ["weight"] }
+}
+```
+
+`consent.mandatory` and `consent.optIn` name permission ids (a stream
+permission's `streamId`, a feature permission's `feature`);
+`consent.allowUserChoice` means the same thing it means in an OAuth2 or CMC
+offer. The annotations travel BESIDE the entries rather than inside them so
+that `requestedPermissions` stays exactly what it has always been: the auth
+page forwards those entries verbatim to `accesses.checkApp`, whose schema
+rejects unknown per-entry fields, and an annotation written inside an entry
+would fail there against servers and auth pages already deployed.
+
+The server resolves the pair into a consent form and echoes it, as
+`consent`, on the `201` and on the `NEED_SIGNIN` poll. That echo is also how
+an app can tell whether the server understood the annotations: an older core
+ignores the field and answers without it, and the flow degrades to
+all-or-nothing rather than failing.
+
+**`POST /reg/access/:key` with `status: ACCEPTED` now verifies the grant, but
+only for a request that carried a `consent` sidecar.** The server reads the
+access behind the posted token (locally, or on the user's own core when the
+platform hosts them elsewhere, never at the host named in the posted
+`apiEndpoint`) and checks it against the consent form with the same rule the
+OAuth2 and CMC accept paths use. Two new answers:
+
+- `400 invalid-consent-grant` with `data.reason` one of `token-invalid`,
+  `not-app-access`, `empty-grant`, `not-subset`, `choice-not-allowed`,
+  `mandatory-refused`, and `data.offending` listing the entries at fault for
+  the last three. The access request is left open, so a page can correct the
+  grant and post again.
+- `503 consent-check-unavailable` with `data.reason` one of
+  `core-unresolvable`, `core-unreachable`, `storage-error`, when this server
+  could not perform the check at all. The request is unchanged and the post
+  can be retried. This is deliberately not a `400`: a check that could not
+  run says nothing about the access, and a page that deletes the access it
+  just minted on a rejection must not be told a good access is bad.
+
+**A request without `consent` is unaffected in every respect**: no new
+validation on create, no `consent` key in either response body (absent, not
+`null`), and no check on accept, so the long-standing opaque-token contract
+of the accept endpoint still holds for existing integrator UIs.
+
 ### Consent offers: an `optIn` annotation beside `mandatory`
 
 A permission entry in a consent request or offer (`consent/request-cmc`,

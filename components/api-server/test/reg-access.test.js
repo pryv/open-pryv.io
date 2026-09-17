@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, coreRequest, assert */
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const accessState = require('../src/routes/reg/accessState.ts');
 
@@ -322,6 +322,189 @@ describe('[RGAC] Register access authorization', () => {
       const res = await coreRequest.post('/reg/access/' + key)
         .send({ status: 'ACCEPTED', username: 'testuser' });
       assert.strictEqual(res.status, 400);
+    });
+  });
+
+  describe('POST /reg/access/:key (accept) with a consent form', () => {
+    // These exercise the real check: a real user, real app accesses minted
+    // in storage, and the server reading the access behind the posted token
+    // through the same loader `access-info` runs.
+    let fixtures, fixtureUser, username;
+    let counter = 0;
+
+    const OFFER = [
+      { streamId: 'diary', level: 'read', defaultName: 'Journal' },
+      { streamId: 'weight', level: 'read' }
+    ];
+    // diary is required, weight is offered unticked, the user may choose.
+    const SIDECAR = { allowUserChoice: true, mandatory: ['diary'], optIn: ['weight'] };
+
+    before(async function () {
+      this.timeout(30000);
+      fixtures = getNewFixture();
+      username = cuid();
+      fixtureUser = await fixtures.user(username);
+      await fixtureUser.stream({ id: 'diary', name: 'Journal' });
+      await fixtureUser.stream({ id: 'weight', name: 'Weight' });
+      await fixtureUser.stream({ id: 'secret', name: 'Secret' });
+    });
+
+    /** Mint an app access the way an auth page would, and return its token.
+     * The name varies per mint because (name, type, deviceName) is unique
+     * per user; what the check reads is the permissions, not the name. */
+    async function mintApp (permissions) {
+      const n = ++counter;
+      const token = 'tok-' + n + '-' + cuid();
+      await fixtureUser.access({
+        id: 'acc-' + n + '-' + cuid(),
+        type: 'app',
+        name: 'test-app-' + n,
+        token,
+        permissions
+      });
+      return token;
+    }
+
+    async function createRequest (consent) {
+      const res = await coreRequest.post('/reg/access')
+        .send({
+          requestingAppId: 'test-app',
+          requestedPermissions: OFFER,
+          ...(consent !== undefined ? { consent } : {})
+        });
+      assert.strictEqual(res.status, 201);
+      return res.body.key;
+    }
+
+    function accept (key, token) {
+      return coreRequest.post('/reg/access/' + key).send({
+        status: 'ACCEPTED',
+        username,
+        token,
+        apiEndpoint: 'https://' + username + '.pryv.me/'
+      });
+    }
+
+    it('[RA70] must accept an access carrying the whole offer (the old-page path)', async () => {
+      const key = await createRequest(SIDECAR);
+      const token = await mintApp([
+        { streamId: 'diary', level: 'read' },
+        { streamId: 'weight', level: 'read' }
+      ]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.status, 'ACCEPTED');
+    });
+
+    it('[RA71] must accept a subset that drops an opt-in entry, and hand the token back', async () => {
+      const key = await createRequest(SIDECAR);
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+      const pollRes = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(pollRes.body.status, 'ACCEPTED');
+      assert.strictEqual(pollRes.body.token, token);
+    });
+
+    it('[RA72] must refuse a grant missing a mandatory entry, leave the state open, and accept a corrected retry', async () => {
+      const key = await createRequest(SIDECAR);
+      const badToken = await mintApp([{ streamId: 'weight', level: 'read' }]); // drops mandatory diary
+      const res = await accept(key, badToken);
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual(res.body.error.data.reason, 'mandatory-refused');
+      // The offending entries come from the OFFER, so they carry its
+      // display name; only the consent annotations are stripped.
+      assert.deepEqual(res.body.error.data.offending,
+        [{ streamId: 'diary', level: 'read', defaultName: 'Journal' }]);
+
+      // The request is untouched, so the page can fix the grant and retry.
+      const pollRes = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(pollRes.body.status, 'NEED_SIGNIN');
+
+      const goodToken = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const retryRes = await accept(key, goodToken);
+      assert.strictEqual(retryRes.status, 200, JSON.stringify(retryRes.body));
+    });
+
+    it('[RA73] must refuse a subset when the offer is all-or-nothing', async () => {
+      const key = await createRequest({ mandatory: ['diary'] }); // no allowUserChoice
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual(res.body.error.data.reason, 'choice-not-allowed');
+      assert.deepEqual(res.body.error.data.offending, [{ streamId: 'weight', level: 'read' }]);
+    });
+
+    it('[RA74] must refuse an access carrying a permission that was never offered', async () => {
+      const key = await createRequest(SIDECAR);
+      const token = await mintApp([
+        { streamId: 'diary', level: 'read' },
+        { streamId: 'secret', level: 'read' } // not in the offer
+      ]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual(res.body.error.data.reason, 'not-subset');
+      assert.deepEqual(res.body.error.data.offending, [{ streamId: 'secret', level: 'read' }]);
+    });
+
+    it('[RA75] must refuse a token that resolves to nothing, while an un-annotated request still accepts it', async () => {
+      const annotatedKey = await createRequest(SIDECAR);
+      const res = await accept(annotatedKey, 'not-a-real-token');
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual(res.body.error.data.reason, 'token-invalid');
+
+      // The opaque-token contract every other integrator UI relies on is
+      // untouched: without a consent form the same fake token is accepted.
+      const plainKey = await createRequest(undefined);
+      const plainRes = await accept(plainKey, 'not-a-real-token');
+      assert.strictEqual(plainRes.status, 200, JSON.stringify(plainRes.body));
+    });
+
+    it('[RA77] must not reach for another core when the user is local', async () => {
+      // The local arm is in process. If the route ever took the remote arm
+      // for a local user it would call out over HTTP, which on a default
+      // single-core install has nowhere to go.
+      const calls = [];
+      const { checkAcceptedGrant } = require('../src/routes/reg/consentCheck.ts');
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const outcome = await checkAcceptedGrant(
+        {
+          app: global.app,
+          username,
+          token,
+          consentForm: {
+            allowUserChoice: true,
+            permissions: [
+              { streamId: 'diary', level: 'read', mandatory: true },
+              { streamId: 'weight', level: 'read', optIn: true }
+            ]
+          }
+        },
+        { fetch: async (url) => { calls.push(url); throw new Error('must not fetch for a local user'); } }
+      );
+      assert.deepStrictEqual(outcome, { ok: true });
+      assert.strictEqual(calls.length, 0);
+    });
+
+    it('[RA76] must refuse a personal token posted against a consent form', async () => {
+      // NO mandatory entry and user choice allowed, so the grant rule alone
+      // would accept anything this token carries. What refuses it is the
+      // access TYPE, which is what this pins.
+      const key = await createRequest({ allowUserChoice: true, optIn: ['weight'] });
+      const personalToken = 'personal-' + cuid();
+      await fixtureUser.access({ id: 'personal-' + cuid(), type: 'personal', token: personalToken });
+      await fixtureUser.session(personalToken);
+      const res = await accept(key, personalToken);
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      // A personal token grants everything; it is not what a page mints for
+      // an app, so it is refused on the access TYPE, before any comparison.
+      assert.strictEqual(res.body.error.data.reason, 'not-app-access');
     });
   });
 

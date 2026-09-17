@@ -999,6 +999,90 @@ describe('[RGMC] register: multi-core', function () {
   // ----------------------------------------------------------------
   // 10. Explicit core.url override (DNSless multi-core)
   // ----------------------------------------------------------------
+  describe('[MC20] consent check on the auth-request accept', function () {
+    // Where the server looks for the access behind the posted token is
+    // decided by the platform mapping, never by the caller. This endpoint is
+    // unauthenticated, so a caller-chosen destination would be an SSRF.
+    after(restoreSingleCore);
+
+    const OFFER = [
+      { streamId: 'diary', level: 'read' },
+      { streamId: 'weight', level: 'read' }
+    ];
+    const SIDECAR = { allowUserChoice: true, mandatory: ['diary'] };
+    // A host the caller would love the server to contact on its behalf.
+    const CALLER_SUPPLIED = 'https://attacker.example.net/';
+
+    async function createAnnotatedRequest (request) {
+      const res = await request.post('/reg/access').send({
+        requestingAppId: 'test-app',
+        requestedPermissions: OFFER,
+        consent: SIDECAR
+      });
+      assert.strictEqual(res.status, 201);
+      return res.body.key;
+    }
+
+    it('[MC20A] must not contact the host the caller posted, and must say the check is unavailable', async function () {
+      await setupMultiCore(CORE_A);
+      // CORE_B exists but has no reachable URL of its own: no explicit url
+      // row and, for this test, no derivable one either.
+      await getPlatformDB().setCoreInfo(CORE_B, {
+        id: CORE_B, url: null, ip: null, ipv6: null, cname: null, hosting: 'us-east-1', available: true
+      });
+      await platform._refreshCoreUrlCache();
+
+      const app = getApplication(true);
+      await app.initiate();
+      const request = await listeningAgent(app.expressApp);
+      const key = await createAnnotatedRequest(request);
+
+      const username = 'mc20a-' + cuid.slug();
+      await platform.setUserCore(username, CORE_B);
+
+      const res = await request.post('/reg/access/' + key).send({
+        status: 'ACCEPTED',
+        username,
+        token: 'some-token',
+        apiEndpoint: CALLER_SUPPLIED
+      });
+
+      // The user is on another core, so the check needs that core. Whatever
+      // the outcome, it must never be a pass, and the state must survive.
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'consent-check-unavailable');
+      assert.ok(['core-unresolvable', 'core-unreachable'].includes(res.body.error.data.reason),
+        'unexpected reason: ' + res.body.error.data.reason);
+      // Not a bypass: the request is still open, not ACCEPTED.
+      const pollRes = await request.get('/reg/access/' + key);
+      assert.strictEqual(pollRes.body.status, 'NEED_SIGNIN');
+    });
+
+    it('[MC20B] must take the local path when the platform hosts the user here', async function () {
+      await setupMultiCore(CORE_A);
+      const app = getApplication(true);
+      await app.initiate();
+      const request = await listeningAgent(app.expressApp);
+      const key = await createAnnotatedRequest(request);
+
+      const username = 'mc20b-' + cuid.slug();
+      await platform.setUserCore(username, CORE_A); // this core
+
+      const res = await request.post('/reg/access/' + key).send({
+        status: 'ACCEPTED',
+        username,
+        token: 'no-such-token',
+        apiEndpoint: CALLER_SUPPLIED
+      });
+
+      // Local: the token is resolved in process and simply does not exist,
+      // which is the page's fault (400), NOT an unavailable check (503).
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual(res.body.error.data.reason, 'token-invalid');
+    });
+  });
+
   describe('[MC10] core.url override', function () {
     after(restoreSingleCore);
 
