@@ -345,6 +345,16 @@ const NON_RETRYABLE_REASONS = new Set([
   // peer probing this path six attempts instead of one.
   'cmc-back-channel-wrong-stream',
   'cmc-back-channel-wrong-type',
+  // Scope-update verdicts are properties of the stored request and grant;
+  // re-running reaches the same answer.
+  'cmc-scope-request-not-found',
+  'cmc-scope-request-not-from-peer',
+  'cmc-scope-request-stream-mismatch',
+  'cmc-scope-request-expired',
+  'cmc-scope-request-already-answered',
+  'cmc-scope-request-invalid',
+  'cmc-scope-update-target-not-counterparty',
+  'cmc-scope-update-nothing-to-apply',
 ]);
 
 function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {

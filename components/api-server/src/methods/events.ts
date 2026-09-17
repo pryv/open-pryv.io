@@ -185,6 +185,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
+  const cmcEnsureAcceptScopeHook = cmc.createEnsureAcceptScopeHook({
+    mall,
+    logger: getLogger('cmc:ensure-accept-scope'),
+  });
 
   // Shared-secret items are ordinary events, so the ordinary events API can
   // reach them — these keep it from being a way around their lifecycle.
@@ -440,6 +444,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.create.params),
     sharedSecretsCreateGuard,
     emailsCreateGuard,
+    // Personal-token accept / refuse triggers: create the app scope they
+    // are written on when absent. Must run before the stream existence
+    // check in normalizeStreamIdAndStreamIds.
+    cmcEnsureAcceptScopeHook,
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,

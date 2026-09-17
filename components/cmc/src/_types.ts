@@ -124,6 +124,7 @@ export type MallAccessesLike = {
 export type MallEventsLike = {
   create: (userId: string, params: MallParams) => Promise<{ id?: string; [k: string]: unknown }>;
   get: (userId: string, params: MallParams) => Promise<Array<Record<string, unknown>>>;
+  getOne?: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
   update: (userId: string, params: MallParams) => Promise<unknown>;
 };
 

@@ -33,7 +33,7 @@ The `:_cmc:` namespace has **two plugin-managed top-level regions** plus user-cr
 | Region | Created by | Holds |
 |---|---|---|
 | **`:_cmc:inbox`** | server (always present) | One-shot lifecycle events delivered to you: `consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc`. **Plugin-internal-write-only**, apps never write here. |
-| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper) | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like, `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps` (except for the auto-created `chats` / `collectors` sub-segments below). |
+| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper); also created on demand when a personal token writes `consent/accept-cmc` / `consent/refuse-cmc` on one that does not exist yet | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like, `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps` (except for the auto-created `chats` / `collectors` sub-segments below). |
 | **`:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`** | plugin (auto-created on first chat) | All `message/chat-cmc` events, both sent and received, for one specific counterparty under this app/path. One thread per user-pair per app-scope. |
 | **`:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`** | plugin (auto-created at acceptance) | The system channel for one specific collector-relationship: `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc`. A study's reminders don't bleed into clinical-care alerts from the same doctor. |
 
@@ -618,7 +618,7 @@ Doctor's plugin:
 2. **Pre-validates permission-chain rules locally** against the provider's app-access, the provider must hold manage rights on the underlying data-grant; the new permissions must be ⊆ the provider's own app permissions.
 3. If invalid: updates trigger with `status: 'failed', failure: { reason: 'scope-update-offending-children', detail: [...] }`. Alice never sees a failed request, the provider sees the error immediately.
 4. If valid: delivers `consent/scope-request-cmc` to Alice's `:_cmc:apps:patient:incoming:collectors:doctor--example-com` via Alice's data-grant apiEndpoint.
-5. Updates trigger with `status: 'delivered'`. Final status `completed` lands when Alice responds.
+5. Updates the trigger with `status: 'completed'` once delivered, and stamps `content.remoteEventId`: the id the request got on Alice's account. **That id, not the trigger's own id, is what the user side answers** (it is what to pass to a hand-off such as `/cmc-scope-update`).
 
 Jane's app sees the request via socket.io on `:_cmc:apps:patient:incoming:collectors:doctor--example-com` and prompts: "Provider A would like to also access: nutrition. [Accept] [Refuse]".
 
@@ -630,22 +630,25 @@ await patientConnection.api([
       streamIds: [':_cmc:apps:patient:incoming:collectors:doctor--example-com'],
       type: 'consent/scope-update-cmc',
       content: {
-        scopeRequestEventId: '<inbox event id from 3b>',
+        scopeRequestEventId: '<id of the request as it arrived on your collectors stream>',
         accept: true
       }
   }}
 ]);
 ```
 
+The answer must be written on the same collectors stream the request arrived on.
+
 Jane's plugin:
 
-1. Reads the incoming `consent/scope-request-cmc` event from the same collector stream to identify the access + new permissions.
-2. Calls `accesses.update` on the local data-grant access with the new permissions. Composite serial bumps (e.g. `abc123` → `abc123:1`).
-3. Delivers `consent/scope-update-cmc` (`accept: true`) to the provider's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` via the stored back-channel apiEndpoint.
-4. Doctor's plugin (on receipt) emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
-5. Alice's plugin updates her trigger with `status: 'completed', newAccessId: 'abc123:1'`.
+1. Reads the `consent/scope-request-cmc` named by `scopeRequestEventId` and binds it: it must have been written by the collector's grant on this account, the grant serving that same collectors stream. The permission set and the grant to change both come from that request, never from the answer.
+2. Updates the data-grant with the request's `newPermissions` (the plugin-owned `:_cmc:*` permissions are kept), and records on the request `status: 'accepted'` and `responseEventId`.
+3. Stamps the trigger with `accessId`, `newPermissions` (the set now in force) and `applied: true`, then delivers `consent/scope-update-cmc` with that content to the provider's collectors stream.
+4. Updates the trigger with `status: 'completed'`. **`completed` means the grant changed.** If delivery fails after the change, the trigger reads `status: 'failed'` with `applied: true`; a transient delivery failure is retried, and a retry never applies twice.
 
-**To refuse**: `accept: false`. Alice's plugin skips the local `accesses.update` and delivers the refusal, the provider's app gets the negative response on the same collector stream.
+The answer fails (trigger `status: 'failed'`, nothing changed) with one of: `cmc-scope-request-not-found` (no such request on this account, typically a collector-side id), `cmc-scope-request-not-from-peer`, `cmc-scope-request-stream-mismatch`, `cmc-scope-request-expired`, `cmc-scope-request-already-answered`, `cmc-scope-request-invalid`, `cmc-scope-update-nothing-to-apply` (e.g. `accept` missing).
+
+**To refuse**: `accept: false`. The request is bound the same way, nothing is applied, the request is recorded `refused`, the trigger completes with `applied: false`, and the provider gets the negative response on the same collector stream.
 
 `consent/scope-update-cmc` events can also be **user-initiated** without responding to a collector's request, see Walkthrough 4.
 

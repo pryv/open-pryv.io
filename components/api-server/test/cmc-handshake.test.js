@@ -561,6 +561,205 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     });
   });
 
+  describe('[CMCHS-SR] collector scope request answered by the user', function () {
+    let h;
+    let bobDataGrantId;
+
+    async function pollEvent (actor, eventId, predicate, label) {
+      const t0 = Date.now();
+      let last;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.eventsPath + '/' + eventId)
+          .set('Authorization', actor.token);
+        last = res.body?.event;
+        if (last != null && predicate(last)) return last;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('poll timeout: ' + label + '; last content=' + JSON.stringify(last?.content));
+    }
+
+    async function grantStreamIds (actor, accessId) {
+      const res = await coreRequest.get(actor.accessesPath).set('Authorization', actor.token);
+      const acc = (res.body?.accesses || []).find((a) => a.id === accessId);
+      return new Set((acc?.permissions || []).map((p) => p.streamId));
+    }
+
+    // Collector side: propose, wait for delivery, return the id the request
+    // got on the user's account.
+    async function propose (hs, newPermissions) {
+      const res = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({ streamIds: [hs.aliceCollectorStreamId], type: 'consent/scope-request-cmc', content: { newPermissions } });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const done = await pollEvent(alice, res.body.event.id,
+        (e) => e.content?.status === 'completed' || e.content?.status === 'failed', 'scope request delivered');
+      assert.strictEqual(done.content.status, 'completed', JSON.stringify(done.content));
+      assert.ok(typeof done.content.remoteEventId === 'string', 'completed request must carry remoteEventId');
+      return done.content.remoteEventId;
+    }
+
+    async function answer (streamId, content) {
+      const res = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({ streamIds: [streamId], type: 'consent/scope-update-cmc', content });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return pollEvent(bob, res.body.event.id,
+        (e) => e.content?.status === 'completed' || e.content?.status === 'failed', 'scope update processed');
+    }
+
+    before(async function () {
+      h = await runFreshHandshake('study-sr');
+      const dg = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      bobDataGrantId = dg.id;
+    });
+
+    it('[CN40] the collector\'s completed request carries the id it has on the user\'s account, created by the user\'s grant for that collector', async function () {
+      const remoteId = await propose(h, [{ streamId: 'fertility', level: 'read' }, { streamId: 'steps', level: 'read' }]);
+      const res = await coreRequest.get(bob.eventsPath + '/' + remoteId).set('Authorization', bob.token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const arrived = res.body.event;
+      assert.strictEqual(arrived.type, 'consent/scope-request-cmc');
+      assert.ok(arrived.streamIds.includes(h.bobCollectorStreamId));
+      assert.strictEqual(arrived.createdBy.split(' ')[0], bobDataGrantId);
+      assert.strictEqual(arrived.content.from.username, alice.username);
+    });
+
+    it('[CN41] accepting applies the request\'s permissions to that grant, completes with applied, and notifies the collector', async function () {
+      const remoteId = await propose(h, [{ streamId: 'fertility', level: 'read' }, { streamId: 'steps', level: 'read' }]);
+      assert.ok(!(await grantStreamIds(bob, bobDataGrantId)).has('steps'), 'baseline must not grant steps');
+      const done = await answer(h.bobCollectorStreamId, { scopeRequestEventId: remoteId, accept: true });
+      assert.strictEqual(done.content.status, 'completed', JSON.stringify(done.content));
+      assert.strictEqual(done.content.applied, true);
+      assert.strictEqual(done.content.accessId, bobDataGrantId);
+      const ids = await grantStreamIds(bob, bobDataGrantId);
+      assert.ok(ids.has('steps') && ids.has('fertility'), JSON.stringify([...ids]));
+      assert.ok([...ids].some((s) => s.startsWith(':_cmc:')), 'machinery permissions must survive');
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/scope-update-cmc',
+        (e) => e.content?.scopeRequestEventId === remoteId && e.content?.accept === true &&
+          e.content?.newPermissions?.some((p) => p.streamId === 'steps'));
+      // A second answer to the same request is refused.
+      const again = await answer(h.bobCollectorStreamId, { scopeRequestEventId: remoteId, accept: true });
+      assert.strictEqual(again.content.status, 'failed');
+      assert.strictEqual(again.content.failure.reason, 'cmc-scope-request-already-answered');
+    });
+
+    it('[CN42] an answer on another relationship\'s collectors stream changes neither grant', async function () {
+      const other = await runFreshHandshake('study-sr-other');
+      const otherGrant = await pollCounterpartyAccessForScope(bob, alice.username, other.triggerStreamId);
+      const remoteId = await propose(h, [{ streamId: 'fertility', level: 'read' }, { streamId: 'mood', level: 'read' }]);
+      const done = await answer(other.bobCollectorStreamId, { scopeRequestEventId: remoteId, accept: true });
+      assert.strictEqual(done.content.status, 'failed');
+      assert.strictEqual(done.content.failure.reason, 'cmc-scope-request-stream-mismatch');
+      assert.ok(!(await grantStreamIds(bob, bobDataGrantId)).has('mood'));
+      assert.ok(!(await grantStreamIds(bob, otherGrant.id)).has('mood'));
+    });
+
+    it('[CN43] a request the user wrote themself cannot be answered into a grant change', async function () {
+      const forged = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/scope-request-cmc',
+          content: { newPermissions: [{ streamId: '*', level: 'manage' }] },
+        });
+      assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
+      const done = await answer(h.bobCollectorStreamId, { scopeRequestEventId: forged.body.event.id, accept: true });
+      assert.strictEqual(done.content.status, 'failed');
+      assert.strictEqual(done.content.failure.reason, 'cmc-scope-request-not-from-peer');
+      assert.ok(!(await grantStreamIds(bob, bobDataGrantId)).has('*'));
+    });
+
+    it('[CN44] refusing applies nothing, completes with applied false, and tells the collector', async function () {
+      const remoteId = await propose(h, [{ streamId: 'fertility', level: 'read' }, { streamId: 'sleep', level: 'read' }]);
+      const done = await answer(h.bobCollectorStreamId, { scopeRequestEventId: remoteId, accept: false });
+      assert.strictEqual(done.content.status, 'completed', JSON.stringify(done.content));
+      assert.strictEqual(done.content.applied, false);
+      assert.ok(!(await grantStreamIds(bob, bobDataGrantId)).has('sleep'));
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/scope-update-cmc',
+        (e) => e.content?.scopeRequestEventId === remoteId && e.content?.accept === false);
+    });
+  });
+
+  describe('[CMCHS-AS] accept on an app scope the accepter never created', function () {
+    async function issueRequest (appId) {
+      const root = ':_cmc:apps:' + appId;
+      const trigger = root + ':study';
+      await ensureStream(alice.streamsPath, alice.token, { id: root, parentId: ':_cmc:apps', name: appId });
+      await ensureStream(alice.streamsPath, alice.token, { id: trigger, parentId: root, name: 'study' });
+      const res = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [trigger],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            request: {
+              title: { en: appId },
+              description: { en: 'absent accept scope' },
+              consent: { en: 'I consent.' },
+              permissions: [{ streamId: 'fertility', level: 'read' }],
+            },
+            requesterMeta: { username: alice.username, appId },
+          },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.event.content.capabilityUrl;
+    }
+
+    async function streamExists (actor, streamId) {
+      const res = await coreRequest.get(actor.streamsPath).set('Authorization', actor.token);
+      const find = (list) => {
+        for (const s of list || []) {
+          if (s.id === streamId) return s;
+          const c = find(s.children);
+          if (c != null) return c;
+        }
+        return null;
+      };
+      return find(res.body?.streams);
+    }
+
+    it('[CN45] a personal-token accept provisions the absent scope and completes', async function () {
+      const appId = 'fresh-' + cuid().slice(-8).toLowerCase();
+      const capabilityUrl = await issueRequest(appId);
+      const scope = ':_cmc:apps:' + appId + ':cohort';
+      assert.strictEqual(await streamExists(bob, ':_cmc:apps:' + appId), null, 'precondition: scope absent');
+      const res = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({ streamIds: [scope], type: 'consent/accept-cmc', content: { capabilityUrl, accessName: 'cmc-grant-' + appId } });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const created = await streamExists(bob, scope);
+      assert.ok(created != null, 'scope stream must now exist');
+      assert.strictEqual(created.clientData?.cmc?.autoProvisioned, true);
+      const t0 = Date.now();
+      let status;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const ev = await coreRequest.get(bob.eventsPath + '/' + res.body.event.id).set('Authorization', bob.token);
+        status = ev.body?.event?.content?.status;
+        if (status === 'completed' || status === 'failed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(status, 'completed');
+    });
+
+    it('[CN46] a non-personal token gets no provisioning', async function () {
+      const appId = 'fresh-' + cuid().slice(-8).toLowerCase();
+      const capabilityUrl = await issueRequest(appId);
+      const appToken = cuid();
+      const accRes = await coreRequest.post(bob.accessesPath)
+        .set('Authorization', bob.token)
+        .send({ type: 'app', name: 'app-' + appId, token: appToken, permissions: [{ streamId: ':_cmc:apps:' + appId, level: 'manage' }] });
+      assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+      const scope = ':_cmc:apps:' + appId + ':cohort';
+      const res = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', appToken)
+        .send({ streamIds: [scope], type: 'consent/accept-cmc', content: { capabilityUrl } });
+      assert.notStrictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(await streamExists(bob, scope), null);
+    });
+  });
+
   describe('[CMCHS-IDEMP] accept re-delivery idempotency', function () {
     // Defined LAST: this test triggers a second back-channel-cmc to bob
     // from a different scope, which (per the current matcher) overwrites

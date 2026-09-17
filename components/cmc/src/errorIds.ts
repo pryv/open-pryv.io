@@ -229,6 +229,35 @@ const CmcErrorIds = {
   // Delivery was attempted (endpoint present) and failed after the bounded
   // in-request retries — peer down, network, or a 4xx rejection.
   REVOKE_DELIVERY_FAILED: 'cmc-revoke-delivery-failed',
+
+  // --- Scope-update (response to a collector's scope request) ---
+  // A `consent/scope-update-cmc` carrying `scopeRequestEventId` is resolved
+  // against the request as it ARRIVED on this account: the target grant and
+  // the permission set come from that request, never from the client.
+  // No `consent/scope-request-cmc` with that id exists on this account (the
+  // id is typically the collector-side one, which lives on another account).
+  SCOPE_REQUEST_NOT_FOUND: 'cmc-scope-request-not-found',
+  // The request was not written by a counterparty grant that serves the
+  // request's own collectors stream: user-authored, or bound to another
+  // relationship.
+  SCOPE_REQUEST_NOT_FROM_PEER: 'cmc-scope-request-not-from-peer',
+  // The answer was written on a different collectors stream than the request,
+  // so applying and notifying would address two different relationships.
+  SCOPE_REQUEST_STREAM_MISMATCH: 'cmc-scope-request-stream-mismatch',
+  // The request carried `expires` and it is in the past.
+  SCOPE_REQUEST_EXPIRED: 'cmc-scope-request-expired',
+  // The request was already answered by another trigger.
+  SCOPE_REQUEST_ALREADY_ANSWERED: 'cmc-scope-request-already-answered',
+  // The stored request no longer validates (no usable `newPermissions`).
+  SCOPE_REQUEST_INVALID: 'cmc-scope-request-invalid',
+  // An explicit `accessId` names an access that is not a CMC counterparty
+  // grant. This trigger only adjusts relationship grants.
+  SCOPE_UPDATE_TARGET_NOT_COUNTERPARTY: 'cmc-scope-update-target-not-counterparty',
+  // The trigger names nothing that can be applied (no request reference and
+  // no `newPermissions`).
+  SCOPE_UPDATE_NOTHING_TO_APPLY: 'cmc-scope-update-nothing-to-apply',
+  // The grant update itself failed.
+  SCOPE_UPDATE_LOCAL_APPLY_FAILED: 'cmc-scope-update-local-apply-failed',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

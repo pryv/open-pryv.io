@@ -378,20 +378,22 @@ sequenceDiagram
     participant Peer as Plugin-A
 
     UserApp->>Plugin: events.create consent/scope-update-cmc<br/>content.scopeRequestEventId<br/>content.accept=true
-    Plugin->>APIServer: events.get scopeRequestEventId<br/>(reads the pending request)
-    APIServer-->>Plugin: scope-request event<br/>(newPermissions, accessId)
-    Plugin->>Plugin: set cls.context.cmcInternalUpdate = true<br/>(double-fire suppression, see flow 10)
-    Plugin->>APIServer: accesses.update id=<data-grant><br/>permissions=newPermissions
-    APIServer->>Storage: composite-id bumps<br/>'abc123' → 'abc123:1'
-    APIServer-->>Plugin: updated access
-    Plugin->>Plugin: clear cls flag
-    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: consent/scope-update-cmc<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
+    Plugin->>Storage: mall.events.getOne scopeRequestEventId<br/>(the request as it arrived on this account)
+    Storage-->>Plugin: scope-request event<br/>(newPermissions, createdBy, streamIds)
+    Plugin->>Plugin: bind: createdBy is the counterparty grant serving<br/>the request's collectors stream; answer on that same stream;<br/>not expired; not answered by another trigger
+    Plugin->>Plugin: runWithSuppression<br/>(double-fire suppression, see flow 10)
+    Plugin->>Storage: mall.accesses.update id=<createdBy grant><br/>permissions=request.newPermissions + :_cmc:* machinery
+    Plugin->>Storage: request content: status='accepted', responseEventId
+    Plugin->>Plugin: trigger content: accessId, newPermissions, applied=true
+    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: consent/scope-update-cmc<br/>content (accept, accessId, newPermissions, applied)
     Peer-->>Plugin: ok
-    Plugin->>APIServer: events.update trigger status='completed'<br/>newAccessId='abc123:1'
-    APIServer-->>UserApp: socket.io push + accessUpdated event
+    Plugin->>APIServer: events.update trigger status='completed'
+    APIServer-->>UserApp: socket.io push
 ```
 
-**Refusal path** (`accept: false`): plugin skips steps 4–7 entirely; delivers a `consent/scope-update-cmc` with `content.accept=false` and `refusalDetails` set. No local `accesses.update` runs → no post-hook fire → no double-notification.
+`completed` means the grant changed. A binding failure fails the trigger with a `cmc-scope-request-*` reason and changes nothing. On the collector side the completed `consent/scope-request-cmc` trigger carries `content.remoteEventId`, the id this flow must be given.
+
+**Refusal path** (`accept: false`): the request is bound the same way, no update runs, the request is recorded `refused`, the trigger records `applied: false`, and a `consent/scope-update-cmc` with `content.accept=false` is delivered. No local update runs → no post-hook fire → no double-notification.
 
 ---
 

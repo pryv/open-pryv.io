@@ -33,6 +33,7 @@ const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const accessesUpdateHookMod = require('./accessesUpdateHook.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const validators = require('./validators.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 // Matches the trailing :collectors:<counterparty-slug> portion of a
@@ -69,7 +70,7 @@ function parseCollectorStreamId (streamId: string): ParsedCollectorStream | null
   return { appCode, scopeStreamId, counterpartySlug, counterparty };
 }
 
-import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
+import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
 
 
 type SystemHandlerResult =
@@ -78,6 +79,10 @@ type SystemHandlerResult =
       eventType: string;
       remoteEventId?: string;
       currentCount?: number;
+      // Scope-update outcome (handleSystemScopeUpdate).
+      accessId?: string;
+      newPermissions?: Array<Record<string, unknown>>;
+      applied?: boolean;
     }
   | {
       ok: false;
@@ -296,117 +301,345 @@ async function handleSystemScopeRequest (params: {
   return handleSystemEvent(params);
 }
 
-/**
- * Handle a `consent/scope-update-cmc` trigger.
- *
- * Issued AFTER the local accesses.update post-hook fires, to inform the
- * peer that an access they hold has had its permissions
- * adjusted. Content typically carries:
- *   - the new permissions
- *   - the new compositeId/version (composite-id access versioning)
- *   - optional reason / human-readable message
- *
- * The peer uses this to know their existing data-grant has new scope
- * AND to reconcile the composite-id chain if they cached the previous
- * version.
- */
-async function handleSystemScopeUpdate (params: {
+type ScopeUpdateDeps = {
+  mall: { accesses: MallAccessesLike; events?: Partial<MallEventsLike> };
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  timeoutMs?: number;
+  logger?: CmcLogger;
+  // The trigger-writer's AccessLogic, for the permission-chain re-check.
+  triggerAccess?: {
+    canUpdateAccess?: (target: Record<string, unknown>) => boolean | Promise<boolean>;
+    canCreateAccess?: (payload: Record<string, unknown>) => boolean | Promise<boolean>;
+  };
+};
+
+type ScopeUpdateParams = {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: MallAccessesLike }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
-}): Promise<SystemHandlerResult> {
+  deps: ScopeUpdateDeps;
+};
+
+type PermissionList = Array<Record<string, unknown>>;
+
+type RequestEventLike = {
+  id?: string;
+  type?: string;
+  streamIds?: string[];
+  createdBy?: string;
+  trashed?: boolean;
+  content?: Record<string, unknown>;
+};
+
+type ScopeUpdateTarget =
+  | { ok: true; accessId: string; newPermissions: PermissionList; requestEvent?: RequestEventLike }
+  | { ok: false; reason: string; detail?: unknown };
+
+const isCmcMachinery = (p: Record<string, unknown>): boolean =>
+  typeof p?.streamId === 'string' && p.streamId.startsWith(':_cmc:');
+
+function firstCollectorStream (streamIds: unknown): string | null {
+  if (!Array.isArray(streamIds)) return null;
+  for (const sid of streamIds) {
+    if (parseCollectorStreamId(sid) != null) return sid;
+  }
+  return null;
+}
+
+/**
+ * Resolve and bind the collector's `consent/scope-request-cmc` a response
+ * refers to. The request must be the one that ARRIVED on this account: written
+ * by the counterparty grant that serves the request's own collectors stream.
+ * That binding is what stops one peer's request from widening another peer's
+ * grant, and a user-written event from posing as a peer's request.
+ */
+async function resolveScopeRequest (params: {
+  userId: string;
+  triggerEvent: ScopeUpdateParams['triggerEvent'];
+  triggerStream: string;
+  accessList: AccessLike[];
+  deps: ScopeUpdateDeps;
+}): Promise<{ ok: true; requestEvent: RequestEventLike; grant: AccessLike } | { ok: false; reason: string; detail?: unknown }> {
+  const { userId, triggerEvent, triggerStream, accessList, deps } = params;
+  const scopeRequestEventId = triggerEvent.content.scopeRequestEventId as string;
+  const notFound = { ok: false as const, reason: CmcErrorIds.SCOPE_REQUEST_NOT_FOUND, detail: { scopeRequestEventId } };
+
+  if (deps.mall.events?.getOne == null) return notFound;
+  let requestEvent: RequestEventLike | null = null;
+  try {
+    // getOne, not get({ id }): the events query does not filter on `id`.
+    requestEvent = (await deps.mall.events.getOne(userId, scopeRequestEventId)) as RequestEventLike | null;
+  } catch (_e) {
+    return notFound;
+  }
+  if (requestEvent == null || requestEvent.trashed === true || requestEvent.type !== C.ET_SYSTEM_SCOPE_REQUEST) {
+    return notFound;
+  }
+
+  const notFromPeer = { ok: false as const, reason: CmcErrorIds.SCOPE_REQUEST_NOT_FROM_PEER, detail: { scopeRequestEventId } };
+  const requestStream = firstCollectorStream(requestEvent.streamIds);
+  if (requestStream == null) return notFromPeer;
+  const createdBy = requestEvent.createdBy;
+  if (typeof createdBy !== 'string' || createdBy.length === 0) return notFromPeer;
+  // `createdBy` is `<accessId>` or `<accessId> <callerId>`.
+  const sep = createdBy.indexOf(' ');
+  const createdByAccessId = sep === -1 ? createdBy : createdBy.slice(0, sep);
+  const grant = accessList.find((a) => a?.id === createdByAccessId) ?? null;
+  if (grant == null || grant.clientData?.cmc?.role !== 'counterparty') return notFromPeer;
+  // The grant's own channel permission names the relationship it serves; a
+  // peer cannot choose which stream its grant may write to.
+  const servesRequestStream = Array.isArray(grant.permissions) &&
+    grant.permissions.some((p) => (p as { streamId?: unknown })?.streamId === requestStream);
+  if (!servesRequestStream) return notFromPeer;
+
+  if (triggerStream !== requestStream) {
+    return {
+      ok: false,
+      reason: CmcErrorIds.SCOPE_REQUEST_STREAM_MISMATCH,
+      detail: { scopeRequestEventId, requestStreamId: requestStream, triggerStreamId: triggerStream },
+    };
+  }
+
+  const content = requestEvent.content ?? {};
+  if (typeof content.expires === 'number' && content.expires < Date.now() / 1000) {
+    return { ok: false, reason: CmcErrorIds.SCOPE_REQUEST_EXPIRED, detail: { scopeRequestEventId, expires: content.expires } };
+  }
+  // Answered by THIS trigger means a re-dispatch (retry): proceed.
+  if (content.responseEventId != null && content.responseEventId !== triggerEvent.id) {
+    return { ok: false, reason: CmcErrorIds.SCOPE_REQUEST_ALREADY_ANSWERED, detail: { scopeRequestEventId } };
+  }
+
+  return { ok: true, requestEvent, grant };
+}
+
+/**
+ * Decide which grant a scope-update applies to and with which permissions.
+ *
+ *   (a) response to a collector's request (`scopeRequestEventId`): both come
+ *       from the bound request, never from the client;
+ *   (b) self-initiated, explicit (`accessId` + `newPermissions`): the target
+ *       must be a counterparty grant;
+ *   (c) self-initiated, implicit (`newPermissions` only): the relationship
+ *       grant of the trigger's collectors stream.
+ */
+async function resolveScopeUpdateTarget (params: {
+  userId: string;
+  triggerEvent: ScopeUpdateParams['triggerEvent'];
+  triggerStream: string;
+  accessList: AccessLike[];
+  deps: ScopeUpdateDeps;
+}): Promise<ScopeUpdateTarget> {
+  const { triggerEvent, triggerStream, accessList, deps } = params;
+  const content = triggerEvent.content ?? {};
+
+  if (typeof content.scopeRequestEventId === 'string') {
+    // An answer must say what it answers: only an explicit acceptance applies.
+    if (content.accept !== true) {
+      return { ok: false, reason: CmcErrorIds.SCOPE_UPDATE_NOTHING_TO_APPLY, detail: { scopeRequestEventId: content.scopeRequestEventId } };
+    }
+    const bound = await resolveScopeRequest(params);
+    if (!bound.ok) return bound;
+    const requestContent = bound.requestEvent.content ?? {};
+    const validation = validators.validate(C.ET_SYSTEM_SCOPE_REQUEST, requestContent);
+    if (!validation.valid || !Array.isArray(requestContent.newPermissions)) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.SCOPE_REQUEST_INVALID,
+        detail: { scopeRequestEventId: content.scopeRequestEventId },
+      };
+    }
+    return {
+      ok: true,
+      accessId: bound.grant.id,
+      newPermissions: requestContent.newPermissions as PermissionList,
+      requestEvent: bound.requestEvent,
+    };
+  }
+
+  if (typeof content.accessId === 'string' && Array.isArray(content.newPermissions)) {
+    const target = accessList.find((a) => a?.id === content.accessId) ?? null;
+    if (target == null || target.clientData?.cmc?.role !== 'counterparty') {
+      return {
+        ok: false,
+        reason: CmcErrorIds.SCOPE_UPDATE_TARGET_NOT_COUNTERPARTY,
+        detail: { accessId: content.accessId },
+      };
+    }
+    return { ok: true, accessId: target.id, newPermissions: content.newPermissions as PermissionList };
+  }
+
+  if (Array.isArray(content.newPermissions)) {
+    const parsed = parseCollectorStreamId(triggerStream) as ParsedCollectorStream;
+    const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
+      accesses: accessList,
+      counterparty: parsed.counterparty,
+      scopeStreamId: parsed.scopeStreamId,
+      appCode: parsed.appCode,
+      logger: deps.logger,
+    });
+    if (chosen == null) {
+      return {
+        ok: false,
+        reason: 'cmc-system-counterparty-access-not-found',
+        detail: { appCode: parsed.appCode, counterpartySlug: parsed.counterpartySlug },
+      };
+    }
+    return { ok: true, accessId: chosen.id, newPermissions: content.newPermissions as PermissionList };
+  }
+
+  return { ok: false, reason: CmcErrorIds.SCOPE_UPDATE_NOTHING_TO_APPLY };
+}
+
+/**
+ * Best-effort: record on the stored request how it was answered, so a second
+ * answer is refused and a reader of the request sees its outcome.
+ */
+async function stampScopeRequest (
+  userId: string,
+  requestEvent: RequestEventLike,
+  status: 'accepted' | 'refused',
+  responseEventId: string | undefined,
+  deps: ScopeUpdateDeps
+): Promise<void> {
+  if (deps.mall.events?.update == null) return;
+  try {
+    await deps.mall.events.update(userId, {
+      ...requestEvent,
+      content: { ...(requestEvent.content ?? {}), status, responseEventId },
+    });
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to stamp the scope request', {
+      scopeRequestEventId: requestEvent.id,
+      error: String((err as Error)?.message || err),
+    });
+  }
+}
+
+/**
+ * Handle a `consent/scope-update-cmc` trigger.
+ *
+ * The local grant change is APPLIED here, before the peer is notified, and
+ * the trigger records it: `accessId`, `newPermissions` (the user-facing set
+ * applied) and `applied: true` are written onto the trigger content, so a
+ * `completed` status means the grant changed. A refusal applies nothing and
+ * records `applied: false`.
+ *
+ * Accepted shapes are listed on `resolveScopeUpdateTarget`. The collector
+ * receives the same content (plus `from`), so it learns the permission set
+ * that is now in force.
+ */
+async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
   }
+  const { userId, triggerEvent, deps } = params;
+  const content = triggerEvent.content ?? {};
+  triggerEvent.content = content;
 
-  // Local-apply branch: when the trigger carries an accessId + newPermissions,
-  // apply the change to the local data-grant access BEFORE delivering the
-  // notification to the peer. The accesses.update is wrapped in
-  // runWithSuppression so the post-hook does NOT also fire — this handler
-  // is the authoritative notifier for the change.
-  //
+  const triggerStream = firstCollectorStream(triggerEvent.streamIds);
+  if (triggerStream == null) {
+    return { ok: false, reason: 'cmc-system-stream-not-collector', detail: { streamIds: triggerEvent.streamIds } };
+  }
+  const listed = await deps.mall.accesses.get(userId, {});
+  const accessList: AccessLike[] = Array.isArray(listed) ? listed : [];
+
+  // Refusal of a collector's request: bind it exactly like an acceptance,
+  // apply nothing, tell the collector.
+  if (content.accept === false) {
+    if (typeof content.scopeRequestEventId !== 'string') {
+      return { ok: false, reason: CmcErrorIds.SCOPE_UPDATE_NOTHING_TO_APPLY };
+    }
+    const bound = await resolveScopeRequest({ userId, triggerEvent, triggerStream, accessList, deps });
+    if (!bound.ok) return bound;
+    content.applied = false;
+    await stampScopeRequest(userId, bound.requestEvent, 'refused', triggerEvent.id, deps);
+    return handleSystemEvent(params);
+  }
+
+  const target = await resolveScopeUpdateTarget({ userId, triggerEvent, triggerStream, accessList, deps });
+  if (!target.ok) return target;
+  const { accessId, newPermissions } = target;
+
   // AUTO-MERGE CMC MACHINERY: the plugin owns the `:_cmc:inbox` create-only
   // and the per-peer `:_cmc:apps:*:chats:<slug>` / `collectors:<slug>`
-  // contribute permissions on each counterparty data-grant. The caller
-  // writing `consent/scope-update-cmc` typically passes only the
-  // USER-FACING perm set; if we wrote `newPermissions` verbatim, the
-  // machinery perms would be dropped and the back-channel would go silent.
-  // We preserve them by reading the access's current permissions, keeping
-  // every `:_cmc:*`-stream permission as-is, and overlaying the caller's
-  // non-machinery perms on top. Callers CAN include CMC perms explicitly
-  // — they're filtered out and replaced with whatever the access actually
-  // has (the plugin owns these; user input is informational only).
-  const accessId = (params.triggerEvent.content as { accessId?: string })?.accessId;
-  const newPermissions = (params.triggerEvent.content as { newPermissions?: Array<Record<string, unknown>> })?.newPermissions;
-  if (typeof accessId === 'string' && Array.isArray(newPermissions) &&
-      (params.deps?.mall?.accesses as { update?: unknown })?.update != null) {
-    try {
-      let mergedPerms = newPermissions;
-      if (params.deps?.mall?.accesses?.get != null) {
-        const accessList = await params.deps.mall.accesses.get(params.userId, {});
-        const acc = Array.isArray(accessList)
-          ? accessList.find((a: AccessLike) => a?.id === accessId)
-          : null;
-        if (acc != null && Array.isArray(acc.permissions)) {
-          const isCmcMachinery = (p: Record<string, unknown>) =>
-            typeof p?.streamId === 'string' && p.streamId.startsWith(':_cmc:');
-          const machinery = acc.permissions.filter(isCmcMachinery);
-          const userFacing = newPermissions.filter((p: Record<string, unknown>) => !isCmcMachinery(p));
-          mergedPerms = [...userFacing, ...machinery];
-        }
-      }
-      // Chain check (defense in depth) — the api-server's accesses.update
-      // route runs the equivalent `canUpdateAccess` + `canCreateAccess`
-      // permission-subset checks in applyPrerequisitesForUpdate. The
-      // mall.accesses.update path bypasses them. Personal tokens
-      // short-circuit both to true; non-personal tokens are blocked by
-      // cmcAcceptAccessGateHook at events.create already, so this re-check
-      // closes the bypass for any path that reaches the handler without
-      // the gate. Skip when triggerAccess isn't plumbed (unit-test dispatch
-      // with mocked deps) — the gate is the primary guard.
-      const triggerAccess = (params.deps as { triggerAccess?: { canUpdateAccess?: (target: Record<string, unknown>) => boolean | Promise<boolean>; canCreateAccess?: (payload: Record<string, unknown>) => boolean | Promise<boolean> } })?.triggerAccess;
-      if (triggerAccess?.canUpdateAccess != null && triggerAccess?.canCreateAccess != null) {
-        let canUpdate = true;
-        let canGrant = true;
-        try {
-          canUpdate = await triggerAccess.canUpdateAccess({ id: accessId, type: 'shared' });
-        } catch (_e) { canUpdate = false; }
-        try {
-          canGrant = await triggerAccess.canCreateAccess({ type: 'shared', permissions: mergedPerms });
-        } catch (_e) { canGrant = false; }
-        if (!canUpdate || !canGrant) {
-          return {
-            ok: false,
-            reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
-            detail: {
-              accessId,
-              canUpdate,
-              canGrant,
-              message: canUpdate
-                ? 'trigger-writing access cannot grant the proposed new permissions'
-                : 'trigger-writing access cannot update the target counterparty access',
-            },
-          };
-        }
-      }
+  // contribute permissions on each counterparty data-grant. Whoever supplies
+  // the permission set (the collector's request, or the caller) states only
+  // the USER-FACING part; writing it verbatim would drop the machinery perms
+  // and the back-channel would go silent. We keep every `:_cmc:*` permission
+  // the access currently has and overlay the non-machinery perms. `:_cmc:*`
+  // entries in the supplied set are ignored (the plugin owns these).
+  const userFacing = newPermissions.filter((p) => !isCmcMachinery(p));
+  const acc = accessList.find((a) => a?.id === accessId);
+  const machinery = Array.isArray(acc?.permissions) ? acc.permissions.filter(isCmcMachinery) : [];
+  const mergedPerms = [...userFacing, ...machinery];
 
-      await accessesUpdateHookMod.runWithSuppression(async () => {
-        await params.deps.mall.accesses.update(params.userId, {
-          id: accessId,
-          update: { permissions: mergedPerms },
-        });
-      });
-    } catch (err: unknown) {
+  // Chain check (defense in depth) — the api-server's accesses.update
+  // route runs the equivalent `canUpdateAccess` + `canCreateAccess`
+  // permission-subset checks in applyPrerequisitesForUpdate. The
+  // mall.accesses.update path bypasses them. Personal tokens
+  // short-circuit both to true; non-personal tokens are blocked by
+  // cmcAcceptAccessGateHook at events.create already, so this re-check
+  // closes the bypass for any path that reaches the handler without
+  // the gate. Skip when triggerAccess isn't plumbed (unit-test dispatch
+  // with mocked deps) — the gate is the primary guard.
+  const triggerAccess = deps.triggerAccess;
+  if (triggerAccess?.canUpdateAccess != null && triggerAccess?.canCreateAccess != null) {
+    let canUpdate = true;
+    let canGrant = true;
+    try {
+      canUpdate = await triggerAccess.canUpdateAccess({ id: accessId, type: 'shared' });
+    } catch (_e) { canUpdate = false; }
+    try {
+      canGrant = await triggerAccess.canCreateAccess({ type: 'shared', permissions: mergedPerms });
+    } catch (_e) { canGrant = false; }
+    if (!canUpdate || !canGrant) {
       return {
         ok: false,
-        reason: 'cmc-scope-update-local-apply-failed',
-        detail: { accessId, message: String((err as Error)?.message || err) },
+        reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
+        detail: {
+          accessId,
+          canUpdate,
+          canGrant,
+          message: canUpdate
+            ? 'trigger-writing access cannot grant the proposed new permissions'
+            : 'trigger-writing access cannot update the target counterparty access',
+        },
       };
     }
   }
 
-  return handleSystemEvent(params);
+  // The update is wrapped in runWithSuppression so the accesses.update
+  // post-hook does NOT also notify the peer: this handler is the
+  // authoritative notifier for the change.
+  try {
+    await accessesUpdateHookMod.runWithSuppression(async () => {
+      await deps.mall.accesses.update(userId, {
+        id: accessId,
+        update: { permissions: mergedPerms },
+      });
+    });
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      reason: CmcErrorIds.SCOPE_UPDATE_LOCAL_APPLY_FAILED,
+      detail: { accessId, message: String((err as Error)?.message || err) },
+    };
+  }
+
+  // Record the outcome on the trigger BEFORE delivery: the content is both
+  // what gets persisted (completed or failed) and what the collector
+  // receives. A delivery failure after this point leaves a truthful
+  // `applied: true` on a failed trigger; a retry re-applies idempotently.
+  content.accessId = accessId;
+  content.newPermissions = userFacing;
+  content.applied = true;
+  if (target.requestEvent != null) {
+    await stampScopeRequest(userId, target.requestEvent, 'accepted', triggerEvent.id, deps);
+  }
+
+  const delivered = await handleSystemEvent(params);
+  if (!delivered.ok) return delivered;
+  return { ...delivered, accessId, newPermissions: userFacing, applied: true };
 }
 
 export {

@@ -38,7 +38,7 @@ cd "$(dirname "$0")/.."
 # payload-specific fields, so the openness is load-bearing and enumerating would
 # misrepresent partial views as closed shapes. Raised by the four additions per
 # the rule above.
-MAX=226
+MAX=225
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

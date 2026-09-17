@@ -104,6 +104,7 @@ type HandlerResult = {
   dataGrantAccessId?: string;
   offerEventId?: string;
   capabilityId?: string;
+  remoteEventId?: string;
   requesterIdentity?: { username: string; host: string };
   backChannelAccessId?: string;
   anchorStreamIds?: string[];
@@ -338,6 +339,10 @@ async function dispatch (params: {
       dataGrantAccessId: result?.dataGrantAccessId,
       offerEventId: result?.offerEventId,
       capabilityId: result?.capabilityId,
+      // A collector's scope request arrives on the user's account as a
+      // different event; the user side must answer THAT id, and this is the
+      // only place the collector can learn it.
+      remoteEventId: event.type === C.ET_SYSTEM_SCOPE_REQUEST ? result?.remoteEventId : undefined,
       // For handleAccept (accepter side): stamp the resolved REQUESTER
       // identity so listAcceptedRelationships's mapper picks up
       // `content.from = {username, host}` instead of falling through to

@@ -24,6 +24,7 @@ const {
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  createEnsureAcceptScopeHook,
   createCounterpartyFromStampingHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
@@ -541,6 +542,83 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
       assert.equal(err, undefined);
       assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+  });
+
+  describe('[CMCHOOK-AS] createEnsureAcceptScopeHook', () => {
+    beforeEach(() => { _resetEnsuredUsersMemo(); });
+
+    function fakeMall (opts = {}) {
+      const calls = { streamsCreated: [] };
+      return {
+        calls,
+        streams: {
+          // Reserved tree already there, so only the scope chain is created.
+          async getOneWithNoChildren (_userId, streamId) { return { id: streamId }; },
+          async create (_userId, params) {
+            calls.streamsCreated.push(params);
+            if (opts.existing?.includes(params.id)) {
+              const e = new Error('item-already-exists');
+              e.id = 'item-already-exists';
+              throw e;
+            }
+            if (opts.throwOn === params.id) throw new Error('boom');
+            return { id: params.id };
+          },
+        },
+      };
+    }
+    const personal = { id: 'acc-p', type: 'personal', isPersonal: () => true };
+    const app = { id: 'acc-app', type: 'app', isPersonal: () => false };
+    const ctx = (access, type, streamIds) => ({ user: { id: 'u1' }, access, newEvent: { type, streamIds, content: {} } });
+
+    it('[CH-AS01] personal accept on an absent nested scope creates the chain top-down with provenance', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      const err = await runMiddleware(mw, ctx(personal, 'consent/accept-cmc', [':_cmc:apps:new-app:sub']), {}, {});
+      assert.equal(err, undefined);
+      assert.deepEqual(mall.calls.streamsCreated.map((s) => [s.id, s.parentId]), [
+        [':_cmc:apps:new-app', ':_cmc:apps'],
+        [':_cmc:apps:new-app:sub', ':_cmc:apps:new-app'],
+      ]);
+      assert.deepEqual(mall.calls.streamsCreated[0].clientData, { cmc: { kind: 'app-scope', autoProvisioned: true } });
+      assert.equal(mall.calls.streamsCreated[0].createdBy, 'acc-p');
+    });
+
+    it('[CH-AS02] app token, non-accept types: nothing created', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      await runMiddleware(mw, ctx(app, 'consent/accept-cmc', [':_cmc:apps:new-app']), {}, {});
+      await runMiddleware(mw, ctx(personal, 'message/chat-cmc', [':_cmc:apps:new-app']), {}, {});
+      await runMiddleware(mw, ctx(personal, 'note/txt', [':_cmc:apps:new-app']), {}, {});
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CH-AS03] plugin-owned or reserved segments and non-apps streams are never created', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      for (const sid of [
+        ':_cmc:apps:x:collectors:bob--h', ':_cmc:apps:x:chats', ':_cmc:apps:chats', ':_cmc:inbox', 'diary', ':_cmc:apps:Bad_Code',
+      ]) {
+        await runMiddleware(mw, ctx(personal, 'consent/refuse-cmc', [sid]), {}, {});
+      }
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CH-AS04] existing segments are tolerated', async () => {
+      const mall = fakeMall({ existing: [':_cmc:apps:new-app'] });
+      const mw = createEnsureAcceptScopeHook({ mall });
+      const err = await runMiddleware(mw, ctx(personal, 'consent/accept-cmc', [':_cmc:apps:new-app:sub']), {}, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 2);
+    });
+
+    it('[CH-AS05] a failing create is non-fatal: next() is still called without error', async () => {
+      const mall = fakeMall({ throwOn: ':_cmc:apps:new-app' });
+      const mw = createEnsureAcceptScopeHook({ mall });
+      const err = await runMiddleware(mw, ctx(personal, 'consent/accept-cmc', [':_cmc:apps:new-app:sub']), {}, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 1, 'stops the chain at the first failure');
     });
   });
 

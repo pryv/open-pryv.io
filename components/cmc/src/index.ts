@@ -79,6 +79,7 @@ export const {
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  createEnsureAcceptScopeHook,
   createCounterpartyFromStampingHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,

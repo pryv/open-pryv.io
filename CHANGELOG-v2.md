@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### CMC: approving a collector's scope request now changes the grant
+
+A user answering a collector's `consent/scope-request-cmc` with
+`consent/scope-update-cmc` `{ scopeRequestEventId, accept: true }` saw the
+trigger reach `status: 'completed'`, and the approval page report success, while
+the data-grant kept its old permissions: only answers that restated `accessId`
+and `newPermissions` were applied, and `completed` reflected delivery to the
+collector, not a change. Reported in
+[#136](https://github.com/pryv/open-pryv.io/issues/136).
+
+Now:
+- The answer is resolved against the request **as it arrived on the user's
+  account**. The permission set and the grant to change come from that request,
+  never from the answer. The request must have been written by the collector's
+  grant serving that collectors stream, and the answer must be written on the
+  same stream, so one collector's request can never widen another collector's
+  grant, and a request the user wrote themself cannot be approved into a grant.
+- The trigger records `accessId`, `newPermissions` (the user-facing set now in
+  force) and `applied: true`; **`completed` means the grant changed**. A
+  refusal (`accept: false`) completes with `applied: false`. The collector
+  receives the same content.
+- The collector's completed `consent/scope-request-cmc` trigger carries
+  `content.remoteEventId`: the id the request has on the user's account. That is
+  the id the user side must answer (and the one to put in a hand-off link);
+  answering the collector-side id fails with `cmc-scope-request-not-found`.
+- New failure reasons on the trigger: `cmc-scope-request-not-found`,
+  `cmc-scope-request-not-from-peer`, `cmc-scope-request-stream-mismatch`,
+  `cmc-scope-request-expired`, `cmc-scope-request-already-answered`,
+  `cmc-scope-request-invalid`, `cmc-scope-update-target-not-counterparty`,
+  `cmc-scope-update-nothing-to-apply`.
+- A scope update that names nothing to apply (no request reference and no
+  `newPermissions`, or an answer without `accept`) now fails instead of
+  completing. A self-initiated update with an explicit `accessId` must name a
+  CMC counterparty grant.
+
+### CMC: accepting no longer fails when the app scope stream does not exist
+
+`consent/accept-cmc` written on a `:_cmc:apps:<app>[:<path>]` stream the
+accepter never created failed with `unknown-referenced-resource`, naming the
+stream rather than the cause, for every participant of a collector that had not
+arranged for it. When written with a **personal** token, `consent/accept-cmc`
+and `consent/refuse-cmc` now create the missing scope chain (marked
+`clientData.cmc.autoProvisioned`). App and shared tokens get no provisioning.
+Reported in [pryv/app-web-user-account#2](https://github.com/pryv/app-web-user-account/issues/2).
+
 ### SECURITY — the PostgreSQL audit engine returned audit rows across accesses
 
 Reading the audit trail applied **no stream filter** when `storages.audit.engine`

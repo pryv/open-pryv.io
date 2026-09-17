@@ -528,6 +528,62 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
+  describe('[CMCDISP-SR] scope request: the completed trigger carries the id the request got on the peer', () => {
+    const STREAM = ':_cmc:apps:my-app:collectors:bob--recipient-example-com';
+    function mallWithGrant () {
+      const mall = fakeMall();
+      mall.accesses.get = async () => [{
+        id: 'acc-cp',
+        type: 'shared',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            counterparty: {
+              username: 'bob',
+              host: 'recipient.example.com',
+              apiEndpoint: 'https://tok@recipient.example.com/',
+              remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:alice--recipient-example-com',
+            },
+          },
+        },
+      }];
+      return mall;
+    }
+
+    it('[CDSR1] stamps content.remoteEventId from the peer response on completion', async () => {
+      const mall = mallWithGrant();
+      const { fetch } = fakeFetch({ status: 201, body: { event: { id: 'remote-req-1' } } });
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'req-local',
+          type: 'consent/scope-request-cmc',
+          streamIds: [STREAM],
+          content: { newPermissions: [{ streamId: 'steps', level: 'read' }] },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'completed');
+      const last = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1];
+      assert.equal(last.content.status, 'completed');
+      assert.equal(last.content.remoteEventId, 'remote-req-1');
+    });
+
+    it('[CDSR2] other system events do not get remoteEventId stamped', async () => {
+      const mall = mallWithGrant();
+      const { fetch } = fakeFetch({ status: 201, body: { event: { id: 'remote-alert-1' } } });
+      await dispatch({
+        userId: 'u1',
+        event: { id: 'al', type: 'notification/alert-cmc', streamIds: [STREAM], content: { code: 'x' } },
+        deps: makeDeps({ mall, fetch }),
+      });
+      const last = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1];
+      assert.equal(last.content.status, 'completed');
+      assert.equal(last.content.remoteEventId, undefined);
+    });
+  });
+
   describe('[CMCDISP-MW] createDispatchMiddleware (fire-and-forget)', () => {
     it('[CD08] kicks off dispatch without awaiting; calls next() immediately', async () => {
       const mall = fakeMall();

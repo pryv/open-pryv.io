@@ -21,6 +21,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const validators = require('./validators.ts');
 const provisioning = require('./provisioning.ts');
+const anchorStreams = require('./anchorStreams.ts');
 
 type ApiError = Error & { id?: string; data?: unknown };
 type ErrorFactory = {
@@ -734,7 +735,94 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
   };
 }
 
+/**
+ * events.create hook: provision the app scope an accept / refuse trigger is
+ * written on.
+ *
+ * `consent/accept-cmc` / `consent/refuse-cmc` land on the accepter's own
+ * `:_cmc:apps:<app>[:<path>]` stream. Nothing else creates that stream for an
+ * accepter whose grants never referenced the app, so the trigger would fail
+ * the stream check with `unknown-referenced-resource`, naming a stream rather
+ * than the cause, for every participant of that app. The accept itself
+ * already provisions anchors and a data-grant under that scope; creating the
+ * empty scope on the way is strictly less.
+ *
+ * Only for PERSONAL tokens: an app token that lacks the stream must not have
+ * it created for it. Non-fatal: on failure the stream check reports as before.
+ * Must run before the stream existence check (it ensures the reserved
+ * parents itself).
+ */
+function createEnsureAcceptScopeHook (deps: ProvisionDeps): Middleware {
+  return async function cmcEnsureAcceptScope (context, params, _result, next) {
+    const userId = context?.user?.id;
+    // Runs before the stream existence check, which is also where
+    // `context.newEvent` gets set: read the event from the call params.
+    const newEvent = (context?.newEvent ?? params) as MethodContext['newEvent'] | null | undefined;
+    if (userId == null || newEvent == null) return next();
+    if (newEvent.type !== C.ET_ACCEPT && newEvent.type !== C.ET_REFUSE) return next();
+
+    const access = context.access as { id?: string; type?: string; isPersonal?: () => boolean } | undefined;
+    const isPersonal = typeof access?.isPersonal === 'function'
+      ? access.isPersonal()
+      : access?.type === 'personal';
+    if (!isPersonal) return next();
+
+    const streamIds: string[] = Array.isArray(newEvent.streamIds) ? newEvent.streamIds : [];
+    const scopes = streamIds.filter((id) => typeof id === 'string' && isProvisionableAppScope(id));
+    if (scopes.length === 0) return next();
+
+    try {
+      await ensureReservedParentsOnce(deps, userId);
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc: failed to ensure reserved parents before accept-scope provisioning', {
+        userId,
+        error: String((err as Error)?.message || err),
+      });
+    }
+
+    for (const scopeStreamId of scopes) {
+      for (const streamId of anchorStreams.scopeAncestors(scopeStreamId)) {
+        const payload: Record<string, unknown> & { id: string } = {
+          id: streamId,
+          parentId: streamId.substring(0, streamId.lastIndexOf(':')),
+          name: streamId.split(':').pop() ?? streamId,
+          clientData: { cmc: { kind: 'app-scope', autoProvisioned: true } },
+        };
+        if (access?.id != null) {
+          payload.createdBy = access.id;
+          payload.modifiedBy = access.id;
+        }
+        try {
+          await deps.mall.streams.create(userId, payload);
+          deps.logger?.debug?.('cmc: provisioned accept scope', { userId, streamId });
+        } catch (err: unknown) {
+          if (provisioning.isAlreadyExistsError(err)) continue;
+          deps.logger?.warn?.('cmc: failed to provision accept scope', {
+            userId,
+            streamId,
+            error: String((err as Error)?.message || err),
+          });
+          break;
+        }
+      }
+    }
+    next();
+  };
+}
+
+/**
+ * True for a `:_cmc:apps:<app>[:<path>]` id the user may create: a valid,
+ * non-reserved app code and no plugin-owned `chats` / `collectors` segment.
+ */
+function isProvisionableAppScope (streamId: string): boolean {
+  if (!C.isUserCreatableStreamId(streamId)) return false;
+  const appCode = C.getAppCode(streamId);
+  if (appCode == null || appCode === '' || RESERVED_APP_SEGMENTS.has(appCode) || !APP_CODE_RE.test(appCode)) return false;
+  return !streamId.split(':').slice(3).some((segment) => RESERVED_APP_SEGMENTS.has(segment) || segment === '');
+}
+
 export {
+  createEnsureAcceptScopeHook,
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
