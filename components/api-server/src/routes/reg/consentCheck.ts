@@ -111,10 +111,14 @@ async function loadLocalAccess (
   app: AppLike, username: string, token: string
 ): Promise<{ access: LoadedAccess } | { failure: ConsentCheckOutcome }> {
   const source = { name: 'http', ip: null };
-  const context = new MethodContext(
-    source, username, token, app.getCustomAuthFunction('consent-check'), {}, {}, null
-  );
+  let context;
   try {
+    // Constructed inside the try: MethodContext parses the authorization
+    // material in its constructor, and a token that is not a string throws
+    // synchronously there. That is a malformed request, not a server fault.
+    context = new MethodContext(
+      source, username, token, app.getCustomAuthFunction('consent-check'), {}, {}, null
+    );
     await context.init();
     await context.retrieveExpandedAccess(app.storageLayer);
   } catch (err: unknown) {

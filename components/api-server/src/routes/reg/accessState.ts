@@ -154,14 +154,35 @@ async function get (key: string): Promise<AccessState | null> {
 }
 
 /**
- * Update an access request state (accept or refuse).
+ * The ONLY fields an update may write.
+ *
+ * Whoever posts the outcome of the flow is exactly the party whose grant
+ * the accept then verifies, so it must not be able to reach the rest of
+ * the state. Assigning the request body wholesale let a poster send
+ * `consent: null`, or a consent form of its own choosing, and so switch
+ * the grant check off or narrow the offer to whatever it had minted.
+ *
+ * The server's record of what the APP asked for (`requestedPermissions`,
+ * `consent`, `requestingAppId`, the URLs, the expiry) is not the poster's
+ * to change.
+ */
+const UPDATABLE_FIELDS = Object.freeze([
+  'status', 'username', 'token', 'apiEndpoint',
+  'reasonId', 'message', 'redirectUrl'
+]);
+
+/**
+ * Update an access request state (accept or refuse). Only
+ * `UPDATABLE_FIELDS` are written; anything else in `update` is ignored.
  */
 async function update (key: string, update: Partial<AccessState>): Promise<AccessState | null> {
   const platformDB = getPlatformDB();
   const row = await platformDB.getAccessState(key);
   if (!row) return null;
   const state = row.value;
-  Object.assign(state, update);
+  for (const field of UPDATABLE_FIELDS) {
+    if (update[field] !== undefined) state[field] = update[field];
+  }
   if (update.status === 'ACCEPTED') {
     state.code = 200;
   } else if (update.status === 'REFUSED' || update.status === 'ERROR') {

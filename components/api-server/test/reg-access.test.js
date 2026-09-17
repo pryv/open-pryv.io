@@ -465,6 +465,60 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(plainRes.status, 200, JSON.stringify(plainRes.body));
     });
 
+    it('[RA78] must not let the posted body erase or rewrite the consent form', async () => {
+      // The party being checked is the one posting, so anything it can put
+      // in the body must not be able to switch the check off. The state is
+      // the server's record of what the APP asked for; only the outcome
+      // fields belong to the poster.
+      const overBroad = await mintApp([
+        { streamId: 'diary', level: 'read' },
+        { streamId: 'secret', level: 'read' } // never offered
+      ]);
+
+      // (a) erase the form through a REFUSED post, then accept unchecked.
+      const keyA = await createRequest(SIDECAR);
+      await coreRequest.post('/reg/access/' + keyA)
+        .send({ status: 'REFUSED', reasonId: 'x', message: 'x', consent: null });
+      const sneakyA = await accept(keyA, overBroad);
+      assert.notStrictEqual(sneakyA.status, 200,
+        'an access carrying an unoffered permission was accepted after the form was erased');
+
+      // (b) erase the form on the ACCEPTED post itself.
+      const keyB = await createRequest(SIDECAR);
+      const resB = await coreRequest.post('/reg/access/' + keyB).send({
+        status: 'ACCEPTED',
+        username,
+        token: overBroad,
+        apiEndpoint: 'https://' + username + '.pryv.me/',
+        consent: null
+      });
+      assert.strictEqual(resB.status, 400, JSON.stringify(resB.body));
+      assert.strictEqual(resB.body.error.id, 'invalid-consent-grant');
+
+      // (c) replace the form with a laxer one of the poster's choosing.
+      const keyC = await createRequest(SIDECAR);
+      const resC = await coreRequest.post('/reg/access/' + keyC).send({
+        status: 'ACCEPTED',
+        username,
+        token: overBroad,
+        apiEndpoint: 'https://' + username + '.pryv.me/',
+        consent: {
+          allowUserChoice: true,
+          permissions: [
+            { streamId: 'diary', level: 'read' },
+            { streamId: 'secret', level: 'read' }
+          ]
+        }
+      });
+      assert.strictEqual(resC.status, 400, JSON.stringify(resC.body));
+      assert.strictEqual(resC.body.error.id, 'invalid-consent-grant');
+
+      // And the stored form is intact after all of that.
+      const pollC = await coreRequest.get('/reg/access/' + keyC);
+      assert.strictEqual(pollC.body.status, 'NEED_SIGNIN');
+      assert.deepEqual(pollC.body.consent.permissions.map((p) => p.streamId), ['diary', 'weight']);
+    });
+
     it('[RA77] must not reach for another core when the user is local', async () => {
       // The local arm is in process. If the route ever took the remote arm
       // for a local user it would call out over HTTP, which on a default

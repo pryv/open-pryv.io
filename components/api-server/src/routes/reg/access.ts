@@ -269,7 +269,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       }
 
       if (status === 'ACCEPTED') {
-        if (!req.body.username || !req.body.token) {
+        // Types, not just presence: these two are used to look up an access,
+        // and a non-string would fault deep in the loader rather than being
+        // reported as the malformed request it is.
+        if (typeof req.body.username !== 'string' || req.body.username === '' ||
+            typeof req.body.token !== 'string' || req.body.token === '') {
           return res.status(400).json({
             error: { id: 'invalid-parameters', message: 'ACCEPTED requires username and token' }
           });

@@ -1023,13 +1023,18 @@ describe('[RGMC] register: multi-core', function () {
       return res.body.key;
     }
 
-    it('[MC20A] must not contact the host the caller posted, and must say the check is unavailable', async function () {
+    it('[MC20A] with no resolvable url for the user core, refuses without reaching out at all', async function () {
       await setupMultiCore(CORE_A);
-      // CORE_B exists but has no reachable URL of its own: no explicit url
-      // row and, for this test, no derivable one either.
+      // No explicit url row AND no domain to derive one from, which is the
+      // default install: `coreIdToUrl` then yields nothing usable.
       await getPlatformDB().setCoreInfo(CORE_B, {
         id: CORE_B, url: null, ip: null, ipv6: null, cname: null, hosting: 'us-east-1', available: true
       });
+      // `coreIdToUrl` falls through cache -> dns domain -> `core:url`, so
+      // BOTH of the latter must be absent for it to yield nothing. That is
+      // the default install: neither the wizard nor the bootstrap sets one.
+      config.set('dns:domain', null);
+      config.set('core:url', null);
       await platform._refreshCoreUrlCache();
 
       const app = getApplication(true);
@@ -1047,15 +1052,61 @@ describe('[RGMC] register: multi-core', function () {
         apiEndpoint: CALLER_SUPPLIED
       });
 
-      // The user is on another core, so the check needs that core. Whatever
-      // the outcome, it must never be a pass, and the state must survive.
+      // Exactly `core-unresolvable`, which is only reachable on the branch
+      // that returns BEFORE any request is made. Had the posted apiEndpoint
+      // been used as the destination, this would have been reached and the
+      // reason would be `core-unreachable` instead.
       assert.strictEqual(res.status, 503, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'consent-check-unavailable');
-      assert.ok(['core-unresolvable', 'core-unreachable'].includes(res.body.error.data.reason),
-        'unexpected reason: ' + res.body.error.data.reason);
+      assert.strictEqual(res.body.error.data.reason, 'core-unresolvable');
       // Not a bypass: the request is still open, not ACCEPTED.
       const pollRes = await request.get('/reg/access/' + key);
       assert.strictEqual(pollRes.body.status, 'NEED_SIGNIN');
+    });
+
+    it('[MC20C] a genuine hop to the user core that cannot answer is unavailable, not a bad grant', async function () {
+      await setupMultiCore(CORE_A);
+      const app = getApplication(true);
+      await app.initiate();
+      const request = await listeningAgent(app.expressApp);
+
+      // Point CORE_B at this very server, so the check makes a REAL http
+      // request. This server hosts the user on core-a, so its own
+      // wrong-core middleware answers 421, which is precisely a core that
+      // could not give a verdict.
+      // A second socket on the SAME express app, only to learn a port the
+      // check can really connect to. supertest does not expose its own.
+      const socket = app.expressApp.listen(0, '127.0.0.1');
+      await new Promise((resolve, reject) => {
+        socket.once('listening', resolve);
+        socket.once('error', reject);
+      });
+      socket.unref();
+      const liveUrl = 'http://127.0.0.1:' + socket.address().port + '/';
+      await getPlatformDB().setCoreInfo(CORE_B, {
+        id: CORE_B, url: liveUrl, ip: null, ipv6: null, cname: null, hosting: 'us-east-1', available: true
+      });
+      await platform._refreshCoreUrlCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
+
+      const key = await createAnnotatedRequest(request);
+      const username = 'mc20c-' + cuid.slug();
+      await platform.setUserCore(username, CORE_B);
+
+      const res = await request.post('/reg/access/' + key).send({
+        status: 'ACCEPTED',
+        username,
+        token: 'some-token',
+        apiEndpoint: CALLER_SUPPLIED
+      });
+
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'consent-check-unavailable');
+      assert.strictEqual(res.body.error.data.reason, 'core-unreachable');
+      const pollRes = await request.get('/reg/access/' + key);
+      assert.strictEqual(pollRes.body.status, 'NEED_SIGNIN');
+      socket.close();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
     });
 
     it('[MC20B] must take the local path when the platform hosts the user here', async function () {
