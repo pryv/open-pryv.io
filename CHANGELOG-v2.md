@@ -29,6 +29,25 @@ stream id that was a suffix of another could match it.
 
 **No action is required beyond upgrading**; no stored data is altered.
 
+### Cross-core delegation no longer requires an explicit `core.url`
+
+On a multi-core platform, every cross-core `delegations.*` call failed with
+`400 delegation-unknown-core` ("Could not resolve the delegate account core
+endpoint") unless the operator had configured an explicit `core.url` on each
+core. Resolving the delegate's core read the peer's registry entry directly,
+where a URL is recorded only when that peer was given an explicit `core.url` —
+which neither the configuration wizard nor the bootstrap bundle writes. So on a
+dns-active platform the lookup could not succeed, and the relationship could
+never be created. Same-core delegation was unaffected.
+
+Resolution now goes through the same helper the rest of the API uses, which
+prefers a peer's advertised URL and otherwise derives it from the core id and
+the platform DNS domain. Deployments that had set `core.url` as a workaround
+keep working unchanged and may now drop it. Where neither an advertised URL nor
+a domain is available the call is still refused with `delegation-unknown-core`,
+rather than being delivered to the calling core itself. Reported via
+[#134](https://github.com/pryv/open-pryv.io/issues/134).
+
 ### Account-stream permissions: clearer error, corrected docs
 
 - **BREAKING (error contract)**: `accesses.create` with a permission on an
