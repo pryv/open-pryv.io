@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## `just install` keeps optional dependencies
+
+`just install` ran `npm install --omit=optional`, which removes sharp's native
+binaries (sharp ships them as optional `@img/sharp-<platform>` packages), so the
+previews server failed to load (`Could not load the "sharp" module`) until
+sharp was reinstalled by hand. A full test run then crashed that component at
+load without printing a failing test. The recipe now installs optional
+dependencies, like CI, the Dockerfile and the native deploy path already did.
+
 ## Credentials out of the replicated platform store
 
 **`/reg/access` state** (`api-server/src/routes/reg/accessState.ts`) moved from
