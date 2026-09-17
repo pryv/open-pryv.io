@@ -84,10 +84,16 @@ describe('[AD01] Accesses with account streams', function () {
     accountAccessData = createAccessResponse.body.access;
   }
 
+  // ⚑ Query by `id`, not `_id`. The PostgreSQL storage maps both to its id
+  // column (`BaseStoragePG.toCol`), so an `_id` query works there and silently
+  // matches nothing on SQLite, whose user storage has no such mapping. That
+  // made every assertion below read `null` and fail on the SQLite engine while
+  // passing on PostgreSQL, so these checks had no coverage on the default
+  // audit engine at all. `id` is understood by both.
   async function getAccessInDb (id) {
     const findOneAsync = promisify((userId, query, opts, cb) =>
       user.storage.accesses.findOne(userId, query, opts, cb));
-    return await findOneAsync({ id: user.attrs.id }, { _id: id }, null);
+    return await findOneAsync({ id: user.attrs.id }, { id }, null);
   }
 
   let savedIntegrityCheck;
