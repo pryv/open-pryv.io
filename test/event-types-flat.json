@@ -481,6 +481,10 @@
                       "mandatory": {
                         "type": "boolean",
                         "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                      },
+                      "optIn": {
+                        "type": "boolean",
+                        "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                       }
                     },
                     "required": [
@@ -504,6 +508,10 @@
                       "mandatory": {
                         "type": "boolean",
                         "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                      },
+                      "optIn": {
+                        "type": "boolean",
+                        "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                       }
                     },
                     "required": [
@@ -788,6 +796,10 @@
                   "mandatory": {
                     "type": "boolean",
                     "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                   }
                 },
                 "required": [
@@ -811,6 +823,10 @@
                   "mandatory": {
                     "type": "boolean",
                     "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                   }
                 },
                 "required": [
@@ -876,6 +892,10 @@
                   "mandatory": {
                     "type": "boolean",
                     "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                   }
                 },
                 "required": [
@@ -899,6 +919,10 @@
                   "mandatory": {
                     "type": "boolean",
                     "description": "Consent-layer flag: this entry is required for the requesting app to function - an accept must include it (the consent UI locks it; the user's alternative is denying the whole request)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "Consent-layer flag: this entry is optional and the consent UI opens it NOT pre-selected (the user opts in). Omit it for the default, where an optional entry opens pre-selected and the user may opt out. Display-only: it never changes what may be granted, and it cannot be combined with `mandatory` on the same entry."
                   }
                 },
                 "required": [

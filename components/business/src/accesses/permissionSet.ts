@@ -12,6 +12,11 @@
  *   Permission = StreamPermission  { streamId, level, defaultName?, name? }
  *              | FeaturePermission { feature, setting }
  *
+ * In a CONSENT request or offer an entry may also carry the annotations
+ * `mandatory?` and `optIn?` (see `ConsentPermission`). They live only in
+ * the consent layer: `stripConsentAnnotations` removes them before an
+ * access is minted, so no stored permission ever carries one.
+ *
  * Consumers:
  *   - AccessLogic (level ordering via `PermissionLevels`)
  *   - api-server schema/access.ts (JSON-schema enums derive from the
@@ -19,6 +24,9 @@
  *   - cmc acceptOrchestration (offer permissions normalization)
  *   - oauth2 route mount (granted ⊆ offered consent-downgrade check,
  *     injected as a dep)
+ *   - api-server routes/reg/consentCheck (the same check on the auth
+ *     request's ACCEPTED post, against the form resolved from its
+ *     `consent` sidecar)
  *
  * Keep this module pure (no config, no I/O) so any component can load it.
  */
@@ -69,9 +77,48 @@ function isFeaturePermission (p: unknown): p is FeaturePermission {
 }
 
 /** A permission entry as it appears in a CONSENT request/offer: the
- * plain lexicon plus the consent-layer `mandatory` annotation. Never
- * reaches a minted access row (see `stripConsentAnnotations`). */
-type ConsentPermission = Permission & { mandatory?: boolean };
+ * plain lexicon plus the consent-layer annotations. Neither reaches a
+ * minted access row (see `stripConsentAnnotations`).
+ *
+ * The two annotations are orthogonal and together express the three
+ * words a requester can put on an entry:
+ *
+ *   mandatory : `mandatory: true`  the user cannot drop it (enforced by
+ *                                  `checkConsentGrant`)
+ *   opt-out   : neither flag       optional, offered pre-selected (the
+ *                                  behaviour every offer has today)
+ *   opt-in    : `optIn: true`      optional, offered NOT pre-selected
+ *
+ * `optIn` is DISPLAY-ONLY: it says how the consent screen should present
+ * the entry, never what the user is allowed to grant. `checkConsentGrant`
+ * does not read it, so an offer's grant rule is identical with and without
+ * it. `mandatory` and `optIn` on the same entry contradict each other and
+ * are rejected at normalization. */
+type ConsentPermission = Permission & { mandatory?: boolean; optIn?: boolean };
+
+/**
+ * Copy the consent-layer annotations from a request/offer entry onto its
+ * normalized twin, rejecting the one combination that carries no meaning.
+ * Only called in consent context; outside it both annotations are dropped.
+ *
+ * `mandatory` + `optIn` on one entry is a contradiction: the first says
+ * the user may not drop the entry, the second says it is offered
+ * unselected, so the screen would open on a state the grant rule refuses.
+ * Rejecting it at normalization means neither the consent screen nor
+ * `checkConsentGrant` ever has to decide which flag wins.
+ */
+function copyConsentAnnotations (from: ConsentPermission, to: ConsentPermission, index: number): void {
+  const mandatory = from.mandatory === true;
+  const optIn = from.optIn === true;
+  if (mandatory && optIn) {
+    throw new Error(
+      `invalid consent permission at index ${index}: 'mandatory' and 'optIn' contradict ` +
+      'each other (a mandatory entry cannot be offered unselected)'
+    );
+  }
+  if (mandatory) to.mandatory = true;
+  if (optIn) to.optIn = true;
+}
 
 /**
  * Validate an unknown value as a permissions array covering the FULL
@@ -79,15 +126,15 @@ type ConsentPermission = Permission & { mandatory?: boolean };
  * carrying only the known fields (display names preserved on stream
  * permissions). Throws with the offending index on invalid entries.
  *
- * With `opts.consent`, the consent-layer `mandatory: true` annotation
- * is preserved on entries (offer/request context); without it the
- * annotation is dropped (mint/grant context).
+ * With `opts.consent`, the consent-layer annotations (`mandatory: true`,
+ * `optIn: true`) are preserved on entries (offer/request context);
+ * without it they are dropped (mint/grant context).
  */
 function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): ConsentPermission[] {
   if (!Array.isArray(perms)) {
     throw new Error('permissions must be an array');
   }
-  const keepMandatory = opts?.consent === true;
+  const keepAnnotations = opts?.consent === true;
   return perms.map((p, i) => {
     if (isStreamPermission(p)) {
       // Consent context: a permission set is validated by the "granted ⊆
@@ -97,7 +144,7 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
       // cannot-list / forbidden-get sets), so an offered `none` entry that
       // masks a broader grant INVERTS the rule — dropping it WIDENS access.
       // Consent offers therefore must not carry masks.
-      if (keepMandatory && p.level === 'none') {
+      if (keepAnnotations && p.level === 'none') {
         throw new Error(
           `invalid consent permission at index ${i}: level 'none' (an exclusion mask) ` +
           `is not allowed in a consent offer — offers must grant positive access only`
@@ -106,12 +153,12 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
       const out: ConsentPermission = { streamId: p.streamId, level: p.level };
       if (typeof p.defaultName === 'string') out.defaultName = p.defaultName;
       if (typeof p.name === 'string') out.name = p.name;
-      if (keepMandatory && (p as ConsentPermission).mandatory === true) out.mandatory = true;
+      if (keepAnnotations) copyConsentAnnotations(p as ConsentPermission, out, i);
       return out;
     }
     if (isFeaturePermission(p)) {
       const out: ConsentPermission = { feature: p.feature, setting: p.setting };
-      if (keepMandatory && (p as ConsentPermission).mandatory === true) out.mandatory = true;
+      if (keepAnnotations) copyConsentAnnotations(p as ConsentPermission, out, i);
       return out;
     }
     throw new Error(
@@ -172,11 +219,12 @@ function levelCapabilityExcess (
   return (Object.keys(g) as Array<keyof StreamCapabilities>).filter((c) => g[c] && !o[c]);
 }
 
-/** Drop consent-layer annotations — call before anything that mints or
- * updates a real access row. */
+/** Drop consent-layer annotations (`mandatory`, `optIn`): call before
+ * anything that mints or updates a real access row. */
 function stripConsentAnnotations (perms: ConsentPermission[]): Permission[] {
   return perms.map((p) => {
-    const { mandatory: _mandatory, ...rest } = p as ConsentPermission & Record<string, unknown>;
+    const { mandatory: _mandatory, optIn: _optIn, ...rest } =
+      p as ConsentPermission & Record<string, unknown>;
     return rest as Permission;
   });
 }
@@ -226,6 +274,13 @@ type ConsentGrantCheck =
  * `offered` is expected in consent form (annotations preserved —
  * `normalizePermissions(perms, {consent: true})`); `granted` in plain
  * form. Identity ignores annotations.
+ *
+ * `optIn` is deliberately NOT read here. It sets how a consent screen
+ * opens (unselected rather than pre-selected), which is a presentation
+ * choice; what the user may then grant is unchanged. So this rule
+ * returns the same verdict for an offer with and without `optIn` on
+ * any entry, and an opt-in entry the user leaves unticked is simply an
+ * entry that is not in `granted`.
  */
 function checkConsentGrant (
   granted: Permission[],

@@ -56,7 +56,9 @@ export type SignedStatePayload = {
     capabilityUrl: string;
     capabilityId: string | null;
     offerEventId: string | null;
-    /** Consent form — per-entry `mandatory` annotation preserved. */
+    /** Consent form: per-entry `mandatory` and `optIn` annotations
+     * preserved (the entries are carried opaquely, so an annotation
+     * added to the lexicon rides through here without a change). */
     permissions: Array<Record<string, unknown>>;
     /** Default FALSE: ALL OR NOTHING; true enables cherry-picking
      * (mandatory entries stay locked). */

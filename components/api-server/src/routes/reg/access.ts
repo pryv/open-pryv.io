@@ -18,6 +18,31 @@ const require = createRequire(import.meta.url);
  */
 
 const accessState = require('./accessState.ts');
+const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
+const { checkAcceptedGrant } = require('./consentCheck.ts');
+const { getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('routes:reg:access');
+
+/** Operator- and developer-facing wording for each grant refusal. The
+ * reason id in `data.reason` is the machine-readable form; this is what a
+ * person reads in a console. */
+function consentGrantMessage (reason: string): string {
+  switch (reason) {
+    case 'token-invalid':
+      return 'The posted token does not resolve to an access on this platform.';
+    case 'not-app-access':
+      return 'The posted token must belong to an app access created for this request.';
+    case 'empty-grant':
+      return 'The access grants nothing that was offered; refuse the request instead.';
+    case 'choice-not-allowed':
+      return 'This consent is all-or-nothing: the access must carry every offered permission.';
+    case 'mandatory-refused':
+      return 'Permissions the app marked as mandatory are missing from the access.';
+    default:
+      return 'The access carries permissions that were not offered to the user.';
+  }
+}
 
 /**
  * Whether `candidate` (a caller-supplied auth-page URL) matches one of the
@@ -68,7 +93,26 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         });
       }
 
-      const { key, state, expiresAt } = accessState.buildState(req.body);
+      // The optional `consent` sidecar carries the per-entry annotations
+      // (`mandatory`, `optIn`) beside the plain entries, and is resolved
+      // here into the consent form the auth page and the ACCEPTED check
+      // both read. A request without it runs no new validation and is
+      // processed exactly as it was before consent forms existed.
+      let consentForm;
+      // `!= null`, not `!== undefined`: a client that serialises an absent
+      // option as `null` degrades on an older core (which ignores the
+      // unknown field) and must not fail here instead.
+      if (req.body.consent != null) {
+        try {
+          consentForm = resolveConsentSidecar(requestedPermissions, req.body.consent);
+        } catch (err: unknown) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: (err as Error)?.message ?? String(err) }
+          });
+        }
+      }
+
+      const { key, state, expiresAt } = accessState.buildState({ ...req.body, consent: consentForm });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
       // per core, so every poll GET must hit the same core that served
@@ -142,13 +186,19 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // the flow. The auth UI gets richer state from GET /reg/access/:key
       // (and from query parameters on `authUrl`). Service metadata
       // belongs at `/service/info` — clients fetch it from there.
-      res.status(201).json({
+      const created: Record<string, unknown> = {
         status: state.status,
         key,
         authUrl,
         poll: pollUrl,
         poll_rate_ms: state.poll_rate_ms
-      });
+      };
+      // Echoed ONLY for an annotated request. This is also the app's
+      // detection signal: a server that understood the sidecar says so
+      // here, an older one simply does not, and the flow degrades to
+      // all-or-nothing rather than failing.
+      if (state.consent !== undefined) created.consent = state.consent;
+      res.status(201).json(created);
     } catch (err) { next(err); }
   });
 
@@ -184,6 +234,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         response.returnURL = state.returnURL;
         response.oauthState = state.oauthState;
         response.clientData = state.clientData;
+        // Only for an annotated request, and absent (not null) otherwise,
+        // so an un-annotated poll body is unchanged byte for byte and an
+        // auth page that does not know the field keeps working:
+        // `requestedPermissions` above stays plain and complete.
+        if (state.consent !== undefined) response.consent = state.consent;
       } else if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;
@@ -217,7 +272,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       }
 
       if (status === 'ACCEPTED') {
-        if (!req.body.username || !req.body.token) {
+        // Types, not just presence: these two are used to look up an access,
+        // and a non-string would fault deep in the loader rather than being
+        // reported as the malformed request it is.
+        if (typeof req.body.username !== 'string' || req.body.username === '' ||
+            typeof req.body.token !== 'string' || req.body.token === '') {
           return res.status(400).json({
             error: { id: 'invalid-parameters', message: 'ACCEPTED requires username and token' }
           });
@@ -229,6 +288,53 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           return res.status(400).json({
             error: { id: 'invalid-parameters', message: 'REDIRECTED requires redirectUrl' }
           });
+        }
+      }
+
+      // A request created with a consent form is the only one whose
+      // ACCEPTED is checked: the server reads the access the page just
+      // minted and asks whether it matches what the user was offered.
+      // Without a form there is nothing to check against (the rule would
+      // be "grant everything"), so the endpoint keeps its long-standing
+      // opaque-token contract for every other integrator UI.
+      if (status === 'ACCEPTED') {
+        const pending = await accessState.get(req.params.key);
+        if (pending?.consent != null) {
+          const outcome = await checkAcceptedGrant({
+            app,
+            username: req.body.username,
+            token: req.body.token,
+            consentForm: pending.consent
+          });
+          if (!outcome.ok && outcome.kind === 'grant') {
+            // The state is deliberately left untouched: still NEED_SIGNIN,
+            // so the page can correct the grant and post again.
+            return res.status(400).json({
+              error: {
+                id: 'invalid-consent-grant',
+                message: consentGrantMessage(outcome.reason),
+                data: {
+                  reason: outcome.reason,
+                  ...(outcome.offending != null ? { offending: outcome.offending } : {})
+                }
+              }
+            });
+          }
+          if (!outcome.ok) {
+            // Could not perform the check. Never a pass (that would be a
+            // consent bypass) and never an opaque 500: the operator is
+            // told which of the three it was, in the log and in the body.
+            logger.error('consent check unavailable on access request ' + req.params.key +
+              ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
+            return res.status(503).json({
+              error: {
+                id: 'consent-check-unavailable',
+                message: 'The consent grant could not be verified by this server. ' +
+                  'The access request is unchanged; retry shortly.',
+                data: { reason: outcome.reason }
+              }
+            });
+          }
         }
       }
 

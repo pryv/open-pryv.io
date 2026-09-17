@@ -126,4 +126,32 @@ describe('[OAUTH-OFR] offer resolution', () => {
       assert.equal(r.permissions.length, 2);
     });
   });
+
+  describe('[OAUTH-OFR-OPTIN] the optIn display annotation rides through resolution', () => {
+    // `optIn` says the consent screen opens the entry unselected. The
+    // resolver must carry it into the signed state untouched, exactly as
+    // it carries `mandatory`, or the screen loses the distinction between
+    // an opt-in entry and a pre-selected one.
+    it('[OFR-O1] optIn and mandatory are both preserved by resolveOffer', async () => {
+      const perms = [
+        { streamId: 'health', level: 'read', mandatory: true },
+        { streamId: 'diary', level: 'contribute' },
+        { streamId: 'location', level: 'read', optIn: true },
+      ];
+      const fetchFn = offerFetch(baseOffer({ request: { title: { en: 'x' }, permissions: perms } }));
+      const r = await resolveOffer({ offerName: 'study-A', capabilityUrl: CAP_URL, deps: { fetch: fetchFn } });
+      assert.deepEqual(r.permissions, perms);
+    });
+
+    it('[OFR-O2] an entry marked both mandatory and optIn is rejected at the edge', async () => {
+      // The contradiction is refused where every other malformed offer is
+      // refused: at resolution, before a signed state exists.
+      const perms = [{ streamId: 'location', level: 'read', mandatory: true, optIn: true }];
+      const fetchFn = offerFetch(baseOffer({ request: { title: { en: 'x' }, permissions: perms } }));
+      await assert.rejects(
+        resolveOffer({ offerName: 'study-A', capabilityUrl: CAP_URL, deps: { fetch: fetchFn } }),
+        (err) => err instanceof OfferResolveError && /contradict/.test(err.message)
+      );
+    });
+  });
 });

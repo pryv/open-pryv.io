@@ -151,6 +151,88 @@ describe('[PSET] accesses permissionSet', () => {
     });
   });
 
+  describe('[PSET-OPTIN] the optIn display annotation', () => {
+    // mandatory = `mandatory: true`, opt-out = neither flag (offered
+    // pre-selected, what every entry does today), opt-in = `optIn: true`
+    // (offered unselected). `optIn` is display-only: it never reaches a
+    // minted access and the grant rule never reads it.
+    const offered = [
+      { streamId: 'health', level: 'read', mandatory: true },
+      { streamId: 'diary', level: 'contribute' },
+      { streamId: 'location', level: 'read', optIn: true },
+      { feature: 'selfRevoke', setting: 'forbidden', optIn: true }
+    ];
+
+    it('[PS11] consent form preserves optIn; plain form and strip drop it', () => {
+      const consentForm = ps.normalizePermissions(offered, { consent: true });
+      assert.deepEqual(consentForm, offered);
+      const plain = [
+        { streamId: 'health', level: 'read' },
+        { streamId: 'diary', level: 'contribute' },
+        { streamId: 'location', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' }
+      ];
+      assert.deepEqual(ps.normalizePermissions(offered), plain);
+      assert.deepEqual(ps.stripConsentAnnotations(consentForm), plain);
+    });
+
+    it('[PS12] mandatory + optIn on one entry is rejected with the offending index', () => {
+      assert.throws(
+        () => ps.normalizePermissions(
+          [
+            { streamId: 'health', level: 'read' },
+            { streamId: 'location', level: 'read', mandatory: true, optIn: true }
+          ],
+          { consent: true }
+        ),
+        /index 1: 'mandatory' and 'optIn' contradict/
+      );
+      // Same contradiction on a feature entry, and reported at its own index.
+      assert.throws(
+        () => ps.normalizePermissions(
+          [{ feature: 'selfRevoke', setting: 'forbidden', mandatory: true, optIn: true }],
+          { consent: true }
+        ),
+        /index 0: 'mandatory' and 'optIn' contradict/
+      );
+      // Outside consent context the annotations are dropped, so there is
+      // nothing to contradict and the entry normalizes cleanly.
+      assert.deepEqual(
+        ps.normalizePermissions([{ streamId: 'location', level: 'read', mandatory: true, optIn: true }]),
+        [{ streamId: 'location', level: 'read' }]
+      );
+    });
+
+    it('[PS13] the grant rule returns the same verdict with and without optIn', () => {
+      const withOptIn = ps.normalizePermissions(offered, { consent: true });
+      const withoutOptIn = ps.normalizePermissions(
+        offered.map(({ optIn, ...rest }) => rest), { consent: true });
+      const all = ps.normalizePermissions(offered);
+      // An opt-in entry the user leaves unticked is simply absent from the grant.
+      const untickedOptIns = [
+        { streamId: 'health', level: 'read' },
+        { streamId: 'diary', level: 'contribute' }
+      ];
+      for (const granted of [all, untickedOptIns, []]) {
+        for (const allowUserChoice of [false, true]) {
+          assert.deepEqual(
+            ps.checkConsentGrant(granted, withOptIn, allowUserChoice),
+            ps.checkConsentGrant(granted, withoutOptIn, allowUserChoice)
+          );
+        }
+      }
+      // And the annotation does not make an entry droppable on its own:
+      // without user choice, dropping the opt-in entries is still refused.
+      const r = ps.checkConsentGrant(untickedOptIns, withOptIn, false);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'choice-not-allowed');
+      assert.deepEqual(r.offending, [
+        { streamId: 'location', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' }
+      ]);
+    });
+  });
+
   describe('[PSET-MASK] consent offers reject exclusion masks (level:none)', () => {
     // `none` is an EXCLUSION MASK in AccessLogic (cannot-list / forbidden-get),
     // so an offered `none` masking a broader grant inverts the consent subset

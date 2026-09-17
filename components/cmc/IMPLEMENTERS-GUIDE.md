@@ -802,11 +802,19 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
     title:       LocalizableText,
     description: LocalizableText,
     consent:     LocalizableText,
-    // Permission[] plus an optional consent-layer `mandatory?: boolean`
-    // per entry (a mandatory entry must be granted on accept; the
-    // consent UI locks it). `mandatory` is stripped before the
-    // data-grant access is minted.
-    permissions: Array<Permission & { mandatory?: boolean }>,
+    // Permission[] plus the optional consent-layer annotations
+    // `mandatory?: boolean` and `optIn?: boolean` per entry. Together
+    // they express three words for what an entry means to the user:
+    //   mandatory  `mandatory: true`  must be granted on accept; the
+    //                                 consent UI locks it
+    //   opt-out    neither flag       optional, shown pre-selected
+    //                                 (what every entry does today)
+    //   opt-in     `optIn: true`      optional, shown NOT pre-selected
+    // `optIn` is display-only: it changes how the screen opens, never
+    // what may be granted, so it is never read by the accept check.
+    // Setting both on one entry is rejected. Both annotations are
+    // stripped before the data-grant access is minted.
+    permissions: Array<Permission & { mandatory?: boolean, optIn?: boolean }>,
     // Default false → the accept is ALL OR NOTHING (the user may only
     // grant the whole set or refuse). true → the accepter may grant a
     // subset via `consent/accept-cmc.grantedPermissions` (mandatory
