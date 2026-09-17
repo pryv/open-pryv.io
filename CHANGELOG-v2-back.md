@@ -1,5 +1,31 @@
 # Changelog - Internal (no API impact)
 
+## backup export streams end to end, so its memory is a batch rather than the account
+
+`bin/backup` materialised every collection before writing it, and walked the
+events array a second time to find attachments. Peak memory was therefore the
+size of the largest collection, which is the wrong shape for exactly the
+accounts a backup matters most for.
+
+Events and audit now flow through a lazy pipeline: the export source, the
+snapshot/incremental timestamp filter and sanitize run one item at a time on the
+way to the writer, and attachment references are collected during that same
+single pass instead of a second full iteration. Both stores gained a streaming
+producer next to the array one (`events.exportAllStreamed`, and
+`exportAllEventsStreamed` on the audit interface) on PostgreSQL through a
+server-side cursor and on SQLite through a statement iterator.
+
+The streaming producer is **optional and feature-detected**, so this is additive:
+the audit interface's required-method set is unchanged, an engine that does not
+implement it keeps the array path, and the import/restore contracts stay
+array-based. The backup file format does not change.
+
+On PostgreSQL the audit export runs on the streamed-read pool
+(`auditReadPoolSize`), not the audit write pool, because exporting one account's
+audit set holds a cursor for the whole collection. `bin/backup` is a separate
+process today, so nothing can be starved by it; keeping it on the read pool
+means an in-process backup trigger added later cannot regress that.
+
 ## audit reads on PostgreSQL stream for real, and an aborted response releases the pool client
 
 `UserAuditDatabasePG.getEventsStreamed` and `getEventDeletionsStreamed` looked

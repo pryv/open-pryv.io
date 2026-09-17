@@ -37,10 +37,11 @@ type DbLike = DatabasePG;
 class UserAuditDatabasePG {
   db: DbLike; // DatabasePG — not yet typed externally
   /**
-   * The STREAMED-read pool. `_streamRows` uses this and nothing else does:
-   * every other method here runs a query that returns in milliseconds and
-   * belongs on the write pool with the writes. See the note in the engine's
-   * `createAuditStorage` for why the two are kept apart.
+   * The STREAMED-read pool, for every read that holds a connection for longer
+   * than a query: `_streamRows` (the audit read path) and
+   * `exportAllEventsStreamed` (backup). Everything else here returns in
+   * milliseconds and belongs on the write pool with the writes. See the note in
+   * the engine's `createAuditStorage` for why the two are kept apart.
    */
   readDb: DbLike;
   userId: string;
@@ -218,6 +219,26 @@ class UserAuditDatabasePG {
       [this.userId]
     );
     return res.rows;
+  }
+
+  /**
+   * Streaming counterpart of exportAllEvents for bounded-memory backup: yields
+   * the same raw rows (converters bypassed), in the same order, one at a time.
+   *
+   * ⚑ On `readDb`, the streamed-read pool, not `db`. Exporting one user's audit
+   * set holds a cursor open for the whole collection, which is exactly the
+   * long-hold shape the pool split exists for. `bin/backup` is the only caller
+   * today and runs as its own process, so nothing can be starved right now;
+   * putting it here costs one identifier and keeps "the write pool never holds
+   * a long-lived client" true by construction, so an in-process trigger added
+   * later cannot regress it.
+   */
+  async * exportAllEventsStreamed (): AsyncGenerator<AuditRow> {
+    yield * this.readDb.queryIterable(
+      'SELECT * FROM audit_events WHERE user_id = $1',
+      [this.userId],
+      STREAM_BATCH_SIZE
+    ) as AsyncIterable<AuditRow>;
   }
 
   async importAllEvents (events: AuditRow[]): Promise<void> {

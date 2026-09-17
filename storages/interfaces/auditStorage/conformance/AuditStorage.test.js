@@ -176,15 +176,19 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
           assert.strictEqual(countAfter, countBefore);
         });
 
-        it('[SQ17] exportAllEventsStreamed() (when present) must yield the same raw rows as exportAllEvents(), in order', async function () {
+        it('[SQ18] exportAllEventsStreamed() (when present) must yield the same raw rows as exportAllEvents()', async function () {
           if (typeof userDb.exportAllEventsStreamed !== 'function') return this.skip();
           const arrayRows = await userDb.exportAllEvents();
           const streamedRows = [];
           for await (const row of userDb.exportAllEventsStreamed()) streamedRows.push(row);
-          assert.deepStrictEqual(streamedRows, arrayRows);
+          // Both run the same SELECT with no ORDER BY, so compare as sets keyed
+          // by eventid: an incidental scan-order difference is not a defect and
+          // must not flake this.
+          const byEventid = (a, b) => String(a.eventid).localeCompare(String(b.eventid));
+          assert.deepStrictEqual([...streamedRows].sort(byEventid), [...arrayRows].sort(byEventid));
         });
 
-        it('[SQ18] exportAllEventsStreamed() (when present) on an empty store must yield nothing', async function () {
+        it('[SQ19] exportAllEventsStreamed() (when present) on an empty store must yield nothing', async function () {
           const emptyDb = await storage.forUser(getUserId() + '-empty-streamed');
           if (typeof emptyDb.exportAllEventsStreamed !== 'function') return this.skip();
           const rows = [];
