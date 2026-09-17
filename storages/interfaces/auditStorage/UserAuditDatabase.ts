@@ -64,6 +64,14 @@ export interface UserAuditDatabase {
 
   // Migration methods — raw rows, converters bypassed
   exportAllEvents (): AuditExportRow[] | Promise<AuditExportRow[]>;
+  /**
+   * Optional streaming counterpart of exportAllEvents (bounded memory for
+   * backup). When present, yields the same raw rows as exportAllEvents. Order
+   * is NOT guaranteed: neither runs an ORDER BY, so consumers that care must
+   * sort (the conformance check compares as sets). Not in REQUIRED_METHODS: engines may implement only the
+   * array form, and consumers feature-detect this method.
+   */
+  exportAllEventsStreamed? (): AsyncIterable<AuditExportRow>;
   importAllEvents (events: AuditExportRow[]): Promise<void>;
 }
 

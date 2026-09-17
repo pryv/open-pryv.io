@@ -61,6 +61,32 @@ describe('[AUSP] streamed audit reads match the non-streamed read', function () 
     return out;
   }
 
+  // The read/write pool split is a deliberate ruling, not an implementation
+  // detail: a backup export holds a cursor for the whole collection, and the
+  // write pool must never hold a long-lived client. Nothing else would notice
+  // this moving back to `db`, because both pools work.
+  it('[AUSP5] the audit export runs on the READ pool, not the write pool', async function () {
+    const { UserAuditDatabasePG } = require('../src/UserAuditDatabasePG.ts');
+    const calls = [];
+    const stub = (name) => ({
+      async * queryIterable () { calls.push(name); },
+      async query () { calls.push(name + ':query'); return { rows: [] }; }
+    });
+    const udb = new UserAuditDatabasePG(stub('write'), 'u-1', helpers.getLogger ? helpers : { getLogger: () => ({}) }, stub('read'));
+    const drained = [];
+    for await (const row of udb.exportAllEventsStreamed()) drained.push(row);
+    assert.deepStrictEqual(calls, ['read'],
+      'exportAllEventsStreamed must use readDb; using the write pool lets a long export block audit writes');
+  });
+
+  it('[AUSP4] the PG audit engine actually implements exportAllEventsStreamed', function () {
+    // Regression guard against silent fallback. The conformance [SQ18]/[SQ19]
+    // tests SKIP when the method is absent and the backup orchestrator falls
+    // back to the array path, so a rename or removal would turn bounded-memory
+    // backup back into a full materialisation with every test still green.
+    assert.strictEqual(typeof userDb.exportAllEventsStreamed, 'function');
+  });
+
   it('[AUSP1] getEventsStreamed yields exactly what getEvents returns', async function () {
     this.timeout(30000);
     const expected = await userDb.getEvents(freshParams());
