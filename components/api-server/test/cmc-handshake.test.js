@@ -305,6 +305,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
             description: { en: 'fresh handshake for in-process test' },
             consent: { en: 'I consent.' },
             permissions: [{ streamId: 'fertility', level: 'read' }],
+            ...(opts.expiresAt !== undefined ? { expiresAt: opts.expiresAt } : {}),
           },
           requesterMeta: { username: alice.username, appId },
         },
@@ -359,6 +360,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // The invite trigger itself: what a revoke arrival's `inviteEventId`
       // must match, from the requester's point of view.
       requestEventId: reqRes.body?.event?.id,
+      capabilityExpiresAt: reqRes.body?.event?.content?.capabilityExpiresAt,
       aliceChatStreamId: C.chatStreamUnder(triggerStreamId, bobSlug),
       bobChatStreamId: C.chatStreamUnder(triggerStreamId, aliceSlug),
       aliceCollectorStreamId: C.collectorStreamUnder(triggerStreamId, bobSlug),
@@ -1592,6 +1594,132 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // Bob re-consents through the same link (blocked until acceptedBy cleared).
       await postAccept(bob, h.capabilityUrl, 'reco-e-again');
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 re-accept');
+    });
+  });
+
+  describe('[CMCHS-EXP] capability expiry per mode', function () {
+    this.timeout(120_000);
+
+    const TWO_YEARS = 2 * 365 * 24 * 60 * 60;
+
+    async function capabilityAccess (owner, capabilityId) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      return (res.body?.accesses || []).find((a) =>
+        a?.clientData?.cmc?.kind === 'capability' &&
+        a?.clientData?.cmc?.capabilityId === capabilityId);
+    }
+
+    async function postRequest (studyId, { mode, expiresAt }) {
+      const triggerStreamId = ':_cmc:apps:my-app:' + studyId;
+      await ensureStream(alice.streamsPath, alice.token, {
+        id: triggerStreamId, parentId: ':_cmc:apps:my-app', name: studyId,
+      });
+      const res = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [triggerStreamId],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            ...(mode != null ? { capability: { mode } } : {}),
+            request: {
+              title: { en: studyId },
+              description: { en: 'expiry test' },
+              consent: { en: 'I consent.' },
+              permissions: [{ streamId: 'fertility', level: 'read' }],
+              expiresAt,
+            },
+            requesterMeta: { username: alice.username, appId: 'my-app' },
+          },
+        });
+      return { res, triggerStreamId };
+    }
+
+    async function acceptAndWaitOutcome (actor, capabilityUrl, tag) {
+      const res = await coreRequest.post(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl, accessName: 'cmc-grant-' + tag + '-' + Date.now() },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const eventId = res.body.event.id;
+      const t0 = Date.now();
+      let content;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const r = await coreRequest.get(actor.eventsPath + '/' + eventId).set('Authorization', actor.token);
+        content = r.body?.event?.content;
+        if (content?.status === 'completed' || content?.status === 'failed') return content;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('accept ' + eventId + ' never settled; last status=' + JSON.stringify(content?.status));
+    }
+
+    it('[CN47] an open-link invite with expiresAt null has no expiry and completes a handshake', async function () {
+      const h = await runFreshHandshake('noexp-a', 'my-app', { mode: 'open-link', expiresAt: null });
+      assert.strictEqual(h.capabilityExpiresAt, null);
+      const acc = await capabilityAccess(alice, h.capabilityId);
+      assert.ok(acc != null, 'capability access must be listed');
+      assert.ok(acc.expires == null, 'capability access must carry no expiry: ' + JSON.stringify(acc.expires));
+    });
+
+    it('[CN48] a single-use invite with expiresAt null is refused and not persisted', async function () {
+      const { res, triggerStreamId } = await postRequest('noexp-b', { expiresAt: null });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-capability-no-expiry-not-allowed');
+      const list = await coreRequest.get(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .query({ streams: [triggerStreamId], types: ['consent/request-cmc'] });
+      assert.strictEqual((list.body?.events || []).length, 0);
+    });
+
+    it('[CN49] invalidation still ends an open-link invite that has no expiry', async function () {
+      const h = await runFreshHandshake('noexp-c', 'my-app', { mode: 'open-link', expiresAt: null });
+      const invRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type: 'consent/invalidate-link-cmc',
+          content: { capabilityId: h.capabilityId },
+        });
+      assert.strictEqual(invRes.status, 201, JSON.stringify(invRes.body));
+      const t0 = Date.now();
+      let state;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        state = (await capabilityAccess(alice, h.capabilityId))?.clientData?.cmc?.capability?.state;
+        if (state === 'invalidated') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(state, 'invalidated');
+      const outcome = await acceptAndWaitOutcome(bob, h.capabilityUrl, 'noexp-c-again');
+      assert.strictEqual(outcome.status, 'failed', JSON.stringify(outcome));
+      assert.strictEqual(outcome.failure?.reason, 'cmc-capability-invalidated', JSON.stringify(outcome));
+    });
+
+    it('[CN50] a numeric expiresAt two years ahead is accepted for open-link and refused for single-use', async function () {
+      const expiresAt = Math.floor(Date.now() / 1000) + TWO_YEARS;
+      const h = await runFreshHandshake('noexp-d', 'my-app', { mode: 'open-link', expiresAt });
+      // The hook and the mint each read the clock once; a second boundary
+      // between the two reads is the only way the stamp can differ (by 1).
+      assert.ok(h.capabilityExpiresAt === expiresAt || h.capabilityExpiresAt === expiresAt + 1,
+        'capabilityExpiresAt ' + h.capabilityExpiresAt + ' vs requested ' + expiresAt);
+
+      const { res } = await postRequest('noexp-e', { expiresAt });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-capability-ttl-out-of-range');
+      assert.strictEqual(res.body?.error?.data?.mode, 'single-use');
+      assert.strictEqual(res.body?.error?.data?.maxTtlSeconds, 30 * 24 * 60 * 60);
+    });
+
+    it('[CN51] accepting through an unknown capability token fails with cmc-capability-invalid', async function () {
+      const h = await runFreshHandshake('noexp-f', 'my-app', { mode: 'open-link' });
+      const url = new URL(h.capabilityUrl);
+      url.username = 'unknowntoken' + cuid().slice(-8);
+      const outcome = await acceptAndWaitOutcome(bob, url.toString(), 'noexp-f-bad');
+      assert.strictEqual(outcome.status, 'failed', JSON.stringify(outcome));
+      assert.strictEqual(outcome.failure?.reason, 'cmc-capability-invalid', JSON.stringify(outcome));
     });
   });
 

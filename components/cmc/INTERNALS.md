@@ -81,7 +81,7 @@ When `consent/request-cmc` is written with `capabilityRequested: true`, the plug
 - `:_cmc:_internal:offer:<capId>`: the plugin pre-populates with the one request event (read).
 - `:_cmc:_internal:responses:<capId>`: empty at mint, accepts exactly one accept/refuse (create-only).
 
-These are real streams, not virtual, per-event access scoping doesn't exist in core (see [audit notes](#audit-notes)). The plugin GCs both streams (and the access) together on first response or TTL expiry.
+These are real streams, not virtual, per-event access scoping doesn't exist in core (see [audit notes](#audit-notes)). The plugin keeps the access and both streams (state is tracked on the access; nothing is garbage-collected automatically, see the README, Capability accesses, Retention).
 
 ```mermaid
 sequenceDiagram
@@ -97,7 +97,7 @@ sequenceDiagram
     APIServer->>Storage: persist streams
     Plugin->>APIServer: events.create on :_cmc:_internal:offer:<capId><br/>(plugin-pre-populates with the request event)
     APIServer->>Storage: persist offer event
-    Plugin->>APIServer: accesses.create type='shared'<br/>name='__cmc-cap-<short-id>'<br/>permissions: read on :_cmc:_internal:offer:<capId><br/>+ create-only on :_cmc:_internal:responses:<capId><br/>clientData.cmc={kind:'capability', requestEventId, capabilityId, singleUse:true}<br/>TTL=7d (default)
+    Plugin->>APIServer: accesses.create type='shared'<br/>name='__cmc-cap-<short-id>'<br/>permissions: read on :_cmc:_internal:offer:<capId><br/>+ create-only on :_cmc:_internal:responses:<capId><br/>clientData.cmc={kind:'capability', requestEventId, capabilityId,<br/>capability:{mode, state:'open', stateChangedAt}, singleUse}<br/>expires: 7 d default, per-invite override, or none (open-link)
     APIServer->>Storage: persist access
     Plugin->>APIServer: events.update trigger<br/>content.capabilityUrl=access.apiEndpoint<br/>content.capabilityExpiresAt
     APIServer-->>App: trigger reflects capabilityUrl
@@ -107,9 +107,8 @@ sequenceDiagram
     Note over App,Storage: ... time passes ...
     end
 
-    Note over Storage: TTL elapses OR first accept/refuse consumes the capability
-    Plugin->>APIServer: accesses.delete capability-access<br/>+ streams.delete :_cmc:_internal:offer:<capId><br/>+ streams.delete :_cmc:_internal:responses:<capId>
-    APIServer->>Storage: remove access + both per-capability streams
+    Note over Storage: first accept flips state (single-use), expiry (if set) stops auth
+    Note over Storage: access + both per-capability streams are kept (not garbage-collected)
 ```
 
 **Single-use enforcement under concurrency:** two `consent/accept-cmc` arriving in parallel against the same capability, first-write-wins on `:_cmc:_internal:responses:<capId>`. The plugin enforces "exactly one event ever in this stream" via a write-hook that checks the stream's event count before persisting (queries via standard `events.get` with `limit: 1`). The losing accept rolls back its local data-grant access (atomic dual-write, see flow 3).
@@ -144,7 +143,7 @@ sequenceDiagram
     CoreB->>CoreA: events.create consent/accept-cmc in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
     CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:apps:my-app:chats:alice--pryv-me<br/>+ rights on :_cmc:apps:my-app:collectors:alice--pryv-me<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
     CoreA->>CoreA: streams.create :_cmc:apps:my-app:chats:alice--pryv-me<br/>streams.create :_cmc:apps:my-app:collectors:alice--pryv-me
-    CoreA->>CoreA: accesses.delete capability (single-use consumed)
+    CoreA->>CoreA: capability state flips to consumed (single-use), access kept
     CoreA-->>CoreB: response carries back-channel.apiEndpoint
     CoreB->>CoreB: events.update data-grant access<br/>clientData.cmc.counterparty.backChannelApiEndpoint=<...>
     CoreA->>CoreA: events.create consent/accept-cmc in requester's :_cmc:inbox<br/>(server-side delivery, persisted in Storage-A)
@@ -155,7 +154,7 @@ sequenceDiagram
 
 All persistence happens in the **per-user accesses/streams/events tables** of each core's standard storage (PG/SQLite). No rqlite, no separate engine.
 
-**Atomicity worry:** if step 9 (capability delete) crashes after the back-channel access is created (step 7) but before the response is sent (step 10), the accepter retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
+**Atomicity worry:** if the single-use state flip to `consumed` happens after the back-channel access is created but the response is lost before it reaches the accepter, a retry through the same URL fails with `cmc-capability-consumed`. The capability access is not deleted (its state answers the retry). Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. The race is surfaced as an error; pruning is operational.
 
 **Anchor stream creation idempotence:** `streams.create` is upsert-semantics in the plugin (catches `stream-already-exists` and continues). Two simultaneous accepts from the same user against two different counterparties won't collide on the user's `:_cmc:apps:<app-code>:[<path>:]chats:` / `collectors:` parents.
 
@@ -692,7 +691,7 @@ Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited
 
 # Open questions (not blockers for this doc)
 
-- Capability TTL default + override policy.
+- Capability TTL default + override policy: settled: 7 d default, [60 s, 30 d] per-invite, open-link may opt out ([#137](https://github.com/pryv/open-pryv.io/issues/137)).
 - Per-host queue / backpressure in retry loop.
 - Operator audit visibility of capability accesses + the hidden `:_cmc:_internal:retries` stream.
 - Anchor stream removal policy on revoke (currently: never; alternative: TTL-based archive).

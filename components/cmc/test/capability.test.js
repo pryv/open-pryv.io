@@ -22,7 +22,9 @@ const {
   recordAccepter,
   clearAccepter,
   buildApiEndpoint,
+  maxTtlSecondsFor,
   DEFAULT_TTL_SECONDS,
+  MAX_TTL_SECONDS,
 } = require('../src/capability.ts');
 
 function fakeMall () {
@@ -142,6 +144,50 @@ describe('[CMCCAP] cmc/capability', () => {
       assert.equal(acc.clientData.cmc.requestEventId, 'evt-trigger-1');
       assert.equal(acc.clientData.cmc.singleUse, true);
       assert.equal(acc.expires, 1000 + DEFAULT_TTL_SECONDS);
+    });
+
+    it('[CC27] ttlSeconds null mints an open-link access without expires; undefined still means the default', async () => {
+      const mall = fakeMall();
+      const result = await mintCapability({
+        userId: 'u1',
+        triggerEvent: VALID_REQUEST_TRIGGER,
+        ttlSeconds: null,
+        mode: 'open-link',
+        deps: { mall, idGen: () => 'capNull', now: () => 1000 },
+      });
+      assert.equal(result.expiresAt, null);
+      assert.equal('expires' in mall.calls.accessesCreated[0], false);
+
+      const mall2 = fakeMall();
+      const result2 = await mintCapability({
+        userId: 'u1',
+        triggerEvent: VALID_REQUEST_TRIGGER,
+        ttlSeconds: undefined,
+        mode: 'open-link',
+        deps: { mall: mall2, idGen: () => 'capUndef', now: () => 1000 },
+      });
+      assert.equal(result2.expiresAt, 1000 + DEFAULT_TTL_SECONDS);
+      assert.equal(mall2.calls.accessesCreated[0].expires, 1000 + DEFAULT_TTL_SECONDS);
+    });
+
+    it('[CC28] ttlSeconds null on a single-use capability throws before anything is created', async () => {
+      const mall = fakeMall();
+      await assert.rejects(
+        mintCapability({
+          userId: 'u1',
+          triggerEvent: VALID_REQUEST_TRIGGER,
+          ttlSeconds: null,
+          deps: { mall, idGen: () => 'capBad', now: () => 1000 },
+        }),
+        /no-expiry capability requires open-link mode/
+      );
+      assert.equal(mall.calls.streamsCreated.length, 0);
+      assert.equal(mall.calls.accessesCreated.length, 0);
+    });
+
+    it('[CC29] maxTtlSecondsFor: single-use is capped, open-link has no upper bound', () => {
+      assert.equal(maxTtlSecondsFor('single-use'), MAX_TTL_SECONDS);
+      assert.equal(maxTtlSecondsFor('open-link'), null);
     });
 
     it('[CC02] strips capabilityRequested + plugin-stamped fields from the offer event content', async () => {

@@ -20,7 +20,7 @@ The same protocol works across **independent open-pryv.io platforms** with diffe
 | Create a `shared` access with `create-only` on inbox so recipients can write responses | Plugin mints a capability access automatically when you publish a request. The access's apiEndpoint IS the invite URL. |
 | Poll `events.get` on the inbox to see replies | Subscribe via socket.io to `:_cmc:inbox`. Push, not poll. |
 | Permission change = `accesses.delete` + `accesses.create` + chain `previousAccessIds` for audit | Write a `consent/scope-request-cmc` (collector side) or `consent/scope-update-cmc` (user side), or just call `accesses.update` directly, the plugin's post-hook auto-notifies the counterparty. Audit history preserved by composite-id versioning. |
-| Hand off invite as `https://<token>@<host>` (the token is in the URL, leakage = compromise) | Hand off the capability access's apiEndpoint, single-event scoped, TTL-bounded, single-use. |
+| Hand off invite as `https://<token>@<host>` (the token is in the URL, leakage = compromise) | Hand off the capability access's apiEndpoint, single-event scoped, single-use or open-link, with a bounded lifetime unless an open-link opts out. |
 | Each acceptance: N×`streams.create` + `accesses.create`, no transaction | Plugin provisions atomically when it processes `consent/accept-cmc`. |
 | Untyped `clientData.cmcCollector.{public,inbox}.streamId` discovery contract | Typed event-type schemas validated server-side. |
 | App tracks and coordinates two writes (one local, one on counterparty's account) per action | One write per action on the user's own platform. Plugin handles the rest. |
@@ -179,24 +179,30 @@ const requestEvent = result[0].event;
 
 The plugin saw the `consent/request-cmc` trigger and:
 
-1. Minted a capability access (`shared`, single-use, TTL-bounded). The access has `read` on a per-capability stream `:_cmc:_internal:offer:<capId>` (which the plugin pre-populates with this one request event) and `create-only` on `:_cmc:_internal:responses:<capId>` (which will receive the recipient's single accept/refuse).
+1. Minted a capability access (`shared`; single-use or open-link; expiring unless an open-link opts out). The access has `read` on a per-capability stream `:_cmc:_internal:offer:<capId>` (which the plugin pre-populates with this one request event) and `create-only` on `:_cmc:_internal:responses:<capId>` (which will receive the recipient's single accept/refuse).
 2. Wrote the access's apiEndpoint into the trigger event's `content.capabilityUrl`.
 
 The doctor's app encodes the URL into a QR code, email, deep-link, whatever the operator uses for hand-off.
 
-**Capability TTL.** The capability access expires automatically.
-Default lifetime is **7 days**, configurable per-invite via
-`content.expiresAt` (Unix seconds) on the trigger event. The plugin
-validates the resolved TTL against the platform-allowed bounds
-**`[60s, 30d]`** at mint time and rejects out-of-range values with
-`cmc-capability-ttl-out-of-range`; omit `expiresAt` to fall back to
-the default. The exact expiry stamped on the trigger event as
-`content.capabilityExpiresAt` (Unix seconds) so a sender app can
-display it on the invite UI. Recipient apps should check it before
-opening the URL, a stale URL returns a structured
-`invalid-access-token` from the api-server's auth middleware. The
-defaults + bounds live in [`components/cmc/src/capability.ts`](src/capability.ts)
-(`DEFAULT_TTL_SECONDS` / `MIN_TTL_SECONDS` / `MAX_TTL_SECONDS`).
+**Capability expiry.** Default lifetime is **7 days**, set per invite via
+`content.request.expiresAt` (Unix seconds) on the trigger event. The plugin
+validates the resolved lifetime at mint time: a single-use invite must
+resolve to **[60 s, 30 d]**; an open-link invite must resolve to **at least
+60 s** and has no upper bound. Out-of-bounds values are refused with
+`cmc-capability-ttl-out-of-range` (details carry `mode`, `minTtlSeconds`,
+`maxTtlSeconds`, the latter `null` for open-link); omit `expiresAt` for the
+default. Open-link invites may pass `request.expiresAt: null`: the capability
+access is minted without expiry and `capabilityExpiresAt` is `null`; the link
+ends only with `consent/invalidate-link-cmc`. `null` on a single-use invite is
+refused with `cmc-capability-no-expiry-not-allowed`. The exact expiry is
+stamped on the trigger event as `content.capabilityExpiresAt` (Unix seconds,
+or `null`) so a sender app can display it. Recipient apps should check it
+before opening the URL: an expired capability answers HTTP 403 (`forbidden`,
+"Access has expired.") and an unknown one HTTP 403 (`invalid-access-token`);
+the accepter's trigger then fails with `cmc-capability-invalid`. The
+constants live in [`components/cmc/src/capability.ts`](src/capability.ts)
+(`DEFAULT_TTL_SECONDS` / `MIN_TTL_SECONDS` / `MAX_TTL_SECONDS`, the last for
+single-use only).
 
 **Features negotiation.** `content.request.features.{chat,
 systemMessaging}` opts the request IN or OUT of each cross-account
@@ -802,7 +808,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
     // entries still required).
     allowUserChoice?: boolean,
     features?:   { chat?: boolean, systemMessaging?: boolean },
-    expiresAt?:  number,
+    expiresAt?:  number | null,  // null: no expiry (open-link only)
     customData?: object
   },
   requesterMeta?: { displayName, appId?, appUrl? }
@@ -812,7 +818,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 {
   // ... above ...
   capabilityUrl?: string,
-  capabilityExpiresAt?: number,
+  capabilityExpiresAt?: number | null,
   capabilityAccessId?: string,
   status: 'pending' | 'delivered' | 'completed' | 'failed',
   failure?: { reason, detail? }
@@ -1117,9 +1123,9 @@ A capability access is a regular Pryv `shared` access on the requester's account
 - **Permissions:**
   - `read` on `:_cmc:_internal:offer:<capId>`
   - `create-only` on `:_cmc:_internal:responses:<capId>`
-- **`clientData.cmc`:** `{ kind: 'capability', requestEventId, capabilityId: '<capId>', singleUse: true }`
-- **TTL:** 7 days default, operator-configurable, requester-overridable
-- **Single-use:** plugin deletes the access AND both per-capability streams on first successful accept/refuse.
+- **`clientData.cmc`:** `{ kind: 'capability', requestEventId, capabilityId: '<capId>', capability: { mode, state, stateChangedAt, [acceptedBy] }, singleUse: <bool> }`
+- **Expiry:** 7 days default (code constant, not operator-configurable); requester sets `content.request.expiresAt` per invite: [60 s, 30 d] for single-use, at least 60 s with no upper bound for open-link, or `null` (open-link only) for no expiry.
+- **Lifecycle:** single-use flips `clientData.cmc.capability.state` to `consumed` on the first accept; open-link stays `open` until `invalidated`. The access and its two streams are kept (not garbage-collected) so re-clicks get typed errors; `gcCapability` is available for operator-driven cleanup only.
 - **Hidden:** filtered from `accesses.get` by default. The per-capability streams are likewise plugin-managed and not enumerated by regular `streams.get`.
 
 The access's `apiEndpoint` is the capability URL. The recipient's plugin opens it as a standard `pryv.Connection(url)` during accept orchestration.
@@ -1205,6 +1211,8 @@ acceptedBy: [
 
 The capability access `state` stays `'open'` across all accepts.
 
+An open-link capability records every accepter on the access and rewrites that list on each accept; it suits cohorts of hundreds, not tens of thousands.
+
 ## Same-patient re-click
 
 If the same `{ username, host }` tries to accept again via the same capability URL, the responses-stream write-hook detects them in `acceptedBy` and rejects with:
@@ -1213,6 +1221,8 @@ If the same `{ username, host }` tries to accept again via the same capability U
 error.id: 'cmc-capability-already-accepted-by-you'
 error.data: { acceptedAt: <unix-seconds> }
 ```
+
+On the accepter's side, the `consent/accept-cmc` trigger fails with `failure.reason: 'cmc-capability-already-accepted-by-you'`; `failure.detail` carries the peer's response body. The same applies to `cmc-capability-consumed` and `cmc-capability-invalidated`. These reasons are not retried.
 
 Match is case-insensitive on `username` and uses the same host-slugification rule as `counterpartySlug` (so `Alice` at `PRYV.me` matches an existing `alice` at `pryv.me`). Patient-side UX: show "you already accepted this invite, you don't need to act again." NO new back-channel access is minted; the doctor's account is not touched.
 
@@ -1308,7 +1318,7 @@ npm package.
 
 | Constant | Value | When it fires |
 |---|---|---|
-| `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 401). Covers "token never existed" + "token expired past TTL", auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
+| `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 403 on current cores, `invalid-access-token` for an unknown token and `forbidden` for an expired one; 401 is mapped the same way). Covers "token never existed" + "token expired past TTL", auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
 | `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted/refused in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
 | `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester via `consent/invalidate-link-cmc`. **Open-link mode** use case, the requester closed the link to new accepters. Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected; use `consent/revoke-cmc` for per-relationship teardown. See [Open-link capability](#reference--open-link-capability). |
 | `CAPABILITY_ALREADY_ACCEPTED_BY_YOU` | `cmc-capability-already-accepted-by-you` | Open-link mode same-patient re-click. The `{username, host}` from the incoming accept matches an entry in the capability's `acceptedBy` list. Patient-side UX: "you already accepted this invite." `error.data.acceptedAt` carries the original accept's unix-seconds timestamp. |
@@ -1328,13 +1338,14 @@ npm package.
 | `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
 | `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
 | `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |
-| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx (excluding 401 on the capability, which becomes `CAPABILITY_UNKNOWN`). |
+| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx. Exceptions: a 401/403 on the capability read becomes `CAPABILITY_INVALID`, and a refusal carrying the capability's own id (`cmc-capability-consumed`, `cmc-capability-invalidated`, `cmc-capability-already-accepted-by-you`) is reported as that id. `failure.detail` carries the peer's status and body in both cases. Not retried. |
 | `HANDLER_DELIVERY_FAILED` | `cmc-handler-delivery-failed` | Peer returned 5xx, a timeout, or a network error, retryable. |
 | `CHAT_STREAM_NOT_CHAT` | `cmc-chat-stream-not-chat` | The chat trigger's streamId doesn't parse as a chats sub-stream under `:_cmc:apps:<app>`. |
 | `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
 | `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished, see Step 4 "Two-phase access materialization". |
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
-| `CAPABILITY_TTL_OUT_OF_RANGE` | `cmc-capability-ttl-out-of-range` | Caller's `content.expiresAt` resolves to a TTL outside the platform-allowed bounds `[60s, 30d]`. Either omit `expiresAt` (default 7d) or pick a value in range and re-issue. |
+| `CAPABILITY_TTL_OUT_OF_RANGE` | `cmc-capability-ttl-out-of-range` | Caller's numeric `content.request.expiresAt` resolves outside the bounds for the mode: [60 s, 30 d] for single-use, at least 60 s (no upper bound) for open-link. Details carry `mode`, `minTtlSeconds`, `maxTtlSeconds` (`null` for open-link). Omit `expiresAt` (default 7 d) or pick a value in range and re-issue. |
+| `CAPABILITY_NO_EXPIRY_NOT_ALLOWED` | `cmc-capability-no-expiry-not-allowed` | `request.expiresAt: null` (no expiry) on a single-use invite. Use `capability.mode: 'open-link'`, or give a bounded `expiresAt`. |
 | `CHAT_DISABLED` | `cmc-chat-disabled` | The offer negotiated `features.chat: false`; chat write rejected at send time. Re-issue the request with chat enabled, or use the system channel. |
 | `SYSTEM_MESSAGING_DISABLED` | `cmc-system-messaging-disabled` | The offer negotiated `features.systemMessaging: false`; alert/ack write rejected. Scope-request / scope-update are protocol-level and remain permitted regardless. |
 | `CLIENTDATA_CMC_FORBIDDEN` | `cmc-clientdata-cmc-forbidden` | User code tried to write under `clientData.cmc.*` via `accesses.create` / `accesses.update`. That namespace is plugin-owned end-to-end; remove the field. |
@@ -1345,7 +1356,7 @@ npm package.
 - `cmc-capability-stale` (TTL-expired specifically, today `CAPABILITY_INVALID` collapses this with "never existed"), requires capability tombstones to distinguish stale from unknown. Open as backlog.
 - `cmc-handshake-refused` / `cmc-handshake-revoked`, both require richer access-state tracking; the current `CAPABILITY_CONSUMED` covers the "accepted" case but doesn't carry the original outcome (accepted vs refused). Worth revisiting only if a real client needs the distinction.
 - ~~`cmc-capability-already-accepted-by-you`~~, shipped (open-link mode same-patient re-click discrimination).
-- ~~`cmc-capability-ttl-out-of-range`~~, shipped (capability mint validates `expiresAt` against `[60s, 30d]`).
+- ~~`cmc-capability-ttl-out-of-range`~~, shipped (capability mint validates `expiresAt` against the per-mode bounds).
 - ~~`cmc-chat-disabled` / `cmc-system-messaging-disabled`~~, shipped (feature-gating enforced at send time on both `handleChat` + `handleSystem`).
 - ~~`cmc-clientdata-cmc-forbidden`~~, shipped (route-level forge prevention on `accesses.create` + `accesses.update`).
 - ~~`cmc-reserved-stream-undeletable`~~, shipped (route-level immutability guard on `streams.delete` for the five reserved CMC parents + `:_cmc:_internal:*` + plugin-managed `chats`/`collectors` segments).
@@ -1376,7 +1387,7 @@ const capabilityAccesses = accesses.filter((a) =>
 //   - clientData.cmc.capability.mode       // 'single-use' | 'open-link'
 //   - clientData.cmc.capability.state      // 'open' | 'consumed' | 'invalidated'
 //   - clientData.cmc.capability.stateChangedAt
-//   - access.expires                       // post-TTL the access auth-fails
+//   - access.expires                       // post-TTL the access auth-fails (absent on an open-link without expiry)
 
 // Build dashboard rows:
 for (const cap of capabilityAccesses) {
@@ -1573,9 +1584,8 @@ What CMC does NOT solve here: if the bridge needs to read patient data streams (
 | `event-validation-failed` | trigger create | Content schema mismatch. | Fix payload. |
 | `cmc-not-counterparty` | inbox delivery (plugin internal) | Plugin rejected an inbound write, actor isn't a counterparty access. Shouldn't be visible to apps unless your access lost its counterparty marker. | Check `clientData.cmc.role` on the access. |
 | `cmc-event-type-not-allowed` | inbox delivery | Counterparty tried to write a type its role doesn't permit. | Check the role-vs-type table. |
-| `capability-already-consumed` | trigger status `failed` | Capability was single-use; someone else accepted first. | Capability is dead; ask for a re-issue. |
-| `capability-expired` | trigger status `failed` | TTL elapsed. | Ask requester to re-issue. |
-| `request-expired` | trigger status `failed` | Request past `expiresAt`. | Requester re-issues. |
+| `cmc-capability-consumed` | trigger status `failed` | Capability was single-use; someone accepted or refused it first. | Capability is dead; ask for a re-issue. |
+| `cmc-capability-invalid` | trigger status `failed` | The capability URL no longer authenticates: its `request.expiresAt` has passed, or the token never existed. Not applicable to open-link invites issued without expiry (unless the URL is wrong). | Ask requester to re-issue. |
 | `stale-access-id` | trigger status `failed` | Composite `accessId` isn't current head. | Re-read via `accesses.get`; retry. |
 | `scope-update-offending-children` | trigger status `failed` (creator side) | permission-chain rule violated locally. | Adjust permissions. |
 | `recipient-not-found` | trigger status `failed` | `to:` username doesn't exist locally. | Use capability URL hand-off. |

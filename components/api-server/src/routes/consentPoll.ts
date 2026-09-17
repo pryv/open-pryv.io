@@ -25,6 +25,7 @@
  * on that status and resolves the data-grant only once the trigger reports
  * `completed`, so the transient-grant window is never observed.
  */
+import { CAPABILITY_REFUSAL_IDS } from 'cmc/src/errorIds.ts';
 
 type ConsentFailure = { reason?: unknown; detail?: unknown };
 
@@ -55,15 +56,17 @@ export type AwaitConsentDeps<G> = {
 /**
  * The error to throw when the trigger reports `status: 'failed'`.
  *
- * A peer 4xx refusal (`cmc-handler-delivery-rejected`) is a client-correctable
- * condition, surfaced as a typed `cmc-accept-rejected` error carrying the
- * peer's specific reason id (e.g. `cmc-capability-invalidated`) so the OAuth2
- * accept route returns 400 invalid_grant rather than a bare 500. The peer's id
- * rides in `error.data.id`; `error.id` is only the generic Pryv error class.
+ * A peer 4xx refusal (`cmc-handler-delivery-rejected`, or the capability's own
+ * refusal id reported in its place, e.g. `cmc-capability-invalidated`) is a
+ * client-correctable condition, surfaced as a typed `cmc-accept-rejected` error
+ * carrying the peer's specific reason id so the OAuth2 accept route returns 400
+ * invalid_grant rather than a bare 500. The peer's id rides in `error.data.id`;
+ * `error.id` is only the generic Pryv error class.
  * Any other failure reason (e.g. a delivery timeout) stays a generic throw.
  */
 export function buildConsentRejectionError (failure: ConsentFailure | undefined): Error {
-  if (failure?.reason === 'cmc-handler-delivery-rejected') {
+  if (failure?.reason === 'cmc-handler-delivery-rejected' ||
+      (typeof failure?.reason === 'string' && CAPABILITY_REFUSAL_IDS.has(failure.reason))) {
     const errObj = (failure?.detail as { body?: { error?: { id?: unknown; data?: { id?: unknown } } } } | undefined)?.body?.error;
     const peerErrorId =
       typeof errObj?.data?.id === 'string'

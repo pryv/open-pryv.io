@@ -81,7 +81,7 @@ CMC's protocol works without that future federation layer because every interact
 
 **Directed cross-platform invites** (`to: 'alice@example.com'` where Alice is on a different platform) cannot be auto-routed without a federation channel. CMC v1 supports directed invites only **same-platform**; cross-platform directed invites degrade to capability-URL-only (the requester publishes the request, hands the URL to Alice via email/QR/etc.). When signed inter-platform requests + a well-known invite-webhook endpoint ship, CMC can fold directed cross-platform routing in as a follow-on.
 
-The capability access mechanism here is also the natural store for future OAuth2 authorization codes, both are single-use, TTL-bounded, opaque-token-equivalent constructs.
+The capability access mechanism here is also the natural store for future OAuth2 authorization codes, both are opaque-token constructs with a bounded lifetime (open-link capabilities may opt out of the bound).
 
 ## Architecture
 
@@ -211,9 +211,9 @@ When a `consent/request-cmc` is written with `capabilityRequested: true`, the pl
   - `read` on `:_cmc:_internal:offer:<capId>`.
   - `create-only` on `:_cmc:_internal:responses:<capId>`.
 - **`clientData.cmc`:** `{ kind: 'capability', requestEventId: <id>, capability: { mode, state, stateChangedAt, [acceptedBy] }, singleUse: <bool> }`
-- **TTL:** operator-configured default (7 days proposed); requester can override per-request.
+- **Expiry:** 7 days by default (fixed in code, not operator-configurable); the requester sets an absolute `content.request.expiresAt` (Unix seconds) per invite: at least 60 s from now, and at most 30 days for single-use (open-link has no upper bound). Open-link invites may pass `expiresAt: null` to mint the access without expiry; the link then lives until `consent/invalidate-link-cmc`.
 - **Mode:** `'single-use'` (default) or `'open-link'`. Single-use auto-consumes on first accept and rejects re-clicks with `cmc-capability-consumed`. Open-link accepts multiple counterparties, each is recorded in `clientData.cmc.capability.acceptedBy` (`[{username, host, acceptedAt}]`); same-counterparty re-clicks are rejected with `cmc-capability-already-accepted-by-you`; the requester writes a `consent/invalidate-link-cmc` event to close the link to new accepters. See the Implementer's Guide section "Open-link capability" for the full semantics.
-- **Auto-deletion:** single-use; plugin deletes the access after the first successful response write. Open-link capabilities stay alive until TTL expiry or explicit invalidation.
+- **Retention:** capability accesses are not deleted by the plugin. A consumed single-use access and an invalidated open-link access are kept with their state so that a later click on the same URL gets a typed error (`cmc-capability-consumed` / `cmc-capability-invalidated`) instead of a bare 401. An expired access simply stops authenticating, like any expired Pryv access. `gcCapability` exists for operator-driven cleanup and is not run automatically.
 
 The access's `apiEndpoint` IS the capability URL, a standard `pryv.Connection(url)` works against it. Hidden from `accesses.get` by default (filtered by `clientData.cmc.kind: 'capability'`); operators can opt to surface them via a query parameter.
 
@@ -381,10 +381,13 @@ be made.
    published wire format and of every stream id an app builds, so it is fixed.
 2. **Capability TTL default: 7 days**
    (`capability.ts` `DEFAULT_TTL_SECONDS`). A caller may set an absolute
-   `content.request.expiresAt` on `consent/request-cmc`; values outside the
-   accepted bounds (floor 60 s) are refused with
+   `content.request.expiresAt` on `consent/request-cmc`. Bounds depend on the
+   mode: single-use must resolve to [60 s, 30 d]; open-link must resolve to at
+   least 60 s and has no upper bound. Out-of-bounds values are refused with
    `cmc-capability-ttl-out-of-range`, and the default applies when no
-   `expiresAt` is given.
+   `expiresAt` is given. Open-link invites may set `expiresAt: null` for no
+   expiry; the same on a single-use invite is refused with
+   `cmc-capability-no-expiry-not-allowed`.
 3. **System-messaging opt-in is all-or-nothing.** The negotiated flag is a
    single boolean, `clientData.cmc.features.systemMessaging`; there is no
    per-level (info / warning / critical) granularity.

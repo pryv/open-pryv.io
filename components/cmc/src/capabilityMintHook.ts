@@ -28,6 +28,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { MallLike } from './_types.ts';
 
@@ -143,27 +144,47 @@ function createCapabilityMintHook (deps: Deps): Middleware {
     // Per-invite TTL from `content.request.expiresAt` (absolute
     // unix-seconds timestamp; lib-js `cmc.createInvite({expiresAt})`
     // writes it there). When present, convert to `ttlSeconds` for
-    // mintCapability and apply platform bounds. Out-of-range rejects
-    // the createInvite at this layer — the trigger event is NOT
-    // persisted, the events.create caller gets a typed API error.
-    // Absent / non-number → fall through to mintCapability's
+    // mintCapability and apply the bounds of the invite's mode
+    // (single-use [60s, 30d]; open-link >= 60s, no upper bound).
+    // `null` means no expiry, open-link only. A refusal rejects the
+    // createInvite at this layer: the trigger event is NOT persisted,
+    // the events.create caller gets a typed API error.
+    // Absent / other non-number → fall through to mintCapability's
     // DEFAULT_TTL_SECONDS (7d).
-    let ttlSeconds: number | undefined;
-    const callerExpiresAt = (event.content?.request as { expiresAt?: number } | undefined)?.expiresAt;
-    if (typeof callerExpiresAt === 'number' && Number.isFinite(callerExpiresAt)) {
-      const now = (deps.now ?? (() => Date.now() / 1000))();
-      const computed = Math.floor(callerExpiresAt - now);
-      if (computed < capabilityMod.MIN_TTL_SECONDS || computed > capabilityMod.MAX_TTL_SECONDS) {
+    const requestedMode = (event.content?.capability as { mode?: string } | undefined)?.mode;
+    const mode = requestedMode === 'open-link' ? 'open-link' : 'single-use';
+    let ttlSeconds: number | null | undefined;
+    const callerExpiresAt = (event.content?.request as { expiresAt?: number | null } | undefined)?.expiresAt;
+    if (callerExpiresAt === null) {
+      if (mode !== 'open-link') {
         return next(deps.errors.invalidOperation(
-          'CMC capability TTL out of range: expiresAt resolves to ' + computed +
-          's, must be within [' + capabilityMod.MIN_TTL_SECONDS + ', ' +
-          capabilityMod.MAX_TTL_SECONDS + '] seconds from now.',
+          'CMC capability without expiry is only allowed for open-link invites (capability.mode: "open-link").',
+          { id: CmcErrorIds.CAPABILITY_NO_EXPIRY_NOT_ALLOWED, mode }
+        ));
+      }
+      ttlSeconds = null;
+    } else if (typeof callerExpiresAt === 'number' && Number.isFinite(callerExpiresAt)) {
+      // Same whole-second clock as mintCapability, which adds the TTL to
+      // its own floored now(): a fractional now here made the stamped
+      // expiry land one second before the requested one.
+      const now = (deps.now ?? (() => Math.floor(Date.now() / 1000)))();
+      const computed = Math.floor(callerExpiresAt - now);
+      const min = capabilityMod.MIN_TTL_SECONDS;
+      const max = capabilityMod.maxTtlSecondsFor(mode);
+      if (computed < min || (max != null && computed > max)) {
+        return next(deps.errors.invalidOperation(
+          max == null
+            ? 'CMC capability TTL out of range: expiresAt resolves to ' + computed +
+              's, must be at least ' + min + 's from now (open-link has no upper bound).'
+            : 'CMC capability TTL out of range: expiresAt resolves to ' + computed +
+              's, must be within [' + min + ', ' + max + '] seconds from now.',
           {
-            id: 'cmc-capability-ttl-out-of-range',
+            id: CmcErrorIds.CAPABILITY_TTL_OUT_OF_RANGE,
+            mode,
             expiresAt: callerExpiresAt,
             computedTtlSeconds: computed,
-            minTtlSeconds: capabilityMod.MIN_TTL_SECONDS,
-            maxTtlSeconds: capabilityMod.MAX_TTL_SECONDS,
+            minTtlSeconds: min,
+            maxTtlSeconds: max,
           }
         ));
       }

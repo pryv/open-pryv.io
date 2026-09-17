@@ -26,7 +26,7 @@ const C = require('./constants.ts');
 const ao = require('./acceptOrchestration.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
-const { CmcErrorIds } = require('./errorIds.ts');
+const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // Tree-aware consent guard (hierarchical-masking class) — see
 // business/src/accesses/consentEffectiveGuard.ts.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
@@ -380,9 +380,15 @@ async function handleAccept (params: {
         // will catch the orphan via the standard "access without paired
         // back-channel" pruning script (not shipped yet).
       }
+      // A refusal by the capability itself (consumed / invalidated /
+      // already accepted by you) is the outcome the accepter needs: report
+      // its typed id as the reason. detail keeps the peer's body either way.
+      const peerId = (delivery.response?.body as { error?: { data?: { id?: unknown } } } | undefined)?.error?.data?.id;
       return {
         ok: false,
-        reason: 'cmc-handler-delivery-rejected',
+        reason: typeof peerId === 'string' && CAPABILITY_REFUSAL_IDS.has(peerId)
+          ? peerId
+          : CmcErrorIds.HANDLER_DELIVERY_REJECTED,
         detail: { status: delivery.response?.status, body: delivery.response?.body },
       };
     }
