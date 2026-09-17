@@ -203,43 +203,62 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     function updatePersonalAccess (accessData: AccessRow, existing: AccessRow, context: MethodContext, callback: (err: Error | null) => void) {
       context.updateTrackingProperties(accessData, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       const previousToken = existing.token;
-      const rotating = accessData.token !== previousToken && previousToken != null;
-      // When two logins for the same (user, appId) race with a stale token on
-      // the row (the previous session already expired), both mint a fresh
-      // session and would each overwrite the token, leaving the loser with a
-      // live session whose token is on no access (403 on first use,
-      // B-2026-09-17-5). Guard the rotation with a compare-and-swap on the
-      // observed token: only the login whose `previousToken` still matches wins.
-      // Otherwise keep the original plain update (token unchanged -> idempotent).
-      const query = rotating ? { ...(context.accessQuery as Record<string, unknown>), token: previousToken } : context.accessQuery;
-      userAccessesStorage.updateOne(context.user, query, accessData, (err: Error | null, updated?: AccessRow | null) => {
-        if (err != null) return callback(err);
-        if (rotating && updated == null) {
-          // Lost the race: a concurrent login rotated the token first. Adopt the
-          // winner's (live) token instead of clobbering it, and drop our own
-          // orphan session so no client is ever handed a dead token.
-          return findAccess(context, (err2: Error | null, winner: AccessRow | null) => {
-            if (err2 != null || winner == null) return callback(err2 ?? errors.unexpectedError(new Error('access vanished during concurrent login')));
-            const orphanToken = result.token as string | undefined;
-            result.token = winner.token;
-            accessData.token = winner.token;
-            const finish = () => {
-              const merged = { id: winner.id, type: winner.type, created: winner.created, expires: winner.expires, modified: winner.modified };
-              reindexAccessNonFatal(context.user.username, merged as { id?: unknown }).then(() => callback(null));
-            };
-            if (context.sessionGenerated === true && orphanToken != null && orphanToken !== winner.token) {
-              sessionsStorage.destroy(orphanToken, () => finish());
-            } else {
-              finish();
-            }
-          });
-        }
-        // Won the rotation, or a plain (no-rotation) update.
-        // Keep the reverse-index fresh on token rotation, and index a
-        // pre-backfill personal access on its next login. Merge the
-        // authoritative identity fields with the just-bumped modified time.
-        const merged = { id: existing.id, type: existing.type, created: existing.created, expires: existing.expires, modified: accessData.modified };
+      // We "minted" a token when openSession generated a fresh session because it
+      // found no live one to reuse; the row still carries a different, older token.
+      const minted = accessData.token !== previousToken && previousToken != null;
+
+      // Refresh the reverse-index for an identity row, then finish.
+      const finishWith = (idRow: AccessRow) => {
+        const merged = { id: idRow.id, type: idRow.type, created: idRow.created, expires: idRow.expires, modified: idRow.modified };
         reindexAccessNonFatal(context.user.username, merged as { id?: unknown }).then(() => callback(null));
+      };
+      // Return `winnerToken` (which is already on the row and backed by a live
+      // session) to the client instead of our minted one, and drop our own orphan
+      // session. Deliberately does NOT write the row: an unconditional write could
+      // clobber a token another login rotated in between (reintroducing the bug),
+      // and the winning login already wrote its token + tracking.
+      const adopt = (winnerToken: string | undefined, idRow: AccessRow) => {
+        const orphanToken = result.token as string | undefined;
+        result.token = winnerToken;
+        accessData.token = winnerToken;
+        const done = () => finishWith(idRow);
+        if (context.sessionGenerated === true && orphanToken != null && orphanToken !== winnerToken) {
+          sessionsStorage.destroy(orphanToken, () => done());
+        } else {
+          done();
+        }
+      };
+
+      if (!minted) {
+        // Token unchanged (session reused, or the create-duplicate path already
+        // adopted the winner's token): plain idempotent update, as before.
+        return userAccessesStorage.updateOne(context.user, context.accessQuery, accessData, (err: Error | null) => {
+          if (err != null) return callback(err);
+          finishWith(existing);
+        });
+      }
+
+      // We minted a fresh token but the row still carries an older one. If that
+      // token still has a LIVE session, a concurrent login is using it (it just
+      // wrote the row and returned that token to its client): ADOPT it rather than
+      // rotate it away, which would strand that login (403 on first use,
+      // B-2026-09-17-5). Only rotate when the previous session is truly dead.
+      sessionsStorage.get(previousToken as string, (err: Error | null, session?: unknown) => {
+        if (err != null) return callback(errors.unexpectedError(err));
+        if (session != null) return adopt(previousToken, existing);
+
+        // Previous session dead: rotate with a compare-and-swap on the observed
+        // token so two logins racing the same stale token converge on one winner.
+        const casQuery = { ...(context.accessQuery as Record<string, unknown>), token: previousToken };
+        userAccessesStorage.updateOne(context.user, casQuery, accessData, (err2: Error | null, updated?: AccessRow | null) => {
+          if (err2 != null) return callback(err2);
+          if (updated != null) return finishWith(existing); // won the rotation
+          // Lost: another login rotated first. Adopt the winner's live token.
+          findAccess(context, (err3: Error | null, winner: AccessRow | null) => {
+            if (err3 != null || winner == null) return callback(err3 ?? errors.unexpectedError(new Error('access vanished during concurrent login')));
+            adopt(winner.token, winner);
+          });
+        });
       });
     }
   }

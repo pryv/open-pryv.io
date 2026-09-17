@@ -281,13 +281,14 @@ describe('[AUTH] auth', function () {
       //    fresh session, racing to rotate the stale token.
       await new Promise((resolve, reject) => sessionsStorage.expireNow(first.body.token, (err) => err ? reject(err) : resolve()));
 
-      // 3. Two concurrent logins race the rotation.
-      const responses = await Promise.all([login(), login()]);
+      // 3. Several concurrent logins race the rotation (more than two so the
+      //    interleave is very unlikely to fully serialize into session reuse).
+      const responses = await Promise.all([login(), login(), login()]);
       for (const res of responses) assert.strictEqual(res.statusCode, 200);
       const tokens = responses.map((res) => res.body.token);
 
-      // They must converge on one token (the winner's live session).
-      assert.strictEqual(tokens[0], tokens[1], 'concurrent logins must converge on a single token');
+      // They must all converge on one token (the winner's live session).
+      assert.strictEqual(new Set(tokens).size, 1, 'concurrent logins must converge on a single token');
 
       // And every returned token must actually authenticate (no dead loser).
       for (const token of tokens) {
