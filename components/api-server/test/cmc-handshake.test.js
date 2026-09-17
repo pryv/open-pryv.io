@@ -756,6 +756,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         .set('Authorization', appToken)
         .send({ streamIds: [scope], type: 'consent/accept-cmc', content: { capabilityUrl } });
       assert.notStrictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.id, 'unknown-referenced-resource', JSON.stringify(res.body));
       assert.strictEqual(await streamExists(bob, scope), null);
     });
   });

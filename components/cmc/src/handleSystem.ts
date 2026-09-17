@@ -465,6 +465,18 @@ async function resolveScopeUpdateTarget (params: {
         detail: { accessId: content.accessId },
       };
     }
+    // The peer notified is resolved from the trigger stream: the grant changed
+    // must be the one serving that stream, or the notice would describe
+    // another relationship's grant.
+    const servesTriggerStream = Array.isArray(target.permissions) &&
+      target.permissions.some((p) => (p as { streamId?: unknown })?.streamId === triggerStream);
+    if (!servesTriggerStream) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.SCOPE_UPDATE_TARGET_STREAM_MISMATCH,
+        detail: { accessId: target.id, triggerStreamId: triggerStream },
+      };
+    }
     return { ok: true, accessId: target.id, newPermissions: content.newPermissions as PermissionList };
   }
 
@@ -516,6 +528,28 @@ async function stampScopeRequest (
 }
 
 /**
+ * Best-effort: write the outcome recorded on the trigger (`applied`,
+ * `accessId`, `newPermissions`) before the peer delivery, which may take up to
+ * the outbound timeout. A reader polling the trigger then sees the truth while
+ * delivery is still in flight, not a bare `delivered`.
+ */
+async function persistTriggerOutcome (
+  userId: string,
+  triggerEvent: ScopeUpdateParams['triggerEvent'],
+  deps: ScopeUpdateDeps
+): Promise<void> {
+  if (triggerEvent.id == null || deps.mall.events?.update == null) return;
+  try {
+    await deps.mall.events.update(userId, { ...triggerEvent, content: triggerEvent.content });
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to record the outcome before delivery', {
+      eventId: triggerEvent.id,
+      error: String((err as Error)?.message || err),
+    });
+  }
+}
+
+/**
  * Handle a `consent/scope-update-cmc` trigger.
  *
  * The local grant change is APPLIED here, before the peer is notified, and
@@ -553,6 +587,7 @@ async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<Syst
     if (!bound.ok) return bound;
     content.applied = false;
     await stampScopeRequest(userId, bound.requestEvent, 'refused', triggerEvent.id, deps);
+    await persistTriggerOutcome(userId, triggerEvent, deps);
     return handleSystemEvent(params);
   }
 
@@ -629,13 +664,14 @@ async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<Syst
   // Record the outcome on the trigger BEFORE delivery: the content is both
   // what gets persisted (completed or failed) and what the collector
   // receives. A delivery failure after this point leaves a truthful
-  // `applied: true` on a failed trigger; a retry re-applies idempotently.
+  // `applied: true` on a failed trigger; a retry re-applies the same set.
   content.accessId = accessId;
   content.newPermissions = userFacing;
   content.applied = true;
   if (target.requestEvent != null) {
     await stampScopeRequest(userId, target.requestEvent, 'accepted', triggerEvent.id, deps);
   }
+  await persistTriggerOutcome(userId, triggerEvent, deps);
 
   const delivered = await handleSystemEvent(params);
   if (!delivered.ok) return delivered;

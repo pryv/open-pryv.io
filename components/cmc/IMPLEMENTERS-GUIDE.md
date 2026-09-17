@@ -644,7 +644,7 @@ Jane's plugin:
 1. Reads the `consent/scope-request-cmc` named by `scopeRequestEventId` and binds it: it must have been written by the collector's grant on this account, the grant serving that same collectors stream. The permission set and the grant to change both come from that request, never from the answer.
 2. Updates the data-grant with the request's `newPermissions` (the plugin-owned `:_cmc:*` permissions are kept), and records on the request `status: 'accepted'` and `responseEventId`.
 3. Stamps the trigger with `accessId`, `newPermissions` (the set now in force) and `applied: true`, then delivers `consent/scope-update-cmc` with that content to the provider's collectors stream.
-4. Updates the trigger with `status: 'completed'`. **`completed` means the grant changed.** If delivery fails after the change, the trigger reads `status: 'failed'` with `applied: true`; a transient delivery failure is retried, and a retry never applies twice.
+4. Updates the trigger with `status: 'completed'`. **`completed` means the grant changed.** If delivery fails after the change, the trigger reads `status: 'failed'` with `applied: true`; a transient delivery failure is retried, and a retry re-applies the same set, so the grant ends in the same state.
 
 The answer fails (trigger `status: 'failed'`, nothing changed) with one of: `cmc-scope-request-not-found` (no such request on this account, typically a collector-side id), `cmc-scope-request-not-from-peer`, `cmc-scope-request-stream-mismatch`, `cmc-scope-request-expired`, `cmc-scope-request-already-answered`, `cmc-scope-request-invalid`, `cmc-scope-update-nothing-to-apply` (e.g. `accept` missing).
 

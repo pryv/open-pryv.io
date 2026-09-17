@@ -570,6 +570,32 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(last.content.remoteEventId, 'remote-req-1');
     });
 
+    it('[CDSR3] a scope update applied but not delivered is persisted failed with its applied record', async () => {
+      const STREAM_A = STREAM;
+      const mall = mallWithGrant();
+      const grants = await mall.accesses.get();
+      grants[0].permissions = [{ streamId: STREAM_A, level: 'contribute' }];
+      mall.accesses.get = async () => grants;
+      mall.accesses.update = async () => ({});
+      const { fetch } = fakeFetch({ status: 400, body: { error: { id: 'nope' } } });
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'su-1',
+          type: 'consent/scope-update-cmc',
+          streamIds: [STREAM_A],
+          content: { accessId: 'acc-cp', newPermissions: [{ streamId: 'steps', level: 'read' }] },
+        },
+        deps: Object.assign(makeDeps({ mall, fetch }), { enqueueRetries: false }),
+      });
+      assert.equal(r.status, 'failed');
+      const last = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1];
+      assert.equal(last.content.status, 'failed');
+      assert.equal(last.content.applied, true);
+      assert.equal(last.content.accessId, 'acc-cp');
+      assert.deepEqual(last.content.newPermissions, [{ streamId: 'steps', level: 'read' }]);
+    });
+
     it('[CDSR2] other system events do not get remoteEventId stamped', async () => {
       const mall = mallWithGrant();
       const { fetch } = fakeFetch({ status: 201, body: { event: { id: 'remote-alert-1' } } });

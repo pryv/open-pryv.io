@@ -31,11 +31,14 @@ Now:
   `cmc-scope-request-not-from-peer`, `cmc-scope-request-stream-mismatch`,
   `cmc-scope-request-expired`, `cmc-scope-request-already-answered`,
   `cmc-scope-request-invalid`, `cmc-scope-update-target-not-counterparty`,
-  `cmc-scope-update-nothing-to-apply`.
+  `cmc-scope-update-target-stream-mismatch`, `cmc-scope-update-nothing-to-apply`.
 - A scope update that names nothing to apply (no request reference and no
   `newPermissions`, or an answer without `accept`) now fails instead of
-  completing. A self-initiated update with an explicit `accessId` must name a
-  CMC counterparty grant.
+  completing. A self-initiated update with an explicit `accessId` must name the
+  CMC counterparty grant serving the collectors stream it is written on.
+- The outcome (`applied`, `accessId`, `newPermissions`) is written to the
+  trigger before the collector is contacted, so a client polling the trigger
+  sees it while delivery is still in flight.
 
 ### CMC: accepting no longer fails when the app scope stream does not exist
 

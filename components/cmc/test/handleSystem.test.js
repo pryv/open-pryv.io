@@ -402,6 +402,12 @@ describe('[CMCHS] cmc/handleSystem', () => {
       },
     };
 
+    // An explicit `accessId` must name the grant serving the trigger's stream.
+    const CHANNEL_ACCESS = {
+      ...COUNTERPARTY_ACCESS,
+      permissions: [{ streamId: SCOPE_UPDATE_TRIGGER.streamIds[0], level: 'contribute' }],
+    };
+
     it('[HS22] handleSystemScopeRequest delivers consent/scope-request-cmc to peer', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-sr' } } });
@@ -443,7 +449,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS26] local-apply: trigger with accessId+newPermissions calls accesses.update before peer delivery', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       const trigger = {
         ...SCOPE_UPDATE_TRIGGER,
@@ -465,7 +471,10 @@ describe('[CMCHS] cmc/handleSystem', () => {
       // Local update fired
       assert.equal(mall.calls.accessesUpdated.length, 1);
       assert.equal(mall.calls.accessesUpdated[0].id, 'acc-back-channel');
-      assert.deepEqual(mall.calls.accessesUpdated[0].update.permissions, [{ streamId: 'fertility', level: 'read' }]);
+      assert.deepEqual(mall.calls.accessesUpdated[0].update.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        ...CHANNEL_ACCESS.permissions,
+      ]);
       // Peer delivery still happened
       assert.equal(calls.length, 1);
     });
@@ -542,6 +551,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
         permissions: [
           { streamId: ':_cmc:inbox', level: 'create-only' },
           { streamId: ':_cmc:apps:my-app:chats:provider-a--provider-example-org', level: 'contribute' },
+          { streamId: ':_cmc:apps:my-app:collectors:provider-a--provider-example-org', level: 'contribute' },
         ],
       };
       const mall = fakeMall([accessWithMachinery]);
@@ -586,7 +596,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
       //      delivery (its own — not duplicated by the post-hook path).
       const { isSuppressed } = require('../src/accessesUpdateHook.ts');
       let observedSuppression = null;
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       const origUpdate = mall.accesses.update;
       mall.accesses.update = async function (userId, params) {
         observedSuppression = isSuppressed();
@@ -616,7 +626,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS-AUTH-PT] passes the chain check when triggerAccess is personal', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       let updated = false;
       mall.accesses.update = async () => { updated = true; };
       const { fetch } = fakeFetch({ status: 201, body: {} });
@@ -640,7 +650,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS-AUTH-NUP] rejects with cmc-insufficient-permissions when canUpdateAccess is false', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       let updated = false;
       mall.accesses.update = async () => { updated = true; };
       const { fetch } = fakeFetch({ status: 201, body: {} });
@@ -666,7 +676,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS-AUTH-NCR] rejects with cmc-insufficient-permissions when canCreateAccess is false (cannot grant the proposed perms)', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       let updated = false;
       mall.accesses.update = async () => { updated = true; };
       const { fetch } = fakeFetch({ status: 201, body: {} });
@@ -692,7 +702,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS-AUTH-SKIP] passes through when triggerAccess is absent (unit-test mocked deps)', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       let updated = false;
       mall.accesses.update = async () => { updated = true; };
       const { fetch } = fakeFetch({ status: 201, body: {} });
@@ -715,7 +725,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const mall = fakeMall([CHANNEL_ACCESS]);
       mall.accesses.update = async () => { throw new Error('access-update-fail'); };
       const { fetch } = fakeFetch({ status: 201, body: {} });
       const trigger = {
@@ -826,9 +836,10 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(sent.content.accept, true);
       assert.equal(sent.content.applied, true);
       assert.deepEqual(sent.content.newPermissions.map((p) => p.streamId), ['fertility', 'steps']);
-      assert.equal(mall.calls.eventsUpdated.length, 1);
-      assert.equal(mall.calls.eventsUpdated[0].content.status, 'accepted');
-      assert.equal(mall.calls.eventsUpdated[0].content.responseEventId, 'ans-1');
+      const requestWrites = mall.calls.eventsUpdated.filter((e) => e.id === 'req-1');
+      assert.equal(requestWrites.length, 1);
+      assert.equal(requestWrites[0].content.status, 'accepted');
+      assert.equal(requestWrites[0].content.responseEventId, 'ans-1');
     });
 
     it('[HS33] refuses a request written by a non-counterparty access (e.g. the user) with cmc-scope-request-not-from-peer', async () => {
@@ -938,6 +949,59 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(r.reason, 'cmc-scope-update-target-not-counterparty');
       assert.equal(mall.calls.accessesUpdated.length, 0);
       assert.equal(calls.length, 0);
+    });
+
+    it('[HS44] the applied record is written to the trigger before the peer is contacted', async () => {
+      const mall = mallWith([GRANT_A], [request()]);
+      let updatesAtPost = null;
+      const { fetch } = fakeFetch({ status: 201, body: { event: { id: 'r' } } });
+      const spyFetch = (url, init) => {
+        updatesAtPost = mall.calls.eventsUpdated.slice();
+        return fetch(url, init);
+      };
+      const trigger = answer({ scopeRequestEventId: 'req-1', accept: true });
+      const r = await handleSystemScopeUpdate({ userId: 'u1', triggerEvent: trigger, selfIdentity: SELF, deps: { mall, fetch: spyFetch } });
+      assert.equal(r.ok, true);
+      const triggerWrite = updatesAtPost.find((e) => e.id === 'ans-1');
+      assert.ok(triggerWrite != null, 'trigger must be written before delivery');
+      assert.equal(triggerWrite.content.applied, true);
+      assert.equal(triggerWrite.content.accessId, 'acc-grant-a');
+    });
+
+    it('[HS45] an explicit accessId must be the grant serving the trigger stream', async () => {
+      const mall = mallWith([GRANT_A, GRANT_B], []);
+      const { r, calls } = await run(answer({ accessId: 'acc-grant-b', newPermissions: [{ streamId: 'steps', level: 'read' }] }), mall);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-scope-update-target-stream-mismatch');
+      assert.equal(mall.calls.accessesUpdated.length, 0);
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HS46] answering a request ignores accessId / newPermissions supplied by the client', async () => {
+      const mall = mallWith([GRANT_A, GRANT_B], [request()]);
+      const trigger = answer({
+        scopeRequestEventId: 'req-1',
+        accept: true,
+        accessId: 'acc-grant-b',
+        newPermissions: [{ streamId: '*', level: 'manage' }],
+      });
+      const { r } = await run(trigger, mall);
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesUpdated.length, 1);
+      assert.equal(mall.calls.accessesUpdated[0].id, 'acc-grant-a');
+      assert.ok(!mall.calls.accessesUpdated[0].update.permissions.some((p) => p.streamId === '*'));
+      assert.equal(trigger.content.accessId, 'acc-grant-a');
+    });
+
+    it('[HS47] a refusal whose delivery fails keeps applied false and the request refused', async () => {
+      const mall = mallWith([GRANT_A], [request()]);
+      const trigger = answer({ scopeRequestEventId: 'req-1', accept: false });
+      const { r } = await run(trigger, mall, { status: 400, body: { error: { id: 'x' } } });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-delivery-failed');
+      assert.equal(trigger.content.applied, false);
+      assert.equal(mall.calls.accessesUpdated.length, 0);
+      assert.ok(mall.calls.eventsUpdated.some((e) => e.id === 'req-1' && e.content.status === 'refused'));
     });
 
     it('[HS43] delivery failure after apply fails the trigger but keeps a truthful applied record', async () => {

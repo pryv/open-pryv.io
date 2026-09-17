@@ -354,6 +354,7 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-scope-request-already-answered',
   'cmc-scope-request-invalid',
   'cmc-scope-update-target-not-counterparty',
+  'cmc-scope-update-target-stream-mismatch',
   'cmc-scope-update-nothing-to-apply',
 ]);
 

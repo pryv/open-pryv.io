@@ -570,7 +570,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
     }
     const personal = { id: 'acc-p', type: 'personal', isPersonal: () => true };
     const app = { id: 'acc-app', type: 'app', isPersonal: () => false };
-    const ctx = (access, type, streamIds) => ({ user: { id: 'u1' }, access, newEvent: { type, streamIds, content: {} } });
+    const ctx = (access, type, streamIds, content = { capabilityUrl: 'https://cap@peer.example.com/' }) => ({ user: { id: 'u1' }, access, newEvent: { type, streamIds, content } });
 
     it('[CH-AS01] personal accept on an absent nested scope creates the chain top-down with provenance', async () => {
       const mall = fakeMall();
@@ -619,6 +619,47 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, ctx(personal, 'consent/accept-cmc', [':_cmc:apps:new-app:sub']), {}, {});
       assert.equal(err, undefined);
       assert.equal(mall.calls.streamsCreated.length, 1, 'stops the chain at the first failure');
+    });
+  });
+
+  describe('[CMCHOOK-AS2] createEnsureAcceptScopeHook: rejected writes and unsafe ids', () => {
+    beforeEach(() => { _resetEnsuredUsersMemo(); });
+    function fakeMall () {
+      const calls = { streamsCreated: [] };
+      return {
+        calls,
+        streams: {
+          async getOneWithNoChildren (_userId, streamId) { return { id: streamId }; },
+          async create (_userId, params) { calls.streamsCreated.push(params); return { id: params.id }; },
+        },
+      };
+    }
+    const personal = { id: 'acc-p', type: 'personal', isPersonal: () => true };
+
+    it('[CH-AS06] invalid accept content leaves no stream behind', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      const ctx = { user: { id: 'u1' }, access: personal, newEvent: { type: 'consent/accept-cmc', streamIds: [':_cmc:apps:new-app'], content: {} } };
+      assert.equal(await runMiddleware(mw, ctx, {}, {}), undefined);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CH-AS07] reads the event from params when context.newEvent is not set yet', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      const params = { type: 'consent/accept-cmc', streamIds: [':_cmc:apps:new-app'], content: { capabilityUrl: 'https://cap@peer.example.com/' } };
+      assert.equal(await runMiddleware(mw, { user: { id: 'u1' }, access: personal }, params, {}), undefined);
+      assert.deepEqual(mall.calls.streamsCreated.map((s) => s.id), [':_cmc:apps:new-app']);
+    });
+
+    it('[CH-AS08] segments that are not plain slugs are never provisioned', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureAcceptScopeHook({ mall });
+      for (const sid of [':_cmc:apps:app:Study', ':_cmc:apps:app:a"b', ':_cmc:apps:app:', ':_cmc:apps:app:a b']) {
+        const params = { type: 'consent/accept-cmc', streamIds: [sid], content: { capabilityUrl: 'https://cap@peer.example.com/' } };
+        await runMiddleware(mw, { user: { id: 'u1' }, access: personal }, params, {});
+      }
+      assert.equal(mall.calls.streamsCreated.length, 0);
     });
   });
 

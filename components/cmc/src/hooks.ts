@@ -760,6 +760,8 @@ function createEnsureAcceptScopeHook (deps: ProvisionDeps): Middleware {
     const newEvent = (context?.newEvent ?? params) as MethodContext['newEvent'] | null | undefined;
     if (userId == null || newEvent == null) return next();
     if (newEvent.type !== C.ET_ACCEPT && newEvent.type !== C.ET_REFUSE) return next();
+    // A write the content validation will reject must leave nothing behind.
+    if (!validators.validate(newEvent.type, newEvent.content).valid) return next();
 
     const access = context.access as { id?: string; type?: string; isPersonal?: () => boolean } | undefined;
     const isPersonal = typeof access?.isPersonal === 'function'
@@ -818,8 +820,12 @@ function isProvisionableAppScope (streamId: string): boolean {
   if (!C.isUserCreatableStreamId(streamId)) return false;
   const appCode = C.getAppCode(streamId);
   if (appCode == null || appCode === '' || RESERVED_APP_SEGMENTS.has(appCode) || !APP_CODE_RE.test(appCode)) return false;
-  return !streamId.split(':').slice(3).some((segment) => RESERVED_APP_SEGMENTS.has(segment) || segment === '');
+  // Every segment must be a plain slug (the shape `streams.create` gives ids),
+  // so a provisioned id can never break later stream queries.
+  return streamId.split(':').slice(3).every((segment) =>
+    !RESERVED_APP_SEGMENTS.has(segment) && SCOPE_SEGMENT_RE.test(segment));
 }
+const SCOPE_SEGMENT_RE = /^[a-z0-9-]{1,100}$/;
 
 export {
   createEnsureAcceptScopeHook,

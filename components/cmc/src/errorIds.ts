@@ -253,6 +253,10 @@ const CmcErrorIds = {
   // An explicit `accessId` names an access that is not a CMC counterparty
   // grant. This trigger only adjusts relationship grants.
   SCOPE_UPDATE_TARGET_NOT_COUNTERPARTY: 'cmc-scope-update-target-not-counterparty',
+  // An explicit `accessId` names a counterparty grant that does not serve the
+  // collectors stream the trigger was written on (the peer notified would not
+  // be the one whose grant changed).
+  SCOPE_UPDATE_TARGET_STREAM_MISMATCH: 'cmc-scope-update-target-stream-mismatch',
   // The trigger names nothing that can be applied (no request reference and
   // no `newPermissions`).
   SCOPE_UPDATE_NOTHING_TO_APPLY: 'cmc-scope-update-nothing-to-apply',
