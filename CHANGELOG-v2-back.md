@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## a failure after a response started streaming no longer crashes the worker
+
+When a response failed after its headers were sent (for example an attachment
+whose file read failed mid-transfer), the error handler still tried to write an
+error status. That threw inside the async handler, an unhandled rejection that
+takes a worker down under Node's default, and the client waited forever for the
+bytes its `Content-Length` announced. The handler now audits and logs the error as
+before, then cuts the connection, so the client sees a broken transfer at once.
+
+A failure while writing the ERROR audit record had the same effect on the error
+path of every request: the handler rejected before answering, so the request hung
+and the rejection was unhandled. The audit failure is now logged and the error
+answered.
+
+On the download path, a failure while writing the success audit record after the
+file was served was also left to reject unhandled; it is now logged. A file that
+cannot be opened (a missing file) or whose read fails before the first byte answers
+with a JSON error status and an error audit record, and no longer carries the
+attachment's `Content-Type`, `Content-Disposition` and `Digest` headers, so a browser
+does not save the error as the file.
+
 ## rqlite tests use the configured rqlite, and the conformance suite no longer skips silently
 
 The rqlite PlatformDB conformance suite and the ACME integration test defaulted to

@@ -10,7 +10,8 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { Readable } from 'node:stream';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const { getConfig } = require('@pryv/boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
+const logger = getLogger('attachment-access');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
 
@@ -86,21 +87,11 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     if (!canReadEvent) {
       return next(errors.forbidden());
     }
-    // set response content type (we can't rely on the filename)
     const attachment = event.attachments
       ? event.attachments.find((att: AttachmentLike) => att.id === req.params.fileId)
       : null;
     if (!attachment) {
       return next(errors.unknownResource('attachment', req.params.fileId));
-    }
-    res.header('Content-Type', attachment.type);
-    res.header('Content-Length', String(attachment.size));
-    res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
-    if (attachment.integrity != null) {
-      const digest = getHTTPDigestHeaderForAttachment(attachment.integrity);
-      if (digest != null) {
-        res.header('Digest', digest);
-      }
     }
     const fileReadStream = await mall!.events.getAttachment(req.context.user.id, event, req.params.fileId);
     // for Audit
@@ -113,6 +104,19 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     if (res.destroyed) {
       fileReadStream.destroy();
       return;
+    }
+    // Attachment headers only once there is a file to serve: an error before
+    // this point (a missing file rejects getAttachment above) must go out as a
+    // plain JSON error, not presented as the attachment. Content type comes
+    // from the attachment metadata, we can't rely on the filename.
+    res.header('Content-Type', attachment.type);
+    res.header('Content-Length', String(attachment.size));
+    res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
+    if (attachment.integrity != null) {
+      const digest = getHTTPDigestHeaderForAttachment(attachment.integrity);
+      if (digest != null) {
+        res.header('Digest', digest);
+      }
     }
     // `.pipe()` is deliberate here, not pipeline(): a source error before any
     // byte was written must leave `res` usable so the error middleware can still
@@ -130,11 +134,24 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
       } catch (e) {
         // error audit is taken in charge by express error management
       }
+      // Before the first byte the error middleware still answers with a JSON
+      // error: drop the attachment's headers so it is not presented (or saved)
+      // as the file.
+      if (!res.headersSent) {
+        for (const name of ['Content-Type', 'Content-Length', 'Content-Disposition', 'Digest']) res.removeHeader(name);
+      }
       next(err);
     });
     res.once('finish', async () => {
       if (streamHasErrors) { return; }
-      if (isAuditActive) { await audit!.validApiCall(req.context, null); }
+      // The file is already served: a failing audit write can only be logged.
+      // Left to reject, it would be unhandled (nothing awaits an event
+      // listener) and take the worker down.
+      try {
+        if (isAuditActive) { await audit!.validApiCall(req.context, null); }
+      } catch (err) {
+        logger.error('Failed to audit a served attachment download', err);
+      }
       // do not call "next()"
     });
   } catch (err) {

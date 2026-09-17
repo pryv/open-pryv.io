@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const errors = require('errors');
 const errorsFactory = errors.factory;
@@ -23,7 +24,7 @@ export { produceHandleErrorMiddleware };
 /**
  * Error route handling.
  */
-function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => unknown }) {
+function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => Logger }) {
   const logger = logging.getLogger('error-middleware');
   const config = getConfigSync();
   const isAuditActive = config.get('audit:active');
@@ -40,10 +41,26 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => u
     }
     if (req.context != null) {
       // context is not initialized in case of malformed JSON
-      if (isAuditActive) { await audit!.errorApiCall(req.context, error); }
+      // An audit-store failure must not stop the error answer, nor reject
+      // unhandled out of this async handler and take the worker down.
+      try {
+        if (isAuditActive) { await audit!.errorApiCall(req.context, error); }
+      } catch (auditError) {
+        logger.error('Failed to audit an API error', auditError);
+      }
       // req.context.tracing.finishSpan('express1');
     }
     errorHandling.logError(error, req, logger);
+    // A streamed response can fail after its headers (and some body) are on the
+    // wire. The status can no longer change, and writing one throws inside this
+    // async handler, i.e. an unhandled rejection that takes the worker down,
+    // while the client waits forever for the bytes its Content-Length promised.
+    // The error is audited and logged above; cutting the connection is the only
+    // honest answer left.
+    if (res.headersSent) {
+      if (!res.writableEnded) res.destroy();
+      return;
+    }
     // Error-scoped response headers (e.g. WWW-Authenticate challenges
     // for auth-scheme failures) ride on the error object itself.
     const errorHeaders = (error as { httpHeaders?: Record<string, string> }).httpHeaders;
