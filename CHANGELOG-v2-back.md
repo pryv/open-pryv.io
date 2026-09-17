@@ -6,14 +6,18 @@ On raw deploys the API process forwards HF series traffic to the co-located HFS
 worker by piping the client request into the worker request and the worker answer
 back into the client response, and `.pipe()` forwards destroy in neither direction.
 A client aborting mid-upload left the worker request half-open until the worker's
-request timeout (300 s). A client leaving before or during the answer left the proxy
-consuming the worker's answer into the void to its end, holding the worker
-connection for as long as the answer lasted, indefinitely for a long streamed
-query. Each hop now propagates the close of the stream it forwards: a client request
-that closes before its body completed destroys the worker request, the response hop
-runs under `pipeline()`, and a client already gone when the worker answers gets
-nothing piped. A teardown the proxy caused itself is logged at debug, not as an
-upstream failure. nginx-fronted deploys never ran this code.
+request timeout (300 s). A client leaving before the worker answered, or stopping
+mid-answer, left the worker socket stalled with the unread answer, for good when the
+answer (a series query) exceeded the socket buffers. Each hop now propagates the close
+of the stream it forwards: a client request that closes before its body completed
+destroys the worker request, the response hop runs under `pipeline()`, and a client
+already gone when the worker answers gets nothing piped. A teardown the proxy caused
+itself is logged at debug, not as an upstream failure.
+
+A worker answering before the client's body was complete (an access refused on a large
+batch) also stalled the rest of the client's upload until a request timeout; the proxy
+now discards the unread body, as Node's own server does, and releases the worker
+request. nginx-fronted deploys never ran this code.
 
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 

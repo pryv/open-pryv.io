@@ -74,18 +74,26 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
     }, (proxyRes: IncomingMessage) => {
       // The client may have left while the worker was still working on the
       // request (its body was complete, so the request-side hook below did not
-      // fire). Nothing to answer: release the worker's answer now rather than
-      // writing headers onto a gone response (pipeline() below would also tear
-      // it down, this just does not rely on it).
+      // fire). Nothing to answer, and pipeline() throws synchronously on a
+      // destroyed destination: an uncaught exception in the parser callback.
       if (res.destroyed) {
         proxyRes.destroy();
         return;
       }
+      // The worker answered before the client's body was complete (e.g. an
+      // access refused on a large batch). Once that answer ends, Node stops
+      // watching the worker request for 'drain', so the client upload would stall
+      // in `req.pipe(proxyReq)` until a request timeout. Do what Node's own server
+      // does with an unread body: stop forwarding it, discard the rest so the
+      // client can finish, and release the worker request.
+      proxyRes.once('end', () => {
+        if (!req.complete) {
+          req.unpipe(proxyReq);
+          proxyReq.destroy();
+          req.resume();
+        }
+      });
       res.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
-      // Only writes refresh the worker socket's idle timer: the HTTP parser
-      // reads the socket natively. Re-arm it per answer chunk, or a long answer
-      // whose bytes keep flowing would be cut as if the worker were silent.
-      proxyRes.on('data', () => { proxyReq.setTimeout(upstreamIdleTimeoutMs); });
       // pipeline(), not .pipe(): a client that goes away mid-answer must reach the
       // upstream response and its socket, and an upstream that dies mid-answer
       // must end this response instead of leaving it open.
@@ -98,7 +106,8 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
 
     let upstreamTimedOut = false;
     // Socket idle timer: refreshed by every read and write on the worker
-    // connection, so flowing uploads and answers are never cut; a silent worker is.
+    // connection, so flowing uploads and answers are never cut; a silent worker
+    // is, and so is a client that stops sending or reading for the whole window.
     proxyReq.setTimeout(upstreamIdleTimeoutMs, () => {
       // Nobody to answer: the client left after its body completed and the
       // worker never answered.
@@ -111,7 +120,7 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
       // has usually closed the response by then (so `res.destroyed` alone would
       // catch it), but the flag does not depend on that ordering.
       upstreamTimedOut = true;
-      logger.warn(`[hfs-ingress] upstream idle for ${upstreamIdleTimeoutMs} ms ${req.method} ${req.url}`);
+      logger.warn(`[hfs-ingress] no data moved on the worker connection for ${upstreamIdleTimeoutMs} ms${res.writableNeedDrain ? ' (client not reading)' : ''} ${req.method} ${req.url}`);
       proxyReq.destroy();
       if (!res.headersSent) {
         res.writeHead(504, { 'content-type': 'application/json' });

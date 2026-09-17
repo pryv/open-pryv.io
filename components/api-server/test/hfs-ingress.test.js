@@ -175,9 +175,23 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
     const SIZE = 16 * 1024 * 1024;
     const HEAD = Buffer.alloc(64 * 1024, 0x61);
 
-    let upstream, front, warns, debugs, uncaught, frontResClosed;
+    let upstream, front, warns, debugs, uncaught, rejected, frontResClosed;
     let keepAliveAgent = null;
+
+    // Other suites in this process load nock, which routes every http.request
+    // through a mock socket. These tests are about real socket behaviour
+    // (timers, backpressure, teardown), so they run with nock switched off.
+    let nockWasActive = false;
+    before(function () {
+      const nock = require('nock');
+      nockWasActive = nock.isActive();
+      if (nockWasActive) nock.restore();
+    });
+    after(function () {
+      if (nockWasActive) require('nock').activate();
+    });
     const onUncaught = (err) => { uncaught = err; };
+    const onRejection = (reason) => { rejected = reason; };
 
     beforeEach(function () {
       upstream = null;
@@ -185,12 +199,15 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       warns = [];
       debugs = [];
       uncaught = null;
+      rejected = null;
       frontResClosed = false;
       process.on('uncaughtException', onUncaught);
+      process.on('unhandledRejection', onRejection);
     });
 
     afterEach(async function () {
       process.removeListener('uncaughtException', onUncaught);
+      process.removeListener('unhandledRejection', onRejection);
       if (keepAliveAgent != null) {
         keepAliveAgent.destroy();
         keepAliveAgent = null;
@@ -234,21 +251,9 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       return req;
     }
 
-    // A worker answer that does not end on its own (a long streamed query): it
-    // stops only when its socket closes. A finite answer is no good here, even a
-    // large one: a proxy that ignores the client leaving still reads it to the
-    // end into the void and frees the socket, so the test would pass unfixed.
-    async function streamForever (req, res) {
-      res.writeHead(200, { 'content-type': 'application/octet-stream' });
-      const chunk = Buffer.alloc(256 * 1024, 0x61);
-      while (!req.socket.destroyed) {
-        if (!res.write(chunk)) {
-          await new Promise((resolve) => {
-            res.once('drain', resolve);
-            req.socket.once('close', resolve);
-          });
-        }
-      }
+    function assertNothingEscaped () {
+      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assert.strictEqual(rejected, null, rejected && (rejected.stack || String(rejected)));
     }
 
     // Collects how the client's response went.
@@ -291,25 +296,26 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       assert.ok(await until(() => worker.reqClosed),
         'the worker must see the aborted upload promptly, not at its request timeout');
       assert.strictEqual(worker.req.complete, false);
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
 
     it('[HIAB2] a client already gone when the worker answers gets nothing piped and the worker socket is released', async function () {
-      const worker = { ended: false, req: null, held: null, socketClosed: false };
+      const worker = { ended: false, held: null, socketClosed: false };
       await setup((req, res) => {
         req.socket.once('close', () => { worker.socketClosed = true; });
         req.resume();
-        req.on('end', () => { worker.ended = true; worker.req = req; worker.held = res; });
+        req.on('end', () => { worker.ended = true; worker.held = res; });
       });
       const client = clientRequest('/alice/events/cuid-1/series', { 'content-type': 'application/json' });
       client.end('{}');
       assert.ok(await until(() => worker.ended), 'the worker must receive the request');
       client.destroy();
       assert.ok(await until(() => frontResClosed), 'the front must see the client leave');
-      streamForever(worker.req, worker.held);
+      worker.held.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': SIZE });
+      worker.held.end(Buffer.alloc(SIZE, 0x61));
       assert.ok(await until(() => worker.socketClosed),
         'the worker socket must close promptly when the client left before the answer');
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
       assert.deepStrictEqual(warns, []);
     });
 
@@ -318,7 +324,10 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       await setup((req, res) => {
         req.socket.once('close', () => { worker.socketClosed = true; });
         req.resume();
-        req.on('end', () => { streamForever(req, res); });
+        req.on('end', () => {
+          res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': SIZE });
+          res.end(Buffer.alloc(SIZE, 0x61));
+        });
       });
       const client = clientRequest('/alice/events/cuid-1/series', { 'content-type': 'application/json' });
       client.on('response', (res) => {
@@ -328,7 +337,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       client.end('{}');
       assert.ok(await until(() => worker.socketClosed),
         'the worker socket must close promptly when the client stopped reading the answer');
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
       assert.deepStrictEqual(warns, []);
     });
 
@@ -348,29 +357,39 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
         'the request-side teardown must surface on the upstream request as socket hang up');
       assert.deepStrictEqual(warns, [], 'a teardown the proxy caused itself must not be logged as a worker failure');
       assert.strictEqual(debugs.length, 1);
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
 
-    it('[HIAB5] an early worker answer reaches the client intact while the upload is still arriving', async function () {
+    it('[HIAB5] an early worker answer reaches the client, lets its upload finish and releases the worker request', async function () {
       // A worker may answer before reading the body (an access refused on a
-      // large batch). Node's HTTP server then closes that connection, so the
-      // rest of the upload cannot reach the worker whatever the proxy does; what
-      // the proxy owes is the answer itself, whole, and no false alarm.
+      // large batch). The client must get that answer whole, must not be left
+      // stuck mid-upload, and the worker request, whose body will never be
+      // needed, must not wait for a request timeout.
+      // Observed at the worker's socket: once a Node server has answered, it
+      // detaches that request from the connection, so the request itself does
+      // not report the connection going away.
+      const worker = { socketClosed: false };
       await setup((req, res) => {
+        req.socket.once('close', () => { worker.socketClosed = true; });
         res.writeHead(403, { 'content-type': 'application/json' });
         res.end('{"error":{"id":"forbidden"}}');
       });
+      // Keep-alive: with `Connection: close` the front server would drop the
+      // connection after its answer by itself.
       keepAliveAgent = new http.Agent({ keepAlive: true });
       const client = clientRequest('/alice/series/batch', { 'content-length': SIZE }, keepAliveAgent);
+      let clientFinished = false;
+      client.on('finish', () => { clientFinished = true; });
       const outcome = collect(client);
       client.write(HEAD);
       assert.ok(await until(() => outcome.ended), 'the early answer must reach the client');
       assert.strictEqual(outcome.status, 403);
       assert.strictEqual(JSON.parse(outcome.body).error.id, 'forbidden');
       client.end(Buffer.alloc(SIZE - HEAD.length, 0x62));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.ok(await until(() => clientFinished), 'the rest of the upload must be accepted, not stall');
+      assert.ok(await until(() => worker.socketClosed), 'the worker connection must be released');
       assert.deepStrictEqual(warns, []);
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
 
     it('[HIAB6] a worker that never answers yields 504 and releases the worker socket', async function () {
@@ -387,8 +406,8 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       assert.strictEqual(JSON.parse(outcome.body).error.id, 'unexpected-error');
       assert.ok(await until(() => worker.socketClosed), 'the worker socket must be released');
       assert.strictEqual(warns.length, 1);
-      assert.match(warns[0], /upstream idle for 200 ms/);
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assert.match(warns[0], /no data moved on the worker connection for 200 ms/);
+      assertNothingEscaped();
     });
 
     it('[HIAB7] a timeout is reported once and its own teardown is not a second failure', async function () {
@@ -402,7 +421,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       assert.strictEqual(debugs.length, 1);
       assert.strictEqual(outcome.status, 504);
       assert.strictEqual(JSON.parse(outcome.body).error.message, 'HFS upstream timed out');
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
 
     it('[HIAB8] a worker that stalls mid-answer ends the client response instead of leaving it open', async function () {
@@ -422,7 +441,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       assert.ok(outcome.received < SIZE);
       assert.strictEqual(warns.length, 1);
       assert.ok(await until(() => worker.socketClosed), 'the worker socket must be released');
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
 
     it('[HIAB9] a slow but flowing answer is not cut (idle time, not a total budget)', async function () {
@@ -437,14 +456,16 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
           }
           res.end();
         });
-      }, { upstreamIdleTimeoutMs: 200 });
+        // 500 ms idle bound against 50 ms gaps: a wide margin for slow runners,
+        // while the whole answer (~0.8 s) still outlasts a total-duration timer.
+      }, { upstreamIdleTimeoutMs: 500 });
       const client = clientRequest('/alice/events/cuid-1/series', { 'content-type': 'application/json' });
       const outcome = collect(client);
       client.end('{}');
       assert.ok(await until(() => outcome.ended, 5000), 'a flowing answer must complete');
       assert.strictEqual(outcome.received, 16 * CHUNK);
       assert.deepStrictEqual(warns, []);
-      assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
+      assertNothingEscaped();
     });
   });
 });

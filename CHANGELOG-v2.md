@@ -10,8 +10,9 @@ request now gets that request answered with `504` and the JSON error
 `unexpected-error` ("HFS upstream timed out"), or the response cut if the worker
 stalls after it started answering. Before, the client waited until its own timeout.
 The bound is idle time on the worker connection, so long uploads and long query
-answers whose bytes keep flowing are never cut. It matches the 60 s the documented
-nginx front applies to the same traffic. nginx-fronted deployments are unaffected.
+answers whose bytes keep flowing are never cut; a client that itself stops sending or
+reading for 60 s is cut the same way. It matches the 60 s the documented nginx front
+applies to the same traffic. nginx-fronted deployments are unaffected.
 
 ### SECURITY — the PostgreSQL audit engine returned audit rows across accesses
 
