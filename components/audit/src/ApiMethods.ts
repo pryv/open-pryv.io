@@ -90,6 +90,7 @@ const ALL_METHODS = [
   'system.getAccess',
   'system.listUsers',
   'system.listCores',
+  'system.getEventTypesStatus',
   'auth.hostings',
   // OAuth 2.0 authorization-server events. Emitted directly via
   // audit.eventForUser() from the oauth2 component's grant/consent paths
@@ -126,7 +127,9 @@ const NOT_AUDITED_METHODS = [
   'auth.cores',
   'auth.hostings',
   'system.checkPlatformIntegrity',
-  'system.listCores'
+  'system.listCores',
+  // read-only dictionary status introspection, no per-user context
+  'system.getEventTypesStatus'
 ];
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));

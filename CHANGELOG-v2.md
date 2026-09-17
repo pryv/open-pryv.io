@@ -381,6 +381,33 @@ would have compared against a frozen number.
   Operators who read `service/info.version` (or the `API-Version` header) to
   identify a deployed build can now trust it on released images.
 
+### A core that cannot load the event-types dictionary now refuses unknown types
+
+If the boot-time fetch of the published event-types dictionary
+(`service.eventTypes`) failed, the core started up healthy and ran for the rest of
+its lifetime on the embedded fallback set. Because unknown types were accepted
+without content validation, this surfaced as a silent, permanent loss of
+validation rather than an error: every type present in the published dictionary
+but absent from the embedded set was written with no schema check.
+
+- **BREAKING (degraded state only)**: while the published dictionary has never
+  loaded, `events.create` / `events.update` now **refuse** an unknown event type
+  with `400 invalid-operation` (`data.type` set to the type) instead of accepting
+  it unvalidated. A core that loaded the dictionary is unaffected: an unknown type
+  is still accepted there as a genuinely new free type. In other words, the change
+  is visible only on a core that booted without its dictionary, and it converts a
+  silent under-validation into an explicit refusal.
+- The core no longer stays silently degraded: a failed initial fetch is logged at
+  `error` (not `warn`) and retried in the background with backoff until it loads,
+  at which point unknown types are validated again.
+- **New admin endpoint** `GET /system/event-types-status` (admin-key gated) reports
+  the dictionary's loaded state (`degraded`, `source`, `version`, `embeddedVersion`,
+  `lastSuccessAt`, `lastAttemptAt`, `lastError`) so operators can alert on a core
+  running on its fallback. On a clustered core each worker holds its own dictionary
+  state, so during a partial recovery successive calls may report `degraded`
+  differently until every worker's retry has landed. Reported via
+  [#138](https://github.com/pryv/open-pryv.io/issues/138).
+
 ## 2.0.0-rc.20 — 2026-09-15
 
 ### CMC: a revocation now ends both halves of the relationship

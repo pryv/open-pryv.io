@@ -62,6 +62,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- event-types dictionary status ----------------- //
+  // Reports whether the published event-types dictionary loaded, so operators
+  // can alert on a core that is running degraded on its embedded fallback.
+  expressApp.get(Paths.System + '/event-types-status', setMethodId('system.getEventTypesStatus'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+  });
   // --------------------- admin force-renew --------------------- //
   // POST /system/admin/certs/force-renew — operator-triggered ACME
   // rollover. The orchestrator lives in the master process; this worker
