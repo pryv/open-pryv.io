@@ -1109,7 +1109,11 @@ class Platform {
     const crypto = require('node:crypto');
     const created: Array<{ id: string; createdAt: number; createdBy: string; description: string }> = [];
     for (let i = 0; i < count; i++) {
-      const token = crypto.randomBytes(4).toString('hex');
+      // 128 bits of entropy: the row is keyed by the token's UNSALTED SHA-256, so
+      // a low-entropy token could be recovered from a PlatformDB copy by offline
+      // brute force (exactly the at-rest threat this hashing addresses). Legacy
+      // and config-seeded (human-chosen) tokens remain offline-guessable at rest.
+      const token = crypto.randomBytes(16).toString('hex');
       const info = {
         createdAt: Date.now(),
         createdBy: createdBy || 'admin',
@@ -1155,7 +1159,14 @@ class Platform {
     for (const entry of entries) {
       if (entry.keyHashed === true) continue; // already hashed
       const { id: rawToken, ...info } = entry;
-      await this.#db.createInvitationToken(this.#hashInvitationToken(rawToken), { ...info, keyHashed: true });
+      const hashedKey = this.#hashInvitationToken(rawToken);
+      // Create only when the hashed row is absent: a sibling core may have
+      // migrated this token already and a user then CONSUMED it, so an
+      // unconditional upsert (or a crash-replay of this loop) could resurrect a
+      // consumed token. Always drop the legacy raw-keyed row.
+      if (await this.#db.getInvitationToken(hashedKey) == null) {
+        await this.#db.createInvitationToken(hashedKey, { ...info, keyHashed: true });
+      }
       await this.#db.deleteInvitationToken(rawToken);
     }
   }

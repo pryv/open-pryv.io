@@ -109,4 +109,32 @@ describe('[INVT] invitation tokens stored hashed at rest', () => {
       assert.deepStrictEqual(db.invitations.get(k), v, 'rows must be unchanged by the second migration');
     }
   });
+
+  it('[INVT6] a consumed legacy token stays consumed after migration', async () => {
+    const { platform, db } = makePlatform();
+    db.invitations.set('used-legacy-token', { createdAt: 1, createdBy: 'old', description: 'legacy', consumedAt: 2, consumedBy: 'alice' });
+
+    await platform._migrateInvitationTokensForTests();
+
+    const migrated = db.invitations.get(sha256('used-legacy-token'));
+    assert.ok(migrated, 'token must be re-keyed under its hash');
+    assert.strictEqual(migrated.consumedBy, 'alice', 'consumed state must be preserved');
+    assert.strictEqual(await platform.isInvitationTokenValid('used-legacy-token'), false, 'a consumed token stays invalid');
+  });
+
+  it('[INVT7] migration does not overwrite an already-migrated (consumed) row — no resurrection', async () => {
+    const { platform, db } = makePlatform();
+    // A sibling core already migrated this token (hashed key, marker), and a user
+    // then consumed it. A legacy raw row for the SAME token still lingers here.
+    const hashedKey = sha256('shared-token');
+    db.invitations.set(hashedKey, { createdAt: 1, createdBy: 'old', description: 'shared', keyHashed: true, consumedAt: 5, consumedBy: 'bob' });
+    db.invitations.set('shared-token', { createdAt: 1, createdBy: 'old', description: 'shared' });
+
+    await platform._migrateInvitationTokensForTests();
+
+    assert.ok(!db.invitations.has('shared-token'), 'legacy raw row must be removed');
+    const kept = db.invitations.get(hashedKey);
+    assert.strictEqual(kept.consumedBy, 'bob', 'already-migrated consumed row must NOT be overwritten');
+    assert.strictEqual(await platform.isInvitationTokenValid('shared-token'), false, 'token must stay consumed, not resurrected');
+  });
 });
