@@ -444,7 +444,8 @@ update-event-types:
 # Run the suites afterwards: the fixture is what every content-validating
 # test validates against.
 update-event-types-fixture:
-    curl -sS -L --fail -o test/event-types-flat.json ${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
+    curl -sS -L --fail --connect-timeout 5 --max-time 30 -o test/event-types-flat.json.tmp ${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
+    mv test/event-types-flat.json.tmp test/event-types-flat.json
     ./scripts/event-types-fixture-guard
 
 # Run source licensing tool (see 'licensing' folder for details)

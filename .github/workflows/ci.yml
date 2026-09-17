@@ -150,10 +150,13 @@ jobs:
       - name: Event-types fixture drift
         # `test/event-types-flat.json` is a hand-copied snapshot of the published
         # catalogue, and it is what every content-validating suite validates
-        # against. Nothing tied the copy to its source, so it drifted by 20 types
-        # over two months without a single signal. The guard fails on drift and
-        # skips when the catalogue cannot be reached, so an upstream outage does
-        # not redden the build.
+        # against. Nothing tied the copy to its source, so it drifted for two
+        # months (two types missing, one definition changed) without a single
+        # signal. The guard fails on drift and skips (with a workflow warning)
+        # when the catalogue cannot be reached, so an upstream outage does not
+        # redden the build. Accepted consequence: the tag-publish `docker` job
+        # needs this job, so a catalogue republished upstream blocks release
+        # builds until the fixture is re-vendored on master.
         run: ./scripts/event-types-fixture-guard
 
   typecheck:

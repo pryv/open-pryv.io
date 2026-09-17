@@ -7,8 +7,8 @@
 # `"eventTypes": "file://test/event-types-flat.json"`, and the business unit
 # tests load it directly, so every suite that validates event content validates
 # against that copy. Nothing tied the copy to its source: it was refreshed only
-# when somebody remembered, and it had drifted by 20 types and two months when
-# this guard was written.
+# when somebody remembered, and it was two months stale (two types missing and a
+# definition changed) when this guard was written.
 #
 # The drift is silent in BOTH directions, which is why it needs a gate rather
 # than a habit: a type added upstream is exercised by no test until the copy is
@@ -18,25 +18,44 @@
 # The `version` field does NOT detect it — the catalogue is republished under
 # the same version — so the guard compares content, canonicalised (key order
 # and whitespace ignored) so a reformat of the published file is not reported
-# as drift.
+# as drift. Array order IS significant (`required`, `enum`): conservative, a
+# reordering upstream is reported and costs one re-vendor.
 #
 # Refresh with:  just update-event-types-fixture
 #
-# Network policy: this guard FAILS on drift and SKIPS when the catalogue cannot
-# be reached. A github.io outage must not redden every build; an unnoticed
-# two-month drift is the thing worth failing on.
+# Network policy: this guard FAILS on drift, and on a 404/410 (the catalogue
+# moved: the URL here is wrong, which is a real signal). It SKIPS when the
+# catalogue cannot be reached or returns something that is not a catalogue: a
+# github.io outage must not redden every build, an unnoticed two-month drift is
+# the thing worth failing on. Under GitHub Actions a skip is raised as a
+# workflow warning so it is visible on the run, not buried in a green step.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
 FIXTURE=test/event-types-flat.json
 
+skip () {
+  echo "event-types fixture guard: SKIPPED — $1" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::warning title=event-types fixture guard skipped::$1"
+  fi
+  exit 0
+}
+
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
-if ! curl -sS -L --fail --max-time 30 -o "$TMP" "$SCHEMA_URL"; then
-  echo "event-types fixture guard: SKIPPED — could not fetch $SCHEMA_URL" >&2
-  exit 0
+HTTP_CODE=$(curl -sS -L --connect-timeout 5 --max-time 30 -o "$TMP" -w '%{http_code}' "$SCHEMA_URL")
+CURL_EXIT=$?
+case "$HTTP_CODE" in
+  404|410)
+    echo "event-types fixture guard: FAILED — $SCHEMA_URL answered $HTTP_CODE; the catalogue moved, update the URL" >&2
+    exit 1
+    ;;
+esac
+if [ "$CURL_EXIT" -ne 0 ] || { [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" -ge 400 ]; }; then
+  skip "could not fetch $SCHEMA_URL (curl exit $CURL_EXIT, HTTP $HTTP_CODE)"
 fi
 
 node --input-type=module -e '
@@ -56,6 +75,9 @@ const canonical = (value) => {
 };
 const digest = (path) => {
   const parsed = JSON.parse(readFileSync(path, "utf-8"));
+  if (parsed === null || typeof parsed !== "object" || parsed.types === null || typeof parsed.types !== "object") {
+    throw new Error("not an event-types catalogue (no \"types\" object)");
+  }
   return { parsed, sha: createHash("sha256").update(canonical(parsed)).digest("hex") };
 };
 
@@ -69,28 +91,35 @@ try {
 try {
   published = digest(publishedPath);
 } catch (err) {
-  // Unparseable download: same class as an unreachable one (a captive portal
-  // or an error page served with 200), so skip rather than fail.
-  console.error(`event-types fixture guard: SKIPPED — ${url} did not return valid JSON (${err.message})`);
+  // Unusable download: same class as an unreachable one (a captive portal or an
+  // error page served with 200), so skip rather than fail.
+  const message = `${url} did not return a valid catalogue (${err.message})`;
+  console.error(`event-types fixture guard: SKIPPED — ${message}`);
+  if (process.env.GITHUB_ACTIONS) console.log(`::warning title=event-types fixture guard skipped::${message}`);
   process.exit(0);
 }
 
 if (fixture.sha === published.sha) {
-  console.log(`event-types fixture guard: OK (${Object.keys(published.parsed.types ?? {}).length} types, version ${published.parsed.version})`);
+  console.log(`event-types fixture guard: OK (${Object.keys(published.parsed.types).length} types, version ${published.parsed.version})`);
   process.exit(0);
 }
 
-const fixtureTypes = new Set(Object.keys(fixture.parsed.types ?? {}));
-const publishedTypes = new Set(Object.keys(published.parsed.types ?? {}));
-const missing = [...publishedTypes].filter((t) => !fixtureTypes.has(t));
-const extra = [...fixtureTypes].filter((t) => !publishedTypes.has(t));
+const fixtureTypes = fixture.parsed.types;
+const publishedTypes = published.parsed.types;
+const missing = Object.keys(publishedTypes).filter((t) => !(t in fixtureTypes));
+const extra = Object.keys(fixtureTypes).filter((t) => !(t in publishedTypes));
+const changed = Object.keys(publishedTypes)
+  .filter((t) => t in fixtureTypes && canonical(publishedTypes[t]) !== canonical(fixtureTypes[t]));
+const sections = [...new Set([...Object.keys(fixture.parsed), ...Object.keys(published.parsed)])]
+  .filter((k) => k !== "types" && canonical(fixture.parsed[k]) !== canonical(published.parsed[k]));
 
 console.error(`event-types fixture guard: DRIFT — ${fixturePath} differs from ${url}`);
-console.error(`  fixture:   ${fixtureTypes.size} types, version ${fixture.parsed.version}`);
-console.error(`  published: ${publishedTypes.size} types, version ${published.parsed.version}`);
+console.error(`  fixture:   ${Object.keys(fixtureTypes).length} types, version ${fixture.parsed.version}`);
+console.error(`  published: ${Object.keys(publishedTypes).length} types, version ${published.parsed.version}`);
 if (missing.length > 0) console.error(`  types published but absent from the fixture: ${missing.join(", ")}`);
 if (extra.length > 0) console.error(`  types in the fixture but no longer published: ${extra.join(", ")}`);
-if (missing.length === 0 && extra.length === 0) console.error("  same type names; a definition changed (description, properties or constraints)");
+if (changed.length > 0) console.error(`  types whose definition changed: ${changed.join(", ")}`);
+if (sections.length > 0) console.error(`  other top-level sections that differ: ${sections.join(", ")}`);
 console.error("");
 console.error("  Re-vendor it deliberately and run the suites against it:");
 console.error("    just update-event-types-fixture");
