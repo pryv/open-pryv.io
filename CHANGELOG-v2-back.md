@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## an aborted attachment download no longer leaks the attachment's file descriptor
+
+An attachment download pipes the file read stream into the HTTP response, and
+`.pipe()` does not forward destroy upstream. When the client went away
+mid-transfer (or before the file was opened), the read stream stayed paused with
+its file descriptor open for the life of the process, so enough aborted
+downloads would exhaust the process file-descriptor limit. The response's close
+now releases the source, and a client already gone when the file is opened gets
+nothing piped. `.pipe()` is kept on purpose rather than `pipeline()`: a source
+error before the first byte must still leave the response usable, so the client
+gets a proper error status and the error is audited. An aborted download writes
+no audit record, as before.
+
 ## backup export streams end to end, so its memory is a batch rather than the account
 
 `bin/backup` materialised every collection before writing it, and walked the
