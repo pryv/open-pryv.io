@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const nock = require('nock');
+const { useNock } = require('test-helpers/src/nockScope.ts');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
 const { listeningAgent } = require('test-helpers');
@@ -24,10 +25,7 @@ const MAIL_HOST = 'https://mandrillapp.local';
 const MAIL_PATH = '/api/1.0/messages/send-template.json';
 
 describe('[EMCR] registration email gate', function () {
-  // nock >=14 patches the global http stack; activate on entry and fully
-  // restore on exit so a later suite's real requests are not intercepted.
-  before(() => { if (!nock.isActive()) nock.activate(); });
-  after(() => { nock.cleanAll(); nock.restore(); });
+  useNock();
 
   this.timeout(20000);
 

@@ -178,18 +178,6 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
     let upstream, front, warns, debugs, uncaught, rejected, frontResClosed;
     let keepAliveAgent = null;
 
-    // Other suites in this process load nock, which routes every http.request
-    // through a mock socket. These tests are about real socket behaviour
-    // (timers, backpressure, teardown), so they run with nock switched off.
-    let nockWasActive = false;
-    before(function () {
-      const nock = require('nock');
-      nockWasActive = nock.isActive();
-      if (nockWasActive) nock.restore();
-    });
-    after(function () {
-      if (nockWasActive) require('nock').activate();
-    });
     const onUncaught = (err) => { uncaught = err; };
     const onRejection = (reason) => { rejected = reason; };
 

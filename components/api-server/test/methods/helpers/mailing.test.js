@@ -9,16 +9,11 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const nock = require('nock');
+const { useNock } = require('test-helpers/src/nockScope.ts');
 const mailing = require('../../../src/methods/helpers/mailing.ts');
 
 describe('[MAIL] Mailing helper methods', () => {
-  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
-  // suite leaves it active, later suites' REAL requests flow through the
-  // mock socket and intermittently die ("socket hang up"). Activate on
-  // entry (restore() in a previous suite deactivates globally), fully
-  // restore on exit.
-  before(() => { if (!nock.isActive()) nock.activate(); });
-  after(() => { nock.cleanAll(); nock.restore(); });
+  useNock();
 
   const template = 'welcome';
   const recipient = {
