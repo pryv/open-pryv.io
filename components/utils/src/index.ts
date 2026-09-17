@@ -14,8 +14,9 @@ import * as extension from './extension.ts';
 import { fromCallback } from './fromCallback.ts';
 import jsonValidator from './jsonValidator.ts';
 import { slug as slugify } from './slugify.ts';
+import { pipeThrough } from './streams.ts';
 import { toString } from './toString.ts';
 import * as treeUtils from './treeUtils.ts';
 
-export { ApiEndpoint, debug, deepMerge, encryption, eventMatchQuery, extension, fromCallback, jsonValidator, slugify, toString, treeUtils };
+export { ApiEndpoint, debug, deepMerge, encryption, eventMatchQuery, extension, fromCallback, jsonValidator, pipeThrough, slugify, toString, treeUtils };
 export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery, AccessToMatch } from './eventMatchQuery.ts';

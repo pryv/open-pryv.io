@@ -246,7 +246,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     const deletedEvents = await mall.events.getDeletionsStreamed('local', context.user.id, { deletedSince: params.modifiedSince },
       { limit: params.limit, skip: params.skip, sortAscending: params.sortAscending });
     // remove properties of events that shouldn't be exposed
-    result.addStream('eventDeletions', deletedEvents.pipe(new CleanDeletedEventsStream()));
+    result.addStream('eventDeletions', utils.pipeThrough(deletedEvents, new CleanDeletedEventsStream()));
     next();
   }
 

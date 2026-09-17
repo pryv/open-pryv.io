@@ -171,6 +171,24 @@ function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): No
       }
       return res;
     },
+    /**
+     * ⚑ Without this, destroying the readable never closes the underlying
+     * statement iterator: `Readable.from` closes its iterator through
+     * `return()` when one exists and does nothing otherwise, so an aborted read
+     * left the iterator open forever.
+     *
+     * What that cost is worth being precise about. Writes were NOT blocked:
+     * better-sqlite3 refuses them while an iterator is open, but user databases
+     * run in `unsafeMode` (see `concurrentSafeWrite.ts`), which disables that
+     * guard. `close()` however keeps the check whatever the mode, so a leaked
+     * iterator made this user's handle unclosable, which is what account
+     * deletion and the handle cache's eviction both need. The un-reset
+     * statement also pins the WAL read mark, holding back checkpointing.
+     */
+    return: function (): IteratorResult<DomainEvent> {
+      if (typeof iterateSource.return === 'function') iterateSource.return();
+      return { value: undefined, done: true };
+    },
     [Symbol.iterator]: function (): IterableIterator<DomainEvent> {
       return iterateTransform;
     }

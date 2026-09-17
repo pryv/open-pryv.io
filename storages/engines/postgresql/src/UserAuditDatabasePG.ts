@@ -14,6 +14,9 @@ const { Readable } = require('stream');
 
 const ALL_EVENTS_TAG = '..';
 const IDS_SEPARATOR = ' ';
+// Rows fetched per cursor round-trip by the streamed reads. Bounds memory
+// without making a large read chatty; not configurable on purpose.
+const STREAM_BATCH_SIZE = 1000;
 
 import type { AuditEvent } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
 type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
@@ -33,11 +36,19 @@ type DbLike = DatabasePG;
 
 class UserAuditDatabasePG {
   db: DbLike; // DatabasePG — not yet typed externally
+  /**
+   * The STREAMED-read pool. `_streamRows` uses this and nothing else does:
+   * every other method here runs a query that returns in milliseconds and
+   * belongs on the write pool with the writes. See the note in the engine's
+   * `createAuditStorage` for why the two are kept apart.
+   */
+  readDb: DbLike;
   userId: string;
   logger: unknown;
 
-  constructor (db: DbLike, userId: string, logger: LoggerLike) {
+  constructor (db: DbLike, userId: string, logger: LoggerLike, readDb?: DbLike) {
     this.db = db;
+    this.readDb = readDb ?? db;
     this.userId = userId;
     this.logger = logger.getLogger('audit-user-pg');
   }
@@ -62,47 +73,33 @@ class UserAuditDatabasePG {
     params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
     params.query.push({ type: 'equal', content: { field: 'head_id', value: null } });
     const { sql, values } = buildSelectQuery(this.userId, params);
-    const db = this.db;
-    let rows: AuditRow[] | null = null;
-    let idx = 0;
-    return new Readable({
-      objectMode: true,
-      async read (this: ReadableType) {
-        if (rows === null) {
-          const res = await db.query(sql, values);
-          rows = res.rows;
-        }
-        if (idx < rows!.length) {
-          this.push(fromDB(rows![idx++]));
-        } else {
-          this.push(null);
-        }
-      }
-    });
+    return this._streamRows(sql, values);
   }
 
   getEventDeletionsStreamed (deletedSince: number): ReadableType {
-    const db = this.db;
-    const userId = this.userId;
-    let rows: AuditRow[] | null = null;
-    let idx = 0;
-    return new Readable({
-      objectMode: true,
-      async read (this: ReadableType) {
-        if (rows === null) {
-          const res = await db.query(
-            'SELECT * FROM audit_events WHERE user_id = $1 AND deleted >= $2 ORDER BY deleted DESC',
-            [userId, deletedSince]
-          );
-          rows = res.rows;
-        }
-        if (idx < rows!.length) {
-          this.push(fromDB(rows![idx++]));
-        } else {
-          this.push(null);
-        }
+    return this._streamRows(
+      'SELECT * FROM audit_events WHERE user_id = $1 AND deleted >= $2 ORDER BY deleted DESC',
+      [this.userId, deletedSince]
+    );
+  }
+
+  /**
+   * Rows of a query as a real stream: a batch in memory at a time rather than
+   * the whole matching set.
+   *
+   * ⚑ The returned stream OWNS a pooled client until it ends or is destroyed,
+   * so whatever consumes it must propagate destroy. On the `events.get` path
+   * that is what the `pipeThrough` plumbing guarantees; abandon this stream and
+   * the client never comes back, and the audit pool is small.
+   */
+  _streamRows (sql: string, values: unknown[]): ReadableType {
+    const db = this.readDb;
+    async function * rows (): AsyncGenerator<AuditEvent> {
+      for await (const row of db.queryIterable(sql, values, STREAM_BATCH_SIZE)) {
+        yield fromDB(row as AuditRow);
       }
-    });
+    }
+    return Readable.from(rows(), { objectMode: true });
   }
 
   async getOneEvent (eventId: string): Promise<AuditEvent | null> {

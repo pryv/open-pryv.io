@@ -112,6 +112,15 @@ jobs:
           storages__engines__postgresql__user: pryv
           storages__engines__postgresql__password: pryv
           storages__engines__postgresql__database: pryv-node-test
+      - name: Run the SQLite engine suite
+        # The step above runs with STORAGE_ENGINE=postgresql, and the component
+        # runner skips a primary storage engine that does not match it, so
+        # nothing in this workflow was executing storages/engines/sqlite/test at
+        # all. SQLite is a supported baseStorage engine and is the DEFAULT audit
+        # engine, so its own suite needs a job, for the same reason the
+        # PostgreSQL audit step above exists: an engine nothing runs is an
+        # engine whose failures nobody sees.
+        run: just clean-test-data && just test-sqlite storages:sqlite
 
   lint:
     runs-on: ubuntu-22.04

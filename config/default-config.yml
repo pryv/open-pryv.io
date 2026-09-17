@@ -71,6 +71,13 @@ storages:
       user: 'pryv'
       password: ''
       max: 20
+      # Audit connections are pooled separately from the ones above, and the
+      # two audit pools are separate from each other: a streamed audit read
+      # holds its connection for the whole response, so keeping it off the
+      # write pool is what stops a slow reader delaying or dropping an audit
+      # write. Raise auditReadPoolSize, not auditPoolSize, for read throughput.
+      # auditPoolSize: 5      # audit writes and short reads
+      # auditReadPoolSize: 5  # streamed audit reads only
     sqlite:
       path: 'REPLACE ME'
     filesystem:
