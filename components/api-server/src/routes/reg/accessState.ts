@@ -105,7 +105,10 @@ function _setKvClientForTests (client: KvClient | null): void {
 }
 
 /** Keys created through this module in this process, so `clear()` (tests)
- * can drop them without wiping unrelated `cluster_kv` entries. */
+ * can drop them without wiping unrelated `cluster_kv` entries. Tracked in
+ * test runs only: nothing removes a key on expiry, so in a server this set
+ * would grow with every request. */
+const TRACK_KEYS = process.env.NODE_ENV === 'test';
 const knownKeys = new Set<string>();
 
 async function write (key: string, state: AccessState, expiresAt: number): Promise<void> {
@@ -113,7 +116,7 @@ async function write (key: string, state: AccessState, expiresAt: number): Promi
   // so an already-past expiry drops the entry instead of pinning it.
   const ttlMs = Math.max(1, expiresAt - Date.now());
   await getKv().set(NAMESPACE + key, state, { ttlMs });
-  knownKeys.add(key);
+  if (TRACK_KEYS) knownKeys.add(key);
 }
 
 /**

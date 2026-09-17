@@ -250,11 +250,17 @@ if (cluster.isPrimary) {
       const revokeOrphans = revokeExpiredCodeOrphans({
         platform: platformDB,
         coreId: String(config.get('core:id') ?? 'single'),
-        revokeLocal: ({ userId, username, accessId }) => new Promise((resolve, reject) => {
+        revokeLocal: async ({ userId, username, accessId, clientId }) => {
+          const accesses = storagesBarrel.storageLayer.accesses;
+          const user = { id: userId, username };
+          // Only the client's OAuth session access: a row must not reach any other access.
+          const access = await new Promise((resolve, reject) =>
+            accesses.findOne(user, { id: accessId }, null, (err, a) => (err != null ? reject(err) : resolve(a))));
+          if (access == null || access.type !== 'app' || access.name !== 'oauth:' + clientId) return;
           // Never delivered to a client, so no cached access logic to invalidate.
-          storagesBarrel.storageLayer.accesses.delete({ id: userId, username }, { id: accessId },
-            (err) => (err != null ? reject(err) : resolve()));
-        })
+          await new Promise((resolve, reject) =>
+            accesses.delete(user, { id: accessId }, (err) => (err != null ? reject(err) : resolve())));
+        }
       })
         .then((revoked) => {
           if (revoked > 0) log(`[oauth-orphan-revoke] revoked ${revoked} orphaned pre-minted access(es)`);

@@ -73,9 +73,14 @@ async function spawnWorkers ({
       }
     });
   }
+  // Under `just test-parallel` the parent carries MOCHA_PARALLEL=1, which makes
+  // cluster_kv's default client use a per-process store; children talking to
+  // the fixture's master must not inherit it.
+  const parentEnv: Record<string, string | undefined> = { ...process.env };
+  if (kvMaster) delete parentEnv.MOCHA_PARALLEL;
   for (let i = 0; i < count; i++) {
     const child = childProcess.fork(workerScript, [], {
-      env: { ...process.env, ...env, WORKER_INDEX: String(i) },
+      env: { ...parentEnv, ...env, WORKER_INDEX: String(i) },
       stdio: ['ignore', 'inherit', 'inherit', 'ipc']
     });
     workers.push({ child, pending: new Map() });

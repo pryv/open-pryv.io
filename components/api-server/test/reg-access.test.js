@@ -629,10 +629,15 @@ describe('[RGAC] Register access authorization', () => {
       // token-bearing apiEndpoint, username) must never reach it.
       const platformDB = require('storages').platformDB;
       assert.strictEqual(await platformDB.getAccessState(key), null);
+      // and in no platform-store row at all, under any key
+      for (const storeKey of await platformDB.listPlatformKvKeys('access-state/')) {
+        const entry = await platformDB.getAccessState(storeKey.slice('access-state/'.length));
+        assert.ok(!(storeKey + JSON.stringify(entry)).includes(ACCEPT.token), 'token found in ' + storeKey);
+      }
     });
 
     it('[RA81] must serve ACCEPTED during the retention window, then forget the key', async () => {
-      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 1000 } }, async () => {
         const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
         await coreRequest.post('/reg/access/' + key).send(ACCEPT);
         // clients read the outcome more than once (lib-js polls, then connectFromKey)
@@ -641,7 +646,7 @@ describe('[RGAC] Register access authorization', () => {
           assert.strictEqual(res.status, 200);
           assert.strictEqual(res.body.token, ACCEPT.token);
         }
-        await sleep(450);
+        await sleep(1400);
         const late = await coreRequest.get('/reg/access/' + key);
         assert.strictEqual(late.status, 400);
         assert.strictEqual(late.body.error.id, 'unknown-access-key');
@@ -649,12 +654,12 @@ describe('[RGAC] Register access authorization', () => {
     });
 
     it('[RA82] must apply the same retention window to REFUSED', async () => {
-      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 1000 } }, async () => {
         const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
         await coreRequest.post('/reg/access/' + key).send({ status: 'REFUSED', reasonId: 'USER_DENIED', message: 'No' });
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 403);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 403);
-        await sleep(450);
+        await sleep(1400);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 400);
       });
     });
@@ -664,16 +669,16 @@ describe('[RGAC] Register access authorization', () => {
         const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
         await coreRequest.post('/reg/access/' + key).send(ACCEPT);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
-        await sleep(450);
+        await sleep(1400);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
       });
     });
 
     it('[RA84] must not start the retention window on a NEED_SIGNIN poll', async () => {
-      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 1000 } }, async () => {
         const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 201);
-        await sleep(450);
+        await sleep(1400);
         await coreRequest.post('/reg/access/' + key).send(ACCEPT);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
       });

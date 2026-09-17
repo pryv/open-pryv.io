@@ -42,12 +42,12 @@ import { logServerError } from '../serverLog.ts';
 
 /** Read a live access from this core's storage; null when absent, deleted or expired. */
 export type AuthCodeAccessResolver = (params: {
-  userId: string; username: string; accessId: string;
+  userId: string; username: string; accessId: string; clientId: string;
 }) => Promise<{ accessToken: string; apiEndpoint: string } | null>;
 
 /** Delete an access from this core's storage (best-effort orphan cleanup). */
 export type AuthCodeAccessRevoker = (params: {
-  userId: string; username: string; accessId: string;
+  userId: string; username: string; accessId: string; clientId: string;
 }) => Promise<void>;
 
 export type AuthCodeDeps = {
@@ -128,7 +128,7 @@ export async function handleAuthorizationCode (
     // them apart cheaply; the reuse-detection signal arrives by storing
     // recently-consumed codes in a short-TTL keyspace in a follow-up.
     // Nothing was consumed here, so there is no orphaned access to revoke.
-    await audit('oauth.code.reused', { clientId: params.client_id, codeId: params.code });
+    await audit('oauth.code.reused', { clientId: params.client_id, codeId: storage.hashSecret(params.code) });
     return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
   }
 
@@ -148,7 +148,7 @@ export async function handleAuthorizationCode (
       }
     } else if (row.coreId === coreId && typeof deps.revokeAccessLocal === 'function') {
       try {
-        await deps.revokeAccessLocal({ userId: row.userId, username: row.username, accessId: row.accessId });
+        await deps.revokeAccessLocal({ userId: row.userId, username: row.username, accessId: row.accessId, clientId: row.clientId });
       } catch (err) {
         // Best-effort: the access then dies by its own (short) TTL.
         logServerError('authorization_code: orphan access revoke failed', err);
@@ -247,7 +247,7 @@ export async function handleAuthorizationCode (
     await audit('oauth.code.exchanged', {
       clientId: row.clientId,
       userId: row.userId,
-      codeId: params.code,
+      codeId: storage.hashSecret(params.code as string),
       grantedScope: row.scope,
     });
     await audit('oauth.token.issued.authorization_code', {
@@ -299,7 +299,7 @@ export async function handleAuthorizationCode (
     }
     let resolved;
     try {
-      resolved = await deps.resolveAccess({ userId: row.userId, username: row.username, accessId });
+      resolved = await deps.resolveAccess({ userId: row.userId, username: row.username, accessId, clientId: row.clientId });
     } catch (err) {
       logServerError('authorization_code: access resolution failed', err);
       return { ok: false, status: 500, error: 'server_error', description: 'failed to read the issued access' };

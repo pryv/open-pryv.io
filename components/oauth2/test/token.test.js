@@ -436,7 +436,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         }
       }, res);
       assert.equal(res.body.error, 'invalid_grant');
-      assert.deepEqual(localRevokes, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice' }]);
+      assert.deepEqual(localRevokes, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice', clientId: 'myapp' }]);
       assert.equal(deletes.length, 0);
     });
 
@@ -553,7 +553,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       const res = fakeRes();
       await handler({ body: body('CODE-CR1', verifier) }, res);
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(calls, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice' }]);
+      assert.deepEqual(calls, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice', clientId: 'myapp' }]);
       assert.equal(res.body.access_token, 'tok-from-storage');
       assert.equal(res.body.apiEndpoint, 'https://tok-from-storage@alice.pryv.me/');
     });

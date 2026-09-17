@@ -27,8 +27,8 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
   it('[OSW1] revokes this core\'s orphans locally, skips other cores, revokes legacy rows over HTTP', async () => {
     const platform = platformWithExpired({
       'oauth-ac/': [
-        { key: 'oauth-ac/h1', value: { coreId: 'core-a', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
-        { key: 'oauth-ac/h2', value: { coreId: 'core-b', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
+        { key: 'oauth-ac/h1', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
+        { key: 'oauth-ac/h2', value: { coreId: 'core-b', clientId: 'app', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
       ],
       'oauth-code/': [
         { key: 'oauth-code/raw', value: { accessId: 'acc-3', accessToken: 'tok-3', apiEndpoint: 'https://carol.pryv.me/' } },
@@ -43,15 +43,15 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
       revokeHttp: async (p) => { http.push(p); return true; },
     });
     assert.equal(revoked, 2);
-    assert.deepEqual(local, [{ userId: 'u1', username: 'alice', accessId: 'acc-1' }]);
+    assert.deepEqual(local, [{ userId: 'u1', username: 'alice', accessId: 'acc-1', clientId: 'app' }]);
     assert.deepEqual(http, [{ apiEndpoint: 'https://carol.pryv.me/', accessToken: 'tok-3', accessId: 'acc-3' }]);
   });
 
   it('[OSW2] a failing local revoke is not counted and does not stop the sweep', async () => {
     const platform = platformWithExpired({
       'oauth-ac/': [
-        { key: 'a', value: { coreId: 'core-a', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
-        { key: 'b', value: { coreId: 'core-a', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
+        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
+        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
       ],
     });
     const seen = [];
@@ -66,7 +66,7 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
   });
 
   it('[OSW3] honours the per-tick cap', async () => {
-    const rows = Array.from({ length: 5 }, (_, i) => ({ key: 'k' + i, value: { coreId: 'core-a', userId: 'u', username: 'x', accessId: 'acc-' + i } }));
+    const rows = Array.from({ length: 5 }, (_, i) => ({ key: 'k' + i, value: { coreId: 'core-a', clientId: 'app', userId: 'u', username: 'x', accessId: 'acc-' + i } }));
     const platform = platformWithExpired({ 'oauth-ac/': rows });
     const local = [];
     await revokeExpiredCodeOrphans({ platform, coreId: 'core-a', maxPerTick: 3, revokeLocal: async (p) => { local.push(p); }, revokeHttp: async () => true });

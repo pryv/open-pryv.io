@@ -150,40 +150,70 @@ function _masterStoreForTests () {
 
 // ---------- Worker-side client ----------
 
+type PendingRequest = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
+
+/**
+ * One `message` listener per process handle, dispatching replies by
+ * requestId. A listener per request would pass Node's default listener cap
+ * (and log MaxListenersExceededWarning) as soon as more than ten requests
+ * are in flight in one worker. The listener is removed when nothing is pending.
+ */
+const _dispatchers = new WeakMap<ProcessLike, { pending: Map<string, PendingRequest>; onMsg: (raw: unknown) => void }>();
+
+function _dispatcherFor (processHandle: ProcessLike) {
+  let d = _dispatchers.get(processHandle);
+  if (d == null) {
+    const pending = new Map<string, PendingRequest>();
+    const onMsg = (raw: unknown) => {
+      const msg = raw as KvMessage | null;
+      if (!msg || msg.type !== 'kv:reply' || typeof msg.requestId !== 'string') return;
+      const entry = pending.get(msg.requestId);
+      if (entry == null) return;
+      _settle(processHandle, msg.requestId);
+      if (msg.ok) {
+        entry.resolve({ value: msg.value });
+      } else {
+        entry.reject(new Error(msg.error || 'cluster_kv error'));
+      }
+    };
+    d = { pending, onMsg };
+    _dispatchers.set(processHandle, d);
+  }
+  return d;
+}
+
+/** Drop a pending request; detach the listener when none is left. */
+function _settle (processHandle: ProcessLike, requestId: string) {
+  const d = _dispatchers.get(processHandle);
+  if (d == null) return;
+  const entry = d.pending.get(requestId);
+  if (entry != null) clearTimeout(entry.timer);
+  d.pending.delete(requestId);
+  if (d.pending.size === 0) {
+    processHandle.removeListener('message', d.onMsg);
+    _dispatchers.delete(processHandle);
+  }
+}
+
 function _request (payload: Partial<KvMessage>, processHandle: ProcessLike, timeoutMs: number) {
   if (typeof processHandle.send !== 'function') {
     return { _noChannel: true };
   }
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
-    let settled = false;
-    const onMsg = (raw: unknown) => {
-      if (settled) return;
-      const msg = raw as KvMessage | null;
-      if (!msg || msg.type !== 'kv:reply' || msg.requestId !== requestId) return;
-      settled = true;
-      clearTimeout(timer);
-      processHandle.removeListener('message', onMsg);
-      if (msg.ok) {
-        resolve({ value: msg.value });
-      } else {
-        reject(new Error(msg.error || 'cluster_kv error'));
-      }
-    };
+    const d = _dispatcherFor(processHandle);
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      processHandle.removeListener('message', onMsg);
+      if (!d.pending.has(requestId)) return;
+      _settle(processHandle, requestId);
       reject(new Error(`cluster_kv timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    processHandle.on('message', onMsg);
+    if (d.pending.size === 0) processHandle.on('message', d.onMsg);
+    d.pending.set(requestId, { resolve, reject, timer });
     try {
       processHandle.send!({ ...payload, requestId });
     } catch (err: unknown) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      processHandle.removeListener('message', onMsg);
+      if (!d.pending.has(requestId)) return;
+      _settle(processHandle, requestId);
       reject(new Error('cluster_kv send failed: ' + (err as Error).message));
     }
   });
