@@ -599,6 +599,91 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('request state storage and delivery', () => {
+    const { withInjectedConfig } = require('test-helpers');
+    const BODY = {
+      requestingAppId: 'test-app',
+      requestedPermissions: [{ streamId: 'diary', level: 'read' }]
+    };
+    const ACCEPT = {
+      status: 'ACCEPTED',
+      username: 'testuser',
+      token: 'state-storage-token',
+      apiEndpoint: 'https://state-storage-token@testuser.pryv.me/'
+    };
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('[RA80] must not write the accepted credential to the platform store', async () => {
+      const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
+      await coreRequest.post('/reg/access/' + key).send(ACCEPT);
+      const pollRes = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(pollRes.body.token, ACCEPT.token);
+      // The platform store is replicated to every core; the request (token,
+      // token-bearing apiEndpoint, username) must never reach it.
+      const platformDB = require('storages').platformDB;
+      assert.strictEqual(await platformDB.getAccessState(key), null);
+    });
+
+    it('[RA81] must serve ACCEPTED during the retention window, then forget the key', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+        const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
+        await coreRequest.post('/reg/access/' + key).send(ACCEPT);
+        // clients read the outcome more than once (lib-js polls, then connectFromKey)
+        for (let i = 0; i < 2; i++) {
+          const res = await coreRequest.get('/reg/access/' + key);
+          assert.strictEqual(res.status, 200);
+          assert.strictEqual(res.body.token, ACCEPT.token);
+        }
+        await sleep(450);
+        const late = await coreRequest.get('/reg/access/' + key);
+        assert.strictEqual(late.status, 400);
+        assert.strictEqual(late.body.error.id, 'unknown-access-key');
+      });
+    });
+
+    it('[RA82] must apply the same retention window to REFUSED', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+        const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
+        await coreRequest.post('/reg/access/' + key).send({ status: 'REFUSED', reasonId: 'USER_DENIED', message: 'No' });
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 403);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 403);
+        await sleep(450);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 400);
+      });
+    });
+
+    it('[RA83] must keep a decided request until expiry when retention is 0', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 0 } }, async () => {
+        const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
+        await coreRequest.post('/reg/access/' + key).send(ACCEPT);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
+        await sleep(450);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
+      });
+    });
+
+    it('[RA84] must not start the retention window on a NEED_SIGNIN poll', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 300 } }, async () => {
+        const key = (await coreRequest.post('/reg/access').send(BODY)).body.key;
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 201);
+        await sleep(450);
+        await coreRequest.post('/reg/access/' + key).send(ACCEPT);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
+      });
+    });
+
+    it('[RA85] multi-core without core:url must build the poll URL from this core, not the register URL', async () => {
+      await withInjectedConfig({ core: { isSingleCore: false, url: null }, dns: { domain: 'ra85.test' } }, async () => {
+        const { getPlatform } = require('platform');
+        const platform = await getPlatform();
+        const self = platform.coreIdToUrl(platform.coreId);
+        const res = await coreRequest.post('/reg/access').send(BODY);
+        assert.strictEqual(res.status, 201);
+        assert.strictEqual(res.body.poll, self + 'reg/access/' + res.body.key);
+      });
+    });
+  });
+
   describe('POST /reg/access/:key (errors)', () => {
     it('[RA40] must return 400 for invalid status', async () => {
       const createRes = await coreRequest.post('/reg/access')

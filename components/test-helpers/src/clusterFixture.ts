@@ -42,17 +42,37 @@ const DEFAULT_CALL_TIMEOUT_MS = 15_000;
  * @param [opts.env] - extra env vars passed to children
  * @param [opts.bootTimeoutMs]
  * @param [opts.callTimeoutMs]
+ * @param [opts.kvMaster] - run the `cluster_kv` master handler in this
+ *   (parent) process for the children, as `bin/master.js` does for real
+ *   workers, so state kept in cluster_kv is shared between them.
  */
 async function spawnWorkers ({
   count = 2,
   workerScript,
   env = {},
   bootTimeoutMs = DEFAULT_BOOT_TIMEOUT_MS,
-  callTimeoutMs = DEFAULT_CALL_TIMEOUT_MS
+  callTimeoutMs = DEFAULT_CALL_TIMEOUT_MS,
+  kvMaster = false
 }: any = {}) {
   if (!workerScript) throw new Error('clusterFixture.spawnWorkers: workerScript is required');
 
   const workers: any[] = [];
+  // The master handler listens on a `cluster`-shaped emitter: `message`
+  // events carry (worker, msg). Children are forked processes here, so
+  // relay each child's messages onto that shape.
+  const kvHandlers: any[] = [];
+  const clusterKv = kvMaster ? require('messages/src/cluster_kv.ts') : null;
+  if (clusterKv) {
+    clusterKv.masterStart({
+      cluster: {
+        on: (event: string, handler: any) => { if (event === 'message') kvHandlers.push(handler); },
+        removeListener: (event: string, handler: any) => {
+          const i = kvHandlers.indexOf(handler);
+          if (i >= 0) kvHandlers.splice(i, 1);
+        }
+      }
+    });
+  }
   for (let i = 0; i < count; i++) {
     const child = childProcess.fork(workerScript, [], {
       env: { ...process.env, ...env, WORKER_INDEX: String(i) },
@@ -60,6 +80,11 @@ async function spawnWorkers ({
     });
     workers.push({ child, pending: new Map() });
     child.on('message', (msg: any) => {
+      if (clusterKv && typeof msg?.type === 'string' && msg.type.startsWith('kv:')) {
+        const worker = { send: (m: unknown) => child.send(m) };
+        for (const handler of kvHandlers) handler(worker, msg);
+        return;
+      }
       if (!msg || typeof msg.requestId !== 'string') return;
       const entry = workers[i].pending.get(msg.requestId);
       if (!entry) return;
@@ -105,6 +130,7 @@ async function spawnWorkers ({
       await exited;
       clearTimeout(killTimer);
     }));
+    if (clusterKv) clusterKv.masterStop();
   }
 
   return {
