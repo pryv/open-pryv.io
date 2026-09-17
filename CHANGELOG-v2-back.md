@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## event-types dictionary: load-state tracking, bounded fetch, boot await + background retry
+
+The type repository (`business/src/types.ts`) now tracks whether the published
+dictionary ever loaded (`everSucceeded` / `degraded`, plus `source`, `version`,
+`embeddedVersion`, `lastSuccessAt`, `lastAttemptAt`, `lastError`), exposed via
+`getEventTypesLoadState()` and the instance `isDegraded()` / `getLoadState()`. The
+fetch is now bounded by an `AbortController` timeout so awaiting it cannot hang.
+
+At boot, `methods/events.ts` awaits the first fetch (a healthy core validates
+against the published set before it serves, closing the previous startup window),
+and on failure schedules a background retry with exponential backoff (5s → 5min,
+unref'd) that self-heals the core once the endpoint is reachable, logging recovery.
+The previous fire-and-forget `.catch(warn)` is gone.
+
+The HFS worker had the same dictionary fetch as a fire-and-forget with **no**
+`.catch`; with no global `unhandledRejection` handler, an unreachable endpoint at
+boot could crash-loop that worker. It now catches and logs, running on the embedded
+fallback (hfs is already fail-closed for unknown types, so it refuses rather than
+under-validates).
+
 ## CMC capability accesses are read by id on the accept path
 
 An accept or refuse arriving through a capability is written with the capability

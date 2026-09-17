@@ -20,6 +20,61 @@ const BasicType = require('./types/basic_type.ts').default;
 const ComplexType = require('./types/complex_type.ts').default;
 const SERIES_PREFIX = 'series:';
 
+// The version baked into the repo. Captured before any remote merge so we can
+// always report which dictionary is actually in effect.
+const EMBEDDED_VERSION: string | null = defaultTypes.version ?? null;
+
+// How long a single dictionary fetch may run before it is aborted. A boot that
+// awaits the first attempt must not hang forever on an unreachable endpoint.
+const FETCH_TIMEOUT_MS = 30000;
+
+// Load state of the event-types dictionary, exposed so operators can alert on a
+// degraded core (see `getEventTypesLoadState`). `everSucceeded` is the security
+// pivot: while it is false the published dictionary has never merged, so the API
+// must fail closed on unknown types rather than accept them unvalidated.
+type EventTypesLoadState = {
+  everSucceeded: boolean;
+  degraded: boolean;
+  source: string | null;
+  version: string | null;
+  embeddedVersion: string | null;
+  lastSuccessAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+};
+const loadState: EventTypesLoadState = {
+  everSucceeded: false,
+  degraded: true,
+  source: null,
+  version: EMBEDDED_VERSION,
+  embeddedVersion: EMBEDDED_VERSION,
+  lastSuccessAt: null,
+  lastAttemptAt: null,
+  lastError: null
+};
+
+// Returns a copy of the current dictionary load state. `degraded` is true until
+// a remote/file fetch has ever succeeded.
+function getEventTypesLoadState (): EventTypesLoadState {
+  return { ...loadState };
+}
+
+// Test-only: reset the (module-singleton) load state to its pristine, never-loaded
+// form so a suite can exercise the degraded/recovery transitions independently of
+// what ran before it. Not used in production. Note: this resets the load state
+// ONLY, not `defaultTypes` — a previously-merged dictionary stays in effect, so
+// this reproduces "degraded" (isDegraded()===true) but not the embedded-only type
+// set of a real boot-degraded core.
+function _resetEventTypesLoadStateForTests (): void {
+  loadState.everSucceeded = false;
+  loadState.degraded = true;
+  loadState.source = null;
+  loadState.version = EMBEDDED_VERSION;
+  loadState.lastSuccessAt = null;
+  loadState.lastAttemptAt = null;
+  loadState.lastError = null;
+}
+
 type EventLike = { type: string; content?: unknown; [k: string]: unknown };
 type JsonSchema = Record<string, unknown>;
 type EventTypeInstance = {
@@ -218,18 +273,22 @@ class TypeRepository {
   // Tries to update the stored type definitions with a file found on the
   // internet.
   //
-  async tryUpdate (sourceURL: string, apiVersion: string) {
-    function unavailableError (err: unknown) {
-      throw new Error('Could not update event types from ' +
+  async tryUpdate (sourceURL: string, apiVersion?: string) {
+    function unavailableError (err: unknown): never {
+      const e = new Error('Could not update event types from ' +
                 sourceURL +
                 '\nError: ' +
                 (err as Error).message);
+      loadState.lastError = e.message;
+      throw e;
     }
-    function invalidError (err: unknown) {
-      throw new Error('Invalid event types schema returned from ' +
+    function invalidError (err: unknown): never {
+      const e = new Error('Invalid event types schema returned from ' +
                 sourceURL +
                 '\nErrors: ' +
                 (err as { errors?: unknown })?.errors);
+      loadState.lastError = e.message;
+      throw e;
     }
     const FILE_PROTOCOL = 'file://';
     function isFileUrl (url: string) {
@@ -238,6 +297,7 @@ class TypeRepository {
     function removeFileProtocol (url: string) {
       return url.substring(FILE_PROTOCOL.length);
     }
+    loadState.lastAttemptAt = Date.now();
     let eventTypesDefinition: Record<string, unknown> | undefined;
     try {
       if (isFileUrl(sourceURL)) {
@@ -254,13 +314,24 @@ class TypeRepository {
         eventTypesDefinition = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       } else {
         const USER_AGENT_PREFIX = 'Pryv.io/';
-        const res = await fetch(sourceURL, {
-          headers: { 'User-Agent': USER_AGENT_PREFIX + apiVersion }
-        });
-        if (!res.ok) {
-          throw new Error(`Event types fetch failed: HTTP ${res.status} ${res.statusText}`);
+        // Bound the WHOLE exchange, headers AND body: awaiting this at boot must
+        // not hang forever on a server that returns 200 then stalls the body.
+        // The body read stays inside the timed region so the abort aborts it too
+        // (undici aborts an in-flight body read when the signal fires).
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        try {
+          const res = await fetch(sourceURL, {
+            headers: { 'User-Agent': USER_AGENT_PREFIX + apiVersion },
+            signal: controller.signal
+          });
+          if (!res.ok) {
+            throw new Error(`Event types fetch failed: HTTP ${res.status} ${res.statusText}`);
+          }
+          eventTypesDefinition = await res.json();
+        } finally {
+          clearTimeout(timer);
         }
-        eventTypesDefinition = await res.json();
       }
     } catch (err) {
       unavailableError(err);
@@ -271,6 +342,26 @@ class TypeRepository {
     // actually be used.
     defaultTypes = applyCatalogue(defaultTypes, eventTypesDefinition!);
     warnAboutInvalidTypeSchemas(defaultTypes.types, `the event types loaded from ${sourceURL}`);
+    // Record success: a trusted dictionary is now in effect, so the API may
+    // stop failing closed on unknown types.
+    loadState.everSucceeded = true;
+    loadState.degraded = false;
+    loadState.source = sourceURL;
+    loadState.version = (eventTypesDefinition!.version as string | null | undefined) ?? loadState.version;
+    loadState.lastSuccessAt = Date.now();
+    loadState.lastError = null;
+  }
+
+  // True until a dictionary fetch has ever succeeded. While degraded, the
+  // published type set has never loaded, so unknown types cannot be validated
+  // and the API must refuse them rather than accept them unvalidated.
+  isDegraded (): boolean {
+    return !loadState.everSucceeded;
+  }
+
+  // Copy of the current dictionary load state, for operator observability.
+  getLoadState (): EventTypesLoadState {
+    return getEventTypesLoadState();
   }
 }
-export { TypeRepository, SeriesRowType, isSeriesType, errors };
+export { TypeRepository, SeriesRowType, isSeriesType, errors, getEventTypesLoadState, _resetEventTypesLoadStateForTests };

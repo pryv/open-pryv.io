@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
 const path = require('node:path');
-const { TypeRepository } = require('../../src/types.ts');
+const { TypeRepository, getEventTypesLoadState, _resetEventTypesLoadStateForTests } = require('../../src/types.ts');
 
 // The published list, fetched over the internet. Only exercised when
 // explicitly asked for (see [WMDW] below).
@@ -134,6 +134,47 @@ describe('[TYPR] business.types.TypeRepository', function () {
       } catch (err) {
         assert.match(err.message, /Could not update event types/);
       }
+    });
+  });
+  describe('[TYLS] dictionary load state (degraded / recovery)', function () {
+    beforeEach(() => _resetEventTypesLoadStateForTests());
+    after(() => _resetEventTypesLoadStateForTests());
+    it('[LS01] starts degraded, on the embedded version, before any fetch', function () {
+      const state = getEventTypesLoadState();
+      assert.strictEqual(state.degraded, true);
+      assert.strictEqual(state.everSucceeded, false);
+      assert.strictEqual(repository.isDegraded(), true);
+      assert.strictEqual(state.source, null);
+      assert.strictEqual(state.lastSuccessAt, null);
+      // The embedded dictionary carries a version, and it is what is in effect.
+      assert.strictEqual(typeof state.embeddedVersion, 'string');
+      assert.strictEqual(state.version, state.embeddedVersion);
+    });
+    it('[LS02] a failed fetch keeps it degraded and records the error', async function () {
+      try { await repository.tryUpdate('bahbahblacksheep'); } catch (_e) { /* expected */ }
+      const state = repository.getLoadState();
+      assert.strictEqual(state.degraded, true);
+      assert.strictEqual(state.everSucceeded, false);
+      assert.strictEqual(repository.isDegraded(), true);
+      assert.strictEqual(typeof state.lastAttemptAt, 'number');
+      assert.match(state.lastError, /Could not update event types/);
+    });
+    it('[LS03] a successful fetch clears degraded and records source/version', async function () {
+      await repository.tryUpdate(VENDORED_SOURCE_URL);
+      const state = repository.getLoadState();
+      assert.strictEqual(state.degraded, false);
+      assert.strictEqual(state.everSucceeded, true);
+      assert.strictEqual(repository.isDegraded(), false);
+      assert.strictEqual(state.source, VENDORED_SOURCE_URL);
+      assert.strictEqual(typeof state.lastSuccessAt, 'number');
+      assert.strictEqual(state.lastError, null);
+    });
+    it('[LS04] recovery after a failure: degraded clears once a fetch succeeds', async function () {
+      try { await repository.tryUpdate('bahbahblacksheep'); } catch (_e) { /* expected */ }
+      assert.strictEqual(repository.isDegraded(), true);
+      await repository.tryUpdate(VENDORED_SOURCE_URL);
+      assert.strictEqual(repository.isDegraded(), false);
+      assert.strictEqual(repository.getLoadState().lastError, null);
     });
   });
   describe('[TY02] basic types like mass/kg', function () {

@@ -118,6 +118,47 @@ type EventsAnyResult = { event?: WireEvent; eventDeletion?: ItemDeletion; [k: st
 // for events.
 const typeRepo = new TypeRepository();
 
+// Background-retry backoff for a failed event-types dictionary fetch: start at
+// 5s, double up to 5min, then hold. Retries continue for the process lifetime
+// while degraded, so a core that booted without the dictionary self-heals once
+// the endpoint is reachable.
+const EVENT_TYPES_RETRY_START_MS = 5000;
+const EVENT_TYPES_RETRY_MAX_MS = 300000;
+
+// Load the dictionary once, awaited by boot. On failure the core stays UP but
+// degraded and a background retry is scheduled.
+async function initEventTypesDictionary (eventTypesUrl: string, apiVersion: string): Promise<void> {
+  try {
+    await typeRepo.tryUpdate(eventTypesUrl, apiVersion);
+    const state = typeRepo.getLoadState();
+    getLogger('typeRepo').info(`Event-types dictionary loaded (version ${state.version ?? 'unknown'}) from ${eventTypesUrl}`);
+  } catch (err: unknown) {
+    getLogger('typeRepo').error(
+      'Event-types dictionary unavailable at boot; running on the embedded fallback ' +
+      `(version ${typeRepo.getLoadState().embeddedVersion ?? 'unknown'}) and REFUSING unknown ` +
+      `event types until it loads. Cause: ${(err as Error).message ?? String(err)}`);
+    scheduleEventTypesRetry(eventTypesUrl, apiVersion, EVENT_TYPES_RETRY_START_MS);
+  }
+}
+
+// Retry the dictionary fetch in the background with exponential backoff, until
+// it succeeds. Timers are unref'd so they never keep the process alive.
+function scheduleEventTypesRetry (eventTypesUrl: string, apiVersion: string, delayMs: number): void {
+  const timer = setTimeout(() => {
+    typeRepo.tryUpdate(eventTypesUrl, apiVersion).then(
+      () => {
+        const state = typeRepo.getLoadState();
+        getLogger('typeRepo').info(`Event-types dictionary recovered (version ${state.version ?? 'unknown'}); unknown types are validated again.`);
+      },
+      (err: unknown) => {
+        getLogger('typeRepo').error(`Event-types dictionary still unavailable; core stays degraded and keeps retrying. Cause: ${(err as Error).message ?? String(err)}`);
+        scheduleEventTypesRetry(eventTypesUrl, apiVersion, Math.min(delayMs * 2, EVENT_TYPES_RETRY_MAX_MS));
+      }
+    );
+  }, delayMs);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
 /**
  * Events API methods implementations.
  */
@@ -148,10 +189,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // Initialise the project version as soon as we can.
   const version = await getAPIVersion();
 
-  // Update types and log error
-  typeRepo
-    .tryUpdate(eventTypesUrl, version)
-    .catch((err: unknown) => getLogger('typeRepo').warn((err as Error).message ?? String(err)));
+  // Load the event-types dictionary. Await the first attempt so a healthy core
+  // is validating against the published set before it serves (no startup window
+  // where a just-published type would be refused). On failure the core still
+  // boots, but it runs DEGRADED: it logs at error, refuses unknown types (see
+  // `validateEventContentAndCoerce`) rather than accept them unvalidated, and
+  // retries in the background with backoff until the dictionary loads.
+  await initEventTypesDictionary(eventTypesUrl, version);
 
   const logger = getLogger('methods:events');
 
@@ -1000,7 +1044,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!typeRepo.isKnown(type)) {
       // We forbid the 'series' prefix for these free types.
       if (isSeriesType(type)) { return next(errors.invalidEventType(type)); }
-      // No further checks, let the user do what he wants.
+      // Fail closed while the published dictionary has never loaded: an unknown
+      // type here may in fact be a published type we simply could not fetch, so
+      // accepting it would store content that should have been validated. Refuse
+      // rather than under-validate silently until the dictionary is available.
+      if (typeRepo.isDegraded()) {
+        return next(errors.invalidOperation(
+          'Event type "' + type + '" cannot be validated: the event-types dictionary is unavailable. ' +
+          'The core is running on its embedded fallback and refuses unknown types until the dictionary loads.',
+          { type }));
+      }
+      // Dictionary is loaded: an unknown type is a genuinely new free type; accept.
       return next();
     }
     // assert: `type` is known

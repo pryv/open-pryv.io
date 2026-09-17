@@ -31,6 +31,7 @@ const { fromCallback } = require('utils');
 const { getStorageLayer, getUsersLocalIndex } = require('storage');
 const { ready, getLogger } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { getEventTypesLoadState } = require('business').types;
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
@@ -227,6 +228,22 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
           userCount: counts[core.id] || 0
         }));
         next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
+  // ------------------------------------------------------ eventTypesStatus
+  // Operator-alertable state of the event-types dictionary. `degraded` is true
+  // when the published dictionary has never loaded, in which case the core runs
+  // on its embedded fallback and refuses unknown event types.
+  systemAPI.register('system.getEventTypesStatus',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    async function getEventTypesStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      try {
+        result.eventTypes = getEventTypesLoadState();
+        return next();
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
