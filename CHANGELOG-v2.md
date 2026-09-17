@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-## 2.0.0-rc.21 — 2026-09-17
-
 ### CMC: open-link invites can be issued without expiry
 
 An `open-link` invite (`capability.mode: 'open-link'`) may now be published with
