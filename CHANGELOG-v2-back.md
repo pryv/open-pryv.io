@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## api-server tests: nock is off outside the suites that mock HTTP
+
+nock 14 switches itself on when it is loaded and then sends every HTTP request of the
+process through a mock socket. Mocha loads every spec file before running any, and a
+suite filtered out by `--grep` never runs its own hooks, so a filtered run (the usual
+way to debug one test) ran socket-level tests against the mock instead of Node. Suites
+that mock HTTP now call `useNock()` (`test-helpers/src/nockScope.ts`). Root hooks switch
+nock off at startup and around every test outside such a suite. If a test leaves it on,
+the hooks switch it off and the run fails at the end, naming that test. Test-only
+change.
+
 ## an event type with a malformed schema is now named in the log, and a download replaces types whole
 
 The event-types catalogue is checked as a whole when it loads, which does not look

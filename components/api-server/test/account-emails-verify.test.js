@@ -29,6 +29,7 @@ const errors = require('errors').factory;
 const timestamp = require('unix-timestamp');
 const crypto = require('node:crypto');
 const nock = require('nock');
+const { useNock } = require('test-helpers/src/nockScope.ts');
 const { withInjectedConfig } = require('test-helpers');
 
 // A trusted app with a wildcard origin in the test config, so the public
@@ -407,8 +408,7 @@ describe('[VEML] account email verification', function () {
   });
 
   describe('[EMLK] verification link', function () {
-    before(() => { if (!nock.isActive()) nock.activate(); });
-    after(() => { nock.cleanAll(); nock.restore(); });
+    useNock();
 
     it('[EMLK1] the mailed VERIFY_LINK carries the username so the landing page can address the account', async function () {
       const u = await makeUser(cuid() + '@lk.example.com');
