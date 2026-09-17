@@ -276,6 +276,8 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.ok(err instanceof Error);
       assert.equal(err.details?.id, 'cmc-capability-ttl-out-of-range');
+      assert.equal(err.details?.mode, 'single-use');
+      assert.equal(err.details?.maxTtlSeconds, 30 * 24 * 60 * 60);
       assert.equal(mall.calls.accessesCreated.length, 0);
     });
 
@@ -347,6 +349,79 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
       assert.equal(err, undefined);
       const access = mall.calls.accessesCreated[0];
       assert.equal(access.expires, 1000 + 7 * 24 * 60 * 60);
+    });
+  });
+
+  describe('[CMCMINT-NOEXP] per-mode bounds and no-expiry open-link', () => {
+    const TWO_YEARS = 2 * 365 * 24 * 60 * 60;
+
+    async function mint ({ expiresAt, capability }) {
+      const errors = fakeErrors();
+      const mall = fakeMall();
+      const mw = createCapabilityMintHook({
+        mall,
+        errors: errors.factory,
+        idGen: () => 'capNX',
+        now: () => 1000,
+      });
+      const content = {
+        ...VALID_REQUEST_CONTENT,
+        request: { ...VALID_REQUEST_CONTENT.request, expiresAt },
+      };
+      if (capability !== undefined) content.capability = capability;
+      const ctx = { newEvent: { type: 'consent/request-cmc', content }, user: { id: 'u1' } };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      return { err, mall, ctx };
+    }
+
+    it('[CM18] open-link + expiresAt null mints an access without expires', async () => {
+      const { err, mall, ctx } = await mint({ expiresAt: null, capability: { mode: 'open-link' } });
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      assert.equal('expires' in mall.calls.accessesCreated[0], false);
+      assert.equal(ctx.newEvent.content.capabilityExpiresAt, null);
+    });
+
+    it('[CM19] default mode + expiresAt null is refused, nothing minted', async () => {
+      const { err, mall } = await mint({ expiresAt: null });
+      assert.ok(err instanceof Error);
+      assert.equal(err.details?.id, 'cmc-capability-no-expiry-not-allowed');
+      assert.equal(err.details?.mode, 'single-use');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CM20] explicit single-use + expiresAt null is refused', async () => {
+      const { err, mall } = await mint({ expiresAt: null, capability: { mode: 'single-use' } });
+      assert.ok(err instanceof Error);
+      assert.equal(err.details?.id, 'cmc-capability-no-expiry-not-allowed');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+    });
+
+    it('[CM21] open-link + expiresAt 2 years ahead is minted with that expiry', async () => {
+      const { err, mall, ctx } = await mint({ expiresAt: 1000 + TWO_YEARS, capability: { mode: 'open-link' } });
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.accessesCreated[0].expires, 1000 + TWO_YEARS);
+      assert.equal(ctx.newEvent.content.capabilityExpiresAt, 1000 + TWO_YEARS);
+    });
+
+    it('[CM22] open-link + expiresAt 59s ahead is refused with maxTtlSeconds null', async () => {
+      const { err, mall } = await mint({ expiresAt: 1000 + 59, capability: { mode: 'open-link' } });
+      assert.ok(err instanceof Error);
+      assert.equal(err.details?.id, 'cmc-capability-ttl-out-of-range');
+      assert.equal(err.details?.mode, 'open-link');
+      assert.equal(err.details?.minTtlSeconds, 60);
+      assert.equal(err.details?.maxTtlSeconds, null);
+      assert.equal(mall.calls.accessesCreated.length, 0);
+    });
+
+    it('[CM23] explicit single-use + expiresAt 31 days ahead is still refused', async () => {
+      const { err, mall } = await mint({ expiresAt: 1000 + 31 * 24 * 60 * 60, capability: { mode: 'single-use' } });
+      assert.ok(err instanceof Error);
+      assert.equal(err.details?.id, 'cmc-capability-ttl-out-of-range');
+      assert.equal(err.details?.mode, 'single-use');
+      assert.equal(err.details?.maxTtlSeconds, 30 * 24 * 60 * 60);
+      assert.equal(mall.calls.accessesCreated.length, 0);
     });
   });
 

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### CMC: open-link invites can be issued without expiry
+
+An `open-link` invite (`capability.mode: 'open-link'`) may now be published with
+`request.expiresAt: null`: the capability access is minted with no expiry and the
+link keeps working until the requester ends it with `consent/invalidate-link-cmc`.
+The trigger reports `capabilityExpiresAt: null`. Until now every capability was
+capped at 30 days, which forced a public registration link to be re-minted and
+republished monthly. Reported in
+[#137](https://github.com/pryv/open-pryv.io/issues/137).
+
+- Bounds are now per mode. `single-use` keeps [60 s, 30 d]. `open-link` accepts
+  any `request.expiresAt` at least 60 s ahead, with no upper bound, or `null`.
+  `cmc-capability-ttl-out-of-range` details now carry `mode`, and
+  `maxTtlSeconds` is `null` for open-link. `request.expiresAt: null` on a
+  single-use invite is refused with the new error id
+  `cmc-capability-no-expiry-not-allowed`.
+- An accept through an expired or unknown capability URL now fails with
+  `cmc-capability-invalid`; current cores answer 403 there, which was previously
+  reported as `cmc-handler-offer-read-failed`.
+- An accept refused by the capability itself (consumed, invalidated, or already
+  accepted by you) now reports that typed id as the trigger's `failure.reason`,
+  instead of the generic `cmc-handler-delivery-rejected` with the id buried in
+  `failure.detail`.
+- Documentation corrected: the default lifetime (7 days) is a code constant, not
+  an operator setting; the per-invite field is `content.request.expiresAt`
+  (previously documented as `content.expiresAt`); capability accesses are not
+  garbage-collected (consumed and invalidated ones are kept so a later click on
+  the same URL gets a typed error, expired ones stop authenticating like any
+  expired access).
+- Requires event-types catalogue 1.1.2 (`consent/request-cmc` `request.expiresAt`
+  is now `number | null`). A core still validating against an older catalogue
+  refuses `null` with `invalid-parameters-format` at `#/request/expiresAt`;
+  restart the core after the catalogue is published, or update the runtime seed
+  (this release ships it).
+
 ### `contact/facebook`, `audiogram/data` and `clinical/fhir` events are accepted again
 
 The schemas of these three event types in the event-types catalogue were malformed

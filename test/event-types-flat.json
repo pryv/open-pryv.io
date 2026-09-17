@@ -1,5 +1,5 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -526,8 +526,11 @@
               }
             },
             "expiresAt": {
-              "type": "number",
-              "description": "Unix timestamp (seconds)."
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Absolute expiry of the capability access, Unix timestamp (seconds). Omit for the platform default (7 days). `null` requests a capability without expiry; the core accepts it for `capability.mode: 'open-link'` only and refuses it on single-use invites."
             },
             "allowUserChoice": {
               "type": "boolean",

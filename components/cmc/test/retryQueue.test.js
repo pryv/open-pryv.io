@@ -86,6 +86,9 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(isRetryableReason('cmc-system-counterparty-access-not-found'), false);
       assert.equal(isRetryableReason('cmc-chat-no-remote-apiendpoint'), false);
       assert.equal(isRetryableReason('cmc-handler-data-grant-name-conflict'), false);
+      assert.equal(isRetryableReason('cmc-capability-invalidated'), false);
+      assert.equal(isRetryableReason('cmc-capability-consumed'), false);
+      assert.equal(isRetryableReason('cmc-capability-already-accepted-by-you'), false);
     });
     it('[RQ03] delivery-failed with peer 5xx / network / timeout is retryable', () => {
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'http-5xx' }), true);

@@ -39,6 +39,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const { isRetryableFailure } = require('./outbound.ts');
+const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 
 const MAX_ATTEMPTS = 6;
 const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
@@ -309,7 +310,8 @@ async function runRetryLoop (params: {
  *   - cmc-handler-data-grant-no-apiendpoint
  *   - cmc-handler-data-grant-name-conflict (name collision survives the
  *     uniquified retry — no attempt can converge)
- *   - cmc-handler-delivery-rejected (4xx)
+ *   - cmc-handler-delivery-rejected (4xx), and the capability refusals
+ *     reported in its place (consumed / invalidated / already accepted)
  *   - cmc-offer-empty-permissions
  *   - cmc-system-counterparty-access-not-found
  *   - cmc-system-no-remote-*
@@ -329,6 +331,8 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-data-grant-no-apiendpoint',
   'cmc-handler-data-grant-name-conflict',
   'cmc-handler-delivery-rejected',
+  // The capability's own refusals, reported instead of delivery-rejected.
+  ...CAPABILITY_REFUSAL_IDS,
   'cmc-offer-empty-permissions',
   'cmc-system-counterparty-access-not-found',
   'cmc-system-no-remote-apiendpoint',

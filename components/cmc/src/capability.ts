@@ -17,9 +17,9 @@ const require = createRequire(import.meta.url);
  *   :_cmc:_internal:offer:<capId>     read   — bears the request event
  *   :_cmc:_internal:responses:<capId> create-only — accepts one accept/refuse
  *
- * The access's apiEndpoint becomes the capability URL. Single-use; the
- * plugin GCs the access + both streams together on first response or TTL
- * expiry.
+ * The access's apiEndpoint becomes the capability URL. State is tracked on
+ * the access (see CapabilityMode). Nothing is garbage-collected
+ * automatically; `gcCapability` is an operator-driven helper.
  *
  * Pure orchestration module: takes mall + id-gen + clock via deps so tests
  * can inject fakes. Issues no HTTP calls — that's the job of outbound.ts.
@@ -85,7 +85,8 @@ type MintResult = {
   offerStreamId: string;
   responsesStreamId: string;
   capabilityUrl: string;
-  expiresAt: number;
+  // null: the capability access has no expiry (open-link only).
+  expiresAt: number | null;
   accessId: string;
 };
 
@@ -103,9 +104,21 @@ const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
  * `capabilityMintHook` with `cmc-capability-ttl-out-of-range`. The
  * `DEFAULT_TTL_SECONDS` continues to apply when no `expiresAt` is
  * provided.
+ *
+ * `MIN_TTL_SECONDS` applies to both modes. `MAX_TTL_SECONDS` is the upper
+ * bound for `single-use` capabilities only: `open-link` capabilities have
+ * no upper bound (a public link is ended by invalidation, not by time), and
+ * may be minted without expiry. See `maxTtlSecondsFor`.
  */
 const MIN_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Upper TTL bound for a capability mode, or null when the mode has none.
+ */
+function maxTtlSecondsFor (mode: CapabilityMode): number | null {
+  return mode === 'open-link' ? null : MAX_TTL_SECONDS;
+}
 
 function defaultIdGen (): string {
   // Short, URL-safe id generator. Production callers should pass a real
@@ -134,7 +147,8 @@ function defaultNow (): number {
 async function mintCapability (params: {
   userId: string;
   triggerEvent: RequestEventLike;
-  ttlSeconds?: number;
+  // undefined: DEFAULT_TTL_SECONDS. null: no expiry (open-link only).
+  ttlSeconds?: number | null;
   // Capability mode (default 'single-use' for back-compat). Read from
   // `triggerEvent.content.capability.mode` when present; explicit
   // `params.mode` wins. See type doc above.
@@ -151,12 +165,17 @@ async function mintCapability (params: {
 }): Promise<MintResult> {
   const { userId, triggerEvent, deps } = params;
   const requesterIdentity = params.requesterIdentity;
-  const ttlSeconds = params.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+  // `??` would turn an explicit null (no expiry) into the default.
+  const ttlSeconds = params.ttlSeconds === undefined ? DEFAULT_TTL_SECONDS : params.ttlSeconds;
   const triggerCapability = triggerEvent?.content?.capability ?? {};
   const mode: CapabilityMode = (params.mode ??
     (triggerCapability.mode === 'open-link' ? 'open-link' : 'single-use'));
   const idGen = deps.idGen ?? defaultIdGen;
   const now = deps.now ?? defaultNow;
+
+  if (ttlSeconds === null && mode !== 'open-link') {
+    throw new Error('cmc/capability: no-expiry capability requires open-link mode');
+  }
 
   if (triggerEvent == null || typeof triggerEvent.type !== 'string') {
     throw new Error('cmc/capability: triggerEvent must carry a type');
@@ -168,7 +187,7 @@ async function mintCapability (params: {
   }
 
   const capabilityId = idGen();
-  const expiresAt = now() + ttlSeconds;
+  const expiresAt = ttlSeconds === null ? null : now() + ttlSeconds;
   const offerStreamId = C.offerStreamIdFor(capabilityId);
   const responsesStreamId = C.responsesStreamIdFor(capabilityId);
 
@@ -235,7 +254,8 @@ async function mintCapability (params: {
     content: offerContent,
   });
 
-  // 3. The capability access — shared, single-use, TTL-bounded.
+  // 3. The capability access: shared; expires per ttlSeconds, or never
+  // when ttlSeconds is null (open-link only).
   const access = await deps.mall.accesses.create(userId, {
     type: 'shared',
     name: '__cmc-cap-' + capabilityId.substring(0, 8),
@@ -262,7 +282,7 @@ async function mintCapability (params: {
         singleUse: mode === 'single-use',
       },
     },
-    expires: expiresAt,
+    ...(expiresAt != null ? { expires: expiresAt } : {}),
   });
 
   const capabilityUrl =
@@ -290,6 +310,11 @@ async function mintCapability (params: {
  * Plugin GC for a consumed or expired capability — deletes the access
  * AND the two per-capability streams. Idempotent: tolerates "not found"
  * on either delete so re-running on an already-cleaned capability is safe.
+ *
+ * Not wired to any automatic path; for operator-driven cleanup by explicit
+ * capabilityId. Consumed and invalidated capabilities are kept on purpose so
+ * a re-click gets a typed error. A future sweeper must skip capabilities
+ * without expiry (open-link links that end only by invalidation).
  */
 async function gcCapability (params: {
   userId: string;
@@ -637,6 +662,7 @@ export {
   DEFAULT_TTL_SECONDS,
   MIN_TTL_SECONDS,
   MAX_TTL_SECONDS,
+  maxTtlSecondsFor,
   mintCapability,
   gcCapability,
   findCapabilityAccess,

@@ -116,6 +116,13 @@ describe('[CMCVAL] cmc/validators', () => {
       };
       expectInvalid('consent/request-cmc', bad, 'features.chat');
     });
+
+    it('[VR07] accepts request.expiresAt: null (no expiry; the mode check lives in the mint hook)', () => {
+      expectValid('consent/request-cmc', {
+        ...VALID_REQUEST,
+        request: { ...VALID_REQUEST.request, expiresAt: null },
+      });
+    });
   });
 
   describe('[CMCVAL-ACC] consent/accept-cmc', () => {

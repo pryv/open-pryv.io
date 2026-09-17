@@ -112,6 +112,15 @@ describe('[CPOLL] OAuth2 consent poll is outcome-driven', function () {
     assert.match(thrown.message, /completed but no data-grant was found/);
   });
 
+  it('[CPOLL6] a capability refusal reported as the reason maps to cmc-accept-rejected with that id', function () {
+    const e = buildConsentRejectionError({
+      reason: 'cmc-capability-invalidated',
+      detail: { body: { error: { id: 'invalid-operation', data: { id: 'cmc-capability-invalidated' } } } },
+    });
+    assert.strictEqual(e.code, 'cmc-accept-rejected');
+    assert.strictEqual(e.cmcErrorId, 'cmc-capability-invalidated');
+  });
+
   it('[CPOLL5] a non-delivery-rejected failure stays a generic error (maps to 500, not 400)', function () {
     const generic = buildConsentRejectionError({ reason: 'cmc-delivery-timeout' });
     assert.strictEqual(generic.code, undefined, 'generic failures carry no cmc-accept-rejected code');

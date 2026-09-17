@@ -143,6 +143,21 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       );
     });
 
+    it('[AO04E] stamps `cmc-capability-invalid` on 403, what a real core answers for an unknown or expired token; other failures keep no id', async () => {
+      for (const body of [{ error: { id: 'invalid-access-token' } }, { error: { id: 'forbidden', message: 'Access has expired.' } }]) {
+        const { fetch } = fakeFetch({ status: 403, body });
+        await assert.rejects(
+          readOfferViaCapability({ capabilityUrl: 'https://StaleTok@example.com/', deps: { fetch } }),
+          (err) => err.id === 'cmc-capability-invalid' && err.status === 403
+        );
+      }
+      const { fetch } = fakeFetch({ status: 500, body: { error: { id: 'unexpected-error' } } });
+      await assert.rejects(
+        readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } }),
+        (err) => err.id === undefined && err.status === 500
+      );
+    });
+
     it('[AO04C] the capability read forbids redirects (redirect: error)', async () => {
       const { fetch, calls } = fakeFetch({ status: 200, body: { events: [VALID_OFFER] } });
       await readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } });

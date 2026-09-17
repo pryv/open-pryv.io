@@ -237,7 +237,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.reason, 'cmc-handler-missing-capability-url');
     });
 
-    it('[HA04] surfaces capability HTTP error from offer-read', async () => {
+    it('[HA04] surfaces capability HTTP error from offer-read (403 = unknown/expired capability)', async () => {
       const mall = fakeMall();
       const { fetch } = fakeFetch({ status: 403, body: { error: 'forbidden' } });
       const r = await handleAccept({
@@ -247,8 +247,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
         deps: { mall, fetch },
       });
       assert.equal(r.ok, false);
-      assert.ok(r.reason === 'cmc-capability-empty' ||
-                r.reason === 'cmc-handler-offer-read-failed');
+      assert.equal(r.reason, 'cmc-capability-invalid');
       // No data-grant created
       assert.equal(mall.calls.accessesCreated.length, 0);
     });
@@ -305,6 +304,42 @@ describe('[CMCHA] cmc/handleAccept', () => {
       // Rollback: data-grant deleted
       assert.equal(mall.calls.accessesDeleted.length, 1);
       assert.equal(mall.calls.accessesDeleted[0].id, 'acc-1');
+    });
+
+    it('[HA07B] a capability refusal on delivery is reported with its typed id, detail kept, grant rolled back', async () => {
+      for (const id of ['cmc-capability-invalidated', 'cmc-capability-consumed', 'cmc-capability-already-accepted-by-you']) {
+        const mall = fakeMall();
+        const body = { error: { id: 'invalid-operation', data: { id } } };
+        const { fetch } = fakeFetch([
+          { status: 200, body: { events: [VALID_OFFER] } },
+          { status: 400, body },
+        ]);
+        const r = await handleAccept({
+          userId: 'u1',
+          triggerEvent: ACCEPT_TRIGGER,
+          selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+          deps: { mall, fetch },
+        });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, id);
+        assert.deepEqual(r.detail.body, body);
+        assert.equal(mall.calls.accessesDeleted.length, 1);
+      }
+    });
+
+    it('[HA07C] any other 4xx keeps the generic delivery-rejected reason', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 400, body: { error: { id: 'invalid-operation', data: { id: 'cmc-something-else' } } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.reason, 'cmc-handler-delivery-rejected');
     });
 
     it('[HA08] does NOT roll back data-grant on 5xx (retryable; orchestration loop will retry)', async () => {

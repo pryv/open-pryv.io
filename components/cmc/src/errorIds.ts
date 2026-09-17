@@ -26,10 +26,10 @@
 const CmcErrorIds = {
   // --- Capability lifecycle ---
   // The capability URL/access could not be authenticated. Covers
-  // "token never existed" + "token expired (past TTL)" — both look
-  // identical at the auth middleware (401) and the plugin can't
-  // distinguish them without tombstones (out of scope; see
-  // HANDOVER-RESPONSE.md).
+  // "token never existed" + "token expired (past TTL)". The core answers
+  // HTTP 403 for both (`invalid-access-token` for an unknown token,
+  // `forbidden` for an expired one; 401 is accepted too) and the plugin
+  // can't tell them apart without tombstones.
   CAPABILITY_INVALID: 'cmc-capability-invalid',
   // The capability was already accepted/refused (single-use mode only —
   // open-link mode does not transition to 'consumed' on accept).
@@ -71,13 +71,18 @@ const CmcErrorIds = {
   // offer event; an oversize body is a resource-exhaustion / misdirected
   // fetch signal). The read is aborted and rejected rather than buffered.
   CAPABILITY_OFFER_TOO_LARGE: 'cmc-capability-offer-too-large',
-  // Caller's `request.expiresAt` resolves to a TTL outside the
-  // platform-allowed bounds [60s, 30d]. Either the timestamp is in the
-  // past / too close to now, or it's farther than 30 days out. Plugin
-  // rejects the createInvite at mint time. Caller should retry with a
-  // bounded value or omit `expiresAt` to fall back to the 7-day
-  // platform default.
+  // Caller's numeric `request.expiresAt` resolves to a TTL outside the
+  // bounds for the invite's mode: [60s, 30d] for single-use, >= 60s (no
+  // upper bound) for open-link. Details carry `mode`, `minTtlSeconds`,
+  // `maxTtlSeconds` (`null` for open-link). Plugin rejects the
+  // createInvite at mint time. Caller should retry with a bounded value
+  // or omit `expiresAt` to fall back to the 7-day default. `null` (no
+  // expiry) is a separate case, see CAPABILITY_NO_EXPIRY_NOT_ALLOWED.
   CAPABILITY_TTL_OUT_OF_RANGE: 'cmc-capability-ttl-out-of-range',
+  // Caller sent `request.expiresAt: null` (no expiry) on a single-use
+  // invite. No expiry is only allowed for open-link. Remedy: set
+  // `capability.mode: 'open-link'` or give a bounded `expiresAt`.
+  CAPABILITY_NO_EXPIRY_NOT_ALLOWED: 'cmc-capability-no-expiry-not-allowed',
 
   // --- Trigger-event content shape ---
   // The accept-cmc trigger event's content omitted `capabilityUrl`.
@@ -266,5 +271,14 @@ const CmcErrorIds = {
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];
 
-export { CmcErrorIds };
+// The capability's own refusals of an accept (write-hook verdicts on a still
+// valid access). An accepter's trigger reports these as its failure reason
+// rather than the generic HANDLER_DELIVERY_REJECTED; all are permanent.
+const CAPABILITY_REFUSAL_IDS: ReadonlySet<string> = new Set([
+  CmcErrorIds.CAPABILITY_CONSUMED,
+  CmcErrorIds.CAPABILITY_INVALIDATED,
+  CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU,
+]);
+
+export { CmcErrorIds, CAPABILITY_REFUSAL_IDS };
 export type { CmcErrorId };
