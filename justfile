@@ -78,8 +78,9 @@ lint-create-require:
 lint-prod-deps:
     ./scripts/prod-dep-integrity
 
-# Event-types fixture drift: `test/event-types-flat.json` must match the published
-# catalogue. Fails on drift, SKIPS when the catalogue is unreachable.
+# Event-types catalogue drift: `test/event-types-flat.json` must match the published
+# catalogue, and the runtime seed must already contain it merged. Fails on drift,
+# SKIPS when the catalogue is unreachable.
 lint-event-types:
     ./scripts/event-types-fixture-guard
 
@@ -435,9 +436,11 @@ security-assessment-grype:
 # Misc. utils
 # –––––––––––––----------------------------------------------------------------
 
-# Update default event types from online reference
+# Merge the online reference into the runtime default event types seed, then
+# check it. What `lint-event-types` tells you to run when the seed is behind.
 update-event-types:
     scripts/update-event-types
+    ./scripts/event-types-fixture-guard
 
 # Re-vendor the TEST event-types fixture from the published catalogue, then
 # check it. What `lint-event-types` tells you to run when it reports drift.

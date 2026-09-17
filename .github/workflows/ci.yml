@@ -147,16 +147,18 @@ jobs:
         # a top-level require('cuid') (a devDependency) and was dead on arrival
         # (#106). This static gate catches it without a prod build.
         run: ./scripts/prod-dep-integrity
-      - name: Event-types fixture drift
-        # `test/event-types-flat.json` is a hand-copied snapshot of the published
-        # catalogue, and it is what every content-validating suite validates
-        # against. Nothing tied the copy to its source, so it drifted for two
-        # months (two types missing, one definition changed) without a single
-        # signal. The guard fails on drift and skips (with a workflow warning)
-        # when the catalogue cannot be reached, so an upstream outage does not
-        # redden the build. Accepted consequence: the tag-publish `docker` job
-        # needs this job, so a catalogue republished upstream blocks release
-        # builds until the fixture is re-vendored on master.
+      - name: Event-types catalogue drift
+        # Two vendored copies of the published catalogue: the test fixture
+        # `test/event-types-flat.json` (what every content-validating suite
+        # validates against) and the runtime seed
+        # `components/business/src/types/event-types.default.json` (what a core
+        # validates against until its startup download lands, or forever if it
+        # fails). Nothing tied either to its source: the fixture drifted for two
+        # months, the seed for almost three years. The guard fails on drift and
+        # skips (with a workflow warning) when the catalogue cannot be reached,
+        # so an upstream outage does not redden the build. Accepted consequence:
+        # the tag-publish `docker` job needs this job, so a catalogue republished
+        # upstream blocks release builds until both are re-vendored on master.
         run: ./scripts/event-types-fixture-guard
 
   typecheck:

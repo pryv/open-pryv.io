@@ -1,22 +1,46 @@
 #!/bin/bash
 
-# This script updates the default event types JSON schema file,
-# used as a fallback by the server for validating incoming event values.
+# This script updates the default event types JSON schema file, the seed a core
+# validates incoming event content against until (and unless) its startup
+# download of the catalogue succeeds.
+#
+# The published catalogue is MERGED into the existing seed with the same
+# `deepMerge` a running core applies to its download, rather than replacing it:
+# the running merge is additive, so types removed upstream stay valid on every
+# core, and the seed must match that or an offline core would refuse types an
+# online one accepts. `scripts/event-types-fixture-guard` (in `just lint`)
+# checks the result.
 
-SCHEMA_URL=https://pryv.github.io/event-types/flat.json
+set -euo pipefail
+
+SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
 LOCAL_PATH=components/business/src/types/event-types.default.json
 
 # working dir fix
-SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
-cd $SCRIPT_FOLDER/..
+SCRIPT_FOLDER=$(cd "$(dirname "$0")"; pwd)
+cd "$SCRIPT_FOLDER/.."
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP" "$LOCAL_PATH.tmp"' EXIT
 
 echo ""
-echo "Downloading schema file from $SCHEMA_URL, saving to $LOCAL_PATH..."
+echo "Downloading schema file from $SCHEMA_URL, merging into $LOCAL_PATH..."
 echo ""
 
-curl -L --fail -o $LOCAL_PATH $SCHEMA_URL
-EXIT_CODE=$?
+curl -sS -L --fail --connect-timeout 5 --max-time 30 -o "$TMP" "$SCHEMA_URL"
 
+node --input-type=module -e '
+import { readFileSync, writeFileSync } from "node:fs";
+import { deepMerge } from "./components/utils/src/deepMerge.ts";
+const [seedPath, publishedPath, outPath] = process.argv.slice(1);
+const published = JSON.parse(readFileSync(publishedPath, "utf-8"));
+if (published === null || typeof published !== "object" || typeof published.types !== "object") {
+  throw new Error("downloaded file is not an event-types catalogue");
+}
+const merged = deepMerge(JSON.parse(readFileSync(seedPath, "utf-8")), published);
+writeFileSync(outPath, JSON.stringify(merged, null, 2));
+' "$LOCAL_PATH" "$TMP" "$LOCAL_PATH.tmp"
+mv "$LOCAL_PATH.tmp" "$LOCAL_PATH"
+
+echo "Done. Run the suites: this seed is what every core validates against first."
 echo ""
-
-exit ${EXIT_CODE}
