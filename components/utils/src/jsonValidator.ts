@@ -235,8 +235,14 @@ function createValidator (options: ValidateOptions = {}) {
    */
   function schemaShapeError (schema: unknown): string | null {
     const ajv = metaSchemaChecker();
-    if (ajv.validateSchema(schema)) return null;
-    return ajv.errorsText(ajv.errors);
+    try {
+      if (ajv.validateSchema(schema)) return null;
+      return ajv.errorsText(ajv.errors);
+    } catch (err: unknown) {
+      // ajv throws rather than reports on some inputs (a null schema, an
+      // unknown `$schema` URI): that is a malformed schema too.
+      return (err as Error).message;
+    }
   }
 
   return {

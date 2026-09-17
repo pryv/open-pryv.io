@@ -11,7 +11,7 @@ const path = require('path');
 const { fileURLToPath } = require('node:url');
 // components/business/src → repo root (anchor for repo-root-relative file:// URLs)
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const { deepMerge, fromCallback, jsonValidator } = require('utils');
+const { fromCallback, jsonValidator } = require('utils');
 const { getLogger } = require('@pryv/boiler');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors.ts');
@@ -32,20 +32,55 @@ type Validator = {
   lastReport?: unknown;
 };
 
-// The whole-catalogue `validateSchema` check does not look inside `types`, so a
-// type whose own schema is malformed loads silently, and its validator then
-// fails to build: every event of that type is refused. Name each such type in
-// the log so the refusal has a visible cause. Behaviour is unchanged.
+type Catalogue = { types: Record<string, JsonSchema>; [section: string]: unknown };
+
+// `types` is not a JSON Schema keyword, so neither the whole-catalogue
+// `validateSchema` check nor a compile looks inside it: a type whose own schema
+// is malformed loads silently, and its validator then fails to build, so every
+// event of that type is refused. Two cheap signals make that visible without
+// changing behaviour:
+// - on load, each type schema is checked against the meta-schema (a few ms for
+//   the whole list) and each malformed one is named in the log;
+// - on use, a schema that still fails to compile (what the meta-schema cannot
+//   see: an unresolvable `$ref`, an invalid regex) is named once.
+// Wildcard entries such as `numset/*` are skipped: no event type ever matches them.
 let bundledTypesChecked = false;
-function warnAboutInvalidTypeSchemas (types: Record<string, unknown> | null | undefined, source: string): void {
+function warnAboutInvalidTypeSchemas (types: Record<string, JsonSchema> | null | undefined, source: string): void {
   if (types == null || typeof types !== 'object') return;
   const validator = jsonValidator() as Validator;
+  const logger = getLogger('event-types');
   for (const [name, schema] of Object.entries(types)) {
+    if (name.includes('*')) continue;
     const problem = validator.schemaShapeError(schema);
     if (problem != null) {
-      getLogger('event-types').warn(`Event type "${name}" from ${source} has an invalid schema, so every event of this type will be refused: ${problem}`);
+      logger.warn(`Event type "${name}" from ${source} has an invalid schema, so every event of this type will be refused: ${problem}`);
     }
   }
+}
+const typesReportedUncompilable = new Set<string>();
+function warnOnceUncompilable (name: string, err: Error): void {
+  if (typesReportedUncompilable.has(name)) return;
+  typesReportedUncompilable.add(name);
+  getLogger('event-types').warn(`Event type "${name}" has a schema that cannot be compiled, so every event of this type is refused: ${err.message}`);
+}
+
+// Applies a downloaded catalogue onto the current one, entry by entry: each
+// entry of a section (a type, an extras, classes or sets entry) replaces the
+// current one whole, and entries the download does not carry are kept. A deep
+// merge would keep keys removed upstream inside a type, so a schema repaired
+// upstream could stay broken on a running core. Keeping unpublished entries
+// preserves the legacy types running cores accept.
+function applyCatalogue (target: Catalogue, source: Record<string, unknown>): Catalogue {
+  const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+  for (const [section, value] of Object.entries(source)) {
+    const current = target[section];
+    if (isPlainObject(value) && isPlainObject(current)) {
+      for (const [key, entry] of Object.entries(value)) current[key] = entry;
+    } else {
+      target[section] = value;
+    }
+  }
+  return target;
 }
 
 // Returns true if the name given refers to a series type. Currently this means
@@ -125,7 +160,12 @@ class TypeRepository {
     const schema = defaultTypes.types[event.type] as JsonSchema | undefined;
     if (schema == null) { throw new Error(`Event type validation was used on the unknown type "${event.type}".`); }
     return fromCallback((cb: (err: Error | null) => void) => this._validator.validate(content, schema, cb))
-      .then(() => content);
+      .then(() => content, (err: unknown) => {
+        // Content that does not match rejects with the validator's error list;
+        // an Error means the schema itself could not be compiled.
+        if (err instanceof Error) warnOnceUncompilable(event.type, err);
+        throw err;
+      });
   }
 
   // Returns true if the type given by `name` is known by Pryv. To be known,
@@ -198,7 +238,7 @@ class TypeRepository {
     function removeFileProtocol (url: string) {
       return url.substring(FILE_PROTOCOL.length);
     }
-    let eventTypesDefinition;
+    let eventTypesDefinition: Record<string, unknown> | undefined;
     try {
       if (isFileUrl(sourceURL)) {
         // used for tests
@@ -227,9 +267,10 @@ class TypeRepository {
     }
     const validator = this._validator;
     if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }
-    warnAboutInvalidTypeSchemas((eventTypesDefinition as { types?: Record<string, unknown> })?.types, sourceURL);
-    // Overwrite defaultTypes with the merged list of type schemata.
-    defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
+    // Apply the downloaded list onto the current one, then check what will
+    // actually be used.
+    defaultTypes = applyCatalogue(defaultTypes, eventTypesDefinition!);
+    warnAboutInvalidTypeSchemas(defaultTypes.types, `the event types loaded from ${sourceURL}`);
   }
 }
 export { TypeRepository, SeriesRowType, isSeriesType, errors };

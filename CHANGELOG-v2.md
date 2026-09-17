@@ -12,9 +12,13 @@ and both copies bundled with the server are refreshed from it: valid events of t
 types are now accepted, and their content is validated (`contact/facebook` requires
 `id`; `audiogram/data` requires `sensitivityPoints`, `start` and `end`, each point a
 `frequency`; `clinical/fhir` requires `displayName` and `clinicalType`, and its `fhir`
-object `identifier` and `resourceType`). Cores that load the published catalogue at
-startup pick up the fix from it too. The catalogue's `numset/*` format description was
-also corrected; `numset/...` types remain unvalidated, as before.
+object `identifier` and `resourceType`). A core running an earlier release that loads
+the published catalogue at startup is fixed for `contact/facebook` only: it merged the
+download into its bundled list deeply, which kept the misplaced keys of the other two
+types. A core now applies each downloaded type (and extras, classes and sets entry)
+whole instead, still keeping entries the download does not carry, so a schema repaired
+upstream reaches it. The catalogue's `numset/*` schema was also rewritten;
+`numset/...` types remain unvalidated, as before.
 
 ### HF series requests on raw deploys answer 504 when the HFS worker stalls
 

@@ -81,7 +81,51 @@ describe('[TYPR] business.types.TypeRepository', function () {
 
       it('[TYIS2] the vendored catalogue produces no such warning', async function () {
         await repository.tryUpdate(VENDORED_SOURCE_URL);
-        assert.deepStrictEqual(warnings.filter((w) => w.includes('has an invalid schema')), []);
+        // `tyis/` types left by the other tests of this block are process-wide.
+        assert.deepStrictEqual(warnings.filter((w) => w.includes('has an invalid schema') && !w.includes('tyis/')), []);
+      });
+
+      function writeCatalogue (name, types) {
+        const file = path.join(catalogueDir, name);
+        fs.writeFileSync(file, JSON.stringify({ version: '0.0.0', types }));
+        return 'file://' + file;
+      }
+
+      it('[TYIS3] entries ajv cannot even check are named and the catalogue still loads', async function () {
+        await repository.tryUpdate(writeCatalogue('odd.json', {
+          'tyis/null-entry': null,
+          'tyis/other-draft': { $schema: 'http://json-schema.org/draft-07/schema#', type: 'number' },
+          'tyis/loaded': { type: 'number' }
+        }));
+        assert.ok(warnings.some((w) => w.includes('"tyis/null-entry"')), JSON.stringify(warnings));
+        assert.ok(warnings.some((w) => w.includes('"tyis/other-draft"')), JSON.stringify(warnings));
+        assert.strictEqual(repository.isKnown('tyis/loaded'), true, 'the rest of the catalogue must still be applied');
+      });
+
+      it('[TYIS4] a downloaded entry replaces the current one whole, and unpublished entries are kept', async function () {
+        await repository.tryUpdate(writeCatalogue('first.json', {
+          'tyis/repaired': { type: 'object', properties: { a: { type: 'number' }, required: ['a'] } },
+          'tyis/legacy': { type: 'number' }
+        }));
+        // The repaired schema no longer carries the misplaced `required`: a deep
+        // merge would keep it and the schema would stay uncompilable.
+        await repository.tryUpdate(writeCatalogue('second.json', {
+          'tyis/repaired': { type: 'object', properties: { a: { type: 'number' } }, required: ['a'] }
+        }));
+        await repository.validate({ type: 'tyis/repaired', content: { a: 1 } });
+        await assert.rejects(repository.validate({ type: 'tyis/repaired', content: {} }));
+        assert.strictEqual(repository.isKnown('tyis/legacy'), true, 'an entry the download does not carry is kept');
+      });
+
+      it('[TYIS5] a schema that only fails when compiled is named once, on use', async function () {
+        await repository.tryUpdate(writeCatalogue('regex.json', {
+          'tyis/bad-regex': { type: 'string', pattern: '(' }
+        }));
+        const before = warnings.filter((w) => w.includes('"tyis/bad-regex"')).length;
+        assert.strictEqual(before, 0, 'the meta-schema check cannot see an invalid regex');
+        await assert.rejects(repository.validate({ type: 'tyis/bad-regex', content: 'x' }));
+        await assert.rejects(repository.validate({ type: 'tyis/bad-regex', content: 'y' }));
+        assert.strictEqual(warnings.filter((w) => w.includes('"tyis/bad-regex"')).length, 1);
       });
     });
     it('[6VL6] should fail gracefully', async function () {
