@@ -126,7 +126,9 @@ const __ex_checkApp = {
       requestingAppId: string(),
       deviceName: string(),
       requestedPermissions: access.permissions(Action.CREATE),
-      clientData: object({}),
+      // `null` is what the /reg/access poll carries when the app sent none,
+      // and some auth pages forward it as is; the match treats it as absent.
+      clientData: object({}, { nullable: true }),
       // Access-creation parameters of the auth request. Auth pages forward the
       // whole request to check-app before accesses.create; they do not take
       // part in the match, but must not make the call invalid.

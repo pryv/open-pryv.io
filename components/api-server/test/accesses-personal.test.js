@@ -660,6 +660,29 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.matchingAccess.token, appToken);
     });
 
+    it('[CHKF] expireAfter, token and a null clientData forwarded by an auth page do not affect the match', async function () {
+      const data = {
+        requestingAppId: appAccess.attrs.name,
+        deviceName: appAccess.attrs.deviceName,
+        requestedPermissions: [
+          { streamId: stream0.attrs.id, level: 'contribute', defaultName: 'Same as the existing access' }
+        ],
+        expireAfter: 1,
+        token: 'not-' + appToken,
+        clientData: null
+      };
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.matchingAccess, 'expected a match: ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.matchingAccess.token, appToken);
+      assert.strictEqual(res.body.mismatchingAccess, undefined);
+    });
+
     it('[CHKA] must report a match for an access created via the API — load-time-injected system permissions (":_system:account", ":_audit:access-<id>") must be ignored', async function () {
       const requestedPermissions = [
         { streamId: stream0.attrs.id, level: 'contribute', defaultName: 'Stream 0' }
