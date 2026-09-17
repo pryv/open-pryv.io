@@ -146,25 +146,25 @@
             "required": [
               "frequency"
             ]
-          },
-          "start": {
-            "description": "The start date for the sample. Unit: date in ISO 8601 format",
-            "type": "string"
-          },
-          "end": {
-            "description": "The end date for the sample. Unit: date in ISO 8601 format",
-            "type": "string"
-          },
-          "metadata": {
-            "type": "object"
           }
         },
-        "required": [
-          "sensitivityPoints",
-          "start",
-          "end"
-        ]
-      }
+        "start": {
+          "description": "The start date for the sample. Unit: date in ISO 8601 format",
+          "type": "string"
+        },
+        "end": {
+          "description": "The end date for the sample. Unit: date in ISO 8601 format",
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "sensitivityPoints",
+        "start",
+        "end"
+      ]
     },
     "audit-log/pryv-api": {
       "type": "object",
@@ -387,12 +387,12 @@
             "identifier",
             "resourceType"
           ]
-        },
-        "required": [
-          "displayName",
-          "clinicalType"
-        ]
-      }
+        }
+      },
+      "required": [
+        "displayName",
+        "clinicalType"
+      ]
     },
     "concentration/mmol-l": {
       "description": "Millimoles per liter",
@@ -946,7 +946,7 @@
     "contact/facebook": {
       "type": "object",
       "description": "A Facebook user as specified in the Graph API: https://developers.facebook.com/docs/reference/api/user/",
-      "additionalProperties": "true",
+      "additionalProperties": true,
       "properties": {
         "id": {
           "type": "string"
@@ -2155,15 +2155,17 @@
       ]
     },
     "numset/*": {
-      "description": "The format key is freely defined.\n\nFor example, a heart measurement with type `numset/heart` and content:\n```\n{ \n  \"systolic\": { \"pressure/mmhg\": 105 },\n  \"diastolic\": { \"pressure/mmhg\": 64 },\n  \"rate\": { \"frequency/bpm\": 88 }\n}\n```\n\n ",
+      "description": "The format key is freely defined.\n\nFor example, a heart measurement with type `numset/heart` and content:\n```\n{\n  \"systolic\": { \"pressure/mmhg\": 105 },\n  \"diastolic\": { \"pressure/mmhg\": 64 },\n  \"rate\": { \"frequency/bpm\": 88 }\n}\n```",
       "type": "object",
-      "patternProperties": {
-        "^(/[^/]+)+$": {
-          "type": "number"
-        }
-      },
-      "additionalProperties": "false",
-      "required": []
+      "additionalProperties": {
+        "type": "object",
+        "patternProperties": {
+          "^[a-z0-9-]+/[a-z0-9-]+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "picture/base64": {
       "description": "The picture is caried in base64 (utf-8) encoded in string",
@@ -4415,7 +4417,7 @@
       }
     },
     "absorbed-dose-equivalent": {
-      "description": "The radiation absorbed by a fixed mass of biological tissue.",
+      "description": "The radiation absorbed by a fixed mass of biological tissue.",
       "extras": {
         "name": {
           "en": "Dose equivalent",
@@ -4445,7 +4447,7 @@
       }
     },
     "angular-acceleration": {
-      "description": "The rate of change of angular velocity.",
+      "description": "The rate of change of angular velocity.",
       "extras": {
         "name": {
           "en": "Angular acceleration",
@@ -4495,7 +4497,7 @@
       "description": "To record references to phone calls (landline, mobile, Skype, etc.)."
     },
     "capacitance": {
-      "description": "The ability of a body to store an electrical charge.",
+      "description": "The ability of a body to store an electrical charge.",
       "extras": {
         "name": {
           "en": "Capacitance",
@@ -4504,7 +4506,7 @@
       }
     },
     "catalytic-activity": {
-      "description": "The  increase in rate of a chemical reaction due to the participation of a substance called a catalyst.",
+      "description": "The increase in rate of a chemical reaction due to the participation of a substance called a catalyst.",
       "extras": {
         "name": {
           "en": "Catalytic activity",
@@ -4549,7 +4551,7 @@
       "description": "To record credentials, such as secret keys, passwords or access rights."
     },
     "data-quantity": {
-      "description": "Unit of information in computing and digital communications.",
+      "description": "Unit of information in computing and digital communications.",
       "extras": {
         "name": {
           "en": "Data quantity",
@@ -4561,7 +4563,7 @@
       "description": "To record a date and time."
     },
     "density": {
-      "description": "The density of a material (volumetric mass density).",
+      "description": "The density of a material (volumetric mass density).",
       "extras": {
         "name": {
           "en": "Density",
@@ -4588,7 +4590,7 @@
       }
     },
     "electric-charge-line-density": {
-      "description": "The electric charge per unit volume of space, in one, two or three dimensions.",
+      "description": "The electric charge per unit volume of space, in one, two or three dimensions.",
       "extras": {
         "name": {
           "en": "Electric charge line density",
@@ -4597,7 +4599,7 @@
       }
     },
     "electric-current": {
-      "description": "A flow of electric charge.",
+      "description": "A flow of electric charge.",
       "extras": {
         "name": {
           "en": "Electric current",
@@ -4639,7 +4641,7 @@
       "description": "To record a file, or a group of files. A fallback type for data with no specific handling in Pryv."
     },
     "force": {
-      "description": "A push or pull upon an object resulting from the object's interaction with another object.",
+      "description": "A push or pull upon an object resulting from the object's interaction with another object.",
       "extras": {
         "name": {
           "en": "Force",
@@ -4657,7 +4659,7 @@
       }
     },
     "gas-consumption": {
-      "description": "The quantity of gas consumed."
+      "description": "The quantity of gas consumed."
     },
     "length": {
       "description": "Length measurements. Format = unit.",
@@ -4669,10 +4671,10 @@
       }
     },
     "linear-acceleration": {
-      "description": "The rate of change of linear velocity."
+      "description": "The rate of change of linear velocity."
     },
     "luminous-intensity": {
-      "description": "The wavelength-weighted power emitted by a light source.",
+      "description": "The wavelength-weighted power emitted by a light source.",
       "extras": {
         "name": {
           "en": "Luminous intensity",
@@ -4693,7 +4695,7 @@
       "description": "To record messages, such as e-mails or posts on social networks."
     },
     "mol": {
-      "description": "The size of an ensemble of elementary entities, such as atoms, molecules, electrons, and other particles.",
+      "description": "The size of an ensemble of elementary entities, such as atoms, molecules, electrons, and other particles.",
       "extras": {
         "name": {
           "en": "Amount of substance",
@@ -4738,7 +4740,7 @@
       "description": "To record a geographical position."
     },
     "power": {
-      "description": "The rate at which energy is transferred, used, or transformed.",
+      "description": "The rate at which energy is transferred, used, or transformed.",
       "extras": {
         "name": {
           "en": "Power",
@@ -4774,7 +4776,7 @@
       "description": "To record sleep information."
     },
     "speed": {
-      "description": "The magnitude of the velocity of an object.",
+      "description": "The magnitude of the velocity of an object.",
       "extras": {
         "name": {
           "en": "Speed",
@@ -4810,7 +4812,7 @@
       "description": "To record video (home snippets, Vimeo or YouTube links, etc.)."
     },
     "volume": {
-      "description": "The quantity of three-dimensional space enclosed by some closed boundary.",
+      "description": "The quantity of three-dimensional space enclosed by some closed boundary.",
       "extras": {
         "name": {
           "en": "Volume",
