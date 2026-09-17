@@ -236,33 +236,26 @@ describe('[AUTH] auth', function () {
     // [L7JQ], [4AQR], [NDB0] - Tests moved to login-2convert.test.js
 
     // concurrent requests
-    it('[FMJH] must support concurrent login request, saving only the last token that is written in the storage', function (done) {
-      const loginCount = 2;
+    it('[FMJH] concurrent logins for the same appId converge on a single personal access carrying one of the returned tokens', async function () {
+      // Two logins hashing a password concurrently can take several seconds
+      // on a loaded machine.
+      this.timeout(20000);
       const randomId = 'pryv-test-' + Date.now();
       const accessStorage = helpers.dependencies.storage.user.accesses;
-      async.times(loginCount, function (n, next) {
-        request
-          .post(path(authData.username))
-          .set('Origin', 'https://test.backloop.dev:1234')
-          .send({
-            username: user.username,
-            password: user.password,
-            appId: randomId
-          })
-          .end(function (err, res) {
-            if (err) { return next(err); }
-            assert.strictEqual(res.statusCode, 200);
-            next(null, res.body.token);
-          });
-      }, function (err, results) {
-        if (err) { return done(err); }
-        const lastResult = results[1];
-        accessStorage.findOne(user, { name: randomId, type: 'personal' }, null, (err, access) => {
-          assert.ok(err == null);
-          assert.strictEqual(access.token, lastResult);
-          done();
-        });
+      const login = () => request
+        .post(path(authData.username))
+        .set('Origin', 'https://test.backloop.dev:1234')
+        .send({ username: user.username, password: user.password, appId: randomId });
+      const responses = await Promise.all([login(), login()]);
+      for (const res of responses) assert.strictEqual(res.statusCode, 200);
+      const tokens = responses.map((res) => res.body.token);
+      // The two requests run concurrently, so either can be the last write:
+      // exactly one personal access for the app, carrying one of the tokens.
+      const accesses = await new Promise((resolve, reject) => {
+        accessStorage.find(user, { name: randomId, type: 'personal' }, null, (err, res) => err ? reject(err) : resolve(res));
       });
+      assert.strictEqual(accesses.length, 1, 'expected a single personal access, got ' + accesses.length);
+      assert.ok(tokens.includes(accesses[0].token), 'stored token must be one of the returned tokens');
     });
 
     // cf. GH issue #57
