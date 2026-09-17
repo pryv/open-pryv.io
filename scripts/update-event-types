@@ -1,22 +1,44 @@
 #!/bin/bash
 
-# This script updates the default event types JSON schema file,
-# used as a fallback by the server for validating incoming event values.
+# Re-vendors both copies of the published event-type catalogue, then checks them:
+# - `test/event-types-flat.json`, the test fixture: the published catalogue
+#   verbatim;
+# - `components/business/src/types/event-types.default.json`, the runtime seed a
+#   core validates against until (and unless) its startup download succeeds: the
+#   published catalogue applied onto the previous seed, keeping entries no longer
+#   published (see `scripts/event-types-catalogue.mjs` for why).
+#
+# Run the suites afterwards: these files are what tests and cores validate
+# event content against.
 
-SCHEMA_URL=https://pryv.github.io/event-types/flat.json
-LOCAL_PATH=components/business/src/types/event-types.default.json
+set -euo pipefail
+
+SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
 
 # working dir fix
-SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
-cd $SCRIPT_FOLDER/..
+SCRIPT_FOLDER=$(cd "$(dirname "$0")"; pwd)
+cd "$SCRIPT_FOLDER/.."
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP" test/event-types-flat.json.tmp components/business/src/types/event-types.default.json.tmp' EXIT
 
 echo ""
-echo "Downloading schema file from $SCHEMA_URL, saving to $LOCAL_PATH..."
+echo "Downloading $SCHEMA_URL ..."
+curl -sS -L --fail --connect-timeout 5 --max-time 30 -o "$TMP" "$SCHEMA_URL"
+
+node --input-type=module -e '
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { FIXTURE_PATH, SEED_PATH, parseCatalogue, loadCatalogue, applyToSeed, serialize } from "./scripts/event-types-catalogue.mjs";
+const publishedText = readFileSync(process.argv[1], "utf-8");
+const published = parseCatalogue(publishedText);
+const writeAtomically = (path, content) => {
+  writeFileSync(path + ".tmp", content);
+  renameSync(path + ".tmp", path);
+};
+writeAtomically(FIXTURE_PATH, publishedText);
+writeAtomically(SEED_PATH, serialize(applyToSeed(loadCatalogue(SEED_PATH), published)));
+console.log(`Wrote ${FIXTURE_PATH} and ${SEED_PATH} (${Object.keys(published.types).length} published types, version ${published.version}).`);
+' "$TMP"
+
 echo ""
-
-curl -L --fail -o $LOCAL_PATH $SCHEMA_URL
-EXIT_CODE=$?
-
-echo ""
-
-exit ${EXIT_CODE}
+EVENT_TYPES_URL="$SCHEMA_URL" ./scripts/event-types-fixture-guard

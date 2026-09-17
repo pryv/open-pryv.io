@@ -78,8 +78,9 @@ lint-create-require:
 lint-prod-deps:
     ./scripts/prod-dep-integrity
 
-# Event-types fixture drift: `test/event-types-flat.json` must match the published
-# catalogue. Fails on drift, SKIPS when the catalogue is unreachable.
+# Event-types catalogue drift: `test/event-types-flat.json` must match the published
+# catalogue, and the runtime seed must already contain it merged. Fails on drift,
+# SKIPS when the catalogue is unreachable.
 lint-event-types:
     ./scripts/event-types-fixture-guard
 
@@ -435,18 +436,14 @@ security-assessment-grype:
 # Misc. utils
 # –––––––––––––----------------------------------------------------------------
 
-# Update default event types from online reference
+# Re-vendor both copies of the published event-types catalogue (the test
+# fixture and the runtime seed), then check them. What `lint-event-types` tells
+# you to run when it reports drift. Run the suites afterwards.
 update-event-types:
     scripts/update-event-types
 
-# Re-vendor the TEST event-types fixture from the published catalogue, then
-# check it. What `lint-event-types` tells you to run when it reports drift.
-# Run the suites afterwards: the fixture is what every content-validating
-# test validates against.
-update-event-types-fixture:
-    curl -sS -L --fail --connect-timeout 5 --max-time 30 -o test/event-types-flat.json.tmp ${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
-    mv test/event-types-flat.json.tmp test/event-types-flat.json
-    ./scripts/event-types-fixture-guard
+# Former name of `update-event-types`, kept so existing notes still work.
+update-event-types-fixture: update-event-types
 
 # Run source licensing tool (see 'licensing' folder for details)
 license:

@@ -1,127 +1,128 @@
 #!/usr/bin/env bash
 #
-# Event-types fixture drift guard — run via `just lint` (lint-event-types).
+# Event-types catalogue drift guard — run via `just lint` (lint-event-types).
 #
-# `test/event-types-flat.json` is a hand-copied snapshot of the published
-# event-type catalogue. `test/service-info.json` serves it as
-# `"eventTypes": "file://test/event-types-flat.json"`, and the business unit
-# tests load it directly, so every suite that validates event content validates
-# against that copy. Nothing tied the copy to its source: it was refreshed only
-# when somebody remembered, and it was two months stale (two types missing and a
-# definition changed) when this guard was written.
+# Two vendored copies of the published event-type catalogue live in this repo,
+# and nothing tied either to its source (rules in `scripts/event-types-catalogue.mjs`):
 #
-# The drift is silent in BOTH directions, which is why it needs a gate rather
-# than a habit: a type added upstream is exercised by no test until the copy is
-# refreshed, and a suite can pass against a catalogue no deployed client is
-# served.
+# 1. `test/event-types-flat.json`, the TEST fixture. `test/service-info.json`
+#    serves it as `"eventTypes": "file://test/event-types-flat.json"`, and the
+#    business unit tests load it directly, so every suite that validates event
+#    content validates against it. It must EQUAL the published catalogue.
+#    It was two months stale (two types missing, a definition changed) when this
+#    guard was written.
 #
-# The `version` field does NOT detect it — the catalogue is republished under
-# the same version — so the guard compares content, canonicalised (key order
-# and whitespace ignored) so a reformat of the published file is not reported
-# as drift. Array order IS significant (`required`, `enum`): conservative, a
-# reordering upstream is reported and costs one re-vendor.
+# 2. `components/business/src/types/event-types.default.json`, the RUNTIME
+#    seed. A core validates against it until the catalogue download at startup
+#    lands, and indefinitely when that download fails (it only logs a warning).
+#    Every published entry must be in it unchanged; entries no longer published
+#    are kept on purpose. It was last refreshed in October 2023 (23 published
+#    types missing, 5 descriptions behind) when it joined this guard.
 #
-# Refresh with:  just update-event-types-fixture
+# The `version` field does NOT detect drift (the catalogue is republished under
+# the same version), so the guard compares content, canonicalised (key order and
+# whitespace ignored). Array order IS significant (`required`, `enum`):
+# conservative, a reordering upstream is reported and costs one re-vendor.
 #
-# Network policy: this guard FAILS on drift, and on a 404/410 (the catalogue
-# moved: the URL here is wrong, which is a real signal). It SKIPS when the
-# catalogue cannot be reached or returns something that is not a catalogue: a
-# github.io outage must not redden every build, an unnoticed two-month drift is
-# the thing worth failing on. Under GitHub Actions a skip is raised as a
-# workflow warning so it is visible on the run, not buried in a green step.
+# Refresh both with:  just update-event-types
+#
+# Network policy: the seed is always checked, against the published catalogue
+# when it can be fetched and against the test fixture otherwise, so that part
+# never depends on the network. The fixture itself needs the published file: the
+# guard FAILS on drift, and on a 404/410 (the catalogue moved: the URL here is
+# wrong, which is a real signal), and SKIPS that part when the catalogue cannot be
+# reached or returns something that is not a catalogue. A github.io outage must
+# not redden every build. Under GitHub Actions a skip is raised as a workflow
+# warning so it is visible on the run, not buried in a green step.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 SCHEMA_URL=${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
-FIXTURE=test/event-types-flat.json
-
-skip () {
-  echo "event-types fixture guard: SKIPPED — $1" >&2
-  if [ -n "${GITHUB_ACTIONS:-}" ]; then
-    echo "::warning title=event-types fixture guard skipped::$1"
-  fi
-  exit 0
-}
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
+SKIP_REASON=""
 HTTP_CODE=$(curl -sS -L --connect-timeout 5 --max-time 30 -o "$TMP" -w '%{http_code}' "$SCHEMA_URL")
 CURL_EXIT=$?
 case "$HTTP_CODE" in
   404|410)
-    echo "event-types fixture guard: FAILED — $SCHEMA_URL answered $HTTP_CODE; the catalogue moved, update the URL" >&2
+    echo "event-types catalogue guard: FAILED — $SCHEMA_URL answered $HTTP_CODE; the catalogue moved, update the URL" >&2
     exit 1
     ;;
 esac
 if [ "$CURL_EXIT" -ne 0 ] || { [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" -ge 400 ]; }; then
-  skip "could not fetch $SCHEMA_URL (curl exit $CURL_EXIT, HTTP $HTTP_CODE)"
+  SKIP_REASON="could not fetch $SCHEMA_URL (curl exit $CURL_EXIT, HTTP $HTTP_CODE)"
 fi
 
 node --input-type=module -e '
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { FIXTURE_PATH, SEED_PATH, canonical, loadCatalogue, applyToSeed, describeDifference } from "./scripts/event-types-catalogue.mjs";
 
-const [fixturePath, publishedPath, url] = process.argv.slice(1);
-
-// Canonical form: sorted keys, no insignificant whitespace. Compares the
-// CATALOGUE, not the serialization.
-const canonical = (value) => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-};
-const digest = (path) => {
-  const parsed = JSON.parse(readFileSync(path, "utf-8"));
-  if (parsed === null || typeof parsed !== "object" || parsed.types === null || typeof parsed.types !== "object") {
-    throw new Error("not an event-types catalogue (no \"types\" object)");
-  }
-  return { parsed, sha: createHash("sha256").update(canonical(parsed)).digest("hex") };
+const [publishedPath, url, fetchSkipReason] = process.argv.slice(1);
+const warnSkip = (message) => {
+  console.error(`event-types catalogue guard: SKIPPED the fixture check — ${message}`);
+  if (process.env.GITHUB_ACTIONS) console.log(`::warning title=event-types catalogue guard skipped::${message}`);
 };
 
-let fixture, published;
-try {
-  fixture = digest(fixturePath);
-} catch (err) {
-  console.error(`event-types fixture guard: cannot read ${fixturePath}: ${err.message}`);
-  process.exit(1);
-}
-try {
-  published = digest(publishedPath);
-} catch (err) {
-  // Unusable download: same class as an unreachable one (a captive portal or an
-  // error page served with 200), so skip rather than fail.
-  const message = `${url} did not return a valid catalogue (${err.message})`;
-  console.error(`event-types fixture guard: SKIPPED — ${message}`);
-  if (process.env.GITHUB_ACTIONS) console.log(`::warning title=event-types fixture guard skipped::${message}`);
-  process.exit(0);
+let fixture, seed;
+for (const [path, assign] of [[FIXTURE_PATH, (v) => { fixture = v; }], [SEED_PATH, (v) => { seed = v; }]]) {
+  try {
+    assign(loadCatalogue(path));
+  } catch (err) {
+    console.error(`event-types catalogue guard: cannot read ${path}: ${err.message}`);
+    process.exit(1);
+  }
 }
 
-if (fixture.sha === published.sha) {
-  console.log(`event-types fixture guard: OK (${Object.keys(published.parsed.types).length} types, version ${published.parsed.version})`);
-  process.exit(0);
+let published = null;
+if (fetchSkipReason) {
+  warnSkip(fetchSkipReason);
+} else {
+  try {
+    published = loadCatalogue(publishedPath);
+  } catch (err) {
+    // Unusable download: same class as an unreachable one (a captive portal or
+    // an error page served with 200).
+    warnSkip(`${url} did not return a valid catalogue (${err.message})`);
+  }
 }
 
-const fixtureTypes = fixture.parsed.types;
-const publishedTypes = published.parsed.types;
-const missing = Object.keys(publishedTypes).filter((t) => !(t in fixtureTypes));
-const extra = Object.keys(fixtureTypes).filter((t) => !(t in publishedTypes));
-const changed = Object.keys(publishedTypes)
-  .filter((t) => t in fixtureTypes && canonical(publishedTypes[t]) !== canonical(fixtureTypes[t]));
-const sections = [...new Set([...Object.keys(fixture.parsed), ...Object.keys(published.parsed)])]
-  .filter((k) => k !== "types" && canonical(fixture.parsed[k]) !== canonical(published.parsed[k]));
+let drift = false;
+const report = (label, path, reference, diff, counts) => {
+  drift = true;
+  console.error(`event-types catalogue guard: DRIFT — ${label} ${path} is behind ${reference}`);
+  for (const line of counts) console.error(`  ${line}`);
+  if (diff.missing.length > 0) console.error(`  types published but absent: ${diff.missing.join(", ")}`);
+  if (diff.extra.length > 0) console.error(`  types present but no longer published: ${diff.extra.join(", ")}`);
+  if (diff.changed.length > 0) console.error(`  types whose definition differs: ${diff.changed.join(", ")}`);
+  if (diff.sections.length > 0) console.error(`  other top-level sections that differ: ${diff.sections.join(", ")}`);
+  console.error("  Re-vendor deliberately and run the suites against it:  just update-event-types");
+  console.error("");
+};
+const typeCount = (c) => Object.keys(c.types).length;
 
-console.error(`event-types fixture guard: DRIFT — ${fixturePath} differs from ${url}`);
-console.error(`  fixture:   ${Object.keys(fixtureTypes).length} types, version ${fixture.parsed.version}`);
-console.error(`  published: ${Object.keys(publishedTypes).length} types, version ${published.parsed.version}`);
-if (missing.length > 0) console.error(`  types published but absent from the fixture: ${missing.join(", ")}`);
-if (extra.length > 0) console.error(`  types in the fixture but no longer published: ${extra.join(", ")}`);
-if (changed.length > 0) console.error(`  types whose definition changed: ${changed.join(", ")}`);
-if (sections.length > 0) console.error(`  other top-level sections that differ: ${sections.join(", ")}`);
-console.error("");
-console.error("  Re-vendor it deliberately and run the suites against it:");
-console.error("    just update-event-types-fixture");
-process.exit(1);
-' "$FIXTURE" "$TMP" "$SCHEMA_URL"
+// 1. The test fixture must equal the published catalogue (needs the network).
+if (published != null && canonical(fixture) !== canonical(published)) {
+  report("test fixture", FIXTURE_PATH, url, describeDifference(fixture, published), [
+    `fixture:   ${typeCount(fixture)} types, version ${fixture.version}`,
+    `published: ${typeCount(published)} types, version ${published.version}`
+  ]);
+}
+
+// 2. The runtime seed must already contain every entry of the reference
+// unchanged: applying it again changes nothing. The reference is the published
+// catalogue, or the test fixture when that could not be fetched.
+const reference = published ?? fixture;
+const referenceLabel = published != null ? url : FIXTURE_PATH;
+const expectedSeed = applyToSeed(seed, reference);
+if (canonical(expectedSeed) !== canonical(seed)) {
+  report("runtime seed", SEED_PATH, referenceLabel, { ...describeDifference(seed, expectedSeed), extra: [] }, [
+    `seed:      ${typeCount(seed)} types, version ${seed.version}`,
+    `reference: ${typeCount(reference)} types, version ${reference.version}`
+  ]);
+}
+
+if (drift) process.exit(1);
+const legacy = Object.keys(seed.types).filter((t) => !(t in reference.types));
+console.log(`event-types catalogue guard: OK against ${published != null ? "the published catalogue" : "the test fixture only"} (${typeCount(reference)} types, version ${reference.version}; runtime seed keeps ${legacy.length} legacy type(s)${legacy.length > 0 ? ": " + legacy.join(", ") : ""})`);
+' "$TMP" "$SCHEMA_URL" "$SKIP_REASON"

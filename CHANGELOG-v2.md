@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Event content validation no longer falls back to a 2023 type list
+
+A core validates event content against its built-in event-type list until its
+startup download of the published catalogue succeeds, and for as long as it runs
+if that download fails. The built-in list dated from October 2023, so on a core
+that could not reach the catalogue, and on every core during its startup window:
+
+- 23 current types were unknown, and unknown types are accepted with ANY content.
+  They are now validated: for example a `concentration/mmol-l` event whose content
+  is not a number was accepted and is now refused with `invalid-parameters-format`.
+  The affected types include `concentration/*`, `consent/*-cmc`,
+  `notification/*-cmc`, `message/chat-cmc`, `calendar/ical-event`,
+  `encrypted/aes-256-gcm`, `encrypted/ecies-aes-256-gcm` and `shared-secret/item`.
+- `series:` events of those 23 types were refused as an unknown series type; they
+  are now accepted.
+
+Cores that reached the catalogue at startup already behaved this way after the
+download, so nothing changes for them past startup. The legacy
+`density/g-dl`, `density/mmol-l` and `density/mg-dl` types, renamed to
+`concentration/*` in the catalogue, remain accepted everywhere.
+
 ### CMC: two legacy lookups read the wrong event
 
 Two fallback paths looked an event up by id with a query that does not filter
