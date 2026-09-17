@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## a failure after a response started streaming no longer crashes the worker
+
+When a response failed after its headers were sent (for example an attachment
+whose file read failed mid-transfer), the error handler still tried to write an
+error status. That threw inside the async handler, an unhandled rejection that
+takes a worker down under Node's default, and the client waited forever for the
+bytes its `Content-Length` announced. The handler now audits and logs the error as
+before, then cuts the connection, so the client sees a broken transfer at once.
+
+On the same download path, a failure while writing the success audit record after
+the file was served was also left to reject unhandled; it is now logged. A test
+now covers a file read failing before the first byte too, which answers with an
+error status and an error audit record.
+
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 
 An attachment download pipes the file read stream into the HTTP response, and

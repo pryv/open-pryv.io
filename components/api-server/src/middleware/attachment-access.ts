@@ -10,7 +10,8 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { Readable } from 'node:stream';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const { getConfig } = require('@pryv/boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
+const logger = getLogger('attachment-access');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
 
@@ -134,7 +135,14 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     });
     res.once('finish', async () => {
       if (streamHasErrors) { return; }
-      if (isAuditActive) { await audit!.validApiCall(req.context, null); }
+      // The file is already served: a failing audit write can only be logged.
+      // Left to reject, it would be unhandled (nothing awaits an event
+      // listener) and take the worker down.
+      try {
+        if (isAuditActive) { await audit!.validApiCall(req.context, null); }
+      } catch (err) {
+        logger.error('Failed to audit a served attachment download: ' + ((err as Error).message ?? String(err)));
+      }
       // do not call "next()"
     });
   } catch (err) {

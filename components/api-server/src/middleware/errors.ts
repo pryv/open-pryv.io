@@ -44,6 +44,16 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => u
       // req.context.tracing.finishSpan('express1');
     }
     errorHandling.logError(error, req, logger);
+    // A streamed response can fail after its headers (and some body) are on the
+    // wire. The status can no longer change, and writing one throws inside this
+    // async handler, i.e. an unhandled rejection that takes the worker down,
+    // while the client waits forever for the bytes its Content-Length promised.
+    // The error is audited and logged above; cutting the connection is the only
+    // honest answer left.
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
     // Error-scoped response headers (e.g. WWW-Authenticate challenges
     // for auth-scheme failures) ride on the error object itself.
     const errorHeaders = (error as { httpHeaders?: Record<string, string> }).httpHeaders;
