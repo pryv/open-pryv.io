@@ -651,6 +651,35 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(r2.body.error, 'invalid_grant');
     });
 
+    it('[OE24] refresh-token reuse revokes the chain AND the app receives the consent/revoke-cmc', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const accessesRes = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      const dataGrant = (accessesRes.body.accesses ?? []).find((a) => a.clientData?.cmc?.role === 'counterparty');
+      assert.ok(dataGrant != null, 'data-grant must exist');
+
+      const params = { grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId };
+      assert.equal((await coreRequest.post('/oauth2/token').type('form').send(params)).status, 200);
+      // No grace window, so the immediate replay is treated as reuse (chain revoke).
+      const { withInjectedConfig } = require('test-helpers');
+      await withInjectedConfig({ oauth: { refreshReuseGraceSeconds: 0 } }, async () => {
+        const replay = await coreRequest.post('/oauth2/token').type('form').send(params);
+        assert.equal(replay.status, 400);
+      });
+
+      // The app side (the offer's publisher) is told, in its inbox.
+      let revoke = null;
+      for (let i = 0; i < 20 && revoke == null; i++) {
+        const inbox = await coreRequest.get('/' + appUsername + '/events')
+          .set('Authorization', appToken)
+          .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 });
+        revoke = (inbox.body.events ?? []).find((e) => e.content?.accessId === dataGrant.id) ?? null;
+        if (revoke == null) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.ok(revoke != null, 'the app must receive a consent/revoke-cmc naming the revoked data-grant');
+      assert.equal(typeof revoke.content.reason, 'object');
+    });
+
     it('[OE21] revoking the consent data-grant kills the refresh chain (invalid_grant)', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200);

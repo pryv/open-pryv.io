@@ -42,8 +42,14 @@ upgrade every core.
   access (it read them from the poll, which did not carry them, so the access was
   created without a lifetime, device name or requested token). Absent when not sent.
 - **Fixed.** `accesses.checkApp` now accepts `expireAfter` and `token`, which auth pages forward
-  from the auth request before creating the access. They do not affect the match. Without this,
-  sign-in for an app that sends `expireAfter` or `token` stopped at `check-app failed (400)`.
+  from the auth request before creating the access, and a `null` `clientData` (what the poll
+  carries when the app sent none). None of them affect the match. Without this, sign-in for an app
+  that sends `expireAfter` or `token` stopped at `check-app failed (400)`.
+- **Fixed (OAuth2).** When a refresh token is reused, the chain is revoked and the app is told
+  through a `consent/revoke-cmc` in its inbox. That notification lacked the required `accessId`
+  (and sent `reason` as a string), so the app's core refused it and the app only found out at its
+  next refresh. It now carries `accessId` (the revoked data-grant), a localized `reason` and the
+  relationship's correlation ids, like a user-initiated revoke.
 
 ### Native installs: use Node.js 24 below 24.19.0
 
