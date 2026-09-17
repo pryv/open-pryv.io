@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
  */
 
 const accessState = require('./accessState.ts');
+const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 
 /**
  * Whether `candidate` (a caller-supplied auth-page URL) matches one of the
@@ -68,7 +69,23 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         });
       }
 
-      const { key, state, expiresAt } = accessState.buildState(req.body);
+      // The optional `consent` sidecar carries the per-entry annotations
+      // (`mandatory`, `optIn`) beside the plain entries, and is resolved
+      // here into the consent form the auth page and the ACCEPTED check
+      // both read. A request without it runs no new validation and is
+      // processed exactly as it was before consent forms existed.
+      let consentForm;
+      if (req.body.consent !== undefined) {
+        try {
+          consentForm = resolveConsentSidecar(requestedPermissions, req.body.consent);
+        } catch (err: unknown) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: (err as Error)?.message ?? String(err) }
+          });
+        }
+      }
+
+      const { key, state, expiresAt } = accessState.buildState({ ...req.body, consent: consentForm });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
       // per core, so every poll GET must hit the same core that served
@@ -142,13 +159,19 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // the flow. The auth UI gets richer state from GET /reg/access/:key
       // (and from query parameters on `authUrl`). Service metadata
       // belongs at `/service/info` — clients fetch it from there.
-      res.status(201).json({
+      const created: Record<string, unknown> = {
         status: state.status,
         key,
         authUrl,
         poll: pollUrl,
         poll_rate_ms: state.poll_rate_ms
-      });
+      };
+      // Echoed ONLY for an annotated request. This is also the app's
+      // detection signal: a server that understood the sidecar says so
+      // here, an older one simply does not, and the flow degrades to
+      // all-or-nothing rather than failing.
+      if (state.consent !== undefined) created.consent = state.consent;
+      res.status(201).json(created);
     } catch (err) { next(err); }
   });
 
@@ -184,6 +207,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         response.returnURL = state.returnURL;
         response.oauthState = state.oauthState;
         response.clientData = state.clientData;
+        // Only for an annotated request, and absent (not null) otherwise,
+        // so an un-annotated poll body is unchanged byte for byte and an
+        // auth page that does not know the field keeps working:
+        // `requestedPermissions` above stays plain and complete.
+        if (state.consent !== undefined) response.consent = state.consent;
       } else if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;

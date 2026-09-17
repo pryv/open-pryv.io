@@ -138,6 +138,112 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('POST /reg/access with a consent sidecar', () => {
+    const PERMS = [
+      { streamId: 'diary', level: 'read', defaultName: 'Journal' },
+      { streamId: 'weight', level: 'read' },
+      { feature: 'selfRevoke', setting: 'forbidden' }
+    ];
+
+    it('[RA60] must resolve the sidecar, echo the consent form on create and on the poll', async () => {
+      const createRes = await coreRequest.post('/reg/access')
+        .send({
+          requestingAppId: 'test-app',
+          requestedPermissions: PERMS,
+          consent: { allowUserChoice: true, mandatory: ['diary'], optIn: ['weight'] }
+        });
+      assert.strictEqual(createRes.status, 201);
+      const expectedForm = {
+        allowUserChoice: true,
+        permissions: [
+          { streamId: 'diary', level: 'read', defaultName: 'Journal', mandatory: true },
+          { streamId: 'weight', level: 'read', optIn: true },
+          { feature: 'selfRevoke', setting: 'forbidden' }
+        ]
+      };
+      // Echoed on create: this is how an app detects that the server
+      // understood the annotations (an older one echoes nothing).
+      assert.deepEqual(createRes.body.consent, expectedForm);
+
+      const pollRes = await coreRequest.get('/reg/access/' + createRes.body.key);
+      assert.strictEqual(pollRes.status, 201);
+      assert.deepEqual(pollRes.body.consent, expectedForm);
+      // The plain entries are untouched: an auth page that ignores
+      // `consent` still receives exactly what it always received.
+      assert.deepEqual(pollRes.body.requestedPermissions, PERMS);
+    });
+
+    it('[RA61] without a sidecar the create and poll bodies carry no consent key at all', async () => {
+      const createRes = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: PERMS });
+      assert.strictEqual(createRes.status, 201);
+      // Absent, not null: an un-annotated request must be byte-identical
+      // to what it was before consent forms existed.
+      assert.ok(!('consent' in createRes.body), 'create body must not carry a consent key');
+
+      const pollRes = await coreRequest.get('/reg/access/' + createRes.body.key);
+      assert.strictEqual(pollRes.status, 201);
+      assert.ok(!('consent' in pollRes.body), 'poll body must not carry a consent key');
+      assert.deepEqual(pollRes.body.requestedPermissions, PERMS);
+    });
+
+    it('[RA62] must reject a sidecar that names nothing, names twice, or is mistyped', async () => {
+      const cases = [
+        { consent: { mandatory: ['diarry'] }, why: 'unknown id' },
+        { consent: { mandatory: ['diary'], optIn: ['diary'] }, why: 'id in both lists' },
+        { consent: { allowUserChoice: 'yes' }, why: 'non-boolean allowUserChoice' },
+        { consent: { mandatory: 'diary' }, why: 'id list not an array' },
+        {
+          permissions: [{ streamId: 'diary', level: 'read' }, { streamId: 'diary', level: 'contribute' }],
+          consent: { mandatory: ['diary'] },
+          why: 'ambiguous id (two entries share it)'
+        }
+      ];
+      for (const c of cases) {
+        const res = await coreRequest.post('/reg/access')
+          .send({
+            requestingAppId: 'test-app',
+            requestedPermissions: c.permissions || PERMS,
+            consent: c.consent
+          });
+        assert.strictEqual(res.status, 400, c.why);
+        assert.strictEqual(res.body.error.id, 'invalid-parameters', c.why);
+      }
+    });
+
+    it('[RA63] must reject an exclusion mask (level:none) once a consent form is asked for', async () => {
+      // Dropping a `none` entry at the consent screen would WIDEN access,
+      // inverting the subset rule, so an annotated request may not carry one.
+      const res = await coreRequest.post('/reg/access')
+        .send({
+          requestingAppId: 'test-app',
+          requestedPermissions: [{ streamId: '*', level: 'read' }, { streamId: 'medical', level: 'none' }],
+          consent: { allowUserChoice: true }
+        });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      // ... while the same request without a sidecar is still accepted.
+      const plainRes = await coreRequest.post('/reg/access')
+        .send({
+          requestingAppId: 'test-app',
+          requestedPermissions: [{ streamId: '*', level: 'read' }, { streamId: 'medical', level: 'none' }]
+        });
+      assert.strictEqual(plainRes.status, 201);
+    });
+
+    it('[RA64] mandatory without allowUserChoice is accepted and echoed (inert, as in a CMC offer)', async () => {
+      const res = await coreRequest.post('/reg/access')
+        .send({
+          requestingAppId: 'test-app',
+          requestedPermissions: PERMS,
+          consent: { mandatory: ['diary'] }
+        });
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.body.consent.allowUserChoice, false);
+      assert.strictEqual(res.body.consent.permissions[0].mandatory, true);
+    });
+  });
+
   describe('GET /reg/access/:key', () => {
     it('[RA10] must return current state for valid key', async () => {
       const createRes = await coreRequest.post('/reg/access')

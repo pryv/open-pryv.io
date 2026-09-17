@@ -36,6 +36,11 @@ type BuildStateParams = {
   oauthState?: unknown;
   clientData?: unknown;
   deviceName?: string | null;
+  /** Resolved consent form, present ONLY when the request carried a
+   * `consent` sidecar. Absence is meaningful: it is what keeps an
+   * un-annotated request behaving exactly as it did before, and it is
+   * what the ACCEPTED handler tests to decide whether to enforce. */
+  consent?: unknown;
 };
 
 type AccessState = {
@@ -49,6 +54,8 @@ type AccessState = {
   oauthState: unknown;
   clientData: unknown;
   deviceName: string | null;
+  /** See `BuildStateParams.consent`: set only for an annotated request. */
+  consent?: unknown;
   poll_rate_ms: number;
   createdAt: number;
   expiresAt: number;
@@ -106,6 +113,10 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
     createdAt: Date.now(),
     expiresAt
   };
+  // Assigned only when present, never as `consent: undefined`: an
+  // un-annotated state must not gain the key at all, so its poll body
+  // stays byte-identical to what it was before consent forms existed.
+  if (params.consent !== undefined) state.consent = params.consent;
   return { key, state, expiresAt };
 }
 

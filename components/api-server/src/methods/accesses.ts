@@ -22,6 +22,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/accessesMethods.ts');
 const string = require('./helpers/string.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
+const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 
 const cache = require('cache').default;
 
@@ -1081,12 +1082,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // ':_audit:access-<id>' (read, selfAudit). They are not part of what the
     // app requested, so counting them would make every existing app access
     // report as mismatching (the requesting app re-prompts for consent on
-    // every sign-in).
-    const isInjectedPermission = (perm: StreamPermission) =>
-      (perm.streamId === accountStreams.STREAM_ID_ACCOUNT && perm.level === 'none') ||
-      (perm.streamId === ':_audit:access-' + access.id && perm.level === 'read');
-    const accessPerms = access.permissions.filter((perm) => !isInjectedPermission(perm));
-    const requestedPerms = requestedPermissions.filter((perm) => !isInjectedPermission(perm));
+    // every sign-in). Shared with the auth-request consent check, which
+    // needs the same subtraction for the same reason.
+    const accessPerms = withoutInjectedPermissions(access.permissions, access.id) as StreamPermission[];
+    const requestedPerms = withoutInjectedPermissions(requestedPermissions, access.id) as StreamPermission[];
     if (accessPerms.length !== requestedPerms.length) {
       return false;
     }
