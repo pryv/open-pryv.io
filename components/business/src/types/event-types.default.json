@@ -146,25 +146,25 @@
             "required": [
               "frequency"
             ]
-          },
-          "start": {
-            "description": "The start date for the sample. Unit: date in ISO 8601 format",
-            "type": "string"
-          },
-          "end": {
-            "description": "The end date for the sample. Unit: date in ISO 8601 format",
-            "type": "string"
-          },
-          "metadata": {
-            "type": "object"
           }
         },
-        "required": [
-          "sensitivityPoints",
-          "start",
-          "end"
-        ]
-      }
+        "start": {
+          "description": "The start date for the sample. Unit: date in ISO 8601 format",
+          "type": "string"
+        },
+        "end": {
+          "description": "The end date for the sample. Unit: date in ISO 8601 format",
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "sensitivityPoints",
+        "start",
+        "end"
+      ]
     },
     "audit-log/pryv-api": {
       "type": "object",
@@ -338,17 +338,17 @@
             "identifier",
             "resourceType"
           ]
-        },
-        "required": [
-          "displayName",
-          "clinicalType"
-        ]
-      }
+        }
+      },
+      "required": [
+        "displayName",
+        "clinicalType"
+      ]
     },
     "contact/facebook": {
       "type": "object",
       "description": "A Facebook user as specified in the Graph API: https://developers.facebook.com/docs/reference/api/user/",
-      "additionalProperties": "true",
+      "additionalProperties": true,
       "properties": {
         "id": {
           "type": "string"
@@ -1456,13 +1456,15 @@
     "numset/*": {
       "description": "The format key is freely defined.\n\nFor example, a heart measurement with type `numset/heart` and content:\n```\n{\n  \"systolic\": { \"pressure/mmhg\": 105 },\n  \"diastolic\": { \"pressure/mmhg\": 64 },\n  \"rate\": { \"frequency/bpm\": 88 }\n}\n```",
       "type": "object",
-      "patternProperties": {
-        "^(/[^/]+)+$": {
-          "type": "number"
-        }
-      },
-      "additionalProperties": "false",
-      "required": []
+      "additionalProperties": {
+        "type": "object",
+        "patternProperties": {
+          "^[a-z0-9-]+/[a-z0-9-]+$": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "picture/base64": {
       "description": "The picture is caried in base64 (utf-8) encoded in string",
