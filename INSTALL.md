@@ -2,7 +2,11 @@
 
 ## Prerequisites
 
-- **Node.js** 24.x (matches `engines.node` in `package.json`)
+- **Node.js** 24.x **below 24.19.0** (matches `engines.node` in `package.json`). Node 24.19.0 and
+  later abort the process when a SQLite statement is garbage-collected
+  ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)); SQLite is the default audit
+  engine, so this hits every native install. The Docker image is not affected (it pins Node
+  24.18.0). See "Node major bumps" below for pinning the version.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
@@ -629,6 +633,17 @@ NodeSource-based installs:
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
+```
+
+`setup_24.x` installs the LATEST 24.x. Until
+[nodejs/node#65446](https://github.com/nodejs/node/issues/65446) is fixed, install and hold a
+version below 24.19.0 instead (check `node -v` on every host, including existing ones that may have
+been upgraded by a routine `apt upgrade`):
+
+```bash
+apt-cache madison nodejs                      # pick a 24.18.x (or earlier 24.x) entry
+sudo apt-get install -y nodejs=24.18.0-1nodesource1
+sudo apt-mark hold nodejs
 ```
 
 If you're running native HTTPS or the embedded DNS as non-root, also

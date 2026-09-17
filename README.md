@@ -52,7 +52,7 @@ curl http://localhost:3000/   # adjust to the public URL you chose in the wizard
 
 ## Native installation
 
-Prerequisites: Node.js 24.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 24.x below 24.19.0 (see [INSTALL.md](./INSTALL.md): later 24.x releases abort on SQLite), PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env    # setup local file structure + PostgreSQL + rqlite

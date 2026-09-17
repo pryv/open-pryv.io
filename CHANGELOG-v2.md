@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Native installs: use Node.js 24 below 24.19.0
+
+Node.js 24.19.0 and later (24.20, 24.21 at the time of writing) abort the whole
+process when a SQLite statement is garbage-collected
+(`RemoveEnvironmentCleanupHook ... Assertion (env) != nullptr`,
+[nodejs/node#65446](https://github.com/nodejs/node/issues/65446)). SQLite is the
+default audit engine, so a native (non-Docker) install on such a Node version can
+crash at any time under normal use. `engines.node` is now `>=24.0.0 <24.19.0`,
+and `INSTALL.md` shows how to install and hold a suitable version.
+
+**Check your hosts:** run `node -v`; if it reports 24.19.0 or later, downgrade to
+24.18.x. A NodeSource `setup_24.x` install or a routine `apt upgrade` lands on the
+latest 24.x. The Docker image is not affected (it pins Node 24.18.0).
+
 ## 2.0.0-rc.21 — 2026-09-17
 
 ### CMC: an invite reports its outcome, and a refusal reaches the requester
