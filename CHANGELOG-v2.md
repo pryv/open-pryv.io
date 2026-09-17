@@ -31,6 +31,17 @@ upgrade every core.
   issued before the upgrade are still accepted until they expire (10 minutes), and
   existing refresh tokens keep working: each core converts its own at startup.
 
+### `/reg/access`: `expireAfter`, `deviceName` and `token` reach the auth page again
+
+- **Fixed.** `expireAfter` in `POST /reg/access` is the lifetime of the access to
+  create, in seconds, but the server used it as the lifetime of the request itself,
+  in milliseconds: an app sending `expireAfter: 3600` had 3.6 seconds to complete
+  sign-in before the key became unknown. The request now always lives one hour.
+- **Fixed.** The `NEED_SIGNIN` poll now returns `expireAfter`, `deviceName` and
+  `token` when the app sent them, so the auth page applies them when it creates the
+  access (it read them from the poll, which did not carry them, so the access was
+  created without a lifetime, device name or requested token). Absent when not sent.
+
 ### CMC: an invite reports its outcome, and a refusal reaches the requester
 
 - **Added.** The `consent/request-cmc` trigger now reports what happened to the

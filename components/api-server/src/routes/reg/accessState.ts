@@ -41,7 +41,11 @@ const NAMESPACE = 'access-request/';
 const TERMINAL_STATUSES = Object.freeze(['ACCEPTED', 'REFUSED', 'ERROR']);
 
 type BuildStateParams = {
+  /** Lifetime of the access the app asks for, in SECONDS (an
+   * `accesses.create` parameter the auth page applies), not of the request. */
   expireAfter?: number;
+  /** Token the app asks the access to carry (`accesses.create` `token`). */
+  token?: string;
   requestingAppId: string;
   requestedPermissions: unknown;
   languageCode?: string;
@@ -67,6 +71,8 @@ type AccessState = {
   oauthState: unknown;
   clientData: unknown;
   deviceName: string | null;
+  /** See `BuildStateParams.expireAfter`: set only when the app sent one. */
+  expireAfter?: number;
   /** See `BuildStateParams.consent`: set only for an annotated request. */
   consent?: unknown;
   poll_rate_ms: number;
@@ -129,8 +135,9 @@ function generateKey (): string {
  */
 function buildState (params: BuildStateParams): { key: string; state: AccessState; expiresAt: number } {
   const key = generateKey();
-  const ttl = params.expireAfter || DEFAULT_TTL_MS;
-  const expiresAt = Date.now() + ttl;
+  // The request always lives DEFAULT_TTL_MS. `expireAfter` is the lifetime
+  // of the ACCESS (seconds), carried to the auth page below.
+  const expiresAt = Date.now() + DEFAULT_TTL_MS;
   const state: AccessState = {
     status: 'NEED_SIGNIN',
     code: 201,
@@ -150,6 +157,12 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
   // un-annotated state must not gain the key at all, so its poll body
   // stays byte-identical to what it was before consent forms existed.
   if (params.consent !== undefined) state.consent = params.consent;
+  // Same rule for the access-creation parameters the auth page applies:
+  // present only when the app sent them.
+  if (typeof params.expireAfter === 'number' && Number.isFinite(params.expireAfter)) {
+    state.expireAfter = params.expireAfter;
+  }
+  if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
   return { key, state, expiresAt };
 }
 

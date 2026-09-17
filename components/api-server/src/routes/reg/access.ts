@@ -257,6 +257,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // auth page that does not know the field keeps working:
         // `requestedPermissions` above stays plain and complete.
         if (state.consent !== undefined) response.consent = state.consent;
+        // Access-creation parameters the app asked for, which the auth page
+        // passes to accesses.create (and app-web-auth3 displays). Absent
+        // when the app did not send them.
+        if (state.deviceName != null) response.deviceName = state.deviceName;
+        if (state.expireAfter != null) response.expireAfter = state.expireAfter;
+        if (state.token != null) response.token = state.token;
       } else if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;

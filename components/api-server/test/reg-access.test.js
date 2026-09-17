@@ -349,6 +349,13 @@ describe('[RGAC] Register access authorization', () => {
       await fixtureUser.stream({ id: 'secret', name: 'Secret' });
     });
 
+    after(async function () {
+      this.timeout(30000);
+      // Remove the user this block created: a later suite that resets users
+      // (reg-multicore) would otherwise leave its platform entries behind.
+      await fixtures.clean();
+    });
+
     /** Mint an app access the way an auth page would, and return its token.
      * The name varies per mint because (name, type, deviceName) is unique
      * per user; what the check reads is the permissions, not the name. */
@@ -670,6 +677,28 @@ describe('[RGAC] Register access authorization', () => {
         await coreRequest.post('/reg/access/' + key).send(ACCEPT);
         assert.strictEqual((await coreRequest.get('/reg/access/' + key)).status, 200);
       });
+    });
+
+    it('[RA86] expireAfter is the access lifetime (seconds): it does not shorten the request, and reaches the auth page with deviceName and token', async () => {
+      const res = await coreRequest.post('/reg/access')
+        .send({ ...BODY, expireAfter: 1, deviceName: 'phone', token: 'app-chosen-token' });
+      assert.strictEqual(res.status, 201);
+      // expireAfter used to be taken as the request TTL in milliseconds
+      await sleep(50);
+      const poll = await coreRequest.get('/reg/access/' + res.body.key);
+      assert.strictEqual(poll.status, 201);
+      assert.strictEqual(poll.body.status, 'NEED_SIGNIN');
+      assert.strictEqual(poll.body.expireAfter, 1);
+      assert.strictEqual(poll.body.deviceName, 'phone');
+      assert.strictEqual(poll.body.token, 'app-chosen-token');
+    });
+
+    it('[RA87] without those parameters the NEED_SIGNIN poll carries no deviceName, expireAfter or token key', async () => {
+      const res = await coreRequest.post('/reg/access').send(BODY);
+      const poll = await coreRequest.get('/reg/access/' + res.body.key);
+      for (const k of ['deviceName', 'expireAfter', 'token']) {
+        assert.ok(!(k in poll.body), k + ' must be absent');
+      }
     });
 
     it('[RA85] multi-core without core:url must build the poll URL from this core, not the register URL', async () => {
