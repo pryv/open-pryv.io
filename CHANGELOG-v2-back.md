@@ -9,10 +9,16 @@ takes a worker down under Node's default, and the client waited forever for the
 bytes its `Content-Length` announced. The handler now audits and logs the error as
 before, then cuts the connection, so the client sees a broken transfer at once.
 
-On the same download path, a failure while writing the success audit record after
-the file was served was also left to reject unhandled; it is now logged. A test
-now covers a file read failing before the first byte too, which answers with an
-error status and an error audit record.
+A failure while writing the ERROR audit record had the same effect on the error
+path of every request: the handler rejected before answering, so the request hung
+and the rejection was unhandled. The audit failure is now logged and the error
+answered.
+
+On the download path, a failure while writing the success audit record after the
+file was served was also left to reject unhandled; it is now logged. A file read
+failing before the first byte answers with a JSON error status and an error audit
+record, and no longer carries the attachment's `Content-Disposition` and `Digest`
+headers, so a browser does not save the error as the file.
 
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 

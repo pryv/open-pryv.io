@@ -22,19 +22,22 @@ const { Readable } = require('node:stream');
 //   broken transfer instead of hanging on a Content-Length that never arrives),
 //   the error audited once, and nothing may reject unhandled.
 // - A failure writing the success audit record after the file was served must
-//   not reject unhandled either.
+//   not reject unhandled either, nor may a failure writing an ERROR audit record
+//   (that one is on the error path of every request).
 //
 // The in-process core serves the requests, so the spies on the mall and on the
 // audit singleton are the objects the middleware calls. Unhandled rejections are
 // observed with a process listener: the test runner installs a warn-only
 // handler, which would otherwise hide a rejection that crashes a real worker.
+// Mocha re-emits each unhandled rejection to the other listeners, so a failing
+// run lists every rejection twice; that is not a double invocation.
 describe('[ATER] attachment download error paths', function () {
   this.timeout(60_000);
 
   let fixtures, mall, audit;
   let username, token, eventId, fileId;
   let sourceFactory = null;
-  let originalGetAttachment, originalValidApiCall;
+  let originalGetAttachment, getAttachmentWasOwn, originalValidApiCall, originalErrorApiCall;
   let rejections = [];
   const onRejection = (reason) => { rejections.push(reason); };
 
@@ -60,6 +63,7 @@ describe('[ATER] attachment download error paths', function () {
 
     mall = await require('mall').getMall();
     originalGetAttachment = mall.events.getAttachment;
+    getAttachmentWasOwn = Object.hasOwn(mall.events, 'getAttachment');
     mall.events.getAttachment = async function (...args) {
       if (sourceFactory != null) {
         // Keep the real file stream from leaking while a fake one is served.
@@ -70,11 +74,21 @@ describe('[ATER] attachment download error paths', function () {
     };
     audit = require('audit').default;
     originalValidApiCall = audit.validApiCall;
+    originalErrorApiCall = audit.errorApiCall;
   });
 
   after(async function () {
-    if (mall != null) delete mall.events.getAttachment;
-    if (audit != null) audit.validApiCall = originalValidApiCall;
+    if (mall != null) {
+      if (getAttachmentWasOwn) {
+        mall.events.getAttachment = originalGetAttachment;
+      } else {
+        delete mall.events.getAttachment; // back to the prototype method
+      }
+    }
+    if (audit != null) {
+      audit.validApiCall = originalValidApiCall;
+      audit.errorApiCall = originalErrorApiCall;
+    }
     if (fixtures != null) {
       try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
     }
@@ -89,6 +103,7 @@ describe('[ATER] attachment download error paths', function () {
   afterEach(function () {
     process.removeListener('unhandledRejection', onRejection);
     audit.validApiCall = originalValidApiCall;
+    audit.errorApiCall = originalErrorApiCall;
   });
 
   async function until (predicate, deadlineMs = 3000) {
@@ -113,7 +128,7 @@ describe('[ATER] attachment download error paths', function () {
 
   // Resolves with how the transfer ended from the client's side. `hung` means
   // neither 'end' nor an error arrived within the deadline.
-  function download (deadlineMs = 3000) {
+  function download (deadlineMs = 3000, path = '/' + username + '/events/' + eventId + '/' + fileId) {
     return new Promise((resolve) => {
       let settled = false;
       const settle = (outcome) => { if (!settled) { settled = true; clearTimeout(timer); req.destroy(); resolve(outcome); } };
@@ -121,14 +136,14 @@ describe('[ATER] attachment download error paths', function () {
       const req = http.get({
         host: '127.0.0.1',
         port: global.coreServer.address().port,
-        path: '/' + username + '/events/' + eventId + '/' + fileId,
+        path,
         headers: { Authorization: token }
       });
       req.on('error', (err) => settle({ ending: 'error', code: err.code }));
       req.on('response', (res) => {
         const chunks = [];
         res.on('data', (chunk) => chunks.push(chunk));
-        res.on('end', () => settle({ ending: 'end', status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+        res.on('end', () => settle({ ending: 'end', status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
         res.on('aborted', () => settle({ ending: 'aborted', status: res.statusCode }));
         res.on('error', (err) => settle({ ending: 'error', status: res.statusCode, code: err.code }));
       });
@@ -171,9 +186,21 @@ describe('[ATER] attachment download error paths', function () {
     assert.strictEqual(outcome.ending, 'end', JSON.stringify(outcome));
     assert.strictEqual(outcome.status, 500);
     assert.ok(JSON.parse(outcome.body).error != null, 'the body must carry the API error');
+    assert.match(outcome.headers['content-type'], /application\/json/);
+    assert.strictEqual(outcome.headers['content-disposition'], undefined, 'the error must not be presented as the attachment');
+    assert.strictEqual(outcome.headers.digest, undefined, 'the error must not carry the attachment digest');
     assert.ok(await until(async () => (await auditCounts()).error === before.error + 1),
       'the failed download must be audited as an error');
     assert.strictEqual((await auditCounts()).valid, before.valid, 'no success record');
+    assert.deepStrictEqual(rejections.map(String), [], 'no unhandled rejection');
+  });
+
+  it('[ATER4] a failing error audit still answers the error and rejects nothing', async function () {
+    audit.errorApiCall = async function () { throw new Error('simulated error-audit write failure'); };
+    const outcome = await download(3000, '/' + username + '/events/' + cuid());
+    assert.strictEqual(outcome.ending, 'end', JSON.stringify(outcome));
+    assert.strictEqual(outcome.status, 404);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepStrictEqual(rejections.map(String), [], 'no unhandled rejection');
   });
 

@@ -131,6 +131,12 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
       } catch (e) {
         // error audit is taken in charge by express error management
       }
+      // Before the first byte the error middleware still answers with a JSON
+      // error: drop the attachment's headers so it is not presented (or saved)
+      // as the file.
+      if (!res.headersSent) {
+        for (const name of ['Content-Type', 'Content-Length', 'Content-Disposition', 'Digest']) res.removeHeader(name);
+      }
       next(err);
     });
     res.once('finish', async () => {
@@ -141,7 +147,7 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
       try {
         if (isAuditActive) { await audit!.validApiCall(req.context, null); }
       } catch (err) {
-        logger.error('Failed to audit a served attachment download: ' + ((err as Error).message ?? String(err)));
+        logger.error('Failed to audit a served attachment download', err);
       }
       // do not call "next()"
     });

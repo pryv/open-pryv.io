@@ -23,7 +23,10 @@ export { produceHandleErrorMiddleware };
 /**
  * Error route handling.
  */
-function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => unknown }) {
+type LogFnLike = (message: string, ...meta: unknown[]) => void;
+type LoggerLike = { debug: LogFnLike; info: LogFnLike; warn: LogFnLike; error: LogFnLike };
+
+function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => LoggerLike }) {
   const logger = logging.getLogger('error-middleware');
   const config = getConfigSync();
   const isAuditActive = config.get('audit:active');
@@ -40,7 +43,13 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => u
     }
     if (req.context != null) {
       // context is not initialized in case of malformed JSON
-      if (isAuditActive) { await audit!.errorApiCall(req.context, error); }
+      // An audit-store failure must not stop the error answer, nor reject
+      // unhandled out of this async handler and take the worker down.
+      try {
+        if (isAuditActive) { await audit!.errorApiCall(req.context, error); }
+      } catch (auditError) {
+        logger.error('Failed to audit an API error', auditError);
+      }
       // req.context.tracing.finishSpan('express1');
     }
     errorHandling.logError(error, req, logger);
@@ -51,7 +60,7 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => u
     // The error is audited and logged above; cutting the connection is the only
     // honest answer left.
     if (res.headersSent) {
-      res.destroy();
+      if (!res.writableEnded) res.destroy();
       return;
     }
     // Error-scoped response headers (e.g. WWW-Authenticate challenges
