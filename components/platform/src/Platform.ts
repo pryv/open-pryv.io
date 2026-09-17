@@ -108,7 +108,9 @@ class Platform {
     // `core.url` overrides are in play (DNSless multi-core).
     await this._refreshCoreUrlCache();
 
-    // Seed invitation tokens from config into PlatformDB (if not already present)
+    // Re-key any legacy raw-keyed invitation tokens to their hash (idempotent),
+    // then seed from config (writes hashed keys).
+    await this.#migrateInvitationTokensToHashedKeys();
     await this.#seedInvitationTokens();
 
     return this;
@@ -204,6 +206,11 @@ class Platform {
     this.#db = db;
     this.#piiHasher = hasher;
     this.#piiInitError = null;
+  }
+
+  /** Test-only: run the invitation-token key migration on demand (init() runs it at boot). */
+  async _migrateInvitationTokensForTests (): Promise<void> {
+    return this.#migrateInvitationTokensToHashedKeys();
   }
 
   /**
@@ -1035,11 +1042,21 @@ class Platform {
       return;
     }
 
-    // PlatformDB has tokens — check against them
-    const tokenInfo = await this.#db.getInvitationToken(invitationToken);
+    // PlatformDB has tokens — check against them (keyed by the token's hash).
+    const tokenInfo = await this.#db.getInvitationToken(this.#hashInvitationToken(invitationToken));
     if (tokenInfo == null || tokenInfo.consumedBy != null) {
       throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
     }
+  }
+
+  /**
+   * SHA-256 (hex) of an invitation token. PlatformDB is replicated to every
+   * core (rqlite) and backed up, so the token must never be a usable key at
+   * rest: cores store `invitation/<sha256(token)>` and the admin listing then
+   * exposes only the description + creation info, never a live token.
+   */
+  #hashInvitationToken (token: string): string {
+    return require('node:crypto').createHash('sha256').update(String(token), 'utf8').digest('hex');
   }
 
   /**
@@ -1047,11 +1064,12 @@ class Platform {
    * @param username - the user who consumed it
    */
   async consumeInvitationToken (token: string, username: string) {
-    const info = await this.#db.getInvitationToken(token);
+    const key = this.#hashInvitationToken(token);
+    const info = await this.#db.getInvitationToken(key);
     if (info == null) return; // static config token or no tokens — nothing to consume
     info.consumedAt = Date.now();
     info.consumedBy = username;
-    await this.#db.updateInvitationToken(token, info);
+    await this.#db.updateInvitationToken(key, info);
   }
 
   /**
@@ -1068,15 +1086,18 @@ class Platform {
       return Array.isArray(configTokens) && configTokens.includes(token);
     }
 
-    const tokenInfo = await this.#db.getInvitationToken(token);
+    const tokenInfo = await this.#db.getInvitationToken(this.#hashInvitationToken(token));
     return tokenInfo != null && tokenInfo.consumedBy == null;
   }
 
   /**
-   * Get all invitation tokens.
+   * Get all invitation tokens (admin listing). The `id` is the storage key,
+   * which is the token's SHA-256 (not a usable token), and the internal
+   * `keyHashed` marker is stripped.
    */
   async getAllInvitationTokens () {
-    return this.#db.getAllInvitationTokens();
+    const entries = await this.#db.getAllInvitationTokens();
+    return entries.map(({ keyHashed, ...rest }) => rest);
   }
 
   /**
@@ -1088,13 +1109,18 @@ class Platform {
     const crypto = require('node:crypto');
     const created: Array<{ id: string; createdAt: number; createdBy: string; description: string }> = [];
     for (let i = 0; i < count; i++) {
-      const token = crypto.randomBytes(4).toString('hex');
+      // 128 bits of entropy: the row is keyed by the token's UNSALTED SHA-256, so
+      // a low-entropy token could be recovered from a PlatformDB copy by offline
+      // brute force (exactly the at-rest threat this hashing addresses). Legacy
+      // and config-seeded (human-chosen) tokens remain offline-guessable at rest.
+      const token = crypto.randomBytes(16).toString('hex');
       const info = {
         createdAt: Date.now(),
         createdBy: createdBy || 'admin',
         description: description || ''
       };
-      await this.#db.createInvitationToken(token, info);
+      // Store under the token's hash; return the raw token once, to the admin.
+      await this.#db.createInvitationToken(this.#hashInvitationToken(token), { ...info, keyHashed: true });
       created.push({ id: token, ...info });
     }
     return created;
@@ -1112,11 +1138,36 @@ class Platform {
     if (existing.length > 0) return; // already seeded
 
     for (const token of configTokens) {
-      await this.#db.createInvitationToken(token, {
+      await this.#db.createInvitationToken(this.#hashInvitationToken(token), {
         createdAt: Date.now(),
         createdBy: 'config-seed',
-        description: 'Seeded from invitationTokens config'
+        description: 'Seeded from invitationTokens config',
+        keyHashed: true
       });
+    }
+  }
+
+  /**
+   * One-time boot migration: re-key any legacy invitation token stored under its
+   * raw value (`invitation/<token>`) to `invitation/<sha256(token)>`, so a
+   * PlatformDB copy no longer holds usable tokens. Idempotent: rows already
+   * written by a current core carry `keyHashed: true` and are skipped, so a
+   * second boot re-hashes nothing (double-hashing would orphan them).
+   */
+  async #migrateInvitationTokensToHashedKeys () {
+    const entries = await this.#db.getAllInvitationTokens();
+    for (const entry of entries) {
+      if (entry.keyHashed === true) continue; // already hashed
+      const { id: rawToken, ...info } = entry;
+      const hashedKey = this.#hashInvitationToken(rawToken);
+      // Create only when the hashed row is absent: a sibling core may have
+      // migrated this token already and a user then CONSUMED it, so an
+      // unconditional upsert (or a crash-replay of this loop) could resurrect a
+      // consumed token. Always drop the legacy raw-keyed row.
+      if (await this.#db.getInvitationToken(hashedKey) == null) {
+        await this.#db.createInvitationToken(hashedKey, { ...info, keyHashed: true });
+      }
+      await this.#db.deleteInvitationToken(rawToken);
     }
   }
 

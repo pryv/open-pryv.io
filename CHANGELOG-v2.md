@@ -67,6 +67,15 @@ latest 24.x. The Docker image is not affected (it pins Node 24.18.0).
   access and its first API request answered `403 Cannot find access from token`.
   The token rotation is now a compare-and-swap: the concurrent logins converge on
   a single live token, and the losing call drops its orphan session.
+### Security: invitation tokens are stored hashed in the platform store
+
+- **Invitation tokens are no longer stored as usable keys in PlatformDB.** They
+  were keyed by their raw value, so every core's replicated PlatformDB (and its
+  backups) held live invitation tokens, and `GET /reg/admin/invitations` returned
+  each token as the entry `id`. Tokens are now stored under their SHA-256; the
+  admin listing exposes the hash plus the description and creation info, never a
+  usable token (the token is shown once, to the admin, at generation). Existing
+  tokens keep working: a one-time boot migration re-keys them to their hash.
 
 ## 2.0.0-rc.21 — 2026-09-17
 
