@@ -375,18 +375,19 @@ describe('[FG5R] Events of system streams', () => {
                 .set('authorization', access.token);
               allEventsInDb = await mall.events.get(user.attrs.id, { streams: [{ any: [streamId] }], state: 'all' });
             });
-            it('[SQZ2] should return 201', () => {
-              assert.strictEqual(res.status, 201);
+            it('[SQZ2] should return 400 refusing the events-API email write', () => {
+              assert.strictEqual(res.status, 400);
+              assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+              assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+              assert.deepStrictEqual(res.body.error.data, { streamId });
             });
-            it('[YS79] should return the created event', () => {
-              assert.strictEqual(res.body.event.content, eventData.content);
-              // Account store enforces the configured type for the stream
-              assert.strictEqual(res.body.event.type, 'email/string');
+            it('[YS79] should not return a created event', () => {
+              assert.strictEqual(res.body.event, undefined);
             });
-            it('[DA23] should update the field value (single event per field)', async () => {
+            it('[DA23] should leave the stored email unchanged (write did not land)', async () => {
               assert.strictEqual(allEventsInDb.length, 1);
               assert.deepStrictEqual(allEventsInDb[0].streamIds, [streamId]);
-              assert.strictEqual(allEventsInDb[0].content, eventData.content);
+              assert.strictEqual(allEventsInDb[0].content, user.attrs.email);
             });
           });
           describe('[ED21] whose content is already taken by another user', () => {
@@ -408,12 +409,13 @@ describe('[FG5R] Events of system streams', () => {
                 .set('authorization', access.token);
             });
 
-            it('[89BC] should return 409', () => {
-              assert.strictEqual(res.status, 409);
+            it('[89BC] should return 400 (refusal precedes the uniqueness check)', () => {
+              assert.strictEqual(res.status, 400);
             });
-            it('[10BC] should return the correct error', () => {
-              assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
-              assert.deepStrictEqual(res.body.error.data, { email: eventData.content });
+            it('[10BC] should return the events-API email refusal', () => {
+              assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+              assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+              assert.deepStrictEqual(res.body.error.data, { streamId: addCustomerPrefixToStreamId('email') });
             });
           });
           describe('[6B8D] When creating an event with an email already taken by another user', () => {
@@ -438,12 +440,13 @@ describe('[FG5R] Events of system streams', () => {
                 .set('authorization', access.token);
             });
 
-            it('[2021] should return a 409 error', () => {
-              assert.strictEqual(res.status, 409);
+            it('[2021] should return a 400 error (refusal precedes the uniqueness check)', () => {
+              assert.strictEqual(res.status, 400);
             });
-            it('[121E] should return the correct error', () => {
-              assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
-              assert.deepStrictEqual(res.body.error.data, { email: takenEmail });
+            it('[121E] should return the events-API email refusal', () => {
+              assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+              assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+              assert.deepStrictEqual(res.body.error.data, { streamId });
             });
           });
         });
@@ -500,10 +503,43 @@ describe('[FG5R] Events of system streams', () => {
           .set('authorization', sharedAccess.attrs.token);
       });
 
-      it('[X49R] should return 201', () => {
+      it('[X49R] should return 400 refusing the delegated email write', () => {
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
+      });
+      it('[764A] should not return a created event', () => {
+        assert.strictEqual(res.body.event, undefined);
+      });
+    });
+
+    describe('[ASEM] when using a shared contribute access on a NON-coordinated account stream (phoneNumber)', () => {
+      // The email refusal must not over-block: a contribute grant on another
+      // visible, editable account field still writes through the events API.
+      let sharedAccess;
+      let systemStreamId;
+      before(async function () {
+        systemStreamId = addCustomerPrefixToStreamId('phoneNumber');
+        const user2 = await createUser();
+        sharedAccess = await user2.access({
+          token: cuid(),
+          type: 'shared',
+          permissions: [{ streamId: systemStreamId, level: 'contribute' }]
+        });
+        eventData = {
+          streamIds: [systemStreamId],
+          content: charlatan.Lorem.characters(7),
+          type: 'string/pryv'
+        };
+        res = await request.post(basePath)
+          .send(eventData)
+          .set('authorization', sharedAccess.attrs.token);
+      });
+      it('[ASE1] should return 201', () => {
         assert.strictEqual(res.status, 201);
       });
-      it('[764A] should return the created event', () => {
+      it('[ASE2] should return the created event', () => {
         assert.strictEqual(res.body.event.createdBy, sharedAccess.attrs.id);
         assert.deepStrictEqual(res.body.event.streamIds, [systemStreamId]);
       });
@@ -687,8 +723,11 @@ describe('[FG5R] Events of system streams', () => {
               await createUser();
               await editEvent(systemStreamId);
             });
-            it('[4BB1] should return 200', () => {
-              assert.strictEqual(res.status, 200);
+            it('[4BB1] should return 400 refusing the events-API email update', () => {
+              assert.strictEqual(res.status, 400);
+              assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+              assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+              assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
             });
           });
           describe('[ED41] by updating a unique field that is already taken', () => {
@@ -715,10 +754,11 @@ describe('[FG5R] Events of system streams', () => {
                   .send(eventData)
                   .set('authorization', access.token);
               });
-              it('[F8A8] should return 409', () => {
-                assert.strictEqual(res.status, 409);
-                assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
-                assert.deepStrictEqual(res.body.error.data, { email: eventData.content });
+              it('[F8A8] should return 400 (refusal precedes the uniqueness check)', () => {
+                assert.strictEqual(res.status, 400);
+                assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+                assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+                assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
               });
             });
             describe('[ED43] with a field that is not unique in mongodb', () => {
@@ -737,13 +777,14 @@ describe('[FG5R] Events of system streams', () => {
                   .send(eventData)
                   .set('authorization', access.token);
               });
-              it('[5782] should return 409', () => {
-                assert.strictEqual(res.status, 409);
+              it('[5782] should return 400 (refusal precedes the uniqueness check)', () => {
+                assert.strictEqual(res.status, 400);
               });
-              it('[B285] should return the correct error', () => {
+              it('[B285] should return the events-API email refusal', () => {
                 const error = res.body.error;
-                assert.strictEqual(error.id, ErrorIds.ItemAlreadyExists);
-                assert.strictEqual(error.data.email, eventData.content);
+                assert.strictEqual(error.id, ErrorIds.InvalidOperation);
+                assert.strictEqual(error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+                assert.deepStrictEqual(error.data, { streamId: addCustomerPrefixToStreamId('email') });
               });
             });
           });
@@ -938,6 +979,62 @@ describe('[FG5R] Events of system streams', () => {
       });
       it('[FV8W] should return the correct error', () => {
         assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+      });
+    });
+  });
+
+  describe('[ASEV] events-API email write refusal — delegated-token vectors', () => {
+    describe('[ASE3] a create-only grant on the email account stream cannot create an email event', () => {
+      let systemStreamId;
+      before(async function () {
+        systemStreamId = addCustomerPrefixToStreamId('email');
+        const owner = await createUser();
+        const sharedAccess = await owner.access({
+          token: cuid(),
+          type: 'shared',
+          permissions: [{ streamId: systemStreamId, level: 'create-only' }]
+        });
+        eventData = {
+          streamIds: [systemStreamId],
+          content: charlatan.Lorem.characters(7),
+          type: 'string/pryv'
+        };
+        res = await request.post(basePath)
+          .send(eventData)
+          .set('authorization', sharedAccess.attrs.token);
+      });
+      it('[ASE4] should return the events-API email refusal', () => {
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
+      });
+    });
+    describe('[ASE5] a shared contribute grant on the email account stream cannot update the email event', () => {
+      let systemStreamId;
+      before(async function () {
+        systemStreamId = addCustomerPrefixToStreamId('email');
+        const owner = await createUser();
+        const sharedAccess = await owner.access({
+          token: cuid(),
+          type: 'shared',
+          permissions: [{ streamId: systemStreamId, level: 'contribute' }]
+        });
+        const initialEvent = await getOneEvent(owner.attrs.id, systemStreamId);
+        eventData = {
+          streamIds: [systemStreamId],
+          content: charlatan.Lorem.characters(7),
+          type: 'string/pryv'
+        };
+        res = await request.put(path.join(basePath, initialEvent.id))
+          .send(eventData)
+          .set('authorization', sharedAccess.attrs.token);
+      });
+      it('[ASE6] should return the events-API email refusal', () => {
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
+        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
       });
     });
   });

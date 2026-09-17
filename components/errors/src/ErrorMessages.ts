@@ -38,6 +38,7 @@ const ErrorMessages = {
   [ErrorIds.ForbiddenAccountEventModification]: 'Forbidden event modification. You are trying to edit or delete a non-editable or active system stream event.',
   [ErrorIds.ForbiddenToChangeAccountStreamId]: 'It is forbidden to modify streamIds of system events.',
   [ErrorIds.ForbiddenToEditNoneditableAccountFields]: 'It is forbidden to edit non-editable acccount fields.',
+  [ErrorIds.ForbiddenAccountEmailEvent]: 'The account email cannot be modified through the events API. Use account.update (its email field or emails operations).',
   [ErrorIds.UnexpectedError]: 'Unexpected error',
   [ErrorIds.NewPasswordFieldIsRequired]: 'newPassword field is required.',
   [ErrorIds.TooManyAttempts]: 'Too many failed MFA attempts for this account. Please try again later.',

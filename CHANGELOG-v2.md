@@ -48,6 +48,21 @@ a domain is available the call is still refused with `delegation-unknown-core`,
 rather than being delivered to the calling core itself. Reported via
 [#134](https://github.com/pryv/open-pryv.io/issues/134).
 
+### Account email can no longer be written through the events API
+
+- **BREAKING**: `events.create` and `events.update` targeting the account email
+  stream (`:system:email`) are now refused with `400 invalid-operation`
+  (`forbidden-account-email-event`, `data.streamId` set to the stream id). The
+  primary email carries account-wide coordination — platform uniqueness, the
+  multi-email container lockstep, the verification lifecycle and format
+  validation — that only `account.update` performs. Writing it through the
+  events API bypassed that coordination; a delegated (app/shared) access holding
+  `contribute` on the visible email stream could change the login email and,
+  with it, where a password-reset mail is sent. Use `account.update` (its
+  `email` field, or the `emails` operations object) to change the address.
+  **Reading** `:system:email` is unchanged. Refused for all access types,
+  personal included, so `account.update` is the single coordinated writer.
+
 ### Account-stream permissions: clearer error, corrected docs
 
 - **BREAKING (error contract)**: `accesses.create` with a permission on an

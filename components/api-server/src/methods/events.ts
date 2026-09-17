@@ -554,6 +554,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     context.systemStream = streamConfig;
     context.accountStreamIdWithoutPrefix =
       accountStreams.toFieldName(context.accountStreamId);
+    // The primary email carries account-wide coordination (platform uniqueness,
+    // the :_emails: container lockstep, the verification lifecycle, format
+    // validation and personal-token-only authorization) that only account.update
+    // performs. Refuse writing it through the events API so that path stays the
+    // single coordinated writer; reads are unaffected.
+    if (context.accountStreamIdWithoutPrefix === 'email') {
+      return next(errors.invalidOperation(
+        ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent],
+        { streamId: context.accountStreamId }
+      ));
+    }
     next();
   }
 
@@ -596,6 +607,15 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     context.systemStream = streamConfig;
     context.accountStreamIdWithoutPrefix =
       accountStreams.toFieldName(context.accountStreamId);
+    // See validateAccountStreamForCreate: the primary email is coordinated only
+    // by account.update; refuse an events-API write (this also covers moving an
+    // event INTO the email stream, since detectAccountStream sets the new id).
+    if (context.accountStreamIdWithoutPrefix === 'email') {
+      return next(errors.invalidOperation(
+        ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent],
+        { streamId: context.accountStreamId }
+      ));
+    }
     next();
   }
 
