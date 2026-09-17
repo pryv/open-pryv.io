@@ -364,6 +364,22 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
+    it('[OE08] the platform store (replicated to every core) holds no code, refresh token or access token', async function () {
+      const platformDB = require('storages').platformDB;
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const secrets = [r.code, r.tokenRes.body.refresh_token, r.tokenRes.body.access_token];
+      const keys = await platformDB.listPlatformKvKeys('access-state/oauth');
+      assert.ok(keys.length > 0, 'expected the refresh row to exist');
+      for (const storeKey of keys) {
+        const entry = await platformDB.getAccessState(storeKey.slice('access-state/'.length));
+        const blob = storeKey + ' ' + JSON.stringify(entry);
+        for (const secret of secrets) {
+          assert.ok(!blob.includes(secret), 'platform row carries a credential: ' + storeKey);
+        }
+      }
+    });
+
     it('[OE03] consent downgrade — offer has diary+health, user keeps health only', async function () {
       const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }] });
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));

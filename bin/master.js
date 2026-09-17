@@ -183,6 +183,20 @@ if (cluster.isPrimary) {
       autoRun: autoRunMigrations
     });
 
+    // OAuth refresh tokens used to be stored with the raw token in the
+    // platform-store key (replicated to every core). Move THIS core's rows to
+    // hashed keys before workers serve /oauth2/token. Idempotent; a failure
+    // is logged and retried at next boot (the legacy rows are then unusable
+    // for refresh, so their clients re-authorize).
+    try {
+      const { rekeyLegacyRefreshTokens } = require('../components/oauth2/src/storage.ts');
+      const moved = await rekeyLegacyRefreshTokens(
+        require('../storages/index.ts').platformDB, String(config.get('core:id') ?? 'single'));
+      if (moved > 0) log(`[oauth-refresh-rekey] moved ${moved} refresh-token row(s) to hashed keys`);
+    } catch (e) {
+      warn(`[oauth-refresh-rekey] failed: ${e.message}`);
+    }
+
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'`,
     // populate PlatformDB from a Pug directory if it holds no templates yet.
@@ -216,8 +230,9 @@ if (cluster.isPrimary) {
     const keepAlive = setInterval(() => {}, 60000);
 
     // Periodic sweep of expired access-state rows. OAuth authorization
-    // codes, refresh tokens, and /reg/access request states all live under
-    // the PlatformDB `access-state/` keyspace with a TTL. Expiry is
+    // codes and refresh tokens live under the PlatformDB `access-state/`
+    // keyspace with a TTL (/reg/access request states do not: they are
+    // core-local in cluster_kv, which expires its own entries). Expiry is
     // otherwise LAZY (delete-on-read), so a code or token that is minted and
     // then never presented again would linger as a permanent cluster
     // keyValue row — unbounded growth over the life of the cluster. This
@@ -225,25 +240,23 @@ if (cluster.isPrimary) {
     // best-effort (a failed sweep just retries next interval).
     const sweepIntervalMs = config.get('accessState:sweepIntervalMs') || 15 * 60 * 1000;
     const accessStateSweep = setInterval(() => {
-      const platformDB = require('../storages/index.ts').platformDB;
-      const { revokeOrphanAccess } = require('../components/oauth2/src/orphanAccess.ts');
+      const storagesBarrel = require('../storages/index.ts');
+      const platformDB = storagesBarrel.platformDB;
+      const { revokeExpiredCodeOrphans } = require('../components/oauth2/src/orphanSweep.ts');
       // Revoke the pre-minted access behind each EXPIRED, never-exchanged OAuth
-      // authorization code BEFORE the generic sweep removes the code row. An
-      // expired oauth-code row that still exists was never exchanged (the
-      // /token consume is atomic single-use), so its pre-minted session access
-      // is an orphan — alive until its own (≤1h) TTL. Best-effort: a revoke
-      // failure is accepted (the access then dies by its own TTL) and the row
-      // is swept regardless. Capped per tick to keep the tick bounded.
-      const ORPHAN_REVOKE_MAX_PER_TICK = 300;
-      const revokeOrphans = platformDB.listExpiredAccessStates('oauth-code/')
-        .then(async (rows) => {
-          let revoked = 0;
-          for (const { value } of rows.slice(0, ORPHAN_REVOKE_MAX_PER_TICK)) {
-            const v = value || {};
-            if (typeof v.accessId === 'string' && typeof v.accessToken === 'string' && typeof v.apiEndpoint === 'string') {
-              if (await revokeOrphanAccess({ apiEndpoint: v.apiEndpoint, accessToken: v.accessToken, accessId: v.accessId })) revoked++;
-            }
-          }
+      // authorization code BEFORE the generic sweep removes the code row (see
+      // orphanSweep.ts: this core deletes its own orphans from storage; legacy
+      // rows are revoked over HTTP). Best-effort and capped per tick.
+      const revokeOrphans = revokeExpiredCodeOrphans({
+        platform: platformDB,
+        coreId: String(config.get('core:id') ?? 'single'),
+        revokeLocal: ({ userId, username, accessId }) => new Promise((resolve, reject) => {
+          // Never delivered to a client, so no cached access logic to invalidate.
+          storagesBarrel.storageLayer.accesses.delete({ id: userId, username }, { id: accessId },
+            (err) => (err != null ? reject(err) : resolve()));
+        })
+      })
+        .then((revoked) => {
           if (revoked > 0) log(`[oauth-orphan-revoke] revoked ${revoked} orphaned pre-minted access(es)`);
         })
         .catch((err) => log(`[oauth-orphan-revoke] failed: ${err.message}`));

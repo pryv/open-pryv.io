@@ -53,7 +53,12 @@ function fakePlatform () {
     async getPlatformKv (key) { return kvStore.has(key) ? kvStore.get(key) : null; },
     async deletePlatformKv (key) { kvStore.delete(key); },
     async listPlatformKvKeys (prefix) {
-      return Array.from(kvStore.keys()).filter((k) => k.startsWith(prefix));
+      // Engines keep both families in one table, access-state rows under an
+      // internal `access-state/` namespace, so a raw prefix listing sees both.
+      // Like the engines, refuse SQL LIKE wildcards in the prefix.
+      if (prefix.includes('_') || prefix.includes('%')) throw new Error('listPlatformKvKeys: wildcard in prefix');
+      const all = [...kvStore.keys(), ...Array.from(stateStore.keys()).map((k) => 'access-state/' + k)];
+      return all.filter((k) => k.startsWith(prefix));
     },
     _internalStateStore: stateStore,
     _internalKvStore: kvStore,
@@ -101,7 +106,7 @@ describe('[OAUTH-STORE] storage layer', () => {
     const future = () => Date.now() + 60_000;
     const past = () => Date.now() - 1_000;
 
-    it('[OS-CD1] setCode + getCode round-trip; key is cluster-wide (no coreId)', async () => {
+    it('[OS-CD1] setCode + getCode round-trip; key is oauth-ac/ + sha256(code), raw code in no key', async () => {
       const platform = fakePlatform();
       const payload = {
         clientId: 'app',
@@ -112,10 +117,10 @@ describe('[OAUTH-STORE] storage layer', () => {
         scope: ['pryv:read'],
         expiresAt: future(),
       };
-      await storage.setCode(platform, 'CODE1', payload);
-      // Deliberately NOT core-namespaced: code /token is core-agnostic.
-      assert.ok(platform._internalStateStore.has('oauth-code/CODE1'));
-      const got = await storage.getCode(platform, 'CODE1');
+      await storage.setCode(platform, 'CODE1-RAW-VALUE', payload);
+      assert.ok(platform._internalStateStore.has('oauth-ac/' + storage.hashSecret('CODE1-RAW-VALUE')));
+      assert.ok(![...platform._internalStateStore.keys()].some((k) => k.includes('CODE1-RAW-VALUE')));
+      const got = await storage.getCode(platform, 'CODE1-RAW-VALUE');
       assert.equal(got.codeChallenge, 'cc');
     });
     it('[OS-CD2] getCode returns null when expired (lazy-expire via setAccessState)', async () => {
@@ -145,23 +150,35 @@ describe('[OAUTH-STORE] storage layer', () => {
       await storage.deleteCode(platform, 'CODE3');
       assert.equal(await storage.getCode(platform, 'CODE3'), null);
     });
-    it('[OS-CD4] the code key is cluster-wide — the same code resolves from any core', async () => {
-      // Codes are NOT core-namespaced: `/accept` may mint on one core and an
-      // LB may route `/token` to another; the exchange is core-agnostic (the
-      // access is already minted; the row carries the home-core apiEndpoint).
+    it('[OS-CD4] consumeCode reads a legacy oauth-code/<raw> row once, flagged legacy', async () => {
+      // A code minted by a core before hashed keys (token in the row) must
+      // still complete its exchange across the upgrade.
       const platform = fakePlatform();
-      await storage.setCode(platform, 'SAME', {
+      await platform.setAccessState('oauth-code/LEGACY-CODE', {
+        clientId: 'A', accessId: 'acc', accessToken: 'tok', apiEndpoint: 'https://tok@u.pryv.me/', expiresAt: future(),
+      }, future());
+      const row = await storage.consumeCode(platform, 'LEGACY-CODE');
+      assert.equal(row.legacy, true);
+      assert.equal(row.accessToken, 'tok');
+      assert.equal(await storage.consumeCode(platform, 'LEGACY-CODE'), null, 'single-use');
+    });
+    it('[OS-CD5] consumeCode on a current row returns it without the legacy flag', async () => {
+      const platform = fakePlatform();
+      await storage.setCode(platform, 'CUR', {
         clientId: 'A',
-        redirectUri: 'https://x/cb',
+        redirectUri: 'x',
         codeChallenge: 'cc',
         codeChallengeMethod: 'S256',
         userId: 'u',
         scope: [],
         expiresAt: future(),
+        accessId: 'acc',
+        coreId: 'core-a',
       });
-      // A code minted anywhere resolves via one cluster-wide key.
-      assert.equal((await storage.getCode(platform, 'SAME')).clientId, 'A');
-      assert.ok(platform._internalStateStore.has('oauth-code/SAME'));
+      const row = await storage.consumeCode(platform, 'CUR');
+      assert.equal(row.coreId, 'core-a');
+      assert.equal(row.legacy, undefined);
+      assert.equal(await storage.consumeCode(platform, 'CUR'), null);
     });
   });
 
@@ -205,6 +222,44 @@ describe('[OAUTH-STORE] storage layer', () => {
       await storage.setRefresh(platform, 'core-b', 'SAME', sample({ userId: 'B' }));
       assert.equal((await storage.getRefresh(platform, 'core-a', 'SAME')).userId, 'A');
       assert.equal((await storage.getRefresh(platform, 'core-b', 'SAME')).userId, 'B');
+    });
+    it('[OS-RT5] refresh key is oauth-rt/<core>/ + sha256(token); raw token in no key', async () => {
+      const platform = fakePlatform();
+      await storage.setRefresh(platform, 'core-a', 'RT5-RAW-VALUE', sample());
+      assert.ok(platform._internalStateStore.has('oauth-rt/core-a/' + storage.hashSecret('RT5-RAW-VALUE')));
+      assert.ok(![...platform._internalStateStore.keys()].some((k) => k.includes('RT5-RAW-VALUE')));
+    });
+  });
+
+  describe('[OS-MIG] legacy refresh-token re-key', () => {
+    const row = (userId, expiresAt) => ({ clientId: 'app', userId, scope: [], expiresAt, absoluteExpiresAt: expiresAt });
+
+    it('[OS-MIG1] moves this core\'s raw-key rows to hashed keys, same value and expiry, and only this core\'s', async () => {
+      const platform = fakePlatform();
+      const exp = Date.now() + 60_000;
+      await platform.setAccessState('oauth-refresh/core_a/TOK1', row('u1', exp), exp);
+      await platform.setAccessState('oauth-refresh-used/core_a/TOK2', { clientId: 'app', userId: 'u2', consumedAt: 1 }, exp);
+      await platform.setAccessState('oauth-refresh/core-b/TOK3', row('u3', exp), exp);
+
+      const moved = await storage.rekeyLegacyRefreshTokens(platform, 'core_a');
+      assert.equal(moved, 2);
+      const keys = [...platform._internalStateStore.keys()];
+      assert.ok(!keys.includes('oauth-refresh/core_a/TOK1'));
+      assert.ok(!keys.includes('oauth-refresh-used/core_a/TOK2'));
+      assert.equal((await storage.getRefresh(platform, 'core_a', 'TOK1')).userId, 'u1');
+      assert.equal(platform._internalStateStore.get('oauth-rt/core_a/' + storage.hashSecret('TOK1')).expiresAt, exp);
+      assert.equal((await storage.getRefreshConsumed(platform, 'core_a', 'TOK2')).userId, 'u2');
+      // another core's row is left to that core
+      assert.ok(keys.includes('oauth-refresh/core-b/TOK3'));
+
+      assert.equal(await storage.rekeyLegacyRefreshTokens(platform, 'core_a'), 0, 'idempotent');
+    });
+    it('[OS-MIG2] drops an expired legacy row instead of moving it', async () => {
+      const platform = fakePlatform();
+      const past = Date.now() - 1000;
+      await platform.setAccessState('oauth-refresh/core-a/OLD', row('u', past), past);
+      assert.equal(await storage.rekeyLegacyRefreshTokens(platform, 'core-a'), 0);
+      assert.equal(platform._internalStateStore.size, 0);
     });
   });
 

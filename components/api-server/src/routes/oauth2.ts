@@ -543,6 +543,38 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
 
+  // ---------------------------------------------------------------------
+  // resolveAccess / revokeAccessLocal: the authorization_code exchange
+  // reads back the access pre-minted at /accept (the code row carries its
+  // id, not its token, since the platform store is replicated to every
+  // core), and deletes it when the exchange fails after the code was
+  // consumed. Storage-direct on this core, which is the issuing core.
+  // ---------------------------------------------------------------------
+  async function resolveAccess ({ userId, username, accessId }: {
+    userId: string; username: string; accessId: string;
+  }): Promise<{ accessToken: string; apiEndpoint: string } | null> {
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
+    if (accessesRepository == null) throw new Error('oauth2.resolveAccess: storageLayer.accesses unavailable');
+    const access = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+      accessesRepository.findOne({ id: userId, username }, { id: accessId }, null, cb));
+    if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
+    if (typeof access.expires === 'number' && access.expires <= Math.floor(Date.now() / 1000)) return null;
+    const ApiEndpoint = require('utils').ApiEndpoint;
+    return { accessToken: access.token, apiEndpoint: ApiEndpoint.build(username, access.token) };
+  }
+
+  async function revokeAccessLocal ({ userId, username, accessId }: {
+    userId: string; username: string; accessId: string;
+  }): Promise<void> {
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
+    if (accessesRepository == null) throw new Error('oauth2.revokeAccessLocal: storageLayer.accesses unavailable');
+    const user = { id: userId, username };
+    await fromCallback((cb: (e: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
+    // The cache validates tokens on `expires` only, never `deleted`.
+    cache.unsetUserData(userId);
+    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+  }
+
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
@@ -681,6 +713,8 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     resolveAccountUserId,
     revokeChain,
     bindAccessDpop,
+    resolveAccess,
+    revokeAccessLocal,
     resolveUser,
     createAccess,
   });

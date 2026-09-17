@@ -1,5 +1,33 @@
 # Changelog - Internal (no API impact)
 
+## Credentials out of the replicated platform store
+
+**`/reg/access` state** (`api-server/src/routes/reg/accessState.ts`) moved from
+PlatformDB `access-state/<key>` rows to the core-local `cluster_kv` store (namespace
+`access-request/`), the master-held map MFA sessions already use. The PlatformDB
+choice was made to share state across `cluster.fork()` workers (issue #67); the
+replication to every core was a side effect, and it put the ACCEPTED token and the
+username on every core's disk. Nothing about a request is needed on another core:
+the poll URL is the entry core's own. New `markDelivered()` shortens the life of a
+terminal state to `access:terminalRetentionMs` after the first poll that reads it.
+The cross-worker regression test (`[XS12]`) now runs the `cluster_kv` master handler
+in the test process for the forked children (`clusterFixture` option `kvMaster`), so
+the children no longer open rqlite.
+
+**OAuth2 storage** (`oauth2/src/storage.ts`): codes and refresh tokens are keyed by
+the SHA-256 of their value (`oauth-ac/`, `oauth-rt/<coreId>/`, `oauth-rt-used/<coreId>/`),
+and the code row no longer carries `accessToken` / `apiEndpoint`, only `accessId` and
+the issuing `coreId`. The code grant reads the access back from local storage through
+a new `resolveAccess` dependency and refuses a row issued by another core; a failed
+exchange deletes the orphaned access through `revokeAccessLocal` (storage-direct),
+and the master's expired-code pass (extracted to `oauth2/src/orphanSweep.ts`) deletes
+this core's orphans locally. Migration: `rekeyLegacyRefreshTokens` runs in the master
+after migrations and moves this core's `oauth-refresh[-used]/` rows to hashed keys;
+`consumeCode` still reads a legacy `oauth-code/<code>` row once (to be removed in the
+following release), and legacy orphans keep the HTTP self-revoke. `INTERNALS.md` no
+longer describes a `forwardIfCrossCore` hop at `/oauth2/token` that never existed, and
+names the client-secret hash correctly (bcrypt).
+
 ## event-types dictionary: load-state tracking, bounded fetch, boot await + background retry
 
 The type repository (`business/src/types.ts`) now tracks whether the published

@@ -9,15 +9,17 @@
  * OAuth2 — `grant_type=authorization_code` handler.
  *
  * Exchange flow:
- *   1. Load the code row (key: `oauth-code/<coreId>/<code>`). The row
- *      carries the already-minted access details — see accept.ts for
- *      why creation happens at /accept, not here.
- *   2. Delete the row atomically (single-use; reuse → invalid_grant).
- *   3. Verify PKCE: SHA256(code_verifier) base64url == codeChallenge.
- *   4. Verify client_id + redirect_uri match the row.
- *   5. Mint a refresh token CUID, persist via storage.setRefresh.
+ *   1. Consume the code row atomically (key: `oauth-ac/<sha256(code)>`;
+ *      single-use, reuse → invalid_grant). The row carries the id of the
+ *      access minted at /accept (see accept.ts for why creation happens
+ *      there) and the id of the core that minted it, never its token.
+ *   2. Verify PKCE: SHA256(code_verifier) base64url == codeChallenge.
+ *   3. Verify client_id + redirect_uri match the row.
+ *   4. Read the access back from this core's storage (it must be the
+ *      issuing core: the token is not in the platform store).
+ *   5. Mint a refresh token, persist via storage.setRefresh.
  *   6. Return RFC 6749 §5.1 JSON + Pryv `apiEndpoint` extension for the
- *      multi-core home-core hint, both pulled from the stored row.
+ *      multi-core home-core hint.
  *
  * Reuse-detection (T-05 mitigation): a second presentation of an
  * already-deleted code SHOULD trigger a cluster-wide revoke of every
@@ -30,12 +32,23 @@ import crypto from 'node:crypto';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { generateToken } from '../secureToken.ts';
 import * as storage from '../storage.ts';
-import type { OAuthCode } from '../storage.ts';
+import type { OAuthCode, LegacyOAuthCode } from '../storage.ts';
 import { audit } from '../audit.ts';
 import { getClient } from '../clientRegistry.ts';
 import { authenticateClient } from '../clientSecret.ts';
 import { tokenEndpointAudiences } from '../issuer.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
+import { logServerError } from '../serverLog.ts';
+
+/** Read a live access from this core's storage; null when absent, deleted or expired. */
+export type AuthCodeAccessResolver = (params: {
+  userId: string; username: string; accessId: string;
+}) => Promise<{ accessToken: string; apiEndpoint: string } | null>;
+
+/** Delete an access from this core's storage (best-effort orphan cleanup). */
+export type AuthCodeAccessRevoker = (params: {
+  userId: string; username: string; accessId: string;
+}) => Promise<void>;
 
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
@@ -48,6 +61,10 @@ export type AuthCodeDeps = {
   bindAccessDpop?: (params: {
     userId: string; username: string; accessId: string; jkt: string;
   }) => Promise<void>;
+  /** Reads the pre-minted access back by id (its token is not in the code row). */
+  resolveAccess?: AuthCodeAccessResolver;
+  /** Deletes an orphaned pre-minted access from this core's storage. */
+  revokeAccessLocal?: AuthCodeAccessRevoker;
 };
 
 export type GrantParams = {
@@ -120,16 +137,27 @@ export async function handleAuthorizationCode (
   // runs the rest of the flow; the single guarded exit below then revokes that
   // orphan on ANY failure return — present or future branch — so an abandoned
   // access is not left alive until its own TTL. The success path returns the
-  // access to the client, so it is (correctly) not revoked. Revoke only when
-  // the row carries complete access details (the missing-details 500 has
-  // nothing complete to delete).
+  // access to the client, so it is (correctly) not revoked. The access lives
+  // on the issuing core, so only that core can delete it from storage; a row
+  // from before hashed codes still carries the token and is revoked over HTTP.
   const outcome = await completeExchange(row);
-  if (!outcome.ok && row.accessId != null && row.accessToken != null && row.apiEndpoint != null) {
-    await revokeOrphanAccess({ apiEndpoint: row.apiEndpoint, accessToken: row.accessToken, accessId: row.accessId });
+  if (!outcome.ok && row.accessId != null) {
+    if (isLegacy(row)) {
+      if (row.accessToken != null && row.apiEndpoint != null) {
+        await revokeOrphanAccess({ apiEndpoint: row.apiEndpoint, accessToken: row.accessToken, accessId: row.accessId });
+      }
+    } else if (row.coreId === coreId && typeof deps.revokeAccessLocal === 'function') {
+      try {
+        await deps.revokeAccessLocal({ userId: row.userId, username: row.username, accessId: row.accessId });
+      } catch (err) {
+        // Best-effort: the access then dies by its own (short) TTL.
+        logServerError('authorization_code: orphan access revoke failed', err);
+      }
+    }
   }
   return outcome;
 
-  async function completeExchange (row: OAuthCode): Promise<
+  async function completeExchange (row: OAuthCode | LegacyOAuthCode): Promise<
     | { ok: true; body: Record<string, unknown> }
     | { ok: false; status: number; error: string; description?: string }
   > {
@@ -170,11 +198,14 @@ export async function handleAuthorizationCode (
       return { ok: false, status: auth.status, error: auth.error, description: auth.description };
     }
 
-    if (!row.accessToken || !row.accessId || !row.apiEndpoint) {
+    if (!row.accessId) {
       // Should not happen if accept.ts ran cleanly. Defensive guard so a
       // future refactor doesn't silently return a half-formed response.
       return { ok: false, status: 500, error: 'server_error', description: 'code row missing access details (accept-time provisioning skipped?)' };
     }
+    const issued = await resolveIssuedAccess(row, row.accessId);
+    if (!issued.ok) return issued;
+    const { accessToken, apiEndpoint } = issued;
 
     // DPoP binding (RFC 9449 §5): stamp the pre-minted access with the
     // proof key's thumbprint BEFORE issuing any credential — a binding
@@ -230,13 +261,57 @@ export async function handleAuthorizationCode (
     return {
       ok: true,
       body: {
-        access_token: row.accessToken,
+        access_token: accessToken,
         token_type: dpopJkt != null ? 'DPoP' : 'Bearer',
         expires_in: accessTokenTTL,
         refresh_token: refreshToken,
         scope: row.scope.join(' '),
-        apiEndpoint: row.apiEndpoint,
+        apiEndpoint,
       },
     };
   }
+
+  /**
+   * The access pre-minted at /accept, as the client receives it. A legacy
+   * row still carries it; a current row carries only its id, and only the
+   * issuing core can read the token from its own storage.
+   */
+  async function resolveIssuedAccess (row: OAuthCode | LegacyOAuthCode, accessId: string): Promise<
+    | { ok: true; accessToken: string; apiEndpoint: string }
+    | { ok: false; status: number; error: string; description?: string }
+  > {
+    if (isLegacy(row)) {
+      if (!row.accessToken || !row.apiEndpoint) {
+        return { ok: false, status: 500, error: 'server_error', description: 'code row missing access details (accept-time provisioning skipped?)' };
+      }
+      return { ok: true, accessToken: row.accessToken, apiEndpoint: row.apiEndpoint };
+    }
+    if (row.coreId !== coreId) {
+      // The exchange must reach the core that ran /accept (the issuer
+      // resolves to the user's home core, see wellKnown.ts). Uniform answer
+      // to the client; the routing fault is for the operator.
+      logServerError('authorization_code: code issued by core "' + String(row.coreId) +
+        '" was presented to core "' + coreId + '"; check issuer routing', null);
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
+    }
+    if (typeof deps.resolveAccess !== 'function') {
+      return { ok: false, status: 500, error: 'server_error', description: 'access resolution is not wired on this deployment' };
+    }
+    let resolved;
+    try {
+      resolved = await deps.resolveAccess({ userId: row.userId, username: row.username, accessId });
+    } catch (err) {
+      logServerError('authorization_code: access resolution failed', err);
+      return { ok: false, status: 500, error: 'server_error', description: 'failed to read the issued access' };
+    }
+    if (resolved == null) {
+      // Deleted or expired between /accept and /token.
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'the authorized access is no longer valid' };
+    }
+    return { ok: true, accessToken: resolved.accessToken, apiEndpoint: resolved.apiEndpoint };
+  }
+}
+
+function isLegacy (row: OAuthCode | LegacyOAuthCode): row is LegacyOAuthCode {
+  return (row as LegacyOAuthCode).legacy === true;
 }
