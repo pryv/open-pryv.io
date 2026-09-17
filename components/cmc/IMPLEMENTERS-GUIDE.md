@@ -342,7 +342,7 @@ await patientConnection.api([
 ]);
 ```
 
-Patient's plugin delivers refuse via capability. No accesses created.
+Patient's plugin delivers refuse via capability. No accesses created. On the doctor's side the request moves to `status: 'refused'`; the link is not consumed, so the patient may still accept it later.
 
 ## Revocation (later)
 
@@ -400,10 +400,15 @@ const requests = await doctorConnection.api([
   }}
 ]);
 
-// Each event's content.status is one of:
-//   'pending' | 'delivered' | 'completed' | 'failed'
-// On completion: content.acceptedBy = { username, host }, content.accessIds = { dataGrant, backChannel }
-// On failure:    content.failure   = { reason, detail? }
+// Each request's content.status is one of:
+//   'pending' | 'delivered'                 still open
+//   'accepted'                              single-use: content.acceptedBy = { username, host },
+//                                           content.acceptedAt, content.backChannelAccessId
+//   'refused'                               single-use: content.refusedBy, content.refusedAt, content.reason
+//   'revoked'                               single-use relationship withdrawn: content.revokedAt
+//   'invalidated'                           open-link closed: content.invalidatedAt
+// An open-link request stays 'pending' / 'delivered' while it accepts joiners;
+// who joined is listed by the relationship accesses (see "Inspecting accepters").
 ```
 
 Subscribe to your trigger streams via the standard socket.io monitor to see status updates land in real time.
@@ -1029,9 +1034,6 @@ Common content fields the plugin adds/updates on triggers:
 ```ts
 {
   status: 'pending' | 'delivered' | 'completed' | 'failed',
-  // On 'completed':
-  acceptedBy?:           { username, host },     // for consent/request-cmc once accepted
-  accessIds?:            { dataGrant, backChannel },
   dataGrantAccessId?:    string,                 // for consent/accept-cmc
   backChannelAccessId?:  string,                 // for consent/accept-cmc
   newAccessId?:          string,                 // for consent/scope-update-cmc
@@ -1039,6 +1041,22 @@ Common content fields the plugin adds/updates on triggers:
   failure?: { reason: string, detail?: string }
 }
 ```
+
+A `consent/request-cmc` trigger is not dispatched like the others: its `status` reports the invite's outcome, written by the requester's core.
+
+```ts
+{
+  status: 'pending' | 'delivered'                   // still open
+        | 'accepted' | 'refused' | 'revoked'        // single-use
+        | 'invalidated',                            // open-link
+  acceptedBy?:          { username, host },  acceptedAt?: number,  backChannelAccessId?: string,
+  refusedBy?:           { username, host },  refusedAt?:  number,  reason?: object,
+  revokedAt?:           number,
+  invalidatedAt?:       number,
+}
+```
+
+A refusal does not consume a single-use link: the same party may still accept it, and the request then moves from `refused` to `accepted`. An open-link request never records one party's answer; it stays open until `invalidated`, and who joined is read from the relationship accesses (see [Inspecting accepters](#inspecting-accepters)).
 
 Cross-scope projection (`:_cmc:state` summary) is **deferred to v2**, apps that need it can aggregate by reading from their own scope streams in v1.
 
@@ -1123,10 +1141,10 @@ A capability access is a regular Pryv `shared` access on the requester's account
 - **Permissions:**
   - `read` on `:_cmc:_internal:offer:<capId>`
   - `create-only` on `:_cmc:_internal:responses:<capId>`
-- **`clientData.cmc`:** `{ kind: 'capability', requestEventId, capabilityId: '<capId>', capability: { mode, state, stateChangedAt, [acceptedBy] }, singleUse: <bool> }`
+- **`clientData.cmc`:** `{ kind: 'capability', requestEventId, capabilityId: '<capId>', capability: { mode, state, stateChangedAt }, singleUse: <bool> }` (a `capability.acceptedBy` array left by older releases is ignored)
 - **Expiry:** 7 days default (code constant, not operator-configurable); requester sets `content.request.expiresAt` per invite: [60 s, 30 d] for single-use, at least 60 s with no upper bound for open-link, or `null` (open-link only) for no expiry.
 - **Lifecycle:** single-use flips `clientData.cmc.capability.state` to `consumed` on the first accept; open-link stays `open` until `invalidated`. The access and its two streams are kept (not garbage-collected) so re-clicks get typed errors; `gcCapability` is available for operator-driven cleanup only.
-- **Hidden:** filtered from `accesses.get` by default. The per-capability streams are likewise plugin-managed and not enumerated by regular `streams.get`.
+- **Listing:** returned by `accesses.get` like any access; select with `clientData.cmc.kind === 'capability'`. The per-capability streams are plugin-managed and not enumerated by regular `streams.get`.
 
 The access's `apiEndpoint` is the capability URL. The recipient's plugin opens it as a standard `pryv.Connection(url)` during accept orchestration.
 
@@ -1160,7 +1178,7 @@ Plugin mints a new capability; old one stays deleted.
 
 A capability minted with `mode: 'open-link'` accepts **multiple counterparties** until the requester explicitly invalidates the link. Use this for a doctor publishing a multi-patient study invite, an operator distributing a single QR code to a population, or any "many recipients, one URL" workflow.
 
-Single-use mode (the default) auto-consumes on the first accept and rejects all subsequent re-clicks with `cmc-capability-consumed`. Open-link mode does NOT auto-consume, instead the plugin appends each accepter to `clientData.cmc.capability.acceptedBy` and lets the relationship handshake (data-grant + back-channel) proceed exactly as in single-use mode.
+Single-use mode (the default) auto-consumes on the first accept and rejects all subsequent re-clicks with `cmc-capability-consumed`. Open-link mode does NOT auto-consume: each accept runs the relationship handshake (data-grant + back-channel) exactly as in single-use mode, and the back-channel access it mints on the requester side is the record of that join.
 
 ## When to use `mode: 'open-link'`
 
@@ -1199,32 +1217,24 @@ The trigger gets `content.capabilityUrl` exactly as in single-use mode; that URL
 
 ## Multi-accept semantics
 
-Each patient who opens the capability URL and writes `consent/accept-cmc` triggers the standard handshake (data-grant on the patient's side, back-channel on the doctor's side). After each successful accept, the doctor's `clientData.cmc.capability.acceptedBy` array on the capability access grows by one entry:
-
-```js
-acceptedBy: [
-  { username: 'alice', host: 'pryv.me',  acceptedAt: 1715000000 },
-  { username: 'bob',   host: 'example.com', acceptedAt: 1715000123 },
-  { username: 'carol', host: 'other.org', acceptedAt: 1715000456 }
-]
-```
+Each patient who opens the capability URL and writes `consent/accept-cmc` triggers the standard handshake (data-grant on the patient's side, back-channel on the doctor's side). Each back-channel access carries the capability's id (`clientData.cmc.capabilityId`), so the doctor's joined patients are exactly those accesses (see [Inspecting accepters](#inspecting-accepters)). Accepts do not write to the capability access or to the request event, so concurrent accepts cannot lose one another.
 
 The capability access `state` stays `'open'` across all accepts.
 
-An open-link capability records every accepter on the access and rewrites that list on each accept; it suits cohorts of hundreds, not tens of thousands.
+Each accept on the requester side still reads the account's access list (to refuse a same-patient re-click), so its cost grows with the number of accesses on the doctor's account.
 
 ## Same-patient re-click
 
-If the same `{ username, host }` tries to accept again via the same capability URL, the responses-stream write-hook detects them in `acceptedBy` and rejects with:
+If a `{ username, host }` that still holds a relationship through this link tries to accept again via the same capability URL, the responses-stream write-hook finds that relationship access and rejects with:
 
 ```
 error.id: 'cmc-capability-already-accepted-by-you'
-error.data: { acceptedAt: <unix-seconds> }
+error.data: { acceptedAt: <unix-seconds> }   // creation time of the existing relationship access
 ```
 
 On the accepter's side, the `consent/accept-cmc` trigger fails with `failure.reason: 'cmc-capability-already-accepted-by-you'`; `failure.detail` carries the peer's response body. The same applies to `cmc-capability-consumed` and `cmc-capability-invalidated`. These reasons are not retried.
 
-Match is case-insensitive on `username` and uses the same host-slugification rule as `counterpartySlug` (so `Alice` at `PRYV.me` matches an existing `alice` at `pryv.me`). Patient-side UX: show "you already accepted this invite, you don't need to act again." NO new back-channel access is minted; the doctor's account is not touched.
+Match is case-insensitive on `username` and uses the same host-slugification rule as `counterpartySlug` (so `Alice` at `PRYV.me` matches an existing `alice` at `pryv.me`). Patient-side UX: show "you already accepted this invite, you don't need to act again." NO new back-channel access is minted; the doctor's account is not touched. A patient whose relationship was revoked (by either side) has no such access any more and can join again through the same link.
 
 ## Invalidation (requester-side)
 
@@ -1262,15 +1272,16 @@ For per-relationship teardown, "I want to terminate my relationship with alice s
 
 ## Inspecting accepters
 
-The doctor's dashboard can enumerate the patients who claimed a capability:
+The doctor's dashboard can enumerate the patients currently joined through a capability, from the same `accesses.get` result:
 
 ```js
-const cap = capabilityAccesses.find((a) => a.clientData.cmc.capabilityId === 'cap-xyz');
-const accepters = cap?.clientData?.cmc?.capability?.acceptedBy ?? [];
-// Each entry: { username, host, acceptedAt }
+const accepters = accesses
+  .filter((a) => a.clientData?.cmc?.role === 'counterparty' &&
+                 a.clientData.cmc.capabilityId === 'cap-xyz')
+  .map((a) => ({ ...a.clientData.cmc.counterparty, acceptedAt: a.created, backChannelAccessId: a.id }));
 ```
 
-Combined with `state` (`'open'` / `'invalidated'`), this gives a one-round-trip view of the open-link lifecycle.
+Combined with the capability `state` (`'open'` / `'invalidated'`), this gives a one-round-trip view of the open-link lifecycle. `@pryv/cmc` wraps it as `listInviteAccepters`.
 
 ---
 
@@ -1319,9 +1330,9 @@ npm package.
 | Constant | Value | When it fires |
 |---|---|---|
 | `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 403 on current cores, `invalid-access-token` for an unknown token and `forbidden` for an expired one; 401 is mapped the same way). Covers "token never existed" + "token expired past TTL", auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
-| `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted/refused in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
+| `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
 | `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester via `consent/invalidate-link-cmc`. **Open-link mode** use case, the requester closed the link to new accepters. Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected; use `consent/revoke-cmc` for per-relationship teardown. See [Open-link capability](#reference--open-link-capability). |
-| `CAPABILITY_ALREADY_ACCEPTED_BY_YOU` | `cmc-capability-already-accepted-by-you` | Open-link mode same-patient re-click. The `{username, host}` from the incoming accept matches an entry in the capability's `acceptedBy` list. Patient-side UX: "you already accepted this invite." `error.data.acceptedAt` carries the original accept's unix-seconds timestamp. |
+| `CAPABILITY_ALREADY_ACCEPTED_BY_YOU` | `cmc-capability-already-accepted-by-you` | Open-link mode same-patient re-click. The `{username, host}` from the incoming accept still holds a relationship through this capability on the requester's account. Patient-side UX: "you already accepted this invite." `error.data.acceptedAt` carries the creation time (unix seconds) of that relationship. |
 | `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
 | `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation, investigate. |
 | `CAPABILITY_MULTIPLE_OFFERS` | `cmc-capability-multiple-offers` | Capability resolved but the offer stream held more than one event. Protocol invariant violation. |
@@ -1366,8 +1377,12 @@ npm package.
 # Reference: "Did the patient click my invite yet?"
 
 The doctor's app wants to display the state of every outstanding
-invite without polling the inbox continuously. Two complementary
-query paths cover the common cases, no dedicated `/cmc/*` API:
+invite without polling the inbox continuously. The simplest answer is
+the request event itself: its `content.status` reports `accepted`,
+`refused`, `revoked` or `invalidated` (see "State as trigger-event
+content"), and a socket.io monitor on the trigger stream sees each
+change. Two complementary query paths cover the rest, no dedicated
+`/cmc/*` API:
 
 **Path 1, query the capability accesses directly (best for dashboards).**
 The capability lifecycle stamps the capability state on the access:
@@ -1420,10 +1435,10 @@ monitor.on('event', (event) => {
     // event.content.capabilityId                   , match against the doctor's invite
     // event.content.grantedAccess.apiEndpoint      , the doctor's data-grant
     updateDashboardRow(event.content.capabilityId, 'accepted');
-  } else if (event.type === 'consent/refuse-cmc') {
-    updateDashboardRow(event.content.capabilityId, 'refused');
   }
 });
+// A refusal is not mirrored to :_cmc:inbox: watch the request event's
+// content.status ('refused') on the trigger stream instead.
 await monitor.start();
 ```
 
@@ -1584,7 +1599,7 @@ What CMC does NOT solve here: if the bridge needs to read patient data streams (
 | `event-validation-failed` | trigger create | Content schema mismatch. | Fix payload. |
 | `cmc-not-counterparty` | inbox delivery (plugin internal) | Plugin rejected an inbound write, actor isn't a counterparty access. Shouldn't be visible to apps unless your access lost its counterparty marker. | Check `clientData.cmc.role` on the access. |
 | `cmc-event-type-not-allowed` | inbox delivery | Counterparty tried to write a type its role doesn't permit. | Check the role-vs-type table. |
-| `cmc-capability-consumed` | trigger status `failed` | Capability was single-use; someone accepted or refused it first. | Capability is dead; ask for a re-issue. |
+| `cmc-capability-consumed` | trigger status `failed` | Capability was single-use and someone accepted it first. | Capability is dead; ask for a re-issue. |
 | `cmc-capability-invalid` | trigger status `failed` | The capability URL no longer authenticates: its `request.expiresAt` has passed, or the token never existed. Not applicable to open-link invites issued without expiry (unless the URL is wrong). | Ask requester to re-issue. |
 | `stale-access-id` | trigger status `failed` | Composite `accessId` isn't current head. | Re-read via `accesses.get`; retry. |
 | `scope-update-offending-children` | trigger status `failed` (creator side) | permission-chain rule violated locally. | Adjust permissions. |

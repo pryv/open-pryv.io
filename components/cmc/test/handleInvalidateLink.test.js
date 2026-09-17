@@ -177,4 +177,57 @@ describe('[CMCIL] cmc/handleInvalidateLink', () => {
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'cmc-handler-missing-capability-id');
   });
+
+  function withInvite (mall, triggerId, opts = {}) {
+    const invite = { id: triggerId, type: 'consent/request-cmc', content: { status: 'delivered', capability: { mode: 'open-link' } } };
+    mall.events.getOne = async (userId, id) => (id === invite.id ? invite : null);
+    mall.events.update = async (userId, event) => {
+      if (opts.throws) throw new Error('storage down');
+      Object.assign(invite, event);
+      return event;
+    };
+    return invite;
+  }
+
+  it('[CMCIL-E] open-link: the invite trigger is marked invalidated with the reason', async () => {
+    const mall = fakeMall();
+    const invite = withInvite(mall, OPEN_LINK_TRIGGER.id);
+    await mintCapability({
+      userId: 'u1', triggerEvent: OPEN_LINK_TRIGGER, deps: { mall, idGen: () => 'cap-il-e', now: () => 1000 },
+    });
+    const result = await handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: {
+        id: 'evt-il-e',
+        type: 'consent/invalidate-link-cmc',
+        streamIds: [':_cmc:apps:my-app'],
+        content: { capabilityId: 'cap-il-e', reason: { en: 'study closed' } },
+      },
+      deps: { mall },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(invite.content.status, 'invalidated');
+    assert.equal(typeof invite.content.invalidatedAt, 'number');
+    assert.deepEqual(invite.content.reason, { en: 'study closed' });
+  });
+
+  it('[CMCIL-F] a failing invite write does not fail the invalidation', async () => {
+    const mall = fakeMall();
+    withInvite(mall, OPEN_LINK_TRIGGER.id, { throws: true });
+    const r = await mintCapability({
+      userId: 'u1', triggerEvent: OPEN_LINK_TRIGGER, deps: { mall, idGen: () => 'cap-il-f', now: () => 1000 },
+    });
+    const result = await handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: {
+        id: 'evt-il-f',
+        type: 'consent/invalidate-link-cmc',
+        streamIds: [':_cmc:apps:my-app'],
+        content: { capabilityId: 'cap-il-f' },
+      },
+      deps: { mall, logger: { warn: () => {}, debug: () => {} } },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'invalidated');
+  });
 });

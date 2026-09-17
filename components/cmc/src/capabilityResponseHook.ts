@@ -34,18 +34,18 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
-const slugMod = require('./slug.ts');
+const capabilityMod = require('./capability.ts');
+
+import type { CmcLogger, MallAccessesLike } from './_types.ts';
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
 };
 
-type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number; [k: string]: unknown };
 type CapabilityCd = {
   state?: string;
   mode?: string;
   stateChangedAt?: number;
-  acceptedBy?: AcceptedByEntry[];
   [k: string]: unknown;
 };
 type NewEventLike = {
@@ -54,7 +54,8 @@ type NewEventLike = {
 };
 type MwContext = {
   newEvent?: NewEventLike;
-  access?: { clientData?: { cmc?: { capability?: CapabilityCd; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown };
+  user?: { id?: string };
+  access?: { clientData?: { cmc?: { capabilityId?: string | null; capability?: CapabilityCd; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown };
   [k: string]: unknown;
 };
 type MwNext = (err?: unknown) => void;
@@ -62,8 +63,16 @@ type Middleware = (context: MwContext, params: unknown, result: unknown, next: M
 
 const { CmcErrorIds } = require('./errorIds.ts');
 
-function createCapabilityResponseHook (deps: { errors: ErrorFactory }): Middleware {
-  return function cmcCapabilityResponseHook (context, _params, _result, next) {
+/**
+ * `mall` is optional: without it the open-link re-click check is skipped (unit
+ * constructions that only exercise the state gate).
+ */
+function createCapabilityResponseHook (deps: {
+  errors: ErrorFactory;
+  mall?: { accesses: MallAccessesLike };
+  logger?: CmcLogger;
+}): Middleware {
+  return async function cmcCapabilityResponseHook (context, _params, _result, next) {
     const event = context?.newEvent;
     if (event == null) return next();
     const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
@@ -96,31 +105,35 @@ function createCapabilityResponseHook (deps: { errors: ErrorFactory }): Middlewa
       ));
     }
     // Open-link mode same-patient re-click detection: when the access
-    // is still 'open' but the incoming `content.from.{username, host}`
-    // matches an entry in the capability's `acceptedBy` list, reject
+    // is still 'open' and the incoming `content.from.{username, host}`
+    // still holds a live relationship through this capability, reject
     // with `cmc-capability-already-accepted-by-you`. Lets the patient
     // app distinguish "I already clicked this" from "this is a fresh
-    // invite still claimable by someone else."
-    if (state === 'open' && capabilityCd.mode === 'open-link') {
-      const acceptedBy: AcceptedByEntry[] = Array.isArray(capabilityCd.acceptedBy)
-        ? capabilityCd.acceptedBy
-        : [];
-      const from = event?.content?.from;
-      if (acceptedBy.length > 0 && from != null &&
-          typeof from.username === 'string' && from.username.length > 0 &&
-          typeof from.host === 'string' && from.host.length > 0) {
-        const fromKey = from.username.toLowerCase() + '|' + slugMod.slugifyHost(from.host);
-        const match = acceptedBy.find((a: AcceptedByEntry) =>
-          a != null && typeof a === 'object' &&
-          typeof a.username === 'string' && typeof a.host === 'string' &&
-          (a.username.toLowerCase() + '|' + slugMod.slugifyHost(a.host)) === fromKey
-        );
-        if (match != null) {
-          return next(deps.errors.invalidOperation(
-            'You have already accepted this open-link consent',
-            { id: CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU, acceptedAt: match.acceptedAt }
-          ));
-        }
+    // invite still claimable by someone else." A subject whose
+    // relationship was revoked can join again. `acceptedBy` arrays left on
+    // older capability accesses are not consulted.
+    const capabilityId = context?.access?.clientData?.cmc?.capabilityId;
+    const userId = context?.user?.id;
+    if (state === 'open' && capabilityCd.mode === 'open-link' && deps.mall != null &&
+        typeof capabilityId === 'string' && typeof userId === 'string') {
+      let live = null;
+      try {
+        live = await capabilityMod.findLiveRelationshipForCapability({
+          userId, capabilityId, counterparty: event?.content?.from, deps: { mall: deps.mall },
+        });
+      } catch (err: unknown) {
+        // Fail open: a lookup error must not lock subjects out of the link. A
+        // same-subject re-accept that slips through heals the existing
+        // relationship in place.
+        deps.logger?.warn?.('cmc/capabilityResponseHook: relationship lookup failed', {
+          capabilityId, error: String((err as Error)?.message || err),
+        });
+      }
+      if (live != null) {
+        return next(deps.errors.invalidOperation(
+          'You have already accepted this open-link consent',
+          { id: CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU, acceptedAt: live.created }
+        ));
       }
     }
     // 'open' (or any unknown future state): proceed.

@@ -10,15 +10,14 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — capability open-link lifecycle tests.
  *
- * [CMCOL] covers the open-link mode multi-accept + same-patient
- * re-click detection + `markCapabilityInvalidated` semantics on top of
- * the mintCapability + state machine.
+ * [CMCOL] covers `markCapabilityInvalidated` semantics on top of the
+ * mintCapability + state machine. Who joined an open-link invite is read from
+ * the relationship accesses: see [CC34]/[CC35] and the handshake suite.
  */
 
 const assert = require('node:assert/strict');
 const {
   mintCapability,
-  recordAccepter,
   markCapabilityInvalidated,
   findCapabilityAccess,
 } = require('../src/capability.ts');
@@ -102,101 +101,6 @@ const SINGLE_USE_TRIGGER = {
 };
 
 describe('[CMCOL] cmc/capability open-link', () => {
-  describe('[CMCOL-MA] multi-patient happy path', () => {
-    it('[CMCOL-MA] three counterparties accept the same open-link capability; acceptedBy ends with 3 entries', async () => {
-      const mall = fakeMall();
-      const r = await mintCapability({
-        userId: 'u1',
-        triggerEvent: OPEN_LINK_TRIGGER,
-        deps: { mall, idGen: () => 'cap-ol-ma', now: () => 1000 },
-      });
-      assert.equal(r.capabilityId, 'cap-ol-ma');
-
-      const accepters = [
-        { username: 'alice', host: 'pryv.me' },
-        { username: 'bob', host: 'example.com' },
-        { username: 'carol', host: 'other.org' },
-      ];
-      let t = 2000;
-      for (const ap of accepters) {
-        const res = await recordAccepter({
-          userId: 'u1',
-          capabilityId: 'cap-ol-ma',
-          accepter: ap,
-          deps: { mall, now: () => t++ },
-        });
-        assert.equal(res.ok, true);
-      }
-      const acc = mall.accessesById.get(r.accessId);
-      const list = acc.clientData.cmc.capability.acceptedBy;
-      assert.equal(list.length, 3);
-      assert.deepEqual(list.map((a) => a.username + '@' + a.host).sort(),
-        ['alice@pryv.me', 'bob@example.com', 'carol@other.org'].sort());
-      // State stays 'open' across multiple accepts.
-      assert.equal(acc.clientData.cmc.capability.state, 'open');
-    });
-  });
-
-  describe('[CMCOL-MB] same-patient re-click', () => {
-    it('[CMCOL-MB] second recordAccepter call from the same identity is a no-op (alreadyPresent)', async () => {
-      const mall = fakeMall();
-      await mintCapability({
-        userId: 'u1',
-        triggerEvent: OPEN_LINK_TRIGGER,
-        deps: { mall, idGen: () => 'cap-ol-mb', now: () => 1000 },
-      });
-      const first = await recordAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-ol-mb',
-        accepter: { username: 'alice', host: 'pryv.me' },
-        deps: { mall, now: () => 2000 },
-      });
-      assert.equal(first.ok, true);
-      assert.equal(first.alreadyPresent, undefined);
-      const updatesAfterFirst = mall.calls.accessesUpdated.length;
-      const second = await recordAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-ol-mb',
-        accepter: { username: 'alice', host: 'pryv.me' },
-        deps: { mall, now: () => 3000 },
-      });
-      assert.equal(second.ok, true);
-      assert.equal(second.alreadyPresent, true);
-      // Idempotent: no new update.
-      assert.equal(mall.calls.accessesUpdated.length, updatesAfterFirst);
-    });
-  });
-
-  describe('[CMCOL-MC] recordAccepter idempotency on same identity', () => {
-    it('[CMCOL-MC] length-after-second-call === length-after-first', async () => {
-      const mall = fakeMall();
-      const r = await mintCapability({
-        userId: 'u1',
-        triggerEvent: OPEN_LINK_TRIGGER,
-        deps: { mall, idGen: () => 'cap-ol-mc', now: () => 1000 },
-      });
-      const ap = { username: 'alice', host: 'PRYV.me' }; // uppercase host
-      await recordAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-ol-mc',
-        accepter: ap,
-        deps: { mall, now: () => 2000 },
-      });
-      const acc1 = mall.accessesById.get(r.accessId);
-      const lenAfterFirst = acc1.clientData.cmc.capability.acceptedBy.length;
-      // Case-insensitive username + same slugified host should match.
-      await recordAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-ol-mc',
-        accepter: { username: 'ALICE', host: 'pryv.me' },
-        deps: { mall, now: () => 3000 },
-      });
-      const acc2 = mall.accessesById.get(r.accessId);
-      const lenAfterSecond = acc2.clientData.cmc.capability.acceptedBy.length;
-      assert.equal(lenAfterSecond, lenAfterFirst);
-    });
-  });
-
   describe('[CMCOL-MD] markCapabilityInvalidated flips state', () => {
     it('[CMCOL-MD] open access becomes state=invalidated + bumps stateChangedAt', async () => {
       const mall = fakeMall();

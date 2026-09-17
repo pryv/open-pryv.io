@@ -27,9 +27,8 @@ import type { MallLike } from 'cmc/src/_types.ts';
  *
  * Every CMC wiring site MUST use this composed mall, not the raw Mall: passing
  * the raw Mall gives the handlers a `mall` with no `accesses`, so anything that
- * reaches for `mall.accesses` (e.g. the accesses.delete post-hook clearing a
- * withdrawn subject from an open-link capability's `acceptedBy`) silently
- * becomes a no-op.
+ * reaches for `mall.accesses` (e.g. the responses-stream hook refusing a
+ * same-subject re-accept of an open-link invite) silently becomes a no-op.
  *
  * The underlying mall / storage-layer / users-repository / cache are all
  * process-global singletons, so the composed mall is built once and shared

@@ -524,4 +524,103 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(cmc.inviteEventId, null);
     });
   });
+  describe('[CMCIA-INV] the invite trigger records the outcome', () => {
+    // A requester-side mall where the capability access and the invite trigger
+    // both exist, with the calls needed to observe reads and writes.
+    function inviteMall (mode) {
+      const capability = {
+        id: 'cap-acc-1',
+        clientData: {
+          cmc: {
+            kind: 'capability',
+            capabilityId: 'cap-xyz',
+            requestEventId: 'invite-1',
+            capability: { mode, state: 'open', stateChangedAt: 1 },
+          },
+        },
+      };
+      const minted = structuredClone(capability);
+      const invite = { id: 'invite-1', type: 'consent/request-cmc', content: { status: 'delivered', ...(mode === 'open-link' ? { capability: { mode } } : {}) } };
+      const calls = { getOne: [], gets: 0, accessesUpdated: [], eventsUpdated: [], notified: [] };
+      const mall = {
+        calls,
+        capability,
+        minted,
+        invite,
+        accesses: {
+          async create (_userId, params) { return { id: 'acc-back-1', apiEndpoint: 'https://back-tok@requester.example.com/', ...params }; },
+          async get () { calls.gets++; return [capability]; },
+          async getOne (_userId, { id }) { calls.getOne.push(id); return id === capability.id ? capability : null; },
+          async update (_userId, params) { calls.accessesUpdated.push(params.id); if (params.id === capability.id) Object.assign(capability, params.update); },
+        },
+        events: {
+          async getOne (_userId, id) { return id === invite.id ? invite : null; },
+          async create (_userId, params) { return { id: 'mirror-1', ...params }; },
+          async update (_userId, event) {
+            calls.eventsUpdated.push(event.id);
+            if (event.id === invite.id) Object.assign(invite, event);
+            return event;
+          },
+        },
+        streams: { async create (_userId, params) { return { id: params.id }; } },
+      };
+      return mall;
+    }
+    const acceptThroughCapability = {
+      ...ACCEPT_FROM_INBOX,
+      streamIds: [':_cmc:_internal:responses:cap-xyz'],
+      createdBy: 'cap-acc-1 caller-1',
+      content: { ...ACCEPT_FROM_INBOX.content, capabilityId: 'cap-xyz' },
+    };
+
+    it('[IA14] a single-use accept marks the invite accepted and notifies', async () => {
+      const mall = inviteMall('single-use');
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptThroughCapability,
+        selfIdentity: SELF,
+        deps: { mall, notifyEventChanged: (u, e) => mall.calls.notified.push(e.id) },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.invite.content.status, 'accepted');
+      assert.deepEqual(mall.invite.content.acceptedBy, { username: 'alice', host: 'pryv.me' });
+      assert.equal(typeof mall.invite.content.acceptedAt, 'number');
+      assert.equal(mall.invite.content.backChannelAccessId, 'acc-back-1');
+      assert.deepEqual(mall.calls.notified, ['invite-1']);
+      assert.equal(mall.capability.clientData.cmc.capability.state, 'consumed');
+    });
+
+    it('[IA15] an open-link accept writes neither the invite nor the capability access', async () => {
+      const mall = inviteMall('open-link');
+      const r = await handleIncomingAccept({
+        userId: 'u1', acceptEvent: acceptThroughCapability, selfIdentity: SELF, deps: { mall },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(mall.calls.eventsUpdated, []);
+      assert.equal(mall.calls.accessesUpdated.includes('cap-acc-1'), false);
+      assert.deepEqual(mall.capability, mall.minted);
+    });
+
+    it('[IA16] the capability access is read by id from createdBy', async () => {
+      const mall = inviteMall('open-link');
+      await handleIncomingAccept({
+        userId: 'u1', acceptEvent: acceptThroughCapability, selfIdentity: SELF, deps: { mall },
+      });
+      assert.deepEqual(mall.calls.getOne, ['cap-acc-1']);
+    });
+
+    it('[IA17] a failing invite write is logged and the accept still succeeds', async () => {
+      const mall = inviteMall('single-use');
+      mall.events.update = async () => { throw new Error('storage down'); };
+      const warns = [];
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptThroughCapability,
+        selfIdentity: SELF,
+        deps: { mall, logger: { warn: (m) => warns.push(m), debug: () => {} } },
+      });
+      assert.equal(r.ok, true);
+      assert.ok(warns.some((m) => String(m).includes('could not stamp the invite')), JSON.stringify(warns));
+    });
+  });
 });

@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## CMC capability accesses are read by id on the accept path
+
+An accept or refuse arriving through a capability is written with the capability
+token, so its `createdBy` names the capability access: `handleIncomingAccept`,
+the new `handleIncomingRefuse` and `setRequestEventIdOnAccess` now read that access
+by id (`mall.accesses.getOne`, a primary-key read on both engines) and fall back to
+the full access scan only when the hint does not match. Invite state is written by
+one helper (`cmc/src/inviteState.ts`) with a transition table, so a late write
+cannot overturn a final state. `recordAccepter` / `clearAccepter` are removed; the
+three revoke paths mark the invite instead.
+
 ## an event type with a malformed schema is now named in the log, and a download replaces types whole
 
 The event-types catalogue is checked as a whole when it loads, which does not look

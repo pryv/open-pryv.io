@@ -87,6 +87,7 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(isRetryableReason('cmc-chat-no-remote-apiendpoint'), false);
       assert.equal(isRetryableReason('cmc-handler-data-grant-name-conflict'), false);
       assert.equal(isRetryableReason('cmc-capability-invalidated'), false);
+      assert.equal(isRetryableReason('cmc-capability-invalid'), false);
       assert.equal(isRetryableReason('cmc-capability-consumed'), false);
       assert.equal(isRetryableReason('cmc-capability-already-accepted-by-you'), false);
     });

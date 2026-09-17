@@ -35,6 +35,7 @@ const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
 const handleIncomingAcceptMod = require('./handleIncomingAccept.ts');
 const handleIncomingRevokeMod = require('./handleIncomingRevoke.ts');
+const handleIncomingRefuseMod = require('./handleIncomingRefuse.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const retryQueueMod = require('./retryQueue.ts');
@@ -143,6 +144,13 @@ async function dispatch (params: {
     return { handled: false, eventType: event.type, status: 'skipped', reason: 'not-cmc-event' };
   }
 
+  // A request trigger is not dispatched: its status reports the invite's
+  // outcome (inviteState.ts). Return before the 'delivered' stamp below, which
+  // writes the in-memory event whole and would overwrite that outcome.
+  if (event.type === C.ET_REQUEST) {
+    return { handled: false, eventType: event.type, status: 'skipped', reason: 'request-handled-elsewhere' };
+  }
+
   // Stamp 'delivered' before running the handler (the handler may overwrite
   // to 'completed' or 'failed'; 'delivered' is the explicit "we've taken the
   // event off the queue" indicator).
@@ -208,8 +216,7 @@ async function dispatch (params: {
     if (incoming) {
       // An incoming revoke is where the revocation is ENFORCED on this side:
       // the handler deletes the relationship access the peer holds here, then
-      // clears the withdrawing subject from any open-link capability's
-      // acceptedBy so they can re-consent through the same link. It POSTs
+      // marks a single-use invite it descends from as revoked. It POSTs
       // nothing (its deletes go through the mall, not the api-server route, so
       // they do not fire the accesses-delete hook), so the loop-safety above is
       // unaffected; a failure only logs and never blocks the skip result below.
@@ -268,9 +275,18 @@ async function dispatch (params: {
         }
         break;
       case C.ET_REFUSE:
-        result = await handleAcceptMod.handleRefuse({
-          userId, triggerEvent: event, selfIdentity, deps,
-        });
+        // Direction-aware, like accept: a refuse on a responses stream was
+        // delivered by the invited party (record it on the invite); one on a
+        // :_cmc:apps:* stream is the local user declining (deliver it).
+        if (isOnInbox(event)) {
+          result = await handleIncomingRefuseMod.handleIncomingRefuse({
+            userId, event, deps,
+          });
+        } else {
+          result = await handleAcceptMod.handleRefuse({
+            userId, triggerEvent: event, selfIdentity, deps,
+          });
+        }
         break;
       case C.ET_BACK_CHANNEL:
         // Back-channel info delivered by the requester to the accepter's
@@ -281,10 +297,6 @@ async function dispatch (params: {
           userId, event, deps,
         });
         break;
-      case C.ET_REQUEST:
-        // request triggers are handled separately by a capability-mint
-        // middleware. Dispatch loop is a no-op here.
-        return { handled: false, eventType: event.type, status: 'skipped', reason: 'request-handled-elsewhere' };
       case C.ET_SYSTEM_ALERT:
         result = await handleSystemMod.handleSystemAlert({
           userId, triggerEvent: event, selfIdentity, deps,

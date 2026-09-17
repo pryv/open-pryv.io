@@ -49,10 +49,10 @@ const CmcErrorIds = {
   // State will be added by the open-link capability lifecycle; the
   // error.id is enumerated here so the catalogue is stable.
   CAPABILITY_INVALIDATED: 'cmc-capability-invalidated',
-  // Open-link mode same-patient re-click. A counterparty whose
-  // `{username, host}` is already in the capability access's
-  // `clientData.cmc.capability.acceptedBy` list tried to accept again
-  // through the same capability URL. The response-stream write-hook
+  // Open-link mode same-patient re-click. A counterparty who still holds
+  // a live relationship through this capability (a relationship access
+  // carrying its `capabilityId`, matched on `{username, host}`) tried to
+  // accept again through the same capability URL. The response-stream write-hook
   // rejects with this id so the patient app can show "you already
   // accepted this invite" instead of silently re-running the handler
   // (which would mint a duplicate back-channel).

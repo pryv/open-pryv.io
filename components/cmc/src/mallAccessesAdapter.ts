@@ -146,6 +146,22 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
     },
 
     /**
+     * Read one access by id (same projection and `apiEndpoint` stamping as
+     * `get`). Null when there is no such access.
+     */
+    async getOne (userId: string, params: { id: string }): Promise<AccessRow | null> {
+      if (storageAccesses.findOne == null) {
+        throw new Error('cmc-mall-accesses-adapter: storageAccesses.findOne not available');
+      }
+      const access = await fromCallback((cb: Cb<AccessRow | null>) =>
+        storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
+      if (access == null) return null;
+      const username = await Promise.resolve(resolveUsername(userId));
+      if (username == null || access.token == null) return access;
+      return { ...access, apiEndpoint: apiEndpointBuild(username, access.token) };
+    },
+
+    /**
      * Update an access. Minimal shape: { id, update: { permissions?,
      * clientData?, name?, expires? } }. Does NOT enforce composite-id
      * chain rules — CMC handlers requiring chain validation should

@@ -72,4 +72,11 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     assert.equal(invalidations[0].accessId, 'acc-1');
     assert.equal(invalidations[0].accessToken, undefined);
   });
+
+  it('[MA04] getOne reads one access by id with its apiEndpoint, null when absent', async () => {
+    const one = await adapter.getOne('user-1', { id: 'acc-1' });
+    assert.equal(one.id, 'acc-1');
+    assert.equal(one.apiEndpoint, 'https://tok-1@u1.test/');
+    assert.equal(await adapter.getOne('user-1', { id: 'no-such' }), null);
+  });
 });

@@ -222,27 +222,22 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(results[0].peerNotified, false);
   });
 
-  // ---- local acceptedBy clearing (optional mall dep) ----
-  function fakeMallWithCapability (capId, acceptedBy) {
-    const accessesById = new Map();
-    const calls = { accessesUpdated: [] };
-    accessesById.set('cap-acc', {
-      id: 'cap-acc',
-      clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
-    });
+  // ---- local invite bookkeeping (optional mall dep) ----
+  function fakeMallWithInvite (invite) {
+    const events = new Map([[invite.id, invite]]);
+    const calls = { eventsUpdated: [] };
     return {
       calls,
-      accessesById,
-      accesses: {
-        async get () { return [...accessesById.values()]; },
-        async update (userId, params) {
-          const ex = accessesById.get(params.id);
-          const up = { ...ex, ...(params.update || {}) };
-          accessesById.set(params.id, up);
-          calls.accessesUpdated.push({ id: params.id, update: params.update });
-          return up;
+      events: {
+        async getOne (userId, id) { return events.get(id) ?? null; },
+        async update (userId, event) {
+          events.set(event.id, event);
+          calls.eventsUpdated.push(event);
+          return event;
         },
       },
+      accesses: { async get () { return []; } },
+      eventById: (id) => events.get(id),
     };
   }
   const REQUESTER_SIDE_WITH_CAP = {
@@ -253,31 +248,29 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
         role: 'counterparty',
         appCode: 'my-app',
         capabilityId: 'cap-dh',
+        inviteEventId: 'invite-dh',
         counterparty: { username: 'bob', host: 'peer.example.org', apiEndpoint: 'https://peer-tok@peer.example.org/' },
       },
     },
   };
 
-  it('[DH12] with a mall dep, deleting a stamped relationship clears the subject from the capability acceptedBy', async () => {
+  it('[DH15] with a mall dep, deleting the requester back-channel marks its single-use invite revoked', async () => {
     const { fetch } = fakeFetch({ status: 201, body: {} });
-    const mall = fakeMallWithCapability('cap-dh', [
-      { username: 'bob', host: 'peer.example.org', acceptedAt: 6000 },
-      { username: 'carol', host: 'peer.example.org', acceptedAt: 6000 },
-    ]);
+    const mall = fakeMallWithInvite({ id: 'invite-dh', type: 'consent/request-cmc', content: { status: 'accepted' } });
     const hook = createAccessesDeletePostHook({ fetch, mall });
     await hook('u1', [REQUESTER_SIDE_WITH_CAP]);
-    const cap = mall.accessesById.get('cap-acc');
-    const list = cap.clientData.cmc.capability.acceptedBy;
-    assert.equal(list.length, 1);
-    assert.equal(list[0].username, 'carol', 'only the withdrawing subject is cleared; co-accepter survives');
+    assert.equal(mall.eventById('invite-dh').content.status, 'revoked');
   });
 
-  it('[DH13] a deleted relationship WITHOUT capabilityId does not clear anything', async () => {
+  it('[DH13] a deleted relationship WITHOUT the capabilityId key marks nothing', async () => {
     const { fetch } = fakeFetch({ status: 201, body: {} });
-    const mall = fakeMallWithCapability('cap-dh', [{ username: 'bob', host: 'peer.example.org', acceptedAt: 6000 }]);
+    const mall = fakeMallWithInvite({ id: 'invite-evt-1', type: 'consent/request-cmc', content: { status: 'accepted' } });
     const hook = createAccessesDeletePostHook({ fetch, mall });
-    await hook('u1', [REQUESTER_SIDE_ACCESS]); // no capabilityId on this access
-    assert.equal(mall.calls.accessesUpdated.length, 0);
+    await hook('u1', [{
+      ...REQUESTER_SIDE_ACCESS,
+      clientData: { cmc: { ...REQUESTER_SIDE_ACCESS.clientData.cmc, inviteEventId: 'invite-evt-1' } },
+    }]);
+    assert.equal(mall.calls.eventsUpdated.length, 0);
   });
 
   it('[DH14] forwards inviteEventId on a raw delete, and omits it when absent', async () => {

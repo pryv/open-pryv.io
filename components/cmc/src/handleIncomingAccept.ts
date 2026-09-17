@@ -52,6 +52,7 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
+const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
 const crypto = require('node:crypto');
 
@@ -88,13 +89,14 @@ type SelfIdentity = { username: string; host: string };
  */
 async function handleIncomingAccept (params: {
   userId: string;
-  acceptEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
+  acceptEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string };
   selfIdentity: SelfIdentity;
   deps: {
     mall: MallLike;
     logger?: CmcLogger;
     fetch?: (url: string, init?: RequestInit) => Promise<Response>;
     timeoutMs?: number;
+    notifyEventChanged?: (userId: string, event: { id?: string }) => void;
   };
 }): Promise<IncomingAcceptResult> {
   const { userId, acceptEvent, selfIdentity, deps } = params;
@@ -227,10 +229,16 @@ async function handleIncomingAccept (params: {
   // the accepter side (whose data-grant access carries the same
   // field via buildDataGrantPayload). Absent / null → permissive.
   const negotiatedFeatures: Record<string, unknown> | null = ((acceptEvent?.content as { features?: Record<string, unknown> | null } | undefined)?.features ?? null) as Record<string, unknown> | null;
-  // The open-link capability this accept consumed. Stamped on the back-channel
-  // access so a later revocation can locate the capability and clear the
-  // subject's acceptedBy entry; also used below to consume/enrich the mirror.
+  // The capability this accept came through. Stamped on the back-channel
+  // access: for an open-link invite, the relationship accesses carrying it ARE
+  // the list of who joined. Also used below to consume the link and enrich the
+  // mirror.
   const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+  // An accept on a responses stream is written with the capability token, so
+  // its `createdBy` names the capability access: read it by id rather than
+  // scanning every access. `<accessId> <callerId>` when a callerId was given.
+  const createdBy = typeof acceptEvent.createdBy === 'string' ? acceptEvent.createdBy : '';
+  const capabilityAccessIdHint = createdBy.split(' ')[0] || null;
 
   // Look up the local capability access once. Three consumers below: the
   // back-channel access's `inviteEventId` stamp, the inbox-mirror enrichment,
@@ -243,7 +251,7 @@ async function handleIncomingAccept (params: {
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {
       capabilityAccess = await capabilityMod.findCapabilityAccess({
-        userId, capabilityId: capabilityIdToConsume, deps: { mall },
+        userId, capabilityId: capabilityIdToConsume, accessId: capabilityAccessIdHint, deps: { mall },
       });
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: capability access lookup failed (non-fatal)', {
@@ -277,8 +285,8 @@ async function handleIncomingAccept (params: {
         appCode,
         // Names THIS relationship on both accounts — see relationshipKey.ts.
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
-        // Correlate back to the open-link capability so a later revocation can
-        // clear this subject's acceptedBy entry. null for legacy accepters
+        // Correlate back to the capability: an open-link invite's joins are the
+        // relationship accesses carrying it. null for legacy accepters
         // (pre-stamp); heal-in-place rewrites clientData so it self-refreshes.
         capabilityId: typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0 ? capabilityIdToConsume : null,
         // Correlation ids a revoke forwarded from this side can carry, so the
@@ -388,6 +396,28 @@ async function handleIncomingAccept (params: {
     }
   }
 
+  const capabilityMode = (capabilityAccess?.clientData as { cmc?: { capability?: { mode?: string } } } | undefined)?.cmc?.capability?.mode;
+  // Single-use: the invite now has its counterparty; record the outcome on
+  // the trigger the requester's app watches. Open-link invites are not
+  // written: one subject joining does not change the link, and concurrent
+  // accepts would race on the record. Best-effort.
+  if (capabilityAccess != null && capabilityMode !== 'open-link') {
+    const stamp = await inviteState.stampInvite({
+      userId,
+      inviteEventId,
+      transition: 'accepted',
+      fields: {
+        acceptedBy: { username: counterparty.username, host: counterparty.host },
+        acceptedAt: Date.now() / 1000,
+        backChannelAccessId: access.id,
+      },
+      deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+    });
+    if (!stamp.ok || stamp.skipped != null) {
+      deps.logger?.debug?.('cmc/handleIncomingAccept: invite not stamped accepted', { inviteEventId, stamp });
+    }
+  }
+
   // Mirror the accept to :_cmc:inbox so the requester's app sees it via
   // standard inbox subscription (per INTERNALS.md flow 3 step 11). The
   // accept event itself lives in :_cmc:_internal:responses:<capId>; the
@@ -476,30 +506,22 @@ async function handleIncomingAccept (params: {
   // (instead of silently re-running this handler and minting a
   // duplicate back-channel access). Open-link mode skips this step —
   // capabilities with `mode: 'open-link'` keep state='open' until
-  // explicit invalidation. Best-effort; the back-channel
-  // access is already minted so the relationship is established.
+  // explicit invalidation, and write nothing here: the back-channel access
+  // just minted is the record of this join, which is what the response-stream
+  // write-hook reads to refuse a same-subject re-click. Best-effort; the
+  // back-channel access is already minted so the relationship is established.
   //
   // `capabilityIdToConsume` and `capabilityAccess` were resolved above
   // (for the inbox-mirror enrichment). Reuse to avoid a second lookup.
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {
-      const capabilityMode = (capabilityAccess?.clientData as { cmc?: { capability?: { mode?: string } } } | undefined)?.cmc?.capability?.mode;
       if (capabilityMode === 'single-use' || capabilityMode == null) {
         // Default 'single-use' for legacy capabilities minted before
         // this field existed.
         await capabilityMod.markCapabilityConsumed({
-          userId, capabilityId: capabilityIdToConsume, deps: { mall },
-        });
-      } else if (capabilityMode === 'open-link') {
-        // Open-link mode (capability lifecycle): instead of flipping state
-        // to 'consumed', append the accepter to acceptedBy so a
-        // same-patient re-click can be detected by the response-stream
-        // write-hook. The capability stays open until the requester
-        // explicitly invalidates the link via `consent/invalidate-link-cmc`.
-        await capabilityMod.recordAccepter({
           userId,
           capabilityId: capabilityIdToConsume,
-          accepter: counterparty,
+          accessId: capabilityAccess?.id ?? capabilityAccessIdHint,
           deps: { mall },
         });
       }

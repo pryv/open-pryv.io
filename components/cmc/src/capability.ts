@@ -28,12 +28,13 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
 
-type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number };
+// Capability accesses minted before the joins were read from the relationship
+// accesses may still carry an `acceptedBy` array. It is no longer written or
+// read.
 type CapabilityCd = {
   mode?: string;
   state?: string;
   stateChangedAt?: number;
-  acceptedBy?: AcceptedByEntry[];
 };
 type CmcAccessCd = {
   kind?: string;
@@ -48,9 +49,11 @@ import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
 /**
  * Capability semantics chosen at mint time.
  *
- *   'single-use' — one accept/refuse closes the link. Re-clicks return
+ *   'single-use' — the first accept closes the link. Re-clicks return
  *                  `cmc-capability-consumed` (state-flip detected by the
- *                  responses-stream write-hook). This is the default.
+ *                  responses-stream write-hook). A refusal does not close
+ *                  it: the subject may still accept later. This is the
+ *                  default.
  *
  *   'open-link'  — multiple accepts allowed until the requester
  *                  explicitly invalidates the link (open-link
@@ -361,8 +364,13 @@ async function setRequestEventIdOnAccess (params: {
   // The mint hook minted by id; we have it directly — but the access
   // shape we need to preserve is unknown without a read. accesses.update
   // top-level merge replaces `clientData` whole-sale, so we read first.
-  const list = await deps.mall.accesses.get(userId, {});
-  const acc = (list || []).find((a: AccessRow) => a?.id === accessId) ?? null;
+  let acc: AccessRow | null;
+  if (deps.mall.accesses.getOne != null) {
+    acc = await deps.mall.accesses.getOne(userId, { id: accessId });
+  } else {
+    const list = await deps.mall.accesses.get(userId, {});
+    acc = (list || []).find((a: AccessRow) => a?.id === accessId) ?? null;
+  }
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   if (cmcCd?.requestEventId === requestEventId) {
@@ -390,13 +398,29 @@ async function setRequestEventIdOnAccess (params: {
  *
  * Returns null if no matching access exists (the rare case where the
  * stream-id was forged or the access was deleted out-of-band).
+ *
+ * `accessId` is a hint (typically the `createdBy` of an event written with
+ * the capability token): when the mall can read by id, the access is read
+ * directly and checked. If it is a capability access for ANOTHER capability,
+ * the event was written through that link while naming this one: null, so a
+ * token for one invite cannot answer another. A hint that is not a capability
+ * access (e.g. an inbox arrival written by a counterparty) falls back to the
+ * scan.
  */
 async function findCapabilityAccess (params: {
   userId: string;
   capabilityId: string;
+  accessId?: string | null;
   deps: { mall: MallLike };
 }): Promise<AccessRow | null> {
-  const { userId, capabilityId, deps } = params;
+  const { userId, capabilityId, accessId, deps } = params;
+  if (typeof accessId === 'string' && accessId.length > 0 && deps.mall.accesses?.getOne != null) {
+    const acc = await deps.mall.accesses.getOne(userId, { id: accessId });
+    const cmcCd = acc?.clientData?.cmc;
+    if (acc != null && cmcCd?.kind === 'capability') {
+      return cmcCd.capabilityId === capabilityId ? acc : null;
+    }
+  }
   if (deps.mall.accesses?.get == null) return null;
   const list = await deps.mall.accesses.get(userId, {});
   for (const acc of (list || [])) {
@@ -419,10 +443,11 @@ async function findCapabilityAccess (params: {
 async function markCapabilityConsumed (params: {
   userId: string;
   capabilityId: string;
+  accessId?: string | null;
   deps: { mall: MallLike; now?: () => number };
 }): Promise<{ ok: boolean; reason?: string }> {
-  const { userId, capabilityId, deps } = params;
-  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  const { userId, capabilityId, accessId, deps } = params;
+  const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   if (cmcCd?.capability?.state === 'consumed') {
@@ -452,134 +477,41 @@ async function markCapabilityConsumed (params: {
 }
 
 /**
- * Append an accepter (`{ username, host }`) to the capability access's
- * `clientData.cmc.capability.acceptedBy` array. Idempotent — if the same
- * pair is already present (compared by lowercased username + slugified
- * host) the function is a no-op. Used by open-link mode after each
- * successful accept on handleIncomingAccept so a same-patient re-click
- * can be detected by the response-stream write-hook.
+ * The live relationship access a counterparty holds through an open-link
+ * capability, or null. Who has joined an open-link invite is exactly the set
+ * of relationship accesses carrying its `capabilityId`: deleting one (any
+ * revoke path) is the un-join, so there is no separate list to keep in step.
+ *
+ * Identity key: lowercased username + slugified host, so a re-click spelled
+ * with a different case or host form still matches.
  */
-async function recordAccepter (params: {
+async function findLiveRelationshipForCapability (params: {
   userId: string;
   capabilityId: string;
-  accepter: { username: string; host: string };
-  deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string; alreadyPresent?: boolean }> {
-  const { userId, capabilityId, accepter, deps } = params;
-  if (accepter == null || typeof accepter.username !== 'string' ||
-      accepter.username.length === 0 || typeof accepter.host !== 'string' ||
-      accepter.host.length === 0) {
-    return { ok: false, reason: 'invalid-accepter' };
+  counterparty: { username?: unknown; host?: unknown } | null | undefined;
+  deps: { mall: Pick<MallLike, 'accesses'> };
+}): Promise<AccessRow | null> {
+  const { userId, capabilityId, counterparty, deps } = params;
+  if (counterparty == null ||
+      typeof counterparty.username !== 'string' || counterparty.username.length === 0 ||
+      typeof counterparty.host !== 'string' || counterparty.host.length === 0) {
+    return null;
   }
-  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
-  if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
-  const cmcCd = acc.clientData?.cmc;
-  if (deps.mall.accesses.update == null) {
-    return { ok: false, reason: 'mall-accesses-update-unavailable' };
+  if (deps.mall.accesses?.get == null) return null;
+  const key = counterpartyKey(counterparty.username, counterparty.host);
+  const list = await deps.mall.accesses.get(userId, {});
+  for (const acc of (list || [])) {
+    const cmcCd = acc?.clientData?.cmc;
+    if (cmcCd?.role !== 'counterparty' || cmcCd?.capabilityId !== capabilityId) continue;
+    const cp = cmcCd.counterparty;
+    if (typeof cp?.username !== 'string' || typeof cp?.host !== 'string') continue;
+    if (counterpartyKey(cp.username, cp.host) === key) return acc;
   }
-  const now = deps.now ?? defaultNow;
-  const incomingKey =
-    accepter.username.toLowerCase() + '|' + slug.slugifyHost(accepter.host);
-  const existing: Array<{ username?: string; host?: string; acceptedAt?: number }> = Array.isArray(cmcCd?.capability?.acceptedBy)
-    ? cmcCd.capability.acceptedBy
-    : [];
-  for (const a of existing) {
-    if (a == null || typeof a !== 'object') continue;
-    if (typeof a.username !== 'string' || typeof a.host !== 'string') continue;
-    const existingKey = a.username.toLowerCase() + '|' + slug.slugifyHost(a.host);
-    if (existingKey === incomingKey) {
-      return { ok: true, alreadyPresent: true };
-    }
-  }
-  const acceptedAt = now();
-  const updatedList = existing.concat([{
-    username: accepter.username,
-    host: accepter.host,
-    acceptedAt,
-  }]);
-  await deps.mall.accesses.update(userId, {
-    id: acc.id,
-    update: {
-      clientData: {
-        ...(acc.clientData || {}),
-        cmc: {
-          ...cmcCd,
-          capability: {
-            ...(cmcCd?.capability || {}),
-            acceptedBy: updatedList,
-          },
-        },
-      },
-    },
-  });
-  return { ok: true };
+  return null;
 }
 
-/**
- * Remove an accepter (`{ username, host }`) from the capability access's
- * `clientData.cmc.capability.acceptedBy` array — the inverse of
- * recordAccepter, so an open-link capability stops counting a subject who
- * has withdrawn and they can re-consent through the same link. Identical key
- * derivation (lowercased username + slugified host); only the matching entry
- * is dropped, so every co-accepter survives verbatim. Never writes `state` /
- * `stateChangedAt`: a consumed single-use link stays spent — revocation does
- * not reopen it. Idempotent: a missing entry, a missing capability, or a
- * non-open-link mode are all no-op successes.
- */
-async function clearAccepter (params: {
-  userId: string;
-  capabilityId: string;
-  accepter: { username: string; host: string };
-  deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string; cleared?: boolean }> {
-  const { userId, capabilityId, accepter, deps } = params;
-  if (accepter == null || typeof accepter.username !== 'string' ||
-      accepter.username.length === 0 || typeof accepter.host !== 'string' ||
-      accepter.host.length === 0) {
-    return { ok: false, reason: 'invalid-accepter' };
-  }
-  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
-  // No live capability → nothing can block a re-consent; success, nothing cleared.
-  if (acc == null) return { ok: true, cleared: false };
-  const cmcCd = acc.clientData?.cmc;
-  // Single-use / already-consumed links are spent by design; not our concern.
-  if (cmcCd?.capability?.mode !== 'open-link') {
-    return { ok: true, cleared: false };
-  }
-  if (deps.mall.accesses.update == null) {
-    return { ok: false, reason: 'mall-accesses-update-unavailable' };
-  }
-  const targetKey =
-    accepter.username.toLowerCase() + '|' + slug.slugifyHost(accepter.host);
-  const existing: AcceptedByEntry[] = Array.isArray(cmcCd?.capability?.acceptedBy)
-    ? cmcCd.capability.acceptedBy
-    : [];
-  const filtered = existing.filter((a) => {
-    if (a == null || typeof a !== 'object') return true;
-    if (typeof a.username !== 'string' || typeof a.host !== 'string') return true;
-    const key = a.username.toLowerCase() + '|' + slug.slugifyHost(a.host);
-    return key !== targetKey;
-  });
-  // Entry absent (never accepted, or already cleared) → double-revoke safe.
-  if (filtered.length === existing.length) {
-    return { ok: true, cleared: false };
-  }
-  await deps.mall.accesses.update(userId, {
-    id: acc.id,
-    update: {
-      clientData: {
-        ...(acc.clientData || {}),
-        cmc: {
-          ...cmcCd,
-          capability: {
-            ...(cmcCd?.capability || {}),
-            acceptedBy: filtered,
-          },
-        },
-      },
-    },
-  });
-  return { ok: true, cleared: true };
+function counterpartyKey (username: string, host: string): string {
+  return username.toLowerCase() + '|' + slug.slugifyHost(host);
 }
 
 /**
@@ -593,10 +525,11 @@ async function clearAccepter (params: {
 async function markCapabilityInvalidated (params: {
   userId: string;
   capabilityId: string;
+  accessId?: string | null;
   deps: { mall: MallLike; now?: () => number };
 }): Promise<{ ok: boolean; reason?: string }> {
-  const { userId, capabilityId, deps } = params;
-  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  const { userId, capabilityId, accessId, deps } = params;
+  const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   const state = cmcCd?.capability?.state;
@@ -667,8 +600,7 @@ export {
   gcCapability,
   findCapabilityAccess,
   markCapabilityConsumed,
-  recordAccepter,
-  clearAccepter,
+  findLiveRelationshipForCapability,
   markCapabilityInvalidated,
   setRequestEventIdOnAccess,
   buildApiEndpoint,

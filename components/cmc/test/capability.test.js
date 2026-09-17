@@ -19,8 +19,8 @@ const {
   gcCapability,
   findCapabilityAccess,
   markCapabilityConsumed,
-  recordAccepter,
-  clearAccepter,
+  findLiveRelationshipForCapability,
+  setRequestEventIdOnAccess,
   buildApiEndpoint,
   maxTtlSecondsFor,
   DEFAULT_TTL_SECONDS,
@@ -442,126 +442,116 @@ describe('[CMCCAP] cmc/capability', () => {
       assert.equal(result.reason, 'capability-access-not-found');
     });
 
-    // ---- clearAccepter: the inverse of recordAccepter, so a withdrawn
-    // subject can re-consent through the same open link. ----
-    async function mintOpenLinkWithAccepters (mall, capId, accepters) {
-      const trigger = {
-        ...VALID_REQUEST_TRIGGER,
-        content: { ...VALID_REQUEST_TRIGGER.content, capability: { mode: 'open-link' } },
-      };
-      await mintCapability({
-        userId: 'u1',
-        triggerEvent: trigger,
-        deps: { mall, idGen: () => capId, now: () => 5000 },
-      });
-      for (const a of accepters) {
-        await recordAccepter({ userId: 'u1', capabilityId: capId, accepter: a, deps: { mall, now: () => 6000 } });
-      }
-    }
-    function acceptedByOf (mall, capId) {
-      for (const acc of mall.accessesById.values()) {
-        if (acc.clientData?.cmc?.capabilityId === capId) return acc.clientData.cmc.capability.acceptedBy || [];
-      }
-      return null;
+    // ---- lookup by id (the `createdBy` of an event written with the token) ----
+    function withGetOne (mall) {
+      mall.calls.gets = 0;
+      const get = mall.accesses.get;
+      mall.accesses.get = async (u, p) => { mall.calls.gets++; return get(u, p); };
+      mall.accesses.getOne = async (_u, { id }) => mall.accessesById.get(id) ?? null;
+      return mall;
     }
 
-    it('[CC21] clearAccepter removes exactly the matching entry, co-accepters survive verbatim', async () => {
-      const mall = fakeMall();
-      await mintOpenLinkWithAccepters(mall, 'cap-clr-1', [
-        { username: 'alice', host: 'a.example.com' },
-        { username: 'bob', host: 'b.example.com' },
-      ]);
-      const res = await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-clr-1',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
+    it('[CC30] findCapabilityAccess reads the hinted access by id without scanning', async () => {
+      const mall = withGetOne(fakeMall());
+      const r = await mintCapability({
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-1', now: () => 5000 },
       });
-      assert.equal(res.ok, true);
-      assert.equal(res.cleared, true);
-      const list = acceptedByOf(mall, 'cap-clr-1');
-      assert.equal(list.length, 1);
-      assert.equal(list[0].username, 'bob');
-      assert.equal(list[0].host, 'b.example.com');
+      const found = await findCapabilityAccess({
+        userId: 'u1', capabilityId: 'cap-id-1', accessId: r.accessId, deps: { mall },
+      });
+      assert.equal(found.id, r.accessId);
+      assert.equal(mall.calls.gets, 0, 'no scan when the hint resolves');
     });
 
-    it('[CC22] clearAccepter matches on the normalized key (case + host slug)', async () => {
-      const mall = fakeMall();
-      await mintOpenLinkWithAccepters(mall, 'cap-clr-2', [{ username: 'Alice', host: 'A.Example.com' }]);
-      const res = await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-clr-2',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
+    it('[CC31] findCapabilityAccess falls back to the scan when the hint is not a capability access', async () => {
+      const mall = withGetOne(fakeMall());
+      const second = await mintCapability({
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-2b', now: () => 5000 },
       });
-      assert.equal(res.cleared, true);
-      assert.equal(acceptedByOf(mall, 'cap-clr-2').length, 0);
+      const other = await mall.accesses.create('u1', { name: 'plain', clientData: {} });
+      for (const hint of [other.id, 'no-such-access']) {
+        const found = await findCapabilityAccess({
+          userId: 'u1', capabilityId: 'cap-id-2b', accessId: hint, deps: { mall },
+        });
+        assert.equal(found.id, second.accessId, 'hint ' + hint);
+      }
+      assert.equal(mall.calls.gets, 2);
     });
 
-    it('[CC23] clearAccepter is a no-op (double-revoke safe) when the entry is absent', async () => {
-      const mall = fakeMall();
-      await mintOpenLinkWithAccepters(mall, 'cap-clr-3', [{ username: 'bob', host: 'b.example.com' }]);
-      const updatesBefore = mall.calls.accessesUpdated.length;
-      const res = await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-clr-3',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
+    it('[CC36] a hint naming the capability access of ANOTHER invite resolves nothing', async () => {
+      // An answer written through one link's token must not reach another invite
+      // by naming its capabilityId in the content.
+      const mall = withGetOne(fakeMall());
+      const first = await mintCapability({
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-6a', now: () => 5000 },
       });
-      assert.equal(res.ok, true);
-      assert.equal(res.cleared, false);
-      assert.equal(mall.calls.accessesUpdated.length, updatesBefore, 'no write when nothing to remove');
-    });
-
-    it('[CC24] clearAccepter is a no-op success when the capability is gone', async () => {
-      const mall = fakeMall();
-      const res = await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'never-existed',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
-      });
-      assert.equal(res.ok, true);
-      assert.equal(res.cleared, false);
-    });
-
-    it('[CC25] clearAccepter never touches a single-use link (spent by design)', async () => {
-      const mall = fakeMall();
-      // single-use mint, then force an acceptedBy entry onto it directly.
       await mintCapability({
-        userId: 'u1',
-        triggerEvent: VALID_REQUEST_TRIGGER,
-        deps: { mall, idGen: () => 'cap-clr-5', now: () => 5000 },
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-6b', now: () => 5000 },
       });
-      const acc = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-5');
-      acc.clientData.cmc.capability.acceptedBy = [{ username: 'alice', host: 'a.example.com', acceptedAt: 6000 }];
-      const updatesBefore = mall.calls.accessesUpdated.length;
-      const res = await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-clr-5',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
+      const found = await findCapabilityAccess({
+        userId: 'u1', capabilityId: 'cap-id-6b', accessId: first.accessId, deps: { mall },
       });
-      assert.equal(res.ok, true);
-      assert.equal(res.cleared, false);
-      assert.equal(mall.calls.accessesUpdated.length, updatesBefore, 'single-use must not be rewritten');
+      assert.equal(found, null);
+      assert.equal(mall.calls.gets, 0);
     });
 
-    it('[CC26] clearAccepter leaves state + stateChangedAt untouched', async () => {
-      const mall = fakeMall();
-      await mintOpenLinkWithAccepters(mall, 'cap-clr-6', [{ username: 'alice', host: 'a.example.com' }]);
-      const acc = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-6');
-      const stateBefore = acc.clientData.cmc.capability.state;
-      const changedAtBefore = acc.clientData.cmc.capability.stateChangedAt;
-      await clearAccepter({
-        userId: 'u1',
-        capabilityId: 'cap-clr-6',
-        accepter: { username: 'alice', host: 'a.example.com' },
-        deps: { mall },
+    it('[CC32] setRequestEventIdOnAccess reads the access by id, no scan', async () => {
+      const mall = withGetOne(fakeMall());
+      const r = await mintCapability({
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-3', now: () => 5000 },
       });
-      const after = [...mall.accessesById.values()].find((a) => a.clientData.cmc.capabilityId === 'cap-clr-6');
-      assert.equal(after.clientData.cmc.capability.state, stateBefore);
-      assert.equal(after.clientData.cmc.capability.stateChangedAt, changedAtBefore);
+      const res = await setRequestEventIdOnAccess({
+        userId: 'u1', accessId: r.accessId, requestEventId: 'req-3', deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.requestEventId, 'req-3');
+      assert.equal(mall.calls.gets, 0);
+    });
+
+    it('[CC33] without getOne on the mall the hint is ignored and the scan is used', async () => {
+      const mall = fakeMall();
+      const r = await mintCapability({
+        userId: 'u1', triggerEvent: VALID_REQUEST_TRIGGER, deps: { mall, idGen: () => 'cap-id-4', now: () => 5000 },
+      });
+      const found = await findCapabilityAccess({
+        userId: 'u1', capabilityId: 'cap-id-4', accessId: r.accessId, deps: { mall },
+      });
+      assert.equal(found.id, r.accessId);
+    });
+
+    // ---- who joined an open-link: the live relationship accesses ----
+    async function addRelationship (mall, capabilityId, counterparty) {
+      return mall.accesses.create('u1', {
+        name: 'cmc-back-channel-' + counterparty.username,
+        clientData: { cmc: { role: 'counterparty', capabilityId, counterparty } },
+      });
+    }
+
+    it('[CC34] findLiveRelationshipForCapability matches on the normalized key (case + host slug)', async () => {
+      const mall = fakeMall();
+      const rel = await addRelationship(mall, 'cap-live-1', { username: 'Alice', host: 'A.Example.com' });
+      await addRelationship(mall, 'cap-live-1', { username: 'bob', host: 'b.example.com' });
+      const found = await findLiveRelationshipForCapability({
+        userId: 'u1', capabilityId: 'cap-live-1', counterparty: { username: 'alice', host: 'a.example.com' }, deps: { mall },
+      });
+      assert.equal(found.id, rel.id);
+    });
+
+    it('[CC35] findLiveRelationshipForCapability ignores other capabilities, role-less accesses and bad input', async () => {
+      const mall = fakeMall();
+      await addRelationship(mall, 'cap-live-other', { username: 'alice', host: 'a.example.com' });
+      await mall.accesses.create('u1', {
+        name: 'no-role', clientData: { cmc: { capabilityId: 'cap-live-2', counterparty: { username: 'alice', host: 'a.example.com' } } },
+      });
+      const alice = { username: 'alice', host: 'a.example.com' };
+      assert.equal(await findLiveRelationshipForCapability({
+        userId: 'u1', capabilityId: 'cap-live-2', counterparty: alice, deps: { mall },
+      }), null);
+      for (const counterparty of [null, {}, { username: 'alice' }, { username: '', host: 'a.example.com' }]) {
+        assert.equal(await findLiveRelationshipForCapability({
+          userId: 'u1', capabilityId: 'cap-live-other', counterparty, deps: { mall },
+        }), null);
+      }
     });
   });
 });

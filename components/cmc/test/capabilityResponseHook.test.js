@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
  * The hook rejects events.create when the capability access's
  * clientData.cmc.capability.state is 'consumed' or 'invalidated'.
  * Open state and absence of the capability marker (legacy) pass through.
+ * On an open-link capability, a subject who still holds a live relationship
+ * through it is refused (cmc-capability-already-accepted-by-you).
  */
 
 const assert = require('node:assert/strict');
@@ -108,59 +110,77 @@ describe('[CMCCRH] cmcCapabilityResponseHook', () => {
     });
   });
 
-  it('[CRH-OLN1] open + mode=open-link + accepter NOT in acceptedBy → proceeds', (done) => {
-    const ctx = makeCtx({
-      event: {
-        streamIds: [':_cmc:_internal:responses:cap-ol-1'],
+  // ---- open-link re-click: decided from the live relationship accesses ----
+  function openLinkCtx (from, extraCmc = {}) {
+    return {
+      newEvent: {
+        streamIds: [':_cmc:_internal:responses:cap-ol'],
         type: 'consent/accept-cmc',
-        content: { from: { username: 'alice', host: 'pryv.me' } },
+        content: { from },
       },
+      user: { id: 'u1' },
       access: {
         clientData: {
-          cmc: {
-            capability: {
-              state: 'open',
-              mode: 'open-link',
-              acceptedBy: [
-                { username: 'bob', host: 'example.com', acceptedAt: 1234 },
-              ],
-            },
-          },
+          cmc: { kind: 'capability', capabilityId: 'cap-ol', capability: { state: 'open', mode: 'open-link' }, ...extraCmc },
         },
       },
+    };
+  }
+  function mallWith (accesses) {
+    return { accesses: { async get () { return accesses; } } };
+  }
+  function relationship (capabilityId, counterparty, created) {
+    return { id: 'rel-' + counterparty.username, created, clientData: { cmc: { role: 'counterparty', capabilityId, counterparty } } };
+  }
+
+  it('[CRH07] open-link with no live relationship for the subject proceeds', async () => {
+    const hookWithMall = createCapabilityResponseHook({
+      errors: fakeErrors(),
+      mall: mallWith([relationship('cap-ol', { username: 'bob', host: 'example.com' }, 1234)]),
     });
-    hook(ctx, {}, {}, (err) => {
-      assert.equal(err, undefined);
-      done();
-    });
+    const err = await new Promise((resolve) => hookWithMall(openLinkCtx({ username: 'alice', host: 'pryv.me' }), {}, {}, resolve));
+    assert.equal(err, undefined);
   });
 
-  it('[CRH-OLN2] open + mode=open-link + accepter IS in acceptedBy → rejects cmc-capability-already-accepted-by-you', (done) => {
-    const ctx = makeCtx({
-      event: {
-        streamIds: [':_cmc:_internal:responses:cap-ol-2'],
-        type: 'consent/accept-cmc',
-        content: { from: { username: 'Alice', host: 'PRYV.me' } }, // case-insensitive match
-      },
-      access: {
-        clientData: {
-          cmc: {
-            capability: {
-              state: 'open',
-              mode: 'open-link',
-              acceptedBy: [
-                { username: 'alice', host: 'pryv.me', acceptedAt: 5555 },
-              ],
-            },
-          },
-        },
-      },
+  it('[CRH08] open-link with a live relationship (other spelling) rejects already-accepted-by-you with its created time', async () => {
+    const hookWithMall = createCapabilityResponseHook({
+      errors: fakeErrors(),
+      mall: mallWith([relationship('cap-ol', { username: 'alice', host: 'pryv.me' }, 5555)]),
     });
-    hook(ctx, {}, {}, (err) => {
-      assert.ok(err != null);
-      assert.equal(err.id, 'cmc-capability-already-accepted-by-you');
-      assert.equal(err.data.acceptedAt, 5555);
-      done();
+    const err = await new Promise((resolve) => hookWithMall(openLinkCtx({ username: 'Alice', host: 'PRYV.me' }), {}, {}, resolve));
+    assert.ok(err != null);
+    assert.equal(err.id, 'cmc-capability-already-accepted-by-you');
+    assert.equal(err.data.acceptedAt, 5555);
+  });
+
+  it('[CRH09] a legacy acceptedBy array naming the subject, without a live relationship, is ignored', async () => {
+    const hookWithMall = createCapabilityResponseHook({ errors: fakeErrors(), mall: mallWith([]) });
+    const ctx = openLinkCtx({ username: 'alice', host: 'pryv.me' });
+    ctx.access.clientData.cmc.capability.acceptedBy = [{ username: 'alice', host: 'pryv.me', acceptedAt: 1 }];
+    const err = await new Promise((resolve) => hookWithMall(ctx, {}, {}, resolve));
+    assert.equal(err, undefined);
+  });
+
+  it('[CRH10] without a mall dep the open-link check is skipped', async () => {
+    const err = await new Promise((resolve) => hook(openLinkCtx({ username: 'alice', host: 'pryv.me' }), {}, {}, resolve));
+    assert.equal(err, undefined);
+  });
+
+  it('[CRH11] a live relationship through ANOTHER capability does not block', async () => {
+    const hookWithMall = createCapabilityResponseHook({
+      errors: fakeErrors(),
+      mall: mallWith([relationship('cap-other', { username: 'alice', host: 'pryv.me' }, 5555)]),
     });
+    const err = await new Promise((resolve) => hookWithMall(openLinkCtx({ username: 'alice', host: 'pryv.me' }), {}, {}, resolve));
+    assert.equal(err, undefined);
+  });
+
+  it('[CRH12] a failing lookup lets the accept through', async () => {
+    const hookWithMall = createCapabilityResponseHook({
+      errors: fakeErrors(),
+      mall: { accesses: { async get () { throw new Error('storage down'); } } },
+    });
+    const err = await new Promise((resolve) => hookWithMall(openLinkCtx({ username: 'alice', host: 'pryv.me' }), {}, {}, resolve));
+    assert.equal(err, undefined);
   });
 });

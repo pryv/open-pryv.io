@@ -411,53 +411,40 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
-  describe('[CMCDISP-IREV] incoming peer revoke: skipped AND local acceptedBy cleared', () => {
+  describe('[CMCDISP-IREV] incoming peer revoke: skipped AND the invite marked revoked', () => {
     // A peer-delivered consent/revoke-cmc must stay a no-outbound skip
-    // (loop-safety), but still run the one piece of LOCAL bookkeeping:
-    // clear the withdrawing subject from the open-link capability's
-    // acceptedBy so a re-consent through the same link is accepted again.
+    // (loop-safety), but still run the LOCAL work: delete the peer's access
+    // and, on the requester side, mark the single-use invite revoked.
     const SUBJECT = { username: 'peer', host: 'peer.example.com' };
 
-    function mallForIncomingRevoke (capId, acceptedBy) {
+    function mallForIncomingRevoke (capId) {
       const m = fakeMall();
       const cpAccess = {
         id: 'acc-peer',
-        clientData: { cmc: { role: 'counterparty', capabilityId: capId, counterparty: SUBJECT } },
+        clientData: { cmc: { role: 'counterparty', capabilityId: capId, inviteEventId: 'invite-' + capId, counterparty: SUBJECT } },
       };
-      const capAccess = {
-        id: 'cap-acc',
-        clientData: {
-          cmc: {
-            kind: 'capability',
-            capabilityId: capId,
-            capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy },
-          },
-        },
-      };
-      const list = [cpAccess, capAccess];
+      const list = [cpAccess];
+      const invite = { id: 'invite-' + capId, type: 'consent/request-cmc', content: { status: 'accepted' } };
       m.accesses.get = async () => list;
-      m.accesses.update = async (userId, params) => {
-        const a = list.find((x) => x.id === params.id);
-        if (a != null) Object.assign(a, params.update);
-        m.calls.accessesUpdated.push({ id: params.id, update: params.update });
-      };
       m.accesses.delete = async (userId, params) => {
         const i = list.findIndex((x) => x.id === params.id);
         if (i >= 0) list.splice(i, 1);
         m.calls.accessesDeleted.push(params.id);
       };
-      m.calls.accessesUpdated = [];
+      m.events.getOne = async (userId, id) => (id === invite.id ? invite : null);
+      const update = m.events.update;
+      m.events.update = async (userId, params) => {
+        if (params.id === invite.id) Object.assign(invite, params);
+        return update(userId, params);
+      };
       m.calls.accessesDeleted = [];
-      m._acceptedBy = () => capAccess.clientData.cmc.capability.acceptedBy;
+      m._invite = () => invite;
       m._accessIds = () => list.map((a) => a.id);
       return m;
     }
 
-    it('[CDL05] still returns skipped:cmc-incoming-from-peer AND clears the accepter', async () => {
-      const mall = mallForIncomingRevoke('cap-d', [
-        { ...SUBJECT, acceptedAt: 1 },
-        { username: 'carol', host: 'c.example.com', acceptedAt: 1 },
-      ]);
+    it('[CD15] still returns skipped:cmc-incoming-from-peer AND marks the invite revoked', async () => {
+      const mall = mallForIncomingRevoke('cap-d');
       const r = await dispatch({
         userId: 'u1',
         event: {
@@ -472,10 +459,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.handled, true);
       assert.equal(r.status, 'skipped');
       assert.equal(r.reason, 'cmc-incoming-from-peer');
-      // Handler ran: subject cleared, co-accepter preserved.
-      const list = mall._acceptedBy();
-      assert.equal(list.length, 1);
-      assert.equal(list[0].username, 'carol');
+      assert.equal(mall._invite().content.status, 'revoked');
       // ... and the peer's access on this account is gone, which is what
       // actually enforces the withdrawal.
       assert.deepEqual(mall.calls.accessesDeleted, ['acc-peer']);
@@ -488,7 +472,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
       // peer-delivered test alone would let it fall through to handleRevoke
       // with the peer's foreign content.accessId and mark the withdrawal
       // 'failed' — which an app reads as "the revocation did not work".
-      const mall = mallForIncomingRevoke('cap-e', [{ ...SUBJECT, acceptedAt: 1 }]);
+      const mall = mallForIncomingRevoke('cap-e');
       await mall.accesses.delete('u1', { id: 'acc-peer' });
       const r = await dispatch({
         userId: 'u1',
@@ -523,6 +507,70 @@ describe('[CMCDISP] cmc/dispatch', () => {
         deps: makeDeps({ mall }),
       });
       assert.notEqual(r.reason, 'cmc-incoming-from-peer');
+    });
+  });
+
+  describe('[CMCDISP-REQ] a request trigger is never written by dispatch', () => {
+    it('[CD16] no delivered stamp, so an outcome written on the invite cannot be overwritten', async () => {
+      const mall = fakeMall();
+      const r = await dispatch({
+        userId: 'u1',
+        event: { id: 'inv-9', type: 'consent/request-cmc', streamIds: [':_cmc:apps:my-app'], content: { status: 'accepted' } },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.reason, 'request-handled-elsewhere');
+      assert.deepEqual(mall.calls.eventsUpdated, []);
+    });
+  });
+
+  describe('[CMCDISP-IREF] incoming refuse is recorded on the invite', () => {
+    function mallWithCapability (mode) {
+      const m = fakeMall();
+      const invite = { id: 'invite-r', type: 'consent/request-cmc', content: { status: 'delivered', ...(mode ? { capability: { mode } } : {}) } };
+      m.accesses.get = async () => [{
+        id: 'cap-acc-r',
+        clientData: { cmc: { kind: 'capability', capabilityId: 'cap-r', requestEventId: 'invite-r', capability: { mode: mode || 'single-use', state: 'open' } } },
+      }];
+      m.events.getOne = async (userId, id) => (id === invite.id ? invite : null);
+      const update = m.events.update;
+      m.events.update = async (userId, params) => {
+        if (params.id === invite.id) Object.assign(invite, params);
+        return update(userId, params);
+      };
+      m._invite = () => invite;
+      return m;
+    }
+    const arrival = (content) => ({
+      id: 'evt-refuse-in',
+      type: 'consent/refuse-cmc',
+      streamIds: [':_cmc:_internal:responses:cap-r'],
+      createdBy: 'cap-acc-r',
+      content: { from: { username: 'bob', host: 'b.example.com' }, capabilityId: 'cap-r', capabilityUrl: 'https://example.com/', ...content },
+    });
+
+    it('[CD13] a refuse on a responses stream completes and marks the single-use invite refused', async () => {
+      const mall = mallWithCapability();
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await dispatch({ userId: 'u1', event: arrival({ reason: { en: 'no' } }), deps: makeDeps({ mall, fetch }) });
+      assert.equal(r.status, 'completed');
+      assert.equal(calls.length, 0, 'an incoming refuse issues no outbound call');
+      const invite = mall._invite();
+      assert.equal(invite.content.status, 'refused');
+      assert.equal(invite.content.refusedBy.username, 'bob');
+      assert.deepEqual(invite.content.reason, { en: 'no' });
+    });
+
+    it('[CD14] an open-link invite is not changed by one refusal; a refuse without capabilityId fails', async () => {
+      const mall = mallWithCapability('open-link');
+      const r = await dispatch({ userId: 'u1', event: arrival({}), deps: makeDeps({ mall }) });
+      assert.equal(r.status, 'completed');
+      assert.equal(mall._invite().content.status, 'delivered');
+
+      const bad = await dispatch({
+        userId: 'u1', event: arrival({ capabilityId: undefined }), deps: { ...makeDeps({ mall }), enqueueRetries: false },
+      });
+      assert.equal(bad.status, 'failed');
+      assert.equal(bad.reason, 'cmc-incoming-refuse-missing-capability-id');
     });
   });
 

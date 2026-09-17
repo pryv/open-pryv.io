@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### CMC: an invite reports its outcome, and a refusal reaches the requester
+
+- **Added.** The `consent/request-cmc` trigger now reports what happened to the
+  invite. Its `content.status`, which used to stay `pending` / `delivered` for
+  good, moves to `accepted` (with `acceptedBy`, `acceptedAt`,
+  `backChannelAccessId`), `refused` (`refusedBy`, `refusedAt`, `reason`) or
+  `revoked` (`revokedAt`) for a single-use invite, and to `invalidated`
+  (`invalidatedAt`) for an open-link invite; `reason` is copied when the refusal
+  or invalidation carries one. An open-link invite stays `pending` while it
+  accepts joiners (request triggers are no longer stamped `delivered`). A socket.io monitor on the
+  trigger stream sees each change.
+- **Fixed.** A refusal sent through an invite link never arrived: the requester's
+  core refused the delivery (`400`), so the refusing side ended `failed` with
+  `cmc-handler-delivery-failed` and the requester was never told. The delivered
+  `consent/refuse-cmc` now carries `capabilityUrl` (without its token) and omits
+  an empty `reason`, and the requester's core records the refusal on the invite.
+  Both cores need this release: an older requester core receiving the new shape
+  still does not record the refusal, and the refusing side's trigger ends `failed`
+  with `cmc-capability-invalid`. A refusal does not consume a single-use link: the
+  same party may still accept it later (the invite then moves to `accepted` and
+  loses its refusal fields).
+- **Changed.** An accept or refuse whose capability URL no longer authenticates
+  (`cmc-capability-invalid`: unknown or expired token) is no longer retried; the
+  trigger is marked `failed` at once instead of after six attempts.
+- **Changed.** Who joined an open-link invite is now the set of the requester's
+  relationship accesses carrying the invite's `capabilityId`
+  (`clientData.cmc.role: 'counterparty'`). The capability access's
+  `clientData.cmc.capability.acceptedBy` list is no longer written or read;
+  arrays on existing capability accesses are left as they are. Joins no longer
+  rewrite the capability access, so concurrent accepts can no longer lose one
+  another and the access stops growing. A same-party re-accept is still refused
+  with `cmc-capability-already-accepted-by-you` while that relationship exists;
+  `error.data.acceptedAt` is now the relationship access's creation time. Apps that
+  read `acceptedBy` should list the relationship accesses instead, or use
+  `@pryv/cmc` `listInviteAccepters`.
+- Documentation corrected: capability accesses are listed by `accesses.get` like
+  any other access (they were documented as hidden).
+
 ### CMC: open-link invites can be issued without expiry
 
 An `open-link` invite (`capability.mode: 'open-link'`) may now be published with

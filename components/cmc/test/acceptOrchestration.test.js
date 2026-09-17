@@ -435,7 +435,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       // capabilityId must round-trip on the delivered event so the
       // requester-side handler can locate the capability access and
       // transition its single-use lifecycle (open → consumed) or
-      // append to acceptedBy[] for open-link mode. Omitting it makes
+      // record the open-link join. Omitting it makes
       // the state-flip a silent no-op — a second accept on the same
       // URL then succeeds instead of being rejected with
       // `cmc-capability-consumed`.
@@ -472,12 +472,13 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(sent.type, 'consent/refuse-cmc');
       assert.deepEqual(sent.content.reason, { en: 'Not at this time.' });
       // capabilityId must round-trip on refuse for the same reason as accept
-      // (see [AO10]) — the requester-side handler needs it to transition
-      // capability state on refuse.
+      // (see [AO10]) — the requester-side handler needs it to find the invite.
       assert.equal(sent.content.capabilityId, 'cap-xyz');
+      // Required by the refuse content schema, sent without the token.
+      assert.equal(sent.content.capabilityUrl, 'https://example.com/');
     });
 
-    it('[AO13] passes null reason if not provided', async () => {
+    it('[AO13] omits reason if not provided (the schema refuses a null reason)', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       await deliverRefuseViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
@@ -486,7 +487,8 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         deps: { fetch },
       });
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.content.reason, null);
+      assert.equal(Object.prototype.hasOwnProperty.call(sent.content, 'reason'), false);
+      assert.equal(sent.content.capabilityUrl, 'https://example.com/');
     });
   });
 });

@@ -515,30 +515,12 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     });
   });
 
-  describe('[CMCHR-CLEAR] requester-side acceptedBy clearing on local revoke', () => {
-    // When the deleted relationship access carries the open-link
-    // capabilityId (requester/publisher side), tearing it down must also
-    // clear the withdrawing subject from that capability's acceptedBy so a
-    // re-consent through the SAME link is accepted again. On the accepter
-    // side the local access has no capabilityId → clearing is skipped.
-    const SUBJECT_ACCEPTED = { username: 'provider-a', host: 'provider.example.org', acceptedAt: 1 };
-    const CO_ACCEPTER = { username: 'bob', host: 'b.example.com', acceptedAt: 1 };
-
-    function capabilityAccess (capId, acceptedBy) {
-      return {
-        id: 'cap-acc',
-        type: 'app',
-        clientData: {
-          cmc: {
-            kind: 'capability',
-            capabilityId: capId,
-            capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy },
-          },
-        },
-      };
-    }
-
-    // Counterparty access WITH the capabilityId stamp (requester back-channel).
+  describe('[CMCHR-INVITE] requester-side invite marked revoked on local revoke', () => {
+    // When the deleted relationship access is the requester's back-channel
+    // (it carries the `capabilityId` key), the single-use invite it descends
+    // from is marked revoked on its trigger. An open-link invite is left alone:
+    // the deleted access was the subject's join. On the accepter side nothing
+    // is marked.
     const STAMPED_COUNTERPARTY_ACCESS = {
       id: 'acc-counterparty',
       type: 'shared',
@@ -547,6 +529,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
           role: 'counterparty',
           appCode: 'my-app',
           capabilityId: 'cap-x',
+          inviteEventId: 'invite-x',
           counterparty: {
             username: 'provider-a',
             host: 'provider.example.org',
@@ -556,8 +539,9 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       },
     };
 
-    function richMall (accessList) {
-      const state = { list: accessList.slice(), deleted: [], updated: [] };
+    function richMall (accessList, invite) {
+      const state = { list: accessList.slice(), deleted: [], updated: [], events: new Map(), eventsUpdated: [] };
+      if (invite != null) state.events.set(invite.id, invite);
       return {
         state,
         accesses: {
@@ -572,59 +556,64 @@ describe('[CMCHR] cmc/handleRevoke', () => {
             state.updated.push({ id: params.id, update: params.update });
           },
         },
+        events: {
+          async getOne (userId, id) { return state.events.get(id) ?? null; },
+          async update (userId, event) {
+            state.events.set(event.id, event);
+            state.eventsUpdated.push(event);
+            return event;
+          },
+        },
       };
     }
 
-    function acceptedByOf (mall) {
-      const cap = mall.state.list.find((a) => a.clientData?.cmc?.kind === 'capability');
-      return cap?.clientData?.cmc?.capability?.acceptedBy || [];
+    async function revoke (mall) {
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      return handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
     }
 
-    it('[HR25] clears the withdrawing subject from acceptedBy when the deleted access carries capabilityId', async () => {
-      const mall = richMall([
-        STAMPED_COUNTERPARTY_ACCESS,
-        capabilityAccess('cap-x', [SUBJECT_ACCEPTED, CO_ACCEPTER]),
-      ]);
-      const { fetch } = fakeFetch({ status: 201, body: {} });
-      const r = await handleRevoke({
-        userId: 'u1',
-        triggerEvent: {
-          type: 'consent/revoke-cmc',
-          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
-          content: {},
-        },
-        selfIdentity: SELF,
-        deps: { mall, fetch },
-      });
+    it('[HR29] marks the single-use invite revoked when the deleted access is the requester back-channel', async () => {
+      const mall = richMall([STAMPED_COUNTERPARTY_ACCESS],
+        { id: 'invite-x', type: 'consent/request-cmc', content: { status: 'accepted' } });
+      const r = await revoke(mall);
       assert.equal(r.ok, true);
       assert.ok(r.deletedAccessIds.includes('acc-counterparty'));
-      // The co-accepter survives verbatim; only the withdrawing subject is gone.
-      const list = acceptedByOf(mall);
-      assert.equal(list.length, 1);
-      assert.equal(list[0].username, 'bob');
+      const invite = mall.state.events.get('invite-x');
+      assert.equal(invite.content.status, 'revoked');
+      assert.equal(typeof invite.content.revokedAt, 'number');
     });
 
-    it('[HR26] does NOT touch acceptedBy when the deleted access has no capabilityId (accepter side)', async () => {
-      const mall = richMall([
-        // COUNTERPARTY_ACCESS (top of file) carries no capabilityId.
-        COUNTERPARTY_ACCESS,
-        capabilityAccess('cap-x', [SUBJECT_ACCEPTED, CO_ACCEPTER]),
-      ]);
-      const { fetch } = fakeFetch({ status: 201, body: {} });
-      const r = await handleRevoke({
-        userId: 'u1',
-        triggerEvent: {
-          type: 'consent/revoke-cmc',
-          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
-          content: {},
-        },
-        selfIdentity: SELF,
-        deps: { mall, fetch },
-      });
+    it('[HR30] marks nothing for a relationship without inviteEventId', async () => {
+      const legacy = structuredClone(STAMPED_COUNTERPARTY_ACCESS);
+      delete legacy.clientData.cmc.inviteEventId;
+      const mall = richMall([legacy],
+        { id: 'invite-x', type: 'consent/request-cmc', content: { status: 'accepted' } });
+      const r = await revoke(mall);
       assert.equal(r.ok, true);
-      // No clearAccepter path taken → capability untouched, both entries stay.
-      assert.equal(mall.state.updated.length, 0);
-      assert.equal(acceptedByOf(mall).length, 2);
+      assert.equal(mall.state.eventsUpdated.length, 0);
+    });
+
+    it('[HR31] leaves an open-link invite untouched, and marks nothing on the accepter side', async () => {
+      const openLink = richMall([STAMPED_COUNTERPARTY_ACCESS],
+        { id: 'invite-x', type: 'consent/request-cmc', content: { status: 'delivered', capability: { mode: 'open-link' } } });
+      assert.equal((await revoke(openLink)).ok, true);
+      assert.equal(openLink.state.eventsUpdated.length, 0);
+
+      // COUNTERPARTY_ACCESS (top of file) carries no capabilityId key.
+      const accepter = richMall([COUNTERPARTY_ACCESS],
+        { id: 'invite-x', type: 'consent/request-cmc', content: { status: 'accepted' } });
+      assert.equal((await revoke(accepter)).ok, true);
+      assert.equal(accepter.state.eventsUpdated.length, 0);
+      assert.equal(accepter.state.updated.length, 0);
     });
   });
 

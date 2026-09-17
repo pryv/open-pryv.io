@@ -61,17 +61,17 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const relationshipKey = require('./relationshipKey.ts');
-const capabilityMod = require('./capability.ts');
+const inviteState = require('./inviteState.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps } from './_types.ts';
 
 type Counterparty = { username: string; host: string };
 
-import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
+import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
 type MallParams = Record<string, unknown>;
 
-type MallLike = { accesses: MallAccessesLike };
+type MallLike = { accesses: MallAccessesLike; events?: MallEventsLike };
 
 
 type RevokeHandlerResult =
@@ -113,7 +113,10 @@ async function handleRevoke (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: MallLike } & OutboundDeps;
+  deps: {
+    mall: MallLike;
+    notifyEventChanged?: (userId: string, event: { id?: string }) => void;
+  } & OutboundDeps;
 }): Promise<RevokeHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
   const { mall } = deps;
@@ -362,30 +365,17 @@ async function handleRevoke (params: {
     }
   }
 
-  // Step 6: if this relationship was established through an open-link
-  // capability WE published (requester side), the counterparty access carries
-  // its `capabilityId`; clear the now-withdrawn subject from the capability's
-  // `acceptedBy` so they can re-consent through the same link. Best-effort. On
-  // the accepter side the local access carries no `capabilityId`, so this is a
-  // structural no-op there (no cross-relationship contamination).
-  try {
-    const cmcCd = counterpartyAccess.clientData?.cmc;
-    const capabilityId = cmcCd?.capabilityId;
-    const accepter = cmcCd?.counterparty;
-    if (typeof capabilityId === 'string' && capabilityId.length > 0 &&
-        accepter != null && typeof accepter.username === 'string' &&
-        typeof accepter.host === 'string') {
-      await capabilityMod.clearAccepter({
-        userId,
-        capabilityId,
-        accepter: { username: accepter.username, host: accepter.host },
-        deps: { mall },
-      });
-    }
-  } catch (err: unknown) {
-    deps.logger?.warn?.('cmc/handleRevoke: clearAccepter failed (non-fatal)', {
-      error: String((err as Error)?.message || err),
-    });
+  // Step 6: on the requester side, mark the single-use invite this relationship
+  // descends from as `revoked`. Nothing to do for an open-link invite: the
+  // deleted access was this subject's join, so they can accept the link again.
+  // Best-effort.
+  const stamp = await inviteState.stampRevokedFromRelationship({
+    userId,
+    relationshipCmc: counterpartyAccess.clientData?.cmc,
+    deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+  });
+  if (!stamp.ok) {
+    deps.logger?.warn?.('cmc/handleRevoke: invite not stamped revoked (non-fatal)', { reason: stamp.reason });
   }
 
   return {

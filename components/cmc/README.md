@@ -206,16 +206,18 @@ When a `consent/request-cmc` is written with `capabilityRequested: true`, the pl
 - **Name:** `__cmc-cap-<short-id>`
 - **Per-capability streams** (created by the plugin alongside the access):
   - `:_cmc:_internal:offer:<capId>`: contains the single request event (server-stamped, immutable for the capability lifetime).
-  - `:_cmc:_internal:responses:<capId>`: empty at creation; receives exactly one `consent/accept-cmc` or `consent/refuse-cmc` event during the capability's life.
+  - `:_cmc:_internal:responses:<capId>`: empty at creation; receives the `consent/accept-cmc` / `consent/refuse-cmc` answers (one accept for a single-use link, one per joining counterparty for an open-link).
 - **Permissions:**
   - `read` on `:_cmc:_internal:offer:<capId>`.
   - `create-only` on `:_cmc:_internal:responses:<capId>`.
-- **`clientData.cmc`:** `{ kind: 'capability', requestEventId: <id>, capability: { mode, state, stateChangedAt, [acceptedBy] }, singleUse: <bool> }`
+- **`clientData.cmc`:** `{ kind: 'capability', capabilityId, requestEventId: <id>, capability: { mode, state, stateChangedAt }, singleUse: <bool> }`. Accesses minted by older releases may also carry a `capability.acceptedBy` array; it is no longer written or read.
 - **Expiry:** 7 days by default (fixed in code, not operator-configurable); the requester sets an absolute `content.request.expiresAt` (Unix seconds) per invite: at least 60 s from now, and at most 30 days for single-use (open-link has no upper bound). Open-link invites may pass `expiresAt: null` to mint the access without expiry; the link then lives until `consent/invalidate-link-cmc`.
-- **Mode:** `'single-use'` (default) or `'open-link'`. Single-use auto-consumes on first accept and rejects re-clicks with `cmc-capability-consumed`. Open-link accepts multiple counterparties, each is recorded in `clientData.cmc.capability.acceptedBy` (`[{username, host, acceptedAt}]`); same-counterparty re-clicks are rejected with `cmc-capability-already-accepted-by-you`; the requester writes a `consent/invalidate-link-cmc` event to close the link to new accepters. See the Implementer's Guide section "Open-link capability" for the full semantics.
+- **Mode:** `'single-use'` (default) or `'open-link'`. Single-use auto-consumes on first accept and rejects re-clicks with `cmc-capability-consumed`. Open-link accepts multiple counterparties; who joined is the set of the requester's relationship accesses carrying the invite's `capabilityId` (`clientData.cmc.role: 'counterparty'`), so a revoked relationship is an un-join. A counterparty who still holds such a relationship is refused with `cmc-capability-already-accepted-by-you`; the requester writes a `consent/invalidate-link-cmc` event to close the link to new accepters. See the Implementer's Guide section "Open-link capability" for the full semantics.
 - **Retention:** capability accesses are not deleted by the plugin. A consumed single-use access and an invalidated open-link access are kept with their state so that a later click on the same URL gets a typed error (`cmc-capability-consumed` / `cmc-capability-invalidated`) instead of a bare 401. An expired access simply stops authenticating, like any expired Pryv access. `gcCapability` exists for operator-driven cleanup and is not run automatically.
 
-The access's `apiEndpoint` IS the capability URL, a standard `pryv.Connection(url)` works against it. Hidden from `accesses.get` by default (filtered by `clientData.cmc.kind: 'capability'`); operators can opt to surface them via a query parameter.
+The access's `apiEndpoint` IS the capability URL, a standard `pryv.Connection(url)` works against it. Capability accesses are listed by `accesses.get` like any other access; select them with `clientData.cmc.kind === 'capability'`.
+
+The invite's outcome is written on the `consent/request-cmc` trigger itself: `content.status` becomes `accepted` (with `acceptedBy`, `acceptedAt`, `backChannelAccessId`), `refused` (`refusedBy`, `refusedAt`, `reason`) or `revoked` (`revokedAt`) for a single-use invite, and `invalidated` (`invalidatedAt`) for an open-link one. An open-link invite stays `pending` / `delivered` while it accepts joiners. See the Implementer's Guide section "State as trigger-event content".
 
 ### Access-state-mutating triggers: token-class + access-permission gates
 

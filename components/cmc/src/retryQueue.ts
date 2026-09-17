@@ -327,6 +327,10 @@ async function runRetryLoop (params: {
 const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-wrong-type',
   'cmc-handler-missing-capability-url',
+  'cmc-incoming-refuse-missing-capability-id',
+  // The capability URL no longer authenticates (unknown or expired token):
+  // re-running cannot change that.
+  'cmc-capability-invalid',
   'cmc-handler-counterparty-unknown',
   'cmc-handler-data-grant-no-apiendpoint',
   'cmc-handler-data-grant-name-conflict',

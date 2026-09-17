@@ -14,8 +14,8 @@ const require = createRequire(import.meta.url);
  *   - enforcement: delete the relationship access the revoke arrived through
  *     (the token the withdrawing peer holds against this account), plus any
  *     sibling access serving the same relationship;
- *   - bookkeeping: clear the withdrawing subject from an open-link
- *     capability's acceptedBy so they can re-consent through the same link.
+ *   - bookkeeping: on the requester side, mark the single-use invite the
+ *     relationship descends from as revoked.
  *
  * Local-only throughout: the handler issues no outbound calls.
  */
@@ -29,7 +29,7 @@ function fakeMall (opts = {}) {
   // `calls.order` records the sequence of mutating calls, so a test can assert
   // that enforcement (delete) precedes bookkeeping (update) and not just that
   // both happened.
-  const calls = { accessesUpdated: [], accessesDeleted: [], order: [] };
+  const calls = { accessesUpdated: [], accessesDeleted: [], eventsUpdated: [], order: [] };
   return {
     calls,
     accessesById,
@@ -56,126 +56,100 @@ function fakeMall (opts = {}) {
       async getOne (userId, id) {
         return eventsById.get(id) ?? null;
       },
+      async update (userId, event) {
+        eventsById.set(event.id, event);
+        calls.eventsUpdated.push(event);
+        calls.order.push('event:' + event.id);
+        return event;
+      },
     },
   };
 }
 
-function seedCapability (mall, capId, acceptedBy) {
-  mall.accessesById.set('cap-acc', {
-    id: 'cap-acc',
-    clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
-  });
-}
-function seedCapability2 (mall, capId, acceptedBy) {
-  mall.accessesById.set('cap-acc-2', {
-    id: 'cap-acc-2',
-    clientData: { cmc: { kind: 'capability', capabilityId: capId, capability: { mode: 'open-link', state: 'open', stateChangedAt: 1, acceptedBy } } },
-  });
+function seedInvite (mall, id, content = {}) {
+  mall.eventsById.set(id, { id, type: 'consent/request-cmc', content: { status: 'accepted', ...content } });
 }
 function seedBackChannel (mall, id, cmc) {
   mall.accessesById.set(id, { id, clientData: { cmc: { role: 'counterparty', ...cmc } } });
 }
-function acceptedByOf (mall, capId) {
-  for (const acc of mall.accessesById.values()) {
-    if (acc.clientData?.cmc?.kind === 'capability' && acc.clientData.cmc.capabilityId === capId) {
-      return acc.clientData.cmc.capability.acceptedBy || [];
-    }
-  }
-  return null;
+function inviteOf (mall, id) {
+  return mall.eventsById.get(id);
 }
 const SUBJECT = { username: 'alice', host: 'a.example.com' };
 
 describe('[CMCIR] cmc/handleIncomingRevoke', () => {
-  it('[CIR1] clears the accepter resolved from the createdBy access (stamped capabilityId)', async () => {
+  it('[CIR1] requester side: marks the single-use invite of the relationship revoked', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-1', [{ ...SUBJECT, acceptedAt: 6000 }, { username: 'bob', host: 'b.example.com', acceptedAt: 6000 }]);
-    seedBackChannel(mall, 'bc-1', { capabilityId: 'cap-1', counterparty: SUBJECT });
+    seedInvite(mall, 'invite-1');
+    seedBackChannel(mall, 'bc-1', { capabilityId: 'cap-1', inviteEventId: 'invite-1', counterparty: SUBJECT });
+    let notified = 0;
     const res = await handleIncomingRevoke({
       userId: 'u1',
       event: { type: 'consent/revoke-cmc', createdBy: 'bc-1', content: {} },
-      deps: { mall },
+      deps: { mall, notifyEventChanged: () => { notified++; } },
     });
     assert.equal(res.ok, true);
-    assert.equal(res.cleared, true);
-    const list = acceptedByOf(mall, 'cap-1');
-    assert.equal(list.length, 1);
-    assert.equal(list[0].username, 'bob');
+    assert.equal(res.inviteRevoked, true);
+    assert.equal(inviteOf(mall, 'invite-1').content.status, 'revoked');
+    assert.equal(typeof inviteOf(mall, 'invite-1').content.revokedAt, 'number');
+    assert.deepEqual(res.deletedAccessIds, ['bc-1']);
+    assert.equal(notified, 1);
   });
 
   it('[CIR2] resolves the access id from a "<accessId> <callerId>" createdBy', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-2', [{ ...SUBJECT, acceptedAt: 6000 }]);
-    seedBackChannel(mall, 'bc-2', { capabilityId: 'cap-2', counterparty: SUBJECT });
+    seedInvite(mall, 'invite-2');
+    seedBackChannel(mall, 'bc-2', { capabilityId: 'cap-2', inviteEventId: 'invite-2', counterparty: SUBJECT });
     const res = await handleIncomingRevoke({
       userId: 'u1',
       event: { type: 'consent/revoke-cmc', createdBy: 'bc-2 caller-xyz', content: {} },
       deps: { mall },
     });
-    assert.equal(res.cleared, true);
-    assert.equal(acceptedByOf(mall, 'cap-2').length, 0);
+    assert.equal(res.inviteRevoked, true);
+    assert.equal(inviteOf(mall, 'invite-2').content.status, 'revoked');
   });
 
-  it('[CIR3] legacy bridge: recovers capabilityId from content.offerEventId when the access has none', async () => {
+  it('[CIR3] a relationship minted before inviteEventId was stamped marks nothing, and is still torn down', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-3', [{ ...SUBJECT, acceptedAt: 6000 }]);
-    // back-channel access WITHOUT capabilityId (pre-stamp relationship)
-    seedBackChannel(mall, 'bc-3', { counterparty: SUBJECT });
-    mall.eventsById.set('offer-3', { id: 'offer-3', type: 'consent/request-cmc', content: { capabilityId: 'cap-3' } });
+    seedBackChannel(mall, 'bc-3', { capabilityId: 'cap-3', counterparty: SUBJECT });
     const res = await handleIncomingRevoke({
       userId: 'u1',
-      event: { type: 'consent/revoke-cmc', createdBy: 'bc-3', content: { offerEventId: 'offer-3' } },
+      event: { type: 'consent/revoke-cmc', createdBy: 'bc-3', content: {} },
       deps: { mall },
     });
-    assert.equal(res.cleared, true);
-    assert.equal(acceptedByOf(mall, 'cap-3').length, 0);
+    assert.equal(res.inviteRevoked, false);
+    assert.equal(res.reason, 'no-invite-event-id');
+    assert.deepEqual(res.deletedAccessIds, ['bc-3']);
+    assert.deepEqual(mall.calls.eventsUpdated, []);
   });
 
-  it('[CIR3B] legacy bridge reads the offer the revoke names, not the newest event', async () => {
+  it('[CIR4] an open-link invite is left untouched: the teardown was the un-join', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-3b', [{ ...SUBJECT, acceptedAt: 6000 }]);
-    seedCapability2(mall, 'cap-other', [{ ...SUBJECT, acceptedAt: 7000 }]);
-    seedBackChannel(mall, 'bc-3b', { counterparty: SUBJECT });
-    mall.eventsById.set('offer-3b', { id: 'offer-3b', type: 'consent/request-cmc', content: { capabilityId: 'cap-3b' } });
-    // A newer, unrelated offer: a lookup that ignores the id would pick it.
-    mall.eventsById.set('offer-newer', { id: 'offer-newer', type: 'consent/request-cmc', content: { capabilityId: 'cap-other' } });
-    const res = await handleIncomingRevoke({
-      userId: 'u1',
-      event: { type: 'consent/revoke-cmc', createdBy: 'bc-3b', content: { offerEventId: 'offer-3b' } },
-      deps: { mall },
-    });
-    assert.equal(res.cleared, true);
-    assert.equal(acceptedByOf(mall, 'cap-3b').length, 0);
-    assert.equal(acceptedByOf(mall, 'cap-other').length, 1, 'the other capability must keep its accepter');
-  });
-
-  it('[CIR4] unresolvable capability → no-op success, no throw, no write', async () => {
-    const mall = fakeMall();
-    seedCapability(mall, 'cap-4', [{ ...SUBJECT, acceptedAt: 6000 }]);
-    seedBackChannel(mall, 'bc-4', { counterparty: SUBJECT }); // no capabilityId, no offer
-    const updatesBefore = mall.calls.accessesUpdated.length;
+    seedInvite(mall, 'invite-4', { status: 'delivered', capability: { mode: 'open-link' } });
+    seedBackChannel(mall, 'bc-4', { capabilityId: 'cap-4', inviteEventId: 'invite-4', counterparty: SUBJECT });
     const res = await handleIncomingRevoke({
       userId: 'u1',
       event: { type: 'consent/revoke-cmc', createdBy: 'bc-4', content: {} },
       deps: { mall },
     });
     assert.equal(res.ok, true);
-    assert.equal(res.cleared, false);
-    assert.equal(res.reason, 'no-capability');
-    assert.equal(mall.calls.accessesUpdated.length, updatesBefore);
+    assert.equal(res.inviteRevoked, false);
+    assert.equal(res.reason, 'transition-not-allowed');
+    assert.equal(inviteOf(mall, 'invite-4').content.status, 'delivered');
+    assert.deepEqual(res.deletedAccessIds, ['bc-4']);
   });
 
   it('[CIR5] createdBy access is not a counterparty access → no-op', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-5', [{ ...SUBJECT, acceptedAt: 6000 }]);
     mall.accessesById.set('plain', { id: 'plain', clientData: { cmc: { kind: 'capability' } } });
     const res = await handleIncomingRevoke({
       userId: 'u1',
       event: { type: 'consent/revoke-cmc', createdBy: 'plain', content: {} },
       deps: { mall },
     });
-    assert.equal(res.cleared, false);
+    assert.equal(res.inviteRevoked, false);
     assert.equal(res.reason, 'not-counterparty-access');
-    assert.equal(acceptedByOf(mall, 'cap-5').length, 1);
+    assert.deepEqual(mall.calls.accessesDeleted, []);
   });
 
   it('[CIR6] missing createdBy → no-op', async () => {
@@ -186,14 +160,14 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       deps: { mall },
     });
     assert.equal(res.ok, true);
-    assert.equal(res.cleared, false);
+    assert.equal(res.inviteRevoked, false);
     assert.equal(res.reason, 'no-created-by');
   });
 
   it('[CIR7] issues no outbound calls (loop-safe): fake fetch is never touched', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-7', [{ ...SUBJECT, acceptedAt: 6000 }]);
-    seedBackChannel(mall, 'bc-7', { capabilityId: 'cap-7', counterparty: SUBJECT });
+    seedInvite(mall, 'invite-7');
+    seedBackChannel(mall, 'bc-7', { capabilityId: 'cap-7', inviteEventId: 'invite-7', counterparty: SUBJECT });
     let fetchCalls = 0;
     const fetch = () => { fetchCalls++; throw new Error('handleIncomingRevoke must not POST'); };
     const res = await handleIncomingRevoke({
@@ -201,20 +175,22 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       event: { type: 'consent/revoke-cmc', createdBy: 'bc-7', content: {} },
       deps: { mall, fetch },
     });
-    assert.equal(res.cleared, true);
+    assert.equal(res.inviteRevoked, true);
     // The delete path runs here too (bc-7 is torn down), so this covers the
     // whole handler and not just the bookkeeping half.
     assert.deepEqual(mall.calls.accessesDeleted, ['bc-7']);
     assert.equal(fetchCalls, 0);
   });
 
-  it('[CIR8] deletes the access the revoke arrived through, with no capability to clear', async () => {
+  it('[CIR8] accepter side: deletes the access the revoke arrived through, marks no invite', async () => {
     const mall = fakeMall();
-    // Direction "accepter withdraws": the grant this account minted for the
-    // peer carries no capabilityId, so there is no acceptedBy bookkeeping —
-    // the teardown must happen anyway.
+    // Direction "requester withdraws", seen by the accepter: the grant this
+    // account minted carries no capabilityId key, and its inviteEventId (if
+    // any) names the PEER's event.
+    seedInvite(mall, 'peer-invite-8');
     seedBackChannel(mall, 'grant-8', {
       counterparty: SUBJECT,
+      inviteEventId: 'peer-invite-8',
       scopeStreamId: ':_cmc:apps:my-app:study-a',
     });
     const res = await handleIncomingRevoke({
@@ -223,17 +199,19 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       deps: { mall },
     });
     assert.equal(res.ok, true);
-    assert.equal(res.cleared, false);
-    assert.equal(res.reason, 'no-capability');
+    assert.equal(res.inviteRevoked, false);
+    assert.equal(res.reason, 'not-requester-side');
     assert.deepEqual(res.deletedAccessIds, ['grant-8']);
     assert.equal(mall.accessesById.has('grant-8'), false);
+    assert.equal(inviteOf(mall, 'peer-invite-8').content.status, 'accepted');
   });
 
-  it('[CIR9] deletes first, then clears the accepter', async () => {
+  it('[CIR9] deletes first, then marks the invite', async () => {
     const mall = fakeMall();
-    seedCapability(mall, 'cap-9', [{ ...SUBJECT, acceptedAt: 6000 }]);
+    seedInvite(mall, 'invite-9');
     seedBackChannel(mall, 'bc-9', {
       capabilityId: 'cap-9',
+      inviteEventId: 'invite-9',
       counterparty: SUBJECT,
       scopeStreamId: ':_cmc:apps:my-app:study-a',
     });
@@ -242,12 +220,11 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       event: { type: 'consent/revoke-cmc', createdBy: 'bc-9', content: {} },
       deps: { mall },
     });
-    assert.equal(res.cleared, true);
+    assert.equal(res.inviteRevoked, true);
     assert.deepEqual(res.deletedAccessIds, ['bc-9']);
-    assert.equal(acceptedByOf(mall, 'cap-9').length, 0);
-    // Order matters: a crash between the two must leave a stale acceptedBy
-    // (recoverable), never a live token.
-    assert.deepEqual(mall.calls.order, ['delete:bc-9', 'update:cap-acc']);
+    // Order matters: a crash between the two must leave a stale invite status
+    // (cosmetic), never a live token.
+    assert.deepEqual(mall.calls.order, ['delete:bc-9', 'event:invite-9']);
   });
 
   it('[CIR10] sweeps siblings of the same relationship, and only those', async () => {
@@ -372,7 +349,6 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
         content: { from: SUBJECT, accessId: 'sender-side-id', status: 'delivered' },
       };
       const mall = mallWithEvent(event);
-      seedCapability(mall, 'cap-15', [{ ...SUBJECT, acceptedAt: 1 }]);
       seedBackChannel(mall, 'bc-15', {
         capabilityId: 'cap-15',
         counterparty: SUBJECT,
@@ -536,7 +512,7 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
             kind: 'capability',
             capabilityId: 'cap-18',
             requestEventId: 'legacy-invite-1',
-            capability: { mode: 'open-link', state: 'open', acceptedBy: [] },
+            capability: { mode: 'open-link', state: 'open' },
           },
         },
       });

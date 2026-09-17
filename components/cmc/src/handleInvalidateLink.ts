@@ -33,10 +33,11 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
+const inviteState = require('./inviteState.ts');
 
-import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
+import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
 
-type MallLike = { accesses: MallAccessesLike };
+type MallLike = { accesses: MallAccessesLike; events?: MallEventsLike };
 
 type InvalidateLinkEventContent = {
   capabilityId?: unknown;
@@ -66,7 +67,11 @@ type InvalidateLinkResult =
 async function handleInvalidateLink (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: InvalidateLinkEventContent; streamIds?: string[] };
-  deps: { mall: MallLike; logger?: CmcLogger };
+  deps: {
+    mall: MallLike;
+    logger?: CmcLogger;
+    notifyEventChanged?: (userId: string, event: { id?: string }) => void;
+  };
 }): Promise<InvalidateLinkResult> {
   const { userId, triggerEvent, deps } = params;
   const { mall } = deps;
@@ -97,7 +102,7 @@ async function handleInvalidateLink (params: {
   }
 
   const flip = await capabilityMod.markCapabilityInvalidated({
-    userId, capabilityId, deps: { mall },
+    userId, capabilityId, accessId: acc.id, deps: { mall },
   });
   if (!flip.ok) {
     return {
@@ -105,6 +110,25 @@ async function handleInvalidateLink (params: {
       reason: flip.reason || 'cmc-invalidate-link-failed',
       detail: { capabilityId },
     };
+  }
+
+  // Record the outcome on the invite trigger the requester's app watches.
+  // Best-effort: the link is closed either way.
+  const inviteEventId = acc.clientData?.cmc?.requestEventId;
+  if (mall.events != null) {
+    const stamp = await inviteState.stampInvite({
+      userId,
+      inviteEventId,
+      transition: 'invalidated',
+      fields: {
+        invalidatedAt: Date.now() / 1000,
+        ...(triggerEvent.content?.reason != null ? { reason: triggerEvent.content.reason } : {}),
+      },
+      deps: { mall: { events: mall.events }, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+    });
+    if (!stamp.ok || stamp.skipped != null) {
+      deps.logger?.debug?.('cmc/handleInvalidateLink: invite not stamped invalidated', { inviteEventId, stamp });
+    }
   }
 
   return { ok: true, eventType: triggerEvent.type, capabilityId };

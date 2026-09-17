@@ -46,13 +46,12 @@
 import * as C from './constants.ts';
 import * as outbound from './outbound.ts';
 import * as relationshipKey from './relationshipKey.ts';
-import * as capability from './capability.ts';
+import * as inviteState from './inviteState.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
 
 // Outbound delivery deps + an optional mall so the hook can also do local
-// acceptedBy bookkeeping (clearing the withdrawn subject from an open-link
-// capability). mall is optional: older unit constructions pass none and just
-// skip the clear.
+// invite bookkeeping (marking a single-use invite revoked). mall is optional:
+// older unit constructions pass none and just skip it.
 type DeleteHookDeps = OutboundDeps & { mall?: MallLike };
 
 type DeleteHookResult = {
@@ -92,27 +91,21 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         continue;
       }
 
-      // Local bookkeeping, independent of peer delivery: if this deleted
-      // relationship access carries the open-link `capabilityId` (requester
-      // side), clear the withdrawn subject from that capability's `acceptedBy`
-      // so they can re-consent through the same link. Best-effort; skipped
-      // silently when no `mall` dep was wired (older unit constructions) or
-      // when the access carries no capabilityId (accepter side / legacy).
-      if (deps.mall != null && typeof cmc.capabilityId === 'string' &&
-          cmc.capabilityId.length > 0 && cmc.counterparty != null &&
-          typeof cmc.counterparty.username === 'string' &&
-          typeof cmc.counterparty.host === 'string') {
-        try {
-          await capability.clearAccepter({
-            userId,
-            capabilityId: cmc.capabilityId,
-            accepter: { username: cmc.counterparty.username, host: cmc.counterparty.host },
-            deps: { mall: deps.mall },
-          });
-        } catch (err: unknown) {
-          deps.logger?.warn?.('cmc/accessesDeleteHook: clearAccepter failed (non-fatal)', {
+      // Local bookkeeping, independent of peer delivery: on the requester side,
+      // mark the single-use invite this relationship descends from as
+      // `revoked`. For an open-link invite the delete itself was the un-join.
+      // Best-effort; skipped when no `mall` dep was wired (older unit
+      // constructions).
+      if (deps.mall != null) {
+        const stamp = await inviteState.stampRevokedFromRelationship({
+          userId,
+          relationshipCmc: cmc,
+          deps: { mall: deps.mall, logger: deps.logger },
+        });
+        if (!stamp.ok) {
+          deps.logger?.warn?.('cmc/accessesDeleteHook: invite not stamped revoked (non-fatal)', {
             accessId: access.id,
-            error: String((err as Error)?.message ?? err),
+            reason: stamp.reason,
           });
         }
       }

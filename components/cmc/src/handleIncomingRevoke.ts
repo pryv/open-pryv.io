@@ -16,14 +16,14 @@
  *      Without it the peer withdrew, both sides consider the relationship
  *      over, and their token kept reading our data until their own app got
  *      around to removing it.
- *   2. BOOKKEEP — when the relationship was established through an open-link
- *      capability we published, the withdrawing subject is still listed in
- *      that capability's `acceptedBy`, so the link keeps refusing their
- *      re-consent. Clear their entry.
+ *   2. BOOKKEEP — when this account published the invite the relationship
+ *      descends from (requester side), mark a single-use invite `revoked`.
+ *      An open-link invite needs nothing: the deleted access was the
+ *      subject's join, so they can accept the same link again.
  *
  * Enforcement runs FIRST because the failure modes are not symmetric: a crash
- * between the two leaves a stale `acceptedBy` (re-consent refused until it is
- * cleared, recoverable) whereas the opposite order would leave a live token.
+ * between the two leaves a stale invite status (cosmetic) whereas the opposite
+ * order would leave a live token.
  *
  * Identity is taken from the creating access's SERVER-stamped counterparty,
  * never from the peer-supplied `content.from` / `content.accessId` /
@@ -40,16 +40,9 @@
  * accesses are never swept: without a scope one relationship with a peer cannot
  * be told from another under the same app, and a wrong sweep would tear down a
  * live sibling relationship.
- *
- * Legacy bridge: relationships minted before the back-channel access carried
- * `capabilityId` are correlated via the revoke's `content.offerEventId` → the
- * local offer event → its `content.capabilityId` (or the offer stream id
- * `:_cmc:_internal:offer:<capId>`). Unresolvable → no capability to clear,
- * which is a no-op for step 2 and never blocks step 1.
  */
 
-import * as C from './constants.ts';
-import * as capabilityMod from './capability.ts';
+import * as inviteState from './inviteState.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as slugMod from './slug.ts';
 
@@ -77,7 +70,7 @@ async function handleIncomingRevoke (params: {
   deps: Deps;
 }): Promise<{
   ok: boolean;
-  cleared?: boolean;
+  inviteRevoked?: boolean;
   deletedAccessIds?: string[];
   enriched?: boolean;
   reason?: string;
@@ -91,10 +84,10 @@ async function handleIncomingRevoke (params: {
   // dispatch.isPeerDeliveredEvent).
   const createdBy = event.createdBy;
   if (typeof createdBy !== 'string' || createdBy.length === 0) {
-    return { ok: true, cleared: false, reason: 'no-created-by' };
+    return { ok: true, inviteRevoked: false, reason: 'no-created-by' };
   }
   if (mall.accesses?.get == null) {
-    return { ok: true, cleared: false, reason: 'mall-unavailable' };
+    return { ok: true, inviteRevoked: false, reason: 'mall-unavailable' };
   }
   const sep = createdBy.indexOf(' ');
   const createdByAccessId = sep === -1 ? createdBy : createdBy.slice(0, sep);
@@ -109,16 +102,16 @@ async function handleIncomingRevoke (params: {
     logger?.warn?.('cmc/handleIncomingRevoke: access lookup failed', {
       error: String((err as Error)?.message || err),
     });
-    return { ok: true, cleared: false, deletedAccessIds: [], reason: 'access-lookup-failed' };
+    return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'access-lookup-failed' };
   }
   if (createdByAccess == null) {
     // Already deleted, or the receiving user raw-deleted it between the inbox
     // write and dispatch. Nothing to enforce and nothing reliable to correlate.
-    return { ok: true, cleared: false, deletedAccessIds: [], reason: 'created-by-access-gone' };
+    return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'created-by-access-gone' };
   }
   const cmcCd = createdByAccess.clientData?.cmc;
   if (cmcCd?.role !== 'counterparty') {
-    return { ok: true, cleared: false, deletedAccessIds: [], reason: 'not-counterparty-access' };
+    return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'not-counterparty-access' };
   }
 
   // Withdrawing subject — SERVER-stamped identity only, never content.from.
@@ -150,43 +143,17 @@ async function handleIncomingRevoke (params: {
     logger,
   });
 
-  // Step 2 — BOOKKEEP. From here on a failure only costs a stale `acceptedBy`.
-  let cleared = false;
-  let reason: string | undefined;
-  if (accepter == null || typeof accepter.username !== 'string' ||
-      typeof accepter.host !== 'string') {
-    reason = 'no-counterparty-identity';
-  } else {
-    // Correlate to the open-link capability we published.
-    let capabilityId: string | null =
-      typeof cmcCd.capabilityId === 'string' && cmcCd.capabilityId.length > 0
-        ? cmcCd.capabilityId
-        : null;
-    // Legacy bridge for relationships minted before the stamp.
-    if (capabilityId == null) {
-      capabilityId = await resolveCapabilityIdFromOffer(userId, event, mall, logger);
-    }
-    if (capabilityId == null) {
-      logger?.debug?.('cmc/handleIncomingRevoke: no capability to clear (non-open-link or unresolvable)', {});
-      reason = 'no-capability';
-    } else {
-      try {
-        const res = await capabilityMod.clearAccepter({
-          userId,
-          capabilityId,
-          accepter: { username: accepter.username, host: accepter.host },
-          deps: { mall },
-        });
-        cleared = res?.cleared === true;
-      } catch (err: unknown) {
-        logger?.warn?.('cmc/handleIncomingRevoke: clearAccepter failed', {
-          capabilityId,
-          error: String((err as Error)?.message || err),
-        });
-        reason = 'clear-failed';
-      }
-    }
-  }
+  // Step 2 — BOOKKEEP. On the requester side, mark the single-use invite this
+  // relationship descends from as `revoked`. For an open-link invite the
+  // teardown above already was the un-join. A failure only costs a stale
+  // invite status.
+  const stamp = await inviteState.stampRevokedFromRelationship({
+    userId,
+    relationshipCmc: cmcCd,
+    deps: { mall, logger, notifyEventChanged: deps.notifyEventChanged },
+  });
+  const inviteRevoked = stamp.ok && stamp.written;
+  const reason: string | undefined = stamp.ok ? stamp.skipped : stamp.reason;
 
   // Step 3 — ENRICH. The arrival names the SENDER's access id, which this
   // account has never seen. Add the ids this side already holds for the
@@ -198,7 +165,7 @@ async function handleIncomingRevoke (params: {
     notifyEventChanged: deps.notifyEventChanged,
   });
 
-  return { ok: true, cleared, deletedAccessIds, enriched, ...(reason != null ? { reason } : {}) };
+  return { ok: true, inviteRevoked, deletedAccessIds, enriched, ...(reason != null ? { reason } : {}) };
 }
 
 /**
@@ -302,15 +269,15 @@ async function enrichArrival (params: {
  * serving the SAME relationship, and return the ids actually deleted.
  *
  * "Same relationship" = same server-stamped counterparty (username +
- * `slugifyHost`, the identity key `recordAccepter` / `selectRelationshipAccess`
- * use) AND the same scope stream, which must be non-null on both sides. A
+ * `slugifyHost`, the identity key `selectRelationshipAccess`
+ * uses) AND the same scope stream, which must be non-null on both sides. A
  * scope-less access is never swept: it cannot be told apart from another
  * relationship with the same peer under the same app code, and tearing down the
  * wrong one is precisely the defect class this component already paid for once.
  *
  * Every delete is best-effort and independent: a "unknown resource" race with a
  * local delete is expected and tolerated per item, and a failure here never
- * prevents the `acceptedBy` bookkeeping that follows.
+ * prevents the invite bookkeeping that follows.
  */
 async function tearDownRelationship (params: {
   userId: string;
@@ -369,53 +336,6 @@ async function tearDownRelationship (params: {
     });
   }
   return deleted;
-}
-
-/**
- * Legacy correlation: read the local offer event named by the revoke's
- * `content.offerEventId` and extract its capabilityId — from the event content
- * (stamped at mint) or, failing that, its offer stream id
- * (`:_cmc:_internal:offer:<capId>`).
- */
-async function resolveCapabilityIdFromOffer (
-  userId: string,
-  event: EventLike,
-  mall: MallLike,
-  logger?: LoggerLike
-): Promise<string | null> {
-  const offerEventId = event.content?.offerEventId;
-  if (typeof offerEventId !== 'string' || offerEventId.length === 0) return null;
-  if (mall.events?.getOne == null) return null;
-  try {
-    // getOne, not get({ id }): the events query does not filter on `id`.
-    const offer = await mall.events.getOne(userId, offerEventId);
-    if (offer == null) return null;
-    // `offerEventId` is peer-supplied. The blast radius is already bounded — the
-    // accepter we clear is the SERVER-stamped counterparty of the createdBy
-    // access, so a peer can at most clear THEIR OWN entry — but only trust an
-    // event that is actually one of our CMC offers, not an arbitrary event id.
-    if ((offer as { type?: string }).type !== C.ET_REQUEST) return null;
-    const content = (offer as { content?: Record<string, unknown> }).content;
-    const fromContent = content?.capabilityId;
-    if (typeof fromContent === 'string' && fromContent.length > 0) return fromContent;
-    // Fallback: parse the offer stream id.
-    const streamIds = (offer as { streamIds?: unknown }).streamIds;
-    const prefix = C.NS_INTERNAL + ':offer:';
-    if (Array.isArray(streamIds)) {
-      for (const sid of streamIds) {
-        if (typeof sid === 'string' && sid.startsWith(prefix)) {
-          const capId = sid.slice(prefix.length);
-          if (capId.length > 0) return capId;
-        }
-      }
-    }
-    return null;
-  } catch (err: unknown) {
-    logger?.warn?.('cmc/handleIncomingRevoke: offer lookup failed (legacy bridge)', {
-      error: String((err as Error)?.message || err),
-    });
-    return null;
-  }
 }
 
 export { handleIncomingRevoke };

@@ -369,8 +369,9 @@ async function deliverAcceptViaCapability (params: {
         from: params.counterparty,
         // Stamp capabilityId so handleIncomingAccept can locate the
         // capability access on the requester side and transition its
-        // single-use lifecycle state from 'open' to 'consumed' (or
-        // append to acceptedBy[] in open-link mode). Without this,
+        // single-use lifecycle state from 'open' to 'consumed' (and, in
+        // open-link mode, stamp it on the back-channel as the join
+        // record). Without this,
         // the state-flip block in handleIncomingAccept silently no-ops
         // and a second accept on the same URL succeeds instead of
         // being rejected with `cmc-capability-consumed`.
@@ -385,6 +386,21 @@ async function deliverAcceptViaCapability (params: {
     deps: params.deps,
   });
   return { ok: r.ok, response: r };
+}
+
+/**
+ * The URL without its `user:password@` part (the capability token). Returned
+ * unchanged when it does not parse.
+ */
+function stripCredentials (url: string): string {
+  try {
+    const u = new URL(url);
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch (_e) {
+    return url;
+  }
 }
 
 /**
@@ -409,9 +425,14 @@ async function deliverRefuseViaCapability (params: {
         from: params.counterparty,
         // See deliverAcceptViaCapability above — same rationale for
         // stamping capabilityId so the requester-side handler can
-        // transition the capability state on refuse.
+        // find the invite the refusal answers.
         capabilityId: params.capabilityId,
-        reason: params.reason ?? null,
+        // `consent/refuse-cmc` requires `capabilityUrl`: without it the
+        // requester's core refuses the delivery. Sent without its token, which
+        // the requester does not need back and should not store in the event.
+        capabilityUrl: stripCredentials(params.capabilityUrl),
+        // `reason` must be an object when present; omit rather than send null.
+        ...(params.reason != null ? { reason: params.reason } : {}),
       },
     },
     deps: params.deps,

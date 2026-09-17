@@ -361,7 +361,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // everything else. Local self-writes (personal/app token) pass
   // through unchanged — they aren't a cross-actor forge vector.
   const cmcCounterpartyFromStampingHook = cmc.createCounterpartyFromStampingHook({ errors });
-  const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({ errors });
+  const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({
+    errors,
+    mall: mallForCmc,
+    logger: getLogger('cmc:capability-response'),
+  });
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
     // username: pull from the users repository (cached behind the scenes).

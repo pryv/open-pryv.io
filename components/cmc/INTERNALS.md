@@ -529,13 +529,14 @@ does three things, in this order:
    deliveries; it is not widened here, but it does become a deletion rather than
    a misroute. A deployment that cares about this should care about it at the
    accept, which is the only point where the claim can still be refused.
-2. **Bookkeep** — clear the withdrawing subject from any open-link capability's
-   `acceptedBy`, so the same link accepts them again.
+2. **Bookkeep** — on the requester side, mark the single-use invite the
+   relationship descends from `revoked` on its `consent/request-cmc` trigger.
+   An open-link invite needs nothing: the deleted access was the subject's
+   join, so the same link accepts them again.
 3. **Enrich** — add this side's own handles to the inbox event, see below.
 
-The order is deliberate. A failure between 1 and 2 leaves a stale `acceptedBy`,
-which refuses a re-consent until it is cleared and is recoverable; the reverse
-order would leave a live token. The handler issues no outbound call, and its
+The order is deliberate. A failure between 1 and 2 leaves a stale invite
+status, which is cosmetic; the reverse order would leave a live token. The handler issues no outbound call, and its
 deletes go through the mall rather than the api-server route, so they do not
 fire the accesses-delete hook and cannot loop.
 
@@ -563,7 +564,7 @@ sequenceDiagram
     APIServer-->>Plugin: access record
     Plugin->>APIServer: accesses.delete <accessId>
     Plugin->>Peer: POST /events :_cmc:inbox<br/>type: consent/revoke-cmc
-    Note over Peer: incoming handler runs: deletes the access<br/>the revoke arrived through, clears acceptedBy,<br/>enriches the arrival. No outbound call.
+    Note over Peer: incoming handler runs: deletes the access<br/>the revoke arrived through, marks the invite,<br/>enriches the arrival. No outbound call.
     Peer-->>Plugin: 201 (event stored in inbox)
     Plugin->>APIServer: events.update trigger status='completed'
 ```

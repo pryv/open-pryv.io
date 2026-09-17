@@ -117,6 +117,8 @@ export type MallParams = Record<string, unknown>;
 export type MallAccessesLike = {
   create: (userId: string, params: MallParams) => Promise<CmcAccessLike>;
   get: (userId: string, params?: MallParams) => Promise<CmcAccessLike[]>;
+  // Read by id. Optional so unit fakes may omit it; callers then scan `get`.
+  getOne?: (userId: string, params: { id: string }) => Promise<CmcAccessLike | null>;
   update: (userId: string, params: MallParams) => Promise<CmcAccessLike | null | undefined>;
   delete: (userId: string, params: MallParams) => Promise<unknown>;
 };

@@ -961,16 +961,21 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       return cap?.clientData?.cmc?.capability;
     }
 
+    // Who joined the app's open-link: the counterparties of its live
+    // relationship accesses carrying the capability id.
     async function pollAppAcceptedBy (capabilityId, shouldContain, label) {
       const t0 = Date.now();
       let names = [];
       while (Date.now() - t0 < 60000) {
-        const cap = await appCapabilityState(capabilityId);
-        names = (cap?.acceptedBy || []).map((e) => e.username);
+        const res = await coreRequest.get('/' + appUsername + '/accesses').set('Authorization', appToken);
+        names = (res.body.accesses || [])
+          .filter((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+            a?.clientData?.cmc?.capabilityId === capabilityId)
+          .map((a) => a.clientData.cmc.counterparty?.username);
         if (names.includes(username) === shouldContain) return;
         await sleep(150);
       }
-      throw new Error((label || '') + ' timeout: app acceptedBy contains(' + username +
+      throw new Error((label || '') + ' timeout: app joined contains(' + username +
         ')=' + shouldContain + '; saw ' + JSON.stringify(names));
     }
 
@@ -1058,21 +1063,21 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         // endpoint in any reasonable window. Without the endpoint the
         // withdrawal notification cannot be forwarded, so this happy-path e2e
         // cannot proceed — skip rather than red the suite on environment
-        // starvation. The acceptedBy clearing this test would exercise is
+        // starvation. The re-consent this test would exercise is
         // covered stably under the full matrix by the [CN29]-[CN32] handshake
         // integration tests and by [OE24] for the OAuth2 error path.
         this.skip();
       }
 
       // The user withdraws the consent (raw delete → forwards a revoke to the
-      // app, which clears the user from the open-link acceptedBy).
+      // app, which deletes the relationship the user joined through).
       const delRes = await coreRequest.delete('/' + username + '/accesses/' + encodeURIComponent(dataGrant.id))
         .set('Authorization', personalToken);
       assert.ok(delRes.status === 200 || delRes.status === 204, describeRes(delRes));
       await pollAppAcceptedBy(o.capabilityId, false, 'OE25 withdrawal cleared');
 
       // Re-authorizing through the SAME offer now succeeds (the bug left the
-      // subject stuck in acceptedBy, so this accept used to be refused).
+      // subject counted as joined, so this accept used to be refused).
       const reAccept = await authorizeAndAccept(o.cid, o.offerName);
       assert.equal(reAccept.status, 200, 'OE25 re-accept: ' + describeRes(reAccept));
       assert.match(reAccept.body.redirectTo, /code=/);

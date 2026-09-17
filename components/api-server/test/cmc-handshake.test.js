@@ -369,6 +369,18 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   }
 
   /**
+   * Who has joined `owner`'s invite for `capabilityId`: the counterparties of
+   * the live relationship accesses carrying that capability id.
+   */
+  async function liveAccepters (owner, capabilityId) {
+    const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+    return (res.body?.accesses || [])
+      .filter((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+        a?.clientData?.cmc?.capabilityId === capabilityId)
+      .map((a) => ({ ...a.clientData.cmc.counterparty, accessId: a.id, created: a.created }));
+  }
+
+  /**
    * Poll `actor`'s accesses until one matches: clientData.cmc identifies
    * `peerUsername` as the counterparty AND its stored remoteChat
    * stream-id sits under `expectedScope`. Disambiguates between
@@ -1373,13 +1385,14 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
   // Withdraw-then-re-consent through a still-open shareable link.
   //
-  // An open-link capability records every accepter in its
-  // `acceptedBy` list and refuses a second accept from the same subject
+  // Who joined an open-link invite is the set of live relationship
+  // accesses the requester holds for its capability, and a second accept
+  // from a subject still in that set is refused
   // (`cmc-capability-already-accepted-by-you`). When that subject
-  // withdraws, the requester side must drop them from `acceptedBy` so a
-  // fresh consent through the SAME link is accepted again — while every
-  // OTHER accepter's entry is preserved verbatim.
-  describe('[CMCHS-RECONSENT] withdraw clears acceptedBy so the same link accepts again', function () {
+  // withdraws, their relationship access goes, so a fresh consent through
+  // the SAME link is accepted again — while every OTHER accepter stays
+  // joined.
+  describe('[CMCHS-RECONSENT] withdraw ends the join so the same link accepts again', function () {
     // Each case runs a full two-party open-link handshake plus a revoke round
     // trip (several chained fire-and-forget hops); under full-matrix CPU
     // contention these balloon, so the bound is generous (matches the oauth2
@@ -1387,11 +1400,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     this.timeout(120_000);
 
     async function capabilityAcceptedBy (owner, capabilityId) {
-      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
-      const acc = (res.body?.accesses || []).find((a) =>
-        a?.clientData?.cmc?.kind === 'capability' &&
-        a?.clientData?.cmc?.capabilityId === capabilityId);
-      return acc?.clientData?.cmc?.capability?.acceptedBy || [];
+      return await liveAccepters(owner, capabilityId);
     }
 
     async function pollAcceptedBy (owner, capabilityId, username, shouldContain, label) {
@@ -1403,7 +1412,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         if (names.includes(username) === shouldContain) return list;
         await sleep(POLL_INTERVAL_MS);
       }
-      throw new Error((label || '') + ' timeout: acceptedBy contains(' + username +
+      throw new Error((label || '') + ' timeout: joined contains(' + username +
         ')=' + shouldContain + '; saw ' + JSON.stringify(names));
     }
 
@@ -1437,7 +1446,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const h = await runFreshHandshake('reco-a', 'my-app', { mode: 'open-link' });
       const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
 
-      // First accept recorded bob in the capability's acceptedBy.
+      // First accept: bob holds a relationship through the capability.
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN29 pre-revoke');
 
       // Bob withdraws via the CMC helper trigger.
@@ -1450,12 +1459,12 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         });
       assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
 
-      // The withdrawal must clear bob from acceptedBy (the reported bug:
-      // it never did, so re-consent stayed blocked).
+      // The withdrawal ends bob's join (his relationship access is gone on
+      // alice's side), so re-consent is no longer blocked.
       await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN29 post-revoke');
 
       // A fresh accept through the SAME capability URL now succeeds — proven
-      // by bob reappearing in acceptedBy (a rejected accept never records).
+      // by bob joining again (a rejected accept mints no relationship).
       await postAccept(bob, h.capabilityUrl, 'reco-a-again');
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN29 re-accept');
     });
@@ -1493,17 +1502,17 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
       await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN31 bob cleared');
 
-      // Co-accepter survives verbatim.
+      // Co-accepter stays joined.
       const stillCarol = await capabilityAcceptedBy(alice, h.capabilityId);
       assert.ok(stillCarol.some((e) => e.username === carol.username),
-        'CN31: carol\'s acceptedBy entry must survive bob\'s withdrawal; saw ' +
+        'CN31: carol\'s relationship must survive bob\'s withdrawal; saw ' +
         JSON.stringify(stillCarol.map((e) => e.username)));
 
       // Carol's re-accept is STILL rejected — she never withdrew.
       const carolAgain = await postAccept(carol, h.capabilityUrl, 'reco-c-carol-again');
       const carolTrigger = await pollEventStatus(carol, carolAgain, ['failed', 'completed']);
       assert.equal(carolTrigger.content.status, 'failed',
-        'CN31: carol\'s re-accept must be refused (she is still in acceptedBy)');
+        'CN31: carol\'s re-accept must be refused (she is still joined)');
       // The peer's typed CMC id rides in error.data.id; error.id is the
       // generic Pryv error class ('invalid-operation').
       const carolErr = carolTrigger.content.failure?.detail?.body?.error;
@@ -1516,7 +1525,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN31 bob re-accept');
     });
 
-    it('[CN32] requester-local revoke of the back-channel clears acceptedBy for re-consent', async function () {
+    it('[CN32] requester-local revoke of the back-channel ends the join for re-consent', async function () {
       const h = await runFreshHandshake('reco-d', 'my-app', { mode: 'open-link' });
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN32 pre-revoke');
 
@@ -1540,7 +1549,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // Requester withdraws her own relationship via the CMC helper trigger
       // (consent/revoke-cmc targeting the back-channel access by id). This is
       // the requester-side teardown path that carries the capabilityId stamp,
-      // so it clears the accepter from the capability's acceptedBy.
+      // so deleting it ends the accepter's join.
       const revRes = await coreRequest.post(alice.eventsPath)
         .set('Authorization', alice.token)
         .send({
@@ -1557,13 +1566,12 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN32 re-accept');
     });
 
-    it('[CN33] requester RAW accesses.delete of the back-channel clears acceptedBy locally', async function () {
+    it('[CN33] requester RAW accesses.delete of the back-channel ends the join locally', async function () {
       // CN32 exercises the requester-side teardown via the CMC helper trigger
       // (dispatch path). This drives the OTHER requester-side teardown: a raw
       // accesses.delete of the back-channel, which runs the accesses.delete
-      // post-hook's LOCAL clearAccepter. That hook needs a mall WITH `.accesses`;
-      // wired with the raw Mall it was a silent no-op, so acceptedBy stayed stuck
-      // and re-consent through the same link was refused. Exercises the real
+      // post-hook. Re-consent through the same link must be accepted once the
+      // relationship access is gone. Exercises the real
       // production wiring the DH12/DH13 unit tests (fake mall) could not.
       const h = await runFreshHandshake('reco-e', 'my-app', { mode: 'open-link' });
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 pre-revoke');
@@ -1584,14 +1592,14 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(backChannel != null,
         'CN33: alice\'s back-channel access (with capabilityId stamp) must exist');
 
-      // Raw delete (NOT the CMC helper) — drives the delete post-hook clearAccepter.
+      // Raw delete (NOT the CMC helper) — drives the delete post-hook.
       const delRes = await coreRequest.delete(alice.accessesPath + '/' + backChannel.id)
         .set('Authorization', alice.token);
       assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
 
       await pollAcceptedBy(alice, h.capabilityId, bob.username, false, 'CN33 post-revoke');
 
-      // Bob re-consents through the same link (blocked until acceptedBy cleared).
+      // Bob re-consents through the same link (blocked while he was joined).
       await postAccept(bob, h.capabilityUrl, 'reco-e-again');
       await pollAcceptedBy(alice, h.capabilityId, bob.username, true, 'CN33 re-accept');
     });
@@ -1724,6 +1732,219 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   });
 
   /**
+   * [CMCHS-INVITE] the request trigger reports the invite's outcome.
+   *
+   * The requester's app watches its `consent/request-cmc` trigger; the core
+   * writes each transition there (accepted / refused / revoked for single-use,
+   * invalidated for open-link). Who joined an open-link invite is read from the
+   * live relationship accesses, which nothing rewrites per accept.
+   */
+  describe('[CMCHS-INVITE] invite state on the request trigger', function () {
+    this.timeout(180_000);
+
+    async function pollTrigger (actor, eventId, predicate, label) {
+      const t0 = Date.now();
+      let last;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS * 3) {
+        const res = await coreRequest.get(actor.eventsPath + '/' + eventId).set('Authorization', actor.token);
+        last = res.body?.event;
+        if (last != null && predicate(last.content || {})) return last;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error(label + ': event ' + eventId + ' never matched; last content=' +
+        JSON.stringify(last?.content));
+    }
+
+    async function postInvite (studyId, mode) {
+      const triggerStreamId = ':_cmc:apps:my-app:' + studyId;
+      await ensureStream(alice.streamsPath, alice.token, {
+        id: triggerStreamId, parentId: ':_cmc:apps:my-app', name: studyId,
+      });
+      const res = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [triggerStreamId],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            ...(mode != null ? { capability: { mode } } : {}),
+            request: {
+              title: { en: studyId },
+              description: { en: 'invite state test' },
+              consent: { en: 'I consent.' },
+              permissions: [{ streamId: 'fertility', level: 'read' }],
+            },
+            requesterMeta: { username: alice.username, appId: 'my-app' },
+          },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return {
+        triggerStreamId,
+        requestEventId: res.body.event.id,
+        capabilityUrl: res.body.event.content.capabilityUrl,
+        capabilityId: res.body.event.content.capabilityId,
+      };
+    }
+
+    async function postAnswer (actor, type, capabilityUrl, extra = {}) {
+      const res = await coreRequest.post(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type,
+          content: { capabilityUrl, ...extra },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.event.id;
+    }
+
+    async function capabilityAccessOf (owner, capabilityId) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      return (res.body?.accesses || []).find((a) =>
+        a?.clientData?.cmc?.kind === 'capability' && a?.clientData?.cmc?.capabilityId === capabilityId);
+    }
+
+    const settled = (c) => c.status === 'completed' || c.status === 'failed';
+
+    it('[CN52] a single-use accept marks the invite accepted, naming the accepter and the back-channel', async function () {
+      const h = await runFreshHandshake('inv-a');
+      const trigger = await pollTrigger(alice, h.requestEventId, (c) => c.status === 'accepted', 'CN52');
+      assert.strictEqual(trigger.content.acceptedBy?.username, bob.username, JSON.stringify(trigger.content));
+      assert.ok(typeof trigger.content.acceptedAt === 'number', JSON.stringify(trigger.content));
+      const joined = await liveAccepters(alice, h.capabilityId);
+      assert.strictEqual(joined.length, 1, JSON.stringify(joined));
+      assert.strictEqual(trigger.content.backChannelAccessId, joined[0].accessId);
+    });
+
+    it('[CN53] a refusal reaches the requester and marks the invite refused; the subject may still accept', async function () {
+      const inv = await postInvite('inv-b');
+      const refuseId = await postAnswer(bob, 'consent/refuse-cmc', inv.capabilityUrl, { reason: { en: 'CN53 no' } });
+      const refuse = await pollTrigger(bob, refuseId, settled, 'CN53 refuse trigger');
+      assert.strictEqual(refuse.content.status, 'completed', JSON.stringify(refuse.content));
+      const refused = await pollTrigger(alice, inv.requestEventId, (c) => c.status === 'refused', 'CN53 invite');
+      assert.strictEqual(refused.content.refusedBy?.username, bob.username, JSON.stringify(refused.content));
+
+      // A refusal does not consume a single-use link.
+      const acceptId = await postAnswer(bob, 'consent/accept-cmc', inv.capabilityUrl,
+        { accessName: 'cmc-grant-inv-b-' + Date.now() });
+      const accept = await pollTrigger(bob, acceptId, settled, 'CN53 accept trigger');
+      assert.strictEqual(accept.content.status, 'completed', JSON.stringify(accept.content));
+      await pollTrigger(alice, inv.requestEventId, (c) => c.status === 'accepted', 'CN53 accepted after refusal');
+    });
+
+    it('[CN54] invalidating an open-link marks the invite invalidated and later accepts fail', async function () {
+      const h = await runFreshHandshake('inv-c', 'my-app', { mode: 'open-link' });
+      const invRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type: 'consent/invalidate-link-cmc',
+          content: { capabilityId: h.capabilityId },
+        });
+      assert.strictEqual(invRes.status, 201, JSON.stringify(invRes.body));
+      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'invalidated', 'CN54');
+
+      const carol = await makeActor('carol-' + cuid().slice(-8));
+      const acceptId = await postAnswer(carol, 'consent/accept-cmc', h.capabilityUrl,
+        { accessName: 'cmc-grant-inv-c-' + Date.now() });
+      const accept = await pollTrigger(carol, acceptId, settled, 'CN54 late accept');
+      assert.strictEqual(accept.content.failure?.reason, 'cmc-capability-invalidated', JSON.stringify(accept.content));
+      const after = await pollTrigger(alice, h.requestEventId, () => true, 'CN54 after');
+      assert.strictEqual(after.content.status, 'invalidated');
+    });
+
+    it('[CN55] withdrawing a single-use relationship marks the invite revoked, from either side', async function () {
+      // The accepter withdraws.
+      const a = await runFreshHandshake('inv-d');
+      await pollTrigger(alice, a.requestEventId, (c) => c.status === 'accepted', 'CN55 a accepted');
+      const bobGrant = await pollCounterpartyAccessForScope(bob, alice.username, a.triggerStreamId);
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [a.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: bobGrant.id, reason: { en: 'CN55 withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+      const revoked = await pollTrigger(alice, a.requestEventId, (c) => c.status === 'revoked', 'CN55 a revoked');
+      assert.ok(typeof revoked.content.revokedAt === 'number', JSON.stringify(revoked.content));
+
+      // The requester deletes her own back-channel.
+      const b = await runFreshHandshake('inv-e');
+      await pollTrigger(alice, b.requestEventId, (c) => c.status === 'accepted', 'CN55 b accepted');
+      const [joined] = await liveAccepters(alice, b.capabilityId);
+      const delRes = await coreRequest.delete(alice.accessesPath + '/' + joined.accessId)
+        .set('Authorization', alice.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+      await pollTrigger(alice, b.requestEventId, (c) => c.status === 'revoked', 'CN55 b revoked');
+    });
+
+    it('[CN56] concurrent accepts on one open-link all join, and the capability access is never rewritten', async function () {
+      const inv = await postInvite('inv-f', 'open-link');
+      // The post-create hook stamps requestEventId on the capability access;
+      // take the baseline once that write has landed.
+      let baseline;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        baseline = await capabilityAccessOf(alice, inv.capabilityId);
+        if (baseline?.clientData?.cmc?.requestEventId === inv.requestEventId) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(baseline?.clientData?.cmc?.requestEventId, inv.requestEventId);
+
+      const actors = [];
+      for (let i = 0; i < 5; i++) actors.push(await makeActor('joiner' + i + '-' + cuid().slice(-8)));
+      const triggerIds = await Promise.all(actors.map((actor, i) =>
+        postAnswer(actor, 'consent/accept-cmc', inv.capabilityUrl, { accessName: 'cmc-grant-inv-f-' + i })));
+      for (let i = 0; i < actors.length; i++) {
+        const t = await pollTrigger(actors[i], triggerIds[i], settled, 'CN56 accept ' + i);
+        assert.strictEqual(t.content.status, 'completed', JSON.stringify(t.content));
+      }
+
+      const t1 = Date.now();
+      let names = [];
+      while (Date.now() - t1 < POLL_TIMEOUT_MS * 3) {
+        names = (await liveAccepters(alice, inv.capabilityId)).map((e) => e.username);
+        if (names.length >= actors.length) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.deepStrictEqual(names.sort(), actors.map((a) => a.username).sort());
+
+      const after = await capabilityAccessOf(alice, inv.capabilityId);
+      assert.strictEqual(after.modified, baseline.modified, 'the capability access must not be rewritten per accept');
+      assert.strictEqual(after.clientData.cmc.capability.acceptedBy, undefined);
+      const trigger = await pollTrigger(alice, inv.requestEventId, () => true, 'CN56 trigger');
+      assert.ok(['pending', 'delivered'].includes(trigger.content.status), JSON.stringify(trigger.content));
+    });
+
+    it('[CN57] two concurrent accepts by the same subject leave exactly one relationship', async function () {
+      const inv = await postInvite('inv-g', 'open-link');
+      const dave = await makeActor('dave-' + cuid().slice(-8));
+      const ids = await Promise.all([0, 1].map((i) =>
+        postAnswer(dave, 'consent/accept-cmc', inv.capabilityUrl, { accessName: 'cmc-grant-inv-g-' + i })));
+      for (const id of ids) {
+        const t = await pollTrigger(dave, id, settled, 'CN57 accept');
+        if (t.content.status === 'failed') {
+          assert.strictEqual(t.content.failure?.detail?.body?.error?.data?.id,
+            'cmc-capability-already-accepted-by-you', JSON.stringify(t.content));
+        }
+      }
+      // Let a late back-channel settle before counting.
+      let joined = [];
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        joined = (await liveAccepters(alice, inv.capabilityId)).filter((e) => e.username === dave.username);
+        if (joined.length >= 1) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      await sleep(1000);
+      joined = (await liveAccepters(alice, inv.capabilityId)).filter((e) => e.username === dave.username);
+      assert.strictEqual(joined.length, 1, JSON.stringify(joined));
+    });
+  });
+
+  /**
    * [CMCHS-TEARDOWN] a received revocation destroys the access it arrived
    * through.
    *
@@ -1810,15 +2031,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const t0 = Date.now();
       let names = [];
       while (Date.now() - t0 < POLL_TIMEOUT_MS) {
-        const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
-        const acc = (res.body?.accesses || []).find((a) =>
-          a?.clientData?.cmc?.kind === 'capability' &&
-          a?.clientData?.cmc?.capabilityId === capabilityId);
-        names = (acc?.clientData?.cmc?.capability?.acceptedBy || []).map((e) => e.username);
+        names = (await liveAccepters(owner, capabilityId)).map((e) => e.username);
         if (names.includes(username) === shouldContain) return;
         await sleep(POLL_INTERVAL_MS);
       }
-      assert.fail(label + ' timeout: acceptedBy contains(' + username + ')=' +
+      assert.fail(label + ' timeout: joined contains(' + username + ')=' +
         shouldContain + '; saw ' + JSON.stringify(names));
     }
 
