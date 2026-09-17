@@ -236,7 +236,7 @@ describe('[AUTH] auth', function () {
     // [L7JQ], [4AQR], [NDB0] - Tests moved to login-2convert.test.js
 
     // concurrent requests
-    it('[FMJH] must support concurrent login request, saving only the last token that is written in the storage', async function () {
+    it('[FMJH] concurrent logins for the same appId converge on a single personal access carrying one of the returned tokens', async function () {
       // Two logins hashing a password concurrently can take several seconds
       // on a loaded machine.
       this.timeout(20000);
