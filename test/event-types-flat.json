@@ -1049,8 +1049,48 @@
       "description": "Volt",
       "type": "number"
     },
+    "encrypted/aes-256-gcm": {
+      "description": "AES-256-GCM encrypted payload. <code>payload</code> is <code>Base64( iv || ciphertext || tag )</code> where <code>iv</code> is a random 96-bit (12-byte) nonce generated per encryption, <code>ciphertext</code> is the AES-256-GCM encryption of the UTF-8 JSON plaintext, and <code>tag</code> is the 128-bit (16-byte) GCM authentication tag. The key is 256 bits (32 bytes). Standard (non-URL-safe) Base64.",
+      "type": "object",
+      "properties": {
+        "payload": {
+          "description": "The encrypted data: <code>Base64( iv[12] || ciphertext || tag[16] )</code>.",
+          "type": "string"
+        },
+        "keyRef": {
+          "description": "A reference (e.g. id, name in a keyring) to the key to use for decryption.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "Alternative or complement to <code>keyRef</code>. A hint about which key to use for decryption."
+        }
+      },
+      "required": [
+        "payload"
+      ]
+    },
+    "encrypted/ecies-aes-256-gcm": {
+      "description": "Asymmetric (ECIES-style) encrypted payload for a NIST P-256 (secp256r1) recipient key pair. Encryption: generate an ephemeral P-256 key pair; compute the ECDH shared secret with the recipient's public key (the 32-byte X coordinate); derive the content key with HKDF-SHA-256 (salt: empty, info: the ASCII string <code>encrypted/ecies-aes-256-gcm</code>, output: 32 bytes) and use it as an AES-256-GCM key with a random 96-bit IV. <code>payload</code> is <code>Base64( ephemeralPublicKey || iv || ciphertext || tag )</code> where <code>ephemeralPublicKey</code> is the 65-byte uncompressed SEC1 point (<code>0x04 || X || Y</code>), <code>iv</code> is 12 bytes and <code>tag</code> is the 16-byte GCM authentication tag. Decryption requires the recipient's private key. Standard (non-URL-safe) Base64.",
+      "type": "object",
+      "properties": {
+        "payload": {
+          "description": "The encrypted data: <code>Base64( ephemeralPublicKey[65] || iv[12] || ciphertext || tag[16] )</code>.",
+          "type": "string"
+        },
+        "keyRef": {
+          "description": "A reference (e.g. id, name in a keyring) to the recipient key pair whose private key decrypts the payload.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "Alternative or complement to <code>keyRef</code>. A hint about which key to use for decryption."
+        }
+      },
+      "required": [
+        "payload"
+      ]
+    },
     "encrypted/aes-text-base64": {
-      "description": "AES encrypted payload, with a <em>text</em> key and a <em>Base64</em> payload.",
+      "description": "DEPRECATED — prefer <code>encrypted/aes-256-gcm</code>. AES encrypted payload, with a <em>text</em> key and a <em>Base64</em> payload; the exact cipher parameters (mode, key derivation, IV handling) were never fully specified, so implementations may not interoperate.",
       "type": "object",
       "properties": {
         "payload": {
@@ -4584,7 +4624,7 @@
       }
     },
     "encrypted": {
-      "description": "For client-side-encrypted events. The decrypted <code>payload</code> is expected to be a JSON object with the regular <code>type</code> and <code>content</code> properties (e.g. <code>{ \"type\": \"..\", \"content\": \"..\" }</code>). If the event has attached files, they are expected to be similarly encrypted."
+      "description": "For client-side-encrypted events. The decrypted plaintext is expected to be the UTF-8 JSON serialization of an object with the regular <code>type</code> and <code>content</code> properties (e.g. <code>{ \"type\": \"..\", \"content\": \"..\" }</code>); extra properties are allowed and carried along on decryption. All other event fields (id, streamIds, time, …) stay in plaintext. If the event has attached files, each is encrypted with the same method and key as the event's content, as raw binary in the method's payload byte layout — i.e. exactly the bytes that Base64-decoding a <code>payload</code> would yield (e.g. <code>iv || ciphertext || tag</code> for <code>aes-256-gcm</code>), without Base64 encoding."
     },
     "energy": {
       "description": "The capacity of a physical system to perform work.",
