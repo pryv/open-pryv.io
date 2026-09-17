@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### HF series requests on raw deploys answer 504 when the HFS worker stalls
+
+On deployments where the API process itself routes HF series traffic to the
+co-located HFS worker (no nginx in front), a worker that stays silent for 60 s on a
+request now gets that request answered with `504` and the JSON error
+`unexpected-error` ("HFS upstream timed out"), or the response cut if the worker
+stalls after it started answering. Before, the client waited until its own timeout.
+The bound is idle time on the worker connection, so long uploads and long query
+answers whose bytes keep flowing are never cut; a client that itself stops sending or
+reading for 60 s is cut the same way. It matches the 60 s the documented nginx front
+applies to the same traffic. nginx-fronted deployments are unaffected.
+
 ### Event content validation no longer falls back to a 2023 type list
 
 A core validates event content against its built-in event-type list until its

@@ -23,7 +23,11 @@
  * Exception: `api-server/src/middleware/attachment-access.ts` is a single hop
  * with no transform where a source error before the first byte must leave the
  * response usable for a status; it keeps `.pipe()` and propagates the
- * response's 'close' to the source by hand.
+ * response's 'close' to the source by hand. Also `api-server/src/hfsIngress.ts`,
+ * whose request hop keeps `.pipe()` for the same reason (an upstream failure
+ * while the body is still arriving must still answer 502, and `pipeline()` would
+ * destroy the client's socket with the request) and propagates the request's
+ * 'close' by hand; its response hop uses `pipeline()`.
  */
 
 import { pipeline } from 'node:stream';
