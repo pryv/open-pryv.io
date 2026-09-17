@@ -159,6 +159,17 @@ function cloneStrip (node: unknown, referenced: Set<string>, isTop: boolean): un
   return result;
 }
 
+// One ajv instance for meta-schema checks only: `validateSchema` compiles and
+// registers nothing, so sharing it cannot collide ids between callers.
+type MetaSchemaChecker = { validateSchema (schema: unknown): boolean; errors?: AjvError[] | null; errorsText (errors?: AjvError[] | null): string };
+let sharedMetaSchemaChecker: MetaSchemaChecker | null = null;
+function metaSchemaChecker (): MetaSchemaChecker {
+  if (sharedMetaSchemaChecker == null) {
+    sharedMetaSchemaChecker = new Ajv({ allErrors: true, strict: false }) as MetaSchemaChecker;
+  }
+  return sharedMetaSchemaChecker;
+}
+
 function createValidator (options: ValidateOptions = {}) {
   const ajvOptions = {
     allErrors: !options.breakOnFirstError,
@@ -214,9 +225,30 @@ function createValidator (options: ValidateOptions = {}) {
     }
   }
 
+  /**
+   * Cheap check of a schema against the draft-04 meta-schema, without compiling
+   * it: returns a message when the schema is malformed (e.g. a string where a
+   * boolean belongs, `required` nested inside `properties`), `null` otherwise.
+   * `validateSchema` compiles with `strict: false`, which lets unknown shapes
+   * through at the top level; this is what catches a single broken schema in a
+   * large map (e.g. one event type among hundreds) at a fraction of the cost.
+   */
+  function schemaShapeError (schema: unknown): string | null {
+    const ajv = metaSchemaChecker();
+    try {
+      if (ajv.validateSchema(schema)) return null;
+      return ajv.errorsText(ajv.errors);
+    } catch (err: unknown) {
+      // ajv throws rather than reports on some inputs (a null schema, an
+      // unknown `$schema` URI): that is a malformed schema too.
+      return (err as Error).message;
+    }
+  }
+
   return {
     validate,
     validateSchema,
+    schemaShapeError,
     getLastError: () => lastErrors,
     getLastErrors: () => lastErrors,
     get lastReport () { return lastErrors; }

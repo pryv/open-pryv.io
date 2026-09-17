@@ -1,5 +1,24 @@
 # Changelog - Internal (no API impact)
 
+## an event type with a malformed schema is now named in the log, and a download replaces types whole
+
+The event-types catalogue is checked as a whole when it loads, which does not look
+inside each type, so a type whose own schema was malformed loaded silently and every
+event of that type was then refused with no visible cause (four such types shipped in
+the published catalogue before it was repaired). Each type schema of the bundled
+default list (once per process) and of the list after every download is now checked
+against the JSON Schema meta-schema, a few milliseconds for the whole list, and each
+malformed one is logged as a warning naming the type and the problem; a schema that
+still fails when compiled (an invalid regex, an unresolvable `$ref`) is named once, on
+first use. Behaviour is otherwise unchanged. The validator facade in `utils` gains
+`schemaShapeError(schema)`, which never throws.
+
+A downloaded catalogue is now applied entry by entry (each type, extras, classes and
+sets entry replaces the current one whole; entries not in the download are kept)
+instead of deep-merged, the same rule `scripts/update-event-types` uses for the bundled
+list. The HFS server now logs a failed catalogue download instead of leaving an
+unhandled rejection.
+
 ## the in-process HFS ingress proxy tears its worker request down when the client goes away
 
 On raw deploys the API process forwards HF series traffic to the co-located HFS

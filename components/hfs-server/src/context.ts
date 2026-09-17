@@ -21,7 +21,7 @@ const { getMall } = require('mall');
 type SeriesRepository = unknown;
 type MetadataCacheLike = unknown;
 type MetadataUpdaterLike = { start?: () => void };
-type TypeRepoLike = { tryUpdate: (url: string) => void };
+type TypeRepoLike = { tryUpdate: (url: string) => Promise<void> };
 type TracerSpan = { end?: () => void };
 type TracerLike = { startSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
 import type { ConfigLike } from '@pryv/boiler';
@@ -55,7 +55,8 @@ class Context {
 
   configureTypeRepository (url: string): void {
     const typeRepo: TypeRepoLike = new business.types.TypeRepository();
-    typeRepo.tryUpdate(url); // async
+    typeRepo.tryUpdate(url) // async
+      .catch((err: unknown) => getLogger('typeRepo').warn((err as Error).message ?? String(err)));
     this.typeRepository = typeRepo;
   }
 
