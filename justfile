@@ -57,8 +57,8 @@ run component bin:
 # Test & related
 # –––––––––––––----------------------------------------------------------------
 
-# Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet + createRequire ratchet)
-lint *options: && lint-ts-any lint-open-types lint-create-require lint-prod-deps
+# Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet + createRequire ratchet + event-types fixture)
+lint *options: && lint-ts-any lint-open-types lint-create-require lint-prod-deps lint-event-types
     eslint {{options}} .
 
 # TypeScript `any` gate: no-explicit-any on TS sources (see eslint.ts-any.config.js)
@@ -77,6 +77,11 @@ lint-create-require:
 # package (pruned by `--omit=dev` → crash-loops the production build). #106.
 lint-prod-deps:
     ./scripts/prod-dep-integrity
+
+# Event-types fixture drift: `test/event-types-flat.json` must match the published
+# catalogue. Fails on drift, SKIPS when the catalogue is unreachable.
+lint-event-types:
+    ./scripts/event-types-fixture-guard
 
 # Run code linting only on changed files (excludes deleted files)
 lint-changes *options:
@@ -433,6 +438,15 @@ security-assessment-grype:
 # Update default event types from online reference
 update-event-types:
     scripts/update-event-types
+
+# Re-vendor the TEST event-types fixture from the published catalogue, then
+# check it. What `lint-event-types` tells you to run when it reports drift.
+# Run the suites afterwards: the fixture is what every content-validating
+# test validates against.
+update-event-types-fixture:
+    curl -sS -L --fail --connect-timeout 5 --max-time 30 -o test/event-types-flat.json.tmp ${EVENT_TYPES_URL:-https://pryv.github.io/event-types/flat.json}
+    mv test/event-types-flat.json.tmp test/event-types-flat.json
+    ./scripts/event-types-fixture-guard
 
 # Run source licensing tool (see 'licensing' folder for details)
 license:

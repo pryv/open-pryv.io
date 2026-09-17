@@ -1,5 +1,43 @@
 # Changelog - Internal (no API impact)
 
+## an aborted attachment download no longer leaks the attachment's file descriptor
+
+An attachment download pipes the file read stream into the HTTP response, and
+`.pipe()` does not forward destroy upstream. When the client went away
+mid-transfer (or before the file was opened), the read stream stayed paused with
+its file descriptor open for the life of the process, so enough aborted
+downloads would exhaust the process file-descriptor limit. The response's close
+now releases the source, and a client already gone when the file is opened gets
+nothing piped. `.pipe()` is kept on purpose rather than `pipeline()`: a source
+error before the first byte must still leave the response usable, so the client
+gets a proper error status and the error is audited. An aborted download writes
+no audit record, as before.
+
+## the test event-type catalogue is re-vendored, and a gate keeps it in sync
+
+`test/event-types-flat.json` is a hand-copied snapshot of the published
+event-type catalogue. `test/service-info.json` serves it to the test platform and
+the business unit tests read it directly, so it is what every content-validating
+suite validates against. Nothing tied the copy to its source: it was refreshed
+only when somebody remembered, and it had fallen two months behind: two published
+types missing (`encrypted/aes-256-gcm`, `encrypted/ecies-aes-256-gcm`) and one
+definition changed.
+
+The drift was silent in both directions. A type added upstream was exercised by
+no test until the copy was refreshed by hand, and a suite could pass against a
+catalogue no deployed client is served. The `version` field does not detect it,
+because the catalogue is republished under the same version.
+
+The fixture is now re-vendored to the current catalogue, and `just lint` runs a
+guard (`scripts/event-types-fixture-guard`, also a CI step) that compares it with
+the published file and fails with the re-vendor command when they differ. The
+comparison is on canonicalised JSON, so a reformat upstream is not reported as
+drift, and it names the types added, removed or changed. The guard SKIPS when the
+catalogue cannot be reached (raised as a workflow warning in CI): an upstream
+outage must not redden every build, while an unnoticed two-month drift is worth
+failing on. A 404 fails, since it means the catalogue moved.
+`just update-event-types-fixture` refreshes the copy and re-checks it.
+
 ## backup export streams end to end, so its memory is a batch rather than the account
 
 `bin/backup` materialised every collection before writing it, and walked the

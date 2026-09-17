@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { ConfigLike } from '@pryv/boiler';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import type { Readable } from 'node:stream';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getConfig } = require('@pryv/boiler');
@@ -29,7 +30,7 @@ type EventLike = {
 type MallLike = {
   events: {
     getOne: (userId: string, id: string) => Promise<EventLike | null>;
-    getAttachment: (userId: string, event: EventLike, fileId: string) => Promise<NodeJS.ReadableStream & { unpipe: (dest: unknown) => void; on: (ev: string, fn: (...args: unknown[]) => void) => void; pipe: (dest: NodeJS.WritableStream) => NodeJS.WritableStream }>;
+    getAttachment: (userId: string, event: EventLike, fileId: string) => Promise<Readable>;
   };
 };
 type AuditLike = { validApiCall: (context: ContextLike, err: unknown) => Promise<void> };
@@ -67,9 +68,9 @@ export { middlewareFactory };
 //
 async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, next: NextFunction): Promise<void> {
   // Express 4 does not catch async middleware rejections — without the
-  // try/catch a rejecting getAttachment (s3 / postgresql engines reject on
-  // missing content; filesystem surfaces it as a late stream error) crashes
-  // the worker instead of yielding a 404.
+  // try/catch a rejecting getAttachment (every file engine rejects on missing
+  // content before a stream exists) crashes the worker instead of yielding a
+  // 404.
   try {
     const event = await mall!.events.getOne(req.context.user.id, req.params.id);
     if (!event) {
@@ -104,9 +105,25 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     const fileReadStream = await mall!.events.getAttachment(req.context.user.id, event, req.params.fileId);
     // for Audit
     req.context.originalQuery = req.params;
-    const pipedStream = fileReadStream.pipe(res);
+
+    // The client may already be gone: `.pipe()` onto a destroyed response does
+    // not throw, it leaves the source waiting for a drain that never comes, and
+    // a 'close' listener attached now would never fire. Release the file and
+    // stop; nothing was served, so nothing is audited.
+    if (res.destroyed) {
+      fileReadStream.destroy();
+      return;
+    }
+    // `.pipe()` is deliberate here, not pipeline(): a source error before any
+    // byte was written must leave `res` usable so the error middleware can still
+    // answer with a status (and audit the error). What `.pipe()` lacks is destroy
+    // propagation, so the response's 'close' (emitted on completion AND on
+    // premature termination) releases the source by hand. Idempotent after a
+    // normal end or a source error.
+    res.once('close', () => { fileReadStream.destroy(); });
+    fileReadStream.pipe(res);
     let streamHasErrors = false;
-    fileReadStream.on('error', async (err: unknown) => {
+    fileReadStream.on('error', (err: Error) => {
       streamHasErrors = true;
       try {
         fileReadStream.unpipe(res);
@@ -115,7 +132,7 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
       }
       next(err);
     });
-    pipedStream.on('finish', async () => {
+    res.once('finish', async () => {
       if (streamHasErrors) { return; }
       if (isAuditActive) { await audit!.validApiCall(req.context, null); }
       // do not call "next()"

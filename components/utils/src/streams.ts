@@ -19,6 +19,11 @@
  * `stream.pipeline()` forwards destroy along the whole chain, so every wrap
  * site on that path must use it. Keeping the call in one helper is what makes
  * "no `.pipe()` on the response path" checkable.
+ *
+ * Exception: `api-server/src/middleware/attachment-access.ts` is a single hop
+ * with no transform where a source error before the first byte must leave the
+ * response usable for a status; it keeps `.pipe()` and propagates the
+ * response's 'close' to the source by hand.
  */
 
 import { pipeline } from 'node:stream';
