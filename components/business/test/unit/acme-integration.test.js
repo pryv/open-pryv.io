@@ -38,13 +38,14 @@ const { CertRenewer, PlatformDBDnsWriter } = require('../../src/acme/CertRenewer
 const { FileMaterializer } = require('../../src/acme/FileMaterializer.ts');
 
 // In parallel mode, use the per-worker rqlited URL (worker N at port
-// 4001 + N*10). Otherwise multi-worker ACMEINT concurrent-init races on
+// 4011 + N*10). Otherwise multi-worker ACMEINT concurrent-init races on
 // worker-0's rqlited cause leader-election 503 ("leader not found") in
-// `DBrqlite.init()`. Falls back to the boiler env-mirror
-// (`storages__engines__rqlite__url`) which `helpers-base.ts` already
-// populates per worker.
+// `DBrqlite.init()`. The boiler config resolves the env mirror
+// (`storages__engines__rqlite__url`, which `helpers-base.ts` populates per
+// worker) first, then config/test-config.yml, so a checkout running rqlite
+// on an offset port never writes to another one's.
 const RQLITE_URL = process.env.RQLITE_URL ||
-  process.env.storages__engines__rqlite__url ||
+  require('@pryv/boiler').getConfigUnsafe(true).get('storages:engines:rqlite:url') ||
   'http://localhost:4001';
 
 function realCertPem (cn, days = 90) {
@@ -109,14 +110,15 @@ describe('[ACMEINT] ACME integration (rqlite + real cert material)', function ()
       this.skip();
       return;
     }
+    // Fail, don't skip: an unreachable rqlite must not report green.
+    let res;
     try {
-      const res = await fetch(RQLITE_URL + '/status');
-      if (!res.ok) throw new Error('rqlite not ready');
-      rqliteUp = true;
-    } catch {
-      console.log('  skipping: rqlite not reachable at ' + RQLITE_URL);
-      this.skip();
+      res = await fetch(RQLITE_URL + '/status');
+    } catch (e) {
+      throw new Error(`rqlite not reachable at ${RQLITE_URL}: ${e.message}`);
     }
+    if (!res.ok) throw new Error(`rqlite not ready at ${RQLITE_URL}: HTTP ${res.status}`);
+    rqliteUp = true;
   });
 
   beforeEach(async () => {

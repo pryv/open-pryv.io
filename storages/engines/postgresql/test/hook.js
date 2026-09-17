@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 
 // Ensure boiler init + per-worker rqlited spawn for
 // storages/engines/postgresql tests in parallel mode. Without this,
-// schema/series/PlatformDB conformance tests fetch-fail against
-// host rqlited on 4001 (killed by parallel-mode setup).
+// schema/series/PlatformDB conformance tests in concurrent workers
+// all share the host rqlited instead of each worker's own.
 require('test-helpers/src/api-server-tests-config.ts');
 
 const base = require('test-helpers/src/helpers-base.ts');

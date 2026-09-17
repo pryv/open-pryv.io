@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## rqlite tests use the configured rqlite, and the conformance suite no longer skips silently
+
+The rqlite PlatformDB conformance suite and the ACME integration test defaulted to
+`localhost:4001` and ignored `config/test-config.yml`. A checkout running rqlite on
+another port therefore either skipped 89 conformance tests while the run still
+reported green, or ran them (writes and deletes included) against whichever rqlite
+answered on 4001, possibly another checkout's. Both now resolve the URL from
+`RQLITE_URL`, then the test config (including its `storages__engines__rqlite__url`
+env mirror), then the default. Both fail, naming the URL, when that rqlite is
+unreachable, instead of skipping. The helper that boots a child core for
+multi-core tests falls back to the configured rqlite too.
+
 ## an aborted attachment download no longer leaks the attachment's file descriptor
 
 An attachment download pipes the file read stream into the HTTP response, and

@@ -21,9 +21,9 @@ require('test-helpers/src/api-server-tests-config.ts');
 
 // Export mochaHooks so per-worker rqlited spawns via
 // `setupParallelWorker`. Without this storage tests run in parallel
-// mode against the default `localhost:4001` (host rqlited is killed
-// in parallel-mode setup), causing `fetch failed` in the conformance
-// `before all` hook.
+// mode against the shared host rqlited instead of the worker's own
+// (worker ports start at 4011), so concurrent workers race on one
+// platform DB.
 const base = require('test-helpers/src/helpers-base.ts');
 base.init({});
 export const mochaHooks = base.getMochaHooks(true);

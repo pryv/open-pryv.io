@@ -54,7 +54,7 @@ const http = require('node:http');
   const coreId = process.env.CORE_ID || 'single';
   const coreIp = process.env.CORE_IP || '127.0.0.1';
   const domain = process.env.DNS_DOMAIN || null;
-  const rqliteUrl = process.env.RQLITE_URL || 'http://localhost:4001';
+  const rqliteUrl = process.env.RQLITE_URL || config.get('storages:engines:rqlite:url');
   const adminKey = process.env.ADMIN_KEY || 'test-admin-key';
 
   config.set('http:port', port);
