@@ -66,6 +66,21 @@ describe('[CLUSTERKV] clusterKv', function () {
     assert.deepEqual(v, { a: 1 });
   });
 
+  it('[CKV1] concurrent requests share one message listener, removed when idle', async () => {
+    const { client, clientHandle } = wireClient();
+    let maxListeners = 0;
+    const origSend = clientHandle.send;
+    // Observe the listener count at each send, while requests are in flight.
+    clientHandle.send = (msg) => {
+      maxListeners = Math.max(maxListeners, clientHandle.listenerCount('message'));
+      setImmediate(() => origSend(msg));
+    };
+    const values = await Promise.all(Array.from({ length: 25 }, (_, i) => client.set('k' + i, i).then(() => client.get('k' + i))));
+    assert.deepEqual(values, Array.from({ length: 25 }, (_, i) => i));
+    assert.equal(maxListeners, 1);
+    assert.equal(clientHandle.listenerCount('message'), 0);
+  });
+
   it('get returns null for missing key', async () => {
     const { client } = wireClient();
     const v = await client.get('absent');

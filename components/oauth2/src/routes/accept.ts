@@ -249,8 +249,10 @@ export function handleAccept (deps: AcceptDeps) {
       });
     }
 
-    // Mint code + persist with the access details so the grant can
-    // return them after PKCE verification (user is gone by then).
+    // Mint code + persist with the access id so the grant can return the
+    // access after PKCE verification (user is gone by then). The token is
+    // NOT stored: the platform store is replicated to every core, so the
+    // grant reads it back from this core's own storage by id.
     const code = generateToken();
     const codeExpiresAt = Date.now() + CODE_TTL_SECONDS * 1000;
     await setCode(deps.platform, code, {
@@ -263,8 +265,7 @@ export function handleAccept (deps: AcceptDeps) {
       scope: granted,
       expiresAt: codeExpiresAt,
       accessId: access.accessId,
-      accessToken: access.accessToken,
-      apiEndpoint: access.apiEndpoint,
+      coreId: String(deps.config.get('core:id') ?? 'single'),
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
       ...(access.permissions != null ? { permissions: access.permissions } : {}),
     });

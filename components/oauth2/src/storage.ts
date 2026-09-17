@@ -20,18 +20,28 @@
  *     (client metadata). No TTL.
  *
  * Key prefixes are owned here, not the engine:
- *   - oauth-client/<clientId>          — indefinite
- *   - oauth-code/<code>                — 600s TTL (cluster-wide: code /token is
- *                                        core-agnostic, so any core resolves it)
- *   - oauth-refresh/<coreId>/<token>   — sliding 30d, cap 90d absolute (per-core:
- *                                        refresh re-mints via home-core storage)
+ *   - oauth-client/<clientId>             — indefinite
+ *   - oauth-ac/<sha256(code)>             — 600s TTL; the exchange is served by
+ *                                           the issuing core (`coreId` in the row)
+ *   - oauth-rt/<coreId>/<sha256(token)>   — sliding 30d, cap 90d absolute (per-core:
+ *                                           refresh re-mints via home-core storage)
+ *   - oauth-rt-used/<coreId>/<sha256(token)> — reuse-detection marker
  *
- * Per the no-credentials-in-PlatformDB invariant, the client row may
- * carry `clientSecretHash` (Argon2id, one-way) but never plaintext
- * secrets.
+ * PlatformDB is replicated to every core, so no credential is stored in it:
+ * codes and refresh tokens appear only as SHA-256 digests in the key, rows
+ * carry no access token, and the client row carries only a one-way
+ * `clientSecretHash` (bcrypt). The codes and tokens are 256-bit random
+ * values, so an unsalted SHA-256 is enough: there is no dictionary to
+ * attack, and the digest is a lookup key, never compared.
+ *
+ * Legacy (pre-hash) rows: `oauth-refresh/` and `oauth-refresh-used/` rows are
+ * re-keyed by each core at master boot (`rekeyLegacyRefreshTokens`);
+ * `oauth-code/` rows (≤10 min, carrying the access token) are still read
+ * once by `consumeCode` so an exchange in flight across an upgrade
+ * completes. TODO: drop the legacy code read one release after it ships.
  */
 
-
+import crypto from 'node:crypto';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { PublicJwkSet } from './jwks.ts';
 
@@ -100,13 +110,14 @@ export interface OAuthCode {
   expiresAt: number;
   /**
    * The access is created at /accept time (when the user is
-   * authenticated) and these fields carry the result through to the
-   * /token exchange. Optional so legacy/test rows that don't carry
-   * them still parse; the grant handler defends against missing.
+   * authenticated) on the user's core; its id rides here to the /token
+   * exchange, which reads the token back from that core's own storage.
+   * The token itself is never stored in this row. Optional so rows that
+   * don't carry them still parse; the grant handler defends against missing.
    */
   accessId?: string;
-  accessToken?: string;
-  apiEndpoint?: string;
+  /** `core:id` of the core that minted the access (and must serve /token). */
+  coreId?: string;
   /**
    * Granular-grant binding (cmc scopes): the durable consent record is
    * a data-grant access on the user's account; `permissions` is the
@@ -115,6 +126,17 @@ export interface OAuthCode {
    */
   dataGrantAccessId?: string;
   permissions?: GrantPermission[];
+}
+
+/**
+ * A code row read from the pre-hash `oauth-code/<code>` keyspace, which
+ * carried the access token and apiEndpoint in the row. Flagged so the grant
+ * uses those fields (and the HTTP orphan revoke) for this row only.
+ */
+export interface LegacyOAuthCode extends OAuthCode {
+  legacy: true;
+  accessToken?: string;
+  apiEndpoint?: string;
 }
 
 /** Refresh-token row (per-issuing-core, sliding 30d + 90d absolute). */
@@ -166,9 +188,13 @@ export interface OAuthRefreshUsed {
 
 const PREFIX_CLIENT = 'oauth-client/';
 const PREFIX_CLIENT_REVOKED = 'oauth-client-revoked/';
-const PREFIX_CODE = 'oauth-code/';
-const PREFIX_REFRESH = 'oauth-refresh/';
-const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
+const PREFIX_CODE = 'oauth-ac/';
+const PREFIX_REFRESH = 'oauth-rt/';
+const PREFIX_REFRESH_USED = 'oauth-rt-used/';
+// Pre-hash keyspaces (raw secret in the key). Read for migration only.
+const LEGACY_PREFIX_CODE = 'oauth-code/';
+const LEGACY_PREFIX_REFRESH = 'oauth-refresh/';
+const LEGACY_PREFIX_REFRESH_USED = 'oauth-refresh-used/';
 const PREFIX_DPOP_JTI = 'dpop-jti/';
 const PREFIX_CASSERT_JTI = 'oauth-cassert-jti/';
 const PREFIX_DPOP_JKT_REVOKED = 'dpop-jkt-revoked/';
@@ -274,19 +300,13 @@ export async function pruneRevokedClients (platform: PlatformDB, maxAgeMs: numbe
   return pruned;
 }
 
-// --- Authorization codes (CLUSTER-WIDE, ≤10-min TTL) --- //
+// --- Authorization codes (≤10-min TTL, served by the issuing core) --- //
 //
-// The code key is intentionally NOT namespaced by core:id. `/oauth2/token`
-// (code grant) touches no per-user storage — it returns the access already
-// minted at `/accept` (accessToken + home-core apiEndpoint live in this row).
-// So the exchange is a pure lookup in the cluster-wide PlatformDB and any core
-// can serve it. Keying by the minting core's id would strand a `/token` that a
-// load balancer routes to a different core than `/accept` (both derive from the
-// same issuer, but the LB need not pin them together). The code value is a
-// cryptographically-random token, so a cross-core collision is negligible, and
-// single-use stays atomic cluster-wide via consumeAccessState. (Refresh KEEPS
-// the per-core key — its exchange re-mints via the user's home-core storage, so
-// it is inherently home-core-pinned; see below.)
+// The row carries the id of the access minted at `/accept`, never its token:
+// the `/token` exchange reads the token from the issuing core's own storage
+// (`coreId` in the row), so a code exchange is home-core-pinned like the
+// refresh grant and like the issuer resolution in wellKnown.ts. The key is
+// the SHA-256 of the code; single-use stays atomic via consumeAccessState.
 
 export async function setCode (
   platform: PlatformDB, code: string, payload: OAuthCode,
@@ -313,9 +333,12 @@ export async function deleteCode (platform: PlatformDB, code: string): Promise<v
  * Use this instead of getCode + deleteCode — those race, letting two
  * concurrent `/token` submissions of one code both mint a chain.
  */
-export async function consumeCode (platform: PlatformDB, code: string): Promise<OAuthCode | null> {
+export async function consumeCode (platform: PlatformDB, code: string): Promise<OAuthCode | LegacyOAuthCode | null> {
   const entry = await platform.consumeAccessState(codeKey(code));
-  return entry == null ? null : (entry.value as OAuthCode);
+  if (entry != null) return entry.value as OAuthCode;
+  // A code minted before the upgrade (raw key, token in the row).
+  const legacy = await platform.consumeAccessState(LEGACY_PREFIX_CODE + code);
+  return legacy == null ? null : { ...(legacy.value as OAuthCode), legacy: true };
 }
 
 // --- Refresh tokens (per-core, sliding TTL with absolute cap) --- //
@@ -555,16 +578,58 @@ export async function pruneDpopKeysSeen (platform: PlatformDB, maxAgeMs: number,
   return pruned;
 }
 
+// --- Legacy refresh-token re-key (master boot) --- //
+
+/**
+ * Move this core's pre-hash refresh rows (`oauth-refresh/<coreId>/<token>`,
+ * `oauth-refresh-used/<coreId>/<token>`) to their hashed keys, same value and
+ * expiry, and delete the raw keys. Only rows of `coreId` are touched: each
+ * core migrates its own chains when it upgrades, so a rolling multi-core
+ * upgrade never moves a row an older core still reads. Idempotent.
+ * Returns the number of rows moved.
+ */
+export async function rekeyLegacyRefreshTokens (platform: PlatformDB, coreId: string): Promise<number> {
+  const NS = 'access-state/';
+  let moved = 0;
+  for (const [legacyPrefix, hashedKey] of [
+    [LEGACY_PREFIX_REFRESH, refreshKey],
+    [LEGACY_PREFIX_REFRESH_USED, refreshUsedKey],
+  ] as const) {
+    // List the whole legacy prefix and filter by core here: a core id may
+    // contain `_`, which the engine's prefix listing rejects as a wildcard.
+    const self = legacyPrefix + coreId + '/';
+    const storeKeys = await platform.listPlatformKvKeys(NS + legacyPrefix);
+    for (const storeKey of storeKeys) {
+      const key = storeKey.slice(NS.length);
+      if (!key.startsWith(self)) continue;
+      const token = key.slice(self.length);
+      if (token === '') continue;
+      const entry = await platform.getAccessState(key); // null when expired (and dropped)
+      if (entry != null) {
+        await platform.setAccessState(hashedKey(coreId, token), entry.value, entry.expiresAt);
+        moved++;
+      }
+      await platform.deleteAccessState(key);
+    }
+  }
+  return moved;
+}
+
 // --- Key helpers (owned here, NOT in the engine) --- //
 
+/** SHA-256 hex of a high-entropy secret, the only form used in a key. */
+export function hashSecret (secret: string): string {
+  return crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+}
+
 function codeKey (code: string): string {
-  return PREFIX_CODE + code;
+  return PREFIX_CODE + hashSecret(code);
 }
 
 function refreshKey (coreId: string, token: string): string {
-  return PREFIX_REFRESH + coreId + '/' + token;
+  return PREFIX_REFRESH + coreId + '/' + hashSecret(token);
 }
 
 function refreshUsedKey (coreId: string, token: string): string {
-  return PREFIX_REFRESH_USED + coreId + '/' + token;
+  return PREFIX_REFRESH_USED + coreId + '/' + hashSecret(token);
 }

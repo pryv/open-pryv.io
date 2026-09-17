@@ -547,9 +547,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # POST /reg/access (optional 'authUrl' body field). Only URLs matching an
 # # entry below are honored (same protocol + host, path on a '/' boundary);
 # # anything else is rejected with 400. Unset = client authUrl always refused.
+# # access.terminalRetentionMs: how long a decided access request (ACCEPTED,
+# # REFUSED, ERROR) stays pollable after an app first reads it. Requests are
+# # held in memory on the core that created them. 0 keeps them until the
+# # request expires (1 h). Default 120000 (2 min).
 # # access:
 # #   trustedAuthUrls:
 # #     - https://auth.example.com/my-auth/
+# #   terminalRetentionMs: 120000
 
 # # logs.console.format.json — one JSON object per line ({timestamp, level,
 # # name, pid, message, context}) for log collectors / log-based alerting.

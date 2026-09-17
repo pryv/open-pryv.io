@@ -49,19 +49,65 @@ const __dirname = path.dirname(__filename);
 // root.
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
-// Per-worker port stride. Worker 0 starts at 4011/4012 so the host dev
-// rqlited at 4001/4002 can keep serving sequential test runs unmodified.
-// (Original §2D spec was `4001 + id*10` with worker 0 colliding with the
-// host rqlited; that forced operators to stop the host rqlited before any
-// parallel run. Shifting +10 removes that requirement.)
+// Per-worker ports live in a dedicated band, away from the host services a
+// checkout runs for sequential tests (PostgreSQL, rqlite 4001/4002,
+// tcpBroker 4222, ...), and each checkout gets its own band so parallel
+// checkouts running `just test-parallel` at the same time do not collide:
+//
+//   port = PORT_BAND_BASE + checkoutIndex * CHECKOUT_BAND + workerId * PORT_STRIDE + slot
+//
+// with one slot per service inside a worker's stride. The former fixed
+// bases (rqlite 4011 + id*10, tcpBroker 4222 + id*10, hfs 4000 + id*10)
+// overlapped the host ports of the next checkout and each other.
+const PORT_BAND_BASE = 20000;
+const CHECKOUT_BAND = 1000;
 const PORT_STRIDE = 10;
 
-const RQLITE_HTTP_BASE = 4011;
-const RQLITE_RAFT_BASE = 4012;
-const HTTP_PORT_BASE = 3000;
-const HFS_PORT_BASE = 4000;
-const PREVIEWS_PORT_BASE = 3001;
-const TCP_BROKER_PORT_BASE = 4222;
+const SLOT_HTTP = 0;
+const SLOT_PREVIEWS = 1;
+const SLOT_HFS = 2;
+const SLOT_TCP_BROKER = 3;
+const SLOT_RQLITE_HTTP = 4;
+const SLOT_RQLITE_RAFT = 5;
+
+/** Host rqlite HTTP port of the first checkout; later checkouts add 100 each. */
+const HOST_RQLITE_BASE_PORT = 4001;
+const HOST_CHECKOUT_STEP = 100;
+
+/**
+ * Index of this checkout among parallel checkouts on the machine (0 for
+ * the first). `PRYV_TEST_CHECKOUT_INDEX` wins; otherwise it is derived from
+ * the rqlite port configured in `config/test-config.yml`, where each
+ * checkout already sets its host services on offset ports. Read
+ * synchronously: the overrides are computed at module load, before config.
+ */
+export function getCheckoutIndex (): number {
+  const fromEnv = parseInt(process.env.PRYV_TEST_CHECKOUT_INDEX || '', 10);
+  if (Number.isFinite(fromEnv) && fromEnv >= 0) return fromEnv;
+  if (cachedCheckoutIndex == null) cachedCheckoutIndex = checkoutIndexFromConfigFile();
+  return cachedCheckoutIndex;
+}
+let cachedCheckoutIndex: number | null = null;
+
+/** Exported for tests: parse the checkout index out of a test-config text. */
+export function checkoutIndexFromConfigText (text: string): number {
+  const m = /\n\s+rqlite:\s*\n(?:[^\n]*\n)*?\s+url:\s*\S*:(\d+)/.exec('\n' + text);
+  if (m == null) return 0;
+  const offset = parseInt(m[1], 10) - HOST_RQLITE_BASE_PORT;
+  return offset > 0 && offset % HOST_CHECKOUT_STEP === 0 ? offset / HOST_CHECKOUT_STEP : 0;
+}
+
+function checkoutIndexFromConfigFile (): number {
+  try {
+    return checkoutIndexFromConfigText(fs.readFileSync(path.join(REPO_ROOT, 'config', 'test-config.yml'), 'utf8'));
+  } catch {
+    return 0;
+  }
+}
+
+function workerPort (workerId: number, slot: number): number {
+  return PORT_BAND_BASE + getCheckoutIndex() * CHECKOUT_BAND + workerId * PORT_STRIDE + slot;
+}
 
 interface WorkerOverrides {
   workerId: number;
@@ -144,7 +190,6 @@ export function isParallelMode (): boolean {
  * sequential mode is untouched.
  */
 export function getPerWorkerOverrides (workerId: number = getWorkerId()): WorkerOverrides {
-  const stride = workerId * PORT_STRIDE;
   // Path-typed config values must be absolute so consumers don't
   // re-resolve them against an unpredictable cwd. Engines + bin/master.js
   // both call `path.isAbsolute(p) ? p : path.resolve(process.cwd(), p)`,
@@ -155,13 +200,13 @@ export function getPerWorkerOverrides (workerId: number = getWorkerId()): Worker
     postgresqlDatabase: `pryv-node-test-w${workerId}`,
     sqlitePath: path.join(REPO_ROOT, `var-pryv/users-test-w${workerId}/`),
     previewsDirPath: path.join(REPO_ROOT, `var-pryv/previews-test-w${workerId}/`),
-    rqliteUrl: `http://localhost:${RQLITE_HTTP_BASE + stride}`,
-    rqliteRaftPort: RQLITE_RAFT_BASE + stride,
+    rqliteUrl: `http://localhost:${workerPort(workerId, SLOT_RQLITE_HTTP)}`,
+    rqliteRaftPort: workerPort(workerId, SLOT_RQLITE_RAFT),
     rqliteDataDir: path.join(REPO_ROOT, `var-pryv/rqlite-data-w${workerId}/`),
-    httpPort: HTTP_PORT_BASE + stride,
-    hfsPort: HFS_PORT_BASE + stride,
-    previewsPort: PREVIEWS_PORT_BASE + stride,
-    tcpBrokerPort: TCP_BROKER_PORT_BASE + stride,
+    httpPort: workerPort(workerId, SLOT_HTTP),
+    hfsPort: workerPort(workerId, SLOT_HFS),
+    previewsPort: workerPort(workerId, SLOT_PREVIEWS),
+    tcpBrokerPort: workerPort(workerId, SLOT_TCP_BROKER),
     // Per-worker scratch dir for fixtures that previously wrote into the
     // shared `<repo>/custom-extensions/` directory (e.g. AP04's
     // `customAuthStepFn.js`). Lives under `var-pryv/` so it's gitignored
@@ -288,7 +333,7 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
   if (!o.isParallel) return;
   if (rqliteChild != null && rqliteChild.exitCode == null) return;
 
-  const httpPort = RQLITE_HTTP_BASE + o.workerId * PORT_STRIDE;
+  const httpPort = workerPort(o.workerId, SLOT_RQLITE_HTTP);
   const raftPort = o.rqliteRaftPort;
   const dataDir = path.isAbsolute(o.rqliteDataDir)
     ? o.rqliteDataDir

@@ -16,9 +16,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * Cross-worker accessState regression test.
  *
  * Spawns two child workers and asserts that an access-request state created
- * on worker 0 is readable on worker 1. Before accessState was backed by
- * PlatformDB, this round-trip failed because each worker held its own
- * `new Map()` — a real production bug.
+ * on worker 0 is readable on worker 1. When each worker held its own
+ * `new Map()` this round-trip failed, a real production bug (GH #67). The
+ * state now lives in the core-local `cluster_kv`, served to the children by
+ * the master handler the fixture runs in this process.
  */
 
 const path = require('node:path');
@@ -35,20 +36,12 @@ describe('[XS12] accessState cross-worker (cluster regression)', function () {
 
   before(async function () {
     await initTests();
-    cluster = await spawnWorkers({ count: 2, workerScript: WORKER_SCRIPT });
+    cluster = await spawnWorkers({ count: 2, workerScript: WORKER_SCRIPT, kvMaster: true });
   });
 
   after(async function () {
-    if (cluster) {
-      // Ask a worker to clear (parent process never inits storages —
-      // platformDB is undefined there). Then stop the cluster.
-      try { await cluster.request(0, 'clear'); } catch (_) { /* best-effort */ }
-      await cluster.stop();
-    }
-  });
-
-  afterEach(async function () {
-    if (cluster) await cluster.request(0, 'clear');
+    // Stopping the cluster also stops the master handler and drops its store.
+    if (cluster) await cluster.stop();
   });
 
   it('[XS12A] POST on worker 0 + GET on worker 1 returns the same state', async function () {

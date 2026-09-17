@@ -364,6 +364,59 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
+    it('[OE08] the platform store (replicated to every core) holds no code, refresh token or access token', async function () {
+      const platformDB = require('storages').platformDB;
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const secrets = [r.code, r.tokenRes.body.refresh_token, r.tokenRes.body.access_token];
+      const keys = await platformDB.listPlatformKvKeys('access-state/oauth');
+      assert.ok(keys.length > 0, 'expected the refresh row to exist');
+      for (const storeKey of keys) {
+        const entry = await platformDB.getAccessState(storeKey.slice('access-state/'.length));
+        const blob = storeKey + ' ' + JSON.stringify(entry);
+        for (const secret of secrets) {
+          assert.ok(!blob.includes(secret), 'platform row carries a credential: ' + storeKey);
+        }
+      }
+    });
+
+    it('[OE09] a code row naming a non-OAuth access resolves nothing and deletes nothing', async function () {
+      // Defense in depth: a forged or tampered platform row must not turn an
+      // arbitrary access id (here the user's personal access) into a token.
+      const platformDB = require('storages').platformDB;
+      const { hashSecret } = require('oauth2/src/storage.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const userId = await (await getUsersRepository()).getUserIdForUsername(username);
+      const personalRes = await coreRequest.get('/' + username + '/access-info').set('Authorization', personalToken);
+      assert.equal(personalRes.status, 200, describeRes(personalRes));
+      const personal = personalRes.body;
+      const coreId = String((await require('@pryv/boiler').getConfig()).get('core:id') ?? 'single');
+      const { verifier, challenge } = pkce();
+      const code = 'forged-' + cuid();
+      const expiresAt = Date.now() + 60_000;
+      await platformDB.setAccessState('oauth-ac/' + hashSecret(code), {
+        clientId,
+        redirectUri: REDIRECT_URI,
+        codeChallenge: challenge,
+        codeChallengeMethod: 'S256',
+        userId,
+        username,
+        scope: ['cmc:' + OFFER_NAME],
+        expiresAt,
+        accessId: personal.id,
+        coreId,
+      }, expiresAt);
+      const res = await coreRequest.post('/oauth2/token').type('form').send({
+        grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT_URI,
+      });
+      assert.equal(res.status, 400, describeRes(res));
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(res.body.access_token, undefined);
+      // the failed exchange's orphan cleanup did not touch the personal access
+      const still = await coreRequest.get('/' + username + '/access-info').set('Authorization', personalToken);
+      assert.equal(still.status, 200, describeRes(still));
+    });
+
     it('[OE03] consent downgrade — offer has diary+health, user keeps health only', async function () {
       const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }] });
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));

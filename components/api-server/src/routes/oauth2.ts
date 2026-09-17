@@ -106,6 +106,9 @@ type OAuthMethodResult = {
 /** A CMC data-grant access row, as read back from accesses.get / findOne. */
 type DataGrant = {
   id: string;
+  type?: string;
+  name?: string;
+  alias?: string | null;
   token?: unknown;
   permissions?: Array<Record<string, unknown>>;
   deleted?: unknown;
@@ -543,6 +546,48 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
 
+  // ---------------------------------------------------------------------
+  // resolveAccess / revokeAccessLocal: the authorization_code exchange
+  // reads back the access pre-minted at /accept (the code row carries its
+  // id, not its token, since the platform store is replicated to every
+  // core), and deletes it when the exchange fails after the code was
+  // consumed. Storage-direct on this core, which is the issuing core.
+  // ---------------------------------------------------------------------
+  // Only an OAuth session access of that client qualifies: a code row names an
+  // access by id, and must not be able to reach any other access of the user.
+  async function findOAuthSessionAccess (userId: string, username: string, accessId: string, clientId: string): Promise<DataGrant | null> {
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
+    if (accessesRepository == null) throw new Error('oauth2: storageLayer.accesses unavailable');
+    const access = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+      accessesRepository.findOne({ id: userId, username }, { id: accessId }, null, cb));
+    if (access == null || access.type !== 'app' || access.name !== 'oauth:' + clientId) return null;
+    return access;
+  }
+
+  async function resolveAccess ({ userId, username, accessId, clientId }: {
+    userId: string; username: string; accessId: string; clientId: string;
+  }): Promise<{ accessToken: string; apiEndpoint: string } | null> {
+    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
+    if (typeof access.expires === 'number' && access.expires <= Math.floor(Date.now() / 1000)) return null;
+    // Same builder accesses.create uses, so the exchange returns what /accept minted.
+    const ApiEndpoint = require('utils').ApiEndpoint;
+    return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access, username) };
+  }
+
+  async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
+    userId: string; username: string; accessId: string; clientId: string;
+  }): Promise<void> {
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
+    if (accessesRepository == null) throw new Error('oauth2.revokeAccessLocal: storageLayer.accesses unavailable');
+    if (await findOAuthSessionAccess(userId, username, accessId, clientId) == null) return;
+    const user = { id: userId, username };
+    await fromCallback((cb: (e: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
+    // The cache validates tokens on `expires` only, never `deleted`.
+    cache.unsetUserData(userId);
+    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+  }
+
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
@@ -681,6 +726,8 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     resolveAccountUserId,
     revokeChain,
     bindAccessDpop,
+    resolveAccess,
+    revokeAccessLocal,
     resolveUser,
     createAccess,
   });

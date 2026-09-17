@@ -21,6 +21,7 @@
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
@@ -54,6 +55,10 @@ export type TokenDeps = {
   revokeChain?: (params: {
     userId: string; username: string; clientId: string; dataGrantAccessId?: string;
   }) => Promise<void>;
+  /** Required for authorization_code: read the pre-minted access back by id. */
+  resolveAccess?: AuthCodeAccessResolver;
+  /** authorization_code: delete an orphaned pre-minted access locally. */
+  revokeAccessLocal?: AuthCodeAccessRevoker;
 };
 
 /**
@@ -145,6 +150,8 @@ export function handleToken (deps: TokenDeps) {
             config: deps.config,
             platform: deps.platform,
             ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
+            ...(deps.resolveAccess != null ? { resolveAccess: deps.resolveAccess } : {}),
+            ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
           },
           { ...body, basic },
           dpopJkt,

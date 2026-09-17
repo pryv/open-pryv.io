@@ -12,7 +12,7 @@ This commit ships the **substrate only** — no public auth flow yet. What's wir
 - Hand-maintained Pryv `error.id` → RFC 6749 `error` enum map.
 - App-account client registry (read + write via the operator CLI; HTTP `POST /oauth2/register` is intentionally not shipped).
 - PlatformDB cache keyspace `oauth-client/<clientId>` (cluster-wide App-account-metadata cache for cross-core `/oauth2/authorize` validation).
-- PlatformDB short-TTL keyspaces `oauth-code/<coreId>/<code>` and `oauth-refresh/<coreId>/<token>`.
+- PlatformDB short-TTL keyspaces `oauth-ac/<sha256(code)>` and `oauth-rt/<coreId>/<sha256(token)>` (no credential stored; see `INTERNALS.md`).
 - `.well-known/oauth-authorization-server` discovery doc handler.
 - Operator CLI (`bin/oauth-client.js`) for app-account promotion in `curated` registration mode.
 - Audit-event helper skeleton (`audit.ts`).

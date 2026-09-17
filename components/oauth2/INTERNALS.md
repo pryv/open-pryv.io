@@ -10,8 +10,8 @@ Open Pryv.io deployments can run multiple cores fronted by a load balancer. Each
 |---|---|---|
 | `GET /oauth2/authorize` | Any core | Validates client via the PlatformDB cache (`oauth-client/<clientId>`); the user's home core is not yet known. |
 | Consent UI (`auth.pryv.me/oauth2-authorize`) | Any core (via app-web-auth3 then `GET /reg/<username>/server` → user's home core) | User authenticates against THEIR home core. |
-| `POST /oauth2/authorize/accept` | **User's home core** | The granted access row lives in the user's per-user accesses table. Authorization code stored in PlatformDB with `coreId` prefix locks the code to this core. |
-| `POST /oauth2/token` (any grant) | **User's home core** (via `forwardIfCrossCore` if not local) | The code/refresh-token row's `coreId` prefix dictates routing. Vanilla RFC 6749 clients never see the cross-core hop. |
+| `POST /oauth2/authorize/accept` | **User's home core** | The granted access row lives in the user's per-user accesses table. The authorization-code row records this core's id (`coreId`) and the access id, never the access token. |
+| `POST /oauth2/token` (any grant) | **User's home core** (the issuer resolves there, see `wellKnown.ts`) | The code grant reads the access token back from this core's storage, and the refresh grant re-mints through it, so both must reach the issuing core. There is no cross-core forwarding: a code presented to another core answers `invalid_grant` and logs the routing fault. |
 | `GET /<username>/<api>` with Bearer | User's home core (via `checkUserCore.ts` 421 + `coreUrl`) | Existing Pryv resource-server routing; OAuth-issued tokens flow through unchanged. |
 
 ### Why `iss` is per-deployment, not per-core
@@ -28,17 +28,22 @@ The Pryv-specific `apiEndpoint` field in the token response (carried over from t
 
 ## PlatformDB keyspaces
 
-The component uses three PlatformDB keyspaces, all designed to fit the existing `setAccessState` / `getAccessState` TTL machinery:
+The component uses these PlatformDB keyspaces, the TTL'd ones on the existing `setAccessState` / `getAccessState` machinery. PlatformDB is replicated to every core, so no credential is stored in it: codes and refresh tokens appear only as the SHA-256 of their value in the key (they are 256-bit random values, so no salt or slow hash is needed), and no row carries an access token.
 
 | Keyspace | Lifetime | Contents | Per-core? |
 |---|---|---|---|
 | `oauth-client/<clientId>` | indefinite (rotated on App-account update) | Client metadata: `redirectUris`, `scope`, `clientName`, `logoUri`, `clientUri`, `grantTypes`, `applicationType`, `clientSecretHash?` | NO — cluster-wide |
-| `oauth-code/<coreId>/<code>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, scope, expiresAt, accessId? }` | YES — issuing core's id is in the key |
-| `oauth-refresh/<coreId>/<token>` | sliding 30d (cap 90d absolute) | `{ clientId, userId, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt }` | YES — issuing core's id is in the key |
+| `oauth-ac/<sha256(code)>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, username, scope, expiresAt, accessId, coreId, dataGrantAccessId?, permissions? }` | YES — issuing core's id is in the row |
+| `oauth-rt/<coreId>/<sha256(token)>` | sliding 30d (cap 90d absolute) | `{ clientId, userId, username, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt, ... }` | YES — issuing core's id is in the key |
+| `oauth-rt-used/<coreId>/<sha256(token)>` | remaining life of the rotated token | reuse-detection marker (chain identity, no credential) | YES |
+
+**Upgrade from raw keys.** Earlier releases used `oauth-code/<code>` (with the access token in the row) and `oauth-refresh[-used]/<coreId>/<token>`. At master boot each core moves its own refresh rows to the hashed keys (`rekeyLegacyRefreshTokens`, idempotent; another core's rows wait for that core's upgrade). Legacy code rows are read once by `consumeCode` so an exchange in flight across the upgrade completes; they expire within 10 minutes, and that read is to be removed in the following release.
+
+**Orphaned accesses.** When a code is consumed but the exchange fails, or a code expires unexchanged, the pre-minted access is deleted from the issuing core's storage (grant failure path, and `orphanSweep.ts` from the master sweep for this core's expired rows). Legacy rows are still revoked over HTTP with the token they carry.
 
 ### Why client metadata is cluster-wide (no `coreId` prefix)
 
-By design, client REGISTRATION METADATA may live in PlatformDB (NOT credentials — the only secret-derived value cached is the Argon2id hash, which is one-way). Cluster-wide reads are essential: `/oauth2/authorize` can land on any core, and the validator MUST resolve `client_id` → `redirect_uris` instantly. A `coreId` prefix would force a cross-core fetch on every authorize.
+By design, client REGISTRATION METADATA may live in PlatformDB (NOT credentials — the only secret-derived value cached is the bcrypt hash, which is one-way). Cluster-wide reads are essential: `/oauth2/authorize` can land on any core, and the validator MUST resolve `client_id` → `redirect_uris` instantly. A `coreId` prefix would force a cross-core fetch on every authorize.
 
 The App account's own `:_app:*` streams remain the authoritative source. The PlatformDB row is a denormalized read-cache; the operator CLI updates both atomically (single transaction at the write boundary).
 
@@ -50,7 +55,7 @@ Authorization codes and refresh tokens are bound to the **issuing core** because
 2. Refresh-token rotation + reuse-detection requires single-writer semantics; a cluster-wide row would invite race conditions.
 3. Refresh tokens are core-sticky by multi-core design.
 
-The `coreId` prefix lets any core look up a row and immediately know whether to forward (`forwardIfCrossCore` if `coreId ≠ self`) or process locally.
+The `coreId` (in the refresh key, in the code row) lets a core recognise a row it did not issue and refuse it with `invalid_grant` instead of acting on another core's accesses.
 
 ## Redirect-URI matching
 

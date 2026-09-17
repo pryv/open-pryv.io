@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { handleToken } = require('../src/routes/token.ts');
-const { setRefresh, getRefresh, getRefreshConsumed } = require('../src/storage.ts');
+const { setRefresh, getRefresh, getRefreshConsumed, hashSecret } = require('../src/storage.ts');
 
 const ISSUER = 'https://reg.pryv.me';
 const CORE_ID = 'core-a';
@@ -108,6 +108,21 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       assert.equal(typeof res.body.access_token, 'string');
       assert.notEqual(res.body.refresh_token, 'RT-OK1', 'new refresh token must differ');
       assert.equal(typeof res.body.apiEndpoint, 'string');
+    });
+    it('[RT-H1] no stored key contains a raw refresh token, after issuance or rotation', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-H1-SEED-TOKEN');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-H1-SEED-TOKEN', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 200);
+      const keys = [...platform._state.keys()];
+      for (const raw of ['RT-H1-SEED-TOKEN', res.body.refresh_token]) {
+        assert.ok(!keys.some((k) => k.includes(raw)), 'raw token in a key: ' + raw);
+      }
+      // both the rotated chain head and the reuse marker are present, hashed
+      assert.ok(keys.includes('oauth-rt/' + CORE_ID + '/' + hashSecret(res.body.refresh_token)));
+      assert.ok(keys.includes('oauth-rt-used/' + CORE_ID + '/' + hashSecret('RT-H1-SEED-TOKEN')));
     });
     it('[OTR-OK2] response carries Cache-Control: no-store + Pragma: no-cache', async () => {
       const platform = fakePlatform();
@@ -378,7 +393,7 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       const handler = withRevoke(platform, 0, calls);
       const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD4', client_id: 'myapp' };
       await handler({ body: params }, fakeRes());
-      platform._state.delete('oauth-refresh-used/' + CORE_ID + '/RT-RD4'); // simulate marker TTL expiry
+      platform._state.delete('oauth-rt-used/' + CORE_ID + '/' + hashSecret('RT-RD4')); // simulate marker TTL expiry
       const r2 = fakeRes(); await handler({ body: params }, r2);
       assert.equal(r2.statusCode, 400);
       assert.equal(calls.length, 0, 'no marker → treated as expired, not reuse');
@@ -399,7 +414,7 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       assert.equal(typeof marker.consumedAt, 'number');
       assert.ok(!JSON.stringify(marker).includes('RT-RD5'), 'marker must not carry the token string');
       // Marker TTL = min(expiresAt, absoluteExpiresAt) of the consumed row.
-      const entry = platform._state.get('oauth-refresh-used/' + CORE_ID + '/RT-RD5');
+      const entry = platform._state.get('oauth-rt-used/' + CORE_ID + '/' + hashSecret('RT-RD5'));
       assert.equal(entry.expiresAt, exp, 'marker TTL must be the sooner of the row expiry / absolute cap');
     });
 

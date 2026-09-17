@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Security: credentials no longer stored in the platform store replicated to every core
+
+The platform store (rqlite) is replicated to every core of a platform, on disk.
+Until this release it held live credentials: the app token of every accepted
+`/reg/access` request (with the username, for up to one hour), and the OAuth2
+authorization codes, refresh tokens (valid up to 90 days) and pre-minted access
+tokens. Anyone able to read one core's platform data, or a backup of it, could use
+them against accounts hosted on any core. Operators of multi-core platforms should
+upgrade every core.
+
+- **Changed (`/reg/access`).** A decided request (`ACCEPTED`, `REFUSED`, `ERROR`)
+  stays pollable for a retention window after a poll first reads it, then its key
+  answers `400 unknown-access-key`, exactly as on expiry. Default 2 minutes, new
+  setting `access.terminalRetentionMs` (`0` keeps the previous behaviour: until the
+  request expires). Clients that poll the outcome once or twice right away, such as
+  lib-js (`AuthController` then `connectFromKey`), are unaffected; an integration
+  that reads the outcome much later must do so within the window or set the option.
+- **Changed (`/reg/access`).** Requests are held in memory on the core that created
+  them, shared by its workers. A core restart drops the requests in flight (the user
+  signs in again). The poll URL is always that core's own URL; on a multi-core
+  platform without `core.url`, it is now derived from the core id instead of the
+  register URL.
+- **Changed (OAuth2).** The authorization-code exchange (`POST /oauth2/token`,
+  `grant_type=authorization_code`) must reach the core that ran `/accept`, which is
+  the documented topology (the issuer resolves to the user's home core, like the
+  refresh grant). A code presented to another core now answers `invalid_grant`. Codes
+  issued before the upgrade are still accepted until they expire (10 minutes), and
+  existing refresh tokens keep working: each core converts its own at startup.
+
+### `/reg/access`: `expireAfter`, `deviceName` and `token` reach the auth page again
+
+- **Fixed.** `expireAfter` in `POST /reg/access` is the lifetime of the access to
+  create, in seconds, but the server used it as the lifetime of the request itself,
+  in milliseconds: an app sending `expireAfter: 3600` had 3.6 seconds to complete
+  sign-in before the key became unknown. The request now always lives one hour.
+- **Fixed.** The `NEED_SIGNIN` poll now returns `expireAfter`, `deviceName` and
+  `token` when the app sent them, so the auth page applies them when it creates the
+  access (it read them from the poll, which did not carry them, so the access was
+  created without a lifetime, device name or requested token). Absent when not sent.
+
 ### Native installs: use Node.js 24 below 24.19.0
 
 On Node.js 24.19.0 and later (confirmed on 24.21), the SQLite driver installed on

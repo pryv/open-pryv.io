@@ -7,28 +7,45 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Access-request state store, backed by PlatformDB (rqlite `keyValue`).
+ * Access-request state store, core-local, backed by `cluster_kv` (a
+ * master-held in-memory map that every worker of THIS core reaches over
+ * the cluster IPC channel; an in-process map when there is no master).
  *
- * Why PlatformDB and not an in-process Map: under `cluster.fork()` each
- * worker is a separate Node process. A POST to `/reg/access` lands on
- * worker A and writes; the polling GETs round-robin across workers, so
- * worker B's lookup sees nothing and 400s. Backing the store on rqlite
- * keeps it cluster-wide and worker-symmetric (and survives restart, which
- * is operator-friendly for mid-flow auth requests).
+ * Why core-local: the poll URL handed to the app is the entry core's own
+ * URL, so every read and write of a request lands on the core that
+ * created it. Nothing about a request is needed on another core. Once
+ * ACCEPTED, the state holds the app's access token (and an apiEndpoint
+ * embedding it) plus the username, so it must not sit in the platform
+ * store: that store is replicated to every core of the platform, on disk.
  *
- * Replaces the in-memory `new Map()` from the original v2 implementation
- * (which itself replaced v1's Redis store; the regression was "Map ≠ shared
- * across workers"). See workspace plan 55 + GH issue
- * pryv/open-pryv.io#67 for the production reproducer.
+ * Why not a per-worker Map: under `cluster.fork()` a POST lands on worker
+ * A and the polls round-robin across workers (GH issue
+ * pryv/open-pryv.io#67). The master-held map is shared by all workers.
+ *
+ * Trade-off: in memory only, so a core restart drops the requests in
+ * flight; the user signs in again (the same trade-off as MFA sessions).
+ *
+ * Delivery: a terminal state (ACCEPTED, REFUSED, ERROR) is kept for a
+ * short retention window after it is first read by a poll, then dropped,
+ * so the credential does not linger for the whole request lifetime. The
+ * window exists because clients read the ACCEPTED body more than once
+ * (lib-js polls, then `connectFromKey` polls again).
  */
 
 const crypto = require('node:crypto');
 
 const KEY_LENGTH = 16;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
+const NAMESPACE = 'access-request/';
+/** Terminal states: the outcome is decided, only delivery is left. */
+const TERMINAL_STATUSES = Object.freeze(['ACCEPTED', 'REFUSED', 'ERROR']);
 
 type BuildStateParams = {
+  /** Lifetime of the access the app asks for, in SECONDS (an
+   * `accesses.create` parameter the auth page applies), not of the request. */
   expireAfter?: number;
+  /** Token the app asks the access to carry (`accesses.create` `token`). */
+  token?: string;
   requestingAppId: string;
   requestedPermissions: unknown;
   languageCode?: string;
@@ -54,6 +71,8 @@ type AccessState = {
   oauthState: unknown;
   clientData: unknown;
   deviceName: string | null;
+  /** See `BuildStateParams.expireAfter`: set only when the app sent one. */
+  expireAfter?: number;
   /** See `BuildStateParams.consent`: set only for an annotated request. */
   consent?: unknown;
   poll_rate_ms: number;
@@ -61,20 +80,43 @@ type AccessState = {
   expiresAt: number;
   pollUrl?: string;
   authUrl?: string;
+  /** First time a poll read the terminal state (ms epoch). */
+  deliveredAt?: number;
   [k: string]: unknown;
 };
 
-type PlatformDbAccessRow = { value: AccessState; expiresAt: number };
-
-type PlatformDbAccessApi = {
-  setAccessState: (key: string, state: AccessState, expiresAt: number) => Promise<unknown>;
-  getAccessState: (key: string) => Promise<PlatformDbAccessRow | null>;
-  deleteAccessState: (key: string) => Promise<unknown>;
-  sweepExpiredAccessStates: (now: number) => Promise<unknown>;
+type KvClient = {
+  get: (key: string) => Promise<unknown>;
+  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<void>;
+  delete: (key: string) => Promise<void>;
 };
 
-function getPlatformDB (): PlatformDbAccessApi {
-  return require('storages').platformDB;
+let kvClient: KvClient | null = null;
+
+/** Lazily bound so a test can inject a client before first use. */
+function getKv (): KvClient {
+  if (kvClient == null) kvClient = require('messages/src/cluster_kv.ts').clientFor();
+  return kvClient as KvClient;
+}
+
+/** Test seam: swap the store client (null restores the default). */
+function _setKvClientForTests (client: KvClient | null): void {
+  kvClient = client;
+}
+
+/** Keys created through this module in this process, so `clear()` (tests)
+ * can drop them without wiping unrelated `cluster_kv` entries. Tracked in
+ * test runs only: nothing removes a key on expiry, so in a server this set
+ * would grow with every request. */
+const TRACK_KEYS = process.env.NODE_ENV === 'test';
+const knownKeys = new Set<string>();
+
+async function write (key: string, state: AccessState, expiresAt: number): Promise<void> {
+  // cluster_kv treats a non-positive TTL as "never expires": clamp to 1 ms
+  // so an already-past expiry drops the entry instead of pinning it.
+  const ttlMs = Math.max(1, expiresAt - Date.now());
+  await getKv().set(NAMESPACE + key, state, { ttlMs });
+  if (TRACK_KEYS) knownKeys.add(key);
 }
 
 /**
@@ -87,7 +129,7 @@ function generateKey (): string {
 /**
  * Build a fresh access-request state in memory. Does NOT persist — callers
  * decorate the state with `pollUrl` / `authUrl` (computed from
- * core-affine routing) and then call `persist()` to flush it to PlatformDB
+ * core-affine routing) and then call `persist()` to flush it to the store
  * in a single write.
  *
  * Splitting create into build + persist avoids a read-modify-write
@@ -96,8 +138,9 @@ function generateKey (): string {
  */
 function buildState (params: BuildStateParams): { key: string; state: AccessState; expiresAt: number } {
   const key = generateKey();
-  const ttl = params.expireAfter || DEFAULT_TTL_MS;
-  const expiresAt = Date.now() + ttl;
+  // The request always lives DEFAULT_TTL_MS. `expireAfter` is the lifetime
+  // of the ACCESS (seconds), carried to the auth page below.
+  const expiresAt = Date.now() + DEFAULT_TTL_MS;
   const state: AccessState = {
     status: 'NEED_SIGNIN',
     code: 201,
@@ -117,11 +160,17 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
   // un-annotated state must not gain the key at all, so its poll body
   // stays byte-identical to what it was before consent forms existed.
   if (params.consent !== undefined) state.consent = params.consent;
+  // Same rule for the access-creation parameters the auth page applies:
+  // present only when the app sent them.
+  if (typeof params.expireAfter === 'number' && Number.isFinite(params.expireAfter)) {
+    state.expireAfter = params.expireAfter;
+  }
+  if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
   return { key, state, expiresAt };
 }
 
 /**
- * Persist an in-memory state to PlatformDB. Used both for the initial
+ * Persist an in-memory state to the store. Used both for the initial
  * write after `buildState()` and to push subsequent mutations of `state`
  * back to the store.
  *
@@ -129,14 +178,15 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
  */
 async function persist (key: string, state: AccessState, expiresAt?: number): Promise<void> {
   const ts = expiresAt ?? state.expiresAt;
-  await getPlatformDB().setAccessState(key, state, ts);
+  state.expiresAt = ts;
+  await write(key, state, ts);
 }
 
 /**
  * Compatibility shim — older code paths called `create()` and then
- * mutated the returned `state`. The mutation was lost on PlatformDB-backed
- * writes; new code should use `buildState()` + `persist()` instead. Kept
- * for tests and any external caller that doesn't decorate the state.
+ * mutated the returned `state`. The mutation is not written back; new
+ * code should use `buildState()` + `persist()` instead. Kept for tests
+ * and any external caller that doesn't decorate the state.
  *
  */
 async function create (params: BuildStateParams): Promise<{ key: string; state: AccessState }> {
@@ -149,8 +199,30 @@ async function create (params: BuildStateParams): Promise<{ key: string; state: 
  * Get an access request state.
  */
 async function get (key: string): Promise<AccessState | null> {
-  const row = await getPlatformDB().getAccessState(key);
-  return row ? row.value : null;
+  const value = await getKv().get(NAMESPACE + key) as AccessState | null;
+  if (value == null) return null;
+  // The store expires entries on its own clock; this guards a caller that
+  // reads between expiry and the store's next sweep in a fallback store.
+  if (typeof value.expiresAt === 'number' && Date.now() > value.expiresAt) return null;
+  return value;
+}
+
+/**
+ * Record that a poll has read a terminal state, and shorten its remaining
+ * life to `retentionMs` from that first read. Later reads inside the window
+ * are served unchanged; after it the key is unknown, exactly as on expiry.
+ * A non-terminal state, an already-stamped state, or `retentionMs <= 0`
+ * (retention disabled) is left as is.
+ */
+async function markDelivered (key: string, state: AccessState, retentionMs: number): Promise<void> {
+  if (!TERMINAL_STATUSES.includes(state.status)) return;
+  if (state.deliveredAt != null) return;
+  if (!(retentionMs > 0)) return;
+  const now = Date.now();
+  state.deliveredAt = now;
+  const expiresAt = Math.min(state.expiresAt, now + retentionMs);
+  state.expiresAt = expiresAt;
+  await write(key, state, expiresAt);
 }
 
 /**
@@ -176,10 +248,8 @@ const UPDATABLE_FIELDS = Object.freeze([
  * `UPDATABLE_FIELDS` are written; anything else in `update` is ignored.
  */
 async function update (key: string, update: Partial<AccessState>): Promise<AccessState | null> {
-  const platformDB = getPlatformDB();
-  const row = await platformDB.getAccessState(key);
-  if (!row) return null;
-  const state = row.value;
+  const state = await get(key);
+  if (!state) return null;
   for (const field of UPDATABLE_FIELDS) {
     if (update[field] !== undefined) state[field] = update[field];
   }
@@ -190,7 +260,7 @@ async function update (key: string, update: Partial<AccessState>): Promise<Acces
   } else if (update.status === 'REDIRECTED') {
     state.code = 301;
   }
-  await platformDB.setAccessState(key, state, row.expiresAt);
+  await write(key, state, state.expiresAt);
   return state;
 }
 
@@ -198,15 +268,17 @@ async function update (key: string, update: Partial<AccessState>): Promise<Acces
  * Delete an access request.
  */
 async function remove (key: string): Promise<void> {
-  await getPlatformDB().deleteAccessState(key);
+  await getKv().delete(NAMESPACE + key);
+  knownKeys.delete(key);
 }
 
 /**
- * Clear all entries (used by tests). Calls the master sweep with `now =
- * Infinity` so every row is dropped.
+ * Drop every request created through this module in this process (used by
+ * tests). Entries created by other processes, and unrelated `cluster_kv`
+ * entries such as MFA sessions, are left alone.
  */
-async function clear () {
-  return await getPlatformDB().sweepExpiredAccessStates(Number.POSITIVE_INFINITY);
+async function clear (): Promise<void> {
+  for (const key of [...knownKeys]) await remove(key);
 }
 
-export { buildState, persist, create, get, update, remove, clear };
+export { buildState, persist, create, get, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };

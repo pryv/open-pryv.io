@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { handleToken } = require('../src/routes/token.ts');
+const { handleToken: rawHandleToken } = require('../src/routes/token.ts');
 const { setCode } = require('../src/storage.ts');
 
 const ISSUER = 'https://reg.pryv.me';
@@ -65,6 +65,17 @@ function pkceChallenge (verifier) {
     .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
+// The code row carries only the access id; the exchange reads the access
+// back from the issuing core's storage. Tests override either dep to observe it.
+const ISSUED = { accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://alice.pryv.me/' };
+function handleToken (deps) {
+  return rawHandleToken({
+    resolveAccess: async () => ISSUED,
+    revokeAccessLocal: async () => {},
+    ...deps,
+  });
+}
+
 async function seedCode (platform, code, overrides = {}) {
   const verifier = pkceVerifier();
   await setCode(platform, code, {
@@ -77,8 +88,7 @@ async function seedCode (platform, code, overrides = {}) {
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
     accessId: 'acc-u-alice',
-    accessToken: 'tok-u-alice-myapp',
-    apiEndpoint: 'https://alice.pryv.me/',
+    coreId: CORE_ID,
     ...overrides,
   });
   return verifier;
@@ -396,22 +406,25 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
 
   describe('[OAUTH-TKN-AC-ORPHAN] failed exchange revokes the pre-minted access', () => {
     // The code is consumed atomically at the top of the grant; any failure AFTER
-    // that abandons the access minted at /accept. Those failures must self-revoke
-    // it (HTTP accesses.delete) so it does not live to its TTL. Stub global fetch
-    // to observe the delete.
+    // that abandons the access minted at /accept. Those failures must revoke it
+    // so it does not live to its TTL: from this core's storage for a current row,
+    // over HTTP (accesses.delete) for a legacy row that still carries the token.
+    // Stub global fetch to observe HTTP deletes.
     let deletes;
+    let localRevokes;
     let originalFetch;
-    beforeEach(() => { deletes = []; originalFetch = globalThis.fetch; });
+    beforeEach(() => { deletes = []; localRevokes = []; originalFetch = globalThis.fetch; });
     afterEach(() => { globalThis.fetch = originalFetch; });
     function stubFetch (status = 200) {
       globalThis.fetch = async (url, init) => { deletes.push({ url, init }); return { status }; };
     }
+    const revokeAccessLocal = async (p) => { localRevokes.push(p); };
 
-    it('[OTA-ORV1] PKCE failure revokes the pre-minted access (DELETE to its endpoint + token)', async () => {
+    it('[OTA-ORV1] PKCE failure revokes the pre-minted access from local storage (no token needed)', async () => {
       stubFetch();
       const platform = fakePlatform();
       await seedCode(platform, 'CODE-ORV1');
-      const handler = handleToken({ config: fakeConfig(), platform });
+      const handler = handleToken({ config: fakeConfig(), platform, revokeAccessLocal });
       const res = fakeRes();
       await handler({
         body: {
@@ -423,17 +436,15 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         }
       }, res);
       assert.equal(res.body.error, 'invalid_grant');
-      assert.equal(deletes.length, 1);
-      assert.equal(deletes[0].url, 'https://alice.pryv.me/accesses/acc-u-alice');
-      assert.equal(deletes[0].init.method, 'DELETE');
-      assert.equal(deletes[0].init.headers.authorization, 'tok-u-alice-myapp');
+      assert.deepEqual(localRevokes, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice', clientId: 'myapp' }]);
+      assert.equal(deletes.length, 0);
     });
 
     it('[OTA-ORV2] client_id mismatch revokes the pre-minted access', async () => {
       stubFetch();
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-ORV2');
-      const handler = handleToken({ config: fakeConfig(), platform });
+      const handler = handleToken({ config: fakeConfig(), platform, revokeAccessLocal });
       const res = fakeRes();
       await handler({
         body: {
@@ -445,15 +456,15 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         }
       }, res);
       assert.equal(res.body.error, 'invalid_grant');
-      assert.equal(deletes.length, 1);
-      assert.equal(deletes[0].url, 'https://alice.pryv.me/accesses/acc-u-alice');
+      assert.equal(localRevokes.length, 1);
+      assert.equal(localRevokes[0].accessId, 'acc-u-alice');
     });
 
     it('[OTA-ORV3] successful exchange does NOT revoke', async () => {
       stubFetch();
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-ORV3');
-      const handler = handleToken({ config: fakeConfig(), platform });
+      const handler = handleToken({ config: fakeConfig(), platform, revokeAccessLocal });
       const res = fakeRes();
       await handler({
         body: {
@@ -466,12 +477,49 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       }, res);
       assert.equal(res.statusCode, 200);
       assert.equal(deletes.length, 0);
+      assert.equal(localRevokes.length, 0);
+    });
+
+    it('[OTA-ORV5] a legacy row (token in the row) is revoked over HTTP on failure', async () => {
+      stubFetch();
+      const platform = fakePlatform();
+      const verifier = pkceVerifier();
+      await platform.setAccessState('oauth-code/CODE-ORV5', {
+        clientId: 'myapp',
+        redirectUri: 'https://app.example/cb',
+        codeChallenge: pkceChallenge(verifier),
+        codeChallengeMethod: 'S256',
+        userId: 'u-alice',
+        username: 'alice',
+        scope: ['pryv:read'],
+        expiresAt: Date.now() + 60_000,
+        accessId: 'acc-u-alice',
+        accessToken: 'tok-legacy',
+        apiEndpoint: 'https://alice.pryv.me/',
+      }, Date.now() + 60_000);
+      const handler = handleToken({ config: fakeConfig(), platform, revokeAccessLocal });
+      const res = fakeRes();
+      await handler({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'CODE-ORV5',
+          code_verifier: 'wrong-verifier-1234567890',
+          client_id: 'myapp',
+          redirect_uri: 'https://app.example/cb',
+        }
+      }, res);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(deletes.length, 1);
+      assert.equal(deletes[0].url, 'https://alice.pryv.me/accesses/acc-u-alice');
+      assert.equal(deletes[0].init.method, 'DELETE');
+      assert.equal(deletes[0].init.headers.authorization, 'tok-legacy');
+      assert.equal(localRevokes.length, 0);
     });
 
     it('[OTA-ORV4] an unknown/reused code (nothing consumed) does NOT revoke', async () => {
       stubFetch();
       const platform = fakePlatform();
-      const handler = handleToken({ config: fakeConfig(), platform });
+      const handler = handleToken({ config: fakeConfig(), platform, revokeAccessLocal });
       const res = fakeRes();
       await handler({
         body: {
@@ -484,6 +532,83 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       }, res);
       assert.equal(res.body.error, 'invalid_grant');
       assert.equal(deletes.length, 0);
+      assert.equal(localRevokes.length, 0);
+    });
+  });
+
+  describe('[OAUTH-TKN-AC-CORE] the issued access is read from the issuing core', () => {
+    const body = (code, verifier) => ({
+      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: 'myapp', redirect_uri: 'https://app.example/cb',
+    });
+
+    it('[OTA-CR1] returns the token resolved from local storage for the row\'s access id', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-CR1');
+      const calls = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveAccess: async (p) => { calls.push(p); return { accessToken: 'tok-from-storage', apiEndpoint: 'https://tok-from-storage@alice.pryv.me/' }; },
+      });
+      const res = fakeRes();
+      await handler({ body: body('CODE-CR1', verifier) }, res);
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(calls, [{ userId: 'u-alice', username: 'alice', accessId: 'acc-u-alice', clientId: 'myapp' }]);
+      assert.equal(res.body.access_token, 'tok-from-storage');
+      assert.equal(res.body.apiEndpoint, 'https://tok-from-storage@alice.pryv.me/');
+    });
+
+    it('[OTA-CR2] a code issued by another core is refused, and that core\'s access is not touched here', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-CR2', { coreId: 'core-b' });
+      const resolved = [];
+      const revoked = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveAccess: async (p) => { resolved.push(p); return ISSUED; },
+        revokeAccessLocal: async (p) => { revoked.push(p); },
+      });
+      const res = fakeRes();
+      await handler({ body: body('CODE-CR2', verifier) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(resolved.length, 0);
+      assert.equal(revoked.length, 0);
+    });
+
+    it('[OTA-CR3] an access deleted between /accept and /token → invalid_grant, no refresh token issued', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-CR3');
+      const handler = handleToken({ config: fakeConfig(), platform, resolveAccess: async () => null });
+      const res = fakeRes();
+      await handler({ body: body('CODE-CR3', verifier) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(res.body.refresh_token, undefined);
+    });
+
+    it('[OTA-CR4] a legacy row (minted before the upgrade) still completes from its own fields', async () => {
+      const platform = fakePlatform();
+      const verifier = pkceVerifier();
+      await platform.setAccessState('oauth-code/CODE-CR4', {
+        clientId: 'myapp',
+        redirectUri: 'https://app.example/cb',
+        codeChallenge: pkceChallenge(verifier),
+        codeChallengeMethod: 'S256',
+        userId: 'u-alice',
+        username: 'alice',
+        scope: ['pryv:read'],
+        expiresAt: Date.now() + 60_000,
+        accessId: 'acc-u-alice',
+        accessToken: 'tok-legacy',
+        apiEndpoint: 'https://alice.pryv.me/',
+      }, Date.now() + 60_000);
+      const handler = handleToken({ config: fakeConfig(), platform, resolveAccess: async () => { throw new Error('must not be called'); } });
+      const res = fakeRes();
+      await handler({ body: body('CODE-CR4', verifier) }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(res.body.access_token, 'tok-legacy');
     });
   });
 });

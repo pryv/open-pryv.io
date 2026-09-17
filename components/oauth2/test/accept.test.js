@@ -143,7 +143,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.match(res.body.redirectTo, /&state=csrf-1/);
       assert.match(res.body.redirectTo, /&iss=https%3A%2F%2Freg\.pryv\.me/);
     });
-    it('[OAC-OK2] code row carries full access details (id + token + apiEndpoint) + userId + username + scope', async () => {
+    it('[OAC-OK2] code row carries the access id + issuing core + userId + username + scope, never the token', async () => {
       const platform = fakePlatform();
       const handler = require('../src/routes/accept.ts').handleAccept({
         config: fakeConfig(), platform, resolveUser: resolveAlice, createAccess: createAccessFake,
@@ -158,8 +158,11 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.deepEqual(row.scope, ['cmc:study-A']);
       assert.equal(row.codeChallenge, 'cc-base64');
       assert.equal(row.accessId, 'acc-u-alice-myapp');
-      assert.equal(row.accessToken, 'tok-u-alice-myapp');
-      assert.equal(row.apiEndpoint, 'https://alice.pryv.me/');
+      assert.equal(row.coreId, fakeConfig().get('core:id') ?? 'single');
+      // the platform store is replicated to every core: no credential in it
+      assert.ok(!('accessToken' in row));
+      assert.ok(!('apiEndpoint' in row));
+      assert.ok(!JSON.stringify(row).includes('tok-u-alice-myapp'));
       assert.equal(row.dataGrantAccessId, 'dg-u-alice');
       assert.deepEqual(row.permissions, [
         { streamId: 'health', level: 'read' },

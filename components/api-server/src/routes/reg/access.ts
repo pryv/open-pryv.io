@@ -74,7 +74,17 @@ function isTrustedAuthUrl (candidate: string, trustedEntries: unknown): boolean 
   return false;
 }
 
+/** Default life of a decided request after a poll first reads it. */
+const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
+
 export default function (expressApp: ExpressApp, app: AppLike) {
+  // Read per request, so a config change (or a test override) applies.
+  // 0 disables the shortening: the state then lives its full request TTL.
+  function terminalRetentionMs (): number {
+    const value = app.config.get('access:terminalRetentionMs');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_TERMINAL_RETENTION_MS;
+  }
+
   /**
    * POST /reg/access — Create a new access request.
    */
@@ -115,18 +125,26 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       const { key, state, expiresAt } = accessState.buildState({ ...req.body, consent: consentForm });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
-      // per core, so every poll GET must hit the same core that served
-      // the POST. Using the cluster-wide `service.register` URL (e.g.
-      // https://reg.pryv.me/...) would round-robin across cores and
-      // cause `unknown-access-key`.
+      // per core (core-local store, never replicated), so every poll GET
+      // must hit the same core that served the POST. Using the
+      // cluster-wide `service.register` URL (e.g. https://reg.pryv.me/...)
+      // would round-robin across cores and cause `unknown-access-key`.
       //
       const serviceInfo = (app.config.get('service') || {}) as Record<string, unknown> & { register?: string; api?: string };
       const coreUrl = app.config.get('core:url') as string | undefined;
       // core:url may be operator-supplied with or without trailing slash;
       // normalize so we don't emit `https://core.x//reg/...`.
-      const coreUrlSlash = coreUrl
+      let coreUrlSlash = coreUrl
         ? (coreUrl.endsWith('/') ? coreUrl : coreUrl + '/')
         : null;
+      // Multi-core without an explicit core:url (DNS-derived core URLs):
+      // the register URL spans every core, so derive this core's own URL.
+      if (coreUrlSlash == null && app.config.get('core:isSingleCore') === false) {
+        const { getPlatform } = require('platform');
+        const platform = await getPlatform();
+        const self = platform.coreIdToUrl(platform.coreId);
+        if (typeof self === 'string' && /^https?:\/\//.test(self)) coreUrlSlash = self;
+      }
       const pollBase = coreUrlSlash ? coreUrlSlash + 'reg/' : (serviceInfo.register || '/reg/');
       const pollUrl = pollBase + 'access/' + key;
 
@@ -179,7 +197,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       state.pollUrl = pollUrl;
       state.authUrl = authUrl;
       // Persist the fully-built state once — buildState only prepared the
-      // shape; we write to PlatformDB here, after the URLs are computed.
+      // shape; we write it here, after the URLs are computed.
       await accessState.persist(key, state, expiresAt);
 
       // Calling-app surface: only the fields the SDK needs to drive
@@ -239,6 +257,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // auth page that does not know the field keeps working:
         // `requestedPermissions` above stays plain and complete.
         if (state.consent !== undefined) response.consent = state.consent;
+        // Access-creation parameters the app asked for, which the auth page
+        // passes to accesses.create (and app-web-auth3 displays). Absent
+        // when the app did not send them.
+        if (state.deviceName != null) response.deviceName = state.deviceName;
+        if (state.expireAfter != null) response.expireAfter = state.expireAfter;
+        if (state.token != null) response.token = state.token;
       } else if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;
@@ -253,6 +277,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         response.poll = state.redirectUrl;
         response.redirectUrl = state.redirectUrl;
       }
+
+      // First read of a decided outcome starts the retention window: the
+      // credential stays readable briefly (clients poll it more than once),
+      // then the key is gone, instead of lingering for the full request TTL.
+      await accessState.markDelivered(req.params.key, state, terminalRetentionMs());
 
       res.status(state.code).json(response);
     } catch (err) { next(err); }

@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { webcrypto } = require('node:crypto');
-const { handleToken } = require('../src/routes/token.ts');
+const { handleToken: rawHandleToken } = require('../src/routes/token.ts');
 const { setCode } = require('../src/storage.ts');
 const { mintSecret } = require('../src/clientSecret.ts');
 const { CLIENT_ASSERTION_TYPE } = require('../src/clientAssertion.ts');
@@ -124,6 +124,15 @@ function challenge (v) {
   return crypto.createHash('sha256').update(v).digest('base64')
     .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
+// The code row carries only the access id; the exchange reads the access
+// back from the issuing core's storage.
+function handleToken (deps) {
+  return rawHandleToken({
+    resolveAccess: async () => ({ accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://alice.pryv.me/' }),
+    revokeAccessLocal: async () => {},
+    ...deps,
+  });
+}
 async function seedCode (platform, code) {
   await setCode(platform, code, {
     clientId: CLIENT_ID,
@@ -135,8 +144,7 @@ async function seedCode (platform, code) {
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
     accessId: 'acc-u-alice',
-    accessToken: 'tok-u-alice-myapp',
-    apiEndpoint: 'https://alice.pryv.me/',
+    coreId: CORE_ID,
   });
 }
 function codeBody (code, assertion, extra = {}) {

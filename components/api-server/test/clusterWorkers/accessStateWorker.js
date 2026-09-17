@@ -10,11 +10,13 @@ const require = createRequire(import.meta.url);
 
 /**
  * Child worker harness for the access-state cross-worker test.
- * Initialises storages on first request and dispatches accessState
- * operations over IPC. Run via `child_process.fork`.
+ * Dispatches accessState operations over IPC. Run via `child_process.fork`
+ * with the fixture's `kvMaster` on: the state lives in `cluster_kv`, whose
+ * worker client talks to the master handler in the parent over this same
+ * IPC channel, exactly as a real worker talks to `bin/master.js`.
  *
  * Operations:
- *   __ready              → init storages + accessState; report ready
+ *   __ready              → report ready
  *   buildAndPersist      → accessState.buildState + persist
  *   get                  → accessState.get
  *   update               → accessState.update
@@ -24,39 +26,10 @@ const require = createRequire(import.meta.url);
 
 require('test-helpers/src/api-server-tests-config.ts');
 
-const { getConfig } = require('@pryv/boiler');
 const accessState = require('api-server/src/routes/reg/accessState.ts');
-
-let initialized = false;
-
-/**
- * Initialize ONLY the rqlite PlatformDB. Avoid the full
- * `storages.init()` so the worker doesn't open a PG/Mongo baseStorage
- * pool (each child × test would otherwise eat PG connection slots and
- * starve the parent's [EVST]/[ROOT] suites). accessState's lazy
- * `require('storages').platformDB` lookup goes through the property
- * defined below.
- */
-async function ensureInit () {
-  if (initialized) return;
-  initialized = true;
-  const config = await getConfig();
-
-  const rqliteEngine = require('storages/engines/rqlite/src/index.ts');
-  const engineCfg = config.get('storages:engines:rqlite') || { url: 'http://localhost:4001' };
-  rqliteEngine.init(engineCfg);
-  const platformDB = rqliteEngine.createPlatformDB();
-  await platformDB.init();
-
-  // ESM module namespace properties are non-configurable, so we use the
-  // barrel's exported test-only setter instead of Object.defineProperty.
-  const storages = require('storages');
-  storages._setPlatformDBForTest(platformDB);
-}
 
 const handlers = {
   async __ready () {
-    await ensureInit();
     return { workerIndex: process.env.WORKER_INDEX, pid: process.pid };
   },
   async buildAndPersist (args = {}) {

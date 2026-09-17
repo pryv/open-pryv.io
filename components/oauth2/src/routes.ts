@@ -22,6 +22,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker } from './grants/authorization_code.ts';
 
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
@@ -99,6 +100,13 @@ export type Deps = {
   bindAccessDpop?: (params: {
     userId: string; username: string; accessId: string; jkt: string;
   }) => Promise<void>;
+  /**
+   * Read back, from this core's storage, the access pre-minted at /accept
+   * (authorization_code exchange): the code row carries only its id.
+   */
+  resolveAccess?: AuthCodeAccessResolver;
+  /** Delete an orphaned pre-minted access from this core's storage. */
+  revokeAccessLocal?: AuthCodeAccessRevoker;
 };
 
 /**
@@ -164,6 +172,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       resolveAccountUserId: deps.resolveAccountUserId,
       revokeChain: deps.revokeChain,
       bindAccessDpop: deps.bindAccessDpop,
+      resolveAccess: deps.resolveAccess,
+      revokeAccessLocal: deps.revokeAccessLocal,
     }));
 }
 
