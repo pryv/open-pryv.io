@@ -258,6 +258,54 @@ describe('[AUTH] auth', function () {
       assert.ok(tokens.includes(accesses[0].token), 'stored token must be one of the returned tokens');
     });
 
+    // Regression: a stale personal-access token (its session already expired)
+    // rotated by two concurrent same-appId logins must not leave one login with
+    // a token that is on no access. Before the compare-and-swap fix, the loser's
+    // token was clobbered off the row and its first API call answered 403.
+    it('[FMJK] concurrent logins rotating a stale token converge, and BOTH returned tokens work', async function () {
+      this.timeout(20000);
+      const randomId = 'pryv-test-stale-' + Date.now();
+      const sessionsStorage = helpers.dependencies.storage.sessions;
+      const accessStorage = helpers.dependencies.storage.user.accesses;
+      const login = () => request
+        .post(path(authData.username))
+        .set('Origin', 'https://test.backloop.dev:1234')
+        .send({ username: user.username, password: user.password, appId: randomId });
+
+      // 1. First login creates the personal access + a session.
+      const first = await login();
+      assert.strictEqual(first.statusCode, 200);
+
+      // 2. Kill the session so the access lingers with a token whose session is
+      //    gone: the next logins get no match from getMatching and each mint a
+      //    fresh session, racing to rotate the stale token.
+      await new Promise((resolve, reject) => sessionsStorage.expireNow(first.body.token, (err) => err ? reject(err) : resolve()));
+
+      // 3. Two concurrent logins race the rotation.
+      const responses = await Promise.all([login(), login()]);
+      for (const res of responses) assert.strictEqual(res.statusCode, 200);
+      const tokens = responses.map((res) => res.body.token);
+
+      // They must converge on one token (the winner's live session).
+      assert.strictEqual(tokens[0], tokens[1], 'concurrent logins must converge on a single token');
+
+      // And every returned token must actually authenticate (no dead loser).
+      for (const token of tokens) {
+        const res = await request
+          .get(apiPath(authData.username) + '/access-info')
+          .set('Origin', 'https://test.backloop.dev:1234')
+          .set('Authorization', token);
+        assert.strictEqual(res.statusCode, 200, 'a returned token failed to authenticate: ' + token);
+      }
+
+      // Exactly one personal access, carrying the returned token.
+      const accesses = await new Promise((resolve, reject) => {
+        accessStorage.find(user, { name: randomId, type: 'personal' }, null, (err, res) => err ? reject(err) : resolve(res));
+      });
+      assert.strictEqual(accesses.length, 1, 'expected a single personal access, got ' + accesses.length);
+      assert.strictEqual(accesses[0].token, tokens[0], 'stored token must be the converged returned token');
+    });
+
     // cf. GH issue #57
     it('[9WHP] must not leak _private object from Result', function (done) {
       request
