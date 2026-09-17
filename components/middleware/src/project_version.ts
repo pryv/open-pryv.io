@@ -30,9 +30,11 @@ const { execSync } = require('child_process');
 //   3. 'unset'.
 //
 // Because of (2), the file is effectively the single source of truth for the
-// API version. Docker release builds stamp '.api-version' at build time from
-// the image tag (see the Dockerfile), so a released image reports its own tag;
-// git checkouts and local builds keep the committed dev-line value.
+// API version. The release commit sets the committed '.api-version' to the
+// release tag (the tag CI build refuses to publish otherwise), so a native
+// install that checks out the tag reports it; Docker release builds also stamp
+// the file at build time from the image tag (see the Dockerfile). Checkouts
+// between releases report the last release.
 //
 // The project root is located by looking at the paths in 'process.mainModule'
 // (or 'require.main'), trying the first that exists: that is where modules load
