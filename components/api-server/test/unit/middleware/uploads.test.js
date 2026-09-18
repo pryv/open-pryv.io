@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 
 require('test-helpers/src/api-server-tests-config.ts');
 const express = require('express');
-const supertest = require('supertest');
 const assert = require('node:assert');
+const { listeningAgent } = require('test-helpers/src/listeningAgent.ts');
 const { fixturePath, fixtureFile } = require('../test-helper');
 const uploads = require('../../../src/middleware/uploads.ts');
 
@@ -24,7 +24,12 @@ describe('[UPLD] uploads middleware', function () {
     app.post('/path', express.json(), uploads.hasFileUpload, verifyAssumptions);
     return app;
   }
-  const request = supertest(app());
+  // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
+  // another process holding 127.0.0.1 on that port then answers the request.
+  let request;
+  before(async function () {
+    request = await listeningAgent(app());
+  });
   describe('[UP01] hasFileUpload', function () {
     it('[GY5H] should parse file uploads', function () {
       const rq = request

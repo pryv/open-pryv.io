@@ -7,15 +7,20 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const supertest = require('supertest');
 const express = require('express');
 const assert = require('node:assert');
+const { listeningAgent } = require('test-helpers/src/listeningAgent.ts');
 const subdomainToPath = require('middleware/src/subdomainToPath.ts').default([]);
 
 describe('[SDTP] subdomainToPath middleware', function () {
   describe('[SD01] using a minimal application', function () {
     const app = express();
-    const request = supertest(app);
+    // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
+    // another process holding 127.0.0.1 on that port then answers the request.
+    let request;
+    before(async function () {
+      request = await listeningAgent(app);
+    });
     app.use(subdomainToPath);
     app.get('*', (req, res) => {
       res.json({ path: req.path });

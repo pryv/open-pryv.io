@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## The last bare-app supertest suites bind on 127.0.0.1
+
+`[UPLD]` (uploads middleware) and `[SDTP]` (subdomainToPath) still handed supertest
+a bare express app. supertest then listens on `::` at an ephemeral port and connects
+to `127.0.0.1`; on macOS another process already bound to `127.0.0.1` on that port
+receives the request (reproduced standalone: the specific bind wins), which is how
+`[GY5H]` got a foreign 404 in a full run next to another test matrix. Both now use
+`listeningAgent()`, like `coreRequest`.
+
 ## Delegation: lineage marker on accesses a delegate grants
 
 The delegation plugin gains an `accesses.create` hook that stamps
