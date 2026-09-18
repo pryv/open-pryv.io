@@ -31,7 +31,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
-const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('business/src/accesses/refs.ts');
+const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 // Scoped notifications: structured access-change signal carrying the changed
@@ -206,7 +206,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Visibility — app callers can only see accesses they manage.
     if (!context.access.canListAnyAccess()) {
       const createdByBase = typeof head.createdBy === 'string'
-        ? parseAccessRef(head.createdBy).base
+        ? managingAccessBase(head.createdBy)
         : null;
       const isOwn = head.id === context.access.id;
       const isManaged = createdByBase === context.access.id;
@@ -376,7 +376,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // A managed shared access cannot outlive its managing app's expiry.
     // Enforced on create for consistency with the update path (BREAKING —
     // see CHANGELOG-v2.md). Parent with `expires: null` imposes no
-    // constraint.
+    // constraint. A shared created by an expiring app without `expireAfter`
+    // takes the app's expiry: no expiry would outlive it.
+    if (access.type === 'app' && params.type === 'shared' && access.expires != null && params.expires == null) {
+      params.expires = access.expires;
+    }
     if (access.expires != null && params.expires != null && params.expires > access.expires) {
       return next(errors.invalidOperation(
         'New access cannot expire later than the managing access.',
@@ -742,7 +746,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       if (target.type === 'shared') {
         // Rules A + D — child cannot exceed managing app's scope/expiry.
         let managingApp: InstanceType<typeof AccessLogic> | null = null;
-        const createdByBase = parseAccessRef(target.createdBy).base;
+        const createdByBase = managingAccessBase(target.createdBy);
         if (createdByBase === context.access.id) {
           managingApp = context.access;
         } else {
@@ -766,8 +770,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
               ));
             }
           }
+          // no expiry (`expires: null`) outlives any managing expiry
           if (wantsExpiresChange && managingApp.expires != null &&
-              after.expires != null && after.expires > managingApp.expires) {
+              (after.expires == null || after.expires > managingApp.expires)) {
             return next(errors.invalidOperation(
               'expires cannot be later than the managing access.',
               { parentExpires: managingApp.expires, requestedExpires: after.expires }
@@ -785,7 +790,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const managed = (allAccesses || []).filter((a: { id: string; type?: string; createdBy?: string }) =>
           a.type === 'shared' && a.id !== target.id &&
           typeof a.createdBy === 'string' &&
-          parseAccessRef(a.createdBy).base === target.id);
+          managingAccessBase(a.createdBy) === target.id);
         const offendingChildren: string[] = [];
         for (const child of managed) {
           if (wantsPermChange) {
@@ -798,8 +803,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
               continue;
             }
           }
+          // a child without expiry outlives the new expiry too
           if (wantsExpiresChange && after.expires != null &&
-              child.expires != null && child.expires > after.expires) {
+              (child.expires == null || child.expires > after.expires)) {
             offendingChildren.push(child.id);
           }
         }
@@ -853,11 +859,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.unexpectedError(err));
     }
 
-    // 5. Cache invalidation — parallel to delete's pattern at line ~388.
-    const cached = cache.getAccessLogicForId(context.user.id, baseId);
-    if (cached != null) {
-      cache.unsetAccessLogic(context.user.id, cached);
-    }
+    // 5. Cache invalidation, unconditional like delete: a concurrent request
+    // may re-cache the pre-update row during the write (the expiry chain
+    // reads a managing access's `expires` from this cache).
+    cache.unsetAccessLogic(context.user.id, { id: baseId!, token: target.token });
     next();
   }
 

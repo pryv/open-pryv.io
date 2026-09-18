@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams/index.ts');
-const { parseAccessRef } = require('./refs.ts');
+const { parseAccessRef, managingAccessBase } = require('./refs.ts');
 
 const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
@@ -359,7 +359,7 @@ class AccessLogic {
     // App accesses can update only shared accesses they directly manage.
     if (target.type !== 'shared') return false;
     if (typeof target.createdBy !== 'string') return false;
-    const parentBase = parseAccessRef(target.createdBy).base;
+    const parentBase = managingAccessBase(target.createdBy);
     return parentBase === this.id;
   }
 
