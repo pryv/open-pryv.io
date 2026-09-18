@@ -87,8 +87,26 @@ describe('[DIMR] DynamicInstanceManager readiness', function () {
         new Promise((resolve, reject) => setTimeout(() => reject(new Error('stop() never called back')), 2000)),
       ]);
     } finally {
+      // Restore first: stop()'s 5 s fallback must not hit the fake kill later.
+      child.kill = realKill;
       realKill('SIGKILL');
     }
+  });
+
+  it('[DIM7] stop() force-kills a child that ignores SIGTERM', async () => {
+    dim = new DynamicInstanceManager({ serverFilePath: FAKE_SERVER });
+    process.env.DIM_FAKE_IGNORE_SIGTERM = '1';
+    try {
+      await dim.ensureStartedAsync({});
+    } finally {
+      delete process.env.DIM_FAKE_IGNORE_SIGTERM;
+    }
+    const child = dim.serverProcess;
+    await Promise.race([
+      dim.stopAsync(),
+      new Promise((resolve, reject) => setTimeout(() => reject(new Error('child ignoring SIGTERM was never killed')), 7000)),
+    ]);
+    assert.equal(child.signalCode, 'SIGKILL');
   });
 
   it('[DIM2] the port probe binds the address the server will bind, below the ephemeral range', async () => {

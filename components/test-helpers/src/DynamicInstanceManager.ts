@@ -262,6 +262,8 @@ class DynamicInstanceManager extends EventEmitter {
       serverExited = true;
       exitCode = 1;
       if (this.serverProcess === proc) this.forgetChild();
+      // A spawn failure may emit no 'exit': clean the config here too.
+      if (this.serverProcess == null) this.removeTempConfig();
     });
 
     proc.on('message', (msg: any) => {
@@ -339,16 +341,18 @@ class DynamicInstanceManager extends EventEmitter {
       }
     }
 
-    // Timeout fallback - force kill after 5 seconds
+    // Timeout fallback - force kill after 5 seconds if the child is still
+    // alive. `proc.killed` is not the test: it turns true once SIGTERM is
+    // SENT, so a child ignoring SIGTERM was never force-killed.
     setTimeout(() => {
-      if (proc && !proc.killed) {
+      if (proc && proc.exitCode == null && proc.signalCode == null) {
         try {
           proc.kill('SIGKILL');
         } catch (e) {
           // Ignore
         }
       }
-    }, 5000);
+    }, 5000).unref();
   }
 
   /** Force kill (for cleanup after errors). */

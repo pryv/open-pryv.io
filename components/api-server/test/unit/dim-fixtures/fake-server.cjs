@@ -14,6 +14,8 @@
 const READY_DELAY_MS = 400;
 
 if (process.env.DIM_FAKE_EXIT_EARLY) process.exit(0);
+// With DIM_FAKE_IGNORE_SIGTERM set, only SIGKILL stops it.
+if (process.env.DIM_FAKE_IGNORE_SIGTERM) process.on('SIGTERM', () => {});
 
 // Never outlive the test process (e.g. if it is SIGKILLed).
 process.on('disconnect', () => process.exit(0));
