@@ -69,7 +69,6 @@ files:
 ignore:
 - .git
 - .vscode
-- build/test/pryv
 - coverage
 - external-ressources
 - node_modules

@@ -18,6 +18,16 @@ types) and a check in the OAuth2 `resolveUser` refuse delegation-derived tokens
 `[DCHD]`, `[DLN01-04]`, `[DUP01-04]`, `[DAD05-07]`, `[DUG04-05]`, `[DDG01-03]`,
 `[DDCH1]`, `[OE27]`.
 
+## The v1 docker-compose test harness is removed
+
+`build/test/` (compose file, start script, per-service config) described the v1
+topology (InfluxDB 1.7.8, separate register and mail services, a config layout the
+v2 image no longer reads) and could not run against the single v2 image; 2.0.0-rc.22
+had already flagged it as stale. It is removed along with its `.gitignore`,
+`.licenser.yml` and ESLint ignore entries. Running the release image locally is
+covered by the install wizard (`bin/init.js`, which writes `run-pryv.sh`) and the
+Dokku notes in `INSTALL.md`.
+
 ## The audited query never carries a token
 
 `MethodContext` drops `token` from `originalQuery` (what the audit trail records as
