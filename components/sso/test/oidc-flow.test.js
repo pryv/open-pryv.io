@@ -58,8 +58,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
       onIdentity: async (claims) => { lastIdentity = claims; return { location: LANDING + '?ok=1' }; },
       logger: { warn: () => {} }
     });
-    // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
-    // another process holding 127.0.0.1 on that port then answers the request.
+    // Not a bare app: see listeningAgent.ts on why supertest(app) flakes on macOS.
     request = await listeningAgent(app);
   });
 

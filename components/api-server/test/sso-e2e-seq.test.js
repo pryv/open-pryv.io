@@ -96,8 +96,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     // global.app is the stable booted instance whose api has every method.
     ssoApp = express();
     require('../src/routes/sso.ts').default(ssoApp, global.app);
-    // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
-    // another process holding 127.0.0.1 on that port then answers the request.
+    // Not a bare app: see listeningAgent.ts on why supertest(app) flakes on macOS.
     ssoRequest = await listeningAgent(ssoApp);
   });
 

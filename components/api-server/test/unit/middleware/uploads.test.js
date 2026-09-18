@@ -24,8 +24,7 @@ describe('[UPLD] uploads middleware', function () {
     app.post('/path', express.json(), uploads.hasFileUpload, verifyAssumptions);
     return app;
   }
-  // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
-  // another process holding 127.0.0.1 on that port then answers the request.
+  // Not a bare app: see listeningAgent.ts on why supertest(app) flakes on macOS.
   let request;
   before(async function () {
     request = await listeningAgent(app());
