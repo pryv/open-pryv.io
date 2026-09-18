@@ -156,9 +156,14 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
       .send({ streamIds: ['diary'], type: 'note/txt', content: 'dch05' });
     assert.strictEqual(created.status, 201, JSON.stringify(created.body));
     const userDb = await auditStorage.forUser(bob.username);
-    const events = await userDb.getEvents({ query: [] });
-    const record = events.find((e) => e.content?.action === 'events.create' &&
-      (e.streamIds || []).includes('access-' + base(child.id)));
+    // audit records are written asynchronously
+    let record = null;
+    for (let i = 0; i < 30 && record == null; i++) {
+      const events = await userDb.getEvents({ query: [] });
+      record = events.find((e) => e.content?.action === 'events.create' &&
+        (e.streamIds || []).includes('access-' + base(child.id))) ?? null;
+      if (record == null) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     assert.ok(record != null, 'the child action is audited under its own access stream');
     assert.deepStrictEqual(record.content.delegation, {
       delegateUsername: alice.username,
@@ -180,6 +185,15 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
       assert.deepStrictEqual(stored.clientData?.delegation, marker, 'after clientData ' + JSON.stringify(clientData));
       if (clientData?.x != null) assert.strictEqual(stored.clientData.x, 1);
     }
+    // a null clientData clears the app's own keys, as on any access
+    assert.deepStrictEqual((await bobAccess(child.id)).clientData, { delegation: marker });
+    // the owner can also narrow what the app may do
+    const narrowed = await coreRequest.put(bob.accessesPath + '/' + child.id).set('Authorization', bob.token)
+      .send({ permissions: [{ streamId: 'diary', level: 'read' }] });
+    assert.strictEqual(narrowed.status, 200, JSON.stringify(narrowed.body));
+    const afterNarrow = await bobAccess(narrowed.body.access.id);
+    assert.deepStrictEqual(afterNarrow.permissions.filter((p) => p.streamId === 'diary'), [{ streamId: 'diary', level: 'read' }]);
+    assert.deepStrictEqual(afterNarrow.clientData.delegation, marker);
     const info = await coreRequest.get(bob.accessInfoPath).set('Authorization', child.token);
     assert.strictEqual(info.body.delegation.grantedVia, 'app');
   });
@@ -251,6 +265,22 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
     assert.deepStrictEqual(poll.body.delegation, hint);
     const info = await coreRequest.get(bob.accessInfoPath).set('Authorization', poll.body.token);
     assert.strictEqual(info.body.delegation.grantedVia, 'app');
+  });
+
+  it('[DCH14] a delegation-derived token cannot write a consent trigger that creates or widens a data grant', async function () {
+    const child = await createAccess(patToken, appFor('dch14-app'));
+    for (const type of ['consent/accept-cmc', 'consent/scope-update-cmc']) {
+      for (const token of [patToken, child.token]) {
+        const res = await coreRequest.post(bob.eventsPath).set('Authorization', token)
+          .send({ streamIds: ['diary'], type, content: {} });
+        assert.strictEqual(res.status, 400, type + ' ' + JSON.stringify(res.body));
+        assert.ok(JSON.stringify(res.body).includes('delegation-grant-requires-owner'), JSON.stringify(res.body));
+      }
+      // the owner is not refused by this rule (other checks apply as before)
+      const own = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token)
+        .send({ streamIds: ['diary'], type, content: {} });
+      assert.ok(!JSON.stringify(own.body).includes('delegation-grant-requires-owner'), JSON.stringify(own.body));
+    }
   });
 
   it('[DCH11] an access granted through the delegation cannot detach it (genuine-login gate)', async function () {

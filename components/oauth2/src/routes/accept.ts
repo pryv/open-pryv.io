@@ -65,8 +65,15 @@ export type UserSession = {
 };
 
 /** Resolver provided by the route mount: {username, userToken} → session | null. */
+/** The token is valid but may not grant OAuth access; `description` says why. */
+export type RefusedSession = { refused: true; description: string };
+
 export type ResolveUser = (params: { username: string; userToken: string })
-  => Promise<UserSession | null>;
+  => Promise<UserSession | RefusedSession | null>;
+
+function isRefusedSession (session: UserSession | RefusedSession): session is RefusedSession {
+  return session.refused === true;
+}
 
 /** Access-creator provided by the route mount: mints an OAuth app access for the resolved user. */
 export type CreateAccess = (params: {
@@ -205,6 +212,9 @@ export function handleAccept (deps: AcceptDeps) {
         error: 'invalid_request',
         error_description: 'username + userToken did not resolve to a valid user session',
       });
+    }
+    if (isRefusedSession(session)) {
+      return sendJson(res, 403, { error: 'access_denied', error_description: String(session.description) });
     }
 
     // Mint the app access under the resolved user. The user is the auth

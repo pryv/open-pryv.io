@@ -11,8 +11,12 @@ after the forge-prevention hook, reads the authenticated access only), and an
 the plugin owns (control, delegate token, invite capability, notify, and any
 unknown kind); a `delegated-child` access follows the normal access rules. The
 detach teardown deletes the relationship's `delegated-child` accesses right after
-the delegate token (`store.findMarkerAccesses`) and logs the count. `[DCHD]`,
-`[DLN01-04]`, `[DUP01-04]`, `[DAD05-07]`, `[DUG04-05]`, `[DDCH1]`.
+the delegate token (`store.findMarkerAccesses`) and logs the count. A new
+`events.create` hook (`createDelegatedGrantGuardHook`, fed the CMC gated trigger
+types) and a check in the OAuth2 `resolveUser` refuse delegation-derived tokens
+(`isDelegationDerivedAccess`) on the grant paths that do not stamp the marker.
+`[DCHD]`, `[DLN01-04]`, `[DUP01-04]`, `[DAD05-07]`, `[DUG04-05]`, `[DDG01-03]`,
+`[DDCH1]`, `[OE27]`.
 
 ## The audited query never carries a token
 

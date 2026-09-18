@@ -69,7 +69,7 @@ export const { createMallAccessesAdapter } = mallAccessesAdapter;
 
 export const { createCapabilityMintHook, createCapabilityPostCreateHook } = capabilityMintHook;
 export const { createInboxWriteHook } = inboxWriteHook;
-export const { createCmcAcceptAccessGateHook } = cmcAcceptAccessGate;
+export const { createCmcAcceptAccessGateHook, GATED_EVENT_TYPES } = cmcAcceptAccessGate;
 
 export const { createDispatchMiddleware } = dispatch;
 

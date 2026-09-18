@@ -37,6 +37,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
+const delegation = require('delegation');
 const { getLogger } = require('@pryv/boiler');
 const { MethodContext } = require('business');
 const storages = require('storages');
@@ -171,6 +172,17 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (context.access == null) {
       logger.warn('resolveUser: no access on context after retrieveExpandedAccess');
       return null;
+    }
+    // A token obtained through account delegation acts on this account for
+    // the delegate. The OAuth access (and its refresh-minted successors) is
+    // written outside accesses.create and would carry no delegation lineage,
+    // so it would outlive the delegation: only the owner may consent here.
+    if (delegation.isDelegationDerivedAccess(context.access)) {
+      return {
+        refused: true as const,
+        description: 'A token obtained through account delegation cannot grant OAuth access; ' +
+          'the account owner must sign in and consent.',
+      };
     }
     return {
       userId: context.user.id,

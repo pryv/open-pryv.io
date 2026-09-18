@@ -63,6 +63,8 @@ export const {
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createAccessCreateLineageHook,
+  createDelegatedGrantGuardHook,
+  isDelegationDerivedAccess,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,

@@ -98,7 +98,7 @@ async function ensureStream (path, token, params) {
 describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer scope)', function () {
   this.timeout(60000);
 
-  let username, personalToken, clientId, fixtures, savedConsentUrl;
+  let username, personalToken, clientId, fixtures, savedConsentUrl, endUser;
   let appUsername, appToken, capabilityUrl, originalFetch;
   // Event id of the offer a runFullFlow() grant descends from (publishOffer sets
   // `offerEventId` for its own offer; the main one is kept separately).
@@ -123,6 +123,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     username = cuid();
     personalToken = cuid();
     const user = await fixtures.user(username);
+    endUser = user;
     await user.access({ token: personalToken, type: 'personal' });
     await user.session(personalToken);
     await ensureStream('/' + username + '/streams', personalToken, { id: 'health', name: 'Health' });
@@ -246,7 +247,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       .send({
         state: signedState,
         username,
-        userToken: personalToken,
+        userToken: overrides.userToken ?? personalToken,
         grantedPermissions,
       });
     if (overrides.expectAcceptStatus != null) {
@@ -599,6 +600,25 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         });
       assert.equal(res.status, 302);
       assert.match(res.headers.location, /^https:\/\/app\.example\/cb\?error=invalid_scope/);
+    });
+
+    it('[OE27] a token obtained through account delegation cannot consent (403 access_denied), and nothing is minted', async function () {
+      // A delegate token: owner-equivalent (personal) but marked. Minted
+      // storage-side like the delegation plugin does.
+      const delegateToken = 'deleg-' + cuid();
+      await endUser.access({
+        type: 'personal',
+        token: delegateToken,
+        name: 'delegation:oe27-parent@core',
+        clientData: { delegation: { kind: 'delegate-pat', relId: 'oe27-rel', delegate: { username: 'oe27-parent', hostSlug: 'core' } } },
+      });
+      await endUser.session(delegateToken);
+      const before = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      const r = await runFullFlow({ userToken: delegateToken, expectAcceptStatus: 403 });
+      assert.equal(r.acceptRes.body.error, 'access_denied');
+      assert.match(r.acceptRes.body.error_description, /delegation/);
+      const after = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      assert.equal(after.body.accesses.length, before.body.accesses.length, 'no access was minted');
     });
   });
 

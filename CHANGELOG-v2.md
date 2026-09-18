@@ -8,8 +8,9 @@ A delegate (a parent, a caregiver) can now grant an app access on an account it
 controls, the way the account owner grants one: an auth page authenticated with the
 delegate token creates the app access on the controlled account and posts it back.
 
-- **New (`accessInfo.delegation.grantedVia`).** An access created while
-  authenticated by a delegate token carries a server-set lineage marker, and
+- **New (`accessInfo.delegation.grantedVia`).** An access created through
+  `accesses.create` while authenticated by a delegate token carries a server-set
+  lineage marker, and
   `access-info` reports it as
   `delegation: { isDelegatedAccess: true, controlledUsername, delegate, grantedVia: 'app' }`.
   The same applies to the shared accesses such an app creates. The audit records of
@@ -31,10 +32,19 @@ delegate token creates the app access on the controlled account and posts it bac
   unchanged.
 - **Changed (`accesses.checkApp`).** The lineage marker is not compared as app
   data, so such an access matches a later request exactly as the owner's own grant
-  would.
+  would. Consequence: if the account owner later signs in to the same app on the
+  same device, the access the delegate granted is reused, and it ends with the
+  delegation.
+- **Changed, security: OAuth2 consent and CMC data grants require the account
+  owner.** Those grants are written outside `accesses.create` and carry no lineage
+  marker, so a delegate could create grants that outlive the delegation. A delegate
+  token, or an access it granted, is now refused: `POST /oauth2/authorize/accept`
+  answers `403 access_denied`, and writing `consent/accept-cmc` or
+  `consent/scope-update-cmc` answers `400` with `delegation-grant-requires-owner`.
 - **Changed, BREAKING for apps granted through a delegation: detach revokes them.**
-  `delegations.detachDelegate` now also deletes every access granted through the
-  delegation (and what those apps created). An app that relied on keeping such an
+  `delegations.detachDelegate` now also deletes every access carrying the lineage
+  marker (the accesses created through `accesses.create` with the delegate token,
+  and what those apps created). An app that relied on keeping such an
   access after the delegation ended loses it; the account owner can grant it again.
   Accesses the account owner granted are untouched. Such accesses can otherwise be
   updated or revoked like any access: by the account owner, by the delegate, or by

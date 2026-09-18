@@ -399,6 +399,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // require a personal token. Non-personal tokens hand off to
   // app-web-user-account via @pryv/cmc helpers. Reuses AccessLogic.isPersonal().
   const cmcAcceptAccessGateHook = cmc.createCmcAcceptAccessGateHook({ errors });
+  // Those same triggers create or widen a data grant outside accesses.create,
+  // so it would carry no delegation lineage: refuse them to a token obtained
+  // through account delegation.
+  const delegationDelegatedGrantGuardHook = delegationActive
+    ? delegation.createDelegatedGrantGuardHook({ errors }, cmc.GATED_EVENT_TYPES)
+    : delegationPassthrough;
   // Forge-prevention: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
   // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers
@@ -502,6 +508,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // Reject user writes into the account-delegation namespace (streams or
     // delegation/* types) before any stream resolution runs.
     delegationEventsWriteGuardHook,
+    delegationDelegatedGrantGuardHook,
     // Auto-provision the five reserved :_cmc:* parents on first CMC op
     // for users who pre-date the CMC deploy. Idempotent. Must fire
     // BEFORE verifyCanCreateEventsOnStream so the stream check finds

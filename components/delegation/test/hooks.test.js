@@ -22,6 +22,8 @@ const {
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,
   createAccessCreateLineageHook,
+  createDelegatedGrantGuardHook,
+  isDelegationDerivedAccess,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
@@ -250,10 +252,10 @@ describe('[DELHOOK] delegation/hooks', () => {
       assert.deepEqual(params.update.clientData, { y: 2, delegation: childMarker });
     });
 
-    it('[DUP02] a null clientData becomes the marker alone', async () => {
+    it('[DUP02] a null clientData removes the app keys and keeps the marker', async () => {
       const params = { targetAccess: child(), update: { clientData: null } };
       await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {});
-      assert.deepEqual(params.update.clientData, { delegation: childMarker });
+      assert.deepEqual(params.update.clientData, { x: null, delegation: childMarker });
     });
 
     it('[DUP03] an update without clientData is left untouched', async () => {
@@ -268,6 +270,40 @@ describe('[DELHOOK] delegation/hooks', () => {
         await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {});
         assert.deepEqual(params.update.clientData, { y: 2 });
       }
+    });
+  });
+
+  describe('[DELHOOK-DG] createDelegatedGrantGuardHook', () => {
+    const GATED = new Set(['consent/accept-cmc']);
+    const pat = { id: 'pat1', clientData: { delegation: { kind: 'delegate-pat', relId: 'rel1' } } };
+    const run = (access, type) => {
+      const { factory } = fakeErrors();
+      return runMiddleware(createDelegatedGrantGuardHook({ errors: factory }, GATED), { access, newEvent: { type } }, {}, {});
+    };
+
+    it('[DDG01] refuses a gated type written with the delegate token or an access it granted', async () => {
+      for (const access of [pat, { id: 'c1', clientData: { delegation: childMarker } }]) {
+        const err = await run(access, 'consent/accept-cmc');
+        assert.ok(err instanceof Error);
+        assert.equal(err.details.id, 'delegation-grant-requires-owner');
+      }
+    });
+
+    it('[DDG02] lets other types, and any other access, through', async () => {
+      assert.equal(await run(pat, 'note/txt'), undefined);
+      for (const access of [{ id: 'p', type: 'personal', clientData: null }, { id: 'c', clientData: { delegation: marker } }, null]) {
+        assert.equal(await run(access, 'consent/accept-cmc'), undefined);
+      }
+    });
+
+    it('[DDG03] isDelegationDerivedAccess names exactly the delegate token and delegated children', () => {
+      assert.equal(isDelegationDerivedAccess(pat), true);
+      assert.equal(isDelegationDerivedAccess({ clientData: { delegation: childMarker } }), true);
+      for (const kind of ['control', 'notify', 'invite-capability']) {
+        assert.equal(isDelegationDerivedAccess({ clientData: { delegation: { kind } } }), false, kind);
+      }
+      assert.equal(isDelegationDerivedAccess({ clientData: { x: 1 } }), false);
+      assert.equal(isDelegationDerivedAccess(null), false);
     });
   });
 

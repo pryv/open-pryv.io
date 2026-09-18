@@ -144,6 +144,37 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
   };
 }
 
+/**
+ * True for an access a delegation produced: the delegate token itself, or an
+ * access granted with it. Such an access acts on the controlled account for
+ * the delegate, and everything it grants must be revocable when the
+ * delegation ends.
+ */
+function isDelegationDerivedAccess (access: AccessLike | null | undefined): boolean {
+  const kind = markerKind(access);
+  return kind === C.CLIENTDATA_KIND.DELEGATE_PAT || kind === C.CLIENTDATA_KIND.DELEGATED_CHILD;
+}
+
+/**
+ * events.create hook — refuse the consent triggers that create or widen a
+ * durable data grant (`gatedEventTypes`, supplied by the host) when written
+ * with a delegation-derived access. Those grants are made outside
+ * accesses.create, carry no lineage marker and so would survive the end of
+ * the delegation; until they do, only the account owner may make them.
+ */
+function createDelegatedGrantGuardHook (deps: Deps, gatedEventTypes: ReadonlySet<string>): Middleware {
+  return function delegationDelegatedGrantGuard (context, _params, _result, next) {
+    const type = context?.newEvent?.type;
+    if (typeof type !== 'string' || !gatedEventTypes.has(type)) return next();
+    if (!isDelegationDerivedAccess((context as LineageContext).access)) return next();
+    return next(deps.errors.invalidOperation(
+      'Writing "' + type + '" with a token obtained through account delegation is not allowed: ' +
+      'the account owner must accept this themselves.',
+      { id: DelegationErrorIds.GRANT_REQUIRES_OWNER, eventType: type }
+    ));
+  };
+}
+
 // ------------------------------------------------------------------- LINEAGE
 
 type LineageContext = {
@@ -341,10 +372,16 @@ function createAccessesUpdateMarkerPreserveHook (): Middleware {
     if (markerKind(target) !== C.CLIENTDATA_KIND.DELEGATED_CHILD) return next();
     const update = params?.update;
     if (update == null || update.clientData === undefined) return next();
-    update.clientData = {
-      ...(update.clientData ?? {}),
-      delegation: target!.clientData!.delegation,
-    };
+    let appData = update.clientData as Record<string, unknown> | null;
+    if (appData === null) {
+      // "clear clientData": remove every app key (a null entry removes it
+      // in the merge), keep the marker.
+      appData = {};
+      for (const key of Object.keys(target!.clientData!)) {
+        if (key !== 'delegation') appData[key] = null;
+      }
+    }
+    update.clientData = { ...appData, delegation: target!.clientData!.delegation };
     next();
   };
 }
@@ -452,6 +489,8 @@ export {
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createAccessCreateLineageHook,
+  createDelegatedGrantGuardHook,
+  isDelegationDerivedAccess,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,
