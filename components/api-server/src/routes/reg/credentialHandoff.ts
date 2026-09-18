@@ -25,8 +25,16 @@
  * The reasons that fall back: shared secrets disabled on the user's core
  * (`unavailableMethod`), the access forbidden from creating them
  * (`shared-secret-forbidden`), the core unreachable, a delegation-derived
- * grant (ruling § of the plan: such a token may not create the hand-off
- * secret), or an unparseable apiEndpoint.
+ * token (which may not create the hand-off secret), or an unparseable
+ * apiEndpoint.
+ *
+ * The delegation refusal is enforced here on a LOCAL core (the access is
+ * loaded, so its lineage is known) and by the accept route, which never
+ * requests a conversion for a grant that carries a delegation hint. A
+ * delegation-derived token reaching the REMOTE arm with no hint is not
+ * detected here (the access lives on the other core); it is an accepted
+ * residual, harmless because the secret only carries an already-minted token
+ * and the create is audited on the user's core.
  */
 
 import { getLogger } from '@pryv/boiler';
@@ -123,15 +131,15 @@ export async function createHandoff (params: CreateHandoffParams): Promise<Hando
     secret
   };
 
-  const resolution = await resolveUserCore(username, { platform: params.platform });
-  if (resolution.kind === 'unavailable') return { fallback: resolution.reason };
-
   try {
+    const resolution = await resolveUserCore(username, { platform: params.platform });
+    if (resolution.kind === 'unavailable') return { fallback: resolution.reason };
+
     let key: unknown;
     if (resolution.kind === 'local') {
       // Authenticate AS the app token, in-process, exactly as sso.ts stashes
       // its login token. A delegation-derived token may not create the
-      // hand-off secret (plan ruling § 13): fall back to inline instead.
+      // hand-off secret: fall back to inline instead.
       const context = new MethodContext(
         { name: 'credential-handoff', ip: null }, username, token, null, {}, {}, null
       );
@@ -199,5 +207,9 @@ export function tokenlessEndpointError (apiEndpoint: unknown): string | null {
   try { url = new URL(apiEndpoint); } catch { return 'apiEndpoint must be a valid URL'; }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'apiEndpoint must be http(s)';
   if (url.username !== '' || url.password !== '') return 'apiEndpoint must not carry credentials';
+  // The token also rides as an `?auth=` query in the other apiEndpoint form
+  // (this is what the conversion strips); a shape-H endpoint must not carry it,
+  // else the token-bearing URL would be stored and served on every poll.
+  if (url.searchParams.has('auth')) return 'apiEndpoint must not carry an auth token';
   return null;
 }

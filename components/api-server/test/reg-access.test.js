@@ -1104,6 +1104,33 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(calls.length, 1);
       assert.strictEqual(calls[0], 'https://coreB.core.test/' + encodeURIComponent(username) + '/shared-secrets');
     });
+
+    it('[RA107] a handoff on a non-ACCEPTED post is refused before any write, leaving the request pending', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ status: 'REFUSED', reasonId: 'x', message: 'x', handoff: { type: 'shared-secret', key: fakeKey('n') } });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.match(res.body.error.message, /ACCEPTED/);
+      const stored = await accessState.get(key);
+      assert.strictEqual(stored.status, 'NEED_SIGNIN', 'the poisoned status must not stick');
+      assert.strictEqual(stored.handoff, undefined, 'the unvalidated handoff must never be written');
+    });
+
+    it('[RA108] a shape-H apiEndpoint carrying an ?auth= token is refused', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({
+          status: 'ACCEPTED',
+          username,
+          apiEndpoint: 'https://' + username + '.pryv.me/?auth=leaked-token',
+          handoff: { type: 'shared-secret', key: fakeKey('q') }
+        });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.match(res.body.error.message, /auth token/);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + key)).body.status, 'NEED_SIGNIN');
+    });
   });
 
   describe('POST /reg/access/:key (errors)', () => {

@@ -435,6 +435,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       const wantsHandoff = pending.credentialHandoff === 'shared-secret';
       const isDelegatedGrant = req.body.delegation != null;
 
+      // A hand-off describes an accepted grant only (like the delegation hint).
+      // Refuse it on any other status BEFORE anything is written: `handoff` is
+      // an updatable field, so a REFUSED/ERROR/REDIRECTED post carrying one
+      // would otherwise store an unvalidated object, and a later legitimate
+      // inline ACCEPTED would then drop the real token (the state store clears
+      // the token whenever a handoff is present) and serve the poisoned body.
+      if (hasHandoffField && status !== 'ACCEPTED') {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: 'handoff is only valid with status ACCEPTED' }
+        });
+      }
+
       if (status === 'ACCEPTED') {
         // username is always required (both shapes): it looks up the access,
         // and a non-string would fault deep in the loader rather than being
@@ -446,8 +458,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
         // Exactly one credential shape: the inline token, or a hand-off key,
         // never both and never neither. "Both" is what would let a
-        // half-migrated UI leak a token beside a hand-off.
-        if (hasHandoffField && hasToken) {
+        // half-migrated UI leak a token beside a hand-off; check the token by
+        // presence (not just a valid string) so a non-string token cannot ride
+        // alongside a hand-off unnoticed.
+        if (hasHandoffField && req.body.token != null) {
           return res.status(400).json({
             error: { id: 'invalid-parameters', message: 'ACCEPTED must carry either token (inline) or handoff, not both' }
           });
@@ -460,9 +474,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // A UI-created hand-off (shape H) is accepted only when the request
         // asked for it, is NOT a consent-form request (the grant check needs
         // the token, so those post inline and the server converts), and is NOT
-        // a delegated grant (ruling § 13: a delegation-derived token may not
-        // create the secret, so those deliver inline). Each refusal leaves the
-        // request NEED_SIGNIN so the page can post again.
+        // a delegated grant (a delegation-derived token may not create the
+        // secret, so those deliver inline). Each refusal leaves the request
+        // NEED_SIGNIN so the page can post again.
         if (hasHandoffField) {
           if (!wantsHandoff) {
             return res.status(400).json({
@@ -574,8 +588,14 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // server conversion. Move the inline token into a one-time secret on
         // the user's core and keep only the key. The token exists on this
         // core for the life of this handler only, never stored.
+        // Clamp to the request's remaining life AND to sharedSecrets:maxTtl:
+        // that cap is a hard REFUSAL in the create, not a silent clamp, so a
+        // handoffTtl above it would make every conversion fail (permanent
+        // inline fallback) instead of just shortening the secret.
+        const maxTtlCfg = app.config.get('sharedSecrets:maxTtl');
+        const maxTtlS = typeof maxTtlCfg === 'number' && maxTtlCfg > 0 ? maxTtlCfg : 2592000;
         const remainingS = Math.floor((pending.expiresAt - Date.now()) / 1000);
-        const ttlSeconds = Math.max(1, Math.min(handoffTtlSeconds(), remainingS));
+        const ttlSeconds = Math.max(1, Math.min(handoffTtlSeconds(), remainingS, maxTtlS));
         const result = await createHandoff({
           app,
           username: req.body.username,
