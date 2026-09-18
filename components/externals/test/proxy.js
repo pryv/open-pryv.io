@@ -39,9 +39,16 @@ const ASSETS_DIR = path.resolve(__dirname, 'fixtures/assets');
 const ASSET_TYPES = { '.json': 'application/json', '.css': 'text/css', '.html': 'text/html' };
 
 function serveAsset (clientReq, clientRes) {
-  const rel = decodeURIComponent(clientReq.url.split('?')[0].slice(ASSETS_PREFIX.length));
-  const file = path.resolve(ASSETS_DIR, rel);
-  if (!file.startsWith(ASSETS_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+  let file = null;
+  try {
+    // decodeURIComponent throws on a malformed escape: answer 404, keep the proxy up.
+    const rel = decodeURIComponent(clientReq.url.split('?')[0].slice(ASSETS_PREFIX.length));
+    const candidate = path.resolve(ASSETS_DIR, rel);
+    if (candidate.startsWith(ASSETS_DIR + path.sep) && fs.statSync(candidate).isFile()) file = candidate;
+  } catch (_e) {
+    file = null;
+  }
+  if (file == null) {
     clientRes.writeHead(404, { 'Content-Type': 'text/plain' });
     return clientRes.end('Not found');
   }

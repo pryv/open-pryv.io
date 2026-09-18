@@ -1,6 +1,6 @@
 # Changelog - Internal (no API impact)
 
-## The externals suite no longer needs internet access
+## The externals suite no longer depends on the public assets site
 
 The lib-js integration suite (`components/externals`) pointed
 `service.assets.definitions` at the public assets site on GitHub Pages, so the

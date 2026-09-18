@@ -11,7 +11,8 @@ dnsLess:
 service:
   assets:
     # Served by the suite's HTTPS proxy from components/externals/test/fixtures/assets
-    # (a copy of the public pryv.me assets), so the suite needs no internet access.
+    # (a copy of the public pryv.me assets), so the suite no longer depends on the
+    # public assets site.
     definitions: https://l.backloop.dev:3000/test-assets/index.json
 
 # Auth-popup base URL — only needs to be a well-formed URL for the
