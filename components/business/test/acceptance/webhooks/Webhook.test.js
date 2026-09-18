@@ -258,7 +258,15 @@ describe('[WHBK] Webhook', () => {
             [firstMessage, firstMessage]);
         });
         it('[1VIT] should reset error tracking properties', async () => {
-          storedWebhook = await repository.getById(user, webhook.id);
+          // 'received' fires when the retry request arrives; the webhook resets and
+          // saves its state only once the response is back. Wait for that save.
+          const deadline = Date.now() + 1500;
+          do {
+            storedWebhook = await repository.getById(user, webhook.id);
+            if (storedWebhook.lastRun?.status === 201) break;
+            await awaiting.delay(20);
+          } while (Date.now() < deadline);
+          assert.strictEqual(storedWebhook.lastRun?.status, 201, 'reset was not persisted within 1500 ms');
           assert.ok(webhook.timeout == null);
           assert.strictEqual(webhook.currentRetries, 0);
           assert.strictEqual(webhook.messageBuffer.size, 0);
