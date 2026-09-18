@@ -266,6 +266,7 @@ describe('[WHBK] Webhook', () => {
             if (storedWebhook.lastRun?.status === 201) break;
             await awaiting.delay(20);
           } while (Date.now() < deadline);
+          assert.strictEqual(storedWebhook.lastRun?.status, 201, 'reset was not persisted within 1500 ms');
           assert.ok(webhook.timeout == null);
           assert.strictEqual(webhook.currentRetries, 0);
           assert.strictEqual(webhook.messageBuffer.size, 0);
