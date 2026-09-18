@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-rc.22 — 2026-09-18
+
 ### `service/info.version` now reports the release on native installs too
 
 2.0.0-rc.21 fixed the reported version for the Docker image only: a native
