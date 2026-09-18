@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### `service/info.version` now reports the release on native installs too
+
+2.0.0-rc.21 fixed the reported version for the Docker image only: a native
+install that checks out a release tag still reported `2.0.0-pre.4` in
+`service/info.version`, the `API-Version` header and `meta.apiVersion`, because
+it reads the committed `.api-version` file. From this release on, the release
+commit carries the tag in that file (the tag build refuses to publish
+otherwise), so native installs report the release they run. Reported in
+[#135](https://github.com/pryv/open-pryv.io/issues/135).
+
 ### Security: credentials no longer stored in the platform store replicated to every core
 
 The platform store (rqlite) is replicated to every core of a platform, on disk.
