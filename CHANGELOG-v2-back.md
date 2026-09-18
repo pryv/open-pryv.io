@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Test-server manager hygiene
+
+`DynamicInstanceManager` installs one set of process `exit` / `SIGINT` / `SIGTERM` hooks for all
+instances instead of three listeners per instance (which piled up and kept every manager
+alive), removes its temp config file once its child has exited, and `stop()` now calls back
+when the kill is reported as an `error` event rather than thrown. The port probe resolves
+only after its socket has closed (a race too narrow to test deterministically).
+`[DIM4]`-`[DIM6]`.
+
 ## Test servers: a restart waits for the new server; unexpected exits are logged
 
 `DynamicInstanceManager` reset its readiness flag only in `stop()`. After a spawned test
