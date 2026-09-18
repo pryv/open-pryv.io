@@ -56,6 +56,7 @@ const { fromCallback } = require('utils');
 const WebhooksRepository = require('business').webhooks.Repository;
 // CMC back-channel revoke notify — pure DI HTTP sender, no MethodContext needed.
 const { outbound: cmcOutbound } = require('cmc');
+const cmcRelationshipKey = require('cmc/src/relationshipKey.ts');
 // Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
 // transient data-grant about to be rolled back on a peer refusal is never
 // observed as a success. See consentPoll.ts.
@@ -675,13 +676,30 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: 'refresh-token reuse detected' });
 
-    // 5. CMC back-channel notify (best-effort; informational — the peer applies no
-    //    teardown to an inbound counterparty-role revoke, it learns at its next
-    //    failing refresh). apiEndpoint is null until the app completed the
-    //    back-channel handshake → skip quietly; delivery failure never rolls back.
+    // 5. CMC back-channel notify (best-effort). The peer ENFORCES an inbound
+    //    revoke it accepts (handleIncomingRevoke tears down the back-channel
+    //    access it holds), which is what a user-initiated revoke does too: the
+    //    data-grant deleted above held this side's only pointer to that access.
+    //    apiEndpoint is null until the app completed the back-channel handshake
+    //    → skip quietly; delivery failure never rolls back.
     const cmcCd = dataGrant?.clientData?.cmc;
     const apiEndpoint = cmcCd?.counterparty?.apiEndpoint ?? cmcCd?.backChannelApiEndpoint;
-    if (typeof apiEndpoint === 'string' && apiEndpoint.length > 0) {
+    if (dataGrant != null && typeof apiEndpoint === 'string' && apiEndpoint.length > 0) {
+      // Same content as a user-initiated revoke (cmc handleRevoke): `accessId`
+      // is required by the revoke content schema and `reason` is a localized
+      // object, so the peer's inbox accepts the write; the correlation ids let
+      // the peer match THIS relationship.
+      const revokeContent: Record<string, unknown> = {
+        accessId: dataGrant.id,
+        from: { username, host: selfHost(username) },
+        reason: { en: 'Refresh-token reuse was detected; this consent was revoked.' },
+      };
+      for (const key of ['appCode', 'offerEventId', 'acceptEventId', 'inviteEventId'] as const) {
+        const value = (cmcCd as Record<string, unknown> | undefined)?.[key];
+        if (typeof value === 'string') revokeContent[key] = value;
+      }
+      const revokedScope = cmcRelationshipKey.scopeOfAccess(dataGrant);
+      if (typeof revokedScope === 'string') revokeContent.scopeStreamId = revokedScope;
       try {
         // postToPeer returns a discriminated union — it does NOT throw on an HTTP
         // or network failure, so check the result explicitly (the catch only sees
@@ -689,7 +707,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         const delivery = await cmcOutbound.postToPeer({
           apiEndpoint,
           path: 'events',
-          body: { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: { from: { username, host: selfHost(username) }, reason: 'refresh-token-reuse' } },
+          body: { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: revokeContent },
           deps: { fetch: (u: string, i: unknown) => globalThis.fetch(u, i as RequestInit), timeoutMs: 15000, logger },
         });
         if (delivery != null && delivery.ok === false) {

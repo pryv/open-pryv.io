@@ -100,6 +100,9 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
 
   let username, personalToken, clientId, fixtures, savedConsentUrl;
   let appUsername, appToken, capabilityUrl, originalFetch;
+  // Event id of the offer a runFullFlow() grant descends from (publishOffer sets
+  // `offerEventId` for its own offer; the main one is kept separately).
+  let offerEventId, mainOfferEventId;
 
   before(async function () {
     await initTests();
@@ -153,6 +156,9 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const url = res.body?.event?.content?.capabilityUrl;
       assert.ok(typeof url === 'string' && url.length > 0,
         'capabilityUrl should be stamped synchronously: ' + JSON.stringify(res.body?.event?.content));
+      // The data-grant a flow through THIS offer carries, so a test can pick its
+      // own grant when the account holds several.
+      offerEventId = res.body.event.id;
       return url;
     }
 
@@ -163,6 +169,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       permissions: OFFER_PERMISSIONS,
       allowUserChoice: true,
     });
+    mainOfferEventId = offerEventId;
     // Sibling offer WITHOUT allowUserChoice — the all-or-nothing default.
     const aonCapabilityUrl = await publishOffer({
       title: { en: 'OAuth e2e all-or-nothing offer' },
@@ -649,6 +656,54 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const r2 = await coreRequest.post('/oauth2/token').type('form').send(params);
       assert.equal(r2.status, 400);
       assert.equal(r2.body.error, 'invalid_grant');
+    });
+
+    it('[OE26] refresh-token reuse revokes the chain AND the app receives the consent/revoke-cmc', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      // THIS offer's grant (the account holds one per offer), and only once it
+      // carries the app's back-channel endpoint: the handshake is several
+      // fire-and-forget hops behind /accept, and without the endpoint the
+      // revoke has nowhere to go.
+      this.timeout(120000);
+      let dataGrant;
+      let seen = [];
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        const accessesRes = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+        const grants = (accessesRes.body.accesses ?? []).filter((a) =>
+          a?.clientData?.cmc?.role === 'counterparty' &&
+          typeof a?.clientData?.cmc?.counterparty?.apiEndpoint === 'string');
+        seen = grants.map((a) => ({ id: a.id, offerEventId: a.clientData.cmc.offerEventId }));
+        // This offer's grant when it records the offer, else any grant that has
+        // the endpoint (the account may hold one per offer).
+        dataGrant = grants.find((a) => a.clientData.cmc.offerEventId === mainOfferEventId) ?? grants[0];
+        if (dataGrant != null) break;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      assert.ok(dataGrant != null,
+        'a data-grant carrying the back-channel endpoint must exist; offer=' + mainOfferEventId + ' seen=' + JSON.stringify(seen));
+
+      const params = { grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId };
+      assert.equal((await coreRequest.post('/oauth2/token').type('form').send(params)).status, 200);
+      // No grace window, so the immediate replay is treated as reuse (chain revoke).
+      const { withInjectedConfig } = require('test-helpers');
+      await withInjectedConfig({ oauth: { refreshReuseGraceSeconds: 0 } }, async () => {
+        const replay = await coreRequest.post('/oauth2/token').type('form').send(params);
+        assert.equal(replay.status, 400);
+      });
+
+      // The app side (the offer's publisher) is told, in its inbox.
+      let revoke = null;
+      for (let i = 0; i < 20 && revoke == null; i++) {
+        const inbox = await coreRequest.get('/' + appUsername + '/events')
+          .set('Authorization', appToken)
+          .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 });
+        revoke = (inbox.body.events ?? []).find((e) => e.content?.accessId === dataGrant.id) ?? null;
+        if (revoke == null) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.ok(revoke != null, 'the app must receive a consent/revoke-cmc naming the revoked data-grant');
+      assert.equal(typeof revoke.content.reason, 'object');
     });
 
     it('[OE21] revoking the consent data-grant kills the refresh chain (invalid_grant)', async function () {

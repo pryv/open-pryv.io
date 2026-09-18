@@ -35,6 +35,26 @@ describe('[MCTX] MethodContext', () => {
     });
   });
 
+  describe('[MCTX4] #originalQuery (what the audit trail records)', () => {
+    const username = 'USERNAME';
+    it('[MCQT] keeps no credential: the call\'s own auth and an app-chosen access token are dropped', () => {
+      const query = {
+        auth: 'CALL-TOKEN',
+        token: 'app-chosen-access-token',
+        requestingAppId: 'an-app',
+        expireAfter: 3600
+      };
+      const mc = new MethodContext(contextSource, username, 'TOKEN', null, {}, query, null);
+      assert.strictEqual(mc.originalQuery.auth, undefined);
+      assert.strictEqual(mc.originalQuery.token, undefined);
+      // everything else is kept for the audit trail
+      assert.strictEqual(mc.originalQuery.requestingAppId, 'an-app');
+      assert.strictEqual(mc.originalQuery.expireAfter, 3600);
+      // the caller's object is not mutated
+      assert.strictEqual(query.token, 'app-chosen-access-token');
+    });
+  });
+
   describe('[MCTX2] #retrieveAccessFromId', () => {
     const username = 'USERNAME';
     const customAuthStep = null;

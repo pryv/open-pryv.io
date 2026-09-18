@@ -106,7 +106,7 @@ type AccessesDeleteParams = {
   relatedAccessesToDelete?: AccessLike[];
 };
 type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] };
-type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown> };
+type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown> | null; expireAfter?: number; token?: string };
 type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?: AccessLike; checkedPermissions?: StreamPermission[]; error?: unknown };
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
@@ -1098,7 +1098,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   // Returns true if the given access' permissions match the `requestedPermissions`.
   //
-  function accessMatches (access: AccessLike, requestedPermissions: StreamPermission[], clientData?: Record<string, unknown>) {
+  function accessMatches (access: AccessLike, requestedPermissions: StreamPermission[], clientData?: Record<string, unknown> | null) {
     if (access == null ||
             access.type !== 'app' ||
             access.permissions == null) {
