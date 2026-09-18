@@ -211,6 +211,21 @@ if (cluster.isPrimary) {
       warn(`[oauth-username-scrub] failed: ${e.message}`);
     }
 
+    // OAuth client rows written before they carried `accountUserId` store the
+    // app account's username: convert the rows of the accounts THIS core hosts
+    // (the only core that resolves them, and the only one that can serve their
+    // client_credentials grant). Before workers start; idempotent; a failure is
+    // logged and retried at next boot (the grant still reads the old shape).
+    try {
+      const { migrateClientAccountIds } = require('../components/oauth2/src/storage.ts');
+      const storagesBarrel = require('../storages/index.ts');
+      const converted = await migrateClientAccountIds(storagesBarrel.platformDB,
+        async (username) => (await storagesBarrel.usersLocalIndex.getUserId(username)) ?? null);
+      if (converted > 0) log(`[oauth-client-account-migrate] converted ${converted} client row(s) to the account user id`);
+    } catch (e) {
+      warn(`[oauth-client-account-migrate] failed: ${e.message}`);
+    }
+
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'`,
     // populate PlatformDB from a Pug directory if it holds no templates yet.

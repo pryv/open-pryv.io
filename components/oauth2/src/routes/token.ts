@@ -198,6 +198,7 @@ export function handleToken (deps: TokenDeps) {
             platform: deps.platform,
             mintClientAccess: deps.mintClientAccess,
             resolveAccountUserId: deps.resolveAccountUserId,
+            resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
         );

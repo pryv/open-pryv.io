@@ -14,12 +14,10 @@
  * truth for /oauth2/authorize validation on ANY core (the multi-core
  * discovery-before-session-creation invariant).
  *
- * Write side (called only from the operator CLI in this milestone;
+ * Write side (called only from the operator CLI, `bin/oauth-client.js`;
  * the HTTP `POST /oauth2/register` endpoint is intentionally deferred)
- * updates BOTH the App-account `:_app:*` streams AND the PlatformDB
- * cache atomically. The stream-write helper is provided by the caller
- * (CLI); this module focuses on the cache-write side + the validation
- * rules.
+ * writes the PlatformDB row only: this module validates it and forwards
+ * it to storage. No App-account stream is written.
  *
  * Operator policy: `curated` registration mode only.
  * Errors are mapped at endpoint edge via `errorMap.ts`, NOT

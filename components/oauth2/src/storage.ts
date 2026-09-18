@@ -82,12 +82,15 @@ export interface OAuthClient {
    */
   jwks?: PublicJwkSet;
   /**
-   * Username of the Pryv user account this OAuth client is promoted
-   * from (set by `bin/oauth-client.js create <username>`). Required
-   * for client_credentials grant — the minted access targets THIS
-   * user's per-user storage (the app's own data, no end-user involved).
+   * User id of the Pryv account this OAuth client is promoted from
+   * (`bin/oauth-client.js create <username>` resolves it on the account's
+   * home core). Required for the client_credentials grant, whose minted
+   * access targets that account's per-user storage (the app's own data, no
+   * end user involved); the grant resolves the username locally, the row
+   * never carries it. Rows written before this carry `accountUsername`
+   * instead: read only through `legacyAccountUsername()`.
    */
-  accountUsername?: string;
+  accountUserId?: string;
   /**
    * Named consent-offer references for the `cmc:<name>` scope
    * namespace. Each entry points at the capability URL of an
@@ -235,6 +238,69 @@ export async function deleteClient (platform: PlatformDB, clientId: string): Pro
   // no cross-core bus).
   await platform.setPlatformKv(PREFIX_CLIENT_REVOKED + clientId, JSON.stringify({ revokedAt: Date.now() }));
   await platform.deletePlatformKv(PREFIX_CLIENT + clientId);
+}
+
+/**
+ * The account username a client row written before `accountUserId` still
+ * carries, or null. The one place that field is read (legacy grant path,
+ * migration, CLI): the type deliberately does not declare it.
+ */
+export function legacyAccountUsername (client: OAuthClient): string | null {
+  const value = (client as { accountUsername?: unknown }).accountUsername;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * The row with its account reference converted to `accountUserId`
+ * (`accountUsername` dropped; other fields, `updatedAt` included, kept).
+ */
+export function withAccountUserId (client: OAuthClient, accountUserId: string): OAuthClient {
+  const { accountUsername: _dropped, ...rest } = client as OAuthClient & { accountUsername?: unknown };
+  return { ...rest, accountUserId };
+}
+
+/**
+ * Convert client rows that still carry `accountUsername` to `accountUserId`,
+ * for the accounts this core hosts (`resolveAccountUserId` reads the local
+ * index); rows of other cores' accounts are left to their home core, which is
+ * also the only core that can serve their client_credentials grant. Run at
+ * master boot before workers serve `/oauth2/token`. Idempotent. Returns the
+ * number of rows converted.
+ */
+export async function migrateClientAccountIds (
+  platform: PlatformDB, resolveAccountUserId: (username: string) => Promise<string | null>,
+): Promise<number> {
+  let converted = 0;
+  for (const clientId of await listClientIds(platform)) {
+    try {
+      const client = await getClient(platform, clientId);
+      if (client == null) continue;
+      const row = await convertClientAccount(client, resolveAccountUserId);
+      if (row == null) continue;
+      await setClient(platform, row);
+      converted++;
+    } catch (_err) {
+      // One unreadable row (e.g. malformed JSON) must not stop the others.
+      continue;
+    }
+  }
+  return converted;
+}
+
+/**
+ * The row converted to `accountUserId` when it still carries `accountUsername`
+ * and the account resolves (an `accountUserId` already present is kept), or
+ * null when there is nothing to convert or the account is not on this core.
+ * Shared by the master-boot migration and the CLI `update`.
+ */
+export async function convertClientAccount (
+  client: OAuthClient, resolveAccountUserId: (username: string) => Promise<string | null>,
+): Promise<OAuthClient | null> {
+  const legacy = legacyAccountUsername(client);
+  if (legacy == null) return null;
+  const hasId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0;
+  const userId = hasId ? client.accountUserId as string : await resolveAccountUserId(legacy);
+  return userId == null ? null : withAccountUserId(client, userId);
 }
 
 export async function listClientIds (platform: PlatformDB): Promise<string[]> {

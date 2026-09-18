@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## OAuth2 client rows store the app account's user id, not its username
+
+The `oauth-client/<clientId>` row in PlatformDB (replicated to every core) carried the app
+account's username (`accountUsername`). It now carries `accountUserId`; the
+client_credentials grant resolves the canonical username on the account's home core (the
+only core that can serve it) and answers 500 when the account is not hosted there. Each
+core's master boot converts, once and before workers start, the rows of the accounts it
+hosts (`migrateClientAccountIds`); rows of other cores' accounts are left to their home
+core, and the grant still reads the old shape meanwhile. Rolling back the account's home
+core after the upgrade makes client_credentials answer 500 for converted clients until it
+is upgraded again or the client is re-created. Note: a CLI-created `client_id` IS the
+account username, so the username remains in the row key; only an opaque `client_id` would
+remove it. `[OCU1]`-`[OCU7]`.
+
 ## Test-server manager hygiene
 
 `DynamicInstanceManager` installs one set of process `exit` / `SIGINT` / `SIGTERM` hooks for all

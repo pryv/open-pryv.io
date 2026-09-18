@@ -285,6 +285,34 @@ describe('[OAUTH-STORE] storage layer', () => {
     });
   });
 
+  describe('[OAUTH-STORE-CLIENT-ACCOUNT] client account reference', () => {
+    const client = (id, extra) => ({ clientId: id, redirectUris: ['x'], scope: [], updatedAt: 1234, ...extra });
+
+    it('[OCU5] migrateClientAccountIds converts the rows of local accounts only, keeps the rest, idempotent', async () => {
+      const platform = fakePlatform();
+      await storage.setClient(platform, client('local', { accountUsername: 'alice', clientName: 'Local app' }));
+      await storage.setClient(platform, client('elsewhere', { accountUsername: 'bob' }));
+      await storage.setClient(platform, client('done', { accountUserId: 'u-carol' }));
+      // An unreadable row sorted first must not stop the others.
+      await platform.setPlatformKv('oauth-client/aaa-broken', '{not json');
+      const lookups = [];
+      const resolve = async (u) => { lookups.push(u); return u === 'alice' ? 'u-alice' : null; };
+
+      assert.equal(await storage.migrateClientAccountIds(platform, resolve), 1);
+      const local = await storage.getClient(platform, 'local');
+      assert.equal(local.accountUserId, 'u-alice');
+      assert.ok(!('accountUsername' in local), 'the username is dropped');
+      assert.equal(local.clientName, 'Local app');
+      assert.equal(local.updatedAt, 1234, 'a migration is not an operator update');
+      assert.equal(storage.legacyAccountUsername(await storage.getClient(platform, 'elsewhere')), 'bob',
+        'another core\'s account is left to that core');
+      assert.deepEqual(await storage.getClient(platform, 'done'), client('done', { accountUserId: 'u-carol' }));
+      assert.deepEqual(lookups.sort(), ['alice', 'bob'], 'converted rows are not looked up');
+
+      assert.equal(await storage.migrateClientAccountIds(platform, resolve), 0, 'idempotent');
+    });
+  });
+
   describe('[OAUTH-STORE-ISO] keyspace isolation', () => {
     it('[OS-ISO1] client + code + refresh keyspaces do not collide on the same id', async () => {
       const platform = fakePlatform();

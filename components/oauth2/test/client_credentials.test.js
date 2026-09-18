@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { handleToken } = require('../src/routes/token.ts');
+const { handleToken: rawHandleToken } = require('../src/routes/token.ts');
 const { mintSecret } = require('../src/clientSecret.ts');
 
 const ISSUER = 'https://reg.pryv.me';
@@ -39,7 +39,7 @@ function fakePlatform (clients = {}) {
       redirectUris: ['x'],
       scope: ['pryv:read', 'pryv:write'],
       grantTypes: ['client_credentials'],
-      accountUsername: id,
+      accountUserId: 'u-' + id,
       ...meta,
     }));
   }
@@ -62,8 +62,16 @@ const MINT_CLIENT_FAKE = async ({ userId, username, clientId }) => ({
   apiEndpoint: 'https://' + username + '.pryv.me/',
 });
 
+// Legacy path only: a client row that still carries accountUsername.
 const RESOLVE_ACCOUNT_FAKE = async (username) =>
   (username === 'myapp' || username === 'otherapp') ? 'u-' + username : null;
+// The account's canonical username on this core ('u-<name>' → '<name>').
+const RESOLVE_USERNAME_FAKE = async (userId) =>
+  (userId === 'u-myapp' || userId === 'u-otherapp') ? userId.slice(2) : null;
+
+function handleToken (deps) {
+  return rawHandleToken({ resolveUsername: RESOLVE_USERNAME_FAKE, ...deps });
+}
 
 function fakeRes () {
   return {
@@ -241,7 +249,7 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
     });
 
     it('[OTC-A5] client without clientSecretHash → 401 invalid_client (operator hasn\'t minted a secret)', async () => {
-      const platform = fakePlatform({ myapp: { grantTypes: ['client_credentials'], accountUsername: 'myapp' } });
+      const platform = fakePlatform({ myapp: { grantTypes: ['client_credentials'] } });
       const handler = handleToken({
         config: fakeConfig(),
         platform,
@@ -292,9 +300,9 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
       assert.equal(res.body.error, 'unauthorized_client');
     });
 
-    it('[OTC-G2] client missing accountUsername → 500 server_error', async () => {
+    it('[OTC-G2] [OCU4] client with no account reference at all → 500 server_error naming accountUserId', async () => {
       const c = await makeClient();
-      const platform = fakePlatform({ myapp: { ...c.meta, accountUsername: '' } });
+      const platform = fakePlatform({ myapp: { ...c.meta, accountUserId: '' } });
       const handler = handleToken({
         config: fakeConfig(),
         platform,
@@ -307,6 +315,7 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
         headers: { authorization: basicAuth('myapp', c.secret) },
       }, res);
       assert.equal(res.statusCode, 500);
+      assert.match(res.body.error_description, /accountUserId/);
     });
   });
 
@@ -348,9 +357,74 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
   });
 
   describe('[OAUTH-TKN-CC-RESOLVE] account-username resolution', () => {
-    it('[OTC-R1] accountUsername does not resolve to a user → 500 server_error', async () => {
+    it('[OTC-R1] [OCU3] the account is not on this core (user id does not resolve) → 500, nothing minted', async () => {
       const c = await makeClient();
-      const platform = fakePlatform({ myapp: { ...c.meta, accountUsername: 'ghost' } });
+      const platform = fakePlatform({ myapp: { ...c.meta, accountUserId: 'u-ghost' } });
+      const mints = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        mintClientAccess: async (p) => { mints.push(p); return MINT_CLIENT_FAKE(p); },
+        resolveAccountUserId: RESOLVE_ACCOUNT_FAKE,
+      });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'client_credentials' },
+        headers: { authorization: basicAuth('myapp', c.secret) },
+      }, res);
+      assert.equal(res.statusCode, 500);
+      assert.deepEqual(mints, []);
+    });
+
+    it('[OCU1] a row carrying accountUserId: the canonical username is resolved on this core, the legacy resolver is not used', async () => {
+      const c = await makeClient();
+      const platform = fakePlatform({ myapp: c.meta });
+      const mints = [];
+      const legacyLookups = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async (id) => (id === 'u-myapp' ? 'myapp-canonical' : null),
+        mintClientAccess: async (p) => { mints.push(p); return MINT_CLIENT_FAKE(p); },
+        resolveAccountUserId: async (u) => { legacyLookups.push(u); return null; },
+      });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'client_credentials' },
+        headers: { authorization: basicAuth('myapp', c.secret) },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(mints[0].userId, 'u-myapp');
+      assert.equal(mints[0].username, 'myapp-canonical');
+      assert.deepEqual(legacyLookups, []);
+    });
+
+    it('[OCU2] a legacy row (accountUsername only) resolves its user id once, and the stored name is never forwarded', async () => {
+      const c = await makeClient();
+      const platform = fakePlatform({ myapp: { ...c.meta, accountUserId: undefined, accountUsername: 'myapp' } });
+      const mints = [];
+      const legacyLookups = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async (id) => (id === 'u-myapp' ? 'renamed' : null),
+        mintClientAccess: async (p) => { mints.push(p); return MINT_CLIENT_FAKE(p); },
+        resolveAccountUserId: async (u) => { legacyLookups.push(u); return RESOLVE_ACCOUNT_FAKE(u); },
+      });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'client_credentials' },
+        headers: { authorization: basicAuth('myapp', c.secret) },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.deepEqual(legacyLookups, ['myapp']);
+      assert.equal(mints[0].userId, 'u-myapp');
+      assert.equal(mints[0].username, 'renamed');
+    });
+
+    it('[OCU6] a client without an account reference answers 401 to a wrong credential, not 500', async () => {
+      const c = await makeClient();
+      const platform = fakePlatform({ myapp: { ...c.meta, accountUserId: '' } });
       const handler = handleToken({
         config: fakeConfig(),
         platform,
@@ -360,9 +434,10 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
       const res = fakeRes();
       await handler({
         body: { grant_type: 'client_credentials' },
-        headers: { authorization: basicAuth('myapp', c.secret) },
+        headers: { authorization: basicAuth('myapp', 'wrong-secret') },
       }, res);
-      assert.equal(res.statusCode, 500);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
     });
   });
 
