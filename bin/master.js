@@ -197,6 +197,20 @@ if (cluster.isPrimary) {
       warn(`[oauth-refresh-rekey] failed: ${e.message}`);
     }
 
+    // Refresh rows and consumed markers written before the username was
+    // dropped from them still carry it: remove it from THIS core's rows, after
+    // the re-key above and before workers serve /oauth2/token (a rewrite racing
+    // a rotation would resurrect the consumed row). Idempotent; a failure is
+    // logged and retried at next boot (rotation also rewrites rows without it).
+    try {
+      const { scrubUsernameFromRows } = require('../components/oauth2/src/storage.ts');
+      const scrubbed = await scrubUsernameFromRows(
+        require('../storages/index.ts').platformDB, String(config.get('core:id') ?? 'single'));
+      if (scrubbed > 0) log(`[oauth-username-scrub] removed the username from ${scrubbed} refresh row(s)`);
+    } catch (e) {
+      warn(`[oauth-username-scrub] failed: ${e.message}`);
+    }
+
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'`,
     // populate PlatformDB from a Pug directory if it holds no templates yet.
@@ -250,6 +264,7 @@ if (cluster.isPrimary) {
       const revokeOrphans = revokeExpiredCodeOrphans({
         platform: platformDB,
         coreId: String(config.get('core:id') ?? 'single'),
+        resolveUsername: async (userId) => (await storagesBarrel.usersLocalIndex.getUsername(userId)) ?? null,
         revokeLocal: async ({ userId, username, accessId, clientId }) => {
           const accesses = storagesBarrel.storageLayer.accesses;
           const user = { id: userId, username };

@@ -41,6 +41,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { UsernameResolver } from './authorization_code.ts';
 
 // Kept on the require shim: a typed `storage` import surfaces a pre-existing
 // GrantPermission vs Record<string,unknown> mismatch at the mint boundary that
@@ -104,6 +105,12 @@ export type RefreshTokenDeps = {
   mintRefreshedAccess: MintRefreshedAccess;
   /** Optional: absent → reuse is detected + audited but the chain is not revoked. */
   revokeChain?: RevokeChain;
+  /**
+   * Canonical username for a user id, from THIS core's local users index;
+   * null when the user is no longer on this core. Refresh rows and markers
+   * carry the user id only (PlatformDB is replicated and must not hold usernames).
+   */
+  resolveUsername: UsernameResolver;
 };
 
 export type RefreshGrantParams = {
@@ -177,9 +184,12 @@ export async function handleRefreshToken (
     });
     if (!withinGrace && typeof deps.revokeChain === 'function') {
       try {
+        // A user gone since the rotation has nothing left to revoke.
+        const username = await deps.resolveUsername(marker.userId);
+        if (username == null) return INVALID;
         await deps.revokeChain({
           userId: marker.userId,
-          username: marker.username,
+          username,
           clientId: marker.clientId,
           ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
         });
@@ -198,7 +208,6 @@ export async function handleRefreshToken (
     await storage.markRefreshConsumed(deps.platform, coreId, params.refresh_token, {
       clientId: row.clientId,
       userId: row.userId,
-      username: row.username,
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
       consumedAt: Date.now(),
     }, Math.min(row.expiresAt, row.absoluteExpiresAt));
@@ -267,13 +276,28 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh-token absolute lifetime exceeded' };
   }
 
+  // The row carries no username: resolve it on this core (the refresh key
+  // is per-core, so a row that resolved here was issued here). A user gone
+  // since the last rotation ends the chain; the consumed marker above keeps
+  // reuse detection intact.
+  let username: string | null;
+  try {
+    username = await deps.resolveUsername(row.userId);
+  } catch (err: unknown) {
+    logServerError('refresh_token: username resolution failed', err);
+    return { ok: false, status: 500, error: 'server_error', description: 'failed to resolve the authorizing user' };
+  }
+  if (username == null) {
+    return { ok: false, status: 400, error: 'invalid_grant', description: 'the authorized access is no longer valid' };
+  }
+
   // Mint a fresh access via the injected callback.
   const accessExpiresAt = now + accessTokenTTL * 1000;
   let access;
   try {
     access = await deps.mintRefreshedAccess({
       userId: row.userId,
-      username: row.username,
+      username,
       clientId: row.clientId,
       scope: row.scope,
       expiresAt: accessExpiresAt,
@@ -305,7 +329,6 @@ export async function handleRefreshToken (
   await storage.setRefresh(deps.platform, coreId, newRefresh, {
     clientId: row.clientId,
     userId: row.userId,
-    username: row.username,
     scope: row.scope,
     issuedAt: now,
     lastUsedAt: now,

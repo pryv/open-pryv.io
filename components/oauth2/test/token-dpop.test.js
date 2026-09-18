@@ -127,6 +127,7 @@ function handleToken (deps) {
   return rawHandleToken({
     resolveAccess: async () => ({ accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://tok@alice.pryv.me/' }),
     revokeAccessLocal: async () => {},
+    resolveUsername: async (userId) => (userId === 'u-alice' ? 'alice' : null),
     ...deps,
   });
 }
@@ -137,7 +138,6 @@ async function seedCode (platform, code) {
     codeChallenge: challenge(VERIFIER),
     codeChallengeMethod: 'S256',
     userId: 'u-alice',
-    username: 'alice',
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
     accessId: 'acc-u-alice',
@@ -150,7 +150,6 @@ async function seedRefresh (platform, token, extra = {}) {
   await setRefresh(platform, CORE_ID, token, {
     clientId: 'myapp',
     userId: 'u-alice',
-    username: 'alice',
     scope: ['pryv:read'],
     issuedAt: now,
     lastUsedAt: now,

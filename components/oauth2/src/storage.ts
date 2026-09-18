@@ -32,7 +32,10 @@
  * carry no access token, and the client row carries only a one-way
  * `clientSecretHash` (bcrypt). The codes and tokens are 256-bit random
  * values, so an unsalted SHA-256 is enough: there is no dictionary to
- * attack, and the digest is a lookup key, never compared.
+ * attack, and the digest is a lookup key, never compared. Code, refresh and
+ * consumed-marker rows carry the user id only, never the username: the
+ * serving core (always the user's home core) resolves the username from its
+ * local users index.
  *
  * Legacy (pre-hash) rows: `oauth-refresh/` and `oauth-refresh-used/` rows are
  * re-keyed by each core at master boot (`rekeyLegacyRefreshTokens`);
@@ -105,7 +108,6 @@ export interface OAuthCode {
   codeChallenge: string;
   codeChallengeMethod: 'S256';
   userId: string;
-  username: string;
   scope: string[];
   expiresAt: number;
   /**
@@ -143,7 +145,6 @@ export interface LegacyOAuthCode extends OAuthCode {
 export interface OAuthRefresh {
   clientId: string;
   userId: string;
-  username: string;
   scope: string[];
   issuedAt: number;
   lastUsedAt: number;
@@ -181,7 +182,6 @@ export interface OAuthRefresh {
 export interface OAuthRefreshUsed {
   clientId: string;
   userId: string;
-  username: string;
   dataGrantAccessId?: string;
   consumedAt: number; // Date.now() at rotation — drives the grace window
 }
@@ -613,6 +613,35 @@ export async function rekeyLegacyRefreshTokens (platform: PlatformDB, coreId: st
     }
   }
   return moved;
+}
+
+/**
+ * Drop the `username` field that rows written before it was removed still
+ * carry, from this core's refresh rows and consumed markers (`oauth-rt/`,
+ * `oauth-rt-used/`), keeping value and expiry otherwise. Code rows (≤10 min)
+ * are left to expire. MUST run before workers serve `/oauth2/token`: a
+ * rewrite racing a rotation would resurrect the just-consumed row.
+ * Idempotent. Returns the number of rows rewritten.
+ */
+export async function scrubUsernameFromRows (platform: PlatformDB, coreId: string): Promise<number> {
+  const NS = 'access-state/';
+  let scrubbed = 0;
+  for (const prefix of [PREFIX_REFRESH, PREFIX_REFRESH_USED]) {
+    // Filter by core here, as in rekeyLegacyRefreshTokens (`_` in a core id).
+    const self = prefix + coreId + '/';
+    const storeKeys = await platform.listPlatformKvKeys(NS + prefix);
+    for (const storeKey of storeKeys) {
+      const key = storeKey.slice(NS.length);
+      if (!key.startsWith(self)) continue;
+      const entry = await platform.getAccessState(key); // null when expired (and dropped)
+      const value = entry?.value as Record<string, unknown> | undefined;
+      if (entry == null || value == null || !('username' in value)) continue;
+      const { username: _dropped, ...rest } = value;
+      await platform.setAccessState(key, rest, entry.expiresAt);
+      scrubbed++;
+    }
+  }
+  return scrubbed;
 }
 
 // --- Key helpers (owned here, NOT in the engine) --- //

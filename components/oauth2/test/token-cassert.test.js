@@ -130,6 +130,7 @@ function handleToken (deps) {
   return rawHandleToken({
     resolveAccess: async () => ({ accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://alice.pryv.me/' }),
     revokeAccessLocal: async () => {},
+    resolveUsername: async (userId) => (userId === 'u-alice' ? 'alice' : null),
     ...deps,
   });
 }
@@ -140,7 +141,6 @@ async function seedCode (platform, code) {
     codeChallenge: challenge(VERIFIER),
     codeChallengeMethod: 'S256',
     userId: 'u-alice',
-    username: 'alice',
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
     accessId: 'acc-u-alice',

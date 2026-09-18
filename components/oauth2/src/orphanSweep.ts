@@ -33,6 +33,8 @@ export type OrphanSweepDeps = {
   coreId: string;
   /** Delete an access from this core's storage. */
   revokeLocal: (params: { userId: string; username: string; accessId: string; clientId: string }) => Promise<void>;
+  /** Canonical username for a user id on this core, or null when absent (code rows carry the id only). */
+  resolveUsername: (userId: string) => Promise<string | null>;
   /** Legacy HTTP self-revoke; injectable for tests. */
   revokeHttp?: typeof revokeOrphanAccess;
   /** Upper bound of revokes per call, to keep one sweep tick bounded. */
@@ -50,10 +52,13 @@ export async function revokeExpiredCodeOrphans (deps: OrphanSweepDeps): Promise<
     if (attempts >= max) return revoked;
     const v = (value ?? {}) as Record<string, unknown>;
     if (v.coreId !== deps.coreId) continue;
-    if (typeof v.accessId !== 'string' || typeof v.userId !== 'string' || typeof v.username !== 'string' || typeof v.clientId !== 'string') continue;
+    if (typeof v.accessId !== 'string' || typeof v.userId !== 'string' || typeof v.clientId !== 'string') continue;
     attempts++;
     try {
-      await deps.revokeLocal({ userId: v.userId, username: v.username, accessId: v.accessId, clientId: v.clientId });
+      // A user gone since /accept took the access with their storage.
+      const username = await deps.resolveUsername(v.userId);
+      if (username == null) continue;
+      await deps.revokeLocal({ userId: v.userId, username, accessId: v.accessId, clientId: v.clientId });
       revoked++;
     } catch {
       // best-effort, see header

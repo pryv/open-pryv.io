@@ -21,7 +21,7 @@
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker } from '../grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
@@ -59,6 +59,8 @@ export type TokenDeps = {
   resolveAccess?: AuthCodeAccessResolver;
   /** authorization_code: delete an orphaned pre-minted access locally. */
   revokeAccessLocal?: AuthCodeAccessRevoker;
+  /** Canonical username for a user id on this core (rows carry the id only). */
+  resolveUsername: UsernameResolver;
 };
 
 /**
@@ -152,6 +154,7 @@ export function handleToken (deps: TokenDeps) {
             ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
             ...(deps.resolveAccess != null ? { resolveAccess: deps.resolveAccess } : {}),
             ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
+            resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
           dpopJkt,
@@ -172,6 +175,7 @@ export function handleToken (deps: TokenDeps) {
             platform: deps.platform,
             mintRefreshedAccess: deps.mintRefreshedAccess,
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
+            resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
           dpopJkt,
