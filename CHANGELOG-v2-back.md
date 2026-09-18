@@ -25,6 +25,18 @@ sign-in-button CSS, the button HTML and messages) are now copied under
 `components/externals/test/fixtures/assets/` and served by the suite's HTTPS proxy
 at `/test-assets/`; `config/libjs-test-config.yml` points there.
 
+## The last bare-app supertest suites bind on 127.0.0.1; `[SYRO]` leaves nock off
+
+`[UPLD]` (uploads middleware), `[SDTP]` (subdomainToPath), `[SSOC]` (SSO OIDC client
+flow) and `[SSOE]` (SSO end-to-end) still handed supertest a bare express app.
+supertest then listens on `::` at an ephemeral port and connects to `127.0.0.1`; on
+macOS another process already bound to `127.0.0.1` on that port receives the request
+(reproduced standalone: the specific bind wins). That is how `[GY5H]` and `[SSOC11]`
+got a foreign 404, and a plausible source of the `[SSOE]` `socket hang up`, in full
+runs next to another test matrix. All four now use `listeningAgent()`, like
+`coreRequest`. `[SYRO]` also stops calling `useNock()`: it mocks nothing, and it
+routed its requests to the real spawned server through nock's mock socket.
+
 ## Delegation: lineage marker on accesses a delegate grants
 
 The delegation plugin gains an `accesses.create` hook that stamps

@@ -39,7 +39,8 @@ const accessIndex = require('platform/src/accessIndex.ts');
 require('date-utils');
 
 describe('[SYRO] system route', function () {
-  useNock();
+  // No useNock(): this suite mocks nothing, and its requests go to a real
+  // spawned server, which nock would otherwise route through its mock socket.
 
   let fixtures;
   let username;

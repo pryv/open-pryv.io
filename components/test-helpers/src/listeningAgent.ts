@@ -13,18 +13,18 @@ const supertest = require('supertest');
 /**
  * A supertest agent bound to ONE listening server per express app.
  *
- * Handed a bare express app, supertest binds a fresh ephemeral port for every
- * single request and tears it down again. Across a full suite that is
- * thousands of bind/close cycles, and the port churn is a real source of
- * cross-talk: a connection can reach a port that has just been recycled, so a
- * request occasionally receives a response belonging to another listener on
- * the machine, or a desynchronised one. The symptom is unrelated suites
- * failing at random under load (spurious 404s, socket "Parse Error", hook
- * timeouts) while each of them passes in isolation.
+ * Handed a bare express app, supertest calls `app.listen(0)` with no host for
+ * every request (Node binds `::`) but sends the request to `127.0.0.1:<port>`.
+ * On macOS (BSD SO_REUSEADDR semantics) a socket another process binds to
+ * `127.0.0.1` on that same port coexists with the `::` listener and wins the
+ * connection, so the request is answered by a foreign server: spurious 404s,
+ * `socket hang up`, "Parse Error", in full runs next to other test servers,
+ * while each suite passes in isolation. Linux refuses that second bind.
  *
- * Binding once and reusing the listening server removes the churn. Servers are
- * cached per app instance, so a suite that builds its own application gets its
- * own server and never talks to another suite's app by accident.
+ * This agent binds `127.0.0.1` explicitly, once per app instance, and reuses
+ * the listening server: a specific long-lived bind can neither be shadowed nor
+ * recycled. Servers are cached per app, so a suite that builds its own
+ * application gets its own server and never talks to another suite's app.
  */
 
 type ExpressApp = {
