@@ -204,6 +204,7 @@ class DynamicInstanceManager extends EventEmitter {
     this.serverProcess = proc;
     let serverExited = false;
     let exitCode: number | null = null;
+    let exitSignal: string | null = null;
 
     proc.on('exit', (code: any, signal: any) => {
       // stop() and cleanup() drop the reference before killing: an exit while
@@ -221,16 +222,22 @@ class DynamicInstanceManager extends EventEmitter {
       this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
+      exitSignal = signal;
     });
 
-    this.serverProcess.on('error', (err: any) => {
+    proc.on('error', (err: any) => {
       this.logger.error('Server process error:', err);
       serverExited = true;
       exitCode = 1;
-      this.serverProcess = null;
+      if (this.serverProcess === proc) {
+        this.serverProcess = null;
+        this.serverReady = false;
+      }
     });
 
-    this.serverProcess.on('message', (msg: any) => {
+    proc.on('message', (msg: any) => {
+      // A stopped child's late message must not mark its successor ready.
+      if (this.serverProcess !== proc) return;
       if (msg && msg.type === 'test-notification') {
         const event = msg.event;
         if (this.messagePrefix && !event.startsWith(this.messagePrefix)) return;
@@ -246,6 +253,11 @@ class DynamicInstanceManager extends EventEmitter {
       }
       if (serverExited && exitCode != null && exitCode > 0) {
         return callback(new Error('Server failed (code ' + exitCode + ')'));
+      }
+      if (serverExited && !this.serverReady) {
+        // Killed by a signal or exited 0 before announcing readiness: the
+        // caller's first request would otherwise meet a closed port.
+        return callback(new Error('Server failed: exited before ready (code ' + exitCode + ', signal ' + exitSignal + ')'));
       }
       callback();
     })();

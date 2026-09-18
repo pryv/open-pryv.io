@@ -36,13 +36,25 @@ describe('[DIMR] DynamicInstanceManager readiness', function () {
     await dim.ensureStartedAsync({});
     const child = dim.serverProcess;
     const exited = once(child, 'exit');
-    child.kill('SIGKILL'); // not through stop(): an unexpected exit
+    // Not through stop(): an unexpected exit. This logs an expected
+    // "exited unexpectedly after ready" error line in test-sync.log.
+    child.kill('SIGKILL');
     await exited;
 
     const t0 = Date.now();
     await dim.ensureStartedAsync({});
     const waited = Date.now() - t0;
     assert.ok(waited >= READY_DELAY_MS - 50, `restart returned after ${waited} ms, before the new child was ready`);
+  });
+
+  it('[DIM3] a child that exits 0 before announcing readiness fails the start', async () => {
+    dim = new DynamicInstanceManager({ serverFilePath: FAKE_SERVER });
+    process.env.DIM_FAKE_EXIT_EARLY = '1';
+    try {
+      await assert.rejects(dim.ensureStartedAsync({}), /Server failed: exited before ready/);
+    } finally {
+      delete process.env.DIM_FAKE_EXIT_EARLY;
+    }
   });
 
   it('[DIM2] the port probe binds the address the server will bind, below the ephemeral range', async () => {
