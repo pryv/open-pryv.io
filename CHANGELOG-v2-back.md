@@ -12,7 +12,7 @@ core, and the grant still reads the old shape meanwhile. Rolling back the accoun
 core after the upgrade makes client_credentials answer 500 for converted clients until it
 is upgraded again or the client is re-created. Note: a CLI-created `client_id` IS the
 account username, so the username remains in the row key; only an opaque `client_id` would
-remove it. `[OCU1]`-`[OCU5]`, `[OCU7]`.
+remove it. `[OCU1]`-`[OCU7]`.
 
 ## Test-server manager hygiene
 
