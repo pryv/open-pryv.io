@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 
 require('test-helpers/src/api-server-tests-config.ts');
 const path = require('node:path');
+const fs = require('node:fs');
 const { once } = require('node:events');
 const assert = require('node:assert');
 const { DynamicInstanceManager } = require('test-helpers/src/DynamicInstanceManager.ts');
@@ -54,6 +55,39 @@ describe('[DIMR] DynamicInstanceManager readiness', function () {
       await assert.rejects(dim.ensureStartedAsync({}), /Server failed: exited before ready/);
     } finally {
       delete process.env.DIM_FAKE_EXIT_EARLY;
+    }
+  });
+
+  it('[DIM4] creating managers does not add process listeners per instance', async () => {
+    new DynamicInstanceManager({ serverFilePath: FAKE_SERVER }); // eslint-disable-line no-new
+    const before = ['exit', 'SIGINT', 'SIGTERM'].map((e) => process.listenerCount(e));
+    for (let i = 0; i < 5; i++) new DynamicInstanceManager({ serverFilePath: FAKE_SERVER }); // eslint-disable-line no-new
+    const after = ['exit', 'SIGINT', 'SIGTERM'].map((e) => process.listenerCount(e));
+    assert.deepEqual(after, before);
+  });
+
+  it('[DIM5] the temp config file is removed once the child has stopped', async () => {
+    dim = new DynamicInstanceManager({ serverFilePath: FAKE_SERVER });
+    await dim.ensureStartedAsync({});
+    assert.ok(fs.existsSync(dim.tempConfigPath), 'config written for the child');
+    await dim.stopAsync();
+    assert.ok(!fs.existsSync(dim.tempConfigPath), 'config left behind: ' + dim.tempConfigPath);
+  });
+
+  it('[DIM6] stop() completes when the kill is reported as an error event', async () => {
+    dim = new DynamicInstanceManager({ serverFilePath: FAKE_SERVER });
+    await dim.ensureStartedAsync({});
+    const child = dim.serverProcess;
+    const realKill = child.kill.bind(child);
+    // Node reports a signal it could not send as an 'error' event, not a throw.
+    child.kill = () => { setImmediate(() => child.emit('error', new Error('kill failed'))); return false; };
+    try {
+      await Promise.race([
+        dim.stopAsync(),
+        new Promise((resolve, reject) => setTimeout(() => reject(new Error('stop() never called back')), 2000)),
+      ]);
+    } finally {
+      realKill('SIGKILL');
     }
   });
 

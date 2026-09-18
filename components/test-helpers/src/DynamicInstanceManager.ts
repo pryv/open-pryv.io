@@ -65,10 +65,40 @@ class DynamicInstanceManager extends EventEmitter {
     this.restartAsync = util.promisify(this.restart).bind(this);
     this.stopAsync = util.promisify(this.stop).bind(this);
 
-    // Cleanup handlers for graceful shutdown
-    process.on('exit', () => this.cleanup());
-    process.on('SIGINT', () => this.cleanup());
-    process.on('SIGTERM', () => this.cleanup());
+    // Cleanup handlers for graceful shutdown: installed once for all managers
+    // (one set per instance piled up listeners and kept every manager alive).
+    DynamicInstanceManager.installProcessHooks();
+  }
+
+  /** Managers with a running child, killed on process exit / SIGINT / SIGTERM. */
+  private static live = new Set<DynamicInstanceManager>();
+  private static processHooksInstalled = false;
+
+  private static installProcessHooks () {
+    if (DynamicInstanceManager.processHooksInstalled) return;
+    DynamicInstanceManager.processHooksInstalled = true;
+    const killAll = () => {
+      for (const manager of [...DynamicInstanceManager.live]) manager.cleanup();
+    };
+    process.on('exit', killAll);
+    process.on('SIGINT', killAll);
+    process.on('SIGTERM', killAll);
+  }
+
+  /** Drop the reference to the current child (it exited or is being stopped). */
+  private forgetChild () {
+    this.serverProcess = null;
+    this.serverReady = false;
+    DynamicInstanceManager.live.delete(this);
+  }
+
+  /** The child reads its config at startup only; remove it once no child runs. */
+  private removeTempConfig () {
+    try {
+      fs.rmSync(this.tempConfigPath, { force: true });
+    } catch (e) {
+      // Ignore: a leftover temp file is harmless
+    }
   }
 
   private cleanup () {
@@ -78,9 +108,9 @@ class DynamicInstanceManager extends EventEmitter {
       } catch (e) {
         // Ignore
       }
-      this.serverProcess = null;
-      this.serverReady = false;
+      this.forgetChild();
     }
+    this.removeTempConfig();
   }
 
   private isRunning () {
@@ -202,6 +232,7 @@ class DynamicInstanceManager extends EventEmitter {
     this.serverReady = false;
     const proc = spawn(process.argv[0], args, options);
     this.serverProcess = proc;
+    DynamicInstanceManager.live.add(this);
     let serverExited = false;
     let exitCode: number | null = null;
     let exitSignal: string | null = null;
@@ -216,9 +247,10 @@ class DynamicInstanceManager extends EventEmitter {
           this.logger.error(`Test server ${this.url} (pid ${proc.pid}) exited unexpectedly after ready ` +
             `(code ${code}, signal ${signal}); rerun with LOGS=warn to see its own output`);
         }
-        this.serverProcess = null;
-        this.serverReady = false;
+        this.forgetChild();
       }
+      // No newer child reads the config file (stop() waits for this exit before a restart).
+      if (this.serverProcess == null) this.removeTempConfig();
       this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
@@ -229,10 +261,7 @@ class DynamicInstanceManager extends EventEmitter {
       this.logger.error('Server process error:', err);
       serverExited = true;
       exitCode = 1;
-      if (this.serverProcess === proc) {
-        this.serverProcess = null;
-        this.serverReady = false;
-      }
+      if (this.serverProcess === proc) this.forgetChild();
     });
 
     proc.on('message', (msg: any) => {
@@ -280,15 +309,25 @@ class DynamicInstanceManager extends EventEmitter {
     this.logger.debug('Stopping server instance...');
 
     const proc = this.serverProcess;
-    this.serverProcess = null;
-    this.serverReady = false;
+    this.forgetChild();
 
-    const onExit = () => {
-      this.logger.debug('Server instance stopped');
+    // Called once, whether the child exits or the kill fails (thrown, or
+    // reported as an 'error' event, which Node does when a signal cannot be sent).
+    let done = false;
+    const finish = (failed: boolean) => {
+      if (done) return;
+      done = true;
+      proc.removeListener('exit', onExit);
+      proc.removeListener('error', onError);
+      if (failed) this.logger.warn('Failed to kill the server instance');
+      else this.logger.debug('Server instance stopped');
       if (callback) callback();
     };
+    const onExit = () => finish(false);
+    const onError = () => finish(true);
 
     proc.once('exit', onExit);
+    proc.once('error', onError);
 
     try {
       proc.kill('SIGTERM');
@@ -296,9 +335,7 @@ class DynamicInstanceManager extends EventEmitter {
       try {
         proc.kill('SIGKILL');
       } catch (e2) {
-        this.logger.warn('Failed to kill the server instance');
-        proc.removeListener('exit', onExit);
-        if (callback) callback();
+        finish(true);
       }
     }
 

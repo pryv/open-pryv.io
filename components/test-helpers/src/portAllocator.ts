@@ -77,9 +77,10 @@ function isPortAvailable (port: any, host: string = DEFAULT_HOST) {
       resolve(false);
     });
 
+    // Resolve only once the probe socket is closed, so the caller's own
+    // bind does not race the probe's release of the port.
     server.listen(port, host, () => {
-      server.close();
-      resolve(true);
+      server.close(() => resolve(true));
     });
   });
 }
