@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## Test servers: a restart waits for the new server; unexpected exits are logged
+
+`DynamicInstanceManager` reset its readiness flag only in `stop()`. After a spawned test
+server died unexpectedly or was force-killed, the next `ensureStarted()` trusted the stale
+flag and returned before the new server was listening, so the first request failed with
+`ECONNREFUSED` (the `[SYRO]` sighting). The flag is now reset at every spawn, and an
+unexpected exit after ready is logged at error level, which reaches the durable test log.
+The port allocator now probes the address the server binds (`127.0.0.1`; a probe on
+`0.0.0.0` succeeds on macOS over a port another process holds on `127.0.0.1`) and stays
+within 10000-49151, below the ephemeral range, wrapping around instead of running into it.
+`[DIM1]`, `[DIM2]`.
+
 ## Auth-request credential hand-off: server conversion and a shared user-core resolver
 
 `POST /reg/access/:key` converts an inline-token accept into a one-time shared secret
