@@ -676,10 +676,12 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: 'refresh-token reuse detected' });
 
-    // 5. CMC back-channel notify (best-effort; informational — the peer applies no
-    //    teardown to an inbound counterparty-role revoke, it learns at its next
-    //    failing refresh). apiEndpoint is null until the app completed the
-    //    back-channel handshake → skip quietly; delivery failure never rolls back.
+    // 5. CMC back-channel notify (best-effort). The peer ENFORCES an inbound
+    //    revoke it accepts (handleIncomingRevoke tears down the back-channel
+    //    access it holds), which is what a user-initiated revoke does too: the
+    //    data-grant deleted above held this side's only pointer to that access.
+    //    apiEndpoint is null until the app completed the back-channel handshake
+    //    → skip quietly; delivery failure never rolls back.
     const cmcCd = dataGrant?.clientData?.cmc;
     const apiEndpoint = cmcCd?.counterparty?.apiEndpoint ?? cmcCd?.backChannelApiEndpoint;
     if (dataGrant != null && typeof apiEndpoint === 'string' && apiEndpoint.length > 0) {

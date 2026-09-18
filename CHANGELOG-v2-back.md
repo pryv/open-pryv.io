@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## The audited query never carries a token
+
+`MethodContext` drops `token` from `originalQuery` (what the audit trail records as
+`content.query`) next to the `auth` it already dropped. Callers that ask an access to carry a
+chosen token send it in the body, which is not recorded, so this is a guard against a caller
+putting it in the query string rather than a fix for an observed leak. `[MCQT]`.
+
 ## Credentials out of the replicated platform store
 
 **`/reg/access` state** (`api-server/src/routes/reg/accessState.ts`) moved from

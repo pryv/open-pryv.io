@@ -106,7 +106,14 @@ class MethodContext {
     this.readTokenAuthenticated = false;
     if (auth != null) { this.parseAuth(auth); }
     this.originalQuery = structuredClone(query);
+    // No credential in what the audit trail records (`content.query`, see
+    // audit/src/Audit.ts). `auth` is this call's own token. `token` is the one
+    // an app asks an access to carry (auth request, accesses.create,
+    // accesses.checkApp): those callers send it in the body, which is not
+    // recorded, so this is a guard for a caller that puts it in the query
+    // string rather than a fix for an observed leak.
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }
+    if (this.originalQuery?.token) { delete this.originalQuery.token; }
     this._tracing = tracing;
   }
 
