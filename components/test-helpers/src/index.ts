@@ -20,6 +20,7 @@ const parallelWorkerSetup = require('./parallelWorkerSetup.ts');
 const systemStreamFilters = require('./systemStreamFilters.ts');
 const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjectedConfig.ts');
 const { listeningAgent } = require('./listeningAgent.ts');
+const portHolder = require('./portHolder.ts');
 
 // Pattern C helpers (helpers-c.ts) is NOT exported here due to circular dependency.
 // Load it directly via: require('test-helpers/src/helpers-c.ts')
@@ -42,6 +43,7 @@ export {
   syncPrimitives,
   databaseFixture,
   portAllocator,
+  portHolder,
   parallelTestHelper,
   parallelWorkerSetup,
   systemStreamFilters,

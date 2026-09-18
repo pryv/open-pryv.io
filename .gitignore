@@ -18,11 +18,6 @@ service-core.iml
 .nyc_output/
 .v8-coverage/
 .c8_output/
-build_tag
-build/core/release.tar
-build/hfs/release.tar
-build/preview/release.tar
-build/release.tar
 build/test/pryv/*/backup
 build/test/pryv/*/data
 build/test/pryv/*/log

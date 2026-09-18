@@ -18,6 +18,7 @@ const net = require('node:net');
 const { getConfig } = require('@pryv/boiler');
 
 const tcpPubsub = require('../src/tcp_pubsub.ts');
+const { describeBindError } = require('test-helpers/src/portHolder.ts');
 
 // Minimal newline-delimited-JSON broker that speaks the tcp_pubsub protocol, so
 // the module joins as a client and we control when the broker dies.
@@ -56,8 +57,12 @@ function makeRawBroker (port) {
   return {
     listen () {
       return new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+        // A port collision here is an environment problem (another checkout or a
+        // hand-started server on the canonical port), not a pubsub defect: name
+        // the holder rather than failing with a bare EADDRINUSE.
+        const rejectDescribed = (err) => reject(describeBindError(err, port, 'tcpBroker:port'));
+        server.once('error', rejectDescribed);
+        server.listen(port, '127.0.0.1', () => { server.removeListener('error', rejectDescribed); resolve(); });
       });
     },
     // Kill the broker like a crashed/recycled worker: drop every socket, free the port.
