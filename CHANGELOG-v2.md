@@ -20,6 +20,12 @@ shared token could outlive the app access that issued it.
 - **Security (authentication).** A shared access without expiry whose managing app
   access has expired is refused with `403 Access has expired.`, which also covers shared
   accesses created before this change.
+- **Security (webhooks).** A webhook no longer fires once its access has expired (or,
+  for a shared access without expiry, once its managing app access has expired): it
+  becomes `inactive`, as it already did when its access was deleted. An access still
+  held in the server's cache was not checked at all before. Once the access is valid
+  again, reactivate the webhook with `webhooks.update` (`state: 'active'`) from the same
+  access or a personal token.
 
 ### Credential hand-off: one-time shared-secret delivery for `/reg/access`
 

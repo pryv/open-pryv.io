@@ -9,6 +9,9 @@ import type { UserStorage } from '../../../../storages/interfaces/baseStorage/Us
 import type { Webhook as WebhookType } from './Webhook.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
+const timestamp = require('unix-timestamp');
+const cache = require('cache').default;
+const { managingAccessBase } = require('../accesses/refs.ts');
 const { deepMerge } = require('utils');
 const Webhook = require('./Webhook.ts').default;
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -125,15 +128,34 @@ class Repository {
   }
 
   /**
-   * Returns true iff an active (non-tombstoned) access exists for the
-   * given accessId. Defensive: returns true when no accessesStorage was
-   * wired (older constructor callers) so we never falsely deactivate.
+   * Whether a webhook may still fire for this access: it exists, is not
+   * deleted, has not expired and, for a shared access without expiry, its
+   * managing app access has not expired (the rule applied at authentication).
+   * Defensive: true when no accessesStorage was wired (never deactivate by mistake).
    */
-  async accessExists (user: User, accessId: string): Promise<boolean> {
+  async accessIsUsable (user: User, accessId: string): Promise<boolean> {
     if (this.accessesStorage == null) return true;
-    const access: { deleted?: unknown } | null = await fromCallback((cb: NodeCallback) =>
+    const access = await this._findAccess(user, accessId);
+    if (access == null || access.deleted != null) return false;
+    const now = timestamp.now();
+    if (access.expires != null) return now <= access.expires;
+    if (access.type !== 'shared' || typeof access.createdBy !== 'string' || access.createdBy === 'system') return true;
+    let base: string;
+    try {
+      base = managingAccessBase(access.createdBy);
+    } catch {
+      return true;
+    }
+    const managing = await this._findAccess(user, base);
+    return managing == null || managing.expires == null || now <= managing.expires;
+  }
+
+  /** @private An access from the access cache, else from storage. */
+  async _findAccess (user: User, accessId: string): Promise<{ deleted?: unknown; expires?: number | null; type?: string; createdBy?: unknown } | null> {
+    const cached = cache.getAccessLogicForId(user.id, accessId);
+    if (cached != null) return cached;
+    return await fromCallback((cb: NodeCallback) =>
       this.accessesStorage!.findOne(user, { id: accessId }, {}, cb));
-    return access != null && access.deleted == null;
   }
 }
 export default Repository;
