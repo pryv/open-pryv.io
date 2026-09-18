@@ -85,6 +85,12 @@ export default function (api: { register: (...args: unknown[]) => void }) {
         onAccount: describeVerificationMail(config).enabled
       };
     }
+    // Account delegation: lets an auth page offer to grant an app access for
+    // an account the user controls. Same rule as the flags above: an explicit
+    // `service.features.delegation` wins.
+    if (serviceInfo.features.delegation === undefined) {
+      serviceInfo.features.delegation = config.get('delegation:active') !== false;
+    }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to
     // `/reg/user` via reg.{domain} which round-robins across cores and

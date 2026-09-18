@@ -883,7 +883,8 @@ async function main () {
   console.log('  (consent / sign-in / register / password-reset pages). The default below is');
   console.log('  the canonical Pryv-hosted public build; fork app-web-user-account to rebrand.');
   console.log('  Sets `access.defaultAuthUrl` (auth URL emitted by /reg/access) +');
-  console.log('  `auth.passwordResetPageURL` + adds the host to `auth.trustedApps`.');
+  console.log('  `auth.passwordResetPageURL` + `service.account` (account pages) and adds the');
+  console.log('  host to `auth.trustedApps`.');
   const authUiUrl = (await ask('  app-web-user-account base URL', 'https://pryv.github.io/app-web-user-account')).replace(/\/+$/, '');
   console.log();
 
@@ -1145,7 +1146,9 @@ async function main () {
       eventTypes: serviceEventTypes,
       home: serviceHome,
       support: serviceSupport,
-      terms: serviceTerms
+      terms: serviceTerms,
+      // The account app (self-service account pages) is the auth UI itself.
+      account: authUiUrl
     },
     storages: {
       base: { engine: dbEngine },

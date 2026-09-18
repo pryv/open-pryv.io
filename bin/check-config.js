@@ -275,6 +275,13 @@ if (isMissingOrSentinel(get('access.defaultAuthUrl'))) {
   warnings.push('access.defaultAuthUrl missing or unset — /reg/access responses will carry authUrl=null, breaking SDK sign-in flows. Set this to the URL of your app-web-user-account deployment (e.g. https://pryv.github.io/app-web-user-account/auth).');
 }
 
+// service.account — the account app root, served in service info. Without it
+// the sign-in button's "Manage my account" link has to guess the address from
+// the auth page URL.
+if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(get('service.account'))) {
+  warnings.push('service.account is not set — clients cannot link to the account pages. Set it to the root URL of your app-web-user-account deployment (the access.defaultAuthUrl without its trailing /auth).');
+}
+
 // summary
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);

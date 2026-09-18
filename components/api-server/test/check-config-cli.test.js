@@ -91,4 +91,13 @@ services:
     assert.ok(!/emailVerificationPageURL/.test(res.stdout),
       'no email-verification warning is expected: ' + res.stdout);
   });
+
+  it('[CKCF4] an auth UI without service.account gets a warning; setting it clears it', () => {
+    const without = runCheck(BASE);
+    assert.strictEqual(without.status, 0, without.stdout + without.stderr);
+    assert.match(without.stdout, /service\.account is not set/);
+    const withAccount = runCheck(BASE.replace('  terms: https://example.com/terms',
+      '  terms: https://example.com/terms\n  account: https://app.example.com'));
+    assert.ok(!/service\.account/.test(withAccount.stdout), withAccount.stdout);
+  });
 });

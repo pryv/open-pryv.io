@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Service info: `account` and `features.delegation`
+
+- **New (`service.account`).** The root URL of the platform's account app
+  (app-web-user-account), served in `service/info` when configured. The install
+  wizard now writes it from the app-web-user-account URL it already asks for, and
+  `check-config` warns when `access.defaultAuthUrl` is set without it. The lib-js
+  sign-in button uses it for its "Manage my account" link.
+- **New (`features.delegation`).** `true` when account delegation is available
+  (`delegation.active`, on by default); an explicit `service.features.delegation`
+  wins. Auth pages use it to decide whether to offer granting an app access for an
+  account the user controls.
+
 ### Account delegation: granting an app access for a controlled account
 
 A delegate (a parent, a caregiver) can now grant an app access on an account it

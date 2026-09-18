@@ -111,6 +111,26 @@ describe('[SINF] Service', () => {
       });
     });
 
+    it('[SN11] advertises features.delegation from delegation.active; an explicit service.features.delegation wins', async () => {
+      const get = async () => (await coreRequest.get('/' + username + '/service/info')).body.features.delegation;
+      assert.strictEqual(await get(), true);
+      await withInjectedConfig({ delegation: { active: false } }, async () => {
+        assert.strictEqual(await get(), false);
+      });
+      await withInjectedConfig({ service: { features: { delegation: false } } }, async () => {
+        assert.strictEqual(await get(), false);
+      });
+    });
+
+    it('[SN12] serves service.account (the account app root) when configured, and only then', async () => {
+      const plain = await coreRequest.get('/' + username + '/service/info');
+      assert.ok(!('account' in plain.body), 'account must be absent unless configured');
+      await withInjectedConfig({ service: { account: 'https://account.example.com' } }, async () => {
+        const res = await coreRequest.get('/' + username + '/service/info');
+        assert.strictEqual(res.body.account, 'https://account.example.com');
+      });
+    });
+
     it('[SN05] advertises features.mfa.methods=["totp"] under the shipped default', async () => {
       const res = await coreRequest.get('/' + username + '/service/info');
       assert.strictEqual(res.status, 200);
