@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## Delegation: lineage marker on accesses a delegate grants
+
+The delegation plugin gains an `accesses.create` hook that stamps
+`clientData.delegation = { kind: 'delegated-child', relId, delegate, viaAccessId }`
+when the authenticated access is a delegate token or itself such a child (wired
+after the forge-prevention hook, reads the authenticated access only), and an
+`accesses.update` hook that re-applies the stored marker whenever an update touches
+`clientData`. The delete and update lifecycle guards now protect only the markers
+the plugin owns (control, delegate token, invite capability, notify, and any
+unknown kind); a `delegated-child` access follows the normal access rules. The
+detach teardown deletes the relationship's `delegated-child` accesses right after
+the delegate token (`store.findMarkerAccesses`) and logs the count. `[DCHD]`,
+`[DLN01-04]`, `[DUP01-04]`, `[DAD05-07]`, `[DUG04-05]`, `[DDCH1]`.
+
 ## The audited query never carries a token
 
 `MethodContext` drops `token` from `originalQuery` (what the audit trail records as

@@ -77,6 +77,26 @@ function hasDelegationMarker (access: AccessLike | null | undefined): boolean {
   return clientData != null && typeof clientData === 'object' && clientData.delegation != null;
 }
 
+type MarkerLike = { kind?: unknown; relId?: unknown; delegate?: unknown };
+
+/** The marker's `kind`, or null when the access carries no marker. */
+function markerKind (access: AccessLike | null | undefined): unknown {
+  if (!hasDelegationMarker(access)) return null;
+  const marker = access!.clientData!.delegation as MarkerLike;
+  return typeof marker === 'object' ? marker.kind : undefined;
+}
+
+/**
+ * True for a marker the plugin owns (control, delegate PAT, invite
+ * capability, notify, or any kind not known here): such an access is
+ * control-plane state and only the plugin may delete or update it.
+ * A `delegated-child` access is an ordinary grant that happens to have been
+ * made by a delegate; its lifecycle follows the normal access rules.
+ */
+function isPluginOwnedMarker (access: AccessLike | null | undefined): boolean {
+  return hasDelegationMarker(access) && markerKind(access) !== C.CLIENTDATA_KIND.DELEGATED_CHILD;
+}
+
 /** True when a stream-id list references the `:_delegation:*` namespace. */
 function streamIdsReferenceDelegation (streamIds: unknown): boolean {
   if (!Array.isArray(streamIds)) return false;
@@ -120,6 +140,44 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
         { id: DelegationErrorIds.CLIENTDATA_FORBIDDEN }
       ));
     }
+    next();
+  };
+}
+
+// ------------------------------------------------------------------- LINEAGE
+
+type LineageContext = {
+  access?: { id?: string; clientData?: ClientDataLike | null } | null;
+};
+
+/**
+ * accesses.create hook — lineage marker. An access created while
+ * authenticated by a delegate PAT (or by an access such a PAT created) lives
+ * on the controlled account but was granted by the delegate: stamp
+ * `clientData.delegation = { kind: 'delegated-child', relId, delegate,
+ * viaAccessId }` on it, so access-info and audit name the delegate and
+ * detach can revoke it.
+ *
+ * The source of truth is the authenticated access only. MUST run after the
+ * forge-prevention hook, which has already refused any client-supplied
+ * `clientData.delegation`.
+ */
+function createAccessCreateLineageHook (): Middleware {
+  return function delegationAccessCreateLineageHook (context, params, _result, next) {
+    const creator = (context as LineageContext).access;
+    const kind = markerKind(creator);
+    if (kind !== C.CLIENTDATA_KIND.DELEGATE_PAT && kind !== C.CLIENTDATA_KIND.DELEGATED_CHILD) return next();
+    if (params == null) return next();
+    const marker = creator!.clientData!.delegation as MarkerLike;
+    params.clientData = {
+      ...(params.clientData ?? {}),
+      delegation: {
+        kind: C.CLIENTDATA_KIND.DELEGATED_CHILD,
+        relId: marker.relId,
+        delegate: marker.delegate,
+        viaAccessId: creator!.id,
+      },
+    };
     next();
   };
 }
@@ -222,13 +280,14 @@ function createStreamsGetInternalGuardHook (): Middleware {
 // ---------------------------------------------------------- LIFECYCLE PROTECTION
 
 /**
- * accesses.delete hook — reject deletion of a delegation-marker access.
+ * accesses.delete hook — reject deletion of a plugin-owned access.
  *
  * Wired AFTER the delete chain has resolved the targets: `params.accessToDelete`
  * (the primary target loaded by checkAccessForDeletion) and
  * `params.relatedAccessesToDelete` (cascade descendants). If any target carries
- * `clientData.delegation`, reject — the plugin owns these and tears them down
- * itself during detach.
+ * a plugin-owned `clientData.delegation` marker, reject — the plugin tears
+ * those down itself during detach. A `delegated-child` access is revocable
+ * like any access (by the account owner, the delegate, or the app itself).
  */
 function createAccessesDeleteGuardHook (deps: Deps): Middleware {
   return function delegationAccessesDeleteGuard (context, params, result, next) {
@@ -236,7 +295,7 @@ function createAccessesDeleteGuardHook (deps: Deps): Middleware {
     if (params?.accessToDelete != null) targets.push(params.accessToDelete);
     if (Array.isArray(params?.relatedAccessesToDelete)) targets.push(...params.relatedAccessesToDelete);
     for (const target of targets) {
-      if (hasDelegationMarker(target)) {
+      if (isPluginOwnedMarker(target)) {
         return next(deps.errors.invalidOperation(
           'This access is managed by the account-delegation plugin and may not be deleted directly',
           { id: DelegationErrorIds.MANAGED_RESOURCE }
@@ -248,19 +307,44 @@ function createAccessesDeleteGuardHook (deps: Deps): Middleware {
 }
 
 /**
- * accesses.update hook — reject updating an access that already carries a
- * `clientData.delegation` marker. The pre-image target is loaded onto
- * `params.targetAccess` by loadAccessForUpdate; this hook is wired directly
- * after it.
+ * accesses.update hook — reject updating an access that carries a
+ * plugin-owned `clientData.delegation` marker. The pre-image target is loaded
+ * onto `params.targetAccess` by loadAccessForUpdate; this hook is wired
+ * directly after it. A `delegated-child` access is updatable like any access
+ * (its marker is kept by `createAccessesUpdateMarkerPreserveHook`).
  */
 function createAccessesUpdateGuardHook (deps: Deps): Middleware {
   return function delegationAccessesUpdateGuard (context, params, result, next) {
-    if (hasDelegationMarker(params?.targetAccess)) {
+    if (isPluginOwnedMarker(params?.targetAccess)) {
       return next(deps.errors.invalidOperation(
         'This access is managed by the account-delegation plugin and may not be updated directly',
         { id: DelegationErrorIds.MANAGED_RESOURCE }
       ));
     }
+    next();
+  };
+}
+
+/**
+ * accesses.update hook — keep a `delegated-child` marker across updates.
+ * Storage merges an update's `clientData` one level deep and removes a key
+ * sent as `null`, so `{ delegation: null }` (which the forge hook lets
+ * through: it refuses values only) or a null `clientData` would drop the
+ * marker, and with it the delegate's attribution and the detach
+ * revocation. Wired after the update guard; the
+ * forge-prevention hook has already refused a client-supplied `delegation`,
+ * so the only value that can reach storage is the stored one.
+ */
+function createAccessesUpdateMarkerPreserveHook (): Middleware {
+  return function delegationAccessesUpdateMarkerPreserve (_context, params, _result, next) {
+    const target = params?.targetAccess;
+    if (markerKind(target) !== C.CLIENTDATA_KIND.DELEGATED_CHILD) return next();
+    const update = params?.update;
+    if (update == null || update.clientData === undefined) return next();
+    update.clientData = {
+      ...(update.clientData ?? {}),
+      delegation: target!.clientData!.delegation,
+    };
     next();
   };
 }
@@ -367,8 +451,10 @@ function createEventsUpdateGuardHook (deps: Deps): Middleware {
 export {
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
+  createAccessCreateLineageHook,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
+  createAccessesUpdateMarkerPreserveHook,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,

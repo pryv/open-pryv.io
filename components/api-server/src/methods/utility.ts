@@ -84,6 +84,16 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
           controlledUsername: context.user.username,
           delegate: delMarker.delegate,
         };
+      } else if (delMarker.kind === 'delegated-child') {
+        // An app/shared access granted on the controlled account by a
+        // delegate: the holder acts on the controlled account, and the
+        // grant came through the delegation, not the account owner.
+        result.delegation = {
+          isDelegatedAccess: true,
+          controlledUsername: context.user.username,
+          delegate: delMarker.delegate,
+          grantedVia: 'app',
+        };
       } else if (delMarker.kind === 'control') {
         result.delegation = {
           kind: 'control',

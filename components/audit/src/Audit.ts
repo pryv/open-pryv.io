@@ -220,13 +220,13 @@ function buildDefaultEvent (context: MethodContext): AuditEventLike {
   if (context.callerId != null) {
     event.content.callerId = context.callerId;
   }
-  // Delegation attribution — when the acting access is a delegate PAT (or the
-  // control access itself), stamp the delegate identity onto the audit event.
+  // Delegation attribution — when the acting access is a delegate PAT, the
+  // control access itself, or an access a delegate granted (delegated-child), stamp the delegate identity onto the audit event.
   // Per-delegate attribution is already automatic (each delegate has its own
   // access, so records land under `access-<its-id>`); this makes the acting
   // delegate legible on the record itself. Additive.
   const delMarker = context.access != null ? context.access.clientData?.delegation : undefined;
-  if (delMarker != null && (delMarker.kind === 'delegate-pat' || delMarker.kind === 'control')) {
+  if (delMarker != null && (delMarker.kind === 'delegate-pat' || delMarker.kind === 'control' || delMarker.kind === 'delegated-child')) {
     event.content.delegation = {
       delegateUsername: delMarker.delegate?.username,
       delegateHostSlug: delMarker.delegate?.hostSlug

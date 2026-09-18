@@ -223,6 +223,15 @@ async function findMarkerAccess (mall: MallLike, userId: string, relId: string, 
   return null;
 }
 
+/** Every access carrying a marker of `kind` for `relId`. */
+async function findMarkerAccesses (mall: MallLike, userId: string, relId: string, kind: string): Promise<AccessRow[]> {
+  const list = await mall.accesses.get(userId, {});
+  return (list || []).filter((a) => {
+    const d = a?.clientData?.delegation as { kind?: string; relId?: string } | undefined;
+    return d != null && d.kind === kind && d.relId === relId;
+  });
+}
+
 async function deleteAccessById (mall: MallLike, userId: string, accessId: string): Promise<void> {
   if (mall.accesses.delete == null) return;
   await ignoreNotFound(mall.accesses.delete(userId, { id: accessId }));
@@ -315,6 +324,7 @@ export {
   deleteMirror,
   mintMarkerAccess,
   findMarkerAccess,
+  findMarkerAccesses,
   deleteAccessById,
   findAccessByNameType,
   mintPersonalAccess,

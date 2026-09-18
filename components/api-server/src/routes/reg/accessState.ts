@@ -58,6 +58,10 @@ type BuildStateParams = {
    * un-annotated request behaving exactly as it did before, and it is
    * what the ACCEPTED handler tests to decide whether to enforce. */
   consent?: unknown;
+  /** Who the app wants the access for: 'allow' (the auth page may offer
+   * the accounts the user controls), 'deny' (the signed-in account only),
+   * or a username to preselect. Validated by the route; set only when sent. */
+  actAs?: string;
 };
 
 type AccessState = {
@@ -166,6 +170,7 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
     state.expireAfter = params.expireAfter;
   }
   if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
+  if (typeof params.actAs === 'string') state.actAs = params.actAs;
   return { key, state, expiresAt };
 }
 
@@ -237,10 +242,14 @@ async function markDelivered (key: string, state: AccessState, retentionMs: numb
  * The server's record of what the APP asked for (`requestedPermissions`,
  * `consent`, `requestingAppId`, the URLs, the expiry) is not the poster's
  * to change.
+ *
+ * `delegation` is the display hint an auth page posts when it granted the
+ * access on an account the user controls; the route validates its shape
+ * before it gets here.
  */
 const UPDATABLE_FIELDS = Object.freeze([
   'status', 'username', 'token', 'apiEndpoint',
-  'reasonId', 'message', 'redirectUrl'
+  'reasonId', 'message', 'redirectUrl', 'delegation'
 ]);
 
 /**

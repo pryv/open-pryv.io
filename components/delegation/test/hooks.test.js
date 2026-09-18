@@ -20,6 +20,8 @@ const {
   createAccessUpdateForgePreventionHook,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
+  createAccessesUpdateMarkerPreserveHook,
+  createAccessCreateLineageHook,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
@@ -52,6 +54,8 @@ function runMiddleware (mw, context, params, result) {
 }
 
 const marker = { kind: 'control', relId: 'rel1' };
+const childMarker = { kind: 'delegated-child', relId: 'rel1', delegate: { username: 'parent', hostSlug: 'core-a' }, viaAccessId: 'pat1' };
+const OWNED_KINDS = ['control', 'delegate-pat', 'invite-capability', 'notify', 'some-future-kind'];
 
 describe('[DELHOOK] delegation/hooks', () => {
   describe('[DELHOOK-AC] createAccessCreateForgePreventionHook', () => {
@@ -182,6 +186,127 @@ describe('[DELHOOK] delegation/hooks', () => {
       const { factory } = fakeErrors();
       const mw = createAccessesUpdateGuardHook({ errors: factory });
       assert.equal(await runMiddleware(mw, {}, {}, {}), undefined);
+    });
+
+    it('[DUG04] passthrough for a delegated-child access (updatable like any grant)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessesUpdateGuardHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { targetAccess: { id: 'a1', clientData: { delegation: childMarker } } }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[DUG05] still rejects every plugin-owned kind, and an unknown kind', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessesUpdateGuardHook({ errors: factory });
+      for (const kind of OWNED_KINDS) {
+        const err = await runMiddleware(mw, {}, { targetAccess: { id: 'a1', clientData: { delegation: { kind, relId: 'rel1' } } } }, {});
+        assert.ok(err instanceof Error, kind);
+        assert.equal(err.details.id, 'delegation-managed-resource');
+      }
+    });
+  });
+
+  describe('[DELHOOK-AD2] createAccessesDeleteGuardHook and delegated-child accesses', () => {
+    it('[DAD05] passthrough for a delegated-child primary target', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessesDeleteGuardHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { accessToDelete: { id: 'a1', clientData: { delegation: childMarker } } }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[DAD06] passthrough when delegated-child accesses are among related cascade targets', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessesDeleteGuardHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        accessToDelete: { id: 'a1', clientData: { delegation: childMarker } },
+        relatedAccessesToDelete: [{ id: 'a2', clientData: { delegation: { ...childMarker, viaAccessId: 'a1' } } }],
+      }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[DAD07] still rejects every plugin-owned kind, and an unknown kind', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessesDeleteGuardHook({ errors: factory });
+      for (const kind of OWNED_KINDS) {
+        const owned = { id: 'a3', clientData: { delegation: { kind, relId: 'rel1' } } };
+        for (const params of [
+          { accessToDelete: owned },
+          { accessToDelete: { id: 'a1', clientData: { delegation: childMarker } }, relatedAccessesToDelete: [owned] },
+        ]) {
+          const err = await runMiddleware(mw, {}, params, {});
+          assert.ok(err instanceof Error, kind);
+          assert.equal(err.details.id, 'delegation-managed-resource');
+        }
+      }
+    });
+  });
+
+  describe('[DELHOOK-UP] createAccessesUpdateMarkerPreserveHook', () => {
+    const child = () => ({ id: 'a1', clientData: { delegation: childMarker, x: 1 } });
+
+    it('[DUP01] re-injects the marker when the update replaces clientData', async () => {
+      const params = { targetAccess: child(), update: { clientData: { y: 2 } } };
+      assert.equal(await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {}), undefined);
+      assert.deepEqual(params.update.clientData, { y: 2, delegation: childMarker });
+    });
+
+    it('[DUP02] a null clientData becomes the marker alone', async () => {
+      const params = { targetAccess: child(), update: { clientData: null } };
+      await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {});
+      assert.deepEqual(params.update.clientData, { delegation: childMarker });
+    });
+
+    it('[DUP03] an update without clientData is left untouched', async () => {
+      const params = { targetAccess: child(), update: { name: 'renamed' } };
+      await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {});
+      assert.deepEqual(params.update, { name: 'renamed' });
+    });
+
+    it('[DUP04] an access without a delegated-child marker is left untouched', async () => {
+      for (const clientData of [{ x: 1 }, null, { delegation: { kind: 'control', relId: 'rel1' } }]) {
+        const params = { targetAccess: { id: 'a1', clientData }, update: { clientData: { y: 2 } } };
+        await runMiddleware(createAccessesUpdateMarkerPreserveHook(), {}, params, {});
+        assert.deepEqual(params.update.clientData, { y: 2 });
+      }
+    });
+  });
+
+  describe('[DELHOOK-LN] createAccessCreateLineageHook', () => {
+    const delegate = { username: 'parent', hostSlug: 'core-a' };
+
+    it('[DLN01] an access created by a delegate PAT is stamped delegated-child', async () => {
+      const context = { access: { id: 'pat1', clientData: { delegation: { kind: 'delegate-pat', relId: 'rel1', delegate } } } };
+      const params = { name: 'app', clientData: { app: 'data' } };
+      assert.equal(await runMiddleware(createAccessCreateLineageHook(), context, params, {}), undefined);
+      assert.deepEqual(params.clientData, {
+        app: 'data',
+        delegation: { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'pat1' },
+      });
+    });
+
+    it('[DLN02] an access created by a delegated child carries the same relationship, via the child', async () => {
+      const context = { access: { id: 'child1', clientData: { delegation: { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'pat1' } } } };
+      const params = { name: 'shared' };
+      await runMiddleware(createAccessCreateLineageHook(), context, params, {});
+      assert.deepEqual(params.clientData, {
+        delegation: { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'child1' },
+      });
+    });
+
+    it('[DLN03] accesses without a marker do not stamp', async () => {
+      for (const access of [{ id: 'p1', type: 'personal', clientData: null }, { id: 'app1', clientData: { x: 1 } }, null]) {
+        const params = { name: 'x', clientData: { x: 1 } };
+        await runMiddleware(createAccessCreateLineageHook(), { access }, params, {});
+        assert.deepEqual(params.clientData, { x: 1 });
+      }
+    });
+
+    it('[DLN04] control, notify and invite-capability markers do not stamp', async () => {
+      for (const kind of ['control', 'notify', 'invite-capability']) {
+        const params = { name: 'x' };
+        await runMiddleware(createAccessCreateLineageHook(), { access: { id: 'm1', clientData: { delegation: { kind, relId: 'rel1' } } } }, params, {});
+        assert.equal(params.clientData, undefined, kind);
+      }
     });
   });
 

@@ -99,7 +99,8 @@ function isGenuineLoginAccess (access: GateAccessLike): boolean {
  *     outlives the anchor: (1) destroy the delegate PAT's backing session AND
  *     delete the PAT access (both required — deleting the access does not kill
  *     the session, and the session alone would let a re-issue resurrect the same
- *     token); (2) delete the control access (after this, issueToken can mint no
+ *     token); (1b) delete every `delegated-child` access of the relationship
+ *     (what the delegate granted on B); (2) delete the control access (after this, issueToken can mint no
  *     further PAT); (3) sweep any lingering invite capability; (4) delete the
  *     anchor; then (5) best-effort notify A via the notify-marker channel so A
  *     drops its mirror + notify access. If the notify is lost, A's mirror lingers
@@ -112,7 +113,7 @@ async function detachDelegate (deps: DetachDeps, params: {
   bUserId: string;
   bUsername: string;
   delegateUsername: string;
-}): Promise<Record<string, never>> {
+}): Promise<{ revokedChildAccesses?: number }> {
   const { mall, now, self } = deps;
   const delegateUsername = String(params.delegateUsername || '').trim();
   if (delegateUsername.length === 0) {
@@ -161,6 +162,15 @@ async function detachDelegate (deps: DetachDeps, params: {
     await store.deleteAccessById(mall, params.bUserId, pat.id);
   }
 
+  // (1b) every access the delegate granted on B through the delegation (app
+  // and shared accesses stamped `delegated-child`, grandchildren included):
+  // revoking the delegation revokes what it granted. Right after the PAT, so
+  // nothing it minted outlives it.
+  const children = await store.findMarkerAccesses(mall, params.bUserId, relId, C.CLIENTDATA_KIND.DELEGATED_CHILD);
+  for (const child of children) {
+    await store.deleteAccessById(mall, params.bUserId, child.id);
+  }
+
   // (2) control access — after this, issueToken authenticates nothing and can
   // mint no further PAT.
   const control = await store.findMarkerAccess(mall, params.bUserId, relId, C.CLIENTDATA_KIND.CONTROL);
@@ -181,7 +191,7 @@ async function detachDelegate (deps: DetachDeps, params: {
     try { await deps.notifyDetach(notifyEndpoint, relId); } catch (_e) { /* lazy reconciliation on A */ }
   }
   void now;
-  return {};
+  return { revokedChildAccesses: children.length };
 }
 
 // =================================================== A-side: detach notify

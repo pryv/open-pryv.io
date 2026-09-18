@@ -718,6 +718,112 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('acting for a controlled account (actAs, delegation hint)', () => {
+    const { withInjectedConfig } = require('test-helpers');
+    const BODY = {
+      requestingAppId: 'test-app',
+      requestedPermissions: [{ streamId: 'diary', level: 'read' }]
+    };
+    const HINT = {
+      isDelegatedAccess: true,
+      controlledUsername: 'kiduser',
+      delegate: { username: 'parentuser', hostSlug: 'core-a' }
+    };
+    const ACCEPT_KID = {
+      status: 'ACCEPTED',
+      username: 'kiduser',
+      token: 'kid-app-token',
+      apiEndpoint: 'https://kid-app-token@kiduser.pryv.me/',
+      delegation: HINT
+    };
+    const newKey = async (extra) => {
+      const res = await coreRequest.post('/reg/access').send({ ...BODY, ...extra });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.key;
+    };
+
+    it('[RA88] actAs is stored and echoed on the NEED_SIGNIN poll only when sent', async () => {
+      for (const actAs of ['allow', 'deny', 'kiduser']) {
+        const poll = await coreRequest.get('/reg/access/' + await newKey({ actAs }));
+        assert.strictEqual(poll.body.actAs, actAs);
+      }
+      const plain = await coreRequest.get('/reg/access/' + await newKey());
+      assert.ok(!('actAs' in plain.body), 'actAs must be absent');
+      const nulled = await coreRequest.get('/reg/access/' + await newKey({ actAs: null }));
+      assert.ok(!('actAs' in nulled.body), 'a null actAs is not sent');
+    });
+
+    it('[RA89] an invalid actAs is refused with 400', async () => {
+      for (const actAs of ['', 'Not A User', 42, true, { username: 'kiduser' }, ['allow']]) {
+        const res = await coreRequest.post('/reg/access').send({ ...BODY, actAs });
+        assert.strictEqual(res.status, 400, 'actAs ' + JSON.stringify(actAs));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      }
+    });
+
+    it('[RA90] the delegation hint is echoed on the POST response and on every ACCEPTED poll of the retention window', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 1000 } }, async () => {
+        const key = await newKey({ actAs: 'allow' });
+        const post = await coreRequest.post('/reg/access/' + key).send(ACCEPT_KID);
+        assert.strictEqual(post.status, 200);
+        assert.deepStrictEqual(post.body.delegation, HINT);
+        for (let i = 0; i < 2; i++) {
+          const poll = await coreRequest.get('/reg/access/' + key);
+          assert.strictEqual(poll.status, 200);
+          assert.strictEqual(poll.body.username, 'kiduser');
+          assert.deepStrictEqual(poll.body.delegation, HINT);
+        }
+      });
+    });
+
+    it('[RA91] a malformed hint is refused with 400 and leaves the request pending', async () => {
+      const bad = [
+        'yes',
+        [],
+        { ...HINT, isDelegatedAccess: 'true' },
+        { ...HINT, controlledUsername: '' },
+        { ...HINT, delegate: 'parentuser' },
+        { ...HINT, delegate: { hostSlug: 'core-a' } },
+        { ...HINT, delegate: { username: 'parentuser', token: 'leak' } },
+        { ...HINT, extra: 1 }
+      ];
+      const key = await newKey();
+      for (const delegation of bad) {
+        const res = await coreRequest.post('/reg/access/' + key).send({ ...ACCEPT_KID, delegation });
+        assert.strictEqual(res.status, 400, JSON.stringify(delegation));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      }
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(poll.body.status, 'NEED_SIGNIN');
+    });
+
+    it('[RA92] a hint naming another account than the granted one is refused', async () => {
+      const key = await newKey();
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ ...ACCEPT_KID, username: 'parentuser' });
+      assert.strictEqual(res.status, 400);
+      assert.match(res.body.error.message, /controlledUsername/);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + key)).body.status, 'NEED_SIGNIN');
+    });
+
+    it('[RA93] a hint is refused on a non-ACCEPTED outcome', async () => {
+      const key = await newKey();
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ status: 'REFUSED', reasonId: 'USER_DENIED', message: 'No', delegation: HINT });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + key)).body.status, 'NEED_SIGNIN');
+    });
+
+    it('[RA94] without a hint the ACCEPTED bodies keep exactly their legacy keys', async () => {
+      const key = await newKey();
+      const { delegation, ...legacy } = ACCEPT_KID;
+      const post = await coreRequest.post('/reg/access/' + key).send({ ...legacy, delegation: null });
+      assert.deepStrictEqual(Object.keys(post.body).sort(), ['apiEndpoint', 'status', 'token', 'username']);
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.deepStrictEqual(Object.keys(poll.body).sort(), ['apiEndpoint', 'status', 'token', 'username']);
+    });
+  });
+
   describe('POST /reg/access/:key (errors)', () => {
     it('[RA40] must return 400 for invalid status', async () => {
       const createRes = await coreRequest.post('/reg/access')

@@ -74,6 +74,58 @@ function isTrustedAuthUrl (candidate: string, trustedEntries: unknown): boolean 
   return false;
 }
 
+const { USERNAME_REGEXP_STR } = require('../../schema/helpers.ts');
+const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+
+/**
+ * `actAs` on a new request: 'allow', 'deny', or the username to preselect.
+ * Returns an error message, or null when valid.
+ */
+function actAsError (actAs: unknown): string | null {
+  if (actAs === 'allow' || actAs === 'deny') return null;
+  if (typeof actAs === 'string' && USERNAME_RE.test(actAs)) return null;
+  return 'actAs must be "allow", "deny" or a username';
+}
+
+type DelegationHint = {
+  isDelegatedAccess: true;
+  controlledUsername: string;
+  delegate: { username: string; hostSlug?: string };
+};
+
+function isShortString (value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && value.length <= 256;
+}
+
+/**
+ * The `delegation` display hint an auth page posts with ACCEPTED when it
+ * granted the access on an account the user controls. Only the known keys
+ * are accepted and `controlledUsername` must name the account the access
+ * lives on. Returns a clean copy, or an error message.
+ */
+function parseDelegationHint (value: unknown, username: unknown): DelegationHint | string {
+  const message = 'delegation must be { isDelegatedAccess: true, controlledUsername, delegate: { username, hostSlug? } }';
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return message;
+  const hint = value as Record<string, unknown>;
+  if (Object.keys(hint).some((k) => !['isDelegatedAccess', 'controlledUsername', 'delegate'].includes(k))) return message;
+  if (hint.isDelegatedAccess !== true || !isShortString(hint.controlledUsername)) return message;
+  const delegate = hint.delegate as Record<string, unknown> | null;
+  if (delegate == null || typeof delegate !== 'object' || Array.isArray(delegate)) return message;
+  if (Object.keys(delegate).some((k) => k !== 'username' && k !== 'hostSlug')) return message;
+  if (!isShortString(delegate.username)) return message;
+  if (delegate.hostSlug !== undefined && !isShortString(delegate.hostSlug)) return message;
+  if (hint.controlledUsername !== username) {
+    return 'delegation.controlledUsername must be the username the access was granted on';
+  }
+  const clean: DelegationHint = {
+    isDelegatedAccess: true,
+    controlledUsername: hint.controlledUsername,
+    delegate: { username: delegate.username }
+  };
+  if (delegate.hostSlug !== undefined) clean.delegate.hostSlug = delegate.hostSlug as string;
+  return clean;
+}
+
 /** Default life of a decided request after a poll first reads it. */
 const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
 
@@ -122,7 +174,20 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
-      const { key, state, expiresAt } = accessState.buildState({ ...req.body, consent: consentForm });
+      // Same `!= null` rule as `consent`: an absent option serialised as
+      // null is "not sent".
+      if (req.body.actAs != null) {
+        const message = actAsError(req.body.actAs);
+        if (message != null) {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message } });
+        }
+      }
+
+      const { key, state, expiresAt } = accessState.buildState({
+        ...req.body,
+        consent: consentForm,
+        actAs: req.body.actAs ?? undefined
+      });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
       // per core (core-local store, never replicated), so every poll GET
@@ -263,10 +328,16 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (state.deviceName != null) response.deviceName = state.deviceName;
         if (state.expireAfter != null) response.expireAfter = state.expireAfter;
         if (state.token != null) response.token = state.token;
+        // Who the app wants the access for; absent when it did not say.
+        if (state.actAs != null) response.actAs = state.actAs;
       } else if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;
         response.apiEndpoint = state.apiEndpoint;
+        // Display hint only, present when the access was granted on an
+        // account the user controls; `accessInfo().delegation` on the
+        // token is the authoritative answer.
+        if (state.delegation != null) response.delegation = state.delegation;
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
         response.reasonId = state.reasonId;
         response.message = state.message;
@@ -310,6 +381,25 @@ export default function (expressApp: ExpressApp, app: AppLike) {
             error: { id: 'invalid-parameters', message: 'ACCEPTED requires username and token' }
           });
         }
+      }
+
+      // The `delegation` hint only describes an accepted grant. Validated
+      // before anything is written, so a bad post leaves the request
+      // pending and the page can post again.
+      let update = req.body;
+      if (req.body.delegation != null) {
+        if (status !== 'ACCEPTED') {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'delegation is only valid with status ACCEPTED' }
+          });
+        }
+        const hint = parseDelegationHint(req.body.delegation, req.body.username);
+        if (typeof hint === 'string') {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message: hint } });
+        }
+        update = { ...req.body, delegation: hint };
+      } else if (req.body.delegation === null) {
+        update = { ...req.body, delegation: undefined };
       }
 
       if (status === 'REDIRECTED') {
@@ -367,7 +457,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
-      const state = await accessState.update(req.params.key, req.body);
+      const state = await accessState.update(req.params.key, update);
       if (!state) {
         return res.status(400).json({
           error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }
@@ -381,6 +471,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         response.username = state.username;
         response.token = state.token;
         response.apiEndpoint = state.apiEndpoint;
+        if (state.delegation != null) response.delegation = state.delegation;
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
         response.reasonId = state.reasonId;
         response.message = state.message;

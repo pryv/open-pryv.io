@@ -62,8 +62,10 @@ export const DelegationErrorIds = errorIds.DelegationErrorIds;
 export const {
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
+  createAccessCreateLineageHook,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
+  createAccessesUpdateMarkerPreserveHook,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,

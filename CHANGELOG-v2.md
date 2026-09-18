@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Account delegation: granting an app access for a controlled account
+
+A delegate (a parent, a caregiver) can now grant an app access on an account it
+controls, the way the account owner grants one: an auth page authenticated with the
+delegate token creates the app access on the controlled account and posts it back.
+
+- **New (`accessInfo.delegation.grantedVia`).** An access created while
+  authenticated by a delegate token carries a server-set lineage marker, and
+  `access-info` reports it as
+  `delegation: { isDelegatedAccess: true, controlledUsername, delegate, grantedVia: 'app' }`.
+  The same applies to the shared accesses such an app creates. The audit records of
+  their actions on the controlled account name the delegate (`content.delegation`),
+  as for the delegate token itself. The marker cannot be set, changed or removed by
+  any client, and it is kept across `accesses.update`.
+- **New (`/reg/access` `actAs`).** `POST /reg/access` accepts an optional
+  `actAs`: `'allow'` (the auth page may offer the accounts the user controls),
+  `'deny'` (the signed-in account only) or a username to preselect. Any other value
+  is a `400 invalid-parameters`. It is echoed on the `NEED_SIGNIN` poll only when
+  sent.
+- **New (`/reg/access` `delegation`).** An auth page that granted the access on a
+  controlled account posts `delegation: { isDelegatedAccess: true,
+  controlledUsername, delegate: { username, hostSlug? } }` with `ACCEPTED`;
+  `controlledUsername` must equal `username`, unknown keys and non-`ACCEPTED`
+  statuses are refused with `400`, and the request stays pending. It is echoed on
+  the `ACCEPTED` poll and on the POST response. It is a display hint:
+  `accessInfo().delegation` on the token is authoritative. Bodies without it are
+  unchanged.
+- **Changed (`accesses.checkApp`).** The lineage marker is not compared as app
+  data, so such an access matches a later request exactly as the owner's own grant
+  would.
+- **Changed, BREAKING for apps granted through a delegation: detach revokes them.**
+  `delegations.detachDelegate` now also deletes every access granted through the
+  delegation (and what those apps created). An app that relied on keeping such an
+  access after the delegation ended loses it; the account owner can grant it again.
+  Accesses the account owner granted are untouched. Such accesses can otherwise be
+  updated or revoked like any access: by the account owner, by the delegate, or by
+  the app itself.
+
 ## 2.0.0-rc.22 — 2026-09-18
 
 ### `service/info.version` now reports the release on native installs too

@@ -110,6 +110,10 @@ const CLIENTDATA_KIND = {
   DELEGATE_PAT: 'delegate-pat',
   INVITE_CAPABILITY: 'invite-capability',
   NOTIFY: 'notify',
+  // Stamped by the server on an access created while authenticated by a
+  // delegate PAT: the access lives on the controlled account but was granted
+  // by the delegate. Never client-supplied (forge hooks).
+  DELEGATED_CHILD: 'delegated-child',
 } as const;
 
 // Relationship lifecycle statuses.

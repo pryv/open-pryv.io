@@ -200,6 +200,28 @@ describe('delegation detach — active teardown', function () {
     assert.equal((spies.delivered || []).length, 0, 'no admin-key cancel on the active path');
   });
 
+  it('[DDCH1] revokes the accesses granted through the delegation, and only those', async function () {
+    const mall = makeFakeMall();
+    await seedActiveRelationship(mall);
+    const delegate = { username: NAME_A, hostSlug: HOST_SLUG };
+    const child = await mall.accesses.create(USER_B, {
+      type: 'app', name: 'app-for-kid', clientData: { delegation: { kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId: 'rel-1', delegate, viaAccessId: 'pat' } },
+    });
+    await mall.accesses.create(USER_B, {
+      type: 'shared', name: 'shared-by-child', clientData: { delegation: { kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId: 'rel-1', delegate, viaAccessId: child.id } },
+    });
+    await mall.accesses.create(USER_B, {
+      type: 'app', name: 'other-relationship', clientData: { delegation: { kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId: 'rel-other', delegate, viaAccessId: 'pat2' } },
+    });
+    await mall.accesses.create(USER_B, { type: 'app', name: 'granted-by-kid', clientData: { x: 1 } });
+
+    const outcome = await detach.detachDelegate(makeDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+
+    assert.equal(outcome.revokedChildAccesses, 2);
+    const left = (await mall.accesses.get(USER_B)).map((a) => a.name).sort();
+    assert.deepEqual(left, ['granted-by-kid', 'other-relationship']);
+  });
+
   it('tears down cleanly when no PAT was ever issued', async function () {
     const mall = makeFakeMall();
     await seedActiveRelationship(mall, { withPat: false });

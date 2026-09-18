@@ -599,9 +599,12 @@ export default async function produceDelegationsApiMethods (api: { register (...
           deliverInvite: makeDeliverInvite(),
           notifyDetach: makeNotifyDetach(delegateUsername),
         };
-        await delegation.detachDelegate(deps, {
+        const outcome = await delegation.detachDelegate(deps, {
           bUserId: context.user.id, bUsername: context.user.username, delegateUsername,
         });
+        if (outcome.revokedChildAccesses) {
+          logger.info('detach revoked ' + outcome.revokedChildAccesses + ' access(es) granted through the delegation');
+        }
         next();
       } catch (err) { next(toApiError(err)); }
     });

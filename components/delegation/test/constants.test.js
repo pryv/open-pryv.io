@@ -60,6 +60,7 @@ describe('[DELCONST] delegation/constants', () => {
       DELEGATE_PAT: 'delegate-pat',
       INVITE_CAPABILITY: 'invite-capability',
       NOTIFY: 'notify',
+      DELEGATED_CHILD: 'delegated-child',
     });
     assert.deepEqual(C.STATUS, { INVITE: 'invite', ACTIVE: 'active', STALE: 'stale' });
   });

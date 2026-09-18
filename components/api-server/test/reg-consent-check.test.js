@@ -195,4 +195,33 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     assert.strictEqual(fetchFn.calls.length, 0);
     assert.deepStrictEqual(outcome, { ok: false, kind: 'grant', reason: 'token-invalid' });
   });
+
+  it('[RC07] an app access granted through a delegation on another core is checked like any app access', async () => {
+    // access-info on the controlled account's core also carries the
+    // `delegation` block for such an access; the check reads type and
+    // permissions only.
+    const delegation = {
+      isDelegatedAccess: true,
+      controlledUsername: 'kid',
+      delegate: { username: 'parent', hostSlug: 'core-a' },
+      grantedVia: 'app'
+    };
+    const ok = await checkAcceptedGrant(
+      { app: APP, username: 'kid', token: 'tok-1', consentForm: CONSENT_FORM },
+      {
+        platform: remotePlatform('https://core-b.example.com/'),
+        fetch: accessInfoFetch(200, { id: 'acc-1', type: 'app', permissions: [{ streamId: 'diary', level: 'read' }], delegation })
+      }
+    );
+    assert.deepStrictEqual(ok, { ok: true });
+    const mismatched = await checkAcceptedGrant(
+      { app: APP, username: 'kid', token: 'tok-1', consentForm: CONSENT_FORM },
+      {
+        platform: remotePlatform('https://core-b.example.com/'),
+        fetch: accessInfoFetch(200, { id: 'acc-1', type: 'app', permissions: [{ streamId: 'weight', level: 'read' }], delegation })
+      }
+    );
+    assert.strictEqual(mismatched.kind, 'grant');
+    assert.strictEqual(mismatched.reason, 'mandatory-refused');
+  });
 });

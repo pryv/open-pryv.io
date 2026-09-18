@@ -286,6 +286,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const delegationAccessesDeleteGuardHook = delegationActive
     ? delegation.createAccessesDeleteGuardHook({ errors })
     : delegationPassthrough;
+  const delegationAccessCreateLineageHook = delegationActive
+    ? delegation.createAccessCreateLineageHook()
+    : delegationPassthrough;
+  const delegationAccessesUpdateMarkerPreserveHook = delegationActive
+    ? delegation.createAccessesUpdateMarkerPreserveHook()
+    : delegationPassthrough;
 
   api.register(
     'accesses.create',
@@ -294,6 +300,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcAccessCreateForgePreventionHook,
     delegationAccessCreateForgePreventionHook,
+    delegationAccessCreateLineageHook,
     dpopBindingCreateGuard,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
     createDataStructureFromPermissions,
@@ -577,6 +584,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
     delegationAccessesUpdateGuardHook,
+    delegationAccessesUpdateMarkerPreserveHook,
     dpopBindingUpdateGuard,
     oauthNameUpdateGuard,
     applyAccountStreamsValidationForUpdate,
@@ -668,9 +676,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   /**
    * A DPoP key binding (`clientData.dpop`) is written only by the token
    * issuance path and must survive every accesses.update — the update
-   * replaces `clientData` WHOLESALE, so without this guard any caller
-   * able to update the access could send a dpop-free clientData and
-   * silently downgrade a sender-constrained token to Bearer. Rule: when
+   * merges `clientData` one level deep and a `null` sub-key removes that
+   * key, so without this guard any caller able to update the access could
+   * send `{ dpop: null }` (or a null clientData) and silently downgrade a
+   * sender-constrained token to Bearer. Rule: when
    * the update touches clientData, the binding (present or absent) must
    * come through unchanged. Defense-in-depth: with uniform enforcement
    * a stolen bound token cannot reach this method in the first place.
@@ -1127,8 +1136,17 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         return false;
       }
     }
-    // Compare clientData (treat null and undefined as equivalent)
-    if (!isDeepStrictEqual(access.clientData ?? null, clientData ?? null)) {
+    // Compare clientData (treat null and undefined as equivalent). The
+    // lineage marker the server stamps on an access granted through a
+    // delegation is not the app's data: leave it out, so such an access
+    // matches exactly as the same grant made by the account owner would.
+    let accessClientData = (access.clientData ?? null) as Record<string, unknown> | null;
+    const marker = accessClientData?.delegation as { kind?: unknown } | undefined;
+    if (marker?.kind === 'delegated-child') {
+      const { delegation: _marker, ...appData } = accessClientData!;
+      accessClientData = Object.keys(appData).length > 0 ? appData : null;
+    }
+    if (!isDeepStrictEqual(accessClientData, clientData ?? null)) {
       return false;
     }
     return true;
