@@ -15,6 +15,16 @@ never carry both. The "which core hosts the user, decided by the platform and ne
 posted apiEndpoint" resolution is extracted from the consent check into
 `routes/reg/userCore.ts` (`resolveUserCore`) and shared by both callers. `[RA95]`-`[RA106]`.
 
+## The externals suite no longer depends on the public assets site
+
+The lib-js integration suite (`components/externals`) pointed
+`service.assets.definitions` at the public assets site on GitHub Pages, so the
+`[ASTX]` and `[ACNX]` lib-js tests failed with a connect timeout whenever that
+site was slow or unreachable. The assets they read (`index.json`, the default and
+sign-in-button CSS, the button HTML and messages) are now copied under
+`components/externals/test/fixtures/assets/` and served by the suite's HTTPS proxy
+at `/test-assets/`; `config/libjs-test-config.yml` points there.
+
 ## Delegation: lineage marker on accesses a delegate grants
 
 The delegation plugin gains an `accesses.create` hook that stamps

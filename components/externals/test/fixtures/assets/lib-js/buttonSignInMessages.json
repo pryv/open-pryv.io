@@ -1,0 +1,15 @@
+{
+  "LOADING": {
+    "en": "..."
+  },
+  "ERROR": {
+    "en": "Error"
+  },
+  "LOGIN": {
+    "en": "Login"
+  },
+  "LOGOUT_CONFIRM": {
+    "en": "Logout ?",
+    "fr": "Se Deconnecter ?"
+  }
+}

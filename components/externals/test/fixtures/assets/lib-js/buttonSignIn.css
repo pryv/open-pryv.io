@@ -1,0 +1,84 @@
+/* Style Sign-in button FULL CSS */
+.pryv-access-btn-signin {
+  position: relative;
+  display: inline-block;
+  font-size: 0;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.pryv-access-btn {
+  font-family: 'Roboto', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  text-decoration: none;
+  display: inline-block;
+  padding: 2px 6px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: #FFF;
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+  background-color: #BD1727;
+  border: 1px solid #9D0717;
+  -webkit-border-radius: 3px;
+  -moz-border-radius: 3px;
+  border-radius: 3px;
+}
+
+.pryv-access-btn-signin > .pryv-access-btn {
+  position: relative;
+  -webkit-border-radius: 0;
+  -moz-border-radius: 0;
+  border-radius: 0;
+}
+
+.pryv-access-btn-signin > .pryv-access-btn:first-child {
+  margin-left: 0;
+  -webkit-border-bottom-left-radius: 3px;
+  border-bottom-left-radius: 3px;
+  -webkit-border-top-left-radius: 3px;
+  border-top-left-radius: 3px;
+  -moz-border-radius-bottomleft: 3px;
+  -moz-border-radius-topleft: 3px;
+}
+
+.pryv-access-btn-signin > .pryv-access-btn:first-child span {
+  background-image: url(buttonSigninLogoOnly.png);
+  background-position: 0px 4px;
+  background-repeat: no-repeat;
+  text-indent: -90000px;
+  display: block;
+  width: 27px;
+}
+
+.pryv-access-btn-signin > .pryv-access-btn:last-child{
+  border-left: none;
+  -webkit-border-top-right-radius: 3px;
+  border-top-right-radius: 3px;
+  -webkit-border-bottom-right-radius: 3px;
+  border-bottom-right-radius: 3px;
+  -moz-border-radius-topright: 3px;
+  -moz-border-radius-bottomright: 3px;
+}
+
+.pryv-access-btn a:hover, .pryv-access-btn a:focus {
+  color: #FFF;
+  text-decoration: none;
+}
+
+/* Style Sign-in button WITH IMAGE */
+.pryv-access-btn-signin-image {
+  text-decoration: none;
+  display: inline-block;
+  padding: 0px 36px;
+  margin-bottom: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: #FFFFFF;
+  background-image: url(buttonSignIn.png);
+  background-position: 0px 4px;
+  background-repeat: no-repeat;
+  text-transform: uppercase;
+  line-height: 34px;
+}
