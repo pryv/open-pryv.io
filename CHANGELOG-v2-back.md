@@ -7,10 +7,13 @@ server died unexpectedly or was force-killed, the next `ensureStarted()` trusted
 flag and returned before the new server was listening, so the first request failed with
 `ECONNREFUSED` (the `[SYRO]` sighting). The flag is now reset at every spawn, and an
 unexpected exit after ready is logged at error level, which reaches the durable test log.
+Exit, error and readiness messages only act for the current child (a stopped child's late
+message cannot mark its successor ready), and a child killed by a signal or exiting 0
+before announcing readiness now fails the start instead of resolving it.
 The port allocator now probes the address the server binds (`127.0.0.1`; a probe on
 `0.0.0.0` succeeds on macOS over a port another process holds on `127.0.0.1`) and stays
 within 10000-49151, below the ephemeral range, wrapping around instead of running into it.
-`[DIM1]`, `[DIM2]`.
+`[DIM1]`-`[DIM3]`.
 
 ## Auth-request credential hand-off: server conversion and a shared user-core resolver
 
