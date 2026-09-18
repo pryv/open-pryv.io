@@ -1,5 +1,24 @@
 # Changelog - Internal (no API impact)
 
+## A port collision in a test now names the process holding the port
+
+A suite that could not bind its port failed with a bare `EADDRINUSE`, which reads
+like a defect in the code under test; in practice another checkout on the same
+machine, or a server started by hand on the canonical port, was holding it. The
+new `test-helpers/src/portHolder.ts` reports the holding pid and command line and
+names the setting to move the suite's port to. Wired into the pubsub
+broker-reconnect test, next to the existing check in the externals suite.
+
+## The legacy manual Docker build path is retired
+
+`build/build`, `build/Dockerfile` and `build/scripts/build_name` built an image
+from the v1 base image and stamped `.api-version` themselves, a second mechanism
+that could disagree with the tag a release is built from. Releases are built by
+CI from the root `Dockerfile`, which stamps the version from the image tag, so
+the legacy path is removed (it also still installed with `--omit=optional`,
+which strips sharp's native binaries). `build/test/README.md` now builds its test
+image from the root `Dockerfile`.
+
 ## `just install` keeps optional dependencies
 
 `just install` ran `npm install --omit=optional`, which removes sharp's native
