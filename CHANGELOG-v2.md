@@ -92,8 +92,8 @@ delegate token creates the app access on the controlled account and posts it bac
   and what those apps created). An app that relied on keeping such an
   access after the delegation ended loses it; the account owner can grant it again.
   Accesses the account owner granted are untouched. Such accesses can otherwise be
-  updated or revoked like any access: by the account owner, by the delegate, or by
-  the app itself.
+  updated or revoked by the account owner or the delegate, and revoked by the app
+  itself (no access can update itself).
 
 ## 2.0.0-rc.22 — 2026-09-18
 
