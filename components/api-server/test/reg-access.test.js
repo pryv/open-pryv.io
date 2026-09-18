@@ -824,6 +824,288 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('credential hand-off (shared-secret delivery)', () => {
+    // Real user + real app tokens minted in storage: the conversion path
+    // creates a shared secret authenticated AS the app token, so the token
+    // must resolve to a live access on this (single) core.
+    const { withInjectedConfig } = require('test-helpers');
+    let fixtures, fixtureUser, username;
+    let counter = 0;
+
+    const OFFER = [
+      { streamId: 'diary', level: 'read', defaultName: 'Journal' },
+      { streamId: 'weight', level: 'read' }
+    ];
+    const SIDECAR = { allowUserChoice: true, mandatory: ['diary'], optIn: ['weight'] };
+
+    before(async function () {
+      this.timeout(30000);
+      fixtures = getNewFixture();
+      username = cuid();
+      fixtureUser = await fixtures.user(username);
+      await fixtureUser.stream({ id: 'diary', name: 'Journal' });
+      await fixtureUser.stream({ id: 'weight', name: 'Weight' });
+    });
+
+    after(async function () {
+      this.timeout(30000);
+      await fixtures.clean();
+    });
+
+    async function mintApp (permissions) {
+      const n = ++counter;
+      const token = 'tok-' + n + '-' + cuid();
+      await fixtureUser.access({
+        id: 'acc-' + n + '-' + cuid(),
+        type: 'app',
+        name: 'handoff-app-' + n,
+        token,
+        permissions
+      });
+      return token;
+    }
+
+    async function createRequest (extra) {
+      const res = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: OFFER, ...extra });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.key;
+    }
+
+    const apiEndpoint = () => 'https://' + username + '.pryv.me/';
+
+    function accept (key, token) {
+      return coreRequest.post('/reg/access/' + key)
+        .send({ status: 'ACCEPTED', username, token, apiEndpoint: apiEndpoint() });
+    }
+
+    // A syntactically valid shared-secret key (eventId.randomPart), for the
+    // shape-validation tests that must not depend on a real secret existing.
+    const fakeKey = (seed) => cuid() + '.' + String(seed).repeat(40).slice(0, 40);
+
+    it('[RA95] the 201 echoes credentialHandoff only when the request set it; an unknown value is refused', async () => {
+      const withIt = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: OFFER, credentialHandoff: 'shared-secret' });
+      assert.strictEqual(withIt.status, 201);
+      assert.strictEqual(withIt.body.credentialHandoff, 'shared-secret');
+
+      const without = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: OFFER });
+      assert.strictEqual(without.status, 201);
+      assert.strictEqual(without.body.credentialHandoff, undefined);
+
+      const bad = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: OFFER, credentialHandoff: 'nope' });
+      assert.strictEqual(bad.status, 400);
+      assert.strictEqual(bad.body.error.id, 'invalid-parameters');
+    });
+
+    it('[RA96] the NEED_SIGNIN poll echoes credentialHandoff, and omits it otherwise', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(poll.status, 201);
+      assert.strictEqual(poll.body.credentialHandoff, 'shared-secret');
+
+      const key2 = await createRequest({});
+      const poll2 = await coreRequest.get('/reg/access/' + key2);
+      assert.strictEqual(poll2.body.credentialHandoff, undefined);
+    });
+
+    it('[RA97] a shape-L accept on a hand-off request converts to a one-time secret; the poll carries only the key and the app retrieves once', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.status, 'ACCEPTED');
+      assert.strictEqual(res.body.handoff.type, 'shared-secret');
+      assert.ok(res.body.handoff.key, 'expected a handoff key');
+      assert.strictEqual(res.body.token, undefined);
+
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.strictEqual(poll.body.status, 'ACCEPTED');
+      assert.strictEqual(poll.body.handoff.key, res.body.handoff.key);
+      assert.strictEqual(poll.body.token, undefined);
+      assert.strictEqual(poll.body.apiEndpoint, apiEndpoint());
+
+      const stored = await accessState.get(key);
+      assert.strictEqual(stored.token, undefined, 'the token must not rest in the state');
+      assert.ok(stored.handoff);
+
+      const r1 = await coreRequest.post('/' + username + '/shared-secrets/retrieve')
+        .send({ key: poll.body.handoff.key });
+      assert.strictEqual(r1.status, 200, JSON.stringify(r1.body));
+      assert.deepStrictEqual(r1.body.secret, { username, token, apiEndpoint: apiEndpoint() });
+
+      const r2 = await coreRequest.post('/' + username + '/shared-secrets/retrieve')
+        .send({ key: poll.body.handoff.key });
+      assert.strictEqual(r2.status, 403, JSON.stringify(r2.body));
+      assert.strictEqual(r2.body.error.data.id, 'shared-secret-unavailable');
+      assert.strictEqual(r2.body.secret, undefined, 'the credential must never be served twice');
+    });
+
+    it('[RA98] without credentialHandoff a shape-L accept is byte-identical to the legacy ACCEPTED body', async () => {
+      const key = await createRequest({});
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body, { status: 'ACCEPTED', username, token, apiEndpoint: apiEndpoint() });
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.deepStrictEqual(poll.body, { status: 'ACCEPTED', username, token, apiEndpoint: apiEndpoint() });
+    });
+
+    it('[RA99] the invalid accept shapes are each refused with 400 naming the hand-off rule, leaving the request pending', async () => {
+      // (a) handoff on a request that did not ask for it
+      const plainKey = await createRequest({});
+      const a = await coreRequest.post('/reg/access/' + plainKey)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: apiEndpoint(), handoff: { type: 'shared-secret', key: fakeKey('a') } });
+      assert.strictEqual(a.status, 400);
+      assert.strictEqual(a.body.error.id, 'invalid-parameters');
+      assert.match(a.body.error.message, /credentialHandoff/,
+        'the refusal must name the hand-off rule, not the legacy "token required"');
+      assert.strictEqual((await coreRequest.get('/reg/access/' + plainKey)).body.status, 'NEED_SIGNIN');
+
+      // (b) token AND handoff both present
+      const kB = await createRequest({ credentialHandoff: 'shared-secret' });
+      const b = await coreRequest.post('/reg/access/' + kB)
+        .send({ status: 'ACCEPTED', username, token: 'tok', apiEndpoint: apiEndpoint(), handoff: { type: 'shared-secret', key: fakeKey('b') } });
+      assert.strictEqual(b.status, 400);
+      assert.match(b.body.error.message, /not both/);
+
+      // (c) malformed handoff.key
+      const kC = await createRequest({ credentialHandoff: 'shared-secret' });
+      const c = await coreRequest.post('/reg/access/' + kC)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: apiEndpoint(), handoff: { type: 'shared-secret', key: 'not a key' } });
+      assert.strictEqual(c.status, 400);
+      assert.match(c.body.error.message, /handoff\.key/);
+
+      // (d) wrong handoff.type
+      const kD = await createRequest({ credentialHandoff: 'shared-secret' });
+      const d = await coreRequest.post('/reg/access/' + kD)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: apiEndpoint(), handoff: { type: 'x', key: fakeKey('d') } });
+      assert.strictEqual(d.status, 400);
+      assert.match(d.body.error.message, /handoff\.type/);
+
+      // (e) apiEndpoint that is not http(s)
+      const kE = await createRequest({ credentialHandoff: 'shared-secret' });
+      const e = await coreRequest.post('/reg/access/' + kE)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: 'javascript:alert(1)', handoff: { type: 'shared-secret', key: fakeKey('e') } });
+      assert.strictEqual(e.status, 400);
+      assert.match(e.body.error.message, /apiEndpoint/);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + kE)).body.status, 'NEED_SIGNIN');
+    });
+
+    it('[RA100] a UI-created hand-off (shape H) without a consent form is stored verbatim; the poll carries no token', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const handoffKey = fakeKey('h');
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: apiEndpoint(), handoff: { type: 'shared-secret', key: handoffKey } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.deepStrictEqual(res.body.handoff, { type: 'shared-secret', key: handoffKey });
+      assert.strictEqual(res.body.token, undefined);
+
+      const stored = await accessState.get(key);
+      assert.strictEqual(stored.token, undefined);
+      assert.deepStrictEqual(stored.handoff, { type: 'shared-secret', key: handoffKey });
+
+      const poll = await coreRequest.get('/reg/access/' + key);
+      assert.deepStrictEqual(poll.body.handoff, { type: 'shared-secret', key: handoffKey });
+      assert.strictEqual(poll.body.token, undefined);
+    });
+
+    it('[RA101] a consent-form request refuses a UI-created hand-off (shape H) and stays pending', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret', consent: SIDECAR });
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ status: 'ACCEPTED', username, apiEndpoint: apiEndpoint(), handoff: { type: 'shared-secret', key: fakeKey('c') } });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.match(res.body.error.message, /consent-form/);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + key)).body.status, 'NEED_SIGNIN');
+    });
+
+    it('[RA102] when shared secrets are disabled the conversion falls back to inline delivery', async () => {
+      await withInjectedConfig({ sharedSecrets: { enabled: false } }, async () => {
+        const key = await createRequest({ credentialHandoff: 'shared-secret' });
+        const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+        const res = await accept(key, token);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.token, token);
+        assert.strictEqual(res.body.handoff, undefined);
+      });
+    });
+
+    it('[RA103] an access forbidden from creating shared secrets falls back to inline delivery', async () => {
+      const key = await createRequest({ credentialHandoff: 'shared-secret' });
+      const token = await mintApp([
+        { streamId: 'diary', level: 'read' },
+        { feature: 'secretSharing', setting: 'forbidden' }
+      ]);
+      const res = await accept(key, token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.token, token);
+      assert.strictEqual(res.body.handoff, undefined);
+    });
+
+    it('[RA104] a consent-form hand-off request checks the grant first: a bad grant refuses with no secret, a good grant converts', async () => {
+      const badKey = await createRequest({ credentialHandoff: 'shared-secret', consent: SIDECAR });
+      const badToken = await mintApp([{ streamId: 'weight', level: 'read' }]); // drops mandatory diary
+      const badRes = await accept(badKey, badToken);
+      assert.strictEqual(badRes.status, 400);
+      assert.strictEqual(badRes.body.error.id, 'invalid-consent-grant');
+      assert.strictEqual((await coreRequest.get('/reg/access/' + badKey)).body.status, 'NEED_SIGNIN');
+
+      const goodKey = await createRequest({ credentialHandoff: 'shared-secret', consent: SIDECAR });
+      const goodToken = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const goodRes = await accept(goodKey, goodToken);
+      assert.strictEqual(goodRes.status, 200, JSON.stringify(goodRes.body));
+      assert.strictEqual(goodRes.body.handoff.type, 'shared-secret');
+      assert.strictEqual(goodRes.body.token, undefined);
+    });
+
+    it('[RA105] a hand-off ACCEPTED body is served through the retention window, then the key is unknown', async () => {
+      await withInjectedConfig({ access: { terminalRetentionMs: 1000 } }, async () => {
+        const key = await createRequest({ credentialHandoff: 'shared-secret' });
+        const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+        await accept(key, token);
+        const p1 = await coreRequest.get('/reg/access/' + key);
+        assert.ok(p1.body.handoff.key);
+        const p2 = await coreRequest.get('/reg/access/' + key);
+        assert.ok(p2.body.handoff.key);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const p3 = await coreRequest.get('/reg/access/' + key);
+        assert.strictEqual(p3.status, 400);
+        assert.strictEqual(p3.body.error.id, 'unknown-access-key');
+      });
+    });
+
+    it('[RA106] the conversion creates the secret on the platform-resolved core, never the posted apiEndpoint host', async () => {
+      const { createHandoff } = require('../src/routes/reg/credentialHandoff.ts');
+      const calls = [];
+      const fakePlatform = {
+        isSingleCore: false,
+        coreId: 'coreA',
+        getUserCore: async () => 'coreB',
+        coreIdToUrl: (id) => 'https://' + id + '.core.test/'
+      };
+      const result = await createHandoff({
+        app: global.app,
+        username,
+        token: 'tok-remote',
+        apiEndpoint: 'https://posted.example/' + username + '/',
+        requestingAppId: 'test-app',
+        ttlSeconds: 600,
+        platform: fakePlatform,
+        fetch: async (url) => {
+          calls.push(url);
+          return { ok: true, json: async () => ({ sharedSecret: { key: fakeKey('r') } }) };
+        }
+      });
+      assert.ok('handoff' in result, JSON.stringify(result));
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0], 'https://coreB.core.test/' + encodeURIComponent(username) + '/shared-secrets');
+    });
+  });
+
   describe('POST /reg/access/:key (errors)', () => {
     it('[RA40] must return 400 for invalid status', async () => {
       const createRes = await coreRequest.post('/reg/access')

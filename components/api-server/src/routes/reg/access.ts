@@ -7,6 +7,8 @@
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import * as sharedSecrets from 'shared-secrets';
+import { createHandoff, parseHandoffField, tokenlessEndpointError } from './credentialHandoff.ts';
 const require = createRequire(import.meta.url);
 /**
  * OAuth-style access authorization routes.
@@ -128,6 +130,9 @@ function parseDelegationHint (value: unknown, username: unknown): DelegationHint
 
 /** Default life of a decided request after a poll first reads it. */
 const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
+/** Default life of a credential hand-off secret, in seconds. Clamped to the
+ * request's remaining life and to `sharedSecrets:maxTtl` when created. */
+const DEFAULT_HANDOFF_TTL_S = 600;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   // Read per request, so a config change (or a test override) applies.
@@ -135,6 +140,31 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   function terminalRetentionMs (): number {
     const value = app.config.get('access:terminalRetentionMs');
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_TERMINAL_RETENTION_MS;
+  }
+
+  // Read per request, same reason as terminalRetentionMs.
+  function handoffTtlSeconds (): number {
+    const value = app.config.get('access:handoffTtl');
+    return typeof value === 'number' && value > 0 ? value : DEFAULT_HANDOFF_TTL_S;
+  }
+
+  /**
+   * The ACCEPTED body, shared by the poll (GET) and the accept response
+   * (POST). A hand-off state carries a one-time `handoff` key and NO token
+   * (the token moved into the secret); an inline state carries the token.
+   * `delegation` is a non-secret display hint that rides at the top level in
+   * either shape.
+   */
+  function acceptedBody (state: Record<string, unknown>): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      status: 'ACCEPTED',
+      username: state.username,
+      apiEndpoint: state.apiEndpoint
+    };
+    if (state.handoff != null) body.handoff = state.handoff;
+    else body.token = state.token;
+    if (state.delegation != null) body.delegation = state.delegation;
+    return body;
   }
 
   /**
@@ -183,10 +213,25 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
+      // Delivery mode. Absent means today's inline delivery. The only value
+      // the server understands is 'shared-secret'; anything else fails loud
+      // (the authUrl precedent) rather than degrading silently. The 201 echo
+      // below is the app's detection signal, same as `consent`.
+      let credentialHandoff: 'shared-secret' | undefined;
+      if (req.body.credentialHandoff != null) {
+        if (req.body.credentialHandoff !== 'shared-secret') {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: "credentialHandoff must be 'shared-secret'" }
+          });
+        }
+        credentialHandoff = 'shared-secret';
+      }
+
       const { key, state, expiresAt } = accessState.buildState({
         ...req.body,
         consent: consentForm,
-        actAs: req.body.actAs ?? undefined
+        actAs: req.body.actAs ?? undefined,
+        credentialHandoff
       });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
@@ -281,6 +326,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // here, an older one simply does not, and the flow degrades to
       // all-or-nothing rather than failing.
       if (state.consent !== undefined) created.consent = state.consent;
+      // Echoed only when the server understood the delivery mode; an older
+      // core drops the field and echoes nothing, which is how a new client
+      // learns it will get inline delivery instead.
+      if (state.credentialHandoff !== undefined) created.credentialHandoff = state.credentialHandoff;
       res.status(201).json(created);
     } catch (err) { next(err); }
   });
@@ -330,14 +379,14 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (state.token != null) response.token = state.token;
         // Who the app wants the access for; absent when it did not say.
         if (state.actAs != null) response.actAs = state.actAs;
+        // Delivery mode, so the auth UI can decide whether to create the
+        // secret itself (shape H) or post the token inline. Absent otherwise.
+        if (state.credentialHandoff != null) response.credentialHandoff = state.credentialHandoff;
       } else if (state.status === 'ACCEPTED') {
-        response.username = state.username;
-        response.token = state.token;
-        response.apiEndpoint = state.apiEndpoint;
-        // Display hint only, present when the access was granted on an
-        // account the user controls; `accessInfo().delegation` on the
-        // token is the authoritative answer.
-        if (state.delegation != null) response.delegation = state.delegation;
+        // Either a one-time `handoff` key (no token here) or the inline
+        // token; `delegation` rides at the top level in either shape.
+        // `accessInfo().delegation` on the token is the authoritative answer.
+        Object.assign(response, acceptedBody(state));
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
         response.reasonId = state.reasonId;
         response.message = state.message;
@@ -371,22 +420,72 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         });
       }
 
+      // Load the pending request once: the accept shape rules depend on
+      // whether it asked for a credential hand-off and whether it carried a
+      // consent form.
+      const pending = await accessState.get(req.params.key);
+      if (!pending) {
+        return res.status(400).json({
+          error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }
+        });
+      }
+
+      const hasHandoffField = req.body.handoff != null;
+      const hasToken = typeof req.body.token === 'string' && req.body.token !== '';
+      const wantsHandoff = pending.credentialHandoff === 'shared-secret';
+      const isDelegatedGrant = req.body.delegation != null;
+
       if (status === 'ACCEPTED') {
-        // Types, not just presence: these two are used to look up an access,
+        // username is always required (both shapes): it looks up the access,
         // and a non-string would fault deep in the loader rather than being
         // reported as the malformed request it is.
-        if (typeof req.body.username !== 'string' || req.body.username === '' ||
-            typeof req.body.token !== 'string' || req.body.token === '') {
+        if (typeof req.body.username !== 'string' || req.body.username === '') {
           return res.status(400).json({
-            error: { id: 'invalid-parameters', message: 'ACCEPTED requires username and token' }
+            error: { id: 'invalid-parameters', message: 'ACCEPTED requires a username' }
           });
+        }
+        // Exactly one credential shape: the inline token, or a hand-off key,
+        // never both and never neither. "Both" is what would let a
+        // half-migrated UI leak a token beside a hand-off.
+        if (hasHandoffField && hasToken) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'ACCEPTED must carry either token (inline) or handoff, not both' }
+          });
+        }
+        if (!hasHandoffField && !hasToken) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'ACCEPTED requires a token or a handoff' }
+          });
+        }
+        // A UI-created hand-off (shape H) is accepted only when the request
+        // asked for it, is NOT a consent-form request (the grant check needs
+        // the token, so those post inline and the server converts), and is NOT
+        // a delegated grant (ruling § 13: a delegation-derived token may not
+        // create the secret, so those deliver inline). Each refusal leaves the
+        // request NEED_SIGNIN so the page can post again.
+        if (hasHandoffField) {
+          if (!wantsHandoff) {
+            return res.status(400).json({
+              error: { id: 'invalid-parameters', message: 'handoff is only valid when the request set credentialHandoff' }
+            });
+          }
+          if (pending.consent != null) {
+            return res.status(400).json({
+              error: { id: 'invalid-parameters', message: 'a consent-form request cannot use a UI-created handoff; post the token inline' }
+            });
+          }
+          if (isDelegatedGrant) {
+            return res.status(400).json({
+              error: { id: 'invalid-parameters', message: 'a delegated grant cannot use a UI-created handoff; post the token inline' }
+            });
+          }
         }
       }
 
       // The `delegation` hint only describes an accepted grant. Validated
       // before anything is written, so a bad post leaves the request
       // pending and the page can post again.
-      let update = req.body;
+      let update: Record<string, unknown> = req.body;
       if (req.body.delegation != null) {
         if (status !== 'ACCEPTED') {
           return res.status(400).json({
@@ -415,45 +514,83 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // minted and asks whether it matches what the user was offered.
       // Without a form there is nothing to check against (the rule would
       // be "grant everything"), so the endpoint keeps its long-standing
-      // opaque-token contract for every other integrator UI.
-      if (status === 'ACCEPTED') {
-        const pending = await accessState.get(req.params.key);
-        if (pending?.consent != null) {
-          const outcome = await checkAcceptedGrant({
-            app,
-            username: req.body.username,
-            token: req.body.token,
-            consentForm: pending.consent
+      // opaque-token contract for every other integrator UI. A consent-form
+      // request always posts the token inline (shape H is refused above), so
+      // the token is present here.
+      if (status === 'ACCEPTED' && pending.consent != null) {
+        const outcome = await checkAcceptedGrant({
+          app,
+          username: req.body.username,
+          token: req.body.token,
+          consentForm: pending.consent
+        });
+        if (!outcome.ok && outcome.kind === 'grant') {
+          // The state is deliberately left untouched: still NEED_SIGNIN,
+          // so the page can correct the grant and post again.
+          return res.status(400).json({
+            error: {
+              id: 'invalid-consent-grant',
+              message: consentGrantMessage(outcome.reason),
+              data: {
+                reason: outcome.reason,
+                ...(outcome.offending != null ? { offending: outcome.offending } : {})
+              }
+            }
           });
-          if (!outcome.ok && outcome.kind === 'grant') {
-            // The state is deliberately left untouched: still NEED_SIGNIN,
-            // so the page can correct the grant and post again.
-            return res.status(400).json({
-              error: {
-                id: 'invalid-consent-grant',
-                message: consentGrantMessage(outcome.reason),
-                data: {
-                  reason: outcome.reason,
-                  ...(outcome.offending != null ? { offending: outcome.offending } : {})
-                }
-              }
-            });
-          }
-          if (!outcome.ok) {
-            // Could not perform the check. Never a pass (that would be a
-            // consent bypass) and never an opaque 500: the operator is
-            // told which of the three it was, in the log and in the body.
-            logger.error('consent check unavailable on access request ' + req.params.key +
-              ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
-            return res.status(503).json({
-              error: {
-                id: 'consent-check-unavailable',
-                message: 'The consent grant could not be verified by this server. ' +
-                  'The access request is unchanged; retry shortly.',
-                data: { reason: outcome.reason }
-              }
-            });
-          }
+        }
+        if (!outcome.ok) {
+          // Could not perform the check. Never a pass (that would be a
+          // consent bypass) and never an opaque 500: the operator is
+          // told which of the three it was, in the log and in the body.
+          logger.error('consent check unavailable on access request ' + req.params.key +
+            ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
+          return res.status(503).json({
+            error: {
+              id: 'consent-check-unavailable',
+              message: 'The consent grant could not be verified by this server. ' +
+                'The access request is unchanged; retry shortly.',
+              data: { reason: outcome.reason }
+            }
+          });
+        }
+      }
+
+      // Decide how the credential is delivered, after the consent check (so a
+      // bad grant is refused before any secret exists).
+      if (status === 'ACCEPTED' && hasHandoffField) {
+        // Shape H: the auth UI created the secret itself and posts only the
+        // key. Store it verbatim; the token never reaches this core.
+        const parsed = parseHandoffField(req.body.handoff, sharedSecrets.key.parse);
+        if (typeof parsed === 'string') {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message: parsed } });
+        }
+        const apiErr = tokenlessEndpointError(req.body.apiEndpoint);
+        if (apiErr != null) {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message: apiErr } });
+        }
+        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed };
+      } else if (status === 'ACCEPTED' && wantsHandoff && !isDelegatedGrant) {
+        // Shape L on a request that asked for a hand-off, not delegated:
+        // server conversion. Move the inline token into a one-time secret on
+        // the user's core and keep only the key. The token exists on this
+        // core for the life of this handler only, never stored.
+        const remainingS = Math.floor((pending.expiresAt - Date.now()) / 1000);
+        const ttlSeconds = Math.max(1, Math.min(handoffTtlSeconds(), remainingS));
+        const result = await createHandoff({
+          app,
+          username: req.body.username,
+          token: req.body.token,
+          apiEndpoint: req.body.apiEndpoint,
+          requestingAppId: pending.requestingAppId,
+          ttlSeconds
+        });
+        if ('handoff' in result) {
+          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff };
+        } else {
+          // Fall back to inline delivery: never worse than today. Log the
+          // reason class and the request key, never the token.
+          logger.warn('credential hand-off fell back to inline for access request ' +
+            req.params.key + ' (' + result.fallback + ')');
         }
       }
 
@@ -464,20 +601,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         });
       }
 
-      const response: Record<string, unknown> = {
-        status: state.status
-      };
+      let response: Record<string, unknown>;
       if (state.status === 'ACCEPTED') {
-        response.username = state.username;
-        response.token = state.token;
-        response.apiEndpoint = state.apiEndpoint;
-        if (state.delegation != null) response.delegation = state.delegation;
-      } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
-        response.reasonId = state.reasonId;
-        response.message = state.message;
-      } else if (state.status === 'REDIRECTED') {
-        response.poll = state.redirectUrl;
-        response.redirectUrl = state.redirectUrl;
+        response = acceptedBody(state);
+      } else {
+        response = { status: state.status };
+        if (state.status === 'REFUSED' || state.status === 'ERROR') {
+          response.reasonId = state.reasonId;
+          response.message = state.message;
+        } else if (state.status === 'REDIRECTED') {
+          response.poll = state.redirectUrl;
+          response.redirectUrl = state.redirectUrl;
+        }
       }
       res.status(state.code).json(response);
     } catch (err) { next(err); }

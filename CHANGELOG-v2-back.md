@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Auth-request credential hand-off: server conversion and a shared user-core resolver
+
+`POST /reg/access/:key` converts an inline-token accept into a one-time shared secret
+when the request asked for `credentialHandoff: 'shared-secret'`: it creates the secret on
+the user's core authenticated AS the app token (in-process through a `MethodContext` on a
+local core, over HTTPS to the platform-resolved core otherwise), stores only the key, and
+never persists the token, which reaches the answering core in the POST handler's memory
+only. A create that cannot be done (shared secrets disabled or forbidden, the core
+unreachable, an unparseable endpoint, or a delegation-derived token, which may not create
+the hand-off secret) falls back to inline delivery with one `warn` line, never the token.
+The state store drops the token whenever a `handoff` is written, so a hand-off state can
+never carry both. The "which core hosts the user, decided by the platform and never by the
+posted apiEndpoint" resolution is extracted from the consent check into
+`routes/reg/userCore.ts` (`resolveUserCore`) and shared by both callers. `[RA95]`-`[RA106]`.
+
 ## Delegation: lineage marker on accesses a delegate grants
 
 The delegation plugin gains an `accesses.create` hook that stamps

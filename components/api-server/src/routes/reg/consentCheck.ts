@@ -35,10 +35,10 @@
  *    check" would destroy a perfectly good access.
  */
 
-import { getPlatform } from 'platform';
 import { MethodContext } from 'business';
 import { withoutInjectedPermissions } from 'business/src/accesses/injectedPermissions.ts';
 import { checkConsentGrant } from 'business/src/accesses/permissionSet.ts';
+import { resolveUserCore, type UserCorePlatform } from './userCore.ts';
 
 import type { Permission } from 'business/src/types/public.ts';
 
@@ -82,12 +82,7 @@ export type ConsentCheckDeps = {
    * apiEndpoint) without standing up a second core. */
   fetch?: typeof globalThis.fetch;
   /** Seam for the platform, same purpose. */
-  platform?: {
-    isSingleCore: boolean;
-    coreId: string;
-    getUserCore: (username: string) => Promise<string | null>;
-    coreIdToUrl: (coreId: string) => string;
-  };
+  platform?: UserCorePlatform;
 };
 
 /** A token failure raised by the local loader, told apart from a genuine
@@ -245,19 +240,6 @@ async function hasApiErrorId (response: { json: () => Promise<unknown> }): Promi
   }
 }
 
-/** Is `url` something we can actually send a request to? `coreIdToUrl`
- * answers `"null/"` when it has neither a cached row, a dns domain, nor a
- * configured core url, and that string must not reach `fetch`. */
-function isUsableCoreUrl (url: unknown): url is string {
-  if (typeof url !== 'string' || url.length === 0) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The check itself. Returns an outcome; it never throws for an expected
  * failure, and the caller maps `kind` to the status code (grant → 400,
@@ -268,42 +250,20 @@ export async function checkAcceptedGrant (
   deps: ConsentCheckDeps = {}
 ): Promise<ConsentCheckOutcome> {
   const { app, username, token, consentForm } = params;
-  const platform = deps.platform ?? await getPlatform();
   const fetchFn = deps.fetch ?? globalThis.fetch;
 
   // Step 1: where does this access live? The platform decides, never the
-  // caller. An unknown user takes the local arm, where the loader answers
-  // with its own "no such user" failure, which is a token failure.
-  let userCoreId: string | null = null;
-  try {
-    userCoreId = platform.isSingleCore ? null : await platform.getUserCore(username);
-  } catch (err: unknown) {
-    return {
-      ok: false,
-      kind: 'unavailable',
-      reason: 'storage-error',
-      detail: (err as Error)?.message ?? String(err)
-    };
+  // caller (userCore.ts). An unknown user takes the local arm, where the
+  // loader answers with its own "no such user" failure, a token failure.
+  const resolution = await resolveUserCore(username, { platform: deps.platform });
+  if (resolution.kind === 'unavailable') {
+    return { ok: false, kind: 'unavailable', reason: resolution.reason, detail: resolution.detail };
   }
-  const isLocal = platform.isSingleCore || userCoreId == null || userCoreId === platform.coreId;
 
   // Step 2: load the access through the loader `access-info` runs.
-  let loaded;
-  if (isLocal) {
-    loaded = await loadLocalAccess(app, username, token);
-  } else {
-    const coreUrl = platform.coreIdToUrl(userCoreId as string);
-    if (!isUsableCoreUrl(coreUrl)) {
-      return {
-        ok: false,
-        kind: 'unavailable',
-        reason: 'core-unresolvable',
-        detail: 'no url for core ' + String(userCoreId) +
-          ' (set `core.url` on that core, or `dns.domain` platform-wide)'
-      };
-    }
-    loaded = await loadRemoteAccess(coreUrl, username, token, fetchFn);
-  }
+  const loaded = resolution.kind === 'local'
+    ? await loadLocalAccess(app, username, token)
+    : await loadRemoteAccess(resolution.coreUrl, username, token, fetchFn);
   if ('failure' in loaded) return loaded.failure;
 
   // Step 3: an app access, minus what the server injected into it.
