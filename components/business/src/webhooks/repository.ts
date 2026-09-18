@@ -128,22 +128,10 @@ class Repository {
   }
 
   /**
-   * Returns true iff an active (non-tombstoned) access exists for the
-   * given accessId. Defensive: returns true when no accessesStorage was
-   * wired (older constructor callers) so we never falsely deactivate.
-   */
-  async accessExists (user: User, accessId: string): Promise<boolean> {
-    if (this.accessesStorage == null) return true;
-    const access: { deleted?: unknown } | null = await fromCallback((cb: NodeCallback) =>
-      this.accessesStorage!.findOne(user, { id: accessId }, {}, cb));
-    return access != null && access.deleted == null;
-  }
-
-  /**
    * Whether a webhook may still fire for this access: it exists, is not
    * deleted, has not expired and, for a shared access without expiry, its
    * managing app access has not expired (the rule applied at authentication).
-   * Defensive like `accessExists`: true when no accessesStorage was wired.
+   * Defensive: true when no accessesStorage was wired (never deactivate by mistake).
    */
   async accessIsUsable (user: User, accessId: string): Promise<boolean> {
     if (this.accessesStorage == null) return true;

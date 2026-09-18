@@ -373,7 +373,6 @@ type WebhookUpdate = {
 type User = { id: string; username: string };
 type WebhookMessage = string;
 type WebhooksRepository = {
-  accessExists?: (user: User, accessId: string) => Promise<boolean>;
   accessIsUsable?: (user: User, accessId: string) => Promise<boolean>;
   insertOne (user: User, webhook: Webhook): Promise<unknown>;
   updateOne (user: User, update: Partial<Webhook>, id: string): Promise<unknown>;

@@ -544,6 +544,10 @@ describe('[WHBK] Webhook', () => {
         [id]: { id, type: 'shared', deleted: null, expires: null, createdBy: app }
       }, id);
       assert.deepStrictEqual(ok, { fired: true, state: 'active' });
+      // managing access row absent: nothing to follow, fires
+      const orphan = cuid();
+      const orphanRes = await firesWith({ [orphan]: { id: orphan, type: 'shared', deleted: null, expires: null, createdBy: cuid() } }, orphan);
+      assert.deepStrictEqual(orphanRes, { fired: true, state: 'active' });
       const sys = cuid();
       const sysRes = await firesWith({ [sys]: { id: sys, type: 'shared', deleted: null, expires: null, createdBy: 'system' } }, sys);
       assert.deepStrictEqual(sysRes, { fired: true, state: 'active' });
@@ -552,12 +556,14 @@ describe('[WHBK] Webhook', () => {
     it('[WCADF6] an expired access that is still cached does not fire', async () => {
       const cache = require('cache').default;
       const id = cuid();
-      cache.setAccessLogic(user.id, { id, token: cuid(), deleted: null, expires: timestamp.now() - 60 });
+      const token = cuid();
+      cache.setAccessLogic(user.id, { id, token, deleted: null, expires: timestamp.now() - 60 });
       try {
-        const res = await firesWith({}, id);
+        // storage holds a live row: only the cached expired access can stop it
+        const res = await firesWith({ [id]: { id, deleted: null, expires: timestamp.now() + 3600 } }, id);
         assert.deepStrictEqual(res, { fired: false, state: 'inactive' });
       } finally {
-        cache.clear();
+        cache.unsetAccessLogic(user.id, { id, token });
       }
     });
 
