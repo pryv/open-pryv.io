@@ -79,6 +79,7 @@ class DynamicInstanceManager extends EventEmitter {
         // Ignore
       }
       this.serverProcess = null;
+      this.serverReady = false;
     }
   }
 
@@ -114,7 +115,7 @@ class DynamicInstanceManager extends EventEmitter {
           httpPort = this.allocatedHttpPort;
           this.logger.debug(`Reusing port: HTTP ${httpPort}`);
         } else {
-          httpPort = await portAllocator.allocatePort();
+          httpPort = await portAllocator.allocatePort(settingsCopy.http?.ip || '127.0.0.1');
           this.allocatedHttpPort = httpPort;
           this.logger.debug(`Allocated new port: HTTP ${httpPort}`);
         }
@@ -195,15 +196,31 @@ class DynamicInstanceManager extends EventEmitter {
       env: { ...process.env, PRYV_BOILER_SUFFIX: '-dyn' + spawnCounter++ }
     };
 
-    this.serverProcess = spawn(process.argv[0], args, options);
+    // A new child is not ready until it says so. Left over from a child that
+    // died unexpectedly (or was force-killed), a `true` here made the wait
+    // below return at once and the first request hit a port nobody listened on.
+    this.serverReady = false;
+    const proc = spawn(process.argv[0], args, options);
+    this.serverProcess = proc;
     let serverExited = false;
     let exitCode: number | null = null;
 
-    this.serverProcess.on('exit', (code: any) => {
+    proc.on('exit', (code: any, signal: any) => {
+      // stop() and cleanup() drop the reference before killing: an exit while
+      // it is still ours was not asked for. After ready, the next request would
+      // fail with ECONNREFUSED and nothing else would say why, so say it here
+      // (warn and above reach the durable test log).
+      if (this.serverProcess === proc) {
+        if (this.serverReady) {
+          this.logger.error(`Test server ${this.url} (pid ${proc.pid}) exited unexpectedly after ready ` +
+            `(code ${code}, signal ${signal}); rerun with LOGS=warn to see its own output`);
+        }
+        this.serverProcess = null;
+        this.serverReady = false;
+      }
       this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
-      this.serverProcess = null;
     });
 
     this.serverProcess.on('error', (err: any) => {

@@ -30,39 +30,45 @@ function getLog () {
 }
 
 // Base port for dynamic allocation
-// Use random starting point to avoid conflicts between parallel test processes
-// Range: 10000-50000 (avoiding well-known ports and ephemeral port range)
+// Use random starting point to avoid conflicts between parallel test processes.
+// Range: 10000-49151, below the IANA / macOS ephemeral range (49152-65535),
+// where the OS places `listen(0)` servers and outgoing client sockets.
 const BASE_PORT_MIN = 10000;
-const BASE_PORT_MAX = 50000;
+const BASE_PORT_MAX = 49151;
 let nextPort = BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN));
+
+// Test servers bind this address (DynamicInstanceManager's `http.ip` default,
+// TestServerContext children). The probe must bind the same one: on macOS a
+// probe on 0.0.0.0 succeeds over a port another process holds on 127.0.0.1,
+// and the server then fails with EADDRINUSE.
+const DEFAULT_HOST = '127.0.0.1';
 
 /**
  * Allocates a free port for testing
+ * @param host - The address the server will bind
  */
-async function allocatePort () {
-  // Keep trying until we find a free port
-  while (true) {
+async function allocatePort (host: string = DEFAULT_HOST) {
+  // Keep trying until we find a free port, wrapping around the range once.
+  for (let tried = 0; tried <= BASE_PORT_MAX - BASE_PORT_MIN; tried++) {
+    if (nextPort > BASE_PORT_MAX) nextPort = BASE_PORT_MIN;
     const port = nextPort++;
 
-    // Safety limit
-    if (port > 65000) {
-      throw new Error('Port allocator: exhausted port range');
-    }
-
-    if (await isPortAvailable(port)) {
+    if (await isPortAvailable(port, host)) {
       getLog().debug(`Allocated port ${port}`);
       return port;
     }
 
     getLog().debug(`Port ${port} unavailable, trying next`);
   }
+  throw new Error('Port allocator: exhausted port range');
 }
 
 /**
  * Checks if a port is available by attempting to bind to it
  * @param port - The port to check
+ * @param host - The address the server will bind
  */
-function isPortAvailable (port: any) {
+function isPortAvailable (port: any, host: string = DEFAULT_HOST) {
   return new Promise((resolve) => {
     const server = net.createServer();
 
@@ -71,7 +77,7 @@ function isPortAvailable (port: any) {
       resolve(false);
     });
 
-    server.listen(port, '0.0.0.0', () => {
+    server.listen(port, host, () => {
       server.close();
       resolve(true);
     });
