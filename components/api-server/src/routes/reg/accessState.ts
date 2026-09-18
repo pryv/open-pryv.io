@@ -62,6 +62,11 @@ type BuildStateParams = {
    * the accounts the user controls), 'deny' (the signed-in account only),
    * or a username to preselect. Validated by the route; set only when sent. */
   actAs?: string;
+  /** Delivery mode the app asked for. 'shared-secret' means the ACCEPTED
+   * body must carry a one-time hand-off key instead of the token. Validated
+   * by the route; set only when the app sent it. Absence keeps today's
+   * inline delivery. */
+  credentialHandoff?: 'shared-secret';
 };
 
 type AccessState = {
@@ -79,6 +84,13 @@ type AccessState = {
   expireAfter?: number;
   /** See `BuildStateParams.consent`: set only for an annotated request. */
   consent?: unknown;
+  /** See `BuildStateParams.credentialHandoff`: set only for a request that
+   * asked for shared-secret delivery. */
+  credentialHandoff?: 'shared-secret';
+  /** One-time credential hand-off descriptor, set on an ACCEPTED state that
+   * delivers by shared secret. The token itself is NOT here: it lives in the
+   * referenced one-time secret on the user's core. */
+  handoff?: { type: 'shared-secret'; key: string };
   poll_rate_ms: number;
   createdAt: number;
   expiresAt: number;
@@ -171,6 +183,7 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
   }
   if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
   if (typeof params.actAs === 'string') state.actAs = params.actAs;
+  if (params.credentialHandoff === 'shared-secret') state.credentialHandoff = 'shared-secret';
   return { key, state, expiresAt };
 }
 
@@ -246,10 +259,15 @@ async function markDelivered (key: string, state: AccessState, retentionMs: numb
  * `delegation` is the display hint an auth page posts when it granted the
  * access on an account the user controls; the route validates its shape
  * before it gets here.
+ *
+ * `handoff` is the one-time credential hand-off descriptor for shared-secret
+ * delivery; the route validates its shape (and that the request asked for it)
+ * before it gets here. A state that carries `handoff` never carries `token`
+ * (see `update()` below): the token moved into the referenced secret.
  */
 const UPDATABLE_FIELDS = Object.freeze([
   'status', 'username', 'token', 'apiEndpoint',
-  'reasonId', 'message', 'redirectUrl', 'delegation'
+  'reasonId', 'message', 'redirectUrl', 'delegation', 'handoff'
 ]);
 
 /**
@@ -262,6 +280,12 @@ async function update (key: string, update: Partial<AccessState>): Promise<Acces
   for (const field of UPDATABLE_FIELDS) {
     if (update[field] !== undefined) state[field] = update[field];
   }
+  // Invariant: a hand-off state carries no token. The token moved into the
+  // one-time secret, so drop whatever the state held — a token the request
+  // had echoed (the app-requested token), or one a shape-L conversion just
+  // wrote before the route decided to hand off. Deleting here (rather than
+  // relying on the caller to omit it) keeps the invariant in one place.
+  if (state.handoff != null) delete state.token;
   if (update.status === 'ACCEPTED') {
     state.code = 200;
   } else if (update.status === 'REFUSED' || update.status === 'ERROR') {

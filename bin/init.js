@@ -551,10 +551,15 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # REFUSED, ERROR) stays pollable after an app first reads it. Requests are
 # # held in memory on the core that created them. 0 keeps them until the
 # # request expires (1 h). Default 120000 (2 min).
+# # access.handoffTtl: life (seconds) of the one-time credential hand-off
+# # secret created when an app asks for shared-secret delivery
+# # (credentialHandoff). Clamped to the request's remaining life and to
+# # sharedSecrets.maxTtl. Default 600 (10 min).
 # # access:
 # #   trustedAuthUrls:
 # #     - https://auth.example.com/my-auth/
 # #   terminalRetentionMs: 120000
+# #   handoffTtl: 600
 
 # # logs.console.format.json — one JSON object per line ({timestamp, level,
 # # name, pid, message, context}) for log collectors / log-based alerting.

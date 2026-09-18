@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Credential hand-off: one-time shared-secret delivery for `/reg/access`
+
+An app can ask that its access token be delivered through a one-time shared secret
+instead of being returned in the authorization poll, so the token never lingers in the
+poll response (or in the logs of the core that answered the authorization request) and
+a theft becomes detectable (the legitimate retrieve fails loudly).
+
+- **New (`/reg/access` `credentialHandoff`).** `POST /reg/access` accepts an optional
+  `credentialHandoff: 'shared-secret'`. Any other value is a `400 invalid-parameters`.
+  It is echoed on the `201` and on the `NEED_SIGNIN` poll when the server understood it;
+  an older core drops it and echoes nothing, so a client learns it will get the legacy
+  inline delivery.
+- **New (ACCEPTED `handoff`).** When a request asked for it, the `ACCEPTED` poll body
+  carries `handoff: { type: 'shared-secret', key }` and a token-less `apiEndpoint`
+  instead of `token`. The app retrieves the credential exactly once with
+  `POST <apiEndpoint>shared-secrets/retrieve { key }`, which returns
+  `{ secret: { username, token, apiEndpoint } }`; a second retrieve answers `403`
+  (`shared-secret-unavailable`). Requests that did not ask for a hand-off keep the
+  inline `token` and are byte-identical to before.
+- **Two accept shapes.** The auth page may post the token inline as before (the server
+  moves it into a one-time secret on the user's core, then keeps only the key), or, when
+  the request carried no consent form, create the secret itself and post `handoff` with
+  no token. Posting both `token` and `handoff`, a `handoff` on a request that did not ask
+  for one, a `handoff` on a consent-form request, a malformed key, or an `apiEndpoint`
+  carrying credentials are each `400 invalid-parameters` and leave the request pending.
+- **Never breaks sign-in.** If the secret cannot be created (shared secrets disabled or
+  forbidden on the user's core, the core unreachable, a delegated grant), the accept
+  falls back to inline delivery.
+- **New config (`access.handoffTtl`).** Life in seconds of the hand-off secret, default
+  `600`, clamped to the request's remaining life and to `sharedSecrets.maxTtl`.
+
 ### Service info: `account` and `features.delegation`
 
 - **New (`service.account`).** The root URL of the platform's account app
