@@ -272,17 +272,35 @@ export async function migrateClientAccountIds (
 ): Promise<number> {
   let converted = 0;
   for (const clientId of await listClientIds(platform)) {
-    const client = await getClient(platform, clientId);
-    if (client == null) continue;
-    const legacy = legacyAccountUsername(client);
-    if (legacy == null) continue;
-    const hasId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0;
-    const userId = hasId ? client.accountUserId as string : await resolveAccountUserId(legacy);
-    if (userId == null) continue;
-    await setClient(platform, withAccountUserId(client, userId));
-    converted++;
+    try {
+      const client = await getClient(platform, clientId);
+      if (client == null) continue;
+      const row = await convertClientAccount(client, resolveAccountUserId);
+      if (row == null) continue;
+      await setClient(platform, row);
+      converted++;
+    } catch (_err) {
+      // One unreadable row (e.g. malformed JSON) must not stop the others.
+      continue;
+    }
   }
   return converted;
+}
+
+/**
+ * The row converted to `accountUserId` when it still carries `accountUsername`
+ * and the account resolves (an `accountUserId` already present is kept), or
+ * null when there is nothing to convert or the account is not on this core.
+ * Shared by the master-boot migration and the CLI `update`.
+ */
+export async function convertClientAccount (
+  client: OAuthClient, resolveAccountUserId: (username: string) => Promise<string | null>,
+): Promise<OAuthClient | null> {
+  const legacy = legacyAccountUsername(client);
+  if (legacy == null) return null;
+  const hasId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0;
+  const userId = hasId ? client.accountUserId as string : await resolveAccountUserId(legacy);
+  return userId == null ? null : withAccountUserId(client, userId);
 }
 
 export async function listClientIds (platform: PlatformDB): Promise<string[]> {

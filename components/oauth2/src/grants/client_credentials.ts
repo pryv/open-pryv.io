@@ -113,16 +113,10 @@ export async function handleClientCredentials (
   if (!Array.isArray(client.grantTypes) || !client.grantTypes.includes('client_credentials')) {
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'client is not registered for client_credentials grant' };
   }
-  const accountUserId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0
-    ? client.accountUserId
-    : null;
-  const legacyUsername = accountUserId == null ? legacyAccountUsername(client) : null;
-  if (accountUserId == null && legacyUsername == null) {
-    return { ok: false, status: 500, error: 'server_error', description: 'client metadata missing accountUserId (re-run bin/oauth-client.js create)' };
-  }
-
   // Verify the confidential credential (client_secret_basic/post OR
-  // private_key_jwt). Uniform invalid_client on any failure.
+  // private_key_jwt). Uniform invalid_client on any failure. Before any
+  // account check, so an unauthenticated caller cannot tell a misconfigured
+  // client (500) from a wrong credential (401).
   const auth = await authenticateClient({
     client,
     clientId,
@@ -134,6 +128,15 @@ export async function handleClientCredentials (
   });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
+  }
+
+  const accountUserId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0
+    ? client.accountUserId
+    : null;
+  const legacyUsername = accountUserId == null ? legacyAccountUsername(client) : null;
+  if (accountUserId == null && legacyUsername == null) {
+    logServerError('client_credentials: client "' + clientId + '" has no account reference', null);
+    return { ok: false, status: 500, error: 'server_error', description: 'client metadata missing accountUserId (re-run bin/oauth-client.js create)' };
   }
 
   // Scope tokens are OPAQUE for this grant: the minted access always
@@ -167,6 +170,8 @@ export async function handleClientCredentials (
   const userId = accountUserId ?? await deps.resolveAccountUserId(legacyUsername as string);
   const username = userId == null ? null : await deps.resolveUsername(userId);
   if (userId == null || username == null) {
+    logServerError('client_credentials: the account of client "' + clientId + '" is not hosted on this core ' +
+      'or no longer exists (run bin/oauth-client.js on its home core)', null);
     return { ok: false, status: 500, error: 'server_error', description: 'the application account is not hosted on this core or no longer exists' };
   }
 

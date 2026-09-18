@@ -293,6 +293,8 @@ describe('[OAUTH-STORE] storage layer', () => {
       await storage.setClient(platform, client('local', { accountUsername: 'alice', clientName: 'Local app' }));
       await storage.setClient(platform, client('elsewhere', { accountUsername: 'bob' }));
       await storage.setClient(platform, client('done', { accountUserId: 'u-carol' }));
+      // An unreadable row sorted first must not stop the others.
+      await platform.setPlatformKv('oauth-client/aaa-broken', '{not json');
       const lookups = [];
       const resolve = async (u) => { lookups.push(u); return u === 'alice' ? 'u-alice' : null; };
 

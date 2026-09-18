@@ -123,6 +123,14 @@ async function runCreate (platform, args, persistClient) {
   const accountUserId = await localUserId(username);
   if (accountUserId == null) {
     const hostingCore = await hostingCoreOf(username);
+    const { getConfig } = require('@pryv/boiler');
+    const selfCore = String((await getConfig()).get('core:id') ?? 'single');
+    if (hostingCore != null && hostingCore === selfCore) {
+      throw new Error(
+        'create: the platform maps user "' + username + '" to THIS core, but its local index\n' +
+        'does not know it (user-core drift). Run bin/reconcile-user-cores.js, then retry.'
+      );
+    }
     if (hostingCore != null) {
       throw new Error(
         'create: user "' + username + '" is hosted on core "' + hostingCore + '", not this one.\n' +
@@ -194,7 +202,7 @@ async function runShow (platform, args, getClient, computeThumbprint) {
     const name = await localUsername(client.accountUserId);
     console.log('account username (resolved on this core): ' +
       (name ?? '(account hosted on another core, or deleted)'));
-  } else if (typeof client.accountUsername === 'string') {
+  } else if (oauthStorage().legacyAccountUsername(client) != null) {
     console.log('LEGACY: the row still carries accountUsername; the master boot of the account\'s');
     console.log('        home core converts it to accountUserId (or run `update` on that core).');
   }
@@ -248,13 +256,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // A row written before accountUserId: convert it when the account is on this
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
-  const { legacyAccountUsername, withAccountUserId } = require('../components/oauth2/src/storage.ts');
-  let row = merged;
-  const legacy = legacyAccountUsername(existing);
-  if (legacy != null) {
-    const userId = await localUserId(legacy);
-    if (userId != null) row = withAccountUserId(merged, userId);
-  }
+  const row = (await oauthStorage().convertClientAccount(merged, localUserId)) ?? merged;
   await persistClient(platform, row);
   console.log('OK   client updated: ' + clientId);
   if (row !== merged) console.log('     converted the account reference to the user id');
@@ -425,6 +427,11 @@ function resolveJwks (args) {
   }
 }
 
+// The oauth2 storage helpers (client row shape), loaded after boiler init.
+function oauthStorage () {
+  return require('../components/oauth2/src/storage.ts');
+}
+
 // User id of a username (or alias) on THIS core's local index, or null.
 async function localUserId (username) {
   const { getUsersLocalIndex } = require('storage');
@@ -440,14 +447,18 @@ async function localUsername (userId) {
 }
 
 // On a multi-core platform, the id of the core hosting `username`; null when
-// single-core or unknown. Only called once the local lookup failed.
+// single-core or unknown. Only called once the local lookup failed; the
+// platform (which registers this core at init) is only loaded on multi-core.
 async function hostingCoreOf (username) {
+  const { getConfig } = require('@pryv/boiler');
+  const config = await getConfig();
+  if (config.get('core:isSingleCore') !== false) return null;
   try {
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
-    if (platform.isSingleCore) return null;
     return (await platform.getUserCore(username)) ?? null;
-  } catch (_e) {
+  } catch (err) {
+    console.error('WARN: could not ask the platform where "' + username + '" is hosted: ' + (err.message ?? err));
     return null;
   }
 }
