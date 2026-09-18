@@ -5,9 +5,10 @@
 `DynamicInstanceManager` installs one set of process `exit` / `SIGINT` / `SIGTERM` hooks for all
 instances instead of three listeners per instance (which piled up and kept every manager
 alive), removes its temp config file once its child has exited, and `stop()` now calls back
-when the kill is reported as an `error` event rather than thrown. The port probe resolves
-only after its socket has closed (a race too narrow to test deterministically).
-`[DIM4]`-`[DIM6]`.
+when the kill is reported as an `error` event rather than thrown. Its 5 s force-kill fallback
+now actually fires for a child that ignores SIGTERM (it tested `proc.killed`, which is true as
+soon as SIGTERM is sent) and no longer holds the process open. The port probe resolves only
+after its socket has closed (a race too narrow to test deterministically). `[DIM4]`-`[DIM7]`.
 
 ## Test servers: a restart waits for the new server; unexpected exits are logged
 
