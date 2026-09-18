@@ -267,9 +267,9 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
     assert.strictEqual(info.body.delegation.grantedVia, 'app');
   });
 
-  it('[DCH14] a delegation-derived token cannot write a consent trigger that creates or widens a data grant', async function () {
+  it('[DCH14] a delegation-derived token cannot write a consent trigger that creates or widens a data grant, nor publish an offer', async function () {
     const child = await createAccess(patToken, appFor('dch14-app'));
-    for (const type of ['consent/accept-cmc', 'consent/scope-update-cmc']) {
+    for (const type of ['consent/accept-cmc', 'consent/scope-update-cmc', 'consent/request-cmc']) {
       for (const token of [patToken, child.token]) {
         const res = await coreRequest.post(bob.eventsPath).set('Authorization', token)
           .send({ streamIds: ['diary'], type, content: {} });

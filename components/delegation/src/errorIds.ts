@@ -85,7 +85,7 @@ const DelegationErrorIds = {
   MIRROR_NOT_STALE: 'delegation-mirror-not-stale',
   // A token obtained through a delegation (the delegate token, or an access
   // granted with it) tried to create a durable grant through a path that does
-  // not record the delegation (OAuth2 consent, CMC data grants). Only the
+  // not record the delegation (OAuth2 consent, CMC data grants and offers). Only the
   // account owner may do so, until those paths carry the lineage marker.
   GRANT_REQUIRES_OWNER: 'delegation-grant-requires-owner',
 } as const;

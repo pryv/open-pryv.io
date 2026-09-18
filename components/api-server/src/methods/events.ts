@@ -401,9 +401,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcAcceptAccessGateHook = cmc.createCmcAcceptAccessGateHook({ errors });
   // Those same triggers create or widen a data grant outside accesses.create,
   // so it would carry no delegation lineage: refuse them to a token obtained
-  // through account delegation.
+  // through account delegation. Publishing an offer too: its capability
+  // access, and the back-channel access its acceptance creates, are written
+  // storage-direct on this account.
   const delegationDelegatedGrantGuardHook = delegationActive
-    ? delegation.createDelegatedGrantGuardHook({ errors }, cmc.GATED_EVENT_TYPES)
+    ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([...cmc.GATED_EVENT_TYPES, cmc.ET_REQUEST]))
     : delegationPassthrough;
   // Forge-prevention: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
@@ -504,11 +506,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcEnsureAcceptScopeHook,
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
+    // Refused for a delegation-derived token whatever the content says.
+    delegationDelegatedGrantGuardHook,
     validateEventContentAndCoerce,
     // Reject user writes into the account-delegation namespace (streams or
     // delegation/* types) before any stream resolution runs.
     delegationEventsWriteGuardHook,
-    delegationDelegatedGrantGuardHook,
     // Auto-provision the five reserved :_cmc:* parents on first CMC op
     // for users who pre-date the CMC deploy. Idempotent. Must fire
     // BEFORE verifyCanCreateEventsOnStream so the stream check finds

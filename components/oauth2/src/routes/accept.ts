@@ -64,10 +64,10 @@ export type UserSession = {
   [key: string]: unknown;
 };
 
-/** Resolver provided by the route mount: {username, userToken} → session | null. */
 /** The token is valid but may not grant OAuth access; `description` says why. */
 export type RefusedSession = { refused: true; description: string };
 
+/** Resolver provided by the route mount: {username, userToken} → session, refusal, or null. */
 export type ResolveUser = (params: { username: string; userToken: string })
   => Promise<UserSession | RefusedSession | null>;
 

@@ -39,8 +39,10 @@ delegate token creates the app access on the controlled account and posts it bac
   owner.** Those grants are written outside `accesses.create` and carry no lineage
   marker, so a delegate could create grants that outlive the delegation. A delegate
   token, or an access it granted, is now refused: `POST /oauth2/authorize/accept`
-  answers `403 access_denied`, and writing `consent/accept-cmc` or
-  `consent/scope-update-cmc` answers `400` with `delegation-grant-requires-owner`.
+  answers `403 access_denied`, and writing `consent/accept-cmc`,
+  `consent/scope-update-cmc` or `consent/request-cmc` (publishing an offer, whose
+  capability and back-channel accesses are written the same way) answers `400`
+  with `delegation-grant-requires-owner`.
 - **Changed, BREAKING for apps granted through a delegation: detach revokes them.**
   `delegations.detachDelegate` now also deletes every access carrying the lineage
   marker (the accesses created through `accesses.create` with the delegate token,
