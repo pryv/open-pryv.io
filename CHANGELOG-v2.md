@@ -1,17 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
-
-### `bin/oauth-client.js create` runs on the app account's home core
-
-The OAuth client record now stores the app account's user id instead of its username,
-so `create <username>` must run on the core that hosts the account; on a multi-core
-platform it refuses elsewhere and names the hosting core (it used to answer "user not
-found"). `show` prints the stored `accountUserId` plus the account username resolved on
-the core it runs on; `update` converts a record written by an earlier version when the
-account is local. `/oauth2/token` wire shapes are unchanged. The CLI also no longer
-claims that re-registering a revoked client id clears the revocation (it does not: tokens
-minted before the revoke stay dead).
+## 2.0.0-rc.23 — 2026-09-18
 
 ### Managed shared accesses no longer outlive their managing app access (security)
 
@@ -37,49 +26,6 @@ shared token could outlive the app access that issued it.
   held in the server's cache was not checked at all before. Once the access is valid
   again, reactivate the webhook with `webhooks.update` (`state: 'active'`) from the same
   access or a personal token.
-
-### Credential hand-off: one-time shared-secret delivery for `/reg/access`
-
-An app can ask that its access token be delivered through a one-time shared secret
-instead of being returned in the authorization poll, so the token never lingers in the
-poll response (or in the logs of the core that answered the authorization request) and
-a theft becomes detectable (the legitimate retrieve fails loudly).
-
-- **New (`/reg/access` `credentialHandoff`).** `POST /reg/access` accepts an optional
-  `credentialHandoff: 'shared-secret'`. Any other value is a `400 invalid-parameters`.
-  It is echoed on the `201` and on the `NEED_SIGNIN` poll when the server understood it;
-  an older core drops it and echoes nothing, so a client learns it will get the legacy
-  inline delivery.
-- **New (ACCEPTED `handoff`).** When a request asked for it, the `ACCEPTED` poll body
-  carries `handoff: { type: 'shared-secret', key }` and a token-less `apiEndpoint`
-  instead of `token`. The app retrieves the credential exactly once with
-  `POST <apiEndpoint>shared-secrets/retrieve { key }`, which returns
-  `{ secret: { username, token, apiEndpoint } }`; a second retrieve answers `403`
-  (`shared-secret-unavailable`). Requests that did not ask for a hand-off keep the
-  inline `token` and are byte-identical to before.
-- **Two accept shapes.** The auth page may post the token inline as before (the server
-  moves it into a one-time secret on the user's core, then keeps only the key), or, when
-  the request carried no consent form, create the secret itself and post `handoff` with
-  no token. Posting both `token` and `handoff`, a `handoff` on a request that did not ask
-  for one, a `handoff` on a consent-form request, a malformed key, or an `apiEndpoint`
-  carrying credentials are each `400 invalid-parameters` and leave the request pending.
-- **Never breaks sign-in.** If the secret cannot be created (shared secrets disabled or
-  forbidden on the user's core, the core unreachable, a delegated grant), the accept
-  falls back to inline delivery.
-- **New config (`access.handoffTtl`).** Life in seconds of the hand-off secret, default
-  `600`, clamped to the request's remaining life and to `sharedSecrets.maxTtl`.
-
-### Service info: `account` and `features.delegation`
-
-- **New (`service.account`).** The root URL of the platform's account app
-  (app-web-user-account), served in `service/info` when configured. The install
-  wizard now writes it from the app-web-user-account URL it already asks for, and
-  `check-config` warns when `access.defaultAuthUrl` is set without it. The lib-js
-  sign-in button uses it for its "Manage my account" link.
-- **New (`features.delegation`).** `true` when account delegation is available
-  (`delegation.active`, on by default); an explicit `service.features.delegation`
-  wins. Auth pages use it to decide whether to offer granting an app access for an
-  account the user controls.
 
 ### Account delegation: granting an app access for a controlled account
 
@@ -130,6 +76,60 @@ delegate token creates the app access on the controlled account and posts it bac
   Accesses the account owner granted are untouched. Such accesses can otherwise be
   updated or revoked by the account owner or the delegate, and revoked by the app
   itself (no access can update itself).
+
+### `bin/oauth-client.js create` runs on the app account's home core
+
+The OAuth client record now stores the app account's user id instead of its username,
+so `create <username>` must run on the core that hosts the account; on a multi-core
+platform it refuses elsewhere and names the hosting core (it used to answer "user not
+found"). `show` prints the stored `accountUserId` plus the account username resolved on
+the core it runs on; `update` converts a record written by an earlier version when the
+account is local. `/oauth2/token` wire shapes are unchanged. The CLI also no longer
+claims that re-registering a revoked client id clears the revocation (it does not: tokens
+minted before the revoke stay dead).
+
+### Credential hand-off: one-time shared-secret delivery for `/reg/access`
+
+An app can ask that its access token be delivered through a one-time shared secret
+instead of being returned in the authorization poll, so the token never lingers in the
+poll response (or in the logs of the core that answered the authorization request) and
+a theft becomes detectable (the legitimate retrieve fails loudly).
+
+- **New (`/reg/access` `credentialHandoff`).** `POST /reg/access` accepts an optional
+  `credentialHandoff: 'shared-secret'`. Any other value is a `400 invalid-parameters`.
+  It is echoed on the `201` and on the `NEED_SIGNIN` poll when the server understood it;
+  an older core drops it and echoes nothing, so a client learns it will get the legacy
+  inline delivery.
+- **New (ACCEPTED `handoff`).** When a request asked for it, the `ACCEPTED` poll body
+  carries `handoff: { type: 'shared-secret', key }` and a token-less `apiEndpoint`
+  instead of `token`. The app retrieves the credential exactly once with
+  `POST <apiEndpoint>shared-secrets/retrieve { key }`, which returns
+  `{ secret: { username, token, apiEndpoint } }`; a second retrieve answers `403`
+  (`shared-secret-unavailable`). Requests that did not ask for a hand-off keep the
+  inline `token` and are byte-identical to before.
+- **Two accept shapes.** The auth page may post the token inline as before (the server
+  moves it into a one-time secret on the user's core, then keeps only the key), or, when
+  the request carried no consent form, create the secret itself and post `handoff` with
+  no token. Posting both `token` and `handoff`, a `handoff` on a request that did not ask
+  for one, a `handoff` on a consent-form request, a malformed key, or an `apiEndpoint`
+  carrying credentials are each `400 invalid-parameters` and leave the request pending.
+- **Never breaks sign-in.** If the secret cannot be created (shared secrets disabled or
+  forbidden on the user's core, the core unreachable, a delegated grant), the accept
+  falls back to inline delivery.
+- **New config (`access.handoffTtl`).** Life in seconds of the hand-off secret, default
+  `600`, clamped to the request's remaining life and to `sharedSecrets.maxTtl`.
+
+### Service info: `account` and `features.delegation`
+
+- **New (`service.account`).** The root URL of the platform's account app
+  (app-web-user-account), served in `service/info` when configured. The install
+  wizard now writes it from the app-web-user-account URL it already asks for, and
+  `check-config` warns when `access.defaultAuthUrl` is set without it. The lib-js
+  sign-in button uses it for its "Manage my account" link.
+- **New (`features.delegation`).** `true` when account delegation is available
+  (`delegation.active`, on by default); an explicit `service.features.delegation`
+  wins. Auth pages use it to decide whether to offer granting an app access for an
+  account the user controls.
 
 ## 2.0.0-rc.22 — 2026-09-18
 
