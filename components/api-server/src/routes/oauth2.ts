@@ -618,7 +618,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     // SECURITY POSTURE (by design — not a scope leak): client_credentials
-    // acts as the app ITSELF on the app's OWN account (`accountUsername`),
+    // acts as the app ITSELF on the app's OWN account (the client row's `accountUserId`),
     // which the app already fully controls by owning it. The minted access is
     // therefore `*/manage` on that one account — NOT an end-user's data and
     // NOT cross-account. The `scope` argument is DELIBERATELY ignored here:

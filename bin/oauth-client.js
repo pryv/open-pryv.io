@@ -118,8 +118,18 @@ async function runCreate (platform, args, persistClient) {
   const username = args.positional[0];
   if (!username) throw new Error('create: <username> required');
 
-  const userExists = await usernameExists(username);
-  if (!userExists) {
+  // The client row stores the account's user id, which only its home core
+  // can resolve (the local users index): create runs on that core.
+  const accountUserId = await localUserId(username);
+  if (accountUserId == null) {
+    const hostingCore = await hostingCoreOf(username);
+    if (hostingCore != null) {
+      throw new Error(
+        'create: user "' + username + '" is hosted on core "' + hostingCore + '", not this one.\n' +
+        'Run this command on that core: the client record stores the account\'s user id,\n' +
+        'which only its home core can resolve.'
+      );
+    }
     throw new Error(
       'create: user "' + username + '" not found.\n' +
       'Promotion-only: create the user via /reg/users first, then re-run this command.\n' +
@@ -146,7 +156,7 @@ async function runCreate (platform, args, persistClient) {
     logoUri: args.flagsScalar['logo-uri'],
     grantTypes,
     applicationType: args.flagsScalar['application-type'] === 'native' ? 'native' : 'web',
-    accountUsername: username,
+    accountUserId,
     cmcOffers: parseCmcOffers(args.flags['cmc-offer']),
     ...(jwks != null ? { jwks } : {}),
   });
@@ -154,10 +164,7 @@ async function runCreate (platform, args, persistClient) {
   console.log('OK   client created: ' + clientId);
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
-  console.log();
-  console.log('NOTE: this writes the PlatformDB cache row only. The full');
-  console.log('      App-account :_app:* stream sync lands when the grant');
-  console.log('      handlers are wired.');
+  console.log('     account:       ' + username + ' (user id ' + accountUserId + ')');
 }
 
 async function runShow (platform, args, getClient, computeThumbprint) {
@@ -182,6 +189,15 @@ async function runShow (platform, args, getClient, computeThumbprint) {
     };
   }
   console.log(JSON.stringify(view, null, 2));
+  // Derived, not stored: the row carries the account's user id only.
+  if (typeof client.accountUserId === 'string' && client.accountUserId.length > 0) {
+    const name = await localUsername(client.accountUserId);
+    console.log('account username (resolved on this core): ' +
+      (name ?? '(account hosted on another core, or deleted)'));
+  } else if (typeof client.accountUsername === 'string') {
+    console.log('LEGACY: the row still carries accountUsername; the master boot of the account\'s');
+    console.log('        home core converts it to accountUserId (or run `update` on that core).');
+  }
 }
 
 // Compute a key's RFC 7638 thumbprint for display; never throw out of `show`.
@@ -229,8 +245,19 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // otherwise keep the existing set untouched.
   const jwks = resolveJwks(args);
   if (jwks != null) merged.jwks = jwks;
-  await persistClient(platform, merged);
+  // A row written before accountUserId: convert it when the account is on this
+  // core (same operation as the master-boot migration), so this whole-row write
+  // does not re-install the old field after the boot converted it.
+  const { legacyAccountUsername, withAccountUserId } = require('../components/oauth2/src/storage.ts');
+  let row = merged;
+  const legacy = legacyAccountUsername(existing);
+  if (legacy != null) {
+    const userId = await localUserId(legacy);
+    if (userId != null) row = withAccountUserId(merged, userId);
+  }
+  await persistClient(platform, row);
   console.log('OK   client updated: ' + clientId);
+  if (row !== merged) console.log('     converted the account reference to the user id');
 }
 
 async function runRevoke (platform, args, removeClient) {
@@ -246,7 +273,9 @@ async function runRevoke (platform, args, removeClient) {
   console.log('      cluster-wide revoke tombstone is written. Every core stops the');
   console.log('      app\'s LIVE access tokens within oauth.clientRevokeCheckSeconds');
   console.log('      (default 30s) — read locally from PlatformDB, no cross-core bus.');
-  console.log('      Re-registering the same client id clears the tombstone.');
+  console.log('      Re-registering the same client id does NOT clear the tombstone:');
+  console.log('      tokens minted before the revoke stay dead, tokens of the new');
+  console.log('      registration are honoured.');
 }
 
 // --- Operator revoke-by-DPoP-key (RFC 9449 sender-constrained tokens) --- //
@@ -396,10 +425,31 @@ function resolveJwks (args) {
   }
 }
 
-async function usernameExists (username) {
+// User id of a username (or alias) on THIS core's local index, or null.
+async function localUserId (username) {
   const { getUsersLocalIndex } = require('storage');
   const usersIndex = await getUsersLocalIndex();
-  return await usersIndex.usernameExists(username);
+  return (await usersIndex.getUserId(username)) ?? null;
+}
+
+// Canonical username of a user id on THIS core's local index, or null.
+async function localUsername (userId) {
+  const { getUsersLocalIndex } = require('storage');
+  const usersIndex = await getUsersLocalIndex();
+  return (await usersIndex.getUsername(userId)) ?? null;
+}
+
+// On a multi-core platform, the id of the core hosting `username`; null when
+// single-core or unknown. Only called once the local lookup failed.
+async function hostingCoreOf (username) {
+  try {
+    const { getPlatform } = require('platform');
+    const platform = await getPlatform();
+    if (platform.isSingleCore) return null;
+    return (await platform.getUserCore(username)) ?? null;
+  } catch (_e) {
+    return null;
+  }
 }
 
 function parseArgs (argv) {
@@ -463,7 +513,8 @@ function printUsage (stream) {
     '                            URL here; clients request it as scope "cmc:<name>"\n' +
     '                            (add the token to --scope as well)\n\n' +
     'Notes:\n' +
-    '  - create requires the user to ALREADY exist(promotion-only).\n' +
+    '  - create requires the user to ALREADY exist on THIS core (promotion-only;\n' +
+    '    run it on the account\'s home core).\n' +
     '  - revoke requires --yes (operator footgun protection;).\n' +
     '  - HTTP `POST /oauth2/register` (RFC 7591 mode:open) is intentionally deferred.\n'
   );

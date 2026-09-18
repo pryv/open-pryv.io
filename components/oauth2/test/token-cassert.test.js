@@ -114,7 +114,7 @@ async function registerClient (platform, meta) {
     redirectUris: ['https://app.example/cb'],
     scope: ['pryv:read', 'pryv:write'],
     grantTypes: ['authorization_code', 'refresh_token', 'client_credentials'],
-    accountUsername: CLIENT_ID,
+    accountUserId: 'u-' + CLIENT_ID,
     ...meta,
   }));
 }
@@ -130,7 +130,7 @@ function handleToken (deps) {
   return rawHandleToken({
     resolveAccess: async () => ({ accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://alice.pryv.me/' }),
     revokeAccessLocal: async () => {},
-    resolveUsername: async (userId) => (userId === 'u-alice' ? 'alice' : null),
+    resolveUsername: async (userId) => ({ 'u-alice': 'alice', ['u-' + CLIENT_ID]: CLIENT_ID })[userId] ?? null,
     ...deps,
   });
 }

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### `bin/oauth-client.js create` runs on the app account's home core
+
+The OAuth client record now stores the app account's user id instead of its username,
+so `create <username>` must run on the core that hosts the account; on a multi-core
+platform it refuses elsewhere and names the hosting core (it used to answer "user not
+found"). `show` prints the stored `accountUserId` plus the account username resolved on
+the core it runs on; `update` converts a record written by an earlier version when the
+account is local. `/oauth2/token` wire shapes are unchanged. The CLI also no longer
+claims that re-registering a revoked client id clears the revocation (it does not: tokens
+minted before the revoke stay dead).
+
 ### Managed shared accesses no longer outlive their managing app access (security)
 
 The expiry chain (a `shared` access managed by an `app` access cannot expire later

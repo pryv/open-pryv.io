@@ -175,7 +175,10 @@ as a deployment-wide invariant and roll it out to all cores together.
 Client management is a CLI on the core. It is **promotion-only**: the target
 user account must already exist (created through the normal `/reg/users` flow);
 the CLI turns an existing account into an application account and writes its
-OAuth client record.
+OAuth client record. Run `create` on the account's **home core**: the record
+stores the account's user id, which only that core can resolve (on a multi-core
+platform the CLI names the hosting core when run elsewhere). `show` prints the
+record plus the account username resolved on the core it runs on.
 
 **The `client_id` is the app account's username** — there is no separate opaque
 client identifier. Promoting user `acme-app` yields `client_id = acme-app`.

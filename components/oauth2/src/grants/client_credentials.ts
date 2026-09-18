@@ -32,6 +32,8 @@ import { getClient } from '../clientRegistry.ts';
 import { tokenEndpointAudiences } from '../issuer.ts';
 import { audit } from '../audit.ts';
 import { logServerError } from '../serverLog.ts';
+import { legacyAccountUsername } from '../storage.ts';
+import type { UsernameResolver } from './authorization_code.ts';
 
 /** Callback shape — same as refresh's mintRefreshedAccess (storage-direct). */
 export type MintClientAccess = (params: {
@@ -42,7 +44,11 @@ export type MintClientAccess = (params: {
   expiresAt: number;
 }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 
-/** Resolve the App account's username → userId. */
+/**
+ * Resolve the App account's username → userId on this core's local index.
+ * Used only for a client row written before rows carried `accountUserId`
+ * (each core's master boot converts the rows of its own accounts).
+ */
 export type ResolveAccountUserId = (username: string) => Promise<string | null>;
 
 export type ClientCredentialsDeps = {
@@ -50,6 +56,8 @@ export type ClientCredentialsDeps = {
   platform: PlatformDB;
   mintClientAccess: MintClientAccess;
   resolveAccountUserId: ResolveAccountUserId;
+  /** Canonical username for the account's user id on this core, or null when absent. */
+  resolveUsername: UsernameResolver;
 };
 
 export type ClientCredentialsParams = {
@@ -105,8 +113,12 @@ export async function handleClientCredentials (
   if (!Array.isArray(client.grantTypes) || !client.grantTypes.includes('client_credentials')) {
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'client is not registered for client_credentials grant' };
   }
-  if (typeof client.accountUsername !== 'string' || client.accountUsername.length === 0) {
-    return { ok: false, status: 500, error: 'server_error', description: 'client metadata missing accountUsername' };
+  const accountUserId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0
+    ? client.accountUserId
+    : null;
+  const legacyUsername = accountUserId == null ? legacyAccountUsername(client) : null;
+  if (accountUserId == null && legacyUsername == null) {
+    return { ok: false, status: 500, error: 'server_error', description: 'client metadata missing accountUserId (re-run bin/oauth-client.js create)' };
   }
 
   // Verify the confidential credential (client_secret_basic/post OR
@@ -146,11 +158,16 @@ export async function handleClientCredentials (
     granted = [...registered].filter((g) => !g.startsWith('cmc:'));
   }
 
-  // Resolve the App-account username → userId. The minted access
-  // targets THIS user's per-user storage.
-  const userId = await deps.resolveAccountUserId(client.accountUsername);
-  if (userId == null) {
-    return { ok: false, status: 500, error: 'server_error', description: 'accountUsername does not resolve to a known user' };
+  // The minted access targets the App account's per-user storage, which
+  // only its home core holds. The row carries the account's user id (a row
+  // written before that carries the username, resolved here once); the
+  // username is always the canonical one from this core's local index,
+  // never a stored value. A registered client whose account is not on this
+  // core is a deployment inconsistency the operator must see: 500.
+  const userId = accountUserId ?? await deps.resolveAccountUserId(legacyUsername as string);
+  const username = userId == null ? null : await deps.resolveUsername(userId);
+  if (userId == null || username == null) {
+    return { ok: false, status: 500, error: 'server_error', description: 'the application account is not hosted on this core or no longer exists' };
   }
 
   const { accessTokenTTL } = lifetimes(deps.config);
@@ -159,7 +176,7 @@ export async function handleClientCredentials (
   try {
     access = await deps.mintClientAccess({
       userId,
-      username: client.accountUsername,
+      username,
       clientId,
       scope: granted,
       expiresAt,

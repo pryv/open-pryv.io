@@ -785,16 +785,19 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
   });
 
   describe('[OAUTH-E2E-CC] client_credentials grant', function () {
-    let ccClientId, ccSecret;
+    let ccClientId, ccSecret, ccMintHash, accountUserId, legacyClientId;
 
     before(async function () {
       // Register an OAuth client with a client_secret and the
       // client_credentials grant enabled. Use the existing test user as
-      // its `accountUsername` so the minted access targets a known user.
+      // its account (by user id) so the minted access targets a known user.
       const { mintSecret } = require('oauth2/src/clientSecret.ts');
       const mint = await mintSecret();
       ccSecret = mint.plaintext;
+      ccMintHash = mint.hash;
       ccClientId = 'app-cc-' + cuid();
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      accountUserId = await (await getUsersRepository()).getUserIdForUsername(username);
       const platformDB = require('storages').platformDB;
       await storage.setClient(platformDB, {
         clientId: ccClientId,
@@ -803,15 +806,16 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         grantTypes: ['client_credentials'],
         clientName: 'OAuth E2E CC App',
         clientSecretHash: mint.hash,
-        accountUsername: username,
+        accountUserId,
         updatedAt: Date.now(),
       });
     });
 
     after(async function () {
-      if (ccClientId != null) {
-        const platformDB = require('storages').platformDB;
-        try { await storage.deleteClient(platformDB, ccClientId); } catch (_) { /* best-effort */ }
+      const platformDB = require('storages').platformDB;
+      for (const id of [ccClientId, legacyClientId]) {
+        if (id == null) continue;
+        try { await storage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ }
       }
     });
 
@@ -863,6 +867,42 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         .send({ grant_type: 'client_credentials', scope: 'cmc:' + OFFER_NAME });
       assert.equal(res.status, 400);
       assert.equal(res.body.error, 'invalid_scope');
+    });
+
+    it('[OCU7] a client row written with accountUsername is migrated on this core and still grants; no client row keeps the field', async function () {
+      const platformDB = require('storages').platformDB;
+      const { getUsersLocalIndex } = require('storage');
+      const usersIndex = await getUsersLocalIndex();
+      legacyClientId = 'app-legacy-' + cuid();
+      // The shape a client row had before it carried accountUserId.
+      await platformDB.setPlatformKv('oauth-client/' + legacyClientId, JSON.stringify({
+        clientId: legacyClientId,
+        redirectUris: ['https://app.example/cb'],
+        scope: ['app:own-data'],
+        grantTypes: ['client_credentials'],
+        clientName: 'OAuth E2E legacy CC App',
+        clientSecretHash: ccMintHash,
+        accountUsername: username,
+        updatedAt: Date.now(),
+      }));
+
+      const converted = await storage.migrateClientAccountIds(platformDB,
+        async (u) => (await usersIndex.getUserId(u)) ?? null);
+      assert.ok(converted >= 1, 'the legacy row was converted');
+      const row = await storage.getClient(platformDB, legacyClientId);
+      assert.equal(row.accountUserId, accountUserId);
+      // Fixture users have id === username, so check the field, not the string.
+      for (const id of await storage.listClientIds(platformDB)) {
+        const client = await storage.getClient(platformDB, id);
+        assert.ok(!('accountUsername' in client), 'client row still carries accountUsername: ' + id);
+      }
+
+      const basic = 'Basic ' + Buffer.from(legacyClientId + ':' + ccSecret).toString('base64');
+      const tokenRes = await coreRequest.post('/oauth2/token').type('form').set('Authorization', basic)
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(tokenRes));
+      const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
+      assert.equal(eventsRes.status, 200);
     });
   });
 
