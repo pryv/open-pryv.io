@@ -22,7 +22,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker } from './grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from './grants/authorization_code.ts';
 
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
@@ -107,6 +107,12 @@ export type Deps = {
   resolveAccess?: AuthCodeAccessResolver;
   /** Delete an orphaned pre-minted access from this core's storage. */
   revokeAccessLocal?: AuthCodeAccessRevoker;
+  /**
+   * Canonical username for a user id, from this core's local users index
+   * (null when absent). Code and refresh rows carry the user id only:
+   * PlatformDB is replicated to every core and must not hold usernames.
+   */
+  resolveUsername?: UsernameResolver;
 };
 
 /**
@@ -141,8 +147,9 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     console.warn('[oauth2] platform not provided — only the discovery doc is mounted');
     return;
   }
-  if (typeof deps.resolveUser !== 'function' || typeof deps.createAccess !== 'function') {
-    console.warn('[oauth2] resolveUser / createAccess not provided — /oauth2/authorize, /accept, /token not mounted');
+  if (typeof deps.resolveUser !== 'function' || typeof deps.createAccess !== 'function' ||
+      typeof deps.resolveUsername !== 'function') {
+    console.warn('[oauth2] resolveUser / createAccess / resolveUsername not provided — /oauth2/authorize, /accept, /token not mounted');
     return;
   }
 
@@ -174,6 +181,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       bindAccessDpop: deps.bindAccessDpop,
       resolveAccess: deps.resolveAccess,
       revokeAccessLocal: deps.revokeAccessLocal,
+      resolveUsername: deps.resolveUsername,
     }));
 }
 

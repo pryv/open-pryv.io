@@ -15,6 +15,10 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const { revokeExpiredCodeOrphans } = require('../src/orphanSweep.ts');
 
+// Code rows carry the user id only; the core resolves the username locally.
+const USERNAMES = { u1: 'alice', u2: 'bob', u: 'x' };
+const RESOLVE_USERNAME = async (userId) => USERNAMES[userId] ?? null;
+
 function platformWithExpired (rowsByPrefix) {
   return {
     async listExpiredAccessStates (prefix) {
@@ -27,8 +31,8 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
   it('[OSW1] revokes this core\'s orphans locally, skips other cores, revokes legacy rows over HTTP', async () => {
     const platform = platformWithExpired({
       'oauth-ac/': [
-        { key: 'oauth-ac/h1', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
-        { key: 'oauth-ac/h2', value: { coreId: 'core-b', clientId: 'app', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
+        { key: 'oauth-ac/h1', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', accessId: 'acc-1' } },
+        { key: 'oauth-ac/h2', value: { coreId: 'core-b', clientId: 'app', userId: 'u2', accessId: 'acc-2' } },
       ],
       'oauth-code/': [
         { key: 'oauth-code/raw', value: { accessId: 'acc-3', accessToken: 'tok-3', apiEndpoint: 'https://carol.pryv.me/' } },
@@ -39,6 +43,7 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
     const revoked = await revokeExpiredCodeOrphans({
       platform,
       coreId: 'core-a',
+      resolveUsername: RESOLVE_USERNAME,
       revokeLocal: async (p) => { local.push(p); },
       revokeHttp: async (p) => { http.push(p); return true; },
     });
@@ -50,14 +55,15 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
   it('[OSW2] a failing local revoke is not counted and does not stop the sweep', async () => {
     const platform = platformWithExpired({
       'oauth-ac/': [
-        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', username: 'alice', accessId: 'acc-1' } },
-        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u2', username: 'bob', accessId: 'acc-2' } },
+        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', accessId: 'acc-1' } },
+        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u2', accessId: 'acc-2' } },
       ],
     });
     const seen = [];
     const revoked = await revokeExpiredCodeOrphans({
       platform,
       coreId: 'core-a',
+      resolveUsername: RESOLVE_USERNAME,
       revokeLocal: async (p) => { seen.push(p.accessId); if (p.accessId === 'acc-1') throw new Error('storage down'); },
       revokeHttp: async () => true,
     });
@@ -66,10 +72,48 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
   });
 
   it('[OSW3] honours the per-tick cap', async () => {
-    const rows = Array.from({ length: 5 }, (_, i) => ({ key: 'k' + i, value: { coreId: 'core-a', clientId: 'app', userId: 'u', username: 'x', accessId: 'acc-' + i } }));
+    const rows = Array.from({ length: 5 }, (_, i) => ({ key: 'k' + i, value: { coreId: 'core-a', clientId: 'app', userId: 'u', accessId: 'acc-' + i } }));
     const platform = platformWithExpired({ 'oauth-ac/': rows });
     const local = [];
-    await revokeExpiredCodeOrphans({ platform, coreId: 'core-a', maxPerTick: 3, revokeLocal: async (p) => { local.push(p); }, revokeHttp: async () => true });
+    await revokeExpiredCodeOrphans({ platform, coreId: 'core-a', maxPerTick: 3, resolveUsername: RESOLVE_USERNAME, revokeLocal: async (p) => { local.push(p); }, revokeHttp: async () => true });
     assert.equal(local.length, 3);
+  });
+
+  it('[OPI6] rows without a username are revoked; a user no longer on this core is skipped, not revoked', async () => {
+    const platform = platformWithExpired({
+      'oauth-ac/': [
+        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'gone', accessId: 'acc-gone' } },
+        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', accessId: 'acc-1' } },
+      ],
+    });
+    const local = [];
+    const revoked = await revokeExpiredCodeOrphans({
+      platform,
+      coreId: 'core-a',
+      resolveUsername: RESOLVE_USERNAME,
+      revokeLocal: async (p) => { local.push(p); },
+      revokeHttp: async () => true,
+    });
+    assert.equal(revoked, 1);
+    assert.deepEqual(local, [{ userId: 'u1', username: 'alice', accessId: 'acc-1', clientId: 'app' }]);
+  });
+
+  it('[OPI10] a failing username resolution skips that row and the sweep continues', async () => {
+    const platform = platformWithExpired({
+      'oauth-ac/': [
+        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'u2', accessId: 'acc-2' } },
+        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', accessId: 'acc-1' } },
+      ],
+    });
+    const local = [];
+    const revoked = await revokeExpiredCodeOrphans({
+      platform,
+      coreId: 'core-a',
+      resolveUsername: async (id) => { if (id === 'u2') throw new Error('index down'); return RESOLVE_USERNAME(id); },
+      revokeLocal: async (p) => { local.push(p.accessId); },
+      revokeHttp: async () => true,
+    });
+    assert.equal(revoked, 1);
+    assert.deepEqual(local, ['acc-1']);
   });
 });

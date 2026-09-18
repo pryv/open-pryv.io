@@ -26,10 +26,12 @@
  *   4. Use the injected `createAccess` helper to mint an app access
  *      under that user. The user is the auth principal — full
  *      accesses.create chain runs (permission checks + hooks).
- *   5. Persist the {code, accessId, accessToken, apiEndpoint, …} row
- *      in PlatformDB. The grant just retrieves these at /token time
- *      after PKCE verification — the user is gone by then, so all
- *      access creation MUST happen here.
+ *   5. Persist the code row in PlatformDB, keyed by the code's SHA-256:
+ *      {accessId, coreId, userId, …}, never the access token nor the
+ *      username (PlatformDB is replicated to every core). At /token time,
+ *      after PKCE verification, this same core reads the access back from
+ *      its own storage; the user is gone by then, so all access creation
+ *      MUST happen here.
  *   6. Return the redirect URL `redirect_uri?code=…&state=…&iss=…`.
  *
  * Refuse path: when the user declines, app-web-auth3 should NOT call
@@ -271,7 +273,6 @@ export function handleAccept (deps: AcceptDeps) {
       codeChallenge: payload.codeChallenge,
       codeChallengeMethod: payload.codeChallengeMethod,
       userId: session.userId,
-      username: session.username,
       scope: granted,
       expiresAt: codeExpiresAt,
       accessId: access.accessId,

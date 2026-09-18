@@ -65,7 +65,17 @@ export type AuthCodeDeps = {
   resolveAccess?: AuthCodeAccessResolver;
   /** Deletes an orphaned pre-minted access from this core's storage. */
   revokeAccessLocal?: AuthCodeAccessRevoker;
+  /**
+   * Canonical username for a user id, from THIS core's local users index;
+   * null when the user is not (or no longer) on this core. The code row
+   * carries the user id only: PlatformDB is replicated to every core and
+   * must not hold usernames.
+   */
+  resolveUsername: UsernameResolver;
 };
+
+/** Canonical username for a user id on this core, or null when absent. */
+export type UsernameResolver = (userId: string) => Promise<string | null>;
 
 export type GrantParams = {
   code?: string;
@@ -140,15 +150,36 @@ export async function handleAuthorizationCode (
   // access to the client, so it is (correctly) not revoked. The access lives
   // on the issuing core, so only that core can delete it from storage; a row
   // from before hashed codes still carries the token and is revoked over HTTP.
+  // The row carries no username (PlatformDB is replicated and must not hold
+  // one): resolve it from this core's local index. Only a row this core
+  // issued is resolved; another core's row is refused in resolveIssuedAccess
+  // without touching the local index. A user gone since /accept has no
+  // storage left to read, bind or clean: nothing is called for them.
+  // Resolved BEFORE the PKCE / client checks on purpose: the orphan revoke
+  // below needs the username on every failure path. A resolver that throws
+  // answers 500 and skips that revoke (the access then dies by its own TTL).
+  let username: string | null = null;
+  if (!isLegacy(row) && row.coreId === coreId) {
+    try {
+      username = await deps.resolveUsername(row.userId);
+    } catch (err) {
+      logServerError('authorization_code: username resolution failed', err);
+      return { ok: false, status: 500, error: 'server_error', description: 'failed to resolve the authorizing user' };
+    }
+    if (username == null) {
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'the authorized access is no longer valid' };
+    }
+  }
+
   const outcome = await completeExchange(row);
   if (!outcome.ok && row.accessId != null) {
     if (isLegacy(row)) {
       if (row.accessToken != null && row.apiEndpoint != null) {
         await revokeOrphanAccess({ apiEndpoint: row.apiEndpoint, accessToken: row.accessToken, accessId: row.accessId });
       }
-    } else if (row.coreId === coreId && typeof deps.revokeAccessLocal === 'function') {
+    } else if (row.coreId === coreId && username != null && typeof deps.revokeAccessLocal === 'function') {
       try {
-        await deps.revokeAccessLocal({ userId: row.userId, username: row.username, accessId: row.accessId, clientId: row.clientId });
+        await deps.revokeAccessLocal({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
       } catch (err) {
         // Best-effort: the access then dies by its own (short) TTL.
         logServerError('authorization_code: orphan access revoke failed', err);
@@ -217,7 +248,11 @@ export async function handleAuthorizationCode (
         return { ok: false, status: 500, error: 'server_error', description: 'DPoP binding is not wired on this deployment' };
       }
       try {
-        await deps.bindAccessDpop({ userId: row.userId, username: row.username, accessId: row.accessId, jkt: dpopJkt });
+        // A legacy row is not resolved above (its access is read from the
+        // row itself); the binding still writes this core's storage.
+        const bindUsername = username ?? await deps.resolveUsername(row.userId);
+        if (bindUsername == null) throw new Error('user not on this core');
+        await deps.bindAccessDpop({ userId: row.userId, username: bindUsername, accessId: row.accessId, jkt: dpopJkt });
       } catch {
         return { ok: false, status: 500, error: 'server_error', description: 'failed to bind the access to the DPoP key' };
       }
@@ -230,7 +265,6 @@ export async function handleAuthorizationCode (
     await storage.setRefresh(deps.platform, coreId, refreshToken, {
       clientId: row.clientId,
       userId: row.userId,
-      username: row.username,
       scope: row.scope,
       issuedAt: now,
       lastUsedAt: now,
@@ -297,9 +331,13 @@ export async function handleAuthorizationCode (
     if (typeof deps.resolveAccess !== 'function') {
       return { ok: false, status: 500, error: 'server_error', description: 'access resolution is not wired on this deployment' };
     }
+    if (username == null) {
+      // Unreachable: a current row of this core was resolved (or refused) above.
+      return { ok: false, status: 500, error: 'server_error', description: 'the authorizing user was not resolved' };
+    }
     let resolved;
     try {
-      resolved = await deps.resolveAccess({ userId: row.userId, username: row.username, accessId, clientId: row.clientId });
+      resolved = await deps.resolveAccess({ userId: row.userId, username, accessId, clientId: row.clientId });
     } catch (err) {
       logServerError('authorization_code: access resolution failed', err);
       return { ok: false, status: 500, error: 'server_error', description: 'failed to read the issued access' };

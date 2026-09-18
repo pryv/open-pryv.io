@@ -56,6 +56,7 @@ function fakePlatform () {
       if (Date.now() > e.expiresAt) return null;
       return e;
     },
+    _state: state,
   };
 }
 
@@ -68,10 +69,13 @@ function pkceChallenge (verifier) {
 // The code row carries only the access id; the exchange reads the access
 // back from the issuing core's storage. Tests override either dep to observe it.
 const ISSUED = { accessToken: 'tok-u-alice-myapp', apiEndpoint: 'https://alice.pryv.me/' };
+// Rows carry the user id only; the core resolves the username locally.
+const RESOLVE_USERNAME = async (userId) => (userId === 'u-alice' ? 'alice' : null);
 function handleToken (deps) {
   return rawHandleToken({
     resolveAccess: async () => ISSUED,
     revokeAccessLocal: async () => {},
+    resolveUsername: RESOLVE_USERNAME,
     ...deps,
   });
 }
@@ -84,7 +88,6 @@ async function seedCode (platform, code, overrides = {}) {
     codeChallenge: pkceChallenge(verifier),
     codeChallengeMethod: 'S256',
     userId: 'u-alice',
-    username: 'alice',
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
     accessId: 'acc-u-alice',
@@ -609,6 +612,79 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       await handler({ body: body('CODE-CR4', verifier) }, res);
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
       assert.equal(res.body.access_token, 'tok-legacy');
+    });
+  });
+
+  describe('[OAUTH-TKN-AC-PII] rows carry the user id only; the username is resolved on this core', () => {
+    const body = (code, verifier) => ({
+      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: 'myapp', redirect_uri: 'https://app.example/cb',
+    });
+    const oauthRows = (platform) => Array.from(platform._state.entries()).filter(([k]) => k.startsWith('oauth-'));
+
+    it('[OPI3] the refresh row written by the exchange has no username', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-PI3');
+      const res = fakeRes();
+      await handleToken({ config: fakeConfig(), platform })({ body: body('CODE-PI3', verifier) }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      const rows = oauthRows(platform);
+      assert.equal(rows.length, 1, 'only the refresh row is left');
+      assert.ok(rows[0][0].startsWith('oauth-rt/'));
+      assert.ok(!('username' in rows[0][1].value));
+      assert.ok(!JSON.stringify(rows[0][1].value).includes('"alice"'));
+    });
+
+    it('[OPI4] a row written before the change (stored username) is ignored in favour of the resolved one', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-PI4', { username: 'alice-stale' });
+      const calls = [];
+      const res = fakeRes();
+      await handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveAccess: async (p) => { calls.push(p); return ISSUED; },
+      })({ body: body('CODE-PI4', verifier) }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(calls[0].username, 'alice');
+      const [, refresh] = oauthRows(platform)[0];
+      assert.ok(!('username' in refresh.value), 'the stale username is not carried into the refresh row');
+    });
+
+    it('[OPI5] a user no longer on this core → invalid_grant, nothing read or revoked, code consumed', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-PI5');
+      const touched = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async () => null,
+        resolveAccess: async (p) => { touched.push(['resolveAccess', p]); return ISSUED; },
+        revokeAccessLocal: async (p) => { touched.push(['revokeAccessLocal', p]); },
+      });
+      const res = fakeRes();
+      await handler({ body: body('CODE-PI5', verifier) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.deepEqual(touched, []);
+      const again = fakeRes();
+      await handler({ body: body('CODE-PI5', verifier) }, again);
+      assert.equal(again.body.error, 'invalid_grant', 'the code stays consumed');
+      assert.deepEqual(oauthRows(platform), [], 'no refresh row was minted');
+    });
+
+    it('[OPI7] a code issued by another core never reaches the local users index', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-PI7', { coreId: 'core-b' });
+      const lookups = [];
+      const res = fakeRes();
+      await handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async (id) => { lookups.push(id); return 'alice'; },
+      })({ body: body('CODE-PI7', verifier) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.deepEqual(lookups, []);
     });
   });
 });

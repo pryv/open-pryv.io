@@ -33,8 +33,8 @@
  *        - multi-core: `https://{username}.domain/` (placeholder in host)
  *      dnsLess shape → strip the trailing `/{username}/`; multi-core shape
  *      → the template host is unusable, fall back to this core's own
- *      `core:url` (requests land on a specific core; `/oauth2/token`
- *      forwards cross-core).
+ *      `core:url` (requests land on a specific core, which must be the
+ *      user's home core: `/oauth2/token` does not forward cross-core).
  *
  * Deriving from the topology base URL (1–2) rather than the per-user
  * template (3) is robust to a `service:api` that is inconsistent with the

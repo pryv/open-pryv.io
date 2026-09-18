@@ -143,7 +143,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.match(res.body.redirectTo, /&state=csrf-1/);
       assert.match(res.body.redirectTo, /&iss=https%3A%2F%2Freg\.pryv\.me/);
     });
-    it('[OAC-OK2] code row carries the access id + issuing core + userId + username + scope, never the token', async () => {
+    it('[OAC-OK2] code row carries the access id + issuing core + userId + scope, never the token nor the username', async () => {
       const platform = fakePlatform();
       const handler = require('../src/routes/accept.ts').handleAccept({
         config: fakeConfig(), platform, resolveUser: resolveAlice, createAccess: createAccessFake,
@@ -153,7 +153,9 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const code = res.body.redirectTo.match(/code=([^&]+)/)[1];
       const row = await getCode(platform, code);
       assert.equal(row.userId, 'u-alice');
-      assert.equal(row.username, 'alice');
+      // PlatformDB is replicated to every core: no username in it either
+      assert.ok(!('username' in row));
+      assert.ok(!JSON.stringify(row).includes('"alice"'));
       assert.equal(row.clientId, 'myapp');
       assert.deepEqual(row.scope, ['cmc:study-A']);
       assert.equal(row.codeChallenge, 'cc-base64');

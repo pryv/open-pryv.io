@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { handleToken } = require('../src/routes/token.ts');
+const { handleToken: rawHandleToken } = require('../src/routes/token.ts');
 const { setRefresh, getRefresh, getRefreshConsumed, hashSecret } = require('../src/storage.ts');
 
 const ISSUER = 'https://reg.pryv.me';
@@ -69,12 +69,17 @@ const MINT_REFRESHED_FAKE = async ({ userId, clientId, username }) => ({
   apiEndpoint: 'https://' + username + '.pryv.me/',
 });
 
+// Rows carry the user id only; the core resolves the username locally.
+const RESOLVE_USERNAME = async (userId) => (userId === 'u-alice' ? 'alice' : null);
+function handleToken (deps) {
+  return rawHandleToken({ resolveUsername: RESOLVE_USERNAME, ...deps });
+}
+
 async function seedRefresh (platform, token, overrides = {}) {
   const now = Date.now();
   await setRefresh(platform, CORE_ID, token, {
     clientId: 'myapp',
     userId: 'u-alice',
-    username: 'alice',
     scope: ['pryv:read'],
     issuedAt: now,
     lastUsedAt: now,
@@ -479,6 +484,109 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       const reuse = fakeRes(); await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-RD10', client_id: 'myapp' } }, reuse);
       const miss = fakeRes(); await handler({ body: { grant_type: 'refresh_token', refresh_token: 'NEVER-X', client_id: 'myapp' } }, miss);
       assert.equal(reuse.body.error_description, miss.body.error_description, 'reuse must not be distinguishable from never-issued');
+    });
+  });
+
+  describe('[OAUTH-TKN-RT-PII] rows carry the user id only; the username is resolved on this core', () => {
+    const params = (token) => ({ grant_type: 'refresh_token', refresh_token: token, client_id: 'myapp' });
+    const oauthRows = (platform) => Array.from(platform._state.entries()).filter(([k]) => k.startsWith('oauth-'));
+
+    it('[OPI1] a rotation writes the new refresh row and the consumed marker without a username', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-PI1');
+      const res = fakeRes();
+      await handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE })({ body: params('RT-PI1') }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      const rows = oauthRows(platform);
+      assert.deepEqual(rows.map(([k]) => k.split('/')[0]).sort(), ['oauth-rt', 'oauth-rt-used']);
+      for (const [key, entry] of rows) {
+        assert.ok(!('username' in entry.value), key + ' carries a username');
+        assert.ok(!JSON.stringify(entry.value).includes('"alice"'), key + ' carries the username');
+      }
+    });
+
+    it('[OPI4] a row written before the change (stored username) is ignored in favour of the resolved one', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-PI4', { username: 'alice-stale' });
+      const mints = [];
+      const res = fakeRes();
+      await handleToken({
+        config: fakeConfig(),
+        platform,
+        mintRefreshedAccess: async (p) => { mints.push(p); return MINT_REFRESHED_FAKE(p); },
+      })({ body: params('RT-PI4') }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(mints[0].username, 'alice');
+      assert.equal(res.body.apiEndpoint, 'https://alice.pryv.me/');
+      for (const [key, entry] of oauthRows(platform)) {
+        assert.ok(!('username' in entry.value), key + ' still carries the stale username');
+      }
+    });
+
+    it('[OPI5] a user no longer on this core → invalid_grant, nothing minted, reuse detection intact', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-PI5');
+      const mints = [];
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async () => null,
+        mintRefreshedAccess: async (p) => { mints.push(p); return MINT_REFRESHED_FAKE(p); },
+      });
+      const res = fakeRes();
+      await handler({ body: params('RT-PI5') }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.deepEqual(mints, []);
+      assert.notEqual(await getRefreshConsumed(platform, CORE_ID, 'RT-PI5'), null, 'the consumed marker is still written');
+    });
+
+    it('[OPI5B] reuse of a gone user\'s token is audited but revokes nothing', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-PI5B');
+      const revokes = [];
+      const cfg = fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 });
+      await handleToken({ config: cfg, platform, mintRefreshedAccess: MINT_REFRESHED_FAKE })({ body: params('RT-PI5B') }, fakeRes());
+      const reuse = fakeRes();
+      await handleToken({
+        config: cfg,
+        platform,
+        resolveUsername: async () => null,
+        mintRefreshedAccess: MINT_REFRESHED_FAKE,
+        revokeChain: async (p) => { revokes.push(p); },
+      })({ body: params('RT-PI5B') }, reuse);
+      assert.equal(reuse.statusCode, 400);
+      assert.equal(reuse.body.error, 'invalid_grant');
+      assert.deepEqual(revokes, []);
+    });
+
+    it('[OPI9] a failing username resolution → 500, nothing minted; on the reuse path → still invalid_grant', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-PI9');
+      const mints = [];
+      const boom = async () => { throw new Error('index down'); };
+      const res = fakeRes();
+      await handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }),
+        platform,
+        resolveUsername: boom,
+        mintRefreshedAccess: async (p) => { mints.push(p); return MINT_REFRESHED_FAKE(p); },
+      })({ body: params('RT-PI9') }, res);
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
+      assert.deepEqual(mints, []);
+      const revokes = [];
+      const reuse = fakeRes();
+      await handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }),
+        platform,
+        resolveUsername: boom,
+        mintRefreshedAccess: MINT_REFRESHED_FAKE,
+        revokeChain: async (p) => { revokes.push(p); },
+      })({ body: params('RT-PI9') }, reuse);
+      assert.equal(reuse.statusCode, 400);
+      assert.equal(reuse.body.error, 'invalid_grant');
+      assert.deepEqual(revokes, []);
     });
   });
 });

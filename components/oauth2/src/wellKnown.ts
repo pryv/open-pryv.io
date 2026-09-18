@@ -17,12 +17,12 @@
  * per-user storage and cannot run cross-core, and there is no username-based
  * routing on `/oauth2/*`. So for a given user's flow the `issuer` MUST
  * resolve to that user's home core — a bare load balancer spraying across
- * cores cannot serve the login/accept step. The code-grant `/token` is the
- * one core-agnostic step (it returns the already-minted access from the
- * cluster-wide code row), so its storage key is deliberately NOT
- * core-namespaced (see storage.ts) — a stray LB-routed code exchange still
- * resolves. A true shared-LB issuer would require username-aware routing at
- * the LB, which is a deployment concern, not a server change.
+ * cores cannot serve the login/accept step. The code-grant `/token` is bound
+ * to the same core: the code row carries the access id and the issuing
+ * `coreId`, never the token, so only the core that ran /accept can read the
+ * access back, and another core answers `invalid_grant`. A true shared-LB
+ * issuer would require username-aware routing at the LB, which is a
+ * deployment concern, not a server change.
  */
 
 import type { Request, Response } from 'express';

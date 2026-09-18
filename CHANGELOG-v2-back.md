@@ -37,6 +37,21 @@ runs next to another test matrix. All four now use `listeningAgent()`, like
 `coreRequest`. `[SYRO]` also stops calling `useNock()`: it mocks nothing, and it
 routed its requests to the real spawned server through nock's mock socket.
 
+## OAuth2 code and refresh rows no longer store the username
+
+Authorization-code, refresh-token and consumed-marker rows live in PlatformDB, which
+is replicated to every core, and carried the username in clear whatever the
+platform's hashed-PII mode. They now carry the user id only: the core that serves
+`/oauth2/token` (always the user's home core; another core's code row is refused)
+resolves the canonical username from its local users index, so a renamed user's
+chain also follows the current name. A user deleted since the grant gets
+`invalid_grant` (a consumed refresh token still leaves its reuse-detection marker),
+and the expired-code orphan sweep skips them. At boot, the master removes the
+username from this core's live refresh rows and markers once, before workers serve
+`/oauth2/token`; code rows (10 min) simply expire. Rolling back to an earlier
+release after this upgrade makes refreshes of chains minted since then fail until
+the user re-consents. `[OAC-OK2]`, `[OPI1]`, `[OPI3]`-`[OPI10]`, `[OE08]`, `[OE28]`.
+
 ## Delegation: lineage marker on accesses a delegate grants
 
 The delegation plugin gains an `accesses.create` hook that stamps

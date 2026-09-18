@@ -494,6 +494,19 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // ---------------------------------------------------------------------
+  // resolveUsername — userId → canonical username, from this core's local
+  // index. OAuth2 code / refresh rows carry the user id only (PlatformDB is
+  // replicated and must not hold usernames); null when the user is gone.
+  // ---------------------------------------------------------------------
+  async function resolveUsername (userId: string): Promise<string | null> {
+    if (typeof userId !== 'string' || userId.length === 0) return null;
+    const { getUsersLocalIndex } = require('storage');
+    const usersIndex = await getUsersLocalIndex();
+    const name = await usersIndex.getUsername(userId);
+    return typeof name === 'string' && name.length > 0 ? name : null;
+  }
+
+  // ---------------------------------------------------------------------
   // Grant-specific mint callbacks over mintAccessDirect:
   //   - refresh: the chain is bound to the durable data-grant — re-read
   //     it (revoked → typed throw the grant maps to invalid_grant) and
@@ -758,6 +771,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     bindAccessDpop,
     resolveAccess,
     revokeAccessLocal,
+    resolveUsername,
     resolveUser,
     createAccess,
   });

@@ -261,6 +261,28 @@ describe('[OAUTH-STORE] storage layer', () => {
       assert.equal(await storage.rekeyLegacyRefreshTokens(platform, 'core-a'), 0);
       assert.equal(platform._internalStateStore.size, 0);
     });
+    it('[OPI8] scrubUsernameFromRows drops the username from this core\'s refresh rows and markers only', async () => {
+      const platform = fakePlatform();
+      const exp = Date.now() + 60_000;
+      const withName = (userId) => ({ ...row(userId, exp), username: 'name-' + userId });
+      await storage.setRefresh(platform, 'core_a', 'TOK1', withName('u1'));
+      await storage.markRefreshConsumed(platform, 'core_a', 'TOK2', { clientId: 'app', userId: 'u2', username: 'name-u2', consumedAt: 1 }, exp);
+      await storage.setRefresh(platform, 'core-b', 'TOK3', withName('u3'));
+      await storage.setCode(platform, 'CODE1', { clientId: 'app', redirectUri: 'x', codeChallenge: 'c', codeChallengeMethod: 'S256', userId: 'u4', username: 'name-u4', scope: [], expiresAt: exp });
+
+      assert.equal(await storage.scrubUsernameFromRows(platform, 'core_a'), 2);
+      const stored = (key) => platform._internalStateStore.get(key);
+      const rt1 = stored('oauth-rt/core_a/' + storage.hashSecret('TOK1'));
+      assert.ok(!('username' in rt1.value));
+      assert.equal(rt1.value.userId, 'u1');
+      assert.equal(rt1.expiresAt, exp, 'expiry kept');
+      assert.ok(!('username' in stored('oauth-rt-used/core_a/' + storage.hashSecret('TOK2')).value));
+      // another core's rows and code rows are left alone
+      assert.equal(stored('oauth-rt/core-b/' + storage.hashSecret('TOK3')).value.username, 'name-u3');
+      assert.equal(stored('oauth-ac/' + storage.hashSecret('CODE1')).value.username, 'name-u4');
+
+      assert.equal(await storage.scrubUsernameFromRows(platform, 'core_a'), 0, 'idempotent');
+    });
   });
 
   describe('[OAUTH-STORE-ISO] keyspace isolation', () => {
