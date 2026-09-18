@@ -16,6 +16,8 @@
 
 const https = require('node:https');
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const httpsOptionsAsync = require('backloop.dev').httpsOptionsAsync;
 
 const LISTEN_PORT = parseInt(process.argv[2]) || 3000;
@@ -29,10 +31,32 @@ function targetPortFor (url) {
   return HFS_PATTERN.test(url) ? HFS_PORT : API_PORT;
 }
 
+// Service assets (`service.assets.definitions` in config/libjs-test-config.yml)
+// are served from local fixtures, so the lib-js assets and auth tests do not
+// depend on reaching the public assets site.
+const ASSETS_PREFIX = '/test-assets/';
+const ASSETS_DIR = path.resolve(__dirname, 'fixtures/assets');
+const ASSET_TYPES = { '.json': 'application/json', '.css': 'text/css', '.html': 'text/html' };
+
+function serveAsset (clientReq, clientRes) {
+  const rel = decodeURIComponent(clientReq.url.split('?')[0].slice(ASSETS_PREFIX.length));
+  const file = path.resolve(ASSETS_DIR, rel);
+  if (!file.startsWith(ASSETS_DIR + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+    clientRes.writeHead(404, { 'Content-Type': 'text/plain' });
+    return clientRes.end('Not found');
+  }
+  clientRes.writeHead(200, {
+    'Content-Type': ASSET_TYPES[path.extname(file)] || 'application/octet-stream',
+    'Access-Control-Allow-Origin': '*'
+  });
+  fs.createReadStream(file).pipe(clientRes);
+}
+
 httpsOptionsAsync(function (err, httpsOptions) {
   if (err) { console.error(err); process.exit(1); }
 
   const server = https.createServer(httpsOptions, function (clientReq, clientRes) {
+    if (clientReq.url.startsWith(ASSETS_PREFIX)) return serveAsset(clientReq, clientRes);
     const headers = Object.assign({ 'x-forwarded-proto': 'https' }, clientReq.headers);
 
     const proxy = http.request({

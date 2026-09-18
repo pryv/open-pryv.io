@@ -1,0 +1,21 @@
+{ 
+  "baseUrl": null,
+  "favicon": {
+    "default": {"url": "favicon.ico"}
+  },
+  "css": {
+    "default": {"url": "default.css"}
+  },
+  "lib-js": {
+    "buttonSignIn": {
+      "css": "lib-js/buttonSignIn.css",
+      "html": "lib-js/buttonSignIn.html",
+      "messages": "lib-js/buttonSignInMessages.json"
+    }
+  },
+  "app-web-auth3": {
+   	"logo": {
+   	  "url": "app-web-auth3/logo.png" 
+   	}
+  }
+}
