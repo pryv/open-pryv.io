@@ -208,7 +208,10 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const platformDB = require('storages').platformDB;
       try { await storage.deleteClient(platformDB, clientId); } catch (_) { /* best-effort */ }
     }
-    if (fixtures != null) await fixtures.clean();
+    // [OE28] deletes the end user: cleaning it again may fail, the rest must not leak.
+    if (fixtures != null) {
+      try { await fixtures.clean(); } catch (_) { /* best-effort */ }
+    }
   });
 
   // Drive the four-call flow once; tests below assert different
@@ -372,11 +375,16 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
-    it('[OE08] the platform store (replicated to every core) holds no code, refresh token or access token', async function () {
+    it('[OE08] the platform store (replicated to every core) holds no code, refresh token, access token or username', async function () {
       const platformDB = require('storages').platformDB;
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
-      const secrets = [r.code, r.tokenRes.body.refresh_token, r.tokenRes.body.access_token];
+      // One rotation, so the rotated row and the consumed marker are checked too.
+      const refreshRes = await coreRequest.post('/oauth2/token').type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+      assert.equal(refreshRes.status, 200, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
+      const secrets = [r.code, r.tokenRes.body.refresh_token, r.tokenRes.body.access_token,
+        refreshRes.body.refresh_token, refreshRes.body.access_token];
       const keys = await platformDB.listPlatformKvKeys('access-state/oauth');
       assert.ok(keys.length > 0, 'expected the refresh row to exist');
       for (const storeKey of keys) {
@@ -385,6 +393,8 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         for (const secret of secrets) {
           assert.ok(!blob.includes(secret), 'platform row carries a credential: ' + storeKey);
         }
+        // Fixture users have id === username, so check the field, not the string.
+        assert.ok(entry?.value == null || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
       }
     });
 
@@ -408,7 +418,6 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         codeChallenge: challenge,
         codeChallengeMethod: 'S256',
         userId,
-        username,
         scope: ['cmc:' + OFFER_NAME],
         expiresAt,
         accessId: personal.id,
@@ -1224,6 +1233,35 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.deepEqual(res.body.dpop_signing_alg_values_supported, ['ES256']);
       assert.ok(res.body.scopes_supported.includes('cmc:*'),
         'discovery must advertise the cmc namespace: ' + JSON.stringify(res.body.scopes_supported));
+    });
+  });
+
+  // LAST in the file: it deletes the account the flow helpers close over.
+  describe('[OAUTH-E2E-GONE] a user deleted after the grant', function () {
+    it('[OE28] refresh answers invalid_grant, and no OAuth row carries the username', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const first = await coreRequest.post('/oauth2/token').type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+      assert.equal(first.status, 200, 'refresh before deletion: ' + describeRes(first));
+
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const userId = await usersRepository.getUserIdForUsername(username);
+      await usersRepository.deleteOne(userId, username);
+
+      const after = await coreRequest.post('/oauth2/token').type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: first.body.refresh_token, client_id: clientId });
+      assert.equal(after.status, 400, describeRes(after));
+      assert.equal(after.body.error, 'invalid_grant');
+      assert.equal(after.body.access_token, undefined);
+
+      const platformDB = require('storages').platformDB;
+      for (const storeKey of await platformDB.listPlatformKvKeys('access-state/oauth')) {
+        const entry = await platformDB.getAccessState(storeKey.slice('access-state/'.length));
+        // Fixture users have id === username, so check the field, not the string.
+        assert.ok(entry?.value == null || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
+      }
     });
   });
 });
