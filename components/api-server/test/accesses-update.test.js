@@ -14,6 +14,7 @@ const { getConfig } = require('@pryv/boiler');
 const storage = require('storage');
 const { pubsub } = require('messages');
 const timestamp = require('unix-timestamp');
+const cache = require('cache').default;
 
 describe('[ACUP] accesses.update', function () {
   let username;
@@ -59,6 +60,8 @@ describe('[ACUP] accesses.update', function () {
 
   async function resetAccesses () {
     await new Promise((resolve) => { accessStorage.removeAll(user, () => resolve()); });
+    // the rows are recreated with the same ids and tokens: drop cached ones
+    cache.clear();
     await fixtureUser.access({
       type: 'personal',
       token: personalToken
@@ -322,6 +325,37 @@ describe('[ACUP] accesses.update', function () {
         assert.strictEqual(res.status, expected, 'app expires ' + (appExpires < timestamp.now() ? 'in the past' : 'in the future'));
         if (expected === 403) assert.strictEqual(res.body.error.message, 'Access has expired.');
       }
+    });
+
+    it('[CR10] a shared created by an app that authenticated with a caller id stops with that app', async function () {
+      const appId = cuid();
+      const sharedToken = cuid();
+      await fixtureUser.access({ id: appId, token: cuid(), name: 'app ' + appId, type: 'app', expires: timestamp.now() - 60, permissions: [{ streamId: stream0.attrs.id, level: 'manage' }] });
+      await fixtureUser.access({ id: cuid(), token: sharedToken, name: 'shared ' + appId, type: 'shared', permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }], createdBy: appId + ' some-caller', modifiedBy: appId + ' some-caller' });
+      const res = await coreRequest
+        .get('/' + username + '/access-info')
+        .set('Authorization', sharedToken);
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[CR11] an app that authenticated with a caller id manages the shared it created, within its expiry', async function () {
+      await appExpiresInAnHour();
+      const created = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessToken + ' some-caller')
+        .send({ name: 'caller-shared', type: 'shared', permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }], expireAfter: 600 });
+      assert.strictEqual(created.status, 201);
+      const refused = await coreRequest
+        .put(path(created.body.access.id))
+        .set('Authorization', appAccessToken)
+        .send({ expires: null });
+      assert.strictEqual(refused.status, 400);
+      assert.strictEqual(refused.body.error.id, ErrorIds.InvalidOperation);
+      const allowed = await coreRequest
+        .put(path(created.body.access.id))
+        .set('Authorization', appAccessToken)
+        .send({ expireAfter: 900 });
+      assert.strictEqual(allowed.status, 200);
     });
 
     it('[CR09] (guard) a shared without expiry under a managing access without expiry keeps working', async function () {

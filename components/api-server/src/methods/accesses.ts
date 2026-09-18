@@ -31,7 +31,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
-const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('business/src/accesses/refs.ts');
+const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 // Scoped notifications: structured access-change signal carrying the changed
@@ -206,7 +206,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Visibility — app callers can only see accesses they manage.
     if (!context.access.canListAnyAccess()) {
       const createdByBase = typeof head.createdBy === 'string'
-        ? parseAccessRef(head.createdBy).base
+        ? managingAccessBase(head.createdBy)
         : null;
       const isOwn = head.id === context.access.id;
       const isManaged = createdByBase === context.access.id;
@@ -746,7 +746,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       if (target.type === 'shared') {
         // Rules A + D — child cannot exceed managing app's scope/expiry.
         let managingApp: InstanceType<typeof AccessLogic> | null = null;
-        const createdByBase = parseAccessRef(target.createdBy).base;
+        const createdByBase = managingAccessBase(target.createdBy);
         if (createdByBase === context.access.id) {
           managingApp = context.access;
         } else {
@@ -790,7 +790,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const managed = (allAccesses || []).filter((a: { id: string; type?: string; createdBy?: string }) =>
           a.type === 'shared' && a.id !== target.id &&
           typeof a.createdBy === 'string' &&
-          parseAccessRef(a.createdBy).base === target.id);
+          managingAccessBase(a.createdBy) === target.id);
         const offendingChildren: string[] = [];
         for (const child of managed) {
           if (wantsPermChange) {
@@ -859,11 +859,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.unexpectedError(err));
     }
 
-    // 5. Cache invalidation — parallel to delete's pattern at line ~388.
-    const cached = cache.getAccessLogicForId(context.user.id, baseId);
-    if (cached != null) {
-      cache.unsetAccessLogic(context.user.id, cached);
-    }
+    // 5. Cache invalidation, unconditional like delete: a concurrent request
+    // may re-cache the pre-update row during the write (the expiry chain
+    // reads a managing access's `expires` from this cache).
+    cache.unsetAccessLogic(context.user.id, { id: baseId!, token: target.token });
     next();
   }
 

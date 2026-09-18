@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const AccessLogic = require('./accesses/AccessLogic.ts').default;
-const { parseAccessRef } = require('./accesses/refs.ts');
+const { managingAccessBase } = require('./accesses/refs.ts');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -292,11 +292,13 @@ class MethodContext {
    * the managing access (the write rules now keep new ones within it).
    */
   async checkManagingAccessExpiry (storage: StorageLike) {
-    const access = this.access as { type?: string; expires?: number | null; createdBy?: unknown } | null;
+    const access = this.access as { type?: string; expires?: number | null; createdBy?: unknown; _noManagingAccess?: boolean } | null;
     if (access == null || access.type !== 'shared' || access.expires != null || typeof access.createdBy !== 'string') return;
+    // minted by the platform, or already found to have no managing access row
+    if (access.createdBy === 'system' || access._noManagingAccess === true) return;
     let base: string;
     try {
-      base = parseAccessRef(access.createdBy).base;
+      base = managingAccessBase(access.createdBy);
     } catch {
       return;
     }
@@ -304,7 +306,11 @@ class MethodContext {
     if (managing == null) {
       const cacheEpoch = cache.getAccessLogicEpoch(this.user.id);
       const row = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, { id: base }, null, cb));
-      if (row == null) return;
+      if (row == null) {
+        // remembered on the cached access: no lookup on its next requests
+        access._noManagingAccess = true;
+        return;
+      }
       managing = new AccessLogic(this.user.id, row);
       cache.setAccessLogic(this.user.id, managing, cacheEpoch);
     }

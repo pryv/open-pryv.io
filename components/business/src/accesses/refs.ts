@@ -51,6 +51,15 @@ export function parseAccessRef (ref: string): AccessRef {
 }
 
 /**
+ * Base id of the access that created (manages) another one, from its
+ * `createdBy`: an app access authenticated with a caller id
+ * (`Authorization: <token> <callerId>`) is recorded as `<id> <callerId>`.
+ */
+export function managingAccessBase (createdBy: string): string {
+  return parseAccessRef(createdBy.split(' ')[0]).base;
+}
+
+/**
  * Render an `{ base, serial }` pair back to the wire format. Bare cuid
  * when serial is null/undefined; `<base>:<serial>` otherwise.
  */
