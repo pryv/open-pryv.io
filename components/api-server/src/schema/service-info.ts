@@ -39,7 +39,10 @@ export default function () {
     // the adapter's web UI and a `manifest.json` under it; clients fetch
     // `<url>/manifest.json` for the adapter's name, type, version and
     // capabilities. `{username}` templating is allowed, as for `api`.
-    adapters: array(string(), { nullable: true })
+    adapters: array(string(), { nullable: true }),
+    // Optional root URL of the platform's account app (self-service account
+    // pages); the lib-js sign-in button links to it.
+    account: string()
   }, {
     required: ['serial', 'api', 'access', 'register', 'name', 'home', 'support', 'terms', 'eventTypes'],
     additionalProperties: false

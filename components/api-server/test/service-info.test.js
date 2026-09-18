@@ -122,12 +122,15 @@ describe('[SINF] Service', () => {
       });
     });
 
-    it('[SN12] serves service.account (the account app root) when configured, and only then', async () => {
+    it('[SN12] serves service.account (the account app root) when configured, and the result schema accepts it', async () => {
+      // The passthrough itself predates `account` (guard); the schema check
+      // fails without `account` in the result schema.
       const plain = await coreRequest.get('/' + username + '/service/info');
       assert.ok(!('account' in plain.body), 'account must be absent unless configured');
       await withInjectedConfig({ service: { account: 'https://account.example.com' } }, async () => {
         const res = await coreRequest.get('/' + username + '/service/info');
         assert.strictEqual(res.body.account, 'https://account.example.com');
+        validation.check(res, { status: 200, schema: methodsSchema.get.result });
       });
     });
 

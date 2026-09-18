@@ -111,6 +111,7 @@ service:
   support: https://your-domain.com
   terms: https://your-domain.com
   # Optional — SDKs display / fetch these; falls back to sensible defaults.
+  account: https://your-account-app.example.com   # app-web-user-account root (access.defaultAuthUrl without /auth)
   assets:
     definitions: https://pryv.github.io/assets-pryv.me/index.json
 
