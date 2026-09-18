@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 import express from 'express';
-import request from 'supertest';
+import { listeningAgent } from 'test-helpers/src/listeningAgent.ts';
 import { startFakeIdp } from '../../sso/test/fake-idp.js';
 const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
@@ -58,7 +58,7 @@ function hashParams (location) {
 
 describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
   this.timeout(40000);
-  let idp, ssoApp, fixtures, restoreConfig, platform;
+  let idp, ssoApp, ssoRequest, fixtures, restoreConfig, platform;
 
   before(async function () {
     await initTests();
@@ -96,6 +96,9 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     // global.app is the stable booted instance whose api has every method.
     ssoApp = express();
     require('../src/routes/sso.ts').default(ssoApp, global.app);
+    // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
+    // another process holding 127.0.0.1 on that port then answers the request.
+    ssoRequest = await listeningAgent(ssoApp);
   });
 
   after(async function () {
@@ -138,7 +141,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
 
   // Drive /start → fake IdP /authorize → returns the state cookie + callback path.
   async function startFlow () {
-    const res1 = await request(ssoApp).get(`/auth/sso/${PROVIDER}/start`);
+    const res1 = await ssoRequest.get(`/auth/sso/${PROVIDER}/start`);
     assert.strictEqual(res1.status, 302, 'start should 302 to the IdP: ' + JSON.stringify(res1.body));
     const setCookie = res1.headers['set-cookie'];
     assert.ok(Array.isArray(setCookie) && setCookie.length === 1, 'start should set the state cookie');
@@ -151,7 +154,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
 
   async function runCallback () {
     const { cookie, callbackPath } = await startFlow();
-    const res = await request(ssoApp).get(callbackPath).set('Cookie', cookie);
+    const res = await ssoRequest.get(callbackPath).set('Cookie', cookie);
     assert.strictEqual(res.status, 302, 'callback should 302 to the landing page');
     return res.headers.location;
   }

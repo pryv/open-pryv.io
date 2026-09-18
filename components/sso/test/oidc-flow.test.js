@@ -18,7 +18,7 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import express from 'express';
-import request from 'supertest';
+import { listeningAgent } from 'test-helpers/src/listeningAgent.ts';
 import { startFakeIdp } from './fake-idp.js';
 const require = createRequire(import.meta.url);
 
@@ -31,7 +31,7 @@ const LANDING = 'https://auth.example.com/sso-signin';
 describe('[SSOC] SSO OIDC client flow', function () {
   this.timeout(20000);
 
-  let idp, app, lastIdentity;
+  let idp, app, request, lastIdentity;
 
   before(async () => {
     idp = await startFakeIdp();
@@ -58,6 +58,9 @@ describe('[SSOC] SSO OIDC client flow', function () {
       onIdentity: async (claims) => { lastIdentity = claims; return { location: LANDING + '?ok=1' }; },
       logger: { warn: () => {} }
     });
+    // Bound on 127.0.0.1: a bare app makes supertest listen on `::`, and on macOS
+    // another process holding 127.0.0.1 on that port then answers the request.
+    request = await listeningAgent(app);
   });
 
   after(async () => { if (idp != null) await idp.close(); });
@@ -80,7 +83,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   // Drive /start, then the fake IdP /authorize, returning the state cookie and
   // the callback path (with code + state) to replay against our app.
   async function startFlow (provider) {
-    const res1 = await request(app).get(`/auth/sso/${provider}/start`);
+    const res1 = await request.get(`/auth/sso/${provider}/start`);
     assert.equal(res1.status, 302, 'start should 302 to the IdP');
     const authorizeUrl = res1.headers.location;
     const setCookie = res1.headers['set-cookie'];
@@ -95,7 +98,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
 
   it('[SSOC1] happy path: valid id_token → onIdentity receives the claims → 302 to landing', async () => {
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.startsWith(LANDING), 'redirects to the landing page');
     assert.ok(!res.headers.location.includes('ssoError'), 'no error marker on success');
@@ -107,7 +110,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   });
 
   it('[SSOC1B] GET /auth/sso/providers lists the operator allow-list (id + label only)', async () => {
-    const res = await request(app).get('/auth/sso/providers');
+    const res = await request.get('/auth/sso/providers');
     assert.equal(res.status, 200);
     const ids = res.body.providers.map((p) => p.id).sort();
     assert.deepEqual(ids, ['other', 'test']);
@@ -120,14 +123,14 @@ describe('[SSOC] SSO OIDC client flow', function () {
   });
 
   it('[SSOC2] unknown provider → 404 at /start', async () => {
-    const res = await request(app).get('/auth/sso/nope/start');
+    const res = await request.get('/auth/sso/nope/start');
     assert.equal(res.status, 404);
   });
 
   it('[SSOC3] email_verified:false flows through to onIdentity as false (linking decides later)', async () => {
     idp.control.emailVerified = false;
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.notEqual(lastIdentity, null);
     assert.equal(lastIdentity.emailVerified, false);
@@ -136,7 +139,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   it('[SSOC4] wrong aud → uniform failure, onIdentity NOT called', async () => {
     idp.control.audOverride = 'some-other-client';
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('#ssoError=sso-failed'));
     assert.equal(lastIdentity, null);
@@ -145,7 +148,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   it('[SSOC5] wrong iss → uniform failure', async () => {
     idp.control.issOverride = 'https://evil.example.com';
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
@@ -154,7 +157,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   it('[SSOC6] expired id_token → uniform failure', async () => {
     idp.control.expOverride = Math.floor(Date.now() / 1000) - 60;
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
@@ -169,7 +172,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   it('[SSOC8] missing nonce in id_token → uniform failure', async () => {
     idp.control.omitNonce = true;
     const { cookie, callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath).set('Cookie', cookie);
+    const res = await request.get(callbackPath).set('Cookie', cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
@@ -177,7 +180,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
 
   it('[SSOC9] callback with no state cookie → uniform failure (replay defence)', async () => {
     const { callbackPath } = await startFlow('test');
-    const res = await request(app).get(callbackPath); // no Cookie header
+    const res = await request.get(callbackPath); // no Cookie header
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
@@ -186,7 +189,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
   it('[SSOC10] tampered state cookie → uniform failure', async () => {
     const { cookie, callbackPath } = await startFlow('test');
     const tampered = cookie.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
-    const res = await request(app).get(callbackPath).set('Cookie', tampered);
+    const res = await request.get(callbackPath).set('Cookie', tampered);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
@@ -196,7 +199,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
     const started = await startFlow('other');
     // Rewrite the callback path to the "test" provider while keeping other's cookie.
     const testCallback = started.callbackPath.replace('/auth/sso/other/callback', '/auth/sso/test/callback');
-    const res = await request(app).get(testCallback).set('Cookie', started.cookie);
+    const res = await request.get(testCallback).set('Cookie', started.cookie);
     assert.equal(res.status, 302);
     assert.ok(res.headers.location.includes('ssoError'));
     assert.equal(lastIdentity, null);
