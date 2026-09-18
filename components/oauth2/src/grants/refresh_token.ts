@@ -183,10 +183,16 @@ export async function handleRefreshToken (
       reason: withinGrace ? 'within-grace' : 'chain-revoked',
     });
     if (!withinGrace && typeof deps.revokeChain === 'function') {
+      let username: string | null;
       try {
-        // A user gone since the rotation has nothing left to revoke.
-        const username = await deps.resolveUsername(marker.userId);
-        if (username == null) return INVALID;
+        username = await deps.resolveUsername(marker.userId);
+      } catch (err: unknown) {
+        logServerError('refresh_token: username resolution failed after reuse detection', err);
+        return INVALID;
+      }
+      // A user gone since the rotation has nothing left to revoke.
+      if (username == null) return INVALID;
+      try {
         await deps.revokeChain({
           userId: marker.userId,
           username,

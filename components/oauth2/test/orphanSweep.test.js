@@ -79,7 +79,7 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
     assert.equal(local.length, 3);
   });
 
-  it('[OPI6] rows without a username are revoked; a user no longer on this core is skipped, not counted', async () => {
+  it('[OPI6] rows without a username are revoked; a user no longer on this core is skipped, not revoked', async () => {
     const platform = platformWithExpired({
       'oauth-ac/': [
         { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'gone', accessId: 'acc-gone' } },
@@ -96,5 +96,24 @@ describe('[OSW] expired authorization-code orphan sweep', () => {
     });
     assert.equal(revoked, 1);
     assert.deepEqual(local, [{ userId: 'u1', username: 'alice', accessId: 'acc-1', clientId: 'app' }]);
+  });
+
+  it('[OPI10] a failing username resolution skips that row and the sweep continues', async () => {
+    const platform = platformWithExpired({
+      'oauth-ac/': [
+        { key: 'a', value: { coreId: 'core-a', clientId: 'app', userId: 'u2', accessId: 'acc-2' } },
+        { key: 'b', value: { coreId: 'core-a', clientId: 'app', userId: 'u1', accessId: 'acc-1' } },
+      ],
+    });
+    const local = [];
+    const revoked = await revokeExpiredCodeOrphans({
+      platform,
+      coreId: 'core-a',
+      resolveUsername: async (id) => { if (id === 'u2') throw new Error('index down'); return RESOLVE_USERNAME(id); },
+      revokeLocal: async (p) => { local.push(p.accessId); },
+      revokeHttp: async () => true,
+    });
+    assert.equal(revoked, 1);
+    assert.deepEqual(local, ['acc-1']);
   });
 });

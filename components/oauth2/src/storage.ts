@@ -635,7 +635,7 @@ export async function scrubUsernameFromRows (platform: PlatformDB, coreId: strin
       if (!key.startsWith(self)) continue;
       const entry = await platform.getAccessState(key); // null when expired (and dropped)
       const value = entry?.value as Record<string, unknown> | undefined;
-      if (entry == null || value == null || !('username' in value)) continue;
+      if (entry == null || value == null || typeof value !== 'object' || !('username' in value)) continue;
       const { username: _dropped, ...rest } = value;
       await platform.setAccessState(key, rest, entry.expiresAt);
       scrubbed++;

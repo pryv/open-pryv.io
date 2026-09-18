@@ -155,6 +155,9 @@ export async function handleAuthorizationCode (
   // issued is resolved; another core's row is refused in resolveIssuedAccess
   // without touching the local index. A user gone since /accept has no
   // storage left to read, bind or clean: nothing is called for them.
+  // Resolved BEFORE the PKCE / client checks on purpose: the orphan revoke
+  // below needs the username on every failure path. A resolver that throws
+  // answers 500 and skips that revoke (the access then dies by its own TTL).
   let username: string | null = null;
   if (!isLegacy(row) && row.coreId === coreId) {
     try {

@@ -13,7 +13,7 @@ and the expired-code orphan sweep skips them. At boot, the master removes the
 username from this core's live refresh rows and markers once, before workers serve
 `/oauth2/token`; code rows (10 min) simply expire. Rolling back to an earlier
 release after this upgrade makes refreshes of chains minted since then fail until
-the user re-consents. `[OPI1]`-`[OPI8]`, `[OE08]`, `[OE28]`.
+the user re-consents. `[OAC-OK2]`, `[OPI1]`, `[OPI3]`-`[OPI10]`, `[OE08]`, `[OE28]`.
 
 ## Delegation: lineage marker on accesses a delegate grants
 

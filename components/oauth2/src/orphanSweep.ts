@@ -26,6 +26,7 @@
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { revokeOrphanAccess } from './orphanAccess.ts';
+import type { UsernameResolver } from './grants/authorization_code.ts';
 
 export type OrphanSweepDeps = {
   platform: PlatformDB;
@@ -34,7 +35,7 @@ export type OrphanSweepDeps = {
   /** Delete an access from this core's storage. */
   revokeLocal: (params: { userId: string; username: string; accessId: string; clientId: string }) => Promise<void>;
   /** Canonical username for a user id on this core, or null when absent (code rows carry the id only). */
-  resolveUsername: (userId: string) => Promise<string | null>;
+  resolveUsername: UsernameResolver;
   /** Legacy HTTP self-revoke; injectable for tests. */
   revokeHttp?: typeof revokeOrphanAccess;
   /** Upper bound of revokes per call, to keep one sweep tick bounded. */
