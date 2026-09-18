@@ -502,6 +502,65 @@ describe('[WHBK] Webhook', () => {
       await repo.deleteOne(user, webhook.id);
     });
 
+    async function firesWith (accesses, accessId) {
+      const fakeAccessesStorage = {
+        findOne: (_u, q, _opts, cb) => cb(null, accesses[q.id] ?? null)
+      };
+      const repo = new WebhooksRepository(storage, userStorage, fakeAccessesStorage);
+      const webhook = new Webhook({ accessId, url, webhooksRepository: repo, user });
+      await webhook.save();
+      const before = mockServer.getMessages().length;
+      await webhook.send('maybe');
+      const fired = mockServer.getMessages().length > before;
+      await repo.deleteOne(user, webhook.id);
+      return { fired, state: webhook.state };
+    }
+
+    it('[WCADF4] when access has expired, marks webhook inactive and skips the HTTP call', async () => {
+      const id = cuid();
+      const res = await firesWith({ [id]: { id, deleted: null, expires: timestamp.now() - 60 } }, id);
+      assert.deepStrictEqual(res, { fired: false, state: 'inactive' });
+      // not expired yet: fires
+      const id2 = cuid();
+      const live = await firesWith({ [id2]: { id: id2, deleted: null, expires: timestamp.now() + 3600 } }, id2);
+      assert.deepStrictEqual(live, { fired: true, state: 'active' });
+    });
+
+    it('[WCADF5] a shared access without expiry stops with its expired managing app access, also when it was created with a caller id', async () => {
+      for (const createdByOf of [(app) => app, (app) => app + ' some-caller']) {
+        const app = cuid();
+        const id = cuid();
+        const res = await firesWith({
+          [app]: { id: app, type: 'app', deleted: null, expires: timestamp.now() - 60 },
+          [id]: { id, type: 'shared', deleted: null, expires: null, createdBy: createdByOf(app) }
+        }, id);
+        assert.deepStrictEqual(res, { fired: false, state: 'inactive' });
+      }
+      // managing app still valid, or platform-minted: fires
+      const app = cuid();
+      const id = cuid();
+      const ok = await firesWith({
+        [app]: { id: app, type: 'app', deleted: null, expires: timestamp.now() + 3600 },
+        [id]: { id, type: 'shared', deleted: null, expires: null, createdBy: app }
+      }, id);
+      assert.deepStrictEqual(ok, { fired: true, state: 'active' });
+      const sys = cuid();
+      const sysRes = await firesWith({ [sys]: { id: sys, type: 'shared', deleted: null, expires: null, createdBy: 'system' } }, sys);
+      assert.deepStrictEqual(sysRes, { fired: true, state: 'active' });
+    });
+
+    it('[WCADF6] an expired access that is still cached does not fire', async () => {
+      const cache = require('cache').default;
+      const id = cuid();
+      cache.setAccessLogic(user.id, { id, token: cuid(), deleted: null, expires: timestamp.now() - 60 });
+      try {
+        const res = await firesWith({}, id);
+        assert.deepStrictEqual(res, { fired: false, state: 'inactive' });
+      } finally {
+        cache.clear();
+      }
+    });
+
     it('[WCADF3] when access is live, fires normally', async () => {
       const fakeAccessesStorage = {
         findOne: (_u, q, _opts, cb) => cb(null, { id: q.id, deleted: null })
