@@ -13,6 +13,7 @@ const { ErrorIds } = require('errors');
 const { getConfig } = require('@pryv/boiler');
 const storage = require('storage');
 const { pubsub } = require('messages');
+const timestamp = require('unix-timestamp');
 
 describe('[ACUP] accesses.update', function () {
   let username;
@@ -199,18 +200,22 @@ describe('[ACUP] accesses.update', function () {
     });
 
     it('[CR03] Rule D: shared expires cannot exceed managing app expires', async function () {
-      // Set app expiry via expireAfter (1h). The schema only accepts
+      // The shared gets an expiry first: an app cannot take an expiry while
+      // a shared it manages has none. The schema only accepts
       // `expires: null` (clear) or `expireAfter: <seconds>` (set) on
       // update — there's no absolute-`expires` setter.
+      await coreRequest
+        .put(path(sharedAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 1800 });
       await coreRequest
         .put(path(appAccessId))
         .set('Authorization', personalToken)
         .send({ expireAfter: 3600 });
-      // The shared access serial is now 1 because we didn't update it,
-      // but the app's update bumped its own row's serial — not the
-      // shared's. Now extend shared to 2h via expireAfter.
+      // The shared was updated once, so its current id is `<id>:1`. Now
+      // extend it to 2h via expireAfter.
       const res = await coreRequest
-        .put(path(sharedAccessId))
+        .put(path(sharedAccessId + ':1'))
         .set('Authorization', personalToken)
         .send({ expireAfter: 7200 });
       assert.strictEqual(res.status, 400);
@@ -218,7 +223,12 @@ describe('[ACUP] accesses.update', function () {
     });
 
     it('[CR04] Rule D retrofitted on create: cannot create shared with longer expiry than parent', async function () {
-      // First narrow the app's expiry via expireAfter.
+      // First narrow the app's expiry via expireAfter (its shared first
+      // gets one: see [CR07]).
+      await coreRequest
+        .put(path(sharedAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 1800 });
       await coreRequest
         .put(path(appAccessId))
         .set('Authorization', personalToken)
@@ -236,6 +246,95 @@ describe('[ACUP] accesses.update', function () {
         });
       assert.strictEqual(res.status, 400);
       assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+    });
+  });
+
+  describe('[ACUP08] a shared access never outlives its managing app', function () {
+    beforeEach(resetAccesses);
+
+    async function appExpiresInAnHour () {
+      await coreRequest
+        .put(path(sharedAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 1800 });
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 3600 });
+      assert.strictEqual(res.status, 200);
+      return res.body.access.expires;
+    }
+
+    it('[CR05] a shared created by an expiring app without expireAfter takes the app\'s expiry', async function () {
+      const appExpires = await appExpiresInAnHour();
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessToken)
+        .send({
+          name: 'no-expiry-shared',
+          type: 'shared',
+          permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }]
+        });
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.body.access.expires, appExpires);
+    });
+
+    it('[CR06] clearing the expiry of a shared under an expiring app is refused', async function () {
+      const appExpires = await appExpiresInAnHour();
+      const res = await coreRequest
+        .put(path(sharedAccessId + ':1'))
+        .set('Authorization', personalToken)
+        .send({ expires: null });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
+      assert.strictEqual(res.body.error.data.requestedExpires, null);
+      assert.strictEqual(res.body.error.data.parentExpires, appExpires);
+    });
+
+    it('[CR07] an app cannot take an expiry while a shared it manages has none; the shared first', async function () {
+      const refused = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 3600 });
+      assert.strictEqual(refused.status, 400);
+      assert.strictEqual(refused.body.error.id, ErrorIds.InvalidOperation);
+      assert.ok(refused.body.error.data.offendingChildren.includes(sharedAccessId));
+      await coreRequest
+        .put(path(sharedAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 1800 });
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ expireAfter: 3600 });
+      assert.strictEqual(res.status, 200);
+    });
+
+    it('[CR08] a shared without expiry stops working when its managing app has expired', async function () {
+      for (const [appExpires, expected] of [[timestamp.now() - 60, 403], [timestamp.now() + 3600, 200]]) {
+        const appId = cuid();
+        const sharedToken = cuid();
+        await fixtureUser.access({ id: appId, token: cuid(), name: 'app ' + appId, type: 'app', expires: appExpires, permissions: [{ streamId: stream0.attrs.id, level: 'manage' }] });
+        await fixtureUser.access({ id: cuid(), token: sharedToken, name: 'shared ' + appId, type: 'shared', permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }], createdBy: appId, modifiedBy: appId });
+        const res = await coreRequest
+          .get('/' + username + '/access-info')
+          .set('Authorization', sharedToken);
+        assert.strictEqual(res.status, expected, 'app expires ' + (appExpires < timestamp.now() ? 'in the past' : 'in the future'));
+        if (expected === 403) assert.strictEqual(res.body.error.message, 'Access has expired.');
+      }
+    });
+
+    it('[CR09] (guard) a shared without expiry under a managing access without expiry keeps working', async function () {
+      const res = await coreRequest
+        .get('/' + username + '/access-info')
+        .set('Authorization', sharedAccessToken);
+      assert.strictEqual(res.status, 200);
+      const created = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessToken)
+        .send({ name: 'shared-no-expiry', type: 'shared', permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }] });
+      assert.strictEqual(created.status, 201);
+      assert.strictEqual(created.body.access.expires, undefined);
     });
   });
 

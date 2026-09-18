@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const AccessLogic = require('./accesses/AccessLogic.ts').default;
+const { parseAccessRef } = require('./accesses/refs.ts');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -267,6 +268,7 @@ class MethodContext {
       await this._retrieveAccess(storage, { token });
     }
     this.checkAccessValid(this.access);
+    await this.checkManagingAccessExpiry(storage);
   }
 
   /**
@@ -281,6 +283,34 @@ class MethodContext {
     if (access == null) return;
     const now = timestamp.now();
     if (access.expires != null && now > access.expires) { throw errors.forbidden('Access has expired.'); }
+  }
+
+  /**
+   * A shared access without expiry stops working with its managing app
+   * access: once that app access has expired, so has this one. Covers
+   * accesses created before the expiry chain treated "no expiry" as outliving
+   * the managing access (the write rules now keep new ones within it).
+   */
+  async checkManagingAccessExpiry (storage: StorageLike) {
+    const access = this.access as { type?: string; expires?: number | null; createdBy?: unknown } | null;
+    if (access == null || access.type !== 'shared' || access.expires != null || typeof access.createdBy !== 'string') return;
+    let base: string;
+    try {
+      base = parseAccessRef(access.createdBy).base;
+    } catch {
+      return;
+    }
+    let managing = cache.getAccessLogicForId(this.user.id, base);
+    if (managing == null) {
+      const cacheEpoch = cache.getAccessLogicEpoch(this.user.id);
+      const row = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, { id: base }, null, cb));
+      if (row == null) return;
+      managing = new AccessLogic(this.user.id, row);
+      cache.setAccessLogic(this.user.id, managing, cacheEpoch);
+    }
+    if (managing.expires != null && timestamp.now() > managing.expires) {
+      throw errors.forbidden('Access has expired.');
+    }
   }
 
   /**
@@ -437,6 +467,7 @@ class MethodContext {
     }
     this.accessToken = this.access.token;
     this.checkAccessValid(this.access);
+    await this.checkManagingAccessExpiry(storage);
     return this.access;
   }
 

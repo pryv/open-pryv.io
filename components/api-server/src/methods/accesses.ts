@@ -376,7 +376,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // A managed shared access cannot outlive its managing app's expiry.
     // Enforced on create for consistency with the update path (BREAKING —
     // see CHANGELOG-v2.md). Parent with `expires: null` imposes no
-    // constraint.
+    // constraint. A shared created by an expiring app without `expireAfter`
+    // takes the app's expiry: no expiry would outlive it.
+    if (access.type === 'app' && params.type === 'shared' && access.expires != null && params.expires == null) {
+      params.expires = access.expires;
+    }
     if (access.expires != null && params.expires != null && params.expires > access.expires) {
       return next(errors.invalidOperation(
         'New access cannot expire later than the managing access.',
@@ -766,8 +770,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
               ));
             }
           }
+          // no expiry (`expires: null`) outlives any managing expiry
           if (wantsExpiresChange && managingApp.expires != null &&
-              after.expires != null && after.expires > managingApp.expires) {
+              (after.expires == null || after.expires > managingApp.expires)) {
             return next(errors.invalidOperation(
               'expires cannot be later than the managing access.',
               { parentExpires: managingApp.expires, requestedExpires: after.expires }
@@ -798,8 +803,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
               continue;
             }
           }
+          // a child without expiry outlives the new expiry too
           if (wantsExpiresChange && after.expires != null &&
-              child.expires != null && child.expires > after.expires) {
+              (child.expires == null || child.expires > after.expires)) {
             offendingChildren.push(child.id);
           }
         }

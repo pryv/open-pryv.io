@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Managed shared accesses no longer outlive their managing app access (security)
+
+The expiry chain (a `shared` access managed by an `app` access cannot expire later
+than that app access) treated a shared access without expiry as within the limit, so a
+shared token could outlive the app access that issued it.
+
+- **BREAKING (`accesses.update`).** Clearing the expiry of a managed shared access
+  (`expires: null`) while its managing app access expires is refused
+  (`400 invalid-operation`, `data.requestedExpires: null`, `data.parentExpires`). Giving an
+  app access an expiry (or a shorter one) while a shared access it manages has none is
+  refused with `data.offendingChildren`, like a child that expires later: set an expiry
+  on each listed shared access (or delete it), then retry.
+- **Change (`accesses.create`).** A shared access created by an expiring app access
+  without `expireAfter` now takes the app access's `expires` (it used to never expire).
+  The response carries the resolved value.
+- **Security (authentication).** A shared access without expiry whose managing app
+  access has expired is refused with `403 Access has expired.`, which also covers shared
+  accesses created before this change.
+
 ### Credential hand-off: one-time shared-secret delivery for `/reg/access`
 
 An app can ask that its access token be delivered through a one-time shared secret
