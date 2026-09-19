@@ -7,6 +7,10 @@
 
 /* global assert, charlatan, cuid, initTests, initCore, coreRequest, getNewFixture, addAccessStreamIdPrefix */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { pollUntil } = require('test-helpers');
+
 // The audit stream filter is an authorization boundary: it is what keeps one
 // access from reading another access's audit trail. It ran unfiltered on the
 // PostgreSQL audit engine because the filter was read as a flat
@@ -50,6 +54,15 @@ describe('[ASFL] audit stream filter', function () {
       await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ limit: 1 });
       await coreRequest.get(otherEventsPath).set('Authorization', otherPersonal.token).query({ limit: 1 });
     }
+    // Those rows are written after each response is sent. Wait until rows of
+    // all three accesses exist: a leak check run before the other user's rows
+    // land would pass for the wrong reason.
+    // (Matched on the seeded calls' `limit`, as these polling reads are audited too.)
+    const hasRowsOf = (...accessIds) => (events) => accessIds.every(
+      (id) => events.some((e) => e.content?.query?.limit === '1' &&
+        e.streamIds.includes(addAccessStreamIdPrefix(id))));
+    await pollUntil(() => auditQuery(personal.token, [':_audit:']), hasRowsOf(personal.id, appAccess.id));
+    await pollUntil(() => auditQuery(otherPersonal.token, [':_audit:'], otherEventsPath), hasRowsOf(otherPersonal.id));
   });
 
   after(async function () {

@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## Tests wait for writes the server makes after answering
+
+The audit record of a successful call and the access usage counters (`calls`, `lastUsed`) are
+written after the response is sent, by design. Tests that read them back right after the call
+raced that write and failed on slower CI runners (`[AINT]`, `[AUDT]`, `[SYER] [9C1A]`). They now
+re-read with a bound through a new `pollUntil` test helper (`test-helpers`, 1500 ms default so a
+missing row reaches the assertion rather than mocha's 2 s timeout); the same applies to `[AUAB]`,
+`[ASTE]` and `[AUDI]`. `[VBV0]` and `[0BK7]` check the audit row of a specific call instead of
+whichever row came first, which let `[VBV0]` pass without checking anything. The `[AUDT]` filter
+tests await the audit writes they start instead of leaving hundreds running into the next hook
+(the `[JBPZ]` hook timeout), let earlier calls' writes settle before resetting their spies (now
+restored afterwards), and assert "not called" as a zero count. `[ASFL]` waits for the rows of all
+three accesses before its leak checks. `[WHBK] [WB07]` captures the webhook's state and arms the
+retry's answer before the retry timer can fire, and its retry interval now outlasts the stored
+read. Verified by slowing both writes by 300 ms: the previous tests fail, these pass.
+
 ## OAuth2 client rows store the app account's user id, not its username
 
 The `oauth-client/<clientId>` row in PlatformDB (replicated to every core) carried the app

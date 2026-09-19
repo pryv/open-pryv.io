@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 /* global assert, cuid, initTests, initCore, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, charlatan */
 
 const timestamp = require('unix-timestamp');
+const { pollUntil } = require('test-helpers');
 
 describe('[ASTE] Audit Streams and Events', function () {
   let user, username, password, access, appAccess, anotherAppAccess;
@@ -73,6 +74,13 @@ describe('[ASTE] Audit Streams and Events', function () {
     await validGet(eventsPath, appAccess);
     await validGet(eventsPath, appAccess).query({ streams: ['other'] });
     await validGet(eventsPath, anotherAppAccess);
+    // Those audit rows are written after each response is sent: wait for all
+    // five (4 under appAccess, 1 under anotherAppAccess) before the tests read them.
+    const rowsOf = (events, access) => events.filter((e) => e.streamIds.includes(addAccessStreamIdPrefix(access.id))).length;
+    await pollUntil(
+      async () => (await coreRequest.get(eventsPath).set('Authorization', personalToken)
+        .query({ fromTime: start, streams: [':_audit:'] })).body.events ?? [],
+      (events) => rowsOf(events, appAccess) >= 4 && rowsOf(events, anotherAppAccess) >= 1);
   });
 
   describe('[AS01] streams.get', () => {

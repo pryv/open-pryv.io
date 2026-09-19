@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan */
 
 const { getConfig } = require('@pryv/boiler');
+const { pollUntil } = require('test-helpers');
 
 describe('[AUDI] Audit logs events (Pattern C)', () => {
   let config;
@@ -99,16 +100,25 @@ describe('[AUDI] Audit logs events (Pattern C)', () => {
     }
   });
 
-  describe('[AU01] GET /events', () => {
-    it('[0BK7] must not return null values or trashed=false', async () => {
-      const res = await coreRequest
+  // The audit row of a successful call is written after its response is sent:
+  // re-read until `until` holds. These reads are audited too, so wait for a
+  // specific call's row, not for any row.
+  function getEventsGetAuditRows (until) {
+    return pollUntil(
+      async () => (await coreRequest
         .get(basePath + '/events')
         .set('Authorization', personalToken)
-        .query({ streams: [':_audit:action-events.get'] });
+        .query({ streams: [':_audit:action-events.get'] })).body.events ?? [],
+      until);
+  }
 
-      const events = res.body.events;
-      assert.ok(events[0], 'Should have at least one audit event');
-      const event = events[0];
+  describe('[AU01] GET /events', () => {
+    it('[0BK7] must not return null values or trashed=false', async () => {
+      // the setup's `trashed: false` read
+      const isSetupRead = (e) => e.content?.query?.trashed === 'false';
+      const events = await getEventsGetAuditRows((rows) => rows.some(isSetupRead));
+      const event = events.find(isSetupRead);
+      assert.ok(event, 'Should have the audit event of the setup read');
 
       for (const [key, val] of Object.entries(event)) {
         assert.ok(val !== null, `Property ${key} should not be null`);
@@ -119,17 +129,16 @@ describe('[AUDI] Audit logs events (Pattern C)', () => {
     });
 
     it('[VBV0] must not return "auth" in "content:query"', async () => {
-      // Make a request with auth in query
+      // Make a request with auth in query; the unusual limit marks its audit row
+      const marker = '13';
       await coreRequest
         .get(basePath + '/events')
-        .query({ auth: actionsToken });
+        .query({ auth: actionsToken, limit: marker });
 
-      const res = await coreRequest
-        .get(basePath + '/events')
-        .set('Authorization', personalToken)
-        .query({ streams: [':_audit:action-events.get'] });
-
-      const event = res.body.events[0];
+      const isMarked = (e) => e.content?.query?.limit === marker;
+      const rows = await getEventsGetAuditRows((rows) => rows.some(isMarked));
+      const event = rows.find(isMarked);
+      assert.ok(event, 'audit row of the call with auth in query');
       assert.ok(!('auth' in (event.content?.query || {})), 'Token in query should not be present in audit log');
     });
 
