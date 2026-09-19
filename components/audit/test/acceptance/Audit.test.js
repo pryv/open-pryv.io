@@ -10,12 +10,13 @@ const require = createRequire(import.meta.url);
 /* global assert, path, charlatan, cuid, audit, config, initTests, initCore, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, apiMethods, fakeAuditEvent, CONSTANTS, sinon, MethodContextUtils, CONSTANTS, AuditAccessIds, injectTestConfigSnapshot */
 
 const timestamp = require('unix-timestamp');
+const { pollUntil } = require('test-helpers');
 
 describe('[AUDT] Audit', function () {
   let user, username, password, access, readAccess, auditReader;
   let eventsPath;
 
-  let sysLogSpy, storageSpy;
+  let sysLogSpy, storageSpy, eventForUserSpy;
   let fixtures;
 
   before(async function () {
@@ -28,6 +29,7 @@ describe('[AUDT] Audit', function () {
     });
     sysLogSpy = sinon.spy(audit.syslog, 'eventForUser');
     storageSpy = sinon.spy(audit.storage, 'forUser');
+    eventForUserSpy = sinon.spy(audit, 'eventForUser');
 
     username = user.attrs.username;
     await user.stream({ id: 'yo', name: 'YO' });
@@ -62,26 +64,57 @@ describe('[AUDT] Audit', function () {
     return path.join('/', username, suffixPath);
   }
 
-  function resetSpies () {
+  // Audit writes of earlier calls run after their responses were sent. Let them
+  // finish first, or a late one lands in the spy counts of the next test. A
+  // streamed result starts its audit on the response 'close', a tick after the
+  // client may have read it: repeat until no new call shows up.
+  async function resetSpies () {
+    let seen;
+    do {
+      seen = eventForUserSpy.callCount;
+      await Promise.allSettled(eventForUserSpy.returnValues);
+      await new Promise((resolve) => setImmediate(resolve));
+    } while (eventForUserSpy.callCount !== seen);
     sysLogSpy.resetHistory();
     storageSpy.resetHistory();
+    eventForUserSpy.resetHistory();
   }
 
   /**
    * Fetch audit logs through events.get over the `:_audit:` store, excluding the
    * reader's own (self-audited) events.get entries. Replaces the removed
    * `GET /audit/logs` route. Accepts the same time-window query the route did.
+   *
+   * The audit row of a call is written after its response is sent, so a read
+   * right after the call can miss it. Pass `until` to re-read until it holds.
    */
-  async function getAuditEvents (query = {}) {
-    const res = await coreRequest
-      .get(eventsPath)
-      .set('Authorization', auditReader.token)
-      .query(Object.assign({ streams: [':_audit:'] }, query));
-    assert.strictEqual(res.status, 200);
-    return res.body.events.filter((e) => !e.streamIds.includes(addAccessStreamIdPrefix(auditReader.id)));
+  async function getAuditEvents (query = {}, until = null) {
+    async function read () {
+      const res = await coreRequest
+        .get(eventsPath)
+        .set('Authorization', auditReader.token)
+        .query(Object.assign({ streams: [':_audit:'] }, query));
+      assert.strictEqual(res.status, 200);
+      return res.body.events.filter((e) => !e.streamIds.includes(addAccessStreamIdPrefix(auditReader.id)));
+    }
+    return until == null ? read() : pollUntil(read, until);
+  }
+
+  const atLeastOne = (entries) => entries.length >= 1;
+  const hasAction = (action) => (entries) => entries.some(e => e.content.action === action);
+
+  /**
+   * Feed one fake audit event per API method through audit.eventForUser and
+   * wait for every write, so none is still running when the next hook starts.
+   */
+  async function auditAllMethods () {
+    await Promise.all(apiMethods.ALL_METHODS.map(method => audit.eventForUser(cuid(), fakeAuditEvent(method))));
   }
 
   after(async function () {
+    eventForUserSpy.restore();
+    sysLogSpy.restore();
+    storageSpy.restore();
     await fixtures.clean();
   });
 
@@ -100,7 +133,7 @@ describe('[AUDT] Audit', function () {
       assert.strictEqual(res.status, 200);
     });
     it('[UZEV] must return logs when queried', async function () {
-      const logs = await getAuditEvents();
+      const logs = await getAuditEvents({}, atLeastOne);
       assert.ok(logs);
       assert.strictEqual(logs.length, 1);
       const log = logs[0];
@@ -116,7 +149,7 @@ describe('[AUDT] Audit', function () {
     describe('[AT02] when making a call that is not audited', function () {
       before(async function () {
         assert.strictEqual(apiMethods.AUDITED_METHODS_MAP['service.info'], undefined);
-        resetSpies();
+        await resetSpies();
         now = timestamp.now();
         res = await coreRequest
           .get(createUserPath('/service/info'));
@@ -124,14 +157,14 @@ describe('[AUDT] Audit', function () {
 
       it('[NJFO] validates the response', function () {
         assert.strictEqual(res.status, 200, '[NJFO] must return 200');
-        assert.strictEqual(sysLogSpy.calledOnce, false, '[V10L] must not log it in syslog');
-        assert.strictEqual(storageSpy.calledOnce, false, '[9RWP] must not save it to storage');
+        assert.strictEqual(sysLogSpy.callCount, 0, '[V10L] must not log it in syslog');
+        assert.strictEqual(storageSpy.callCount, 0, '[9RWP] must not save it to storage');
       });
     });
     describe('[AT03] when making a call that has its own custom accessId', function () {
       let log;
       before(async function () {
-        resetSpies();
+        await resetSpies();
         now = timestamp.now();
         res = await coreRequest
           .post(createUserPath('/auth/login'))
@@ -148,7 +181,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(sysLogSpy.calledOnce, true, '[L92X] must log it in syslog');
       });
       it('[G7UV] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         log = entries[0];
@@ -158,7 +191,7 @@ describe('[AUDT] Audit', function () {
     });
     describe('[AT04] when making a call that has no userId', function () {
       before(async function () {
-        resetSpies();
+        await resetSpies();
         res = await coreRequest
           .post('/users')
           .send({
@@ -173,7 +206,7 @@ describe('[AUDT] Audit', function () {
       it('[JU8F] validates the response', function () {
         assert.strictEqual(res.status, 201, '[JU8F] must return 201');
         assert.strictEqual(sysLogSpy.calledOnce, true, '[KPPH] must log it in syslog');
-        assert.strictEqual(storageSpy.calledOnce, false, '[EI1U] must not log it to storage');
+        assert.strictEqual(storageSpy.callCount, 0, '[EI1U] must not log it to storage');
       });
     });
   });
@@ -182,15 +215,15 @@ describe('[AUDT] Audit', function () {
     let res;
     describe('[AT51] for an unknown user', function () {
       before(async function () {
-        resetSpies();
+        await resetSpies();
         res = await coreRequest
           .get('/unknown-username/events/')
           .set('Authorization', 'doesnt-matter');
       });
       it('[LFSW] validates the response', function () {
         assert.strictEqual(res.status, 404, '[LFSW] must return 404');
-        assert.strictEqual(sysLogSpy.calledOnce, false, '[GM2Y] must not log it in syslog');
-        assert.strictEqual(storageSpy.calledOnce, false, '[2IQO] must not save it to storage');
+        assert.strictEqual(sysLogSpy.callCount, 0, '[GM2Y] must not log it in syslog');
+        assert.strictEqual(storageSpy.callCount, 0, '[2IQO] must not save it to storage');
       });
     });
     describe('[AT52] with errorId "invalid-request-structure"', function () {
@@ -207,7 +240,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[N5OS] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -230,7 +263,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[BZT8] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -253,7 +286,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[OBQ8] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -274,7 +307,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 403);
       });
       it('[6CZ0] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -300,7 +333,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 403);
       });
       it('[14LS] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -320,7 +353,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 404);
       });
       it('[7132] must return logs when queried', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -372,10 +405,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
         });
         it('[ADZL] validates logging and storage', function () {
           const numAudited = apiMethods.AUDITED_METHODS.length;
@@ -394,10 +425,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
         });
         it('[Q2H9] validates logging and storage', function () {
           const logged = apiMethods.AUDITED_METHODS.filter(m => !exclude.includes(m));
@@ -418,10 +447,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
         });
         it('[WDZ9] validates logging and storage', function () {
           const logged = apiMethods.AUDITED_METHODS.filter(m => include.includes(m));
@@ -441,10 +468,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
         });
         it('[NP6H] validates logging and storage', function () {
           assert.strictEqual(sysLogSpy.callCount, 0, '[NP6H] must log it in syslog');
@@ -461,11 +486,9 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            if (method.startsWith('events.')) auditedMethods.push(method);
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          auditedMethods.push(...apiMethods.ALL_METHODS.filter(method => method.startsWith('events.')));
+          await auditAllMethods();
         });
         it('[L2KG] validates logging and storage', function () {
           assert.strictEqual(sysLogSpy.callCount, auditedMethods.length, '[L2KG] must log it in syslog');
@@ -484,10 +507,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
           stored = apiMethods.WITH_USER_METHODS.filter(m => !excluded.includes(m));
           logged = apiMethods.AUDITED_METHODS.filter(m => !excluded.includes(m));
         });
@@ -509,10 +530,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
           stored = apiMethods.WITH_USER_METHODS.filter(m => (m.startsWith('events.') || m === 'getAccessInfo'));
           logged = apiMethods.WITH_USER_METHODS.filter(m => (m.startsWith('events.') || m === 'getAccessInfo'));
         });
@@ -534,10 +553,8 @@ describe('[AUDT] Audit', function () {
             }
           });
           await audit.reloadConfig();
-          resetSpies();
-          apiMethods.ALL_METHODS.forEach(method => {
-            audit.eventForUser(cuid(), fakeAuditEvent(method));
-          });
+          await resetSpies();
+          await auditAllMethods();
           stored = apiMethods.WITH_USER_METHODS.filter(m => (m.startsWith('events.') && m !== 'events.get'));
           logged = apiMethods.WITH_USER_METHODS.filter(m => (m.startsWith('events.') && m !== 'events.get'));
         });
@@ -580,7 +597,7 @@ describe('[AUDT] Audit', function () {
         assert.ok(readCount >= 3, 'scoped read returned the seeded events');
       });
       it('[QK1A] records recordCount + scopedStreamIds on the audit row', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, hasAction('events.get'));
         const log = entries.find(e => e.content.action === 'events.get');
         assert.ok(log, 'events.get audit row present');
         assert.strictEqual(log.content.recordCount, readCount, 'recordCount matches the delivered event count');
@@ -601,7 +618,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.body.events.length, 0, 'empty stream has no events');
       });
       it('[QK2B] records recordCount: 0 (present, not absent)', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, hasAction('events.get'));
         const log = entries.find(e => e.content.action === 'events.get');
         assert.ok(log, 'events.get audit row present');
         assert.strictEqual(log.content.recordCount, 0, 'recordCount is 0, not undefined');
@@ -619,7 +636,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 200);
       });
       it('[QK3C] records the wildcard scope sentinel', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, hasAction('events.get'));
         const log = entries.find(e => e.content.action === 'events.get');
         assert.ok(log, 'events.get audit row present');
         assert.deepEqual(log.content.scopedStreamIds, ['*'], 'wildcard sentinel');
@@ -645,7 +662,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 200);
       });
       it('[QK4D] records recordCount: 1 and no scope field', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now }, hasAction('events.getOne'));
         const log = entries.find(e => e.content.action === 'events.getOne');
         assert.ok(log, 'events.getOne audit row present');
         assert.strictEqual(log.content.recordCount, 1, 'single-record read counts 1');
@@ -667,7 +684,8 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 200);
       });
       it('[QK5E] produces exactly one events.get row per batched read (no envelope duplicate)', async function () {
-        const entries = await getAuditEvents({ fromTime: now });
+        const entries = await getAuditEvents({ fromTime: now },
+          (rows) => rows.filter(e => e.content.action === 'events.get').length >= 2);
         // The batch envelope's own audit row (callBatch, or filtered out) must
         // NOT be a third events.get carrying the last read's recordCount.
         const getRows = entries.filter(e => e.content.action === 'events.get');

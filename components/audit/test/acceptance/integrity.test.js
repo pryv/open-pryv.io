@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 
 const { integrity } = require('business');
 const timestamp = require('unix-timestamp');
+const { pollUntil } = require('test-helpers');
 
 describe('[AINT] Audit events integrity', function () {
   let user, username, password, access, appAccess;
@@ -55,6 +56,17 @@ describe('[AINT] Audit events integrity', function () {
 
   function validPost (path) { return coreRequest.post(path).set('Authorization', appAccess.token); }
 
+  // The audit row of a call is written after its response is sent: re-read
+  // until the row of `action` has landed. The reads are audited too, so only
+  // that action's rows are kept.
+  async function getAuditRows (token, streams, action) {
+    const res = await pollUntil(
+      () => coreRequest.get(eventsPath).set('Authorization', token).query({ fromTime: now, streams }),
+      (res) => (res.body?.events ?? []).some((e) => e.content?.action === action)
+    );
+    return (res.body?.events ?? []).filter((e) => e.content?.action === action);
+  }
+
   before(async () => {
     auditedEvent = (await validPost(eventsPath).send({ streamIds: [streamId], type: 'count/generic', content: 2 })).body.event;
   });
@@ -68,15 +80,10 @@ describe('[AINT] Audit events integrity', function () {
   });
 
   it('[WNWM] must find event integrity key and record value in the audit log ', async () => {
-    const res = await coreRequest
-      .get(eventsPath)
-      .set('Authorization', appAccess.token)
-      .query({ fromTime: now, streams: ':_audit:' });
+    const rows = await getAuditRows(appAccess.token, ':_audit:', 'events.create');
+    assert.strictEqual(1, rows.length);
 
-    assert.ok(res.body?.events);
-    assert.strictEqual(1, res.body.events.length);
-
-    const auditEvent = res.body.events[0];
+    const auditEvent = rows[0];
     assert.ok(auditEvent.content.record);
     assert.strictEqual(auditedEvent.integrity, auditEvent.content.record.integrity);
 
@@ -86,14 +93,10 @@ describe('[AINT] Audit events integrity', function () {
   });
 
   it('[U09J] must find access integrity key and record value in the audit log ', async () => {
-    const res = await coreRequest
-      .get(eventsPath)
-      .set('Authorization', personalToken)
-      .query({ fromTime: now, streams: ':_audit:action-accesses.create' });
+    const rows = await getAuditRows(personalToken, ':_audit:action-accesses.create', 'accesses.create');
+    assert.strictEqual(1, rows.length);
 
-    assert.strictEqual(1, res?.body?.events?.length);
-
-    const auditEvent = res.body.events[0];
+    const auditEvent = rows[0];
     assert.ok(auditEvent.content.record);
     assert.strictEqual(appAccess.integrity, auditEvent.content.record.integrity);
 

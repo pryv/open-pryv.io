@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 /* global assert, charlatan, cuid, audit, initTests, initCore, coreRequest, coreServer, getNewFixture */
 
 const http = require('http');
+const { pollUntil } = require('test-helpers');
 
 // The one test that would have caught the regression this work exists to
 // prevent: a real HTTP client aborting mid-response, observed at the PostgreSQL
@@ -64,10 +65,13 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
       'streamed reads must run on their own pool, or a slow reader can stall audit writes');
 
     // One audited call first, so we can copy a REAL row's stream_ids rather
-    // than guessing how audit encodes them.
+    // than guessing how audit encodes them. That row is written after the
+    // response is sent, so wait for it.
     await coreRequest.get(eventsPath).set('Authorization', token).query({ limit: 1 });
-    const sample = await audit.storage.db.query(
-      'SELECT stream_ids, type FROM audit_events WHERE user_id = $1 LIMIT 1', [userId]);
+    const sample = await pollUntil(
+      () => audit.storage.db.query(
+        'SELECT stream_ids, type FROM audit_events WHERE user_id = $1 LIMIT 1', [userId]),
+      (result) => result.rows.length > 0);
     assert.ok(sample.rows.length > 0, 'the first call must have produced an audit row to clone');
     const { stream_ids: streamIds, type } = sample.rows[0];
 

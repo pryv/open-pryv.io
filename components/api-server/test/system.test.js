@@ -28,7 +28,7 @@ const validation = helpers.validation;
 const encryption = require('utils').encryption;
 const testData = helpers.dynData({ prefix: 'syst' });
 const { getUsersRepository } = require('business/src/users/index.ts');
-const { databaseFixture } = require('test-helpers');
+const { databaseFixture, pollUntil } = require('test-helpers');
 const { produceStorageConnection } = require('./test-helpers');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
@@ -604,25 +604,26 @@ describe('[SYER] system (ex-register)', function () {
             });
         },
         function getUpdatedInfo (stepDone) {
-          request.get(path(user.username))
-            .set('authorization', helpers.dependencies.settings.auth.adminAccessKey)
-            .end(function (err, res) {
-              assert.ok(err == null);
-              const info = res.body.userInfo;
+          // Access usage stats are written after the call has answered: re-read
+          // until both calls are counted.
+          pollUntil(
+            () => request.get(path(user.username))
+              .set('authorization', helpers.dependencies.settings.auth.adminAccessKey),
+            (res) => res.body.userInfo.callsTotal >= originalInfo.callsTotal + 2
+          ).then(function (res) {
+            const info = res.body.userInfo;
 
-              assert.ok(Math.abs(info.lastAccess - expectedTime) <= 2);
+            assert.ok(Math.abs(info.lastAccess - expectedTime) <= 2);
 
-              assert.strictEqual(info.callsTotal, originalInfo.callsTotal + 2, 'calls total');
-              assert.strictEqual(info.callsDetail['events:get'], originalInfo.callsDetail['events:get'] + 2, 'calls detail');
+            assert.strictEqual(info.callsTotal, originalInfo.callsTotal + 2, 'calls total');
+            assert.strictEqual(info.callsDetail['events:get'], originalInfo.callsDetail['events:get'] + 2, 'calls detail');
 
-              const accessKey1 = testData.accesses[4].name; // app access
-              const accessKey2 = 'shared'; // shared access
+            const accessKey1 = testData.accesses[4].name; // app access
+            const accessKey2 = 'shared'; // shared access
 
-              assert.strictEqual(info.callsPerAccess[accessKey1], originalInfo.callsPerAccess[accessKey1] + 1, 'calls per access (personal)');
-              assert.strictEqual(info.callsPerAccess[accessKey2], originalInfo.callsPerAccess[accessKey2] + 1, 'calls per access (shared)');
-
-              stepDone();
-            });
+            assert.strictEqual(info.callsPerAccess[accessKey1], originalInfo.callsPerAccess[accessKey1] + 1, 'calls per access (personal)');
+            assert.strictEqual(info.callsPerAccess[accessKey2], originalInfo.callsPerAccess[accessKey2] + 1, 'calls per access (shared)');
+          }).then(() => stepDone(), stepDone);
         }
       ], done);
     });

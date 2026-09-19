@@ -20,6 +20,7 @@ const parallelWorkerSetup = require('./parallelWorkerSetup.ts');
 const systemStreamFilters = require('./systemStreamFilters.ts');
 const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjectedConfig.ts');
 const { listeningAgent } = require('./listeningAgent.ts');
+const { pollUntil } = require('./pollUntil.ts');
 const portHolder = require('./portHolder.ts');
 
 // Pattern C helpers (helpers-c.ts) is NOT exported here due to circular dependency.
@@ -53,5 +54,6 @@ export {
   dependencies,
   withInjectedConfig,
   injectTestConfigSnapshot,
-  listeningAgent
+  listeningAgent,
+  pollUntil
 };

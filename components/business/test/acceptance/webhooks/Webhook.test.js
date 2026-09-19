@@ -216,20 +216,33 @@ describe('[WHBK] Webhook', () => {
         });
 
         let webhook, run, storedRun, requestTimestamp, storedWebhook;
+        let lastRunAfterSend, retriesAfterSend, retryArmed, retryReceived;
         const firstMessage = 'hello';
 
         before(async () => {
           webhook = new Webhook({
             accessId: 'doesntmatter',
             url,
-            minIntervalMs: 100,
+            // The stored read below runs while the retry is armed: the interval
+            // must outlast it, or the retry's save lands first.
+            minIntervalMs: 1000,
             webhooksRepository: repository,
             user
           });
           await webhook.save();
           requestTimestamp = timestamp.now();
           await webhook.send(firstMessage);
+          // send() resolves right after arming the retry timer, and the retry
+          // rewrites the webhook's in-memory state. Until the next await nothing
+          // can fire: capture the post-failure state, make the retry succeed and
+          // start listening for it here, so a stalled runner cannot let the
+          // retry run first.
           run = webhook.runs[0];
+          lastRunAfterSend = webhook.lastRun;
+          retriesAfterSend = webhook.currentRetries;
+          retryArmed = webhook.timeout != null;
+          notificationsServer.setResponseStatus(201);
+          retryReceived = awaiting.event(notificationsServer, 'received');
           storedWebhook = await repository.getById(user, webhook.id);
           storedRun = storedWebhook.runs[0];
         });
@@ -237,21 +250,20 @@ describe('[WHBK] Webhook', () => {
         it('[E5VQ] should save the run', () => {
           assert.strictEqual(run.status, 503);
           assert.ok(Math.abs(run.timestamp - requestTimestamp) <= 0.1);
-          assert.deepEqual(run, webhook.lastRun);
+          assert.deepEqual(run, lastRunAfterSend);
           assert.strictEqual(storedRun.status, 503);
           assert.ok(Math.abs(storedRun.timestamp - requestTimestamp) <= 0.1);
           assert.deepEqual(storedRun, storedWebhook.lastRun);
         });
         it('[XP7G] should increment currentRetries', () => {
-          assert.strictEqual(webhook.currentRetries, 1);
+          assert.strictEqual(retriesAfterSend, 1);
           assert.strictEqual(storedWebhook.currentRetries, 1);
         });
         it('[9AL1] should schedule for a retry', () => {
-          assert.ok(webhook.timeout);
+          assert.ok(retryArmed);
         });
         it('[OHLY] should send scheduled messages after an interval', async () => {
-          notificationsServer.setResponseStatus(201);
-          await awaiting.event(notificationsServer, 'received');
+          await retryReceived;
           assert.strictEqual(notificationsServer.isMessageReceived(), true);
           // firstMessage is received the first time although it returns a 503.
           assert.deepEqual(notificationsServer.getMessages(),
