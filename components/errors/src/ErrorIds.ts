@@ -48,6 +48,12 @@ const ErrorIds = {
    */
   TooManyAttempts: 'too-many-attempts',
   /**
+   * A per-core resource ceiling is reached, so the request is refused rather
+   * than served (not a per-account limiter: see TooManyAttempts for that).
+   * The caller retries later, guided by the Retry-After header.
+   */
+  TooManyRequests: 'too-many-requests',
+  /**
    * Request body / uploaded attachment exceeds the configured size limit.
    */
   PayloadTooLarge: 'payload-too-large',

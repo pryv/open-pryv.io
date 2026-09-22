@@ -103,7 +103,10 @@ type AccessState = {
 
 type KvClient = {
   get: (key: string) => Promise<unknown>;
-  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<void>;
+  /** Resolves true when it wrote, false when `ifUnderPrefix` refused (the
+   * namespace is full). A guarded write that answers anything else is not
+   * trusted to have honoured the ceiling. */
+  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifUnderPrefix?: { prefix: string; max: number } }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
 };
 
@@ -127,12 +130,19 @@ function _setKvClientForTests (client: KvClient | null): void {
 const TRACK_KEYS = process.env.NODE_ENV === 'test';
 const knownKeys = new Set<string>();
 
-async function write (key: string, state: AccessState, expiresAt: number): Promise<void> {
+async function write (key: string, state: AccessState, expiresAt: number, maxLive?: number): Promise<boolean> {
   // cluster_kv treats a non-positive TTL as "never expires": clamp to 1 ms
   // so an already-past expiry drops the entry instead of pinning it.
   const ttlMs = Math.max(1, expiresAt - Date.now());
-  await getKv().set(NAMESPACE + key, state, { ttlMs });
+  const opts: { ttlMs: number; ifUnderPrefix?: { prefix: string; max: number } } = { ttlMs };
+  if (maxLive != null && maxLive > 0) opts.ifUnderPrefix = { prefix: NAMESPACE, max: maxLive };
+  const stored = await getKv().set(NAMESPACE + key, state, opts);
+  // A guarded write must say it wrote. Anything else (a refusal, or a client
+  // that does not report one) counts as not written, so the ceiling cannot be
+  // lifted by an answer we do not understand.
+  if (opts.ifUnderPrefix != null && stored !== true) return false;
   if (TRACK_KEYS) knownKeys.add(key);
+  return true;
 }
 
 /**
@@ -198,6 +208,23 @@ async function persist (key: string, state: AccessState, expiresAt?: number): Pr
   const ts = expiresAt ?? state.expiresAt;
   state.expiresAt = ts;
   await write(key, state, ts);
+}
+
+/**
+ * First write of a NEW request, refused when this core already holds
+ * `maxLive` of them. Returns whether it stored.
+ *
+ * Creating a request takes no credentials, so this is what keeps a flood of
+ * them from filling the core's memory. The count and the write happen in one
+ * step inside the store: counting first and writing after is a check-then-act
+ * that every worker passes at the same moment.
+ *
+ * `maxLive` of 0 (or less) means no ceiling.
+ */
+async function persistNew (key: string, state: AccessState, expiresAt: number, maxLive: number, maxBytes?: number): Promise<boolean> {
+  state.expiresAt = expiresAt;
+  assertWithinSize(state, maxBytes);
+  return await write(key, state, expiresAt, maxLive);
 }
 
 /**
@@ -270,13 +297,37 @@ const UPDATABLE_FIELDS = Object.freeze([
   'reasonId', 'message', 'redirectUrl', 'delegation', 'handoff'
 ]);
 
+/** Of those, the ones that carry free text and so must be strings. Whoever
+ * posts the outcome is unauthenticated (it holds the key, nothing else), and
+ * an unchecked field takes whatever JSON the body carried: an object, or a
+ * string as large as the body limit, held under that key until the request
+ * expires. `delegation` and `handoff` are shape-checked by the route. */
+const STRING_UPDATABLE_FIELDS = Object.freeze([
+  'username', 'token', 'apiEndpoint', 'reasonId', 'message', 'redirectUrl'
+]);
+
+/** Marks a refusal the route turns into a status code rather than a 500. */
+function rejection (kind: 'invalid-field' | 'too-large', message: string): Error {
+  return Object.assign(new Error(message), { accessStateRejection: kind });
+}
+
 /**
  * Update an access request state (accept or refuse). Only
  * `UPDATABLE_FIELDS` are written; anything else in `update` is ignored.
  */
-async function update (key: string, update: Partial<AccessState>): Promise<AccessState | null> {
-  const state = await get(key);
-  if (!state) return null;
+async function update (key: string, update: Partial<AccessState>, opts: { maxBytes?: number } = {}): Promise<AccessState | null> {
+  for (const field of STRING_UPDATABLE_FIELDS) {
+    if (update[field] !== undefined && typeof update[field] !== 'string') {
+      throw rejection('invalid-field', field + ' must be a string');
+    }
+  }
+  const stored = await get(key);
+  if (!stored) return null;
+  // Merge into a COPY. Without a cluster master the store hands back the very
+  // object it holds (no IPC, so no serialization in between), and mutating it
+  // would change the stored request before this function has decided whether
+  // to accept the update: a refusal below has to leave it exactly as it was.
+  const state: AccessState = { ...stored };
   for (const field of UPDATABLE_FIELDS) {
     if (update[field] !== undefined) state[field] = update[field];
   }
@@ -293,8 +344,25 @@ async function update (key: string, update: Partial<AccessState>): Promise<Acces
   } else if (update.status === 'REDIRECTED') {
     state.code = 301;
   }
+  // The ceiling applies to EVERY write of a request, not only its creation:
+  // the outcome post rewrites the same entry, so a ceiling checked once at
+  // creation would just move the exhaustion one call later. Refusing before
+  // the write leaves the stored request exactly as it was.
+  assertWithinSize(state, opts.maxBytes);
   await write(key, state, state.expiresAt);
   return state;
+}
+
+/**
+ * Refuse a state too large to be held. `maxBytes` of 0 (or absent) disables
+ * the check. Measured on the serialized form, which is what crosses to the
+ * store and what it holds per request.
+ */
+function assertWithinSize (state: AccessState, maxBytes?: number): void {
+  if (maxBytes == null || !(maxBytes > 0)) return;
+  if (Buffer.byteLength(JSON.stringify(state), 'utf8') > maxBytes) {
+    throw rejection('too-large', 'This access request is too large to be held by the core.');
+  }
 }
 
 /**
@@ -314,4 +382,5 @@ async function clear (): Promise<void> {
   for (const key of [...knownKeys]) await remove(key);
 }
 
-export { buildState, persist, create, get, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };
+export { buildState, persist, persistNew, create, get, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };
+export type { AccessState };

@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const accessState = require('../src/routes/reg/accessState.ts');
+const { withInjectedConfig } = require('test-helpers');
 
 describe('[RGAC] Register access authorization', () => {
   before(async function () {
@@ -66,6 +67,112 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(getRes.status, 201);
       assert.deepStrictEqual(getRes.body.clientData, { foo: 'bar' });
       assert.strictEqual(getRes.body.oauthState, 'xyz123');
+    });
+  });
+
+  describe('[RACP] POST /reg/access ceilings (access:maxLiveRequests, access:maxRequestBytes)', () => {
+    // Requests written by earlier files in a sequential run (a decided one
+    // lives on for its retention window) would otherwise fill a ceiling of 1.
+    beforeEach(async () => { await accessState.clear(); });
+
+    function createRequest (extra = {}) {
+      return coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'cap-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }], ...extra });
+    }
+
+    it('[RAC1] refuses with 429 once the core holds the configured number of live requests', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 2 } }, async () => {
+        assert.strictEqual((await createRequest()).status, 201);
+        assert.strictEqual((await createRequest()).status, 201);
+        const refused = await createRequest();
+        assert.strictEqual(refused.status, 429);
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+        assert.strictEqual(refused.headers['retry-after'], '60');
+        // The refusal says nothing about the ceiling or how close the caller got.
+        assert.ok(!/\b2\b/.test(refused.body.error.message), 'message must not leak the ceiling');
+      });
+    });
+
+    it('[RAC2] a freed slot lets the next request through', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 1 } }, async () => {
+        const first = await createRequest();
+        assert.strictEqual(first.status, 201);
+        assert.strictEqual((await createRequest()).status, 429);
+        await accessState.remove(first.body.key);
+        assert.strictEqual((await createRequest()).status, 201);
+      });
+    });
+
+    it('[RAC3] 0 disables the ceiling', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0 } }, async () => {
+        for (let i = 0; i < 3; i++) assert.strictEqual((await createRequest()).status, 201);
+      });
+    });
+
+    it('[RAC4] refuses a request too large to hold, and stores nothing', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxRequestBytes: 2048 } }, async () => {
+        const refused = await createRequest({ clientData: { pad: 'x'.repeat(4096) } });
+        assert.strictEqual(refused.status, 413);
+        assert.strictEqual(refused.body.error.id, 'payload-too-large');
+        assert.strictEqual(refused.body.key, undefined, 'no request was created');
+        // A normal request of the same shape still passes.
+        assert.strictEqual((await createRequest({ clientData: { pad: 'x' } })).status, 201);
+      });
+    });
+
+    it('[RAC5] a store that cannot answer fails closed: no 201, no state', async () => {
+      const real = require('messages/src/cluster_kv.ts').clientFor();
+      accessState._setKvClientForTests({
+        get: (k) => real.get(k),
+        delete: (k) => real.delete(k),
+        set: async () => { throw new Error('store unavailable'); }
+      });
+      try {
+        const res = await createRequest();
+        assert.notStrictEqual(res.status, 201);
+        assert.strictEqual(res.body.key, undefined);
+      } finally {
+        accessState._setKvClientForTests(null);
+      }
+    });
+
+    it('[RAC7] the outcome post cannot grow a stored request past the ceiling, and leaves it untouched', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxRequestBytes: 2048 } }, async () => {
+        const created = await createRequest();
+        assert.strictEqual(created.status, 201);
+
+        // Whoever holds the key needs no credentials to post the outcome.
+        const refused = await coreRequest.post('/reg/access/' + created.body.key)
+          .send({ status: 'REFUSED', reasonId: 'test', message: 'x'.repeat(4096) });
+        assert.strictEqual(refused.status, 413);
+        assert.strictEqual(refused.body.error.id, 'payload-too-large');
+
+        const stillPending = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(stillPending.body.status, 'NEED_SIGNIN', 'the stored request was not rewritten');
+
+        // A field of the wrong type is refused before anything is written.
+        const badType = await coreRequest.post('/reg/access/' + created.body.key)
+          .send({ status: 'REFUSED', reasonId: 'test', message: { nested: 'object' } });
+        assert.strictEqual(badType.status, 400);
+        assert.strictEqual(badType.body.error.id, 'invalid-parameters');
+        assert.strictEqual((await coreRequest.get('/reg/access/' + created.body.key)).body.status, 'NEED_SIGNIN');
+      });
+    });
+
+    it('[RAC6] a decided request stops holding a slot once its retention window passes', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 1, terminalRetentionMs: 300 } }, async () => {
+        const first = await createRequest();
+        assert.strictEqual(first.status, 201);
+        assert.strictEqual((await createRequest()).status, 429, 'the pending request holds the only slot');
+
+        await accessState.update(first.body.key, { status: 'REFUSED', reasonId: 'test' });
+        // The first poll of a decided request starts its retention window.
+        const polled = await coreRequest.get('/reg/access/' + first.body.key);
+        assert.strictEqual(polled.status, 403);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        assert.strictEqual((await createRequest()).status, 201, 'the expired request freed its slot');
+      });
     });
   });
 

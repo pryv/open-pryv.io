@@ -17,8 +17,14 @@ const require = createRequire(import.meta.url);
  *
  * Wire protocol:
  *   worker → master : { type: 'kv:get'|'kv:set'|'kv:delete'|'kv:clear',
- *                       requestId, key?, value?, ttlMs? }
+ *                       requestId, key?, value?, ttlMs?, ifUnderPrefix? }
  *   master → worker : { type: 'kv:reply', requestId, ok, value?, error? }
+ *
+ * `set` takes an optional `ifUnderPrefix: { prefix, max }`: the write happens
+ * only while fewer than `max` live entries exist under `prefix`, and `set`
+ * answers whether it wrote. Counting and writing in the one master-side step
+ * is what makes a ceiling hold: a count followed by a separate write is a
+ * check-then-act that every worker passes at once.
  *
  * Failure semantics: workers fast-fail. `get` returns null when no IPC
  * channel is available (single-process tests, run-from-CLI). `set` /
@@ -31,12 +37,15 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 const SWEEP_INTERVAL_MS = 60_000;
 
 type StoreEntry = { value: unknown; expiresAt: number | null };
+/** Write only while the prefix holds fewer than `max` live entries. */
+type PrefixGuard = { prefix: string; max: number };
 type KvMessage = {
   type: string;
   requestId?: string;
   key?: string;
   value?: unknown;
   ttlMs?: number;
+  ifUnderPrefix?: PrefixGuard;
   ok?: boolean;
   error?: string;
 };
@@ -50,6 +59,41 @@ type ClusterLike = {
   on: (event: string, handler: (worker: WorkerLike, msg: KvMessage) => void) => void;
   removeListener: (event: string, handler: (worker: WorkerLike, msg: KvMessage) => void) => void;
 };
+
+/**
+ * Whether a guarded write may proceed: fewer than `guard.max` live entries
+ * under `guard.prefix`. Shared by the master and the in-process store so the
+ * two can never disagree.
+ *
+ * Cost: the total store size is an upper bound on any prefix count, so a
+ * store below the ceiling answers without scanning at all. Above it, the scan
+ * stops once `max` live entries of the prefix are seen, but it still walks
+ * past entries of other prefixes, so a refused write is O(store size) on the
+ * master. Expired entries are dropped as they are met: they must not hold a
+ * slot, and this also trims what the 60 s sweep has not reached yet.
+ *
+ * A key that already exists skips the count. `Map.has` does not test expiry,
+ * so an expired entry under that exact key lets one write through
+ * uncounted; no caller chooses its own key (random ids, UUIDs), and
+ * replacing an entry never grows the map, which is what the ceiling guards.
+ */
+function _prefixHasRoom (store: Map<string, StoreEntry>, guard: PrefixGuard | undefined, key: string): boolean {
+  if (guard == null || !(guard.max > 0)) return true;
+  // Replacing an entry that already exists does not grow the namespace.
+  if (store.has(key)) return true;
+  if (store.size < guard.max) return true;
+  const now = Date.now();
+  let count = 0;
+  for (const [k, entry] of store) {
+    if (!k.startsWith(guard.prefix)) continue;
+    if (entry.expiresAt != null && now > entry.expiresAt) {
+      store.delete(k);
+      continue;
+    }
+    if (++count >= guard.max) return false;
+  }
+  return true;
+}
 
 let _masterRunning = false;
 let _store: Map<string, StoreEntry> | null = null;
@@ -97,8 +141,11 @@ function masterStart (opts: { log?: (msg: string) => void; cluster?: ClusterLike
           const expiresAt = (typeof msg.ttlMs === 'number' && msg.ttlMs > 0)
             ? Date.now() + msg.ttlMs
             : null;
+          if (!_prefixHasRoom(_store!, msg.ifUnderPrefix, msg.key!)) {
+            return reply({ ok: true, value: false });
+          }
           _store!.set(msg.key!, { value: msg.value, expiresAt });
-          return reply({ ok: true });
+          return reply({ ok: true, value: true });
         }
         case 'kv:delete':
           _store!.delete(msg.key!);
@@ -239,9 +286,11 @@ class _InProcessStore {
   }
 
   async get (key: string): Promise<unknown> { return this._get(key); }
-  async set (key: string, value: unknown, { ttlMs }: { ttlMs?: number } = {}): Promise<void> {
+  async set (key: string, value: unknown, { ttlMs, ifUnderPrefix }: { ttlMs?: number; ifUnderPrefix?: PrefixGuard } = {}): Promise<boolean> {
+    if (!_prefixHasRoom(this.store, ifUnderPrefix, key)) return false;
     const expiresAt = (typeof ttlMs === 'number' && ttlMs > 0) ? Date.now() + ttlMs : null;
     this.store.set(key, { value, expiresAt });
+    return true;
   }
 
   async delete (key: string): Promise<void> { this.store.delete(key); }
@@ -301,8 +350,16 @@ function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fal
       const reply = await _request({ type: 'kv:get', key }, processHandle, timeoutMs) as { value?: unknown };
       return reply.value ?? null;
     },
-    async set (key: string, value: unknown, { ttlMs }: { ttlMs?: number } = {}) {
-      await _request({ type: 'kv:set', key, value, ttlMs }, processHandle, timeoutMs);
+    async set (key: string, value: unknown, { ttlMs, ifUnderPrefix }: { ttlMs?: number; ifUnderPrefix?: PrefixGuard } = {}) {
+      const reply = await _request({ type: 'kv:set', key, value, ttlMs, ifUnderPrefix }, processHandle, timeoutMs) as { value?: unknown };
+      if (ifUnderPrefix == null) return true;
+      // A guarded write that cannot be told apart from an unguarded one would
+      // silently disable the ceiling (an older master answers no value), so
+      // an unusable reply fails loud instead.
+      if (typeof reply.value !== 'boolean') {
+        throw new Error('cluster_kv.set: guarded write got no boolean reply (master too old?)');
+      }
+      return reply.value;
     },
     async delete (key: string) {
       await _request({ type: 'kv:delete', key }, processHandle, timeoutMs);

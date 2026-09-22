@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
  */
 
 const accessState = require('./accessState.ts');
+const ErrorIds = require('errors').ErrorIds;
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { getLogger } = require('@pryv/boiler');
@@ -89,6 +90,24 @@ function actAsError (actAs: unknown): string | null {
   return 'actAs must be "allow", "deny" or a username';
 }
 
+/**
+ * The store refuses a write it must not hold (a state over the size ceiling,
+ * a field of the wrong type). Those are answers to the caller, not faults, so
+ * the route turns them into a status code instead of letting them reach the
+ * error middleware as a 500.
+ */
+function refusalOf (err: unknown): 'invalid-field' | 'too-large' | null {
+  const kind = (err as { accessStateRejection?: string } | null)?.accessStateRejection;
+  return kind === 'invalid-field' || kind === 'too-large' ? kind : null;
+}
+
+function respondRefusal (res: Response, kind: 'invalid-field' | 'too-large', err: Error) {
+  if (kind === 'too-large') {
+    return res.status(413).json({ error: { id: ErrorIds.PayloadTooLarge, message: err.message } });
+  }
+  return res.status(400).json({ error: { id: 'invalid-parameters', message: err.message } });
+}
+
 type DelegationHint = {
   isDelegatedAccess: true;
   controlledUsername: string;
@@ -133,6 +152,26 @@ const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
 /** Default life of a credential hand-off secret, in seconds. Clamped to the
  * request's remaining life and to `sharedSecrets:maxTtl` when created. */
 const DEFAULT_HANDOFF_TTL_S = 600;
+/** Default ceiling on the access requests one core holds at once.
+ *
+ * Creating a request needs no credentials and it is held in the core's master
+ * process for up to an hour, so without a ceiling a flood of POSTs grows that
+ * process until it dies. Two ceilings bound that memory together: this count
+ * and `DEFAULT_MAX_REQUEST_BYTES` per request, so 10000 requests hold at most
+ * ~160 MB of serialized state (the parsed objects the master holds cost more
+ * than that figure). Both are the last line: a reverse-proxy rate limit in
+ * front of `/reg/access` is what keeps a flood from reaching the core at
+ * all. */
+const DEFAULT_MAX_LIVE_REQUESTS = 10000;
+/** Default ceiling on the stored size of ONE access request, in bytes.
+ *
+ * The count ceiling alone bounds nothing: the body limit is
+ * `uploads:maxSizeMb` (50 MB by default) and `requestedPermissions`,
+ * `clientData`, `oauthState` and a consent form are stored as sent, so a few
+ * hundred oversized requests would exhaust the master well under the count.
+ * A request carrying permissions and a consent form is a few KB, so this
+ * leaves a wide margin; operators who annotate heavily can raise it. */
+const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   // Read per request, so a config change (or a test override) applies.
@@ -140,6 +179,20 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   function terminalRetentionMs (): number {
     const value = app.config.get('access:terminalRetentionMs');
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_TERMINAL_RETENTION_MS;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 disables the
+  // ceiling; a negative value is not a way to ask for anything, so it falls
+  // back to the default rather than silently disabling it.
+  function maxLiveRequests (): number {
+    const value = app.config.get('access:maxLiveRequests');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_LIVE_REQUESTS;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 disables it.
+  function maxRequestBytes (): number {
+    const value = app.config.get('access:maxRequestBytes');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_REQUEST_BYTES;
   }
 
   // Read per request, same reason as terminalRetentionMs.
@@ -306,9 +359,34 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // them back verbatim (lib-js rehydrates state from the poll body).
       state.pollUrl = pollUrl;
       state.authUrl = authUrl;
+
       // Persist the fully-built state once — buildState only prepared the
-      // shape; we write it here, after the URLs are computed.
-      await accessState.persist(key, state, expiresAt);
+      // shape; we write it here, after the URLs are computed. The write
+      // carries both ceilings: how many requests this core holds (so the
+      // count and the write cannot be raced apart) and how large one may be
+      // (what an app sends is stored as sent, under a body limit of
+      // megabytes). An unauthenticated caller must not be able to fill the
+      // core's memory with pending requests, by number or by size.
+      let stored: boolean;
+      try {
+        stored = await accessState.persistNew(key, state, expiresAt, maxLiveRequests(), maxRequestBytes());
+      } catch (err) {
+        const refusal = refusalOf(err);
+        if (refusal != null) return respondRefusal(res, refusal, err as Error);
+        throw err;
+      }
+      if (!stored) {
+        // Says neither the ceiling nor how close the caller got. The drain
+        // rate is unknown (requests leave as users decide them, or on
+        // expiry), so Retry-After is a flat, honest minute.
+        res.set('Retry-After', '60');
+        return res.status(429).json({
+          error: {
+            id: ErrorIds.TooManyRequests,
+            message: 'Too many access requests are pending on this core. Please retry later.'
+          }
+        });
+      }
 
       // Calling-app surface: only the fields the SDK needs to drive
       // the flow. The auth UI gets richer state from GET /reg/access/:key
@@ -614,7 +692,16 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
-      const state = await accessState.update(req.params.key, update);
+      let state: { code: number; status: string; [k: string]: unknown } | null;
+      try {
+        // Same size ceiling as at creation: this post rewrites the same
+        // entry, and whoever holds the key needs no credentials to send it.
+        state = await accessState.update(req.params.key, update, { maxBytes: maxRequestBytes() });
+      } catch (err) {
+        const refusal = refusalOf(err);
+        if (refusal != null) return respondRefusal(res, refusal, err as Error);
+        throw err;
+      }
       if (!state) {
         return res.status(400).json({
           error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }
