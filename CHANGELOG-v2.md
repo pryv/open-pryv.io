@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### A ceiling on the access requests a core holds at once
+
+`POST /reg/access` needs no credentials, and each request it creates holds about 1 KB in
+the core's memory for up to an hour, so a flood of calls could grow that process until it
+died. A core now refuses to hold more than `access.maxLiveRequests` pending requests at
+once, answering `429 too-many-requests` (the message names neither the ceiling nor how
+close the caller got). Default 10000, about 10 MB; `0` disables the ceiling. The count is
+per core, like the requests themselves, and expired requests never count toward it. This
+is a last line of defence: configure a rate limit for `/reg/access` in the reverse proxy
+in front of the core as well.
+
 ## 2.0.0-rc.23 — 2026-09-18
 
 ### Managed shared accesses no longer outlive their managing app access (security)

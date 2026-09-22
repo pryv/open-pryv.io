@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const accessState = require('../src/routes/reg/accessState.ts');
+const { withInjectedConfig } = require('test-helpers');
 
 describe('[RGAC] Register access authorization', () => {
   before(async function () {
@@ -66,6 +67,41 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(getRes.status, 201);
       assert.deepStrictEqual(getRes.body.clientData, { foo: 'bar' });
       assert.strictEqual(getRes.body.oauthState, 'xyz123');
+    });
+  });
+
+  describe('[RACP] POST /reg/access ceiling on live requests (access:maxLiveRequests)', () => {
+    function createRequest () {
+      return coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'cap-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }] });
+    }
+
+    it('[RAC1] refuses with 429 once the core holds the configured number of live requests', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 2 } }, async () => {
+        assert.strictEqual((await createRequest()).status, 201);
+        assert.strictEqual((await createRequest()).status, 201);
+        const refused = await createRequest();
+        assert.strictEqual(refused.status, 429);
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+        // The refusal says nothing about the ceiling or how close the caller got.
+        assert.ok(!/\b2\b/.test(refused.body.error.message), 'message must not leak the ceiling');
+      });
+    });
+
+    it('[RAC2] a freed slot lets the next request through', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 1 } }, async () => {
+        const first = await createRequest();
+        assert.strictEqual(first.status, 201);
+        assert.strictEqual((await createRequest()).status, 429);
+        await accessState.remove(first.body.key);
+        assert.strictEqual((await createRequest()).status, 201);
+      });
+    });
+
+    it('[RAC3] 0 disables the ceiling', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0 } }, async () => {
+        for (let i = 0; i < 3; i++) assert.strictEqual((await createRequest()).status, 201);
+      });
     });
   });
 

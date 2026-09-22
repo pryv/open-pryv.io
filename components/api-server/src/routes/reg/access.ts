@@ -133,6 +133,15 @@ const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
 /** Default life of a credential hand-off secret, in seconds. Clamped to the
  * request's remaining life and to `sharedSecrets:maxTtl` when created. */
 const DEFAULT_HANDOFF_TTL_S = 600;
+/** Default ceiling on the access requests one core holds at once.
+ *
+ * Creating a request needs no credentials, and each one holds ~1 KB in the
+ * core's master process for up to an hour, so without a ceiling a flood of
+ * POSTs grows that process until it dies. 10000 is ~10 MB, far above any
+ * legitimate concurrent sign-in volume on one core. The ceiling is the last
+ * line: a reverse-proxy rate limit in front of `/reg/access` is what keeps a
+ * flood from reaching the core at all. */
+const DEFAULT_MAX_LIVE_REQUESTS = 10000;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   // Read per request, so a config change (or a test override) applies.
@@ -140,6 +149,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   function terminalRetentionMs (): number {
     const value = app.config.get('access:terminalRetentionMs');
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_TERMINAL_RETENTION_MS;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 (or a negative
+  // value) disables the cap.
+  function maxLiveRequests (): number {
+    const value = app.config.get('access:maxLiveRequests');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_LIVE_REQUESTS;
   }
 
   // Read per request, same reason as terminalRetentionMs.
@@ -225,6 +241,23 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           });
         }
         credentialHandoff = 'shared-secret';
+      }
+
+      // Last check before the store grows: an unauthenticated caller must
+      // not be able to fill this core's memory with pending requests. The
+      // count is per core, like the store itself. `null` = the store cannot
+      // count (an injected test client), so the cap does not apply.
+      const cap = maxLiveRequests();
+      if (cap > 0) {
+        const live = await accessState.countLive();
+        if (live != null && live >= cap) {
+          return res.status(429).json({
+            error: {
+              id: 'too-many-requests',
+              message: 'Too many access requests are pending on this core. Please retry later.'
+            }
+          });
+        }
       }
 
       const { key, state, expiresAt } = accessState.buildState({

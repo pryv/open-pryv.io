@@ -182,6 +182,46 @@ describe('[CLUSTERKV] clusterKv', function () {
     assert.equal(await client.get('foo'), 1);
   });
 
+  describe('[CKVC] count', () => {
+    it('[CKC1] counts only live entries under the prefix', async () => {
+      const { client } = wireClient();
+      await client.set('ns/a', 1);
+      await client.set('ns/b', 2);
+      await client.set('other/c', 3);
+      assert.equal(await client.count('ns/'), 2);
+      assert.equal(await client.count('other/'), 1);
+      assert.equal(await client.count(''), 3);
+      assert.equal(await client.count('nothing/'), 0);
+    });
+
+    it('[CKC2] an expired entry is not counted, and is dropped as it is met', async () => {
+      const { client } = wireClient();
+      await client.set('ns/live', 1);
+      await client.set('ns/gone', 2, { ttlMs: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(await client.count('ns/'), 1);
+      // The scan removed it rather than leaving it for the 60 s sweep.
+      assert.equal(clusterKv._masterStoreForTests().has('ns/gone'), false);
+    });
+
+    it('[CKC3] the in-process fallback counts the same way', async () => {
+      clusterKv._resetInProcessFallbackForTests();
+      const fallback = clusterKv.clientFor({ processHandle: {} });
+      await fallback.set('ns/a', 1);
+      await fallback.set('ns/b', 2, { ttlMs: 5 });
+      await fallback.set('zz/c', 3);
+      assert.equal(await fallback.count('ns/'), 2);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(await fallback.count('ns/'), 1);
+      clusterKv._resetInProcessFallbackForTests();
+    });
+
+    it('[CKC4] without an IPC channel and no fallback, count fails loud like the writes', async () => {
+      const strict = clusterKv.clientFor({ processHandle: {}, fallback: false });
+      await assert.rejects(() => strict.count('ns/'), /no IPC channel/);
+    });
+  });
+
   it('masterStart is idempotent (second call no-ops)', () => {
     // Second call from the harness shouldn't throw; cluster.on listener count stable.
     clusterKv.masterStart({ log: () => {}, cluster });

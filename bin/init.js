@@ -555,11 +555,17 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # secret created when an app asks for shared-secret delivery
 # # (credentialHandoff). Clamped to the request's remaining life and to
 # # sharedSecrets.maxTtl. Default 600 (10 min).
+# # access.maxLiveRequests: how many pending access requests this core holds
+# # at once. Creating one needs no credentials, so this bounds the memory a
+# # flood of POST /reg/access can take; over the ceiling the core answers 429.
+# # Put a rate limit in the reverse proxy as well. 0 = no ceiling.
+# # Default 10000 (about 10 MB).
 # # access:
 # #   trustedAuthUrls:
 # #     - https://auth.example.com/my-auth/
 # #   terminalRetentionMs: 120000
 # #   handoffTtl: 600
+# #   maxLiveRequests: 10000
 
 # # logs.console.format.json — one JSON object per line ({timestamp, level,
 # # name, pid, message, context}) for log collectors / log-based alerting.

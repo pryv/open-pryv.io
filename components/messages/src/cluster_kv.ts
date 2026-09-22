@@ -16,13 +16,13 @@ const require = createRequire(import.meta.url);
  * Single-core scope. For cross-core state use PlatformDB.
  *
  * Wire protocol:
- *   worker → master : { type: 'kv:get'|'kv:set'|'kv:delete'|'kv:clear',
+ *   worker → master : { type: 'kv:get'|'kv:set'|'kv:delete'|'kv:clear'|'kv:count',
  *                       requestId, key?, value?, ttlMs? }
  *   master → worker : { type: 'kv:reply', requestId, ok, value?, error? }
  *
  * Failure semantics: workers fast-fail. `get` returns null when no IPC
  * channel is available (single-process tests, run-from-CLI). `set` /
- * `delete` / `clear` throw in that case so callers learn early.
+ * `delete` / `clear` / `count` throw in that case so callers learn early.
  */
 
 const { randomUUID } = require('node:crypto');
@@ -99,6 +99,27 @@ function masterStart (opts: { log?: (msg: string) => void; cluster?: ClusterLike
             : null;
           _store!.set(msg.key!, { value: msg.value, expiresAt });
           return reply({ ok: true });
+        }
+        case 'kv:count': {
+          // Live entries under a key prefix, used to bound a namespace (see
+          // the access-request cap). Expired entries are dropped as they are
+          // met, so the scan also trims what the 60 s sweep has not reached
+          // yet and a count is never inflated by them. O(store size) per
+          // call: acceptable because the caller is a bounded namespace, and
+          // the alternative (a per-prefix counter) has to stay correct
+          // across TTL expiry, which this cannot get wrong.
+          const prefix = msg.key ?? '';
+          const now = Date.now();
+          let count = 0;
+          for (const [k, entry] of _store!) {
+            if (!k.startsWith(prefix)) continue;
+            if (entry.expiresAt != null && now > entry.expiresAt) {
+              _store!.delete(k);
+              continue;
+            }
+            count++;
+          }
+          return reply({ ok: true, value: count });
         }
         case 'kv:delete':
           _store!.delete(msg.key!);
@@ -246,6 +267,19 @@ class _InProcessStore {
 
   async delete (key: string): Promise<void> { this.store.delete(key); }
   async clear (): Promise<void> { this.store.clear(); }
+  async count (prefix: string): Promise<number> {
+    const now = Date.now();
+    let count = 0;
+    for (const [k, entry] of this.store) {
+      if (!k.startsWith(prefix)) continue;
+      if (entry.expiresAt != null && now > entry.expiresAt) {
+        this.store.delete(k);
+        continue;
+      }
+      count++;
+    }
+    return count;
+  }
 }
 
 const _SHARED_FALLBACK = new _InProcessStore();
@@ -291,7 +325,8 @@ function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fal
         async get () { return null; },
         async set () { throw new Error('cluster_kv.set: not running under cluster (no IPC channel)'); },
         async delete () { throw new Error('cluster_kv.delete: not running under cluster (no IPC channel)'); },
-        async clear () { throw new Error('cluster_kv.clear: not running under cluster (no IPC channel)'); }
+        async clear () { throw new Error('cluster_kv.clear: not running under cluster (no IPC channel)'); },
+        async count () { throw new Error('cluster_kv.count: not running under cluster (no IPC channel)'); }
       };
     }
     return _SHARED_FALLBACK;
@@ -309,6 +344,10 @@ function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fal
     },
     async clear () {
       await _request({ type: 'kv:clear' }, processHandle, timeoutMs);
+    },
+    async count (prefix: string) {
+      const reply = await _request({ type: 'kv:count', key: prefix }, processHandle, timeoutMs) as { value?: unknown };
+      return typeof reply.value === 'number' ? reply.value : 0;
     }
   };
 }
