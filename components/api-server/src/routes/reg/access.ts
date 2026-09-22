@@ -90,6 +90,24 @@ function actAsError (actAs: unknown): string | null {
   return 'actAs must be "allow", "deny" or a username';
 }
 
+/**
+ * The store refuses a write it must not hold (a state over the size ceiling,
+ * a field of the wrong type). Those are answers to the caller, not faults, so
+ * the route turns them into a status code instead of letting them reach the
+ * error middleware as a 500.
+ */
+function refusalOf (err: unknown): 'invalid-field' | 'too-large' | null {
+  const kind = (err as { accessStateRejection?: string } | null)?.accessStateRejection;
+  return kind === 'invalid-field' || kind === 'too-large' ? kind : null;
+}
+
+function respondRefusal (res: Response, kind: 'invalid-field' | 'too-large', err: Error) {
+  if (kind === 'too-large') {
+    return res.status(413).json({ error: { id: ErrorIds.PayloadTooLarge, message: err.message } });
+  }
+  return res.status(400).json({ error: { id: 'invalid-parameters', message: err.message } });
+}
+
 type DelegationHint = {
   isDelegatedAccess: true;
   controlledUsername: string;
@@ -139,10 +157,11 @@ const DEFAULT_HANDOFF_TTL_S = 600;
  * Creating a request needs no credentials and it is held in the core's master
  * process for up to an hour, so without a ceiling a flood of POSTs grows that
  * process until it dies. Two ceilings bound that memory together: this count
- * and `DEFAULT_MAX_REQUEST_BYTES` per request, so 10000 requests are at most
- * ~160 MB and a realistic one is a few hundred KB. Both are the last line: a
- * reverse-proxy rate limit in front of `/reg/access` is what keeps a flood
- * from reaching the core at all. */
+ * and `DEFAULT_MAX_REQUEST_BYTES` per request, so 10000 requests hold at most
+ * ~160 MB of serialized state (the parsed objects the master holds cost more
+ * than that figure). Both are the last line: a reverse-proxy rate limit in
+ * front of `/reg/access` is what keeps a flood from reaching the core at
+ * all. */
 const DEFAULT_MAX_LIVE_REQUESTS = 10000;
 /** Default ceiling on the stored size of ONE access request, in bytes.
  *
@@ -150,7 +169,8 @@ const DEFAULT_MAX_LIVE_REQUESTS = 10000;
  * `uploads:maxSizeMb` (50 MB by default) and `requestedPermissions`,
  * `clientData`, `oauthState` and a consent form are stored as sent, so a few
  * hundred oversized requests would exhaust the master well under the count.
- * A real request with a consent form stays under 4 KB. */
+ * A request carrying permissions and a consent form is a few KB, so this
+ * leaves a wide margin; operators who annotate heavily can raise it. */
 const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
@@ -340,28 +360,21 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       state.pollUrl = pollUrl;
       state.authUrl = authUrl;
 
-      // What gets STORED is what has to be bounded: the fields an app sends
-      // (permissions, clientData, oauthState, a consent form) are kept as
-      // sent, and the body limit above them is megabytes.
-      const byteCeiling = maxRequestBytes();
-      if (byteCeiling > 0) {
-        const size = Buffer.byteLength(JSON.stringify(state), 'utf8');
-        if (size > byteCeiling) {
-          return res.status(413).json({
-            error: {
-              id: ErrorIds.PayloadTooLarge,
-              message: 'This access request is too large to be held by the core.'
-            }
-          });
-        }
-      }
-
       // Persist the fully-built state once — buildState only prepared the
       // shape; we write it here, after the URLs are computed. The write
-      // carries the ceiling on how many requests this core holds, so the
-      // count and the write cannot be raced apart: an unauthenticated caller
-      // must not be able to fill the core's memory with pending requests.
-      const stored = await accessState.persistNew(key, state, expiresAt, maxLiveRequests());
+      // carries both ceilings: how many requests this core holds (so the
+      // count and the write cannot be raced apart) and how large one may be
+      // (what an app sends is stored as sent, under a body limit of
+      // megabytes). An unauthenticated caller must not be able to fill the
+      // core's memory with pending requests, by number or by size.
+      let stored: boolean;
+      try {
+        stored = await accessState.persistNew(key, state, expiresAt, maxLiveRequests(), maxRequestBytes());
+      } catch (err) {
+        const refusal = refusalOf(err);
+        if (refusal != null) return respondRefusal(res, refusal, err as Error);
+        throw err;
+      }
       if (!stored) {
         // Says neither the ceiling nor how close the caller got. The drain
         // rate is unknown (requests leave as users decide them, or on
@@ -679,7 +692,16 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
-      const state = await accessState.update(req.params.key, update);
+      let state: { code: number; status: string; [k: string]: unknown } | null;
+      try {
+        // Same size ceiling as at creation: this post rewrites the same
+        // entry, and whoever holds the key needs no credentials to send it.
+        state = await accessState.update(req.params.key, update, { maxBytes: maxRequestBytes() });
+      } catch (err) {
+        const refusal = refusalOf(err);
+        if (refusal != null) return respondRefusal(res, refusal, err as Error);
+        throw err;
+      }
       if (!state) {
         return res.status(400).json({
           error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }

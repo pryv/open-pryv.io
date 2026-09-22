@@ -25,7 +25,9 @@ const Profile = require('./Profile.ts').default;
  */
 interface KvClientLike {
   get: (key: string) => Promise<unknown>;
-  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<void>;
+  /** Resolves whether it wrote; an unguarded write (what this store makes)
+   * always does, so the result is not read here. */
+  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
 }

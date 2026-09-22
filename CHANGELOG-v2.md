@@ -15,7 +15,12 @@ ceilings now bound it:
 - `access.maxRequestBytes` (default 16384, `0` disables): the stored size of a single
   request, which is what makes the first ceiling a real memory bound (the fields an app
   sends are stored as sent, under a body limit measured in megabytes). Over it the core
-  answers `413 payload-too-large`. A request carrying a consent form stays well under 4 KB.
+  answers `413 payload-too-large`. A request carrying permissions and a consent form is a
+  few KB, so the default leaves a wide margin. The ceiling applies to **every** write of a
+  request, including `POST /reg/access/{key}`, which rewrites the same entry and takes no
+  credentials beyond the key; an over-large outcome post is refused and the stored request
+  is left untouched. That post's text fields (`username`, `token`, `apiEndpoint`,
+  `reasonId`, `message`, `redirectUrl`) must now be strings, else `400 invalid-parameters`.
 
 Both counts are per core, like the requests themselves, and expired or decided requests
 stop counting once their window passes. This is a last line of defence: configure a rate

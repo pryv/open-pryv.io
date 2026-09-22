@@ -136,6 +136,29 @@ describe('[RGAC] Register access authorization', () => {
       }
     });
 
+    it('[RAC7] the outcome post cannot grow a stored request past the ceiling, and leaves it untouched', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxRequestBytes: 2048 } }, async () => {
+        const created = await createRequest();
+        assert.strictEqual(created.status, 201);
+
+        // Whoever holds the key needs no credentials to post the outcome.
+        const refused = await coreRequest.post('/reg/access/' + created.body.key)
+          .send({ status: 'REFUSED', reasonId: 'test', message: 'x'.repeat(4096) });
+        assert.strictEqual(refused.status, 413);
+        assert.strictEqual(refused.body.error.id, 'payload-too-large');
+
+        const stillPending = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(stillPending.body.status, 'NEED_SIGNIN', 'the stored request was not rewritten');
+
+        // A field of the wrong type is refused before anything is written.
+        const badType = await coreRequest.post('/reg/access/' + created.body.key)
+          .send({ status: 'REFUSED', reasonId: 'test', message: { nested: 'object' } });
+        assert.strictEqual(badType.status, 400);
+        assert.strictEqual(badType.body.error.id, 'invalid-parameters');
+        assert.strictEqual((await coreRequest.get('/reg/access/' + created.body.key)).body.status, 'NEED_SIGNIN');
+      });
+    });
+
     it('[RAC6] a decided request stops holding a slot once its retention window passes', async () => {
       await withInjectedConfig({ access: { maxLiveRequests: 1, terminalRetentionMs: 300 } }, async () => {
         const first = await createRequest();

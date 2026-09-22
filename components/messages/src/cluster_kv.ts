@@ -66,11 +66,16 @@ type ClusterLike = {
  * two can never disagree.
  *
  * Cost: the total store size is an upper bound on any prefix count, so a
- * store below the ceiling answers without scanning at all. When it is not,
- * the scan stops as soon as the ceiling is reached, so a flood at the
- * ceiling walks `max` entries rather than the whole store. Expired entries
- * are dropped as they are met: they must not hold a slot, and this also
- * trims what the 60 s sweep has not reached yet.
+ * store below the ceiling answers without scanning at all. Above it, the scan
+ * stops once `max` live entries of the prefix are seen, but it still walks
+ * past entries of other prefixes, so a refused write is O(store size) on the
+ * master. Expired entries are dropped as they are met: they must not hold a
+ * slot, and this also trims what the 60 s sweep has not reached yet.
+ *
+ * A key that already exists skips the count. `Map.has` does not test expiry,
+ * so an expired entry under that exact key lets one write through
+ * uncounted; no caller chooses its own key (random ids, UUIDs), and
+ * replacing an entry never grows the map, which is what the ceiling guards.
  */
 function _prefixHasRoom (store: Map<string, StoreEntry>, guard: PrefixGuard | undefined, key: string): boolean {
   if (guard == null || !(guard.max > 0)) return true;
