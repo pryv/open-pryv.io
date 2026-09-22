@@ -1,6 +1,30 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.24 — 2026-09-22
+
+### Ceilings on the access requests a core holds at once (security)
+
+`POST /reg/access` needs no credentials, and each request it creates is held in the core's
+memory for up to an hour, so a flood of calls could grow that process until it died. Two
+ceilings now bound it:
+
+- `access.maxLiveRequests` (default 10000, `0` disables): how many pending requests one
+  core holds. Over it the core answers `429 too-many-requests` with a `Retry-After` header;
+  the message names neither the ceiling nor how close the caller got. The count and the
+  write happen in one step, so concurrent calls cannot slip past it together.
+- `access.maxRequestBytes` (default 16384, `0` disables): the stored size of a single
+  request, which is what makes the first ceiling a real memory bound (the fields an app
+  sends are stored as sent, under a body limit measured in megabytes). Over it the core
+  answers `413 payload-too-large`. A request carrying permissions and a consent form is a
+  few KB, so the default leaves a wide margin. The ceiling applies to **every** write of a
+  request, including `POST /reg/access/{key}`, which rewrites the same entry and takes no
+  credentials beyond the key; an over-large outcome post is refused and the stored request
+  is left untouched. That post's text fields (`username`, `token`, `apiEndpoint`,
+  `reasonId`, `message`, `redirectUrl`) must now be strings, else `400 invalid-parameters`.
+
+Both counts are per core, like the requests themselves, and expired or decided requests
+stop counting once their window passes. This is a last line of defence: configure a rate
+limit for `/reg/access` in the reverse proxy in front of the core as well.
 
 ### Third-party sign-in keeps the app's return context
 
@@ -39,30 +63,6 @@ before, and `create` now says so on stdout. `client_id` cannot be changed on an 
 record (`update` refuses the flag), so moving an app to an opaque id means revoking and
 re-creating it: live tokens and refresh chains die and users re-run the authorization
 flow, while their consent records survive (keyed by the offer, not by the client).
-
-### Ceilings on the access requests a core holds at once
-
-`POST /reg/access` needs no credentials, and each request it creates is held in the core's
-memory for up to an hour, so a flood of calls could grow that process until it died. Two
-ceilings now bound it:
-
-- `access.maxLiveRequests` (default 10000, `0` disables): how many pending requests one
-  core holds. Over it the core answers `429 too-many-requests` with a `Retry-After` header;
-  the message names neither the ceiling nor how close the caller got. The count and the
-  write happen in one step, so concurrent calls cannot slip past it together.
-- `access.maxRequestBytes` (default 16384, `0` disables): the stored size of a single
-  request, which is what makes the first ceiling a real memory bound (the fields an app
-  sends are stored as sent, under a body limit measured in megabytes). Over it the core
-  answers `413 payload-too-large`. A request carrying permissions and a consent form is a
-  few KB, so the default leaves a wide margin. The ceiling applies to **every** write of a
-  request, including `POST /reg/access/{key}`, which rewrites the same entry and takes no
-  credentials beyond the key; an over-large outcome post is refused and the stored request
-  is left untouched. That post's text fields (`username`, `token`, `apiEndpoint`,
-  `reasonId`, `message`, `redirectUrl`) must now be strings, else `400 invalid-parameters`.
-
-Both counts are per core, like the requests themselves, and expired or decided requests
-stop counting once their window passes. This is a last line of defence: configure a rate
-limit for `/reg/access` in the reverse proxy in front of the core as well.
 
 ## 2.0.0-rc.23 — 2026-09-18
 
