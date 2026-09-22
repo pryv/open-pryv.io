@@ -267,6 +267,26 @@ function _request (payload: Partial<KvMessage>, processHandle: ProcessLike, time
 }
 
 /**
+ * Detach a value from its caller, the way the IPC channel already does.
+ *
+ * Across the master channel a value is serialized on the way in and parsed on
+ * the way out, so a worker never shares an object with the store. The
+ * in-process store holds the caller's own object, so without this a caller that
+ * mutates what it stored, or what it read back, silently rewrites stored state
+ * (and a second reader sees the change). That made behaviour depend on whether
+ * a cluster master happened to be running: a mutation was inert under
+ * `cluster.fork()` and destructive single-process.
+ *
+ * A JSON round-trip, not `structuredClone`, because it reproduces exactly what
+ * the IPC channel does to the value (`undefined` dropped, `Date` flattened to a
+ * string), so the two paths agree on more than just isolation.
+ */
+function _isolate (value: unknown): unknown {
+  if (value == null || typeof value !== 'object') return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+/**
  * In-process fallback used when `process.send` is unavailable — i.e. the
  * caller isn't running under `cluster.fork()`. Single-process api-server
  * tests, single-worker deployments, and CLI tools all hit this path. The
@@ -282,14 +302,14 @@ class _InProcessStore {
       this.store.delete(key);
       return null;
     }
-    return entry.value;
+    return _isolate(entry.value);
   }
 
   async get (key: string): Promise<unknown> { return this._get(key); }
   async set (key: string, value: unknown, { ttlMs, ifUnderPrefix }: { ttlMs?: number; ifUnderPrefix?: PrefixGuard } = {}): Promise<boolean> {
     if (!_prefixHasRoom(this.store, ifUnderPrefix, key)) return false;
     const expiresAt = (typeof ttlMs === 'number' && ttlMs > 0) ? Date.now() + ttlMs : null;
-    this.store.set(key, { value, expiresAt });
+    this.store.set(key, { value: _isolate(value), expiresAt });
     return true;
   }
 

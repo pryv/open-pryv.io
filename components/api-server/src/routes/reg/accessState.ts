@@ -323,10 +323,10 @@ async function update (key: string, update: Partial<AccessState>, opts: { maxByt
   }
   const stored = await get(key);
   if (!stored) return null;
-  // Merge into a COPY. Without a cluster master the store hands back the very
-  // object it holds (no IPC, so no serialization in between), and mutating it
-  // would change the stored request before this function has decided whether
-  // to accept the update: a refusal below has to leave it exactly as it was.
+  // Merge into a COPY, so that a refusal below leaves the stored request
+  // exactly as it was. The store now detaches what it hands back, so this is
+  // defence in depth rather than the only thing standing between a rejected
+  // update and a mutated request.
   const state: AccessState = { ...stored };
   for (const field of UPDATABLE_FIELDS) {
     if (update[field] !== undefined) state[field] = update[field];

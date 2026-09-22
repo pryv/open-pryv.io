@@ -19,6 +19,12 @@
  * `{ sub, email, email_verified }` and hands them to the injected `onIdentity`
  * seam (P2: a placeholder; later: account resolution + session mint). Every
  * failure mode collapses to ONE coarse error redirect — no oracle.
+ *
+ * When the start carried an `ssoReturn`, it is appended unchanged to the
+ * fragment of whatever location we redirect to, on every outcome. It is read
+ * from the cookie ONLY after that cookie's signature, TTL and provider binding
+ * have verified, so a third party cannot inject a return context into an
+ * in-flight sign-in; the callback never reads it from its own query.
  */
 
 import * as oidc from 'openid-client';
@@ -66,6 +72,17 @@ function parseCookies (header: string | undefined): Record<string, string> {
   return out;
 }
 
+/**
+ * Append the verified return state to a redirect target's FRAGMENT. Encoded as
+ * one value, so it can neither introduce a second key nor a second `#` nor
+ * otherwise alter the URL the core decided to redirect to.
+ */
+function withReturn (location: string, returnState?: string): string {
+  if (returnState == null || returnState === '') return location;
+  const separator = location.includes('#') ? '&' : '#';
+  return location + separator + 'ssoReturn=' + encodeURIComponent(returnState);
+}
+
 export function handleCallback (deps: CallbackDeps) {
   return async function callback (req: CallbackReq, res: CallbackRes): Promise<void> {
     const provider = req.params.provider ?? '';
@@ -75,10 +92,16 @@ export function handleCallback (deps: CallbackDeps) {
     // only, and nothing SSO-related must reach the landing host's access log or
     // Referer. Using the query here would be silently swallowed client-side and
     // would leak the marker to logs.
-    const redirectFail = (): void => {
+    // `returnState` is passed only by callers that run AFTER the cookie has
+    // verified: an unverified value is never reflected back to the browser.
+    const redirectFail = (returnState?: string): void => {
       res.clearCookie(STATE_COOKIE_NAME, { path: STATE_COOKIE_PATH });
-      res.redirect(deps.landingPageURL + '#ssoError=sso-failed');
+      res.redirect(withReturn(deps.landingPageURL + '#ssoError=sso-failed', returnState));
     };
+
+    // Stays undefined until the cookie has verified, so the catch below reflects
+    // it only for failures that happened after that point.
+    let returnState: string | undefined;
 
     try {
       const configuration = await deps.registry.getConfiguration(provider);
@@ -96,6 +119,9 @@ export function handleCallback (deps: CallbackDeps) {
       if (!verified.ok) return redirectFail();
       // Anti-mixup: the cookie was minted for THIS provider.
       if (verified.payload.provider !== provider) return redirectFail();
+      // Signature, TTL and provider binding all hold: the return state is now
+      // trusted enough to be handed back (still never interpreted).
+      returnState = verified.payload.returnState;
 
       // Reconstruct the full callback URL (openid-client reads code + state
       // from its query). Take the path+query the IdP redirected us to.
@@ -111,18 +137,18 @@ export function handleCallback (deps: CallbackDeps) {
       });
 
       const claims = tokens.claims();
-      if (claims == null || typeof claims.sub !== 'string') return redirectFail();
+      if (claims == null || typeof claims.sub !== 'string') return redirectFail(returnState);
       const email = typeof claims.email === 'string' ? claims.email : null;
       const emailVerified = claims.email_verified === true;
 
       const result = await deps.onIdentity({ provider, sub: claims.sub, email, emailVerified });
-      res.redirect(result.location);
+      res.redirect(withReturn(result.location, returnState));
     } catch (err) {
       // Log the error CLASS only — an openid-client error message can embed
       // attacker-supplied callback query params (error_description), which
       // could inject newlines / forge log lines.
       deps.logger?.warn(`[sso] callback failed for provider "${provider}": ${err instanceof Error ? err.name : 'error'}`);
-      return redirectFail();
+      return redirectFail(returnState);
     }
   };
 }
