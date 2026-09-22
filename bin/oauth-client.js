@@ -19,7 +19,7 @@
 // clear error if the username doesn't resolve.
 //
 // Usage:
-//   node bin/oauth-client.js create <username> [--redirect-uri <uri>]... [--scope <s>] [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
+//   node bin/oauth-client.js create <username> [--client-id <opaque-id>] [--redirect-uri <uri>]... [--scope <s>] [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
 //   node bin/oauth-client.js list
 //   node bin/oauth-client.js show <clientId>
 //   node bin/oauth-client.js update <clientId> [--redirect-uri <uri>]... [--scope <s>] ...
@@ -67,7 +67,7 @@ require('@pryv/boiler').init({
 
     switch (args.command) {
       case 'create':
-        await runCreate(platform, args, persistClient);
+        await runCreate(platform, args, persistClient, getClient);
         break;
       case 'show':
         await runShow(platform, args, getClient, computeThumbprint);
@@ -114,7 +114,7 @@ require('@pryv/boiler').init({
 // Commands
 // ---------------------------------------------------------------------------
 
-async function runCreate (platform, args, persistClient) {
+async function runCreate (platform, args, persistClient, getClient) {
   const username = args.positional[0];
   if (!username) throw new Error('create: <username> required');
 
@@ -149,7 +149,18 @@ async function runCreate (platform, args, persistClient) {
     throw new Error('create: at least one --redirect-uri is required');
   }
 
-  const clientId = username; // App account's username IS the client_id,
+  // The client_id defaults to the app account's username, which keeps every
+  // existing deployment working. An operator whose platform hashes usernames
+  // passes an opaque one instead: the id is a key in the replicated platform
+  // store (the client row, its revocation tombstone, the DPoP keys seen) and
+  // travels on the wire, so with the default the username does too, whatever
+  // the platform's PII mode.
+  const clientId = args.flagsScalar['client-id'] ?? username;
+  const idError = oauthStorage().clientIdError(clientId);
+  if (idError != null) throw new Error('create: ' + idError.replace('client_id', '--client-id'));
+  if (clientId !== username && await getClient(platform, clientId) != null) {
+    throw new Error('create: client "' + clientId + '" already exists; pick another --client-id or revoke it first');
+  }
   const grantTypes = (args.flags['grant-type'] && args.flags['grant-type'].length > 0)
     ? args.flags['grant-type']
     : ['authorization_code', 'refresh_token'];
@@ -170,6 +181,10 @@ async function runCreate (platform, args, persistClient) {
   });
 
   console.log('OK   client created: ' + clientId);
+  if (clientId === username) {
+    console.log('     note: client_id is the account username, so it is stored in the platform');
+    console.log('           and sent on the wire. Use --client-id <opaque-id> to avoid that.');
+  }
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     account:       ' + username + ' (user id ' + accountUserId + ')');
@@ -505,6 +520,10 @@ function printUsage (stream) {
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
     '  node bin/oauth-client.js rotate-secret <clientId>\n\n' +
     'Flags (create / update):\n' +
+    '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
+    '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +
+    '                            Use it where the username must not reach the platform\n' +
+    '                            store or the wire (hashed-PII deployments)\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
     '  --scope <scope-token>     (multi-valued; e.g. cmc:<offer-name> — pair with --cmc-offer)\n' +
     '  --grant-type <name>       (multi-valued; default authorization_code,refresh_token)\n' +

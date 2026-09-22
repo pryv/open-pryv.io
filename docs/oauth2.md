@@ -180,8 +180,25 @@ stores the account's user id, which only that core can resolve (on a multi-core
 platform the CLI names the hosting core when run elsewhere). `show` prints the
 record plus the account username resolved on the core it runs on.
 
-**The `client_id` is the app account's username** — there is no separate opaque
-client identifier. Promoting user `acme-app` yields `client_id = acme-app`.
+**By default the `client_id` is the app account's username.** Promoting user
+`acme-app` yields `client_id = acme-app`.
+
+That id is a key in the platform store (the client record, its revocation
+tombstone, the DPoP keys seen), it is replicated to every core, and it travels
+in URLs and in the name of the access the grant mints. So with the default, the
+app account's username does too, whatever the platform's PII mode. A deployment
+that keeps usernames out of the platform store registers an opaque id instead:
+
+```
+node bin/oauth-client.js create acme-app --client-id k7Fq2LmZ4pR8 --redirect-uri https://app.example.com/cb
+```
+
+The account is still named on the command line (it is what the record points
+at, as a user id), but `client_id` no longer carries it. An id is 4 to 64
+characters of `A-Z a-z 0-9 . _ ~ -`, and registering one that already exists is
+refused. `client_id` cannot be changed afterwards: `update` works on an existing
+record, so moving to an opaque id means revoking the client and creating it
+again, which invalidates its existing grants.
 
 ```
 node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
