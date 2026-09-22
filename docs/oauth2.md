@@ -195,13 +195,33 @@ node bin/oauth-client.js create acme-app --client-id k7Fq2LmZ4pR8 --redirect-uri
 
 The account is still named on the command line (it is what the record points
 at, as a user id), but `client_id` no longer carries it. An id is 4 to 64
-characters of `A-Z a-z 0-9 . _ ~ -`, and registering one that already exists is
-refused. `client_id` cannot be changed afterwards: `update` works on an existing
-record, so moving to an opaque id means revoking the client and creating it
-again, which invalidates its existing grants.
+characters of `A-Z a-z 0-9 . ~ -` (no `_`: the store scans keys with SQL
+`LIKE`, where it is a wildcard). Registering an id that already exists, or one
+that is an account name on the platform, is refused. Prefer an id no username
+could ever take, which means anything holding an uppercase letter, a `.` or a
+`~`: usernames are lowercase letters, digits and `-`, so `k7Fq2LmZ4pR8` can
+never collide with one.
+
+Two things still carry the username unless you act:
+
+- **`client_name`**, shown on the consent screen and stored in the record.
+  With `--client-id` it defaults to the id; pass `--name` to set what users
+  read.
+- **the capability URL of a `cmc:` offer**, which an authorization-code client
+  needs. It is built from the publishing account's API endpoint, so it names
+  that account, and it is stored in the record and travels in the signed
+  state. Publish the offer from an account whose name is not sensitive.
+
+`client_id` cannot be changed afterwards: `update` refuses the flag, because
+the id keys the record. Moving an app to an opaque id means revoking the client
+and creating it again. That kills its live tokens and refresh chains, and every
+user re-runs the authorization flow; their consent records survive (they are
+keyed by the offer, not by the client), and the accesses and streams the old id
+created stay on their accounts.
 
 ```
-node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
+node bin/oauth-client.js create <username> [--client-id <opaque-id>] \
+    --redirect-uri <uri> [--redirect-uri <uri> ...] \
     [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
 node bin/oauth-client.js list

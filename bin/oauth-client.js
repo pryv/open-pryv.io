@@ -155,11 +155,37 @@ async function runCreate (platform, args, persistClient, getClient) {
   // store (the client row, its revocation tombstone, the DPoP keys seen) and
   // travels on the wire, so with the default the username does too, whatever
   // the platform's PII mode.
-  const clientId = args.flagsScalar['client-id'] ?? username;
+  const givenId = args.flagsScalar['client-id'];
+  if (givenId === true) throw new Error('create: --client-id requires a value');
+  const clientId = givenId ?? username;
   const idError = oauthStorage().clientIdError(clientId);
-  if (idError != null) throw new Error('create: ' + idError.replace('client_id', '--client-id'));
-  if (clientId !== username && await getClient(platform, clientId) != null) {
-    throw new Error('create: client "' + clientId + '" already exists; pick another --client-id or revoke it first');
+  if (idError != null) {
+    throw new Error('create: ' + (givenId != null
+      ? idError.replace('client_id', '--client-id')
+      : idError + ' (the account name is used as the client_id; pass --client-id <opaque-id>)'));
+  }
+  if (givenId != null) {
+    if (await getClient(platform, clientId) != null) {
+      throw new Error('create: client "' + clientId + '" already exists; pick another --client-id or revoke it first');
+    }
+    // An id that is also a username would be re-pointed at that account the
+    // day someone runs `create <that-user>`, silently moving the client to it.
+    if (clientId !== username && (await localUserId(clientId) != null || await hostingCoreOf(clientId) != null)) {
+      throw new Error(
+        'create: "' + clientId + '" is an account name on this platform; a client_id must not be one.\n' +
+        'Pick an id no username can take (usernames are lowercase letters, digits and "-",\n' +
+        'so any id with an uppercase letter, a "." or a "~" is safe).'
+      );
+    }
+  } else {
+    // Re-running create on an existing client is how an operator rewrites a
+    // record, but doing it on a row pointing at a DIFFERENT account would
+    // hand that account's client to this one.
+    const existing = await getClient(platform, clientId);
+    if (existing != null && typeof existing.accountUserId === 'string' &&
+        existing.accountUserId.length > 0 && existing.accountUserId !== accountUserId) {
+      throw new Error('create: client "' + clientId + '" already exists and points at another account; revoke it first');
+    }
   }
   const grantTypes = (args.flags['grant-type'] && args.flags['grant-type'].length > 0)
     ? args.flags['grant-type']
@@ -170,7 +196,11 @@ async function runCreate (platform, args, persistClient, getClient) {
     clientId,
     redirectUris: args.flags['redirect-uri'],
     scope: args.flags['scope'] ?? [],
-    clientName: args.flagsScalar['name'] ?? username,
+    // The client name is stored in the replicated row and shown on the
+    // consent screen. Defaulting it to the username would put back exactly
+    // what an opaque client_id was chosen to keep out, so with one the id is
+    // the better default; an operator naming the app passes --name.
+    clientName: args.flagsScalar['name'] ?? (givenId != null ? clientId : username),
     clientUri: args.flagsScalar['client-uri'],
     logoUri: args.flagsScalar['logo-uri'],
     grantTypes,
@@ -181,9 +211,12 @@ async function runCreate (platform, args, persistClient, getClient) {
   });
 
   console.log('OK   client created: ' + clientId);
-  if (clientId === username) {
+  if (givenId == null) {
     console.log('     note: client_id is the account username, so it is stored in the platform');
     console.log('           and sent on the wire. Use --client-id <opaque-id> to avoid that.');
+  } else if (args.flagsScalar['name'] == null) {
+    console.log('     note: client_name defaults to the client_id (--name sets what the');
+    console.log('           consent screen shows).');
   }
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
@@ -246,6 +279,14 @@ async function runList (platform, listClientIds) {
 async function runUpdate (platform, args, getClient, persistClient) {
   const clientId = args.positional[0];
   if (!clientId) throw new Error('update: <clientId> required');
+  // Silently ignoring it would report success on a migration that did not
+  // happen: the id keys the record, so it cannot be rewritten in place.
+  if (args.flagsScalar['client-id'] != null) {
+    throw new Error(
+      'update: client_id cannot be changed; revoke this client and create it again\n' +
+      'with --client-id (its existing tokens and refresh chains die with the revoke).'
+    );
+  }
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('update: client "' + clientId + '" not found');
 
@@ -365,6 +406,9 @@ async function runListKeys (platform, args, listDpopKeysSeen, listRevokedDpopKey
 async function runRotateSecret (platform, args, getClient, persistClient) {
   const clientId = args.positional[0];
   if (!clientId) throw new Error('rotate-secret: <clientId> required');
+  if (args.flagsScalar['client-id'] != null) {
+    throw new Error('rotate-secret: client_id cannot be changed here; name the client as the argument');
+  }
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('rotate-secret: client "' + clientId + '" not found');
 
@@ -509,7 +553,7 @@ function printUsage (stream) {
   stream.write(
     'OAuth2 client (app-account) management CLI\n\n' +
     'Usage:\n' +
-    '  node bin/oauth-client.js create <username> --redirect-uri <uri> [more flags]\n' +
+    '  node bin/oauth-client.js create <username> [--client-id <opaque-id>] --redirect-uri <uri> [more flags]\n' +
     '  node bin/oauth-client.js show <clientId>\n' +
     '  node bin/oauth-client.js list\n' +
     '  node bin/oauth-client.js update <clientId> [flags]\n' +
