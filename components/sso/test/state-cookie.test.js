@@ -18,7 +18,8 @@ const require = createRequire(import.meta.url);
 
 const {
   signStateCookie, verifyStateCookie, cookieOptions,
-  STATE_COOKIE_NAME, STATE_COOKIE_PATH, STATE_COOKIE_TTL_SECONDS
+  STATE_COOKIE_NAME, STATE_COOKIE_PATH, STATE_COOKIE_TTL_SECONDS,
+  RETURN_STATE_MAX_CHARS
 } = require('../src/stateCookie.ts');
 
 const ADMIN = 'operator-admin-key-abc123';
@@ -97,6 +98,61 @@ describe('[SSOSC] SSO state cookie', () => {
     const res = verifyStateCookie(ADMIN, thinBody + '.' + thinMac, now + 5);
     assert.equal(res.ok, false);
     assert.equal(res.reason, 'malformed');
+  });
+
+  // Re-sign an arbitrary body with the real key: the signature is valid, so the
+  // only thing that can reject it is the payload shape check.
+  function signBody (body) {
+    const crypto = require('node:crypto');
+    const key = crypto.createHmac('sha256', ADMIN).update(Buffer.from('pryv-sso-state-v1')).digest();
+    const mac = crypto.createHmac('sha256', key).update(body).digest('base64')
+      .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    return body + '.' + mac;
+  }
+
+  function encodeBody (obj) {
+    return Buffer.from(JSON.stringify(obj)).toString('base64')
+      .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  }
+
+  it('[SSOSC9] an opaque returnState round-trips unchanged', () => {
+    const now = 1_000_000;
+    const returnState = 'returnURL=https%3A%2F%2Fapp.example%2Fcb&state=abc&h=n1';
+    const value = signStateCookie(ADMIN, { ...payload, returnState }, now);
+    const res = verifyStateCookie(ADMIN, value, now + 5);
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.returnState, returnState);
+  });
+
+  it('[SSOSC10] a payload without returnState still verifies (older cookie / start without state)', () => {
+    const now = 1_000_000;
+    const value = signStateCookie(ADMIN, payload, now);
+    const res = verifyStateCookie(ADMIN, value, now + 5);
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.returnState, undefined);
+  });
+
+  it('[SSOSC11] a validly-signed but out-of-shape returnState is malformed', () => {
+    const now = 1_000_000;
+    const base = { ...payload, iat: now, exp: now + 600 };
+    const bad = [
+      42,
+      'x'.repeat(RETURN_STATE_MAX_CHARS + 1),
+      'has a space',
+      'has#a#hash',
+      'quote"inside',
+      'semi;colon'
+    ];
+    for (const returnState of bad) {
+      const res = verifyStateCookie(ADMIN, signBody(encodeBody({ ...base, returnState })), now + 5);
+      assert.equal(res.ok, false, `expected reject for ${JSON.stringify(returnState)}`);
+      assert.equal(res.reason, 'malformed');
+    }
+    // Boundary: exactly at the limit is accepted.
+    const atLimit = 'x'.repeat(RETURN_STATE_MAX_CHARS);
+    const ok = verifyStateCookie(ADMIN, signBody(encodeBody({ ...base, returnState: atLimit })), now + 5);
+    assert.equal(ok.ok, true);
+    assert.equal(ok.payload.returnState, atLimit);
   });
 
   it('[SSOSC8] cookie attributes are HttpOnly + Secure + SameSite=Lax + path-scoped', () => {

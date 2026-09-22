@@ -25,6 +25,11 @@
  * confidentiality rests on HttpOnly + Secure (TLS) + the short TTL. The
  * callback consumes it ONE-SHOT (clear before use), so a replayed callback URL
  * finds no cookie and fails closed.
+ *
+ * The cookie may also carry `returnState`, an opaque string the auth app handed
+ * to `/start` (`ssoReturn` query) and gets back on the landing fragment once
+ * this cookie verifies. Shape-checked only (length + alphabet), never
+ * interpreted.
  */
 
 import crypto from 'node:crypto';
@@ -38,12 +43,33 @@ export const STATE_COOKIE_TTL_SECONDS = 600;
 
 const SIGNING_LABEL = Buffer.from('pryv-sso-state-v1');
 
+/**
+ * Bounds on the opaque return state. The alphabet is exactly what
+ * `URLSearchParams` serialization emits, so anything else (space, `#`, `;`,
+ * quotes, control characters) is refused at `/start`: it keeps the value
+ * trivially safe in a URL fragment and the request log line clean.
+ *
+ * 2048 characters is the budget that keeps the signed cookie inside the 4096
+ * byte per-cookie limit alongside the round-trip fields.
+ */
+export const RETURN_STATE_MAX_CHARS = 2048;
+export const RETURN_STATE_RE = /^[A-Za-z0-9*._%+=&-]*$/;
+
+/** Shape guard for the opaque return state — length + alphabet, no parsing. */
+export function isValidReturnState (value: unknown): value is string {
+  return typeof value === 'string' &&
+    value.length <= RETURN_STATE_MAX_CHARS &&
+    RETURN_STATE_RE.test(value);
+}
+
 /** What the cookie carries across the IdP round-trip. */
 export type StateCookiePayload = {
   provider: string;
   state: string;
   nonce: string;
   pkceVerifier: string;
+  /** Opaque, app-chosen return context. Never read by the core. */
+  returnState?: string;
   iat: number;
   exp: number;
 };
@@ -126,6 +152,11 @@ export function verifyStateCookie (
   if (typeof payload.iat !== 'number' || typeof payload.exp !== 'number' ||
       typeof payload.provider !== 'string' || typeof payload.state !== 'string' ||
       typeof payload.nonce !== 'string' || typeof payload.pkceVerifier !== 'string') {
+    return { ok: false, reason: 'malformed' };
+  }
+  // Absent is valid (a start that carried no return context, or a cookie minted
+  // before this field existed); present but out of shape fails closed.
+  if (payload.returnState !== undefined && !isValidReturnState(payload.returnState)) {
     return { ok: false, reason: 'malformed' };
   }
   if (nowSeconds < payload.iat) return { ok: false, reason: 'not_yet_valid' };

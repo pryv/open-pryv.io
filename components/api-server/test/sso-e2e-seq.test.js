@@ -139,8 +139,8 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
   }
 
   // Drive /start → fake IdP /authorize → returns the state cookie + callback path.
-  async function startFlow () {
-    const res1 = await ssoRequest.get(`/auth/sso/${PROVIDER}/start`);
+  async function startFlow (query = '') {
+    const res1 = await ssoRequest.get(`/auth/sso/${PROVIDER}/start${query}`);
     assert.strictEqual(res1.status, 302, 'start should 302 to the IdP: ' + JSON.stringify(res1.body));
     const setCookie = res1.headers['set-cookie'];
     assert.ok(Array.isArray(setCookie) && setCookie.length === 1, 'start should set the state cookie');
@@ -151,8 +151,8 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     return { cookie, callbackPath: cbUrl.pathname + cbUrl.search };
   }
 
-  async function runCallback () {
-    const { cookie, callbackPath } = await startFlow();
+  async function runCallback (query = '') {
+    const { cookie, callbackPath } = await startFlow(query);
     const res = await ssoRequest.get(callbackPath).set('Cookie', cookie);
     assert.strictEqual(res.status, 302, 'callback should 302 to the landing page');
     return res.headers.location;
@@ -284,5 +284,60 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(audit.status, 200, JSON.stringify(audit.body));
     const actions = new Set((audit.body.events ?? []).map((e) => e.content?.action));
     assert.ok(actions.has('sso.login'), 'expected an sso.login audit row, saw ' + JSON.stringify([...actions]));
+  });
+
+  // --- ssoReturn: the auth app's return context survives the real mint ---
+
+  const RETURN_VALUE = 'returnURL=https%3A%2F%2Fapp.example%2Fcb&state=abc&h=n1';
+  const RETURN_QUERY = `?ssoReturn=${encodeURIComponent(RETURN_VALUE)}`;
+
+  it('[SSOE7] a non-MFA sign-in carries ssoReturn back, and still leaks no token', async function () {
+    const email = cuid() + '@ssoe7.example.com';
+    const u = await makeProvedUser(email);
+    idp.control.email = email;
+
+    const location = await runCallback(RETURN_QUERY);
+    const p = hashParams(location);
+    assert.strictEqual(p.ssoStatus, 'login', 'expected login; location=' + location);
+    assert.strictEqual(p.ssoReturn, RETURN_VALUE, 'the app return context must come back unchanged');
+    assert.ok(p.ssoKey && p.ssoKey.length > 0);
+
+    // The handoff still works, and the token still never rides the URL.
+    const ret = await coreRequest.post(`/${u.username}/shared-secrets/retrieve`).send({ key: p.ssoKey });
+    assert.strictEqual(ret.status, 200, 'retrieve should succeed: ' + JSON.stringify(ret.body));
+    assert.strictEqual(location.includes(ret.body.secret.token), false,
+      'the session token must not appear in the URL');
+  });
+
+  it('[SSOE8] an MFA continuation carries ssoReturn back alongside the mfaToken', async function () {
+    const email = cuid() + '@ssoe8.example.com';
+    const u = await makeProvedUser(email, { password: PASSWORD });
+    idp.control.email = email;
+
+    const login = await coreRequest.post(`/${u.username}/auth/login`).set('Origin', TRUSTED_ORIGIN)
+      .send({ username: u.username, password: PASSWORD, appId: TRUSTED_APP });
+    assert.strictEqual(login.status, 200, 'password login: ' + JSON.stringify(login.body));
+    const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', login.body.token).send({});
+    assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
+    const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+      .send({ code: totpCodeFor(act.body.secret, -1) });
+    assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
+
+    const location = await runCallback(RETURN_QUERY);
+    const p = hashParams(location);
+    assert.strictEqual(p.ssoStatus, 'mfa');
+    assert.strictEqual(p.ssoReturn, RETURN_VALUE, 'the return context must survive into the MFA hand-off');
+    assert.ok(p.ssoMfaToken && p.ssoMfaToken.length > 0);
+    assert.strictEqual(p.ssoKey, undefined);
+  });
+
+  it('[SSOE9] a refusal carries ssoReturn back, so the app can still return the user where they were', async function () {
+    idp.control.email = cuid() + '@nobody-ssoe9.example.com';
+    const location = await runCallback(RETURN_QUERY);
+    const p = hashParams(location);
+    assert.strictEqual(p.ssoError, 'no-account');
+    assert.strictEqual(p.ssoReturn, RETURN_VALUE);
+    assert.strictEqual(p.ssoKey, undefined);
+    assert.strictEqual(p.ssoStatus, undefined);
   });
 });

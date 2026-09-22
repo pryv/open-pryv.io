@@ -32,10 +32,22 @@ The component uses these PlatformDB keyspaces, the TTL'd ones on the existing `s
 
 | Keyspace | Lifetime | Contents | Per-core? |
 |---|---|---|---|
-| `oauth-client/<clientId>` | indefinite (rotated on App-account update) | Client metadata: `redirectUris`, `scope`, `clientName`, `logoUri`, `clientUri`, `grantTypes`, `applicationType`, `clientSecretHash?` | NO — cluster-wide |
-| `oauth-ac/<sha256(code)>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, username, scope, expiresAt, accessId, coreId, dataGrantAccessId?, permissions? }` | YES — issuing core's id is in the row |
-| `oauth-rt/<coreId>/<sha256(token)>` | sliding 30d (cap 90d absolute) | `{ clientId, userId, username, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt, ... }` | YES — issuing core's id is in the key |
-| `oauth-rt-used/<coreId>/<sha256(token)>` | remaining life of the rotated token | reuse-detection marker (chain identity, no credential) | YES |
+| `oauth-client/<clientId>` | indefinite (rotated on App-account update) | Client metadata: `redirectUris`, `scope`, `grantTypes`, `updatedAt`, plus optional `clientName`, `clientUri`, `logoUri`, `applicationType`, `clientSecretHash`, `jwks`, `jwksRef`, `accountUserId`, `cmcOffers` | NO — cluster-wide |
+| `oauth-client-revoked/<clientId>` | until pruned (`pruneRevokedClients`, by tombstone age) | `{ revokedAt }` — revoke tombstone, written by `deleteClient`. A token EPOCH, not a name reservation: each core caches it (`revokedClientsCache`) and the resource-server path refuses the client's oauth-session accesses minted before that epoch, so live tokens stop working before they expire. Re-registering the same id does NOT clear it. | NO — cluster-wide |
+| `oauth-ac/<sha256(code)>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, scope, expiresAt, accessId?, coreId?, dataGrantAccessId?, permissions? }` | YES — issuing core's id is in the row |
+| `oauth-rt/<coreId>/<sha256(token)>` | sliding 30d (cap 90d absolute) | `{ clientId, userId, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt, dataGrantAccessId?, permissions?, jkt? }` | YES — issuing core's id is in the key |
+| `oauth-rt-used/<coreId>/<sha256(token)>` | remaining life of the rotated token | `{ clientId, userId, dataGrantAccessId?, consumedAt }` — reuse-detection marker (chain identity, no credential) | YES |
+
+**No row carries a username.** Code and refresh rows identify the account by
+`userId` only, and the client row points at its account through `accountUserId`; a
+grant that needs the username resolves it locally on the core that serves the
+exchange. Rows written before `accountUserId` existed carry `accountUsername`
+instead and are read only through `legacyAccountUsername()`. This is what lets a
+deployment keep usernames out of the replicated store.
+
+`jwks` holds PUBLIC EC P-256 keys only (validated on write), so cluster-wide
+caching is safe; `cmcOffers` maps a `cmc:<name>` scope to the capability URL of a
+consent offer published by the app's account.
 
 **Upgrade from raw keys.** Earlier releases used `oauth-code/<code>` (with the access token in the row) and `oauth-refresh[-used]/<coreId>/<token>`. At master boot each core moves its own refresh rows to the hashed keys (`rekeyLegacyRefreshTokens`, idempotent; another core's rows wait for that core's upgrade). Legacy code rows are read once by `consumeCode` so an exchange in flight across the upgrade completes; they expire within 10 minutes, and that read is to be removed in the following release.
 

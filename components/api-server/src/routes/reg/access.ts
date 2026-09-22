@@ -9,6 +9,7 @@ import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 import * as sharedSecrets from 'shared-secrets';
 import { createHandoff, parseHandoffField, tokenlessEndpointError } from './credentialHandoff.ts';
+import type { AccessState } from './accessState.ts';
 const require = createRequire(import.meta.url);
 /**
  * OAuth-style access authorization routes.
@@ -692,7 +693,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
-      let state: { code: number; status: string; [k: string]: unknown } | null;
+      let state: AccessState | null;
       try {
         // Same size ceiling as at creation: this post rewrites the same
         // entry, and whoever holds the key needs no credentials to send it.

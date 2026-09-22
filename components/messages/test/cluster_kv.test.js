@@ -240,6 +240,47 @@ describe('[CLUSTERKV] clusterKv', function () {
     });
   });
 
+  describe('[CKVI] the in-process fallback isolates values like the IPC channel', () => {
+    it('[CKVI1] mutating what was read back does not rewrite the stored value', async () => {
+      clusterKv._resetInProcessFallbackForTests();
+      const client = clusterKv.clientFor({ processHandle: {} });
+      await client.set('iso/a', { status: 'PENDING', nested: { n: 1 } });
+
+      const first = await client.get('iso/a');
+      first.status = 'ACCEPTED';
+      first.nested.n = 99;
+
+      const second = await client.get('iso/a');
+      assert.equal(second.status, 'PENDING', 'a reader must not be able to rewrite stored state');
+      assert.equal(second.nested.n, 1, 'nested values are detached too');
+      clusterKv._resetInProcessFallbackForTests();
+    });
+
+    it('[CKVI2] mutating what was written does not rewrite the stored value', async () => {
+      clusterKv._resetInProcessFallbackForTests();
+      const client = clusterKv.clientFor({ processHandle: {} });
+      const written = { status: 'PENDING' };
+      await client.set('iso/b', written);
+      written.status = 'ACCEPTED';
+
+      const read = await client.get('iso/b');
+      assert.equal(read.status, 'PENDING', 'the store keeps its own copy of what was written');
+      clusterKv._resetInProcessFallbackForTests();
+    });
+
+    it('[CKVI3] two readers get independent objects', async () => {
+      clusterKv._resetInProcessFallbackForTests();
+      const client = clusterKv.clientFor({ processHandle: {} });
+      await client.set('iso/c', { n: 1 });
+      const a = await client.get('iso/c');
+      const b = await client.get('iso/c');
+      assert.notEqual(a, b, 'each read yields its own object');
+      a.n = 2;
+      assert.equal(b.n, 1);
+      clusterKv._resetInProcessFallbackForTests();
+    });
+  });
+
   it('masterStart is idempotent (second call no-ops)', () => {
     // Second call from the harness shouldn't throw; cluster.on listener count stable.
     clusterKv.masterStart({ log: () => {}, cluster });

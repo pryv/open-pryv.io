@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Third-party sign-in keeps the app's return context
+
+`GET /auth/sso/:provider/start` accepts an optional `ssoReturn` query parameter: an opaque
+string of at most 2048 characters in the form-urlencoded alphabet that the auth app uses to
+remember where the user came from (its own `returnURL`, `state`, `requestingAppId`, `next`).
+The core stores it in the signed state cookie and, once that cookie has verified at the
+callback, hands it back unchanged as `ssoReturn` on the landing page's URL fragment, on every
+outcome (`login`, `mfa`, error). The core never interprets it and still redirects only to
+`sso.landingPageURL`; a value that is too long or malformed is refused with `400`.
+
+A start without `ssoReturn` behaves exactly as before, and a landing page that does not know
+the key ignores it. Before this, an app that sent a user through third-party sign-in got no
+completion redirect back: the query it started from was dropped at the first hop, so the user
+landed on the account profile instead of wherever the app had sent them.
+
 ### An OAuth client can be registered under an opaque `client_id`
 
 `client_id` was always the app account's username, and that id is a key in the

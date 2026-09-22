@@ -85,6 +85,9 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   // Everything SSO hands back rides the URL FRAGMENT, never the query: the
   // fragment is not written to the landing host's access log or the Referer
   // header (D6, § 2.6).
+  //
+  // The sso component appends the app's `ssoReturn` to this fragment after the
+  // state cookie verifies, so nothing here needs to know about it.
   function toFragment (params: string): { location: string } {
     const url = typeof landingPageURL === 'string' ? landingPageURL : '';
     return { location: `${url}#${params}` };
