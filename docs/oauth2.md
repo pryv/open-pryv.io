@@ -180,11 +180,48 @@ stores the account's user id, which only that core can resolve (on a multi-core
 platform the CLI names the hosting core when run elsewhere). `show` prints the
 record plus the account username resolved on the core it runs on.
 
-**The `client_id` is the app account's username** — there is no separate opaque
-client identifier. Promoting user `acme-app` yields `client_id = acme-app`.
+**By default the `client_id` is the app account's username.** Promoting user
+`acme-app` yields `client_id = acme-app`.
+
+That id is a key in the platform store (the client record, its revocation
+tombstone, the DPoP keys seen), it is replicated to every core, and it travels
+in URLs and in the name of the access the grant mints. So with the default, the
+app account's username does too, whatever the platform's PII mode. A deployment
+that keeps usernames out of the platform store registers an opaque id instead:
 
 ```
-node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
+node bin/oauth-client.js create acme-app --client-id k7Fq2LmZ4pR8 --redirect-uri https://app.example.com/cb
+```
+
+The account is still named on the command line (it is what the record points
+at, as a user id), but `client_id` no longer carries it. An id is 4 to 64
+characters of `A-Z a-z 0-9 . ~ -` (no `_`: the store scans keys with SQL
+`LIKE`, where it is a wildcard). Registering an id that already exists, or one
+that is an account name on the platform, is refused. Prefer an id no username
+could ever take, which means anything holding an uppercase letter, a `.` or a
+`~`: usernames are lowercase letters, digits and `-`, so `k7Fq2LmZ4pR8` can
+never collide with one.
+
+Two things still carry the username unless you act:
+
+- **`client_name`**, shown on the consent screen and stored in the record.
+  With `--client-id` it defaults to the id; pass `--name` to set what users
+  read.
+- **the capability URL of a `cmc:` offer**, which an authorization-code client
+  needs. It is built from the publishing account's API endpoint, so it names
+  that account, and it is stored in the record and travels in the signed
+  state. Publish the offer from an account whose name is not sensitive.
+
+`client_id` cannot be changed afterwards: `update` refuses the flag, because
+the id keys the record. Moving an app to an opaque id means revoking the client
+and creating it again. That kills its live tokens and refresh chains, and every
+user re-runs the authorization flow; their consent records survive (they are
+keyed by the offer, not by the client), and the accesses and streams the old id
+created stay on their accounts.
+
+```
+node bin/oauth-client.js create <username> [--client-id <opaque-id>] \
+    --redirect-uri <uri> [--redirect-uri <uri> ...] \
     [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
 node bin/oauth-client.js list

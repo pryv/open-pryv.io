@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### An OAuth client can be registered under an opaque `client_id`
+
+`client_id` was always the app account's username, and that id is a key in the
+replicated platform store (the client record, its revocation tombstone, the DPoP keys
+seen) as well as travelling in URLs and in the name of the access a grant mints. On a
+deployment that keeps usernames out of the platform store, the username went in anyway.
+
+`bin/oauth-client.js create <username>` now takes `--client-id <opaque-id>` (4 to 64
+characters of `A-Z a-z 0-9 . ~ -`; `_` is excluded because the store scans keys with SQL
+`LIKE`, where it is a wildcard). An id already registered, or one that is an account name
+on the platform, is refused. The record still points at the account, by user id, and
+`client_name` then defaults to the id rather than the username.
+
+Two things still name the account unless the operator acts: `client_name` (pass `--name`)
+and the capability URL of a `cmc:` offer, which is built from the publishing account's
+API endpoint and is needed by every authorization-code client.
+
+Nothing changes for existing clients: without the flag the `client_id` is the username as
+before, and `create` now says so on stdout. `client_id` cannot be changed on an existing
+record (`update` refuses the flag), so moving an app to an opaque id means revoking and
+re-creating it: live tokens and refresh chains die and users re-run the authorization
+flow, while their consent records survive (keyed by the offer, not by the client).
+
 ### Ceilings on the access requests a core holds at once
 
 `POST /reg/access` needs no credentials, and each request it creates is held in the core's

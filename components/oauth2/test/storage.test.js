@@ -313,6 +313,42 @@ describe('[OAUTH-STORE] storage layer', () => {
     });
   });
 
+  describe('[OCID] client_id validation', () => {
+    it('[OCI1] accepts an opaque id and any canonical username the default would use', () => {
+      for (const id of ['acme-app', 'k7Fq2LmZ', 'a.b~c-d', 'x'.repeat(64), 'u-0123456789abcdef']) {
+        assert.equal(storage.clientIdError(id), null, id + ' must be usable');
+      }
+    });
+
+    it('[OCI2] refuses ids that would build another record\'s key or bloat it', () => {
+      // A '/' would make `oauth-client/<id>` address a different record.
+      assert.match(storage.clientIdError('acme/../other'), /letters, digits/);
+      assert.match(storage.clientIdError('has space'), /letters, digits/);
+      assert.match(storage.clientIdError('dpop-jkt-seen/x/y'), /letters, digits/);
+      assert.match(storage.clientIdError('x'.repeat(65)), /4 to 64/);
+      assert.match(storage.clientIdError('ab'), /4 to 64/);
+      assert.match(storage.clientIdError(''), /must not be empty/);
+      assert.match(storage.clientIdError(undefined), /must not be empty/);
+      assert.match(storage.clientIdError({ toString: () => 'ok-looking' }), /must not be empty/);
+    });
+
+    it('[OCI3] every accepted id can be used as a store-key prefix (no SQL LIKE wildcards)', async () => {
+      // The engines refuse a prefix holding '_' or '%' (they are LIKE
+      // wildcards), and the keys of a client are scanned by prefix, so an id
+      // they reject must not pass validation in the first place.
+      const platform = fakePlatform(); // refuses a wildcard prefix, like the engines
+      for (const id of ['plain-id', 'k7Fq2LmZ', 'a.b~c-d']) {
+        assert.equal(storage.clientIdError(id), null);
+        await assert.doesNotReject(() => storage.listDpopKeysSeen(platform, id), id + ' must be scannable');
+      }
+      // The ids the engines cannot scan are exactly the ones refused above
+      // (long enough to reach the charset check, not the length one).
+      assert.match(storage.clientIdError('a_bc'), /letters, digits/, 'an id with a LIKE wildcard is refused');
+      assert.match(storage.clientIdError('a%bc'), /letters, digits/);
+      await assert.rejects(() => storage.listDpopKeysSeen(platform, 'a_bc'), /wildcard/);
+    });
+  });
+
   describe('[OAUTH-STORE-ISO] keyspace isolation', () => {
     it('[OS-ISO1] client + code + refresh keyspaces do not collide on the same id', async () => {
       const platform = fakePlatform();

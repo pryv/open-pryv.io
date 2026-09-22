@@ -210,6 +210,35 @@ const JKT_RE = /^[A-Za-z0-9_-]{43}$/;
 
 // --- Client metadata (indefinite, cluster-wide) --- //
 
+/**
+ * Whether a `client_id` can be registered, as an error message or null.
+ *
+ * The id is a KEY in the replicated platform store (`oauth-client/<id>`, the
+ * revocation tombstone, `dpop-jkt-seen/<id>/…`), so a value carrying `/`
+ * would build a key that reads as another record's. It also travels in URLs
+ * and in the name of the access the grant mints, and a bounded length keeps
+ * those keys small.
+ *
+ * The set is the unreserved characters of RFC 3986 MINUS `_`, which needs no
+ * escaping in a URL but IS a single-character wildcard in SQL LIKE: both
+ * engines refuse a prefix holding one, so an id carrying `_` would break the
+ * prefix scans keyed on it (the DPoP keys seen by a client, which is what an
+ * operator lists before revoking a leaked key).
+ *
+ * A canonical username satisfies this by construction, so the default
+ * `client_id` (the app account's username) always passes. An ALIAS used in
+ * its place is not guaranteed to, and is refused here rather than written to
+ * a key that cannot be scanned.
+ */
+export function clientIdError (clientId: unknown): string | null {
+  if (typeof clientId !== 'string' || clientId.length === 0) return 'client_id must not be empty';
+  if (clientId.length < 4 || clientId.length > 64) return 'client_id must be 4 to 64 characters';
+  if (!/^[A-Za-z0-9.~-]+$/.test(clientId)) {
+    return 'client_id may only hold letters, digits, and the characters . ~ -';
+  }
+  return null;
+}
+
 export async function setClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
   const payload = { ...client, clientId: client.clientId, updatedAt: client.updatedAt || Date.now() };
   await platform.setPlatformKv(PREFIX_CLIENT + client.clientId, JSON.stringify(payload));
