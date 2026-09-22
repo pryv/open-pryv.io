@@ -2,16 +2,24 @@
 
 ## Unreleased
 
-### A ceiling on the access requests a core holds at once
+### Ceilings on the access requests a core holds at once
 
-`POST /reg/access` needs no credentials, and each request it creates holds about 1 KB in
-the core's memory for up to an hour, so a flood of calls could grow that process until it
-died. A core now refuses to hold more than `access.maxLiveRequests` pending requests at
-once, answering `429 too-many-requests` (the message names neither the ceiling nor how
-close the caller got). Default 10000, about 10 MB; `0` disables the ceiling. The count is
-per core, like the requests themselves, and expired requests never count toward it. This
-is a last line of defence: configure a rate limit for `/reg/access` in the reverse proxy
-in front of the core as well.
+`POST /reg/access` needs no credentials, and each request it creates is held in the core's
+memory for up to an hour, so a flood of calls could grow that process until it died. Two
+ceilings now bound it:
+
+- `access.maxLiveRequests` (default 10000, `0` disables): how many pending requests one
+  core holds. Over it the core answers `429 too-many-requests` with a `Retry-After` header;
+  the message names neither the ceiling nor how close the caller got. The count and the
+  write happen in one step, so concurrent calls cannot slip past it together.
+- `access.maxRequestBytes` (default 16384, `0` disables): the stored size of a single
+  request, which is what makes the first ceiling a real memory bound (the fields an app
+  sends are stored as sent, under a body limit measured in megabytes). Over it the core
+  answers `413 payload-too-large`. A request carrying a consent form stays well under 4 KB.
+
+Both counts are per core, like the requests themselves, and expired or decided requests
+stop counting once their window passes. This is a last line of defence: configure a rate
+limit for `/reg/access` in the reverse proxy in front of the core as well.
 
 ## 2.0.0-rc.23 — 2026-09-18
 

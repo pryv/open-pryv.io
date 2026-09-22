@@ -103,11 +103,9 @@ type AccessState = {
 
 type KvClient = {
   get: (key: string) => Promise<unknown>;
-  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<void>;
+  /** Resolves false when `ifUnderPrefix` refused the write (namespace full). */
+  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifUnderPrefix?: { prefix: string; max: number } }) => Promise<boolean | void>;
   delete: (key: string) => Promise<void>;
-  /** Live entries under a key prefix. Optional: a test may inject a client
-   * without it, and the caller then treats the count as unavailable. */
-  count?: (prefix: string) => Promise<number>;
 };
 
 let kvClient: KvClient | null = null;
@@ -130,12 +128,17 @@ function _setKvClientForTests (client: KvClient | null): void {
 const TRACK_KEYS = process.env.NODE_ENV === 'test';
 const knownKeys = new Set<string>();
 
-async function write (key: string, state: AccessState, expiresAt: number): Promise<void> {
+async function write (key: string, state: AccessState, expiresAt: number, maxLive?: number): Promise<boolean> {
   // cluster_kv treats a non-positive TTL as "never expires": clamp to 1 ms
   // so an already-past expiry drops the entry instead of pinning it.
   const ttlMs = Math.max(1, expiresAt - Date.now());
-  await getKv().set(NAMESPACE + key, state, { ttlMs });
+  const opts: { ttlMs: number; ifUnderPrefix?: { prefix: string; max: number } } = { ttlMs };
+  if (maxLive != null && maxLive > 0) opts.ifUnderPrefix = { prefix: NAMESPACE, max: maxLive };
+  const stored = await getKv().set(NAMESPACE + key, state, opts);
+  // An unguarded write resolves void; only a guarded one reports a refusal.
+  if (opts.ifUnderPrefix != null && stored === false) return false;
   if (TRACK_KEYS) knownKeys.add(key);
+  return true;
 }
 
 /**
@@ -201,6 +204,22 @@ async function persist (key: string, state: AccessState, expiresAt?: number): Pr
   const ts = expiresAt ?? state.expiresAt;
   state.expiresAt = ts;
   await write(key, state, ts);
+}
+
+/**
+ * First write of a NEW request, refused when this core already holds
+ * `maxLive` of them. Returns whether it stored.
+ *
+ * Creating a request takes no credentials, so this is what keeps a flood of
+ * them from filling the core's memory. The count and the write happen in one
+ * step inside the store: counting first and writing after is a check-then-act
+ * that every worker passes at the same moment.
+ *
+ * `maxLive` of 0 (or less) means no ceiling.
+ */
+async function persistNew (key: string, state: AccessState, expiresAt: number, maxLive: number): Promise<boolean> {
+  state.expiresAt = expiresAt;
+  return await write(key, state, expiresAt, maxLive);
 }
 
 /**
@@ -301,20 +320,6 @@ async function update (key: string, update: Partial<AccessState>): Promise<Acces
 }
 
 /**
- * How many requests of this core are live right now, or null when the store
- * cannot answer (an injected test client without `count`). Expired entries
- * are not counted: the store drops them as it scans.
- *
- * A request is created by an UNAUTHENTICATED call, so this is what lets the
- * route refuse to grow the store without bound.
- */
-async function countLive (): Promise<number | null> {
-  const kv = getKv();
-  if (typeof kv.count !== 'function') return null;
-  return await kv.count(NAMESPACE);
-}
-
-/**
  * Delete an access request.
  */
 async function remove (key: string): Promise<void> {
@@ -331,4 +336,4 @@ async function clear (): Promise<void> {
   for (const key of [...knownKeys]) await remove(key);
 }
 
-export { buildState, persist, create, get, countLive, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };
+export { buildState, persist, persistNew, create, get, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };

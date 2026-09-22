@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
  */
 
 const accessState = require('./accessState.ts');
+const ErrorIds = require('errors').ErrorIds;
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { getLogger } = require('@pryv/boiler');
@@ -135,13 +136,22 @@ const DEFAULT_TERMINAL_RETENTION_MS = 120 * 1000;
 const DEFAULT_HANDOFF_TTL_S = 600;
 /** Default ceiling on the access requests one core holds at once.
  *
- * Creating a request needs no credentials, and each one holds ~1 KB in the
- * core's master process for up to an hour, so without a ceiling a flood of
- * POSTs grows that process until it dies. 10000 is ~10 MB, far above any
- * legitimate concurrent sign-in volume on one core. The ceiling is the last
- * line: a reverse-proxy rate limit in front of `/reg/access` is what keeps a
- * flood from reaching the core at all. */
+ * Creating a request needs no credentials and it is held in the core's master
+ * process for up to an hour, so without a ceiling a flood of POSTs grows that
+ * process until it dies. Two ceilings bound that memory together: this count
+ * and `DEFAULT_MAX_REQUEST_BYTES` per request, so 10000 requests are at most
+ * ~160 MB and a realistic one is a few hundred KB. Both are the last line: a
+ * reverse-proxy rate limit in front of `/reg/access` is what keeps a flood
+ * from reaching the core at all. */
 const DEFAULT_MAX_LIVE_REQUESTS = 10000;
+/** Default ceiling on the stored size of ONE access request, in bytes.
+ *
+ * The count ceiling alone bounds nothing: the body limit is
+ * `uploads:maxSizeMb` (50 MB by default) and `requestedPermissions`,
+ * `clientData`, `oauthState` and a consent form are stored as sent, so a few
+ * hundred oversized requests would exhaust the master well under the count.
+ * A real request with a consent form stays under 4 KB. */
+const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   // Read per request, so a config change (or a test override) applies.
@@ -151,11 +161,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_TERMINAL_RETENTION_MS;
   }
 
-  // Read per request, same reason as terminalRetentionMs. 0 (or a negative
-  // value) disables the cap.
+  // Read per request, same reason as terminalRetentionMs. 0 disables the
+  // ceiling; a negative value is not a way to ask for anything, so it falls
+  // back to the default rather than silently disabling it.
   function maxLiveRequests (): number {
     const value = app.config.get('access:maxLiveRequests');
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_LIVE_REQUESTS;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 disables it.
+  function maxRequestBytes (): number {
+    const value = app.config.get('access:maxRequestBytes');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_REQUEST_BYTES;
   }
 
   // Read per request, same reason as terminalRetentionMs.
@@ -243,23 +260,6 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         credentialHandoff = 'shared-secret';
       }
 
-      // Last check before the store grows: an unauthenticated caller must
-      // not be able to fill this core's memory with pending requests. The
-      // count is per core, like the store itself. `null` = the store cannot
-      // count (an injected test client), so the cap does not apply.
-      const cap = maxLiveRequests();
-      if (cap > 0) {
-        const live = await accessState.countLive();
-        if (live != null && live >= cap) {
-          return res.status(429).json({
-            error: {
-              id: 'too-many-requests',
-              message: 'Too many access requests are pending on this core. Please retry later.'
-            }
-          });
-        }
-      }
-
       const { key, state, expiresAt } = accessState.buildState({
         ...req.body,
         consent: consentForm,
@@ -339,9 +339,41 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // them back verbatim (lib-js rehydrates state from the poll body).
       state.pollUrl = pollUrl;
       state.authUrl = authUrl;
+
+      // What gets STORED is what has to be bounded: the fields an app sends
+      // (permissions, clientData, oauthState, a consent form) are kept as
+      // sent, and the body limit above them is megabytes.
+      const byteCeiling = maxRequestBytes();
+      if (byteCeiling > 0) {
+        const size = Buffer.byteLength(JSON.stringify(state), 'utf8');
+        if (size > byteCeiling) {
+          return res.status(413).json({
+            error: {
+              id: ErrorIds.PayloadTooLarge,
+              message: 'This access request is too large to be held by the core.'
+            }
+          });
+        }
+      }
+
       // Persist the fully-built state once — buildState only prepared the
-      // shape; we write it here, after the URLs are computed.
-      await accessState.persist(key, state, expiresAt);
+      // shape; we write it here, after the URLs are computed. The write
+      // carries the ceiling on how many requests this core holds, so the
+      // count and the write cannot be raced apart: an unauthenticated caller
+      // must not be able to fill the core's memory with pending requests.
+      const stored = await accessState.persistNew(key, state, expiresAt, maxLiveRequests());
+      if (!stored) {
+        // Says neither the ceiling nor how close the caller got. The drain
+        // rate is unknown (requests leave as users decide them, or on
+        // expiry), so Retry-After is a flat, honest minute.
+        res.set('Retry-After', '60');
+        return res.status(429).json({
+          error: {
+            id: ErrorIds.TooManyRequests,
+            message: 'Too many access requests are pending on this core. Please retry later.'
+          }
+        });
+      }
 
       // Calling-app surface: only the fields the SDK needs to drive
       // the flow. The auth UI gets richer state from GET /reg/access/:key

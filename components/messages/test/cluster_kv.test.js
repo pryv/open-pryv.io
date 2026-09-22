@@ -182,43 +182,61 @@ describe('[CLUSTERKV] clusterKv', function () {
     assert.equal(await client.get('foo'), 1);
   });
 
-  describe('[CKVC] count', () => {
-    it('[CKC1] counts only live entries under the prefix', async () => {
+  describe('[CKVC] guarded write (ifUnderPrefix)', () => {
+    const guard = (max) => ({ ifUnderPrefix: { prefix: 'ns/', max } });
+
+    it('[CKC1] writes while the prefix has room, refuses once it is full', async () => {
       const { client } = wireClient();
-      await client.set('ns/a', 1);
-      await client.set('ns/b', 2);
-      await client.set('other/c', 3);
-      assert.equal(await client.count('ns/'), 2);
-      assert.equal(await client.count('other/'), 1);
-      assert.equal(await client.count(''), 3);
-      assert.equal(await client.count('nothing/'), 0);
+      assert.equal(await client.set('ns/a', 1, guard(2)), true);
+      assert.equal(await client.set('ns/b', 2, guard(2)), true);
+      assert.equal(await client.set('ns/c', 3, guard(2)), false);
+      // The refused write stored nothing.
+      assert.equal(await client.get('ns/c'), null);
     });
 
-    it('[CKC2] an expired entry is not counted, and is dropped as it is met', async () => {
+    it('[CKC2] an expired entry holds no slot, and is dropped as it is met', async () => {
       const { client } = wireClient();
-      await client.set('ns/live', 1);
-      await client.set('ns/gone', 2, { ttlMs: 5 });
+      await client.set('ns/a', 1, guard(2));
+      await client.set('ns/gone', 2, { ttlMs: 5, ifUnderPrefix: { prefix: 'ns/', max: 2 } });
       await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(await client.count('ns/'), 1);
+      assert.equal(await client.set('ns/c', 3, guard(2)), true);
       // The scan removed it rather than leaving it for the 60 s sweep.
       assert.equal(clusterKv._masterStoreForTests().has('ns/gone'), false);
     });
 
-    it('[CKC3] the in-process fallback counts the same way', async () => {
+    it('[CKC3] the ceiling counts only its own prefix, and replacing a key is not growth', async () => {
+      const { client } = wireClient();
+      await client.set('other/a', 1);
+      await client.set('other/b', 2);
+      assert.equal(await client.set('ns/a', 1, guard(1)), true);
+      // Full for new keys...
+      assert.equal(await client.set('ns/b', 2, guard(1)), false);
+      // ...but rewriting the existing one still works.
+      assert.equal(await client.set('ns/a', 'again', guard(1)), true);
+      assert.equal(await client.get('ns/a'), 'again');
+    });
+
+    it('[CKC4] an unguarded write is never refused, and the fallback guards the same way', async () => {
+      const { client } = wireClient();
+      await client.set('ns/a', 1, guard(1));
+      assert.equal(await client.set('ns/plain', 2), true);
+
       clusterKv._resetInProcessFallbackForTests();
       const fallback = clusterKv.clientFor({ processHandle: {} });
-      await fallback.set('ns/a', 1);
-      await fallback.set('ns/b', 2, { ttlMs: 5 });
-      await fallback.set('zz/c', 3);
-      assert.equal(await fallback.count('ns/'), 2);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(await fallback.count('ns/'), 1);
+      assert.equal(await fallback.set('ns/a', 1, guard(1)), true);
+      assert.equal(await fallback.set('ns/b', 2, guard(1)), false);
+      assert.equal(await fallback.set('ns/b', 2), true);
       clusterKv._resetInProcessFallbackForTests();
     });
 
-    it('[CKC4] without an IPC channel and no fallback, count fails loud like the writes', async () => {
-      const strict = clusterKv.clientFor({ processHandle: {}, fallback: false });
-      await assert.rejects(() => strict.count('ns/'), /no IPC channel/);
+    it('[CKC5] a guarded write fails loud when the master answers without a verdict', async () => {
+      const { clientHandle } = makeFakeProcessPair();
+      // A master that does not know the guard replies ok with no value; the
+      // ceiling must not silently switch off.
+      clientHandle.send = (msg) => setImmediate(() =>
+        clientHandle.emit('message', { type: 'kv:reply', requestId: msg.requestId, ok: true }));
+      const client = clusterKv.clientFor({ processHandle: clientHandle, timeoutMs: 1000 });
+      await assert.rejects(() => client.set('ns/a', 1, guard(1)), /no boolean reply/);
     });
   });
 
