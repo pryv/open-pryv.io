@@ -1,5 +1,48 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### The CMC accept record in your own account no longer carries a token (security)
+
+Accepting an invite writes a `consent/accept-cmc` event into the accepter's own
+`:_cmc:apps:<app-code>` stream. That event stored two working credentials: the data-grant
+endpoint under `acceptedBy.apiEndpoint`, which is a token to the accepter's own data, and
+the invite URL under `capabilityUrl`. Both are now stored with the token removed, so what
+remains names the endpoint and opens nothing. The refuse record is stripped the same way.
+
+This mattered because an app can hold `read` on that stream, typically the requesting
+app's own, and because an export of the account includes it: a "download my data" file
+meant to be shareable handed a live credential to whoever received it.
+
+The record keeps what it is read for. `dataGrantAccessId` still names which access was
+granted and `content.from` still names the counterparty, which is what
+`listAcceptedRelationships` reads. An app that treated `acceptedBy.apiEndpoint` as a
+usable connection now receives a URL without a token and must use `dataGrantAccessId`
+instead. A record left by a FAILED accept is stripped the same way, which matters because
+a failed single-use accept leaves the invite unconsumed and therefore still live; the
+retry queue is unaffected, since it re-dispatches from its own copy in a stream no API
+read path reaches. Nothing else in the handshake changes: the endpoint delivered to the
+requester, which is what makes the grant usable at all, is untouched.
+
+A back-channel delivery failure also stopped writing the peer's endpoint to the
+operator's log with its token attached.
+
+A core running with `versioning.forceKeepHistory` also stopped archiving the trigger's
+intermediate statuses. A version row snapshots the content as it was before an update, so
+with history on, the stamp that removes the token would have preserved it in a row that
+`events.getOne?includeHistory=true` still reaches. These stamps are the plugin's own
+bookkeeping rather than user edits, so they no longer produce history rows at all; the
+trigger's final state is unaffected.
+
+Events written before this change keep the tokens already stored in them.
+`bin/cmc-scrub-credentials.js` rewrites those older records in place: run it once per
+core, `--dry-run` first. It covers settled records, completed and failed, including
+trashed ones, and leaves a record that is still mid-flight alone, reporting it so a later
+run can sweep it. A core that was running with `versioning.forceKeepHistory` may also hold a
+credential in an older record's version history, which no supported write path can
+rewrite; the tool names those records rather than appear to clean them. Revoking a
+relationship invalidates the grant its token belongs to.
+
 ## 2.0.0-rc.24 — 2026-09-22
 
 ### Ceilings on the access requests a core holds at once (security)

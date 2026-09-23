@@ -194,6 +194,42 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'back-channel must carry remoteChatStreamId');
       assert.ok(typeof inboxBackChannel.content?.remoteCollectorStreamId === 'string',
         'back-channel must carry remoteCollectorStreamId');
+
+      // Bob's own accept trigger, once settled, must carry no usable
+      // credential: it lives in `:_cmc:apps:my-app`, which bob can grant an
+      // app `read` on and which every export of his account includes. The
+      // hosts stay (they say WHICH endpoint), the tokens go.
+      const acceptEventId = accRes.body.event.id;
+      const t0 = Date.now();
+      let trigger;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const r = await coreRequest.get(bob.eventsPath + '/' + acceptEventId)
+          .set('Authorization', bob.token);
+        trigger = r.body?.event?.content;
+        if (trigger?.status === 'completed' || trigger?.status === 'failed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(trigger?.status, 'completed', JSON.stringify(trigger));
+      assert.ok(typeof trigger.dataGrantAccessId === 'string' && trigger.dataGrantAccessId.length > 0,
+        'the trigger must still record WHICH access was granted: ' + JSON.stringify(trigger));
+      // Assert the fields are PRESENT before asserting they are token-less, so
+      // a regression that drops them entirely fails here rather than passing
+      // an empty loop.
+      assert.strictEqual(typeof trigger.capabilityUrl, 'string',
+        'the accepter posted capabilityUrl; it must still be on the record: ' + JSON.stringify(trigger));
+      assert.strictEqual(typeof trigger.acceptedBy?.apiEndpoint, 'string',
+        'acceptedBy.apiEndpoint must still name the granted endpoint: ' + JSON.stringify(trigger));
+      // A token in a Pryv apiEndpoint is the URL's userinfo part.
+      for (const [field, url] of [['acceptedBy.apiEndpoint', trigger.acceptedBy.apiEndpoint],
+        ['capabilityUrl', trigger.capabilityUrl]]) {
+        assert.strictEqual(new URL(url).username, '',
+          field + ' must be stored without its token, got: ' + url);
+      }
+      // The grant token itself must appear nowhere in the stored content.
+      const grantToken = new URL(dataGrant.apiEndpoint).username;
+      assert.ok(grantToken.length > 0, 'fixture check: the delivered grant carries a token');
+      assert.strictEqual(JSON.stringify(trigger).includes(grantToken), false,
+        'the data-grant token leaked into the accepter\'s trigger event: ' + JSON.stringify(trigger));
     });
   });
 

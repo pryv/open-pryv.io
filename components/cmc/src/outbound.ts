@@ -62,6 +62,27 @@ function parseApiEndpoint (apiEndpoint: string): { token: string; base: string }
 }
 
 /**
+ * The same URL without its `user:password@` part — that is, an apiEndpoint
+ * with its token removed. Returned unchanged when it does not parse.
+ *
+ * Use this before an apiEndpoint is written anywhere durable that is not
+ * meant to hand out a credential: an event in a user stream apps can be
+ * granted, a delivery to a peer that has no use for the token, a log line.
+ * What survives (scheme, host, path) still identifies WHICH endpoint is
+ * meant, which is all a bookkeeping record needs.
+ */
+function stripCredentials (url: string): string {
+  try {
+    const u = new URL(url);
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch (_e) {
+    return url;
+  }
+}
+
+/**
  * Default timeout for an outbound delivery (per-attempt, not cumulative).
  * 15s matches the operator-side expectation that cross-platform deliveries
  * are bounded but tolerate transient latency.
@@ -150,6 +171,7 @@ function isRetryableFailure (r: DeliverResult): boolean {
 export {
   DEFAULT_TIMEOUT_MS,
   parseApiEndpoint,
+  stripCredentials,
   postToPeer,
   isRetryableFailure,
 };

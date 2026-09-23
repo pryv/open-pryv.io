@@ -41,6 +41,7 @@ const bootRetryLoop = require('./bootRetryLoop.ts');
 const mallAccessesAdapter = require('./mallAccessesAdapter.ts');
 const errorIds = require('./errorIds.ts');
 const capabilityResponseHook = require('./capabilityResponseHook.ts');
+const credentialScrub = require('./credentialScrub.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -49,7 +50,7 @@ export {
   handleSystem, handleChat, handleRevoke, handleInvalidateLink, retryQueue, handleIncomingAccept,
   handleIncomingRevoke,
   anchorStreams, accessesUpdateHook, accessesDeleteHook, retryScheduler, bootRetryLoop,
-  mallAccessesAdapter, errorIds, capabilityResponseHook,
+  mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
 };
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
@@ -58,7 +59,10 @@ export const { createCapabilityResponseHook } = capabilityResponseHook;
 // that reuse the cross-core plumbing (delivery + capability lifecycle) without
 // touching the consent-relationship handlers. These are pure re-exports — no
 // logic change to the modules themselves.
-export const { postToPeer, isRetryableFailure, parseApiEndpoint } = outbound;
+export const { postToPeer, isRetryableFailure, parseApiEndpoint, stripCredentials } = outbound;
+// Token removal from a record's content, shared by the dispatch loop and the
+// operator scrub tool (bin/cmc-scrub-credentials.js).
+export const { hasCredential, scrubCredentials } = credentialScrub;
 export const { mintCapability, gcCapability } = capability;
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;

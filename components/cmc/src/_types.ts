@@ -123,11 +123,20 @@ export type MallAccessesLike = {
   delete: (userId: string, params: MallParams) => Promise<unknown>;
 };
 
+// `update`'s 3rd/4th arguments mirror the real Mall's
+// (transaction, { onlyIfNotTrashed, skipVersioning }). Both optional so unit
+// fakes may take the two-arg form; the dispatch loop passes `skipVersioning`
+// on every trigger-status stamp (see STATUS_STAMP_OPTS in dispatch.ts).
+// The transaction slot is typed `null` rather than the Mall's own transaction
+// type because no CMC caller opens one: it exists only so the 4th argument
+// lands in the right position.
+export type MallEventUpdateOpts = { onlyIfNotTrashed?: boolean; skipVersioning?: boolean };
+
 export type MallEventsLike = {
   create: (userId: string, params: MallParams) => Promise<{ id?: string; [k: string]: unknown }>;
   get: (userId: string, params: MallParams) => Promise<Array<Record<string, unknown>>>;
   getOne?: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
-  update: (userId: string, params: MallParams) => Promise<unknown>;
+  update: (userId: string, params: MallParams, transaction?: null, opts?: MallEventUpdateOpts) => Promise<unknown>;
 };
 
 export type MallStreamsLike = {
