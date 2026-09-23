@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { CredentialStash } from './credentialScrub.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -183,13 +184,15 @@ async function dispatch (params: {
         ...event,
         content: credentialScrub.scrubCredentials(deliveredContent) ?? deliveredContent,
       }, null, STATUS_STAMP_OPTS);
-      // The IN-MEMORY event deliberately keeps the unscrubbed content: the
-      // handler about to run reads its `capabilityUrl` / `apiEndpoint` from
-      // here, `enqueueRetry` snapshots it into the internal retries stream so
-      // a retry can re-dispatch, and the terminal stamps build from it and
-      // scrub on their own way out. Only the STORED copy drops the token.
-      // Carrying the status forward also keeps a handler that rewrites
-      // `content` (the incoming-revoke enrichment) from dropping it.
+      // The IN-MEMORY event deliberately keeps the usable content: the handler
+      // about to run reads its `capabilityUrl` / `apiEndpoint` from here,
+      // `enqueueRetry` snapshots it into the internal retries stream so a
+      // retry can re-dispatch, and the terminal stamps build from it and scrub
+      // on their own way out. On the live path this object is the middleware's
+      // re-hydrated COPY (see createDispatchMiddleware): the row in storage
+      // never held the token in the first place. Carrying the status forward
+      // also keeps a handler that rewrites `content` (the incoming-revoke
+      // enrichment) from dropping it.
       event.content = deliveredContent;
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: unknown) {
@@ -634,11 +637,27 @@ function createDispatchMiddleware (
 ): (context: MiddlewareContext, params: unknown, result: MiddlewareResult, next: () => void) => unknown {
   return function cmcDispatchMiddleware (context: MiddlewareContext, _params: unknown, result: MiddlewareResult, next: () => void) {
     // Read the event back from the result (api-server convention).
-    const event = result?.event;
+    const stored = result?.event;
     const userId = context?.user?.id;
-    if (event == null || userId == null || !C.isCmcEventType(event.type)) {
+    if (stored == null || userId == null || !C.isCmcEventType(stored.type)) {
       return next();
     }
+    // Work from a COPY, re-hydrated with whatever the pre-persist stash hook
+    // took out (see credentialStashHook.ts). Two reasons:
+    //   - the orchestration needs the usable values: the handler reads the
+    //     endpoint off this object, and `enqueueRetry` snapshots it into the
+    //     internal retries stream so a retry can re-dispatch.
+    //   - `result.event` is the response body, and the object
+    //     `addIntegrityToContext` verified. `dispatch` stamps `event.content`
+    //     in memory, so sharing the object would mutate the response after
+    //     the fact. The copy keeps that from happening.
+    // With no stash (a unit test, or a record that carried no token) the
+    // hydration is the content unchanged.
+    const stash = (context as { cmc?: { credentials?: CredentialStash } })?.cmc?.credentials;
+    const event: CmcEvent = {
+      ...stored,
+      content: credentialScrub.restoreCredentials(stored.content, stash),
+    };
     const requestDeps: DispatchDeps = buildPerRequestDeps != null
       ? { ...deps, ...buildPerRequestDeps(context) }
       : deps;
@@ -653,8 +672,10 @@ function createDispatchMiddleware (
             error: String((err as Error)?.message ?? err),
           });
           // Don't propagate as an events.create failure — the event was
-          // persisted; the side-effect failed and is logged. The retry
-          // loop / operator can re-process from the trigger event.
+          // persisted; the side-effect failed and is logged. The retry loop
+          // re-processes from its own snapshot in the internal retries
+          // stream, which is the ONLY re-dispatch source: the stored trigger
+          // carries no usable endpoint at any point in its life.
           next();
         });
       return;

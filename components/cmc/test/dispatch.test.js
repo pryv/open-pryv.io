@@ -866,6 +866,121 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.ok(mall.calls.eventsUpdated.length >= 1);
     });
 
+    it('[CD22] re-hydrates the stashed token: the handler gets it, no stored write does', async () => {
+      // The live shape after the pre-persist stash hook: result.event is the
+      // STRIPPED row that was persisted, and the usable endpoint travels on
+      // context.cmc.credentials.
+      const mall = fakeMall();
+      mall.accesses.get = async () => [{
+        id: 'grant-1',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            counterparty: { username: 'provider-a', host: 'example.com' },
+          },
+        },
+      }];
+      const accessUpdates = [];
+      mall.accesses.update = async (userId, params) => {
+        accessUpdates.push(params);
+        return { id: 'grant-1' };
+      };
+      const mw = createDispatchMiddleware(makeDeps({ mall }));
+      const storedEvent = {
+        id: 'evt-bc',
+        type: 'consent/back-channel-cmc',
+        streamIds: [':_cmc:inbox'],
+        content: {
+          from: { username: 'provider-a', host: 'example.com' },
+          apiEndpoint: 'https://provider.example.com/', // persisted WITHOUT the token
+          remoteChatStreamId: ':_cmc:apps:my-app:chats:provider-a',
+          remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:provider-a',
+          appCode: 'my-app',
+        },
+      };
+      const result = { event: storedEvent };
+      await new Promise((resolve) => {
+        mw(
+          {
+            user: { id: 'u1' },
+            cmc: { credentials: { apiEndpoint: 'https://BackChanTok@provider.example.com/' } },
+          },
+          {},
+          result,
+          resolve
+        );
+      });
+
+      // The handler received the USABLE endpoint and put it on the access.
+      const grantUpdate = accessUpdates.find((u) => u.id === 'grant-1');
+      assert.ok(grantUpdate != null, 'the handler must update the data-grant access');
+      assert.equal(
+        grantUpdate.update.clientData.cmc.counterparty.apiEndpoint,
+        'https://BackChanTok@provider.example.com/');
+
+      // No write to storage carried it, at any status.
+      assert.ok(mall.calls.eventsUpdated.length >= 1);
+      for (const u of mall.calls.eventsUpdated) {
+        assert.equal(JSON.stringify(u.content).includes('BackChanTok'), false,
+          'a status stamp stored the re-hydrated token: ' + JSON.stringify(u.content));
+      }
+    });
+
+    it('[CD23] never mutates result.event — it is the response body', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const mw = createDispatchMiddleware(makeDeps({ mall, fetch }));
+      const result = {
+        event: {
+          id: 'evt-refuse',
+          type: 'consent/refuse-cmc',
+          content: { capabilityUrl: 'https://example.com/' },
+        },
+      };
+      const before = JSON.stringify(result.event);
+      await new Promise((resolve) => { mw({ user: { id: 'u1' } }, {}, result, resolve); });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(JSON.stringify(result.event), before,
+        'the middleware mutated the create response');
+    });
+
+    it('[CD24] a retryable failure snapshots the RE-HYDRATED url, so the retry can still work', async () => {
+      const mall = fakeMall();
+      const created = [];
+      const baseCreate = mall.events.create;
+      mall.events.create = async (userId, params) => {
+        created.push(params);
+        return baseCreate(userId, params);
+      };
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 500, body: { error: 'peer down' } },
+      ]);
+      const mw = createDispatchMiddleware(makeDeps({ mall, fetch }));
+      await new Promise((resolve) => {
+        mw(
+          {
+            user: { id: 'u1' },
+            cmc: { credentials: { capabilityUrl: 'https://Tok@example.com/' } },
+          },
+          {},
+          {
+            event: {
+              id: 'evt-accept',
+              type: 'consent/accept-cmc',
+              content: { capabilityUrl: 'https://example.com/' }, // stripped, as persisted
+            },
+          },
+          resolve
+        );
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const retry = created.find((e) => e.streamIds?.includes(':_cmc:_internal:retries'));
+      assert.ok(retry != null, 'a retryable failure must enqueue a retry: ' + JSON.stringify(created));
+      assert.equal(retry.content.originalContent.capabilityUrl, 'https://Tok@example.com/',
+        'the retry snapshot must carry the usable URL, not the stripped one');
+    });
+
     it('[CD09] passes through non-cmc events without firing dispatch', async () => {
       const mall = fakeMall();
       const { fetch } = fakeFetch({ status: 201, body: {} });

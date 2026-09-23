@@ -37,6 +37,20 @@ and revoke paths read.
 deliberately NOT stripped: `cmc.waitForAccept()` returns it and apps open a connection
 with it, which is the documented handshake.
 
+**The token is now removed before the record is stored, not after.** Previously the row
+was written exactly as sent and a later status update scrubbed it, so between the two the
+stored record held a live credential, and the change notification that `events.create`
+emits pointed subscribers at it in precisely that window. An `events.create` for
+`consent/accept-cmc`, `consent/refuse-cmc` or `consent/back-channel-cmc` now strips the
+credential before the event is persisted, so the store never holds it at all. The change
+notification that `events.create` emits carries the event's content, not just a pointer to
+it, so that payload no longer carries the token either. Two consequences for apps: the
+`201` response echoes the record as stored, which means a token-less `capabilityUrl` (or
+`apiEndpoint` on a back-channel record), and reading the event back at any moment, however
+soon, shows the same. An app that relied on reading its own invite token back out of the
+create response must keep the value it posted. `consent/request-cmc` is unaffected: its
+`capabilityUrl` is the invite the app hands out.
+
 A back-channel delivery failure also stopped writing the peer's endpoint to the
 operator's log with its token attached.
 

@@ -170,6 +170,17 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
           content: { capabilityUrl, accessName: 'cmc-grant-cn12-' + Date.now() },
         });
       assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+      // The 201 body is the persisted row: token-less from the first write.
+      assert.strictEqual(new URL(accRes.body.event.content.capabilityUrl).username, '',
+        'the create response echoed the invite token back: ' +
+        accRes.body.event.content.capabilityUrl);
+      // And re-reading immediately, before the dispatch has settled, shows the
+      // same. This is the window the earlier after-the-fact scrub left open.
+      const freshRead = await coreRequest.get(bob.eventsPath + '/' + accRes.body.event.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(new URL(freshRead.body.event.content.capabilityUrl).username, '',
+        'the stored accept trigger held the invite token before its dispatch settled: ' +
+        freshRead.body.event.content.capabilityUrl);
 
       const inboxAccept = await pollInboxFor(
         alice.eventsPath, alice.token, 'consent/accept-cmc',
@@ -178,6 +189,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const dataGrant = inboxAccept.content?.grantedAccess;
       assert.ok(dataGrant?.apiEndpoint?.match(/^https?:\/\//),
         'inbox accept must carry grantedAccess.apiEndpoint, got: ' + JSON.stringify(inboxAccept.content));
+      // ...WITH its token. waitForAccept() returns this and apps open a
+      // connection with it; stripping it would 401 the documented handshake.
+      // Asserted explicitly so a future widening of the scrub cannot pass.
+      assert.notStrictEqual(new URL(dataGrant.apiEndpoint).username, '',
+        'the requester\'s inbox mirror must keep the grant token: ' + dataGrant.apiEndpoint);
 
       // Back-channel handshake: alice fans out a consent/back-channel-cmc
       // to bob's inbox carrying alice's back-channel apiEndpoint +
@@ -190,6 +206,12 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(inboxBackChannel.content?.apiEndpoint?.match(/^https?:\/\//),
         'bob\'s back-channel inbox event must carry alice\'s back-channel apiEndpoint, got: ' +
         JSON.stringify(inboxBackChannel.content));
+      // Token-less at the FIRST sighting, not merely after the dispatch has
+      // settled: the stash hook takes it out before the row is persisted, so
+      // there is no window in which a poller could see a usable credential.
+      assert.strictEqual(new URL(inboxBackChannel.content.apiEndpoint).username, '',
+        'the peer token was visible in bob\'s inbox before the dispatch settled: ' +
+        inboxBackChannel.content.apiEndpoint);
       assert.ok(typeof inboxBackChannel.content?.remoteChatStreamId === 'string',
         'back-channel must carry remoteChatStreamId');
       assert.ok(typeof inboxBackChannel.content?.remoteCollectorStreamId === 'string',

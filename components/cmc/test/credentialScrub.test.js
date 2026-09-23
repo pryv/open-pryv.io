@@ -16,7 +16,9 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { hasCredential, scrubCredentials } = require('../src/credentialScrub.ts');
+const {
+  hasCredential, scrubCredentials, takeCredentials, restoreCredentials,
+} = require('../src/credentialScrub.ts');
 
 const WITH_TOKEN = 'https://tok-grant@recipient.example.com/';
 const NO_TOKEN = 'https://recipient.example.com/';
@@ -116,6 +118,57 @@ describe('[CMCSCRUB] cmc/credentialScrub', () => {
     it('[CSCR8] is idempotent: scrubbing a scrubbed record is a no-op', () => {
       const once = scrubCredentials({ capabilityUrl: WITH_TOKEN });
       assert.equal(scrubCredentials(once), null);
+    });
+  });
+  describe('[CMCSCRUB-T] takeCredentials / restoreCredentials', () => {
+    // The pre-persist half: the record is stored without the credential from
+    // its FIRST write, and the orchestration gets the usable values back on an
+    // in-memory copy.
+    it('[CSCR11] round-trips: what is taken out is exactly what is put back', () => {
+      const original = {
+        status: 'pending',
+        capabilityUrl: 'https://Tok@example.com/',
+        apiEndpoint: WITH_TOKEN,
+        from: { username: 'provider-a', host: 'example.com' },
+      };
+      const taken = takeCredentials(original);
+      assert.equal(taken.content.capabilityUrl, 'https://example.com/');
+      assert.equal(taken.content.apiEndpoint, NO_TOKEN);
+      assert.deepEqual(taken.stash, {
+        capabilityUrl: 'https://Tok@example.com/',
+        apiEndpoint: WITH_TOKEN,
+      });
+      assert.deepEqual(restoreCredentials(taken.content, taken.stash), original);
+    });
+
+    it('[CSCR12] returns null when there is nothing to take', () => {
+      assert.equal(takeCredentials({ capabilityUrl: NO_TOKEN }), null);
+      assert.equal(takeCredentials({ dataGrantAccessId: 'acc-1' }), null);
+      assert.equal(takeCredentials(null), null);
+    });
+
+    it('[CSCR13] never touches grantedAccess.apiEndpoint', () => {
+      // waitForAccept() reads this off the stored inbox event and apps open a
+      // connection with it. Stripping it would 401 the documented handshake.
+      const peerAccept = {
+        from: { username: 'bob', host: 'b.example.com' },
+        grantedAccess: { apiEndpoint: WITH_TOKEN },
+        capabilityId: 'cap-x',
+      };
+      assert.equal(takeCredentials(peerAccept), null);
+      assert.equal(hasCredential(peerAccept), false);
+    });
+
+    it('[CSCR14] does not mutate its input', () => {
+      const content = { capabilityUrl: 'https://Tok@example.com/' };
+      takeCredentials(content);
+      assert.equal(content.capabilityUrl, 'https://Tok@example.com/');
+    });
+
+    it('[CSCR15] restoring with no stash is the content unchanged', () => {
+      const content = { status: 'delivered', capabilityUrl: 'https://example.com/' };
+      assert.deepEqual(restoreCredentials(content, undefined), content);
+      assert.deepEqual(restoreCredentials(null, undefined), {});
     });
   });
 });

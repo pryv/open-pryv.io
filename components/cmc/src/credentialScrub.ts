@@ -102,7 +102,51 @@ function scrubCredentials (content: Content): Record<string, unknown> | null {
   return cleaned;
 }
 
+/**
+ * The token-bearing keys a CLIENT or a PEER can put on a record it writes.
+ *
+ * `acceptedBy.apiEndpoint` is deliberately absent: only `markCompleted` writes
+ * it, already stripped, so it never needs stashing.
+ */
+type CredentialStash = { capabilityUrl?: string; apiEndpoint?: string };
+
+/**
+ * Split content into the copy to PERSIST (no tokens) and the originals.
+ * Returns `null` when there was nothing to take, so a caller can pass the
+ * content through untouched.
+ *
+ * This is the pre-persist half of the pair: the record is stored without the
+ * credential from its very first write, rather than stored as sent and
+ * rewritten afterwards. `restoreCredentials` puts the originals back on the
+ * in-memory copy the orchestration works from.
+ */
+function takeCredentials (content: Content): { content: Record<string, unknown>; stash: CredentialStash } | null {
+  const cleaned = scrubCredentials(content);
+  if (cleaned == null) return null;
+  const source = content as Record<string, unknown>;
+  const stash: CredentialStash = {};
+  if (typeof source.capabilityUrl === 'string') stash.capabilityUrl = source.capabilityUrl;
+  if (typeof source.apiEndpoint === 'string') stash.apiEndpoint = source.apiEndpoint;
+  return { content: cleaned, stash };
+}
+
+/**
+ * The content with the stashed originals put back. A new object; the stashed
+ * values win. With no stash this is the content unchanged, which is what a
+ * caller outside the write path (a unit test, a retry re-dispatch) gets.
+ */
+function restoreCredentials (content: Content, stash?: CredentialStash): Record<string, unknown> {
+  const base: Record<string, unknown> = { ...(content as Record<string, unknown> | null ?? {}) };
+  if (stash == null) return base;
+  if (typeof stash.capabilityUrl === 'string') base.capabilityUrl = stash.capabilityUrl;
+  if (typeof stash.apiEndpoint === 'string') base.apiEndpoint = stash.apiEndpoint;
+  return base;
+}
+
 export {
   hasCredential,
   scrubCredentials,
+  takeCredentials,
+  restoreCredentials,
 };
+export type { CredentialStash };
