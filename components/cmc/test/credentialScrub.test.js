@@ -32,7 +32,14 @@ describe('[CMCSCRUB] cmc/credentialScrub', () => {
     it('[CSCR2] is false for content that carries no token', () => {
       assert.equal(hasCredential({ capabilityUrl: NO_TOKEN }), false);
       assert.equal(hasCredential({ acceptedBy: { apiEndpoint: NO_TOKEN } }), false);
+      assert.equal(hasCredential({ apiEndpoint: NO_TOKEN }), false);
       assert.equal(hasCredential({ dataGrantAccessId: 'acc-1', from: { username: 'bob' } }), false);
+    });
+
+    it('[CSCR9] finds a token in a back-channel record\'s top-level apiEndpoint', () => {
+      // `consent/back-channel-cmc` is peer-delivered into `:_cmc:inbox`, which
+      // apps poll; its apiEndpoint is the COUNTERPARTY's back-channel token.
+      assert.equal(hasCredential({ apiEndpoint: WITH_TOKEN }), true);
     });
 
     it('[CSCR3] tolerates missing, null and oddly-shaped content', () => {
@@ -62,6 +69,25 @@ describe('[CMCSCRUB] cmc/credentialScrub', () => {
         acceptedBy: { apiEndpoint: NO_TOKEN },
         dataGrantAccessId: 'acc-1',
         from: { username: 'provider-a', host: 'example.com' },
+      });
+    });
+
+    it('[CSCR10] strips a back-channel record and keeps its routing fields', () => {
+      const cleaned = scrubCredentials({
+        status: 'completed',
+        from: { username: 'provider-a', host: 'example.com' },
+        apiEndpoint: WITH_TOKEN,
+        remoteChatStreamId: ':_cmc:apps:my-app:chats:provider-a',
+        remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:provider-a',
+        appCode: 'my-app',
+      });
+      assert.deepEqual(cleaned, {
+        status: 'completed',
+        from: { username: 'provider-a', host: 'example.com' },
+        apiEndpoint: NO_TOKEN,
+        remoteChatStreamId: ':_cmc:apps:my-app:chats:provider-a',
+        remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:provider-a',
+        appCode: 'my-app',
       });
     });
 

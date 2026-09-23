@@ -318,6 +318,74 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(JSON.stringify(completed).includes('Tok@'), false);
     });
 
+    it('[CD21] back-channel: the inbox record keeps its routing fields but not the peer token', async () => {
+      // The requester POSTs this into the ACCEPTER's :_cmc:inbox, which apps
+      // poll by design and an export includes. `apiEndpoint` is the
+      // REQUESTER's back-channel token; the handler has already copied it onto
+      // the data-grant access clientData, which is the copy everything uses.
+      const mall = fakeMall();
+      // handleIncomingBackChannel looks up the data-grant access by
+      // counterparty, then updates its clientData.
+      mall.accesses.get = async () => [{
+        id: 'grant-1',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            counterparty: { username: 'provider-a', host: 'example.com' },
+          },
+        },
+      }];
+      const accessUpdates = [];
+      mall.accesses.update = async (userId, params) => {
+        accessUpdates.push(params);
+        return { id: 'grant-1' };
+      };
+
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-bc',
+          type: 'consent/back-channel-cmc',
+          streamIds: [':_cmc:inbox'],
+          content: {
+            from: { username: 'provider-a', host: 'example.com' },
+            apiEndpoint: 'https://BackChanTok@provider.example.com/',
+            remoteChatStreamId: ':_cmc:apps:my-app:chats:provider-a',
+            remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:provider-a',
+            appCode: 'my-app',
+          },
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.status, 'completed', JSON.stringify(r));
+
+      const stored = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
+      assert.equal(stored.apiEndpoint, 'https://provider.example.com/');
+      assert.equal(JSON.stringify(stored).includes('BackChanTok'), false,
+        'the peer back-channel token leaked into the inbox record: ' + JSON.stringify(stored));
+      // The fields the record is actually read for survive.
+      assert.equal(stored.remoteChatStreamId, ':_cmc:apps:my-app:chats:provider-a');
+      assert.equal(stored.remoteCollectorStreamId, ':_cmc:apps:my-app:collectors:provider-a');
+      assert.deepEqual(stored.from, { username: 'provider-a', host: 'example.com' });
+
+      // The ordering this fix depends on: the HANDLER still received the usable
+      // token and put it on the data-grant access, which is where chat, system
+      // and revoke read it from. Only the stored EVENT loses it.
+      const grantUpdate = accessUpdates.find((u) => u.id === 'grant-1');
+      assert.ok(grantUpdate != null, 'the handler must update the data-grant access');
+      assert.equal(
+        grantUpdate.update.clientData.cmc.counterparty.apiEndpoint,
+        'https://BackChanTok@provider.example.com/',
+        'the access clientData must keep the usable endpoint: ' + JSON.stringify(grantUpdate.update.clientData));
+
+      // No write of this event, at ANY status, may carry the token — the
+      // 'delivered' stamp is immediately followed by a change notification.
+      for (const u of mall.calls.eventsUpdated) {
+        assert.equal(JSON.stringify(u.content).includes('BackChanTok'), false,
+          'a status stamp stored the peer token: ' + JSON.stringify(u.content));
+      }
+    });
+
     it('[CD20] every status stamp skips versioning, so no history row keeps what was scrubbed', async () => {
       // Under versioning.forceKeepHistory a version row snapshots the
       // PRE-update content. Without skipVersioning the 'delivered' stamp
