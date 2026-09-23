@@ -7,16 +7,19 @@
  * Refer to LICENSE file
  */
 
-// Operator tool: remove access tokens left in CMC accept / refuse records
-// written before the core started stripping them.
+// Operator tool: remove access tokens left in CMC accept / refuse /
+// back-channel records written before the core started stripping them.
 //
-// What it targets. Accepting an invite writes a `consent/accept-cmc` event into
-// the accepter's own `:_cmc:apps:<app-code>` stream, and older cores stored two
-// working credentials in it: the data-grant endpoint under
-// `acceptedBy.apiEndpoint` (a token to the accepter's own data) and the invite
-// URL under `capabilityUrl`. An app can hold `read` on that stream, and an
-// export of the account carries it, so those events hand out live credentials.
-// `consent/refuse-cmc` records carry the same `capabilityUrl`.
+// What it targets. Older cores stored working credentials in three places, all
+// of them app-readable and all of them included in an account export:
+//   - `consent/accept-cmc` in the accepter's own `:_cmc:apps:<app-code>`:
+//     the data-grant endpoint under `acceptedBy.apiEndpoint`, a token to the
+//     accepter's OWN data, and the invite URL under `capabilityUrl`.
+//   - `consent/refuse-cmc` in the same place: the same `capabilityUrl`.
+//   - `consent/back-channel-cmc`, peer-delivered into `:_cmc:inbox`, which apps
+//     poll by design: `apiEndpoint`, the COUNTERPARTY's back-channel token. The
+//     handler copies it onto the data-grant access's clientData, which is the
+//     copy everything actually uses, and never removed it from the event.
 //
 // What it does. Rewrites each affected event's content with the tokens removed,
 // keeping the rest of the URL (scheme, host, port, path) so the record still
@@ -26,6 +29,9 @@
 // It covers settled records, 'completed' AND 'failed'. A failed one matters:
 // a failed single-use accept leaves the requester's capability unconsumed, so
 // the invite URL stored on it is still LIVE.
+//
+// A record carrying NO status was never stamped by any dispatch, so nothing is
+// coming back for it: it is rewritten too, and counted separately.
 //
 // It does NOT touch:
 //   - a trigger still mid-flight ('pending' / 'delivered'), because a live
@@ -94,9 +100,15 @@ require('@pryv/boiler').init({
     : [])]
 });
 
-// The two record types that stored a credential, and the content paths that
-// held one. `acceptedBy.apiEndpoint` is only ever on an accept.
-const TARGET_TYPES = ['consent/accept-cmc', 'consent/refuse-cmc'];
+// The record types that stored a credential. accept and refuse live in the
+// user's own `:_cmc:apps:*` scope; back-channel is peer-delivered into
+// `:_cmc:inbox`, which apps poll by design, and held the COUNTERPARTY's
+// back-channel token.
+const TARGET_TYPES = [
+  'consent/accept-cmc',
+  'consent/refuse-cmc',
+  'consent/back-channel-cmc',
+];
 
 // A record is safe to rewrite once its orchestration has stopped. Both of
 // these are terminal for the stored trigger: the retry path works off its own
@@ -137,6 +149,7 @@ const SETTLED = new Set(['completed', 'failed']);
       scrubbed: 0,
       clean: 0,
       skippedUnsettled: 0,
+      noStatus: 0,
     };
     // Events whose HISTORY still holds a credential (see the note at the top:
     // reported, not rewritten). Kept as `username/eventId` so the operator can
@@ -155,15 +168,28 @@ const SETTLED = new Set(['completed', 'failed']);
       });
       for (const event of (events || [])) {
         if (event == null || event.id == null) continue;
-        // The requester's own invite keeps its capabilityUrl; only records in
-        // the accepter's app scopes are in scope here. An event living in the
-        // internal subtree is not reachable by any API read path anyway.
+        // In scope: the app scopes (`:_cmc:apps:*`, where accept and refuse
+        // records live) and `:_cmc:inbox` (where a peer-delivered back-channel
+        // lands). Both are app-readable and both are in an account export. The
+        // requester's own invite keeps its capabilityUrl and is a different
+        // type anyway, and an event in the internal subtree is unreachable by
+        // any API read path.
         const streamIds = Array.isArray(event.streamIds) ? event.streamIds : [];
-        if (!streamIds.some((id) => typeof id === 'string' && id.startsWith(cmc.NS_APPS + ':'))) continue;
+        const inScope = streamIds.some((id) => typeof id === 'string' &&
+          (id.startsWith(cmc.NS_APPS + ':') || id === cmc.NS_INBOX));
+        if (!inScope) continue;
         counts.seen++;
 
-        // A trigger that has not settled is still the retry queue's input.
-        if (!SETTLED.has(event.content?.status)) {
+        // A record with NO status at all was never stamped: either its
+        // dispatch could not write (the loop logs and moves on) or nothing
+        // dispatched it. Nothing is coming back for it, so waiting for it to
+        // "settle" would skip it forever. Treat it as settled, and count it
+        // separately so the operator sees it happened.
+        const status = event.content?.status;
+        if (status == null) {
+          if (hasCredential(event.content)) counts.noStatus++;
+        } else if (!SETTLED.has(status)) {
+          // Still mid-flight: a live dispatch may be working on it.
           if (hasCredential(event.content)) counts.skippedUnsettled++;
           else counts.clean++;
           continue;
@@ -194,6 +220,10 @@ const SETTLED = new Set(['completed', 'failed']);
     console.log('  records scrubbed    ' + counts.scrubbed);
     console.log('  already clean       ' + counts.clean);
     console.log('  skipped (unsettled) ' + counts.skippedUnsettled);
+    if (counts.noStatus > 0) {
+      console.log('  scrubbed (no status) ' + counts.noStatus +
+        '  (never stamped by any dispatch; nothing was coming back for them)');
+    }
     if (counts.skippedUnsettled > 0) {
       console.log('');
       console.log('  ' + counts.skippedUnsettled + ' record(s) still carry a credential and are still');
@@ -242,6 +272,9 @@ function printUsage (stream) {
     '  node bin/cmc-scrub-credentials.js --dry-run        # report; do not write',
     '  node bin/cmc-scrub-credentials.js                  # rewrite',
     '  node bin/cmc-scrub-credentials.js --user <username>  # one account only',
+    '',
+    'Covers consent/accept-cmc and consent/refuse-cmc in the user\'s own',
+    ':_cmc:apps:* scopes, and consent/back-channel-cmc delivered to :_cmc:inbox.',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the scrub reads the same storage:',

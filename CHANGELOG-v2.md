@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### The CMC accept record in your own account no longer carries a token (security)
+### CMC accept and back-channel records no longer carry access tokens (security)
 
 Accepting an invite writes a `consent/accept-cmc` event into the accepter's own
 `:_cmc:apps:<app-code>` stream. That event stored two working credentials: the data-grant
@@ -23,6 +23,19 @@ a failed single-use accept leaves the invite unconsumed and therefore still live
 retry queue is unaffected, since it re-dispatches from its own copy in a stream no API
 read path reaches. Nothing else in the handshake changes: the endpoint delivered to the
 requester, which is what makes the grant usable at all, is untouched.
+
+The same applies to the **back-channel record**, in the other direction. After an accept,
+the requester delivers a `consent/back-channel-cmc` event into the accepter's
+`:_cmc:inbox` whose `apiEndpoint` is the requester's own back-channel endpoint. That is a
+credential to the *requester's* account sitting in the *accepter's*, and `:_cmc:inbox` is
+a stream apps poll by design and every export carries. Its token is now removed once the
+delivery has been handled. Nothing depends on the event's copy: the handler writes the
+endpoint to the data-grant access's `clientData` first, and that is what the chat, system
+and revoke paths read.
+
+`grantedAccess.apiEndpoint`, on the accept event delivered to the requester, is
+deliberately NOT stripped: `cmc.waitForAccept()` returns it and apps open a connection
+with it, which is the documented handshake.
 
 A back-channel delivery failure also stopped writing the peer's endpoint to the
 operator's log with its token attached.

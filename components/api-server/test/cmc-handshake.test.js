@@ -195,6 +195,30 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(typeof inboxBackChannel.content?.remoteCollectorStreamId === 'string',
         'back-channel must carry remoteCollectorStreamId');
 
+      // ...and once its dispatch has settled, the stored copy in bob's inbox
+      // must not carry alice's back-channel TOKEN. `:_cmc:inbox` is polled by
+      // apps and included in an export, and the endpoint the plugin actually
+      // uses lives on the data-grant access's clientData by now. Re-read until
+      // the status stamp lands rather than asserting on the first sighting:
+      // the event is visible from the moment it is created.
+      const bcT0 = Date.now();
+      let bc = inboxBackChannel.content;
+      while (Date.now() - bcT0 < POLL_TIMEOUT_MS) {
+        const r = await coreRequest.get(bob.eventsPath + '/' + inboxBackChannel.id)
+          .set('Authorization', bob.token);
+        bc = r.body?.event?.content ?? bc;
+        if (bc?.status === 'completed' || bc?.status === 'failed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(bc?.status, 'completed', JSON.stringify(bc));
+      assert.strictEqual(typeof bc.apiEndpoint, 'string',
+        'the back-channel record must still name the endpoint: ' + JSON.stringify(bc));
+      assert.strictEqual(new URL(bc.apiEndpoint).username, '',
+        'the peer back-channel token is stored in bob\'s inbox: ' + bc.apiEndpoint);
+      // The routing fields it is read for survive.
+      assert.strictEqual(typeof bc.remoteChatStreamId, 'string');
+      assert.strictEqual(typeof bc.remoteCollectorStreamId, 'string');
+
       // Bob's own accept trigger, once settled, must carry no usable
       // credential: it lives in `:_cmc:apps:my-app`, which bob can grant an
       // app `read` on and which every export of his account includes. The
@@ -2132,14 +2156,18 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const bc = await backChannelFor(alice, h.triggerStreamId);
       const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
 
-      // The token the ACCEPTER holds on the requester account travels in the
-      // back-channel event the requester sent him.
-      const backChannelEvent = await pollInboxFor(
-        bob.eventsPath, bob.token, 'consent/back-channel-cmc',
-        (e) => e.content?.from?.username === alice.username &&
-               typeof e.content?.apiEndpoint === 'string'
-      );
-      const bcToken = tokenOf(backChannelEvent.content.apiEndpoint);
+      // The token the ACCEPTER holds on the requester account. Read it where
+      // the plugin itself reads it, off the data-grant access's clientData:
+      // it arrived in a back-channel event, but that event's stored copy is
+      // scrubbed of its token once the delivery completes (`:_cmc:inbox` is
+      // app-readable and in every export), so the event is not a source of a
+      // usable token. `pollCounterpartyAccessForScope` above already waited
+      // for the back-channel to land on this access.
+      const bcEndpoint = dataGrant?.clientData?.cmc?.counterparty?.apiEndpoint;
+      assert.strictEqual(typeof bcEndpoint, 'string',
+        'CN35 premise: the data-grant access must carry the back-channel endpoint: ' +
+        JSON.stringify(dataGrant?.clientData));
+      const bcToken = tokenOf(bcEndpoint);
       assert.equal(await tokenLivesOn(alice, bcToken), true,
         'CN35 premise: the accepter back-channel token must authenticate before the revoke');
       // Assert bob IS recorded before asserting he is cleared: without this the

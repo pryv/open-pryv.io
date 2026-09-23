@@ -172,14 +172,25 @@ async function dispatch (params: {
   // event off the queue" indicator).
   if (event.id != null && deps.mall.events.update != null) {
     try {
+      const deliveredContent = { ...(event.content || {}), status: 'delivered' };
+      // Scrubbed HERE too, not only at the terminal stamp. This write is
+      // immediately followed by `notifyEventChanged`, which tells the user's
+      // socket.io subscribers to fetch the row right now — so leaving the
+      // token in it publishes a credential AND invites a read of it. On an
+      // incoming back-channel that token is the PEER's, which this account's
+      // apps never legitimately held.
       await deps.mall.events.update(userId, {
         ...event,
-        content: { ...(event.content || {}), status: 'delivered' },
+        content: credentialScrub.scrubCredentials(deliveredContent) ?? deliveredContent,
       }, null, STATUS_STAMP_OPTS);
-      // Keep the in-memory event in step with what was just written, so a
-      // later handler that rewrites `content` (the incoming-revoke enrichment)
-      // carries the status forward instead of dropping it.
-      event.content = { ...(event.content || {}), status: 'delivered' };
+      // The IN-MEMORY event deliberately keeps the unscrubbed content: the
+      // handler about to run reads its `capabilityUrl` / `apiEndpoint` from
+      // here, `enqueueRetry` snapshots it into the internal retries stream so
+      // a retry can re-dispatch, and the terminal stamps build from it and
+      // scrub on their own way out. Only the STORED copy drops the token.
+      // Carrying the status forward also keeps a handler that rewrites
+      // `content` (the incoming-revoke enrichment) from dropping it.
+      event.content = deliveredContent;
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as delivered', {
