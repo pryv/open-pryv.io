@@ -389,21 +389,6 @@ async function deliverAcceptViaCapability (params: {
 }
 
 /**
- * The URL without its `user:password@` part (the capability token). Returned
- * unchanged when it does not parse.
- */
-function stripCredentials (url: string): string {
-  try {
-    const u = new URL(url);
-    u.username = '';
-    u.password = '';
-    return u.toString();
-  } catch (_e) {
-    return url;
-  }
-}
-
-/**
  * POST a `consent/refuse-cmc` event into the requester's responses stream via
  * the capability connection. No data-grant created on the recipient side.
  */
@@ -430,7 +415,7 @@ async function deliverRefuseViaCapability (params: {
         // `consent/refuse-cmc` requires `capabilityUrl`: without it the
         // requester's core refuses the delivery. Sent without its token, which
         // the requester does not need back and should not store in the event.
-        capabilityUrl: stripCredentials(params.capabilityUrl),
+        capabilityUrl: outbound.stripCredentials(params.capabilityUrl),
         // `reason` must be an object when present; omit rather than send null.
         ...(params.reason != null ? { reason: params.reason } : {}),
       },

@@ -35,9 +35,9 @@ function fakeMall () {
       async delete (userId, params) { calls.accessesDeleted.push({ userId, ...params }); },
     },
     events: {
-      async update (userId, params) {
+      async update (userId, params, _transaction, opts) {
         assertEventUpdateShape(params);
-        calls.eventsUpdated.push({ userId, ...params });
+        calls.eventsUpdated.push({ userId, ...params, _opts: opts });
       },
       async create () { return { event: { id: 'ne' } }; },
     },
@@ -281,6 +281,108 @@ describe('[CMCDISP] cmc/dispatch', () => {
         deps: makeDeps({ mall, fetch }),
       });
       assert.equal(r.status, 'completed');
+    });
+  });
+
+  describe('[CMCDISP-CRED] the completed trigger carries no usable credential', () => {
+    // The trigger lives in the user's own `:_cmc:apps:<app-code>` stream:
+    // an app (typically the requester's) can hold `read` on it, and every
+    // export of the account carries it. Neither the data-grant endpoint nor
+    // the invite URL may be stored there with its token.
+    it('[CD17] accept: acceptedBy keeps the host, drops the token, and capabilityUrl is stripped', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-accept',
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/' },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'completed');
+      const completed = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
+      assert.equal(completed.status, 'completed');
+      // The access the fake mall minted is
+      // `https://tok-grant@recipient.example.com/` — the host survives, the
+      // token does not.
+      assert.deepEqual(completed.acceptedBy, { apiEndpoint: 'https://recipient.example.com/' });
+      assert.equal(completed.capabilityUrl, 'https://example.com/');
+      // The bookkeeping the record actually needs is still there.
+      assert.equal(completed.dataGrantAccessId, 'acc-1');
+      assert.equal(JSON.stringify(completed).includes('tok-grant'), false);
+      assert.equal(JSON.stringify(completed).includes('Tok@'), false);
+    });
+
+    it('[CD20] every status stamp skips versioning, so no history row keeps what was scrubbed', async () => {
+      // Under versioning.forceKeepHistory a version row snapshots the
+      // PRE-update content. Without skipVersioning the 'delivered' stamp
+      // would archive the token the app posted, and the 'completed' stamp
+      // would archive it again, putting it back within reach of
+      // events.getOne?includeHistory=true.
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-accept',
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/' },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.ok(mall.calls.eventsUpdated.length >= 2);
+      for (const u of mall.calls.eventsUpdated) {
+        assert.equal(u._opts?.skipVersioning, true,
+          'trigger status stamp must skip versioning, got: ' + JSON.stringify(u._opts));
+      }
+    });
+
+    it('[CD18] refuse: the spent capabilityUrl is stripped too', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: {} },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-refuse',
+          type: 'consent/refuse-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/', reason: { en: 'no' } },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'completed');
+      const completed = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
+      assert.equal(completed.capabilityUrl, 'https://example.com/');
+    });
+
+    it('[CD19] a FAILED trigger keeps its capabilityUrl intact — the retry re-dispatches from it', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 400, body: { error: 'bad' } },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-accept',
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/' },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'failed');
+      const failed = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
+      assert.equal(failed.capabilityUrl, 'https://Tok@example.com/');
     });
   });
 

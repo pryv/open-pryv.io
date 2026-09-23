@@ -39,6 +39,22 @@ const handleIncomingRefuseMod = require('./handleIncomingRefuse.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const retryQueueMod = require('./retryQueue.ts');
+const outbound = require('./outbound.ts');
+const credentialScrub = require('./credentialScrub.ts');
+
+/**
+ * Options for every write this loop makes to a trigger event.
+ *
+ * `skipVersioning` because these are the plugin's own status stamps on the
+ * app's trigger, not user edits, and one of them exists precisely to REMOVE a
+ * credential from the row (see markCompleted). Under
+ * `versioning.forceKeepHistory`, a version row would snapshot the pre-update
+ * content, preserving exactly what is being scrubbed and putting it back
+ * within reach of `events.getOne?includeHistory=true`. The cost is that a
+ * trigger's intermediate statuses leave no history rows, which is bookkeeping
+ * noise rather than user data.
+ */
+const STATUS_STAMP_OPTS = { skipVersioning: true };
 
 type SelfIdentity = { username: string; host: string };
 
@@ -159,7 +175,7 @@ async function dispatch (params: {
       await deps.mall.events.update(userId, {
         ...event,
         content: { ...(event.content || {}), status: 'delivered' },
-      });
+      }, null, STATUS_STAMP_OPTS);
       // Keep the in-memory event in step with what was just written, so a
       // later handler that rewrites `content` (the incoming-revoke enrichment)
       // carries the status forward instead of dropping it.
@@ -345,8 +361,14 @@ async function dispatch (params: {
 
   if (result?.ok) {
     await markCompleted(deps, userId, event, {
+      // WITHOUT its token: the trigger event lives in the accepter's own
+      // `:_cmc:apps:<app-code>` stream, which an app (typically the
+      // requester's) can hold `read` on, and which every export of the
+      // account carries. The full endpoint here is a working credential to
+      // the accepter's own data; the record only needs to say WHICH access
+      // was granted, and `dataGrantAccessId` below already does.
       acceptedBy: result?.dataGrantApiEndpoint
-        ? { apiEndpoint: result.dataGrantApiEndpoint }
+        ? { apiEndpoint: outbound.stripCredentials(result.dataGrantApiEndpoint) }
         : undefined,
       dataGrantAccessId: result?.dataGrantAccessId,
       offerEventId: result?.offerEventId,
@@ -398,10 +420,21 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEven
         if (v !== undefined) cleaned[k] = v;
       }
     }
-    await deps.mall.events.update(userId, {
-      ...event,
-      content: { ...(event.content || {}), status: 'completed', ...cleaned },
-    });
+    const content: Record<string, unknown> = {
+      ...(event.content || {}),
+      status: 'completed',
+      ...cleaned,
+    };
+    // The app posts the invite URL, token included, as the trigger's
+    // `capabilityUrl`, and the handler has just finished using it. Keep the
+    // URL for reference but not the credential: the trigger sits in a
+    // `:_cmc:apps:*` stream an app can be granted and an export includes,
+    // and in open-link mode the capability stays live after the accept, so
+    // the stored copy would remain a usable invite indefinitely.
+    // Only on the success path: `markFailed` leaves the URL intact because
+    // the retry queue re-dispatches from that content.
+    const scrubbed = credentialScrub.scrubCredentials(content) ?? content;
+    await deps.mall.events.update(userId, { ...event, content: scrubbed }, null, STATUS_STAMP_OPTS);
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as completed', {
@@ -454,7 +487,7 @@ async function markFailed (
           status: 'failed',
           failure: { reason, detail: detail ?? null },
         },
-      });
+      }, null, STATUS_STAMP_OPTS);
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as failed', {

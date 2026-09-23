@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const {
   parseApiEndpoint,
+  stripCredentials,
   postToPeer,
   isRetryableFailure,
   DEFAULT_TIMEOUT_MS,
@@ -78,6 +79,24 @@ describe('[CMCOUT] cmc/outbound', () => {
         () => parseApiEndpoint(''),
         /must be a non-empty string/
       );
+    });
+  });
+
+  describe('[CMCOUT-SC] stripCredentials', () => {
+    it('[CO17] removes the token while keeping scheme, host, port and path', () => {
+      assert.equal(stripCredentials('https://AbCxYz@example.com/'), 'https://example.com/');
+      assert.equal(stripCredentials('https://Tok@example.com:8443/'), 'https://example.com:8443/');
+      assert.equal(stripCredentials('https://Tok@example.com/some/path'), 'https://example.com/some/path');
+    });
+
+    it('[CO18] removes a user:password pair, not just a bare username', () => {
+      assert.equal(stripCredentials('https://user:secret@example.com/'), 'https://example.com/');
+    });
+
+    it('[CO19] leaves a token-less URL alone and returns unparseable input unchanged', () => {
+      assert.equal(stripCredentials('https://example.com/'), 'https://example.com/');
+      assert.equal(stripCredentials('not a url'), 'not a url');
+      assert.equal(stripCredentials(''), '');
     });
   });
 
