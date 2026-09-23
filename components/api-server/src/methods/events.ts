@@ -418,6 +418,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     mall: mallForCmc,
     logger: getLogger('cmc:capability-response'),
   });
+  // Takes the access token OUT of an accept / refuse / back-channel record
+  // before it is persisted, and carries it on context.cmc.credentials for the
+  // dispatch middleware. Without this the row is stored exactly as sent and
+  // only scrubbed by a later status stamp, so it holds a live credential in
+  // between — a window `notify` actively advertises to socket subscribers.
+  const cmcCredentialStashHook = cmc.createCredentialStashHook();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
     // username: pull from the users repository (cached behind the scenes).
@@ -524,6 +530,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcInboxWriteHook,
     cmcCounterpartyFromStampingHook,
     cmcCapabilityResponseHook,
+    // AFTER the validating hooks above, so they judge the record as sent and
+    // a rejected write has nothing to strip; BEFORE createEvent, so the store
+    // computes integrity over the stripped content and the create response
+    // returns the same row a later events.getOne will.
+    cmcCredentialStashHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,

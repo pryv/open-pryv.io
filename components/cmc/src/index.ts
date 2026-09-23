@@ -42,6 +42,7 @@ const mallAccessesAdapter = require('./mallAccessesAdapter.ts');
 const errorIds = require('./errorIds.ts');
 const capabilityResponseHook = require('./capabilityResponseHook.ts');
 const credentialScrub = require('./credentialScrub.ts');
+const credentialStashHook = require('./credentialStashHook.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -51,6 +52,7 @@ export {
   handleIncomingRevoke,
   anchorStreams, accessesUpdateHook, accessesDeleteHook, retryScheduler, bootRetryLoop,
   mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
+  credentialStashHook,
 };
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
@@ -62,7 +64,10 @@ export const { createCapabilityResponseHook } = capabilityResponseHook;
 export const { postToPeer, isRetryableFailure, parseApiEndpoint, stripCredentials } = outbound;
 // Token removal from a record's content, shared by the dispatch loop and the
 // operator scrub tool (bin/cmc-scrub-credentials.js).
-export const { hasCredential, scrubCredentials } = credentialScrub;
+export const { hasCredential, scrubCredentials, takeCredentials, restoreCredentials } = credentialScrub;
+// Pre-persist strip: takes the token out of a lifecycle record before it is
+// stored, and carries it on context.cmc.credentials for the dispatch loop.
+export const { createCredentialStashHook } = credentialStashHook;
 export const { mintCapability, gcCapability } = capability;
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
