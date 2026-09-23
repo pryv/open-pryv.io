@@ -212,10 +212,16 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(trigger?.status, 'completed', JSON.stringify(trigger));
       assert.ok(typeof trigger.dataGrantAccessId === 'string' && trigger.dataGrantAccessId.length > 0,
         'the trigger must still record WHICH access was granted: ' + JSON.stringify(trigger));
+      // Assert the fields are PRESENT before asserting they are token-less, so
+      // a regression that drops them entirely fails here rather than passing
+      // an empty loop.
+      assert.strictEqual(typeof trigger.capabilityUrl, 'string',
+        'the accepter posted capabilityUrl; it must still be on the record: ' + JSON.stringify(trigger));
+      assert.strictEqual(typeof trigger.acceptedBy?.apiEndpoint, 'string',
+        'acceptedBy.apiEndpoint must still name the granted endpoint: ' + JSON.stringify(trigger));
       // A token in a Pryv apiEndpoint is the URL's userinfo part.
-      for (const [field, url] of [['acceptedBy.apiEndpoint', trigger.acceptedBy?.apiEndpoint],
+      for (const [field, url] of [['acceptedBy.apiEndpoint', trigger.acceptedBy.apiEndpoint],
         ['capabilityUrl', trigger.capabilityUrl]]) {
-        if (url == null) continue;
         assert.strictEqual(new URL(url).username, '',
           field + ' must be stored without its token, got: ' + url);
       }

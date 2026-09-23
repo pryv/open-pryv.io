@@ -18,9 +18,14 @@ The record keeps what it is read for. `dataGrantAccessId` still names which acce
 granted and `content.from` still names the counterparty, which is what
 `listAcceptedRelationships` reads. An app that treated `acceptedBy.apiEndpoint` as a
 usable connection now receives a URL without a token and must use `dataGrantAccessId`
-instead. Nothing else in the handshake changes: the endpoint delivered to the requester,
-which is what makes the grant usable at all, is untouched, and a trigger that FAILED
-keeps its `capabilityUrl` intact so the retry queue can re-dispatch it.
+instead. A record left by a FAILED accept is stripped the same way, which matters because
+a failed single-use accept leaves the invite unconsumed and therefore still live; the
+retry queue is unaffected, since it re-dispatches from its own copy in a stream no API
+read path reaches. Nothing else in the handshake changes: the endpoint delivered to the
+requester, which is what makes the grant usable at all, is untouched.
+
+A back-channel delivery failure also stopped writing the peer's endpoint to the
+operator's log with its token attached.
 
 A core running with `versioning.forceKeepHistory` also stopped archiving the trigger's
 intermediate statuses. A version row snapshots the content as it was before an update, so
@@ -31,9 +36,9 @@ trigger's final state is unaffected.
 
 Events written before this change keep the tokens already stored in them.
 `bin/cmc-scrub-credentials.js` rewrites those older records in place: run it once per
-core, `--dry-run` first. It leaves a record whose orchestration has not settled alone,
-because the retry queue re-dispatches from it, and reports those so they can be swept on
-a later run. A core that was running with `versioning.forceKeepHistory` may also hold a
+core, `--dry-run` first. It covers settled records, completed and failed, including
+trashed ones, and leaves a record that is still mid-flight alone, reporting it so a later
+run can sweep it. A core that was running with `versioning.forceKeepHistory` may also hold a
 credential in an older record's version history, which no supported write path can
 rewrite; the tool names those records rather than appear to clean them. Revoking a
 relationship invalidates the grant its token belongs to.

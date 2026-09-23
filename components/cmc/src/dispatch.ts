@@ -381,8 +381,8 @@ async function dispatch (params: {
       // identity so listAcceptedRelationships's mapper picks up
       // `content.from = {username, host}` instead of falling through to
       // `content.acceptedBy` (which carries only the accepter's own
-      // data-grant apiEndpoint). Without this the patient app can't
-      // identify the doctor on each relationship row.
+      // data-grant endpoint, token stripped). Without this the patient app
+      // can't identify the doctor on each relationship row.
       from: result?.requesterIdentity,
       // handleIncomingAccept fields:
       backChannelAccessId: result?.backChannelAccessId,
@@ -431,8 +431,6 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEven
     // `:_cmc:apps:*` stream an app can be granted and an export includes,
     // and in open-link mode the capability stays live after the accept, so
     // the stored copy would remain a usable invite indefinitely.
-    // Only on the success path: `markFailed` leaves the URL intact because
-    // the retry queue re-dispatches from that content.
     const scrubbed = credentialScrub.scrubCredentials(content) ?? content;
     await deps.mall.events.update(userId, { ...event, content: scrubbed }, null, STATUS_STAMP_OPTS);
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
@@ -480,13 +478,26 @@ async function markFailed (
   }
   if (event.id != null && deps.mall.events.update != null) {
     try {
+      // Scrubbed like the success path, and for the same reason: this row
+      // lives in a `:_cmc:apps:*` stream an app can be granted and an export
+      // includes. A failure does not make the token safe to keep there — it
+      // makes it MORE dangerous, because a failed single-use accept leaves
+      // the requester's capability unconsumed, so the stored invite URL is
+      // still live.
+      //
+      // Safe because the retry path never reads this row: `enqueueRetry`
+      // above has already snapshotted the full content into the retry event
+      // in `:_cmc:_internal:retries` (unreachable by any API read path), and
+      // `processRetryEvent` rebuilds its synthetic trigger from THAT snapshot,
+      // never from storage. Order matters: the enqueue precedes this write.
+      const failedContent = {
+        ...(event.content || {}),
+        status: 'failed',
+        failure: { reason, detail: detail ?? null },
+      };
       await deps.mall.events.update(userId, {
         ...event,
-        content: {
-          ...(event.content || {}),
-          status: 'failed',
-          failure: { reason, detail: detail ?? null },
-        },
+        content: credentialScrub.scrubCredentials(failedContent) ?? failedContent,
       }, null, STATUS_STAMP_OPTS);
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: unknown) {

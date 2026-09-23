@@ -365,11 +365,24 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(completed.capabilityUrl, 'https://example.com/');
     });
 
-    it('[CD19] a FAILED trigger keeps its capabilityUrl intact — the retry re-dispatches from it', async () => {
+    it('[CD19] a FAILED trigger is scrubbed too, while the retry keeps the full URL in its own snapshot', async () => {
+      // A failure is not a reason to keep the token: a failed single-use
+      // accept leaves the requester's capability UNCONSUMED, so the invite URL
+      // stored on the trigger is still live. The retry path is unaffected
+      // because it re-dispatches from `originalContent` in
+      // :_cmc:_internal:retries, snapshotted before this write, never from
+      // the stored trigger.
       const mall = fakeMall();
+      // Record what the retry queue snapshots (fakeMall's create is generic).
+      const created = [];
+      const baseCreate = mall.events.create;
+      mall.events.create = async (userId, params) => {
+        created.push(params);
+        return baseCreate(userId, params);
+      };
       const { fetch } = fakeFetch([
         { status: 200, body: { events: [VALID_OFFER] } },
-        { status: 400, body: { error: 'bad' } },
+        { status: 500, body: { error: 'peer down' } }, // retryable → enqueues
       ]);
       const r = await dispatch({
         userId: 'u1',
@@ -381,8 +394,16 @@ describe('[CMCDISP] cmc/dispatch', () => {
         deps: makeDeps({ mall, fetch }),
       });
       assert.equal(r.status, 'failed');
+
       const failed = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
-      assert.equal(failed.capabilityUrl, 'https://Tok@example.com/');
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.capabilityUrl, 'https://example.com/');
+      assert.equal(JSON.stringify(failed).includes('Tok@'), false);
+
+      const retry = created.find((e) => e.streamIds?.includes(':_cmc:_internal:retries'));
+      assert.ok(retry != null, 'a retryable failure must enqueue a retry: ' + JSON.stringify(created));
+      assert.equal(retry.content.originalContent.capabilityUrl, 'https://Tok@example.com/',
+        'the retry re-dispatches from this snapshot, so it must keep the usable URL');
     });
   });
 

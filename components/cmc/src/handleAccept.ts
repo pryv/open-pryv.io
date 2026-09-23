@@ -414,9 +414,9 @@ async function handleAccept (params: {
     // dispatcher can stamp `content.from = {username, host}` on the
     // accept trigger event. Without this, listAcceptedRelationships's
     // mapper falls back to `content.acceptedBy` (which carries the
-    // accepter's own data-grant apiEndpoint, not the requester identity),
-    // and the patient app can't discover WHICH doctor each relationship
-    // belongs to.
+    // accepter's own data-grant endpoint with its token stripped, not the
+    // requester identity), and the patient app can't discover WHICH doctor
+    // each relationship belongs to.
     requesterIdentity: counterparty,
   };
 }

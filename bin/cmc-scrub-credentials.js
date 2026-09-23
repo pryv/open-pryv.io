@@ -23,14 +23,20 @@
 // says WHICH endpoint it means. `dataGrantAccessId` and `content.from`, which
 // is what the records are actually read for, are untouched.
 //
+// It covers settled records, 'completed' AND 'failed'. A failed one matters:
+// a failed single-use accept leaves the requester's capability unconsumed, so
+// the invite URL stored on it is still LIVE.
+//
 // It does NOT touch:
-//   - a trigger whose `content.status` is not 'completed'. A pending or failed
-//     accept is re-dispatched from its `capabilityUrl`, so scrubbing it would
-//     strand the retry. Re-run the tool once those have settled.
+//   - a trigger still mid-flight ('pending' / 'delivered'), because a live
+//     dispatch may be working on it. Those are reported so a later run can
+//     sweep them once they settle.
 //   - the requester's own `consent/request-cmc` invite, whose `capabilityUrl`
 //     IS the deliverable the app shares.
 //   - the `:_cmc:_internal:*` subtree (retry queue, offers, responses), which
-//     no API read path can reach.
+//     no API read path can reach. The retry queue's own snapshot of a
+//     trigger's content keeps its token there by design: `processRetryEvent`
+//     re-dispatches from that snapshot, never from the stored trigger.
 //
 // Every write passes `skipVersioning`, so the scrub does not archive the very
 // content it is removing.
@@ -92,6 +98,11 @@ require('@pryv/boiler').init({
 // held one. `acceptedBy.apiEndpoint` is only ever on an accept.
 const TARGET_TYPES = ['consent/accept-cmc', 'consent/refuse-cmc'];
 
+// A record is safe to rewrite once its orchestration has stopped. Both of
+// these are terminal for the stored trigger: the retry path works off its own
+// snapshot in the internal retries stream, not off this row.
+const SETTLED = new Set(['completed', 'failed']);
+
 (async () => {
   try {
     const args = parseArgs(process.argv.slice(2));
@@ -134,7 +145,14 @@ const TARGET_TYPES = ['consent/accept-cmc', 'consent/refuse-cmc'];
 
     for (const username of usernames) {
       const userId = byUsername[username];
-      const events = await mall.events.get(userId, { types: TARGET_TYPES, limit: 1_000_000 });
+      // `state: 'all'` because the default excludes trashed events, and a
+      // trashed record still holds its token, is still readable by an access
+      // with `state=all`, and is still in the account backup's export.
+      const events = await mall.events.get(userId, {
+        types: TARGET_TYPES,
+        state: 'all',
+        limit: 1_000_000,
+      });
       for (const event of (events || [])) {
         if (event == null || event.id == null) continue;
         // The requester's own invite keeps its capabilityUrl; only records in
@@ -145,7 +163,7 @@ const TARGET_TYPES = ['consent/accept-cmc', 'consent/refuse-cmc'];
         counts.seen++;
 
         // A trigger that has not settled is still the retry queue's input.
-        if (event.content?.status !== 'completed') {
+        if (!SETTLED.has(event.content?.status)) {
           if (hasCredential(event.content)) counts.skippedUnsettled++;
           else counts.clean++;
           continue;
@@ -178,8 +196,8 @@ const TARGET_TYPES = ['consent/accept-cmc', 'consent/refuse-cmc'];
     console.log('  skipped (unsettled) ' + counts.skippedUnsettled);
     if (counts.skippedUnsettled > 0) {
       console.log('');
-      console.log('  ' + counts.skippedUnsettled + ' record(s) still carry a credential because their');
-      console.log('  orchestration has not settled; the retry queue re-dispatches from it.');
+      console.log('  ' + counts.skippedUnsettled + ' record(s) still carry a credential and are still');
+      console.log('  mid-flight (pending / delivered), so a live dispatch may be working on them.');
       console.log('  Re-run once they report status completed or failed.');
     }
     if (dirtyHistory.length > 0) {
@@ -229,9 +247,9 @@ function printUsage (stream) {
     'paths) on top, pass it through so the scrub reads the same storage:',
     '  node bin/cmc-scrub-credentials.js --config config/host-config.yml',
     '',
-    'Run once per core. Safe to re-run. Records whose orchestration has not',
-    'settled are left alone (the retry queue re-dispatches from them) and',
-    'reported, so re-run once those report completed or failed.',
+    'Run once per core. Safe to re-run. Covers settled records (completed and',
+    'failed); one still mid-flight is left alone and reported, so re-run once',
+    'those settle.',
     ''
   ].join('\n'));
 }

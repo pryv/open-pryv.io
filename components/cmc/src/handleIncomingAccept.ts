@@ -493,7 +493,11 @@ async function handleIncomingAccept (params: {
       });
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
-        peerApiEndpoint: grantedApiEndpoint,
+        // Without the token: this is the peer's data-grant endpoint, a live
+        // credential to their account, and a warn line goes to the operator's
+        // log stream and on to whatever aggregates it. The host is what
+        // identifies the failed delivery.
+        peerApiEndpoint: outbound.stripCredentials(grantedApiEndpoint),
         error: String((err as Error)?.message || err),
       });
     }
