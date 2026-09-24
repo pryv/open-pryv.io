@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
+
+`scripts/backloop-ca-warm` now resolves the bundle from `certs/public/` in addition to
+`certs/private/` and the legacy flat path. backloop 5.2.x caches the secret-gated and
+the public, self-signed certificate material in separate directories; when no secret is
+configured (CI, a fresh clone) it provisions only `public/`, which the warm did not look
+in, so it exited non-zero, `NODE_EXTRA_CA_CERTS` was never set, and the lib-js
+integration suite failed its first request on `self-signed certificate`. The earlier
+work-around fed the test job a backloop secret; that is no longer needed and the CI job
+no longer sets it. The suite now trusts the shared public certificate and passes with no
+secret at all. Verified by running the conformance suite with no secret configured: 275
+passing.
+
 ## test: backloop.dev 5.2.1, and the CA warm now finds the bundle in either layout
 
 The dev-only HTTPS test proxy moves to backloop.dev 5.2.1, which keeps the proxy

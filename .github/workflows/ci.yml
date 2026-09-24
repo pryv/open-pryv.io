@@ -16,16 +16,12 @@ jobs:
   test-postgres:
     runs-on: ubuntu-22.04
     timeout-minutes: 40
-    env:
-      # The lib-js conformance suite proxies lib-js over HTTPS on
-      # l.backloop.dev, and `scripts/backloop-ca-warm` provisions the
-      # certificate the proxy serves so Node's fetch will trust it.
-      # backloop.dev is no longer an open service: without a secret it refuses
-      # to issue a certificate at all, the warm produces nothing, and all 25
-      # lib-js suites fail on `self-signed certificate` — which is what broke
-      # this job from the v5.2.1 bump until this secret was added.
-      # Job-level so every test step below inherits it.
-      BACKLOOPDEV: ${{ secrets.BACKLOOPDEV }}
+    # The lib-js conformance suite proxies lib-js over HTTPS on l.backloop.dev,
+    # and `scripts/backloop-ca-warm` provisions the certificate the proxy serves
+    # so Node's fetch will trust it. backloop.dev is no longer an open service,
+    # but with no secret configured it serves a shared, self-signed public
+    # certificate that the warm script now trusts (it looks in the `public/`
+    # cache dir); no BACKLOOPDEV secret is required for this job to pass.
     services:
       postgres:
         image: postgres:16
