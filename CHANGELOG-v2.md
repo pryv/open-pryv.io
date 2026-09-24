@@ -1,6 +1,8 @@
 # Changelog - API Changes
 
-## 2.0.0-rc.25 — 2026-09-24
+## 2.0.0-rc.26 — 2026-09-24
+
+_(2.0.0-rc.25 carries the same changes but published no image: its build could not run the lib-js conformance suite, because backloop.dev stopped issuing certificates without a secret. Use rc.26.)_
 
 ### CMC accept and back-channel records no longer carry access tokens (security)
 
