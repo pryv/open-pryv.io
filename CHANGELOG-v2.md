@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.25 — 2026-09-24
 
 ### CMC accept and back-channel records no longer carry access tokens (security)
 
