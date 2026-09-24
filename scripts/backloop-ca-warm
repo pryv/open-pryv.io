@@ -43,25 +43,47 @@ try {
 // Honour the same certs-dir override backloop itself reads.
 const certsDir = process.env.BACKLOOP_DEV_CERTS_DIR || path.join(pkgDir, 'certs');
 
-// Where the bundle lands depends on the backloop version AND on whether a
-// secret was resolved: 5.2.0 caches the secret-gated and the public,
+// Where the bundle lands depends on the backloop version AND on which
+// certificate was resolved: 5.2.0 caches the secret-gated and the public,
 // self-signed material in separate subdirectories (`private/` and `public/`),
 // while older versions wrote a single flat file. When no secret is configured
 // (CI, a fresh clone), backloop provisions ONLY `public/`, so that path must
 // be a candidate or the warm finds nothing and the caller degrades to "no
 // extra CA", which is what left the lib-js suite failing on
-// `self-signed certificate`. Order: the secret-gated cert first (a machine
-// that has a secret serves it), then the public fallback, then the legacy flat
-// layout. Resolved AFTER provisioning below, because none of these paths exist
-// until backloop has written the certificate.
+// `self-signed certificate`. Resolved AFTER provisioning below, because none of
+// these paths exist until backloop has written the certificate.
 const BUNDLE_CANDIDATES = [
   path.join(certsDir, 'private', 'backloop.dev-bundle.crt'),
   path.join(certsDir, 'public', 'backloop.dev-bundle.crt'),
   path.join(certsDir, 'backloop.dev-bundle.crt')
 ];
 
-function findBundle () {
-  return BUNDLE_CANDIDATES.find((p) => fs.existsSync(p)) ?? null;
+// Choose the bundle that actually matches the certificate backloop just
+// resolved (and the proxy will serve), not merely the first that exists. Both
+// dirs can be present at once: a machine that once had a secret keeps a
+// `private/` bundle, and after the secret is removed backloop serves the public
+// cert while the stale `private/` bundle still sits on disk. Trusting that
+// stale bundle would silently fail the suite on `self-signed certificate`.
+// `httpsOptionsAsync` hands back the resolved `{ cert, ca }`, and each bundle
+// file is `cert + '\n' + ca` (see backloop's check.js), so the right one is the
+// candidate whose contents carry the resolved leaf cert. Existence order
+// (private, public, flat) is only a fallback when the resolved options carry no
+// cert to match against.
+function pickBundle (resolved) {
+  const existing = BUNDLE_CANDIDATES.filter((p) => fs.existsSync(p));
+  if (existing.length === 0) return null;
+  const leaf = resolved && typeof resolved.cert === 'string' ? resolved.cert.trim() : null;
+  if (leaf) {
+    const matched = existing.find((p) => {
+      try {
+        return fs.readFileSync(p, 'utf8').includes(leaf);
+      } catch (e) {
+        return false;
+      }
+    });
+    if (matched != null) return matched;
+  }
+  return existing[0];
 }
 
 // backloop prints its provisioning notices to stdout; the caller captures our
@@ -70,12 +92,12 @@ function findBundle () {
 const realStdoutWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = process.stderr.write.bind(process.stderr);
 
-// interactive:false — never prompt; a missing secret falls back to the public
+// interactive:false never prompts; a missing secret falls back to the public
 // pack, which is exactly what we want to trust here.
-backloop.httpsOptionsAsync({ interactive: false }, function (err) {
+backloop.httpsOptionsAsync({ interactive: false }, function (err, resolved) {
   process.stdout.write = realStdoutWrite;
   if (err) fail();
-  const bundle = findBundle();
+  const bundle = pickBundle(resolved);
   if (bundle == null) fail();
   process.stdout.write(bundle);
 });
