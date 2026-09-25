@@ -49,7 +49,7 @@ type UserDbLike = {
   minimizeEventHistory: (eventId: string, fieldsToRemove: string[]) => Promise<void>;
   deleteEventHistory: (eventId: string) => Promise<void>;
   deleteEvents: (params: { query: unknown[]; options?: unknown }) => Promise<{ changes: number } | null>;
-  countEvents: () => number;
+  countEvents: () => number | Promise<number>;
 };
 type StorageFactory = { forUser: (userId: string) => Promise<UserDbLike> };
 type EventsFileStorageLike = {
@@ -209,7 +209,7 @@ const userEvents = ds.createUserEvents({
 
   async _getStorageInfos (this: Store, userId: string): Promise<{ count: number }> {
     const db = await this.storage.forUser(userId);
-    const count = db.countEvents();
+    const count = await db.countEvents();
     return { count };
   },
 

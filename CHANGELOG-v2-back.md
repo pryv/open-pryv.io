@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## SQLite events store: the storage-infos count is awaited
+
+The per-user database contract lets `countEvents` return a value or a promise, and
+consumers must await it. The SQLite events store's storage-infos method did not, which is
+harmless while the SQLite database answers synchronously but would report a pending
+promise as the event count the moment it does not. The call is now awaited and the local
+type admits both shapes, so dropping the `await` again is a type error. Tests `[SQSI]`.
+
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
 `scripts/backloop-ca-warm` now resolves the bundle from `certs/public/` in addition to
