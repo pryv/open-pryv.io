@@ -43,19 +43,30 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     await user.session(token);
   });
 
-  describe.skip('[CMCNS-AUTO] auto-provisioning on user creation (BLOCKED on regression debug)', function () {
-    // TODO: un-skip when business/src/users/repository.ts re-enables
-    // cmc.provisionUserStreams() — see the TODO there. The regression
-    // is state-dependent (only triggers when AC0* run sequentially);
-    // currently being investigated.
-    //
-    // NOTE: while this stays disabled, the user-visible contract ("the
-    // reserved parents exist whenever you touch the namespace") is
-    // upheld by LAZY provisioning instead, which now covers read,
-    // write AND access-grant entry points — see [CMCNS-LAZY] below.
-    // Until read paths were covered, an account whose first CMC
-    // operation was a read stayed permanently broken (#111).
-    it('[CN01] the five reserved parents exist on a fresh user', async function () {
+  describe('[CMCNS-AUTO] auto-provisioning on user creation', function () {
+    // The reserved tree is provisioned when the user is created, before any
+    // CMC operation. Lazy provisioning ([CMCNS-LAZY] below) still covers
+    // accounts created before that, and a failed creation-time attempt.
+    it('[CNA1] the reserved parents exist on a fresh user before any CMC operation', async function () {
+      // Checked at the data layer: streams.get prunes the
+      // `:_cmc:_internal*` subtree, and a streams.get on the namespace
+      // would itself trigger the lazy path.
+      const mall = await getMall();
+      const uname = cuid();
+      await fixtures.user(uname);
+      for (const id of [
+        C.NS,
+        C.NS_INBOX,
+        C.NS_APPS,
+        C.NS_INTERNAL,
+        C.NS_INTERNAL_RETRIES,
+      ]) {
+        const stream = await mall.streams.getOneWithNoChildren(uname, id, 'local');
+        assert.ok(stream != null, 'expected reserved parent ' + id + ' to exist on a fresh user');
+      }
+    });
+
+    it('[CNA2] a fresh user\'s streams.get lists the API-visible reserved parents', async function () {
       const res = await coreRequest
         .get(basePath)
         .set('Authorization', token);
@@ -66,13 +77,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         if (Array.isArray(s.children)) s.children.forEach(walk);
       }
       (res.body.streams || []).forEach(walk);
-      for (const id of [
-        C.NS,
-        C.NS_INBOX,
-        C.NS_APPS,
-        C.NS_INTERNAL,
-        C.NS_INTERNAL_RETRIES,
-      ]) {
+      for (const id of [C.NS, C.NS_INBOX, C.NS_APPS]) {
         assert.ok(allIds.includes(id), 'expected reserved parent ' + id + ' to exist; got: ' + JSON.stringify(allIds));
       }
     });
@@ -364,14 +369,15 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
   });
 
   describe('[CMCNS-LAZY] lazy provisioning covers every entry point', function () {
-    // Regression cover for open-pryv.io#111: with creation-time
-    // provisioning disabled (see [CMCNS-AUTO] above), the reserved tree
-    // is created on first touch. It used to be created on WRITES only,
-    // so a consumer whose first CMC act was a read — an inbox watcher —
-    // got `unknown-referenced-resource` on every poll, forever.
+    // Regression cover for open-pryv.io#111: when the reserved tree is
+    // missing (an account created before creation-time provisioning, or
+    // whose creation-time attempt failed), it is created on first touch.
+    // It used to be created on WRITES only, so a consumer whose first CMC
+    // act was a read (an inbox watcher) got `unknown-referenced-resource`
+    // on every poll, forever.
     //
-    // Every test here needs its own VIRGIN user: once any CMC operation
-    // has run for a user, the tree exists and the bug is unobservable.
+    // Every test here needs its own VIRGIN user: creation-time provisioning
+    // is undone below so the lazy path is what gets exercised.
 
     async function makeVirginUser () {
       const uname = cuid();
@@ -379,6 +385,11 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       const u = await fixtures.user(uname);
       await u.access({ token: utoken, type: 'personal' });
       await u.session(utoken);
+      const mall = await getMall();
+      for (const id of [C.NS_INTERNAL_RETRIES, C.NS_INTERNAL, C.NS_APPS, C.NS_INBOX, C.NS]) {
+        await mall.streams.delete(uname, id);
+      }
+      assert.strictEqual(await mall.streams.getOneWithNoChildren(uname, C.NS, 'local'), null);
       return { username: uname, token: utoken };
     }
 

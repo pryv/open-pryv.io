@@ -152,7 +152,12 @@ describe('[SYSS] System streams', function () {
         await createUser();
         res = await request.get(basePath).set('authorization', access.token);
 
-        assert.deepStrictEqual(res.body.streams, expectedRes);
+        // The CMC reserved tree is also created with the account; it has its
+        // own coverage ([CMCNS-AUTO]). This snapshot is about the account
+        // system streams, so only check the tree root is there.
+        const cmcRoot = res.body.streams.find((s) => s.id === ':_cmc:');
+        assert.ok(cmcRoot != null, 'expected the :_cmc: reserved root');
+        assert.deepStrictEqual(res.body.streams.filter((s) => s !== cmcRoot), expectedRes);
       });
     });
   });
