@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## SQLite account storage: backups keep the password history author
+
+On the SQLite engine, a user-account export (backup) listed the password history without
+`createdBy`, and restoring it inserted nothing into a `createdBy TEXT NOT NULL` column, so the
+restore failed on any user with a password. The export now carries `createdBy`, and the import
+accepts both spellings (`createdBy`, and PostgreSQL's `created_by`); an author missing from an
+older export is stored as an empty string, the counterpart of PostgreSQL's NULL. Conformance
+tests `[UAX1]` (round trip) and `[UAX2]` (legacy export) run on both engines.
+
+`README-DBs.md` no longer claims that SQLite has no `seriesStorage` (it has had one, as a
+per-user `series-<version>.sqlite` file), and its user-account-storage section points at the
+engine implementations instead of a file that no longer exists.
+
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
 `scripts/backloop-ca-warm` now resolves the bundle from `certs/public/` in addition to

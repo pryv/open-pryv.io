@@ -170,12 +170,12 @@ async function deleteAccountField (userId: string, field: string): Promise<void>
 /**
  * Retrieve all password history, used for migration
  */
-async function _getPasswordHistory (userId: string): Promise<Array<{ hash: string; time: number }>> {
+async function _getPasswordHistory (userId: string): Promise<Array<{ hash: string; time: number; createdBy: string }>> {
   const db = await getUserDB(userId);
-  const res: Array<{ hash: string; time: number }> = [];
-  const getALL = db.prepare('SELECT hash, time FROM passwords');
+  const res: Array<{ hash: string; time: number; createdBy: string }> = [];
+  const getALL = db.prepare('SELECT hash, time, createdBy FROM passwords ORDER BY time');
   for (const entry of getALL.iterate()) {
-    res.push(entry as { hash: string; time: number });
+    res.push(entry as { hash: string; time: number; createdBy: string });
   }
   return res;
 }
@@ -264,7 +264,7 @@ async function clearHistory (userId: string): Promise<void> {
 
 // MIGRATION METHODS
 
-async function _exportAll (userId: string): Promise<{ passwords: Array<{ hash: string; time: number }>, storeKeyValues: Array<{ storeId: string; key: string; value: string }>, accountFields: Array<{ field: string; value: unknown; time: number; createdBy: string }> }> {
+async function _exportAll (userId: string): Promise<{ passwords: Array<{ hash: string; time: number; createdBy: string }>, storeKeyValues: Array<{ storeId: string; key: string; value: string }>, accountFields: Array<{ field: string; value: unknown; time: number; createdBy: string }> }> {
   const passwords = await _getPasswordHistory(userId);
   const storeKeyValues = await _getAllStoreData(userId);
   const db = await getUserDB(userId);
@@ -273,16 +273,27 @@ async function _exportAll (userId: string): Promise<{ passwords: Array<{ hash: s
   return { passwords, storeKeyValues, accountFields };
 }
 
+// `created_by` is the PostgreSQL export spelling. Either may be absent: older
+// SQLite exports omitted `createdBy` from the password history, and the
+// PostgreSQL column is nullable.
 type ImportData = {
-  passwords?: Array<{ hash: string; createdBy: string; time: number }>;
+  passwords?: Array<{ hash: string; createdBy?: string | null; created_by?: string | null; time: number }>;
   storeKeyValues?: Array<{ storeId: string; key: string; value: unknown }>;
-  accountFields?: Array<{ field: string; value: unknown; createdBy: string; time: number }>;
+  accountFields?: Array<{ field: string; value: unknown; createdBy?: string | null; created_by?: string | null; time: number }>;
 };
+
+/**
+ * The SQLite `createdBy` columns are NOT NULL; an author the export does not
+ * carry is stored as '' (unknown), the counterpart of PostgreSQL's NULL.
+ */
+function importedCreatedBy (item: { createdBy?: string | null; created_by?: string | null }): string {
+  return item.createdBy ?? item.created_by ?? '';
+}
 
 async function _importAll (userId: string, data: ImportData): Promise<void> {
   if (data.passwords) {
     for (const p of data.passwords) {
-      await addPasswordHash(userId, p.hash, p.createdBy, p.time);
+      await addPasswordHash(userId, p.hash, importedCreatedBy(p), p.time);
     }
   }
   if (data.storeKeyValues) {
@@ -298,7 +309,7 @@ async function _importAll (userId: string, data: ImportData): Promise<void> {
   }
   if (data.accountFields) {
     for (const af of data.accountFields) {
-      await setAccountField(userId, af.field, af.value, af.createdBy, af.time);
+      await setAccountField(userId, af.field, af.value, importedCreatedBy(af), af.time);
     }
   }
 }

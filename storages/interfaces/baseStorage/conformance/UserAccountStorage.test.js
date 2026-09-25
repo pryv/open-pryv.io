@@ -157,6 +157,46 @@ export default function conformanceTests (getStorage, cleanupFn) {
         assert.ok(Array.isArray(data.storeKeyValues));
       });
 
+      it('[UAX1] _exportAll() then _importAll() must round-trip the password history with its author', async () => {
+        const src = cuid();
+        const dst = cuid();
+        const t0 = timestamp.now('-2d');
+        const t1 = timestamp.now('-1d');
+        await storage.addPasswordHash(src, 'hash_rt_0', 'access-a', t0);
+        await storage.addPasswordHash(src, 'hash_rt_1', 'access-b', t1);
+
+        const exported = await storage._exportAll(src);
+        const byTime = (a, b) => a.time - b.time;
+        assert.deepStrictEqual(
+          exported.passwords.map(p => ({ hash: p.hash, time: p.time, createdBy: p.createdBy })).sort(byTime),
+          [
+            { hash: 'hash_rt_0', time: t0, createdBy: 'access-a' },
+            { hash: 'hash_rt_1', time: t1, createdBy: 'access-b' }
+          ]
+        );
+
+        await storage._importAll(dst, exported);
+        const reExported = await storage._exportAll(dst);
+        assert.deepStrictEqual(
+          reExported.passwords.map(p => ({ hash: p.hash, time: p.time, createdBy: p.createdBy })).sort(byTime),
+          exported.passwords.map(p => ({ hash: p.hash, time: p.time, createdBy: p.createdBy })).sort(byTime)
+        );
+        assert.strictEqual(await storage.getPasswordHash(dst), 'hash_rt_1');
+        await storage._clearAll(src);
+        await storage._clearAll(dst);
+      });
+
+      it('[UAX2] _importAll() must accept a legacy export whose password history lacks createdBy', async () => {
+        const dst = cuid();
+        const time = timestamp.now('-1d');
+        await storage._importAll(dst, {
+          passwords: [{ hash: 'hash_legacy', time }],
+          storeKeyValues: []
+        });
+        assert.strictEqual(await storage.getPasswordHash(dst), 'hash_legacy');
+        await storage._clearAll(dst);
+      });
+
       it('_clearAll() must remove all data for user', async () => {
         const uId = cuid();
         await storage.addPasswordHash(uId, 'hash_clear', 'test', timestamp.now());
