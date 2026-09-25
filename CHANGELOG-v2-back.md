@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## bin/init.js: scripted installs (`--config-from`, `--non-interactive`, `--dry-run`, `--force`)
+
+The install wizard can now run unattended. `--config-from=<file>` reads answers from a
+YAML/JSON file keyed by answer key (e.g. `db.engine`, `publicurl`, `authui.url`), and
+every key can also come from a `PRYV_INIT_<KEY>` env var (dots to underscores; a file
+answer wins over the env). `--non-interactive` never prompts: an answer without a value
+takes its default, and a required one with no value stops with an error naming the env
+var to set. `--dry-run` prints every file the wizard would write without touching disk,
+and `--force` overwrites an existing config and launcher scripts without asking. The
+email-verification page URL prompt is scriptable as `auth.emailverificationpageurl`.
+`--help` lists the options.
+
 ## events.get: forced and forbidden stream ids are merged without duplicates
 
 When an access carries forced (or forbidden) stream ids and the caller's stream query

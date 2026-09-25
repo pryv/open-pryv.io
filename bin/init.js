@@ -1119,7 +1119,7 @@ async function main () {
   // verification is on by default and this URL is what the mailed link opens;
   // without it the feature stays off with a boot warning.
   const defaultEmailVerificationPageURL = `${authUiUrl}/verify-email`;
-  const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL);
+  const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL, 'auth.emailverificationpageurl');
 
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
   // auth UI origin (otherwise the /reg/access flow loaded from the auth app
