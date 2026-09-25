@@ -9,12 +9,14 @@ import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { StoredItem as StoredItemBase } from '../../../../interfaces/_shared/types.ts';
 import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
+import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
 const require = createRequire(import.meta.url);
 
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
 const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
+const { assertCompareAndSet } = require('../../../../interfaces/_shared/jsonPath.ts');
 
 type Options = FindOptions;
 
@@ -395,6 +397,54 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => this._updateManySync(udb, query, updatedData));
+  }
+
+  /**
+   * One `UPDATE ... SET data = json_set(...) WHERE <query> AND <guards>`: a
+   * single statement runs under SQLite's write lock, so concurrent writers from
+   * other processes serialize on it (a busy writer is retried by
+   * `_userDbAndWrite`) and each re-evaluates the guards on the current row.
+   * Unlike `findOneAndUpdate`, there is no read-then-write window.
+   */
+  compareAndSetJson (userOrUserId: UserOrId, query: Query, guards: JsonGuard[], sets: JsonSet[], callback: Callback<boolean>): void {
+    // The `data` column holds the whole item (minus the indexed columns), so an
+    // item path maps to a JSON path in it. Segments are pre-validated, so the
+    // quoted literal needs no escaping.
+    const jsonPathSql = (path: string[]): string => {
+      if (isColColumn(path[0])) throw new Error(`compareAndSetJson: "${path[0]}" is not a JSON field`);
+      return `'$.${path.map((s) => `"${s}"`).join('.')}'`;
+    };
+    let sql: string;
+    let params: SqlParam[];
+    try {
+      assertCompareAndSet(guards, sets);
+      const setArgs: string[] = [];
+      const setParams: SqlParam[] = [];
+      for (const s of sets) {
+        setArgs.push(`${jsonPathSql(s.path)}, json(?)`);
+        setParams.push(JSON.stringify(s.value));
+      }
+      const { sql: where, params: whereParams } = this.buildWhere(query || {});
+      const conds: string[] = [where || 'WHERE 1'];
+      const guardParams: SqlParam[] = [];
+      for (const g of guards) {
+        const p = jsonPathSql(g.path);
+        if (g.eq !== undefined) {
+          conds.push(`CAST(json_extract(data, ${p}) AS TEXT) = ?`);
+          guardParams.push(String(g.eq));
+        } else if (g.lt !== undefined) {
+          conds.push(`(CASE WHEN json_type(data, ${p}) IN ('integer', 'real') THEN json_extract(data, ${p}) < ? ELSE 0 END)`);
+          guardParams.push(g.lt);
+        } else {
+          conds.push(`(json_type(data, ${p}) IS NULL OR json_type(data, ${p}) = 'null')`);
+        }
+      }
+      sql = `UPDATE ${this.tableName} SET data = json_set(data, ${setArgs.join(', ')}) ${conds.join(' AND ')}`;
+      params = [...setParams, ...whereParams, ...guardParams];
+    } catch (err) {
+      return callback(err as Error);
+    }
+    this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.prepare(sql).run(...params).changes === 1);
   }
 
   /** Synchronous core of `updateMany`. See `_findOneAndUpdateSync`. */

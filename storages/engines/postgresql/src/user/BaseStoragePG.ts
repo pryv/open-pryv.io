@@ -8,10 +8,12 @@
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, StoredItem, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
+import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
 const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
 const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
+const { assertCompareAndSet } = require('../../../../interfaces/_shared/jsonPath.ts');
 
 // ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
 
@@ -491,6 +493,57 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
 
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     this._updateManyOn(this.db, userOrUserId, query, updatedData, callback);
+  }
+
+  /**
+   * One `UPDATE ... SET col = jsonb_set(...) WHERE <query> AND <guards>`.
+   * Under READ COMMITTED a concurrent UPDATE of the same row waits for the row
+   * lock and then re-checks the WHERE on the new row version, so of two callers
+   * racing on the same guard exactly one matches, whichever process they run in.
+   */
+  compareAndSetJson (userOrUserId: UserOrId, query: Query, guards: JsonGuard[], sets: JsonSet[], callback: Callback<boolean>): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const params: unknown[] = [];
+    const bind = (v: unknown): string => { params.push(v); return '$' + params.length; };
+    const jsonCol = (path: string[]): string => {
+      const col = this.toCol(path[0]);
+      if (!this.isJsonbCol(col)) throw new Error(`compareAndSetJson: "${path[0]}" is not a JSON field of ${this.tableName}`);
+      return col;
+    };
+    let sql: string;
+    try {
+      assertCompareAndSet(guards, sets);
+      // Sets grouped per column: nested jsonb_set calls, one assignment each.
+      const exprs = new Map<string, string>();
+      for (const s of sets) {
+        const col = jsonCol(s.path);
+        const inner = exprs.get(col) ?? `COALESCE(${col}, '{}'::jsonb)`;
+        exprs.set(col, `jsonb_set(${inner}, ${bind(s.path.slice(1))}::text[], ${bind(JSON.stringify(s.value))}::jsonb, true)`);
+      }
+      const setSql = [...exprs].map(([col, expr]) => `${col} = ${expr}`).join(', ');
+      const where = this.buildWhere(userId, query, params.length + 1);
+      params.push(...where.params);
+      const conds = [where.text];
+      for (const g of guards) {
+        const col = jsonCol(g.path);
+        const p = bind(g.path.slice(1));
+        if (g.eq !== undefined) {
+          conds.push(`(${col} #>> ${p}::text[]) = ${bind(String(g.eq))}`);
+        } else if (g.lt !== undefined) {
+          // CASE, not AND: PG does not promise evaluation order, and the cast
+          // must never run on a non-number.
+          conds.push(`(CASE WHEN jsonb_typeof(${col} #> ${p}::text[]) = 'number' THEN (${col} #>> ${p}::text[])::numeric < ${bind(g.lt)} ELSE false END)`);
+        } else {
+          conds.push(`(${col} #> ${p}::text[] IS NULL OR jsonb_typeof(${col} #> ${p}::text[]) = 'null')`);
+        }
+      }
+      sql = `UPDATE ${this.tableName} SET ${setSql} ${conds.join(' AND ')}`;
+    } catch (err) {
+      return callback(err as Error);
+    }
+    this.db.query(sql, params)
+      .then((res: PGResult) => callback(null, res.rowCount === 1))
+      .catch(callback);
   }
 
   /** Transaction-aware variant: runs the UPDATE via the supplied `queryable`.
