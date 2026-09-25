@@ -97,8 +97,10 @@ describe('[MSTE] Stores Streams & Events', function () {
           .get(streamsPath)
           .set('Authorization', appAccessMaster.token)
           .query({});
-        const streams = res.body.streams;
-        assert.ok(streams);
+        assert.ok(res.body.streams);
+        // A new account also carries the CMC reserved root, which a `*` read sees.
+        assert.strictEqual(res.body.streams.filter((s) => s.id === ':_cmc:').length, 1);
+        const streams = res.body.streams.filter((s) => s.id !== ':_cmc:');
         // Account store streams (:_system:account) are included
         // in local store root queries (account is passthrough)
         assert.strictEqual(streams.length, !isAuditActive ? 4 : 5);
