@@ -17,18 +17,18 @@ require('./test-helper');
 const assert = require('node:assert');
 const { streamQueryAddForcedAndForbiddenStreams } = require('../../src/methods/helpers/eventsGetUtils.ts');
 
-function makeContext (forced, forbidden) {
+function makeContext (forced, forbidden, isPersonal = true) {
   return {
     access: {
       getForcedStreamsGetEventsStreamIds: () => forced,
       getForbiddenGetEventsStreamIds: () => forbidden,
-      isPersonal: () => true
+      isPersonal: () => isPersonal
     }
   };
 }
 
-function makeParams (all, not) {
-  return { arrayOfStreamQueriesWithStoreId: [{ storeId: 'local', all, not }] };
+function makeParams (all, not, any) {
+  return { arrayOfStreamQueriesWithStoreId: [{ storeId: 'local', all, not, any }] };
 }
 
 function run (ctx, params) {
@@ -62,5 +62,14 @@ describe('[EGDU] eventsGetUtils forced / forbidden stream merge', () => {
     const q = params.arrayOfStreamQueriesWithStoreId[0];
     assert.deepStrictEqual(q.all, ['s1']);
     assert.deepStrictEqual(q.not, ['f1']);
+  });
+
+  it('[EGD5] a wildcard query from a non-personal token carries each exclusion once', async () => {
+    const params = makeParams(null, [':_shared-secrets:'], ['*']);
+    await run(makeContext(null, null, false), params);
+    const not = params.arrayOfStreamQueriesWithStoreId[0].not;
+    assert.deepStrictEqual(not, [...new Set(not)]);
+    assert.ok(not.includes(':_emails:'));
+    assert.ok(not.includes(':_shared-secrets:'));
   });
 });

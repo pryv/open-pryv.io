@@ -3,9 +3,11 @@
 ## events.get: forced and forbidden stream ids are merged without duplicates
 
 When an access carries forced (or forbidden) stream ids and the caller's stream query
-already names one of them, the merged query listed that id twice. The merge now appends
-only the ids not already present. Results are unchanged; the expanded query is simply
-duplicate-free for the storage layer. Unit tests `[EGDU]`.
+already names one of them, the merged query listed that id twice. The same happened with
+the built-in exclusions (the wildcard-read exclusions and, for a non-personal token, the
+account and emails roots were both added, so `:_emails:` appeared twice). Every merge now
+appends only the ids not already present. Results are unchanged; the expanded query is
+simply duplicate-free for the storage layer. Unit tests `[EGDU]`.
 
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
