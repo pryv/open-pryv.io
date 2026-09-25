@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
-const { normalizeMfaConfig } = require('../../src/mfa/index.ts');
+const { normalizeMfaConfig, delayForFailures } = require('../../src/mfa/index.ts');
 const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
 
 describe('[MNORM] normalizeMfaConfig', function () {
@@ -89,9 +89,8 @@ describe('[MNORM] normalizeMfaConfig', function () {
 
   const ATTEMPTS_DEFAULTS = {
     perSession: 5,
-    perAccount: 20,
     perAccountWindowSeconds: 900,
-    lockoutSeconds: 900
+    backoff: { freeFailures: 5, baseSeconds: 2, maxSeconds: 300 }
   };
 
   it('[MNORM10] N1: the attempts block gets its defaults when absent', function () {
@@ -105,22 +104,44 @@ describe('[MNORM] normalizeMfaConfig', function () {
   });
 
   it('[MNORM12] explicit attempts values pass through unchanged', function () {
-    const attempts = { perSession: 3, perAccount: 9, perAccountWindowSeconds: 60, lockoutSeconds: 120 };
+    const attempts = { perSession: 3, perAccountWindowSeconds: 60, backoff: { freeFailures: 2, baseSeconds: 1, maxSeconds: 30 } };
     assert.deepStrictEqual(normalizeMfaConfig({ active: true, attempts }).attempts, attempts);
   });
 
-  it('[MNORM13] perAccount:0 is preserved (limiter disabled); junk values fall back per-field', function () {
-    // 0 is meaningful: it disables the per-account limiter.
-    const off = normalizeMfaConfig({ active: true, attempts: { perAccount: 0 } });
-    assert.strictEqual(off.attempts.perAccount, 0);
-    assert.strictEqual(off.attempts.perSession, 5, 'other fields keep their defaults');
+  it('[MNORM13] backoff.maxSeconds:0 is preserved (backoff disabled); junk values fall back per-field', function () {
+    // 0 is meaningful: it disables the per-account backoff.
+    const off = normalizeMfaConfig({ active: true, attempts: { backoff: { maxSeconds: 0 } } });
+    assert.strictEqual(off.attempts.backoff.maxSeconds, 0);
+    assert.strictEqual(off.attempts.backoff.freeFailures, 5, 'other fields keep their defaults');
+    assert.strictEqual(off.attempts.perSession, 5);
 
     // A negative / NaN / non-numeric field must not weaken anything silently.
     const junk = normalizeMfaConfig({
       active: true,
-      attempts: { perSession: -1, perAccount: NaN, perAccountWindowSeconds: 'abc', lockoutSeconds: null }
+      attempts: { perSession: -1, perAccountWindowSeconds: 'abc', backoff: { freeFailures: NaN, baseSeconds: null, maxSeconds: -3 } }
     });
     assert.deepStrictEqual(junk.attempts, ATTEMPTS_DEFAULTS);
+    const notAnObject = normalizeMfaConfig({ active: true, attempts: { backoff: 'fast' } });
+    assert.deepStrictEqual(notAnObject.attempts, ATTEMPTS_DEFAULTS);
+  });
+
+  it('[MBKF1] the keys of the former lockout are not read', function () {
+    const n = normalizeMfaConfig({ active: true, attempts: { perAccount: 1, lockoutSeconds: 99999 } });
+    assert.deepStrictEqual(n.attempts, ATTEMPTS_DEFAULTS);
+  });
+});
+
+describe('[MBKF] delayForFailures', function () {
+  const backoff = { freeFailures: 5, baseSeconds: 2, maxSeconds: 300 };
+
+  it('[MBKF2] no delay for the free failures, then doubling from baseSeconds up to the cap', function () {
+    const seq = Array.from({ length: 16 }, (_, i) => delayForFailures(i + 1, backoff));
+    assert.deepStrictEqual(seq, [0, 0, 0, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300, 300]);
+  });
+
+  it('[MBKF3] maxSeconds:0 disables it; a huge tally stays at the cap', function () {
+    assert.strictEqual(delayForFailures(50, { ...backoff, maxSeconds: 0 }), 0);
+    assert.strictEqual(delayForFailures(1e6, backoff), 300);
   });
 });
 

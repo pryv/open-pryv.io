@@ -670,10 +670,11 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #             body: '{"to": "{{ phone }}", "text": "code {{ code }}"}'
 # #     attempts:                  # failed second-factor limits
 # #       perSession: 5            # wrong codes allowed in one pending MFA session
-# #       perAccount: 20           # wrong codes allowed per account within the window
-# #                                # (0 disables the per-account limit)
-# #       perAccountWindowSeconds: 900
-# #       lockoutSeconds: 900      # how long the MFA step stays locked on breach
+# #       perAccountWindowSeconds: 900  # a failure older than this starts the tally afresh
+# #       backoff:                 # per-account delay, never a lockout
+# #         freeFailures: 5        # failures before any delay
+# #         baseSeconds: 2         # first delay, doubling on each further failure
+# #         maxSeconds: 300        # cap (0 disables the per-account backoff)
 
 # # sso — third-party sign-in (Pryv as an OpenID Connect relying party).
 # # Single-core / dnsLess only in this version. clientSecret is a per-core
