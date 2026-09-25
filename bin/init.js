@@ -80,8 +80,10 @@ Options:
   --dry-run             Run the wizard and print every file it would write,
                         without touching disk. Works even over an existing install.
   --force               Overwrite an existing config + launcher scripts without asking.
-  --config-from=<file>  Read answers from a YAML/JSON file (answer keys → values);
-                        anything not in the file falls back to defaults, then prompts.
+  --config-from=<file>  Read answers from a YAML/JSON file (answer keys → values,
+                        dotted keys or nested mappings); anything not in the file
+                        falls back to defaults, then prompts. With docker the path is
+                        resolved inside the container, so mount the file.
   --non-interactive     Never prompt: every answer comes from --config-from and/or
                         PRYV_INIT_<KEY> env vars, else its default; a missing required
                         answer is a hard error. Implies a non-TTY run.
@@ -89,7 +91,9 @@ Options:
 
 Answer keys use the env form PRYV_INIT_<KEY> (dots → underscores), e.g.
 PRYV_INIT_DNSLESS, PRYV_INIT_DB_ENGINE, PRYV_INIT_SERVICE_NAME. Run --dry-run
-once interactively to see the full set.
+once interactively: every prompt then shows its env name. A file answer wins
+over the env. Prefer the file for secrets (container env is visible to
+\`docker inspect\`). Invalid values and unused file keys are reported.
 `);
 }
 
@@ -138,11 +142,29 @@ function loadAnswersFile (file) {
     process.stderr.write(`init: --config-from file "${file}" must be a mapping of answer keys to values.\n`);
     process.exit(2);
   }
+  // Flatten nested mappings into dotted keys (`db: { engine: x }` → `db.engine`);
+  // keys are case-insensitive.
   const m = new Map();
-  for (const [k, v] of Object.entries(obj)) {
-    m.set(k, v == null ? '' : String(v));
-  }
+  const walk = (prefix, o) => {
+    for (const [k, v] of Object.entries(o)) {
+      const key = (prefix ? prefix + '.' + k : k).toLowerCase();
+      if (Array.isArray(v)) {
+        process.stderr.write(`init: --config-from file "${file}": "${key}" is a list; answers must be scalar values.\n`);
+        process.exit(2);
+      }
+      if (v != null && typeof v === 'object') walk(key, v);
+      else m.set(key, v == null ? '' : String(v));
+    }
+  };
+  walk('', obj);
   return m;
+}
+
+/** An expected operator error (bad or missing answer): printed without a stack, exit 2. */
+function usageError (message) {
+  const err = new Error(message);
+  err.code = 'EUSAGE';
+  return err;
 }
 
 /**
@@ -153,7 +175,8 @@ function loadAnswersFile (file) {
 function emitFile (absPath, content, mode) {
   if (OPTS.dryRun) {
     const modeStr = mode !== undefined ? `, mode ${mode.toString(8)}` : '';
-    console.log(`  ○ DRY-RUN would write ${absPath} (${Buffer.byteLength(content)} bytes${modeStr})`);
+    const overwrite = fs.existsSync(absPath) ? ' (would overwrite the existing file)' : '';
+    console.log(`  ○ DRY-RUN would write ${absPath} (${Buffer.byteLength(content)} bytes${modeStr})${overwrite}`);
     return false;
   }
   if (mode !== undefined) fs.writeFileSync(absPath, content, { mode });
@@ -165,6 +188,7 @@ function emitFile (absPath, content, mode) {
 // takes a stable `key`; the env var form is PRYV_INIT_<KEY> with dots
 // uppercased to underscores (e.g. key 'db.engine' → PRYV_INIT_DB_ENGINE).
 let ANSWERS = null; // Map<key,string> loaded from --config-from, or null
+const CONSUMED = new Set(); // answer keys the wizard asked for (to report unused file keys)
 
 function envVarFor (key) {
   return 'PRYV_INIT_' + key.toUpperCase().replace(/[.]/g, '_');
@@ -173,17 +197,27 @@ function envVarFor (key) {
 /** Resolve a programmatic answer for `key`: config-from file, then env. */
 function autoAnswer (key) {
   if (key == null) return undefined;
+  CONSUMED.add(key);
   if (ANSWERS && ANSWERS.has(key)) return ANSWERS.get(key);
   const env = process.env[envVarFor(key)];
   return env; // undefined when unset
 }
 
-/** True when answers come from a file/env rather than interactive prompts. */
-function autoMode () {
-  return OPTS.nonInteractive || ANSWERS != null;
+/** Answers-file keys no prompt asked for: typos or keys for another path. */
+function unusedAnswerKeys () {
+  if (!ANSWERS) return [];
+  return [...ANSWERS.keys()].filter(k => !CONSUMED.has(k));
 }
 
-async function ask (question, defaultValue, key) {
+function invalidAnswer (key, raw, expected) {
+  return usageError(`init: invalid value "${raw}" for "${key}" (${envVarFor(key)}); expected ${expected}.`);
+}
+
+/**
+ * `opts.hideDefault` keeps the default out of the rendered prompt, for callers
+ * that already show it (the [Y/n] hint of askYesNo).
+ */
+async function ask (question, defaultValue, key, opts = {}) {
   // Programmatic answer wins: an explicit empty value means "accept the
   // default" (same as pressing Enter interactively).
   const supplied = autoAnswer(key);
@@ -195,12 +229,15 @@ async function ask (question, defaultValue, key) {
   // default if there is one, else fail with a pointer to how to supply it.
   if (OPTS.nonInteractive) {
     if (defaultValue !== undefined) return defaultValue;
-    throw new Error(`init: --non-interactive but no answer for "${key || question}". Set ${key ? envVarFor(key) : 'the value'} or add "${key || question}" to the --config-from file.`);
+    throw usageError(`init: --non-interactive but no answer for "${key || question}". Set ${key ? envVarFor(key) : 'the value'} or add "${key || question}" to the --config-from file.`);
   }
 
-  const prompt = defaultValue !== undefined && defaultValue !== ''
-    ? `${question} [${defaultValue}]: `
-    : `${question}: `;
+  // Under --dry-run each prompt names its env var, so one interactive dry run
+  // lists every answer key.
+  const keyHint = OPTS.dryRun && key ? ` (${envVarFor(key)})` : '';
+  const prompt = !opts.hideDefault && defaultValue !== undefined && defaultValue !== ''
+    ? `${question}${keyHint} [${defaultValue}]: `
+    : `${question}${keyHint}: `;
   process.stdout.write(prompt);
   const next = await lineIter.next();
   if (next.done) {
@@ -212,6 +249,9 @@ async function ask (question, defaultValue, key) {
     // time this fires we are either in piped-input testing or stdin
     // was closed by something else mid-run.
     process.stdout.write('\n');
+    if (key && ANSWERS) {
+      throw usageError(`init: input stream closed with no answer for "${key}" (EOF on stdin). Set ${envVarFor(key)}, add "${key}" to the --config-from file, or run with --non-interactive to take defaults.`);
+    }
     throw new Error('init: input stream closed before all prompts were answered (EOF on stdin). If you piped answers in, you ran out of lines; if you launched with docker, ensure `-it` is set.');
   }
   const v = (next.value || '').trim();
@@ -222,9 +262,10 @@ async function askNonEmpty (question, defaultValue, key) {
   while (true) {
     const v = await ask(question, defaultValue, key);
     if (v !== '' && v != null) return v;
-    // A resolved-but-empty required value can't be re-prompted in auto mode.
-    if (autoMode()) {
-      throw new Error(`init: required value "${key || question}" resolved empty. Set ${key ? envVarFor(key) : 'it'} or add "${key || question}" to the --config-from file.`);
+    // An empty required value from file/env (or with no prompt allowed) can't
+    // be re-prompted; an empty one typed at the keyboard re-prompts as usual.
+    if (OPTS.nonInteractive || autoAnswer(key) !== undefined) {
+      throw usageError(`init: required value "${key || question}" resolved empty. Set ${key ? envVarFor(key) : 'it'} or add "${key || question}" to the --config-from file.`);
     }
     console.log('  (required — please enter a value)');
   }
@@ -233,17 +274,21 @@ async function askNonEmpty (question, defaultValue, key) {
 async function askYesNo (question, defaultYes = true, key) {
   const hint = defaultYes ? 'Y/n' : 'y/N';
   // Pass the default as a y/n token so a missing programmatic answer falls
-  // back to it. Accept true/false/1/0/yes/no/y/n from files + env.
-  const raw = (await ask(`${question} [${hint}]`, defaultYes ? 'y' : 'n', key)).toString().trim().toLowerCase();
+  // back to it (hidden: the hint already shows it). Accept
+  // true/false/1/0/yes/no/y/n/on/off from files + env.
+  const scripted = autoAnswer(key) !== undefined;
+  const raw = (await ask(`${question} [${hint}]`, defaultYes ? 'y' : 'n', key, { hideDefault: true })).toString().trim().toLowerCase();
   if (raw === '') return defaultYes;
   if (['y', 'yes', 'true', '1', 'on'].includes(raw)) return true;
   if (['n', 'no', 'false', '0', 'off'].includes(raw)) return false;
+  if (scripted) throw invalidAnswer(key, raw, 'yes/no (y, n, true, false, 1, 0, on, off)');
   return raw.startsWith('y');
 }
 
 async function askChoice (question, choices, defaultIdx = 0, key) {
   // Only render the menu when we'll actually prompt.
-  if (autoAnswer(key) === undefined && !OPTS.nonInteractive) {
+  const scripted = autoAnswer(key) !== undefined;
+  if (!scripted && !OPTS.nonInteractive) {
     console.log(question);
     choices.forEach((c, i) => console.log(`  ${i + 1}) ${c}`));
   }
@@ -251,6 +296,9 @@ async function askChoice (question, choices, defaultIdx = 0, key) {
   // Accept either the choice value by name (case-insensitive) or a 1-based index.
   const byName = choices.findIndex(c => c.toLowerCase() === raw.toLowerCase());
   if (byName >= 0) return choices[byName];
+  if (scripted && !(/^\d+$/.test(raw) && +raw >= 1 && +raw <= choices.length)) {
+    throw invalidAnswer(key, raw, `one of ${choices.join(', ')} (or 1-${choices.length})`);
+  }
   const idx = parseInt(raw, 10) - 1;
   return choices[Number.isFinite(idx) && idx >= 0 && idx < choices.length ? idx : defaultIdx];
 }
@@ -944,10 +992,11 @@ async function main () {
     // the LE round-trip starts. Auto-detect via checkip.amazonaws.com
     // with a tight timeout so wizard runs on machines without public
     // egress don't hang.
-    const detectedIp = await detectPublicIp();
+    // Skip the network probe when the answer is supplied.
+    const detectedIp = autoAnswer('publicip') !== undefined ? null : await detectPublicIp();
     if (detectedIp) {
       console.log(`  (detected public IPv4: ${detectedIp})`);
-    } else {
+    } else if (autoAnswer('publicip') === undefined) {
       console.log('  (public IPv4 auto-detect failed — please enter manually)');
     }
     dnsPublicIp = await askNonEmpty(
@@ -1716,7 +1765,22 @@ async function main () {
   console.log();
   console.log('Next steps');
   console.log(bar());
-  if (genSecrets) {
+  const unused = unusedAnswerKeys();
+  if (unused.length > 0) {
+    console.log(`⚠ --config-from keys no prompt asked for (typo, or not needed on this path): ${unused.join(', ')}`);
+    console.log();
+  }
+  // Never print secret values that are throwaway (--dry-run) or that would land
+  // in a CI log (--non-interactive); point at the file that holds them instead.
+  if (genSecrets && (OPTS.dryRun || OPTS.nonInteractive)) {
+    const names = `auth.adminAccessKey, auth.filesReadTokenSecret, platform.piiHmacKey${leConfig ? ', letsEncrypt.atRestKey' : ''}`;
+    if (OPTS.dryRun) {
+      console.log(`Secrets (${names}) are generated on the real run and written to ${absConfigPath}; back that file up.`);
+    } else {
+      console.log(`Generated secrets (${names}) were written to ${absConfigPath}; back that file up.`);
+    }
+    console.log();
+  } else if (genSecrets) {
     console.log('Generated secrets (BACK THESE UP — losing them locks you out of audit + cert decryption + the PlatformDB routing index):');
     console.log(`  auth.adminAccessKey       = ${adminAccessKey}`);
     console.log(`  auth.filesReadTokenSecret = ${filesReadTokenSecret}`);
@@ -1772,6 +1836,11 @@ async function main () {
 
 main().catch((err) => {
   console.error();
+  if (err && err.code === 'EUSAGE') {
+    console.error(err.message);
+    rl.close();
+    process.exit(2);
+  }
   console.error('init: fatal error');
   console.error(err && err.stack ? err.stack : err);
   rl.close();

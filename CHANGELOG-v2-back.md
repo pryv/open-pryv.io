@@ -10,7 +10,12 @@ takes its default, and a required one with no value stops with an error naming t
 var to set. `--dry-run` prints every file the wizard would write without touching disk,
 and `--force` overwrites an existing config and launcher scripts without asking. The
 email-verification page URL prompt is scriptable as `auth.emailverificationpageurl`.
-`--help` lists the options.
+The answers file accepts dotted keys or nested mappings (case-insensitive). A scripted
+value that is not a valid choice or yes/no stops the run (exit 2) instead of silently
+taking the default, and file keys no prompt asked for are reported. Generated secrets
+are not printed under `--dry-run` or `--non-interactive` (the output points at the
+config file instead). Under `--dry-run` each prompt shows its env var name. `--help`
+lists the options.
 
 ## events.get: forced and forbidden stream ids are merged without duplicates
 
