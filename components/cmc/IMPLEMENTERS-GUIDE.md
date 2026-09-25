@@ -271,7 +271,9 @@ const result = await pryv.cmc.requestAccept({
   capabilityUrl: 'https://AbC...Xyz@example.com/',
   scopeStreamId: ':_cmc:apps:patient:incoming'
 });
-// result = { ok: true, dataGrantApiEndpoint, acceptEventId }
+// result = { ok: true, acceptEventId }  (acceptEventId is an id on the patient's account)
+// The requester gets the data-grant endpoint on its own side:
+//   (await pryv.cmc.waitForAccept(requesterConn, { fromUsername, appCode })).grantedAccessApiEndpoint
 ```
 
 That's the user's only call. Everything else is server-orchestrated by the user's plugin:
