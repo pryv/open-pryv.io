@@ -16,7 +16,7 @@ type SeriesMetaLike = {
 };
 type CtxLike = {
   series: { get: (namespace: string, name: string) => Promise<{ append: (data: unknown) => Promise<unknown> }> };
-  metadata: { forSeries: (userName: string, eventId: string, accessToken: unknown) => Promise<SeriesMetaLike> };
+  metadata: { forSeries: (userName: string, eventId: string, accessToken: unknown, clientIp: string | null) => Promise<SeriesMetaLike> };
   typeRepository: unknown;
   metadataUpdater: { scheduleUpdate: (req: unknown) => Promise<unknown> };
 };
@@ -25,6 +25,7 @@ type CtxLike = {
 const errors = require('errors').factory;
 const business = require('business');
 const ApiConstants = require('../api_constants.ts');
+const { requestClientIp } = require('../../metadata_cache.ts');
 const TracedOperations = require('./traced_operations.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 /** POST /events/:event_id/series - Store data in a series.
@@ -42,7 +43,7 @@ async function storeSeriesData (ctx: CtxLike, req: Request, res: Response) {
   if (eventId == null) { throw errors.invalidItemId(); }
   // Access check: Can user write to this series?
   trace.start('seriesMeta/load');
-  const seriesMeta = await metadata.forSeries(userName, eventId, accessToken);
+  const seriesMeta = await metadata.forSeries(userName, eventId, accessToken, requestClientIp(req));
   trace.finish('seriesMeta/load');
   // Trashed or Deleted: Abort.
   if (seriesMeta.isTrashedOrDeleted()) {

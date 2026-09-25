@@ -12,11 +12,12 @@ const { tryCoerceStringValues } = require('api-server').validation;
 const timestamp = require('unix-timestamp');
 const errors = require('errors').factory;
 const SeriesResponse = require('../SeriesResponse.ts').default;
+const { requestClientIp } = require('../../metadata_cache.ts');
 const AUTH_HEADER = 'authorization';
 
 interface SeriesQuery { from?: number; to: number }
 interface MetadataLike {
-  forSeries: (username: string, eventId: string, authToken: string) => Promise<SeriesMetaLike>;
+  forSeries: (username: string, eventId: string, authToken: string, clientIp: string | null) => Promise<SeriesMetaLike>;
 }
 interface SeriesMetaLike {
   canRead: () => boolean;
@@ -42,7 +43,7 @@ async function querySeriesData (ctx: HfsContextLike, req: Request, res: Response
   // If required params are not there, abort.
   if (accessToken == null) { throw errors.missingHeader(AUTH_HEADER, 401); }
   if (eventId == null) { throw errors.invalidItemId(); }
-  const seriesMeta = await verifyAccess(String(username), String(eventId), String(accessToken), metadata);
+  const seriesMeta = await verifyAccess(String(username), String(eventId), String(accessToken), metadata, requestClientIp(req));
   const query = coerceStringParams(structuredClone(req.query));
   applyDefaultValues(query);
   validateQuery(query);
@@ -67,8 +68,8 @@ function validateQuery (query: SeriesQuery): void {
   if (isNaN(query.to)) { throw errors.invalidParametersFormat("'to' must contain seconds since epoch."); }
   if (query.from != null && query.to != null && query.to < query.from) { throw errors.invalidParametersFormat("'to' must be >= 'from'."); }
 }
-async function verifyAccess (username: string, eventId: string, authToken: string, metadata: MetadataLike): Promise<SeriesMetaLike> {
-  const seriesMeta = await metadata.forSeries(username, eventId, authToken);
+async function verifyAccess (username: string, eventId: string, authToken: string, metadata: MetadataLike, clientIp: string | null): Promise<SeriesMetaLike> {
+  const seriesMeta = await metadata.forSeries(username, eventId, authToken, clientIp);
   if (!seriesMeta.canRead()) { throw errors.forbidden(); }
   return seriesMeta;
 }
