@@ -236,6 +236,24 @@ describe('[DNS] DNS Server', function () {
       const addresses = await resolver.resolve4(`api.${TEST_DOMAIN}`);
       assert.deepStrictEqual(addresses, ['5.6.7.8']);
     });
+
+    it('[DN13] a CNAME entry answers the CNAME for every query type', async () => {
+      for (const type of ['AAAA', 'TXT', 'MX', 'CAA']) {
+        const res = await rawQuery(port, `www.${TEST_DOMAIN}`, type);
+        assert.strictEqual(res.header.rcode, 0, type);
+        assert.strictEqual(res.answers.length, 1, type + ': expected exactly the CNAME');
+        assert.strictEqual(res.answers[0].type, Packet.TYPE.CNAME, type);
+        assert.strictEqual(res.answers[0].domain, 'web.example.com', type);
+      }
+    });
+
+    it('[DN14] a CNAME entry never mixes other record types for the name', async () => {
+      await server.updateStaticEntry('mixed', { cname: 'mixed.example.com', a: ['9.9.9.9'], txt: ['stray'] });
+      for (const type of ['A', 'TXT', 'ANY']) {
+        const res = await rawQuery(port, `mixed.${TEST_DOMAIN}`, type);
+        assert.deepStrictEqual(res.answers.map(a => a.type), [Packet.TYPE.CNAME], type);
+      }
+    });
   });
 
   // --- Username resolution ---
@@ -272,6 +290,13 @@ describe('[DNS] DNS Server', function () {
       // Verify we got an address back (exact format depends on dns2 serialization)
       assert.ok(records[0].address, 'Expected an AAAA address');
     });
+
+    it('[DN25] a username on a CNAME-only core answers the CNAME for AAAA', async () => {
+      const res = await rawQuery(port, `charlie.${TEST_DOMAIN}`, 'AAAA');
+      assert.strictEqual(res.answers.length, 1);
+      assert.strictEqual(res.answers[0].type, Packet.TYPE.CNAME);
+      assert.strictEqual(res.answers[0].domain, 'core3.external.com');
+    });
   });
 
   // --- Cluster discovery ---
@@ -296,6 +321,14 @@ describe('[DNS] DNS Server', function () {
       const records = await resolver.resolveCname(`core-cname.${TEST_DOMAIN}`);
       assert.strictEqual(records.length, 1);
       assert.strictEqual(records[0], 'core3.external.com');
+    });
+
+    it('[DN38] a CNAME-only core answers the CNAME for TXT and AAAA', async () => {
+      for (const type of ['TXT', 'AAAA']) {
+        const res = await rawQuery(port, `core-cname.${TEST_DOMAIN}`, type);
+        assert.strictEqual(res.answers.length, 1, type);
+        assert.strictEqual(res.answers[0].type, Packet.TYPE.CNAME, type);
+      }
     });
 
     it('[DN37] coreId branch must not shadow operator-provided staticEntries', async () => {
