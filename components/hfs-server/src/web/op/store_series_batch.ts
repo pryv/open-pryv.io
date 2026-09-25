@@ -13,12 +13,13 @@ const errors = require('errors').factory;
 const business = require('business');
 const BatchRequest = business.series.BatchRequest;
 const ApiConstants = require('../api_constants.ts');
+const { requestClientIp } = require('../../metadata_cache.ts');
 const TracedOperations = require('./traced_operations.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 
 type HfsContext = {
   series: { makeBatch: (ns: string) => Promise<{ store: (data: unknown, nameResolver: (eventId: string) => Promise<string>) => Promise<unknown> }> };
-  metadata: { forSeries: (userName: string, eventId: string, accessToken: string) => Promise<SeriesMeta> };
+  metadata: { forSeries: (userName: string, eventId: string, accessToken: string, clientIp: string | null) => Promise<SeriesMeta> };
   metadataUpdater: { scheduleUpdate: (req: { entries: unknown[] }) => Promise<unknown> };
   typeRepository: unknown;
   childSpan: (name: string) => { finish (): void };
@@ -29,7 +30,7 @@ type SeriesMeta = {
   produceRowType (repo: unknown): unknown;
   namespaceAndName (): [string, string];
 };
-type ReqLike = { params: Record<string, string>; headers: HttpHeaders; body: unknown };
+type ReqLike = { params: Record<string, string>; headers: HttpHeaders; body: unknown; socket?: { remoteAddress?: string } };
 type ResLike = { status: (code: number) => { json: (b: unknown) => unknown } };
 type BatchRequestLike = {
   elements (): Iterable<{ eventId: string; data: { minmax (): unknown } }>;
@@ -47,7 +48,7 @@ async function storeSeriesBatch (ctx: HfsContext, req: ReqLike, res: ResLike) {
   if (accessToken == null) { throw errors.missingHeader(ApiConstants.AUTH_HEADER); }
   // Parse the data and resolve access rights and types.
   trace.start('parseData');
-  const resolver = new EventMetaDataCache(userName, accessToken!, ctx);
+  const resolver = new EventMetaDataCache(userName, accessToken!, ctx, requestClientIp(req));
   const data = await parseData(body, resolver) as BatchRequestLike;
   trace.finish('parseData');
   // Iterate over all separate namespaces and store the data:
@@ -108,10 +109,13 @@ class EventMetaDataCache {
   ctx: HfsContext;
 
   cache: InstanceType<typeof LRU>;
-  constructor (userName: string, accessToken: string, ctx: HfsContext) {
+  clientIp: string | null;
+
+  constructor (userName: string, accessToken: string, ctx: HfsContext, clientIp: string | null = null) {
     this.userName = userName;
     this.accessToken = accessToken;
     this.ctx = ctx;
+    this.clientIp = clientIp;
     this.cache = new LRU({ max: METADATA_CACHE_SIZE });
   }
 
@@ -140,7 +144,7 @@ class EventMetaDataCache {
   async getSeriesMeta (eventId: string): Promise<SeriesMeta> {
     const ctx = this.ctx;
     const loader = ctx.metadata;
-    return this.fromCacheOrProduce(eventId, () => loader.forSeries(this.userName, eventId, this.accessToken)) as Promise<SeriesMeta>;
+    return this.fromCacheOrProduce(eventId, () => loader.forSeries(this.userName, eventId, this.accessToken, this.clientIp)) as Promise<SeriesMeta>;
   }
 
   // Handles memoisation through the cache in `this.cache`.

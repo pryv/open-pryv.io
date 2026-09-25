@@ -89,7 +89,9 @@ class MetadataCache {
   }
 
   // cache logic
-  async forSeries (userName: string, eventId: string, accessToken: string) {
+  // `clientIp` is not part of the cache key: the cached value is the series
+  // metadata, which does not depend on who asks from where.
+  async forSeries (userName: string, eventId: string, accessToken: string, clientIp: string | null = null) {
     const cache = this.cache;
     const key = [userName, eventId, accessToken].join('/');
     // to make sure we update the tokenList "recently used info" cache we also get eventKey
@@ -102,7 +104,7 @@ class MetadataCache {
       logger.debug(`Using cached credentials for ${userName} / ${eventId}.`);
       return cachedValue;
     }
-    const newValue = await this.loader.forSeries(userName, eventId, accessToken);
+    const newValue = await this.loader.forSeries(userName, eventId, accessToken, clientIp);
     // new event we add it to the list
     if (cachedTokenListForEvent != null) {
       cache.set(eventKey, cachedTokenListForEvent.concat(accessToken));
@@ -131,15 +133,13 @@ class MetadataLoader {
     this.storage = await storage.getStorageLayer();
   }
 
-  forSeries (userName: string, eventId: string, accessToken: string) {
+  forSeries (userName: string, eventId: string, accessToken: string, clientIp: string | null = null) {
     const storage = this.storage;
     const mall = this.mall;
-    // Retrieve Access (including accessLogic)
-    const contextSource = {
-      name: 'hf',
-      // TODO(B-2026-05-27-9, 2026-05-27): pass real client IP from express req — currently emits literal 'TODO' into audit context
-      ip: 'TODO'
-    };
+    // Retrieve Access (including accessLogic). The source ip is left out
+    // when the caller has no request to take it from.
+    const contextSource: { name: string; ip?: string } = { name: 'hf' };
+    if (clientIp != null) contextSource.ip = clientIp;
     const customAuthStep = null;
     const methodContext = new MethodContext(contextSource, userName, accessToken, customAuthStep);
     return fromCallback(async (returnValueCallback: (err: unknown, value?: unknown) => void) => {
@@ -255,7 +255,19 @@ async function definePermissions (access: AccessModel, event: EventModel) {
     return permissions.write === true && permissions.read === true;
   }
 }
-export { MetadataLoader, MetadataCache };
+/**
+ * Client ip of an HF request, taken the same way the API server's method
+ * context takes it: the `X-Forwarded-For` header set by the front proxy,
+ * else the socket peer address.
+ */
+function requestClientIp (req: { headers: Record<string, unknown>; socket?: { remoteAddress?: string } }): string | null {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff !== '') return xff;
+  if (Array.isArray(xff) && xff.length > 0) return String(xff[0]);
+  return req.socket?.remoteAddress ?? null;
+}
+
+export { MetadataLoader, MetadataCache, requestClientIp };
 
 type UsernameEvent = {
   username: string;

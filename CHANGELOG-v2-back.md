@@ -8,6 +8,15 @@ the built-in exclusions (the wildcard-read exclusions and, for a non-personal to
 account and emails roots were both added, so `:_emails:` appeared twice). Every merge now
 appends only the ids not already present. Results are unchanged; the expanded query is
 simply duplicate-free for the storage layer. Unit tests `[EGDU]`.
+## HF series: the method context carries the real client ip
+
+The HF series server built the method context that resolves the access with a literal
+placeholder (`ip: 'TODO'`) as its source ip. Store, query and batch operations now pass the
+requesting client's ip, taken the way the API server takes it (the `X-Forwarded-For` header
+set by the front proxy, else the socket peer address); when no ip is known the field is
+left out rather than filled with a placeholder. The series metadata cache key is unchanged.
+No HF-series audit record is written today, so nothing recorded so far carries the
+placeholder; this readies the context for when one is. Tests `[HFIP]`.
 
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
