@@ -343,6 +343,14 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
   next();
 }
 /**
+ * Append the ids not already present in `target` (in place, order preserved).
+ */
+function pushUnique<T> (target: T[], ids: readonly T[]): void {
+  for (const id of ids) {
+    if (!target.includes(id)) target.push(id);
+  }
+}
+/**
  * Add "forced" and "none" events from permissions
  */
 function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
@@ -352,8 +360,8 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     const forcedStreamIds = context.access.getForcedStreamsGetEventsStreamIds(streamQuery.storeId);
     if (forcedStreamIds?.length > 0) {
       if (streamQuery.all == null) { streamQuery.all = []; }
-      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forced ids
-      streamQuery.all.push(...forcedStreamIds);
+      // caller-supplied ids may already name some forced ids
+      pushUnique(streamQuery.all, forcedStreamIds);
     }
     // One-time shared secrets never answer a wildcard query — they surface only
     // when their stream is named explicitly. A broad "give me everything" should
@@ -389,8 +397,8 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     const forbiddenStreamIds = context.access.getForbiddenGetEventsStreamIds(streamQuery.storeId);
     if (forbiddenStreamIds?.length > 0) {
       if (streamQuery.not == null) { streamQuery.not = []; }
-      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forbidden ids
-      streamQuery.not.push(...forbiddenStreamIds);
+      // caller-supplied ids (or the wildcard exclusions above) may already name some forbidden ids
+      pushUnique(streamQuery.not, forbiddenStreamIds);
     }
     // For non-personal local store queries, exclude account streams root.
     // Account events physically live in local MongoDB but are gated by
