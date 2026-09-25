@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### MFA: the per-account limit is a backoff, not a lockout (security)
+
+Replaces the per-account lockout introduced in 2.0.0-rc.16 ("MFA: per-account
+failed-attempt limit"). That lockout let anyone holding a user's password lock the
+user's second factor for `lockoutSeconds`, renewable indefinitely. Failures still accrue
+per account across logins, but past `services.mfa.attempts.backoff.freeFailures` (default
+5) failures within `perAccountWindowSeconds`, each further failure only delays the NEXT
+attempt: `baseSeconds` (default 2), doubling up to `maxSeconds` (default 300). The real
+user therefore waits at most `maxSeconds` even while under attack, and a successful
+second factor clears the tally.
+
+- During a delay, `mfa.verify`, `mfa.confirm` and `mfa.challenge` answer `429
+  too-many-attempts` with a `Retry-After` header and `error.data.retryAfterSeconds` (for
+  browsers that cannot read the header cross-origin); a code sent during the delay is
+  neither checked nor counted.
+- The failing guess itself is answered as before (`400`, or `401` when the per-session
+  ceiling invalidates the session); only the following attempt is delayed.
+- `services.mfa.attempts.perAccount` and `services.mfa.attempts.lockoutSeconds` are no
+  longer read (a boot warning names them when present). `backoff.maxSeconds: 0` disables
+  the per-account backoff. A tally stored by the former lockout is carried over and its
+  lock is not honoured.
+- `mfa.recover` stays exempt, and still clears the tally.
+
+### MFA: a TOTP code is consumed atomically (security)
+
+The replay guard now consumes the accepted time step with one conditional storage write
+(the enrolment is unchanged and the stored step is still below the accepted one). Two
+verifications of the same code arriving at the same time, on different sessions or
+different API workers, release exactly one token; the other is answered like a wrong code.
+A code for an earlier step inside the drift window is refused once a later step was used.
+
+### MFA settings are checked at boot
+
+`services.mfa` settings that cannot work now refuse the boot with a message naming the key,
+instead of failing each request: an unknown `mode`; a `defaultMethod` that is not an active
+method; a `methods.totp.secretsKey` that is not the base64 of 32 bytes; TOTP `digits`
+outside 6-8, `periodSeconds` below 1 or `driftSteps` outside 0-10; an active SMS method
+with an unknown mode or without the endpoint urls its mode needs; `sessions.ttlSeconds`
+below 1. Removed or invalid `attempts` values and a legacy SMS-only `mode` in effect are
+reported as boot warnings and never refuse the boot. `bin/check-config.js` runs the same
+check on an override file (merged over the shipped defaults).
+
 ### New accounts get the CMC reserved streams at creation
 
 The reserved `:_cmc:` stream tree (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps` and the

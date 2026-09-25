@@ -312,6 +312,16 @@ function checkEmailVerificationGate (config, problems) {
   });
 }
 
+// MFA settings that cannot work refuse the boot here, where the message is
+// clear; the login-path normalizer stays non-throwing so a typo never bricks
+// logins.
+function checkMfaConfig (config, problems) {
+  const { describeMfaConfig } = require('../../components/business/src/mfa/configCheck.ts');
+  for (const p of describeMfaConfig(config.get('services:mfa')).problems) {
+    problems.push({ message: 'MFA: ' + p.message, path: p.path, payload: {} });
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -335,6 +345,7 @@ async function validate (config) {
   checkPlatformEngineTopology(config, problems);
   checkSsoConfig(config, problems);
   checkEmailVerificationGate(config, problems);
+  checkMfaConfig(config, problems);
 
   return problems;
 }
@@ -442,6 +453,8 @@ function collectWarnings (config) {
       'Set the missing keys (the page is the /verify-email route of your auth UI), or set ' +
       "'services.email.enabled.verifyEmail: false' to turn the feature off explicitly.");
   }
+  const { describeMfaConfig } = require('../../components/business/src/mfa/configCheck.ts');
+  warnings.push(...describeMfaConfig(config.get('services:mfa')).warnings);
   return warnings;
 }
 
@@ -467,6 +480,7 @@ module.exports = {
   checkPlatformEngineTopology,
   checkSsoConfig,
   checkEmailVerificationGate,
+  checkMfaConfig,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES
