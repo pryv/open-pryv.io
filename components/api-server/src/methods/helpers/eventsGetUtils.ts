@@ -343,6 +343,14 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
   next();
 }
 /**
+ * Append the ids not already present in `target` (in place, order preserved).
+ */
+function pushUnique<T> (target: T[], ids: readonly T[]): void {
+  for (const id of ids) {
+    if (!target.includes(id)) target.push(id);
+  }
+}
+/**
  * Add "forced" and "none" events from permissions
  */
 function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
@@ -352,8 +360,8 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     const forcedStreamIds = context.access.getForcedStreamsGetEventsStreamIds(streamQuery.storeId);
     if (forcedStreamIds?.length > 0) {
       if (streamQuery.all == null) { streamQuery.all = []; }
-      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forced ids
-      streamQuery.all.push(...forcedStreamIds);
+      // caller-supplied ids may already name some forced ids
+      pushUnique(streamQuery.all, forcedStreamIds);
     }
     // One-time shared secrets never answer a wildcard query — they surface only
     // when their stream is named explicitly. A broad "give me everything" should
@@ -367,12 +375,12 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     if (streamQuery.storeId === storeDataUtils.LocalStoreId &&
         streamQuery.any != null && streamQuery.any.includes('*')) {
       if (streamQuery.not == null) { streamQuery.not = []; }
-      streamQuery.not.push(SHARED_SECRETS_NS_ROOT);
+      pushUnique(streamQuery.not, [SHARED_SECRETS_NS_ROOT]);
       // The multiple-emails container is kept out of wildcard queries for the
       // same reason: it surfaces only when its stream is named explicitly, and
       // its verified/pending status must never leak into a "give me everything"
       // sweep. Personal tokens read it by naming :_emails: directly.
-      streamQuery.not.push(EMAILS_NS_ROOT);
+      pushUnique(streamQuery.not, [EMAILS_NS_ROOT]);
       // Hidden plugin-internal subtrees never answer a wildcard read. A `*`
       // survives here for a personal token (or any token granted `*` read), and
       // the account-scoped exclusions below do NOT cover these plugin roots — so
@@ -381,16 +389,15 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
       // The plugins reach their own subtrees via the data-access layer, so this
       // narrows only the client-facing `*` expansion. Named/direct reads are
       // closed by the per-plugin internal read guards.
-      streamQuery.not.push(DELEGATION_INTERNAL_NS_ROOT);
-      streamQuery.not.push(CMC_INTERNAL_NS_ROOT);
+      pushUnique(streamQuery.not, [DELEGATION_INTERNAL_NS_ROOT, CMC_INTERNAL_NS_ROOT]);
     }
 
     // ------------- NOT ------------- //
     const forbiddenStreamIds = context.access.getForbiddenGetEventsStreamIds(streamQuery.storeId);
     if (forbiddenStreamIds?.length > 0) {
       if (streamQuery.not == null) { streamQuery.not = []; }
-      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forbidden ids
-      streamQuery.not.push(...forbiddenStreamIds);
+      // caller-supplied ids (or the wildcard exclusions above) may already name some forbidden ids
+      pushUnique(streamQuery.not, forbiddenStreamIds);
     }
     // For non-personal local store queries, exclude account streams root.
     // Account events physically live in local MongoDB but are gated by
@@ -398,12 +405,11 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     // stream expansion to exclude all children.
     if (streamQuery.storeId === storeDataUtils.LocalStoreId && !context.access.isPersonal()) {
       if (streamQuery.not == null) { streamQuery.not = []; }
-      streamQuery.not.push(accountStreams.STREAM_ID_ACCOUNT);
       // The emails container is account PII (addresses + verification state).
       // Like the account root, a non-personal token must never read it — not
       // even by naming :_emails: explicitly (the wildcard exclusion above only
       // covers `any:['*']`). Personal tokens keep their explicit-name access.
-      streamQuery.not.push(EMAILS_NS_ROOT);
+      pushUnique(streamQuery.not, [accountStreams.STREAM_ID_ACCOUNT, EMAILS_NS_ROOT]);
     }
   }
   next();
