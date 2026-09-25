@@ -439,6 +439,11 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
           conds.push(`(json_type(data, ${p}) IS NULL OR json_type(data, ${p}) = 'null')`);
         }
       }
+      // Same contract as the PostgreSQL engine: a set's parent must already be
+      // an object, so `true` always means written.
+      for (const s of sets) {
+        conds.push(`json_type(data, ${jsonPathSql(s.path.slice(0, -1))}) = 'object'`);
+      }
       sql = `UPDATE ${this.tableName} SET data = json_set(data, ${setArgs.join(', ')}) ${conds.join(' AND ')}`;
       params = [...setParams, ...whereParams, ...guardParams];
     } catch (err) {

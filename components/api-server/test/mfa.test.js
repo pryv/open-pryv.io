@@ -664,19 +664,28 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       });
 
       it('[MA11F] five failed verifies invalidate the MFA session', async function () {
-        const loginRes = await login();
-        const token = loginRes.body.mfaToken;
-        for (let i = 0; i < 4; i++) {
-          const r = await coreRequest
+        // The per-session ceiling alone: with the default backoff (3 free
+        // failures) the 5th attempt would already be delayed (see [MA12D]).
+        const restore = injectTestConfigSnapshot({
+          services: { mfa: { ...totpTestConfig.services.mfa, attempts: { backoff: { maxSeconds: 0 } } } }
+        });
+        try {
+          const loginRes = await login();
+          const token = loginRes.body.mfaToken;
+          for (let i = 0; i < 4; i++) {
+            const r = await coreRequest
+              .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+            assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+          }
+          const fifth = await coreRequest
             .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
-          assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+          assert.strictEqual(fifth.status, 401, 'the 5th failure should invalidate the session');
+          const after = await coreRequest
+            .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
+          assert.strictEqual(after.status, 401);
+        } finally {
+          restore();
         }
-        const fifth = await coreRequest
-          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
-        assert.strictEqual(fifth.status, 401, 'the 5th failure should invalidate the session');
-        const after = await coreRequest
-          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
-        assert.strictEqual(after.status, 401);
       });
 
       it('[MA11G] a code consumed by one login session cannot be replayed on another concurrent session', async function () {
@@ -715,8 +724,11 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
       it('[MA11I] once a later step is consumed, an earlier in-drift code is refused', async function () {
         const later = await login();
-        const laterStep = Math.floor(Date.now() / 30000) + 1;
-        const laterCode = totpCodeFor(secret, 1);
+        // Step and code from the same instant, so a step boundary between two
+        // clock reads cannot make them disagree.
+        const nowSec = Math.floor(Date.now() / 1000);
+        const laterStep = Math.floor(nowSec / 30) + 1;
+        const laterCode = totpCode(base32Decode(secret), { time: nowSec + 30, periodSeconds: 30, digits: 6 });
         const vLater = await coreRequest
           .post(`/${username}/mfa/verify`).set('Authorization', later.body.mfaToken).send({ code: laterCode });
         assert.strictEqual(vLater.status, 200, `a code one step ahead is inside the drift window: ${JSON.stringify(vLater.body)}`);
@@ -935,6 +947,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
             await sleep(lastDelay * 1000 + 100);
             continue;
           }
+          assert.ok(res.status === 400 || res.status === 401, `a verified wrong guess: ${res.status} ${JSON.stringify(res.body)}`);
           failures++;
         }
         const refused = await guessOnFreshLogin(totpCodeFor(secret, 0));

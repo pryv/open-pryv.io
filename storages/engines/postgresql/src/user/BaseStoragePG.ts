@@ -537,6 +537,15 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
           conds.push(`(${col} #> ${p}::text[] IS NULL OR jsonb_typeof(${col} #> ${p}::text[]) = 'null')`);
         }
       }
+      // jsonb_set writes nothing when a set's parent is not an object, while the
+      // row still counts as matched: require the parent, so `true` means written.
+      for (const s of sets) {
+        const col = jsonCol(s.path);
+        const parent = s.path.slice(1, -1);
+        conds.push(parent.length === 0
+          ? `jsonb_typeof(COALESCE(${col}, '{}'::jsonb)) = 'object'`
+          : `jsonb_typeof(${col} #> ${bind(parent)}::text[]) = 'object'`);
+      }
       sql = `UPDATE ${this.tableName} SET ${setSql} ${conds.join(' AND ')}`;
     } catch (err) {
       return callback(err as Error);

@@ -91,6 +91,14 @@ describe('[PCAS] UserStorage.compareAndSetJson (profile)', function () {
     assert.strictEqual((await read()).mfa.totp.lastUsedStep, 10);
   });
 
+  it('[PCS8] a set whose parent is missing or not an object writes nothing and answers false', async function () {
+    assert.strictEqual(await cas([{ path: LAST, lt: 1e9 }], [{ path: ['data', 'nope', 'x'], value: 1 }]), false);
+    assert.strictEqual(await cas([{ path: LAST, lt: 1e9 }], [{ path: ['data', 'keep', 'x'], value: 1 }]), false);
+    const data = await read();
+    assert.strictEqual(data.nope, undefined);
+    assert.strictEqual(data.keep, 'me');
+  });
+
   it('[PCS7] rejects malformed calls before touching the item', async function () {
     const bad = [
       [[{ path: ['data', "x'; --"], eq: 1 }], [{ path: LAST, value: 1 }]],

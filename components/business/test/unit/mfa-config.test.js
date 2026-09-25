@@ -90,7 +90,7 @@ describe('[MNORM] normalizeMfaConfig', function () {
   const ATTEMPTS_DEFAULTS = {
     perSession: 5,
     perAccountWindowSeconds: 900,
-    backoff: { freeFailures: 5, baseSeconds: 2, maxSeconds: 300 }
+    backoff: { freeFailures: 3, baseSeconds: 2, maxSeconds: 300 }
   };
 
   it('[MNORM10] N1: the attempts block gets its defaults when absent', function () {
@@ -112,7 +112,7 @@ describe('[MNORM] normalizeMfaConfig', function () {
     // 0 is meaningful: it disables the per-account backoff.
     const off = normalizeMfaConfig({ active: true, attempts: { backoff: { maxSeconds: 0 } } });
     assert.strictEqual(off.attempts.backoff.maxSeconds, 0);
-    assert.strictEqual(off.attempts.backoff.freeFailures, 5, 'other fields keep their defaults');
+    assert.strictEqual(off.attempts.backoff.freeFailures, 3, 'other fields keep their defaults');
     assert.strictEqual(off.attempts.perSession, 5);
 
     // A negative / NaN / non-numeric field must not weaken anything silently.

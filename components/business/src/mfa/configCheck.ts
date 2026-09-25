@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { normalizeMfaConfig } from './index.ts';
+import { normalizeMfaConfig, normalizeAttempts } from './index.ts';
 
 /**
  * Boot-time check of `services.mfa`. The MFA normalizer on the login path
@@ -47,7 +47,14 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
     const methods = obj(cfg.methods);
     const def = cfg.defaultMethod;
     if (!legacyMode && (typeof def !== 'string' || obj(methods[def]).active !== true)) {
-      problems.push({ message: `defaultMethod "${def}" is not an active MFA method (active: ${Object.keys(methods).filter((m) => obj(methods[m]).active === true).join(', ') || 'none'}); mfa.activate without an explicit method would always fail.`, path: [...base, 'defaultMethod'] });
+      const activeList = Object.keys(methods).filter((m) => obj(methods[m]).active === true).join(', ') || 'none';
+      if (typeof raw.defaultMethod === 'string') {
+        problems.push({ message: `defaultMethod "${def}" is not an active MFA method (active: ${activeList}); mfa.activate without an explicit method would always fail.`, path: [...base, 'defaultMethod'] });
+      } else {
+        // Not set by the operator: the implicit "totp" is inactive here. Clients
+        // naming their method still work, so warn rather than refuse.
+        warnings.push(`services.mfa.defaultMethod is not set and its implicit value "${def}" is not an active method (active: ${activeList}): mfa.activate without an explicit method fails. Set defaultMethod.`);
+      }
     }
 
     const totp = obj(methods.totp);
@@ -115,6 +122,14 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
     warnings.push(`services.mfa.attempts.backoff = ${JSON.stringify(attempts.backoff)} is not a mapping; the defaults are used.`);
   }
   invalid(obj(attempts.backoff), ['freeFailures', 'baseSeconds', 'maxSeconds'], 'services.mfa.attempts.backoff');
+  // Combinations that silently weaken the backoff (read after normalization).
+  const eff = normalizeAttempts(obj(raw.attempts));
+  if (eff.backoff.maxSeconds > 0 && eff.backoff.baseSeconds === 0) {
+    warnings.push('services.mfa.attempts.backoff.baseSeconds is 0 while maxSeconds is not: every delay is 0, so the per-account backoff is off. Set maxSeconds: 0 to say so, or a baseSeconds above 0.');
+  }
+  if (eff.backoff.maxSeconds > eff.perAccountWindowSeconds) {
+    warnings.push(`services.mfa.attempts.backoff.maxSeconds (${eff.backoff.maxSeconds}) exceeds perAccountWindowSeconds (${eff.perAccountWindowSeconds}): the tally lapses first, so every delay is cut short at perAccountWindowSeconds.`);
+  }
 
   return { problems, warnings };
 }

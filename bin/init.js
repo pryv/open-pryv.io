@@ -671,8 +671,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #     attempts:                  # failed second-factor limits
 # #       perSession: 5            # wrong codes allowed in one pending MFA session
 # #       perAccountWindowSeconds: 900  # a failure older than this starts the tally afresh
-# #       backoff:                 # per-account delay, never a lockout
-# #         freeFailures: 5        # failures before any delay
+# #       backoff:                 # per-account delay, never a lockout (platform-wide)
+# #         freeFailures: 3        # failures before any delay
 # #         baseSeconds: 2         # first delay, doubling on each further failure
 # #         maxSeconds: 300        # cap (0 disables the per-account backoff)
 

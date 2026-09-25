@@ -206,13 +206,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           if ((err as { isDuplicate?: boolean }).isDuplicate) continue;
           throw err;
         }
+      } else if (stored != null && typeof stored.failures !== 'number' && typeof stored.count !== 'number') {
+        // An unreadable leftover offers nothing to guard on: replace it outright.
+        await fromCallback((cb: Cb<unknown>) =>
+          userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfaThrottle: next } }, cb));
       } else {
         // Guard on exactly what was read: nothing, or the same stored count.
-        let guard;
-        if (stored == null) guard = { path: T, absent: true };
-        else if (typeof stored.failures === 'number') guard = { path: [...T, 'failures'], eq: stored.failures };
-        else if (typeof stored.count === 'number') guard = { path: [...T, 'count'], eq: stored.count };
-        else guard = { path: [...T, 'lastFailureAt'], absent: true }; // unreadable leftover: replace it once
+        const guard = stored == null
+          ? { path: T, absent: true as const }
+          : typeof stored.failures === 'number'
+            ? { path: [...T, 'failures'], eq: stored.failures }
+            : { path: [...T, 'count'], eq: stored.count as number };
         const written = await fromCallback((cb: Cb<boolean>) =>
           userProfileStorage.compareAndSetJson(user, { id: PROFILE_ID }, [guard], [{ path: T, value: next }], cb));
         if (!written) continue;
@@ -226,6 +230,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       }
       return;
     }
+    mfaLogger.warn(`MFA failure for user "${user.username}" not counted: lost the race to concurrent failures 10 times in a row.`);
   }
 
   /**

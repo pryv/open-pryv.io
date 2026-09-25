@@ -85,7 +85,7 @@ type RawMfaConfig = MFAConfig & {
 };
 
 const BACKOFF_DEFAULTS: BackoffCfg = {
-  freeFailures: 5,
+  freeFailures: 3,
   baseSeconds: 2,
   maxSeconds: 300
 };
@@ -346,6 +346,6 @@ async function _resetMFASingletons (): Promise<void> {
   _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
 export type { AttemptsCfg, BackoffCfg };
 export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';

@@ -8,10 +8,11 @@ Replaces the per-account lockout introduced in 2.0.0-rc.16 ("MFA: per-account
 failed-attempt limit"). That lockout let anyone holding a user's password lock the
 user's second factor for `lockoutSeconds`, renewable indefinitely. Failures still accrue
 per account across logins, but past `services.mfa.attempts.backoff.freeFailures` (default
-5) failures within `perAccountWindowSeconds`, each further failure only delays the NEXT
+3) failures within `perAccountWindowSeconds`, each further failure only delays the NEXT
 attempt: `baseSeconds` (default 2), doubling up to `maxSeconds` (default 300). The real
 user therefore waits at most `maxSeconds` even while under attack, and a successful
-second factor clears the tally.
+second factor clears the tally. The `attempts` block is platform-wide policy: set the same
+values on every core.
 
 - During a delay, `mfa.verify`, `mfa.confirm` and `mfa.challenge` answer `429
   too-many-attempts` with a `Retry-After` header and `error.data.retryAfterSeconds` (for
@@ -37,11 +38,13 @@ A code for an earlier step inside the drift window is refused once a later step 
 
 `services.mfa` settings that cannot work now refuse the boot with a message naming the key,
 instead of failing each request: an unknown `mode`; a `defaultMethod` that is not an active
-method; a `methods.totp.secretsKey` that is not the base64 of 32 bytes; TOTP `digits`
-outside 6-8, `periodSeconds` below 1 or `driftSteps` outside 0-10; an active SMS method
-with an unknown mode or without the endpoint urls its mode needs; `sessions.ttlSeconds`
-below 1. Removed or invalid `attempts` values and a legacy SMS-only `mode` in effect are
-reported as boot warnings and never refuse the boot. `bin/check-config.js` runs the same
+method set explicitly; a `methods.totp.secretsKey` that is not the base64 of 32 bytes;
+TOTP `digits` outside 6-8, `periodSeconds` outside 1-3600 or `driftSteps` outside 0-10;
+an active SMS method with an unknown mode or without the endpoint urls its mode needs;
+`sessions.ttlSeconds` below 1. Boot warnings, which never refuse the boot: removed or
+invalid `attempts` values, backoff settings that silently weaken it (`baseSeconds: 0`, or
+`maxSeconds` above `perAccountWindowSeconds`), an unset `defaultMethod` whose implicit
+`totp` is inactive, and a legacy SMS-only `mode` in effect. `bin/check-config.js` runs the same
 check on an override file (merged over the shipped defaults).
 
 ### New accounts get the CMC reserved streams at creation

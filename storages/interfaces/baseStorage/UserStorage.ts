@@ -40,7 +40,8 @@ export interface UserStorage<T extends StoredItem = StoredItem> {
   /**
    * Conditional update of JSON values inside ONE item, atomic across processes:
    * the sets are applied only if every guard holds, in a single statement.
-   * `query` must select at most one item. Calls back `true` when the item
+   * `query` must select at most one item: a query matching several would
+   * write them all and still answer false. Calls back `true` when the item
    * matched and was written. Contract: interfaces/_shared/jsonPath.ts.
    */
   compareAndSetJson (userOrUserId: UserOrId, query: Query, guards: JsonGuard[], sets: JsonSet[], callback: Callback<boolean>): void;

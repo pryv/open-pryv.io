@@ -40,9 +40,18 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.mode = 'bogus'; })), ['services.mfa.mode']);
   });
 
-  it('[MCHK3] a defaultMethod that is unknown or inactive is a problem', function () {
+  it('[MCHK3] an explicit defaultMethod that is unknown or inactive is a problem; an implicit one only warns', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.defaultMethod = 'sms'; })), ['services.mfa.defaultMethod']);
     assert.deepStrictEqual(paths(withChange((c) => { c.defaultMethod = 'push'; })), ['services.mfa.defaultMethod']);
+    // SMS-only modern config that never set defaultMethod: the implicit "totp" is inactive.
+    const implicit = withChange((c) => {
+      delete c.defaultMethod;
+      c.methods.totp.active = false;
+      c.methods.sms.active = true;
+      c.sms.endpoints.single.url = 'https://sms.example/s';
+    });
+    assert.deepStrictEqual(implicit.problems, []);
+    assert.match(implicit.warnings.join(' '), /defaultMethod is not set/);
   });
 
   it('[MCHK4] a secretsKey that is not 32 bytes of base64 is a problem; a valid one is not', function () {
@@ -89,6 +98,12 @@ describe('[MCHK] describeMfaConfig', function () {
     const notMapping = withChange((c) => { c.attempts.backoff = 'fast'; });
     assert.match(notMapping.warnings.join(' '), /not a mapping/);
     assert.deepStrictEqual(withChange((c) => { c.attempts.backoff = {}; }).warnings, []);
+  });
+
+  it('[MCHK10] backoff combinations that silently weaken it warn', function () {
+    assert.match(withChange((c) => { c.attempts.backoff.baseSeconds = 0; }).warnings.join(' '), /baseSeconds is 0/);
+    assert.match(withChange((c) => { c.attempts.backoff.maxSeconds = 1200; }).warnings.join(' '), /exceeds perAccountWindowSeconds/);
+    assert.deepStrictEqual(withChange((c) => { c.attempts.backoff.baseSeconds = 0; c.attempts.backoff.maxSeconds = 0; }).warnings, []);
   });
 
   it('[MCHK9] sessions.ttlSeconds below 1 is a problem', function () {

@@ -23,8 +23,9 @@
 export type JsonGuard = { path: string[]; eq?: string | number; lt?: number; absent?: true };
 
 /**
- * One write. `value` is any JSON value. Intermediate objects are NOT created:
- * write a whole sub-object when its parent may be missing.
+ * One write. `value` is any JSON value. The parent of the path must already be
+ * an object, else the call writes nothing and answers false (it acts as an
+ * implicit guard): write a whole sub-object when its parent may be missing.
  */
 export type JsonSet = { path: string[]; value: unknown };
 

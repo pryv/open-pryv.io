@@ -183,7 +183,8 @@ services:
   #     selector, still honored via an in-memory shim that maps it onto
   #     methods.sms. Existing deployments need no change.
   # Category: MIXED. Method policy (active/defaultMethod/methods.*.active +
-  # TOTP digits/period/drift/issuer) is PLATFORM-WIDE (identical across cores).
+  # TOTP digits/period/drift/issuer) and the failed-attempt policy (`attempts`)
+  # are PLATFORM-WIDE (identical across cores).
   # `methods.totp.secretsKey` and SMS endpoint headers are SECRET-grade:
   # YAML-only, never PlatformDB, operator-sync responsibility.
   mfa:
@@ -241,11 +242,14 @@ services:
     # most maxSeconds even under attack, and a success clears the tally. A
     # failure older than `perAccountWindowSeconds` starts the tally afresh. Set
     # backoff.maxSeconds: 0 to disable it, e.g. when throttling at the edge.
+    # PLATFORM-WIDE: set the same values on every core (a user's failures are
+    # counted on their home core, so differing values would give users on
+    # different cores different policies).
     attempts:
       perSession: 5
       perAccountWindowSeconds: 900
       backoff:
-        freeFailures: 5
+        freeFailures: 3
         baseSeconds: 2
         maxSeconds: 300
 
