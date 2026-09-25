@@ -29,6 +29,13 @@ tests `[UAX1]` (round trip) and `[UAX2]` (legacy export) run on both engines.
 `README-DBs.md` no longer claims that SQLite has no `seriesStorage` (it has had one, as a
 per-user `series-<version>.sqlite` file), and its user-account-storage section points at the
 engine implementations instead of a file that no longer exists.
+## SQLite events store: the storage-infos count is awaited
+
+The per-user database contract lets `countEvents` return a value or a promise, and
+consumers must await it. The SQLite events store's storage-infos method did not, which is
+harmless while the SQLite database answers synchronously but would report a pending
+promise as the event count the moment it does not. The call is now awaited and the local
+type admits both shapes, so dropping the `await` again is a type error. Tests `[SQSI]`.
 
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
