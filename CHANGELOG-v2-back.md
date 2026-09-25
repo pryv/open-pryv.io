@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Storage: `UserStorage.compareAndSetJson`, an atomic conditional update of JSON values
+
+New method on every user-scoped collection (PostgreSQL and SQLite): the given JSON values
+of ONE item are written only if every guard holds (`eq`, `lt` on a number, `absent`), in a
+single statement, so two callers racing on the same guard cannot both pass, whichever
+process they run in (PostgreSQL re-checks the WHERE after taking the row lock; SQLite runs
+the statement under its write lock). Paths are validated before any SQL is built (2 to 6
+segments of `[A-Za-z0-9_-]`, the first naming a JSON field), and each written path's
+parent must already be an object, so `true` always means written. The MFA replay guard and the
+per-account failure tally use it. Tests `[PCS1]`-`[PCS7]` (storage component, both
+engines); a read-then-write variant of the same race lets 11 to 12 of 12 callers through
+where this lets exactly one.
+
 ## bin/init.js: scripted installs (`--config-from`, `--non-interactive`, `--dry-run`, `--force`)
 
 The install wizard can now run unattended. `--config-from=<file>` reads answers from a

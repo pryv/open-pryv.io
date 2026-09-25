@@ -59,11 +59,15 @@ function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceL
 // ----------------------------------------------------------------------
 
 type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; [k: string]: unknown };
+type BackoffCfg = {
+  freeFailures: number;
+  baseSeconds: number;
+  maxSeconds: number;
+};
 type AttemptsCfg = {
   perSession: number;
-  perAccount: number;
   perAccountWindowSeconds: number;
-  lockoutSeconds: number;
+  backoff: BackoffCfg;
 };
 type NormalizedMfaConfig = {
   active: boolean;
@@ -77,37 +81,63 @@ type RawMfaConfig = MFAConfig & {
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
   sms?: { endpoints?: Record<string, unknown> };
-  attempts?: Partial<Record<keyof AttemptsCfg, unknown>>;
+  attempts?: Record<string, unknown>;
 };
 
-const ATTEMPTS_DEFAULTS: AttemptsCfg = {
+const BACKOFF_DEFAULTS: BackoffCfg = {
+  freeFailures: 3,
+  baseSeconds: 2,
+  maxSeconds: 300
+};
+const ATTEMPTS_DEFAULTS = {
   perSession: 5,
-  perAccount: 20,
-  perAccountWindowSeconds: 900,
-  lockoutSeconds: 900
+  perAccountWindowSeconds: 900
 };
 
 /**
- * Normalize the `services.mfa.attempts` block. Each field falls back to its
- * default when absent or not a non-negative number, so a config typo weakens
- * nothing silently and cannot brick the login path. `perAccount: 0` is
- * meaningful and preserved: it disables the per-account limiter, leaving only
- * the per-session ceiling (the escape hatch for deployments that throttle at
- * the edge instead).
+ * Copy the non-negative integer values of `raw` over `defaults`. `null`,
+ * absent and '' mean "not configured" and keep the default: coercing them
+ * would yield 0, which DISABLES what it governs rather than weakening nothing,
+ * so an unset key must never reach Number(). Anything else invalid also keeps
+ * the default, so a config typo cannot brick the login path.
  */
-function normalizeAttempts (raw: RawMfaConfig['attempts']): AttemptsCfg {
-  const out = { ...ATTEMPTS_DEFAULTS };
-  for (const key of Object.keys(ATTEMPTS_DEFAULTS) as Array<keyof AttemptsCfg>) {
-    const value = raw?.[key];
-    // `null` / absent / '' mean "not configured" and must fall back to the
-    // default. Coercing them would yield 0, which silently DISABLES the limit
-    // it governs (a zero lockout, or a zero window) rather than weakening
-    // nothing, so an unset key must never reach Number().
+function mergeCounts<T extends Record<string, number>> (defaults: T, raw: unknown): T {
+  const out = { ...defaults };
+  const src = (raw != null && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  for (const key of Object.keys(defaults) as Array<keyof T & string>) {
+    const value = src[key];
     if (value == null || value === '') continue;
     const n = Number(value);
-    if (Number.isFinite(n) && n >= 0) out[key] = Math.floor(n);
+    if (Number.isFinite(n) && n >= 0) out[key] = Math.floor(n) as T[typeof key];
   }
   return out;
+}
+
+/**
+ * Normalize the `services.mfa.attempts` block. `backoff.maxSeconds: 0` is
+ * meaningful and preserved: it disables the per-account backoff, leaving only
+ * the per-session ceiling (for deployments that throttle at the edge instead).
+ * The keys of the former per-account lockout (`perAccount`, `lockoutSeconds`)
+ * are no longer read; a boot warning reports them.
+ */
+function normalizeAttempts (raw: RawMfaConfig['attempts']): AttemptsCfg {
+  return {
+    ...mergeCounts(ATTEMPTS_DEFAULTS, raw),
+    backoff: mergeCounts(BACKOFF_DEFAULTS, raw?.backoff)
+  };
+}
+
+/**
+ * Delay, in seconds, imposed after the `failures`-th failed second factor of a
+ * user within the window: none for the first `freeFailures`, then
+ * `baseSeconds` doubling on each further failure, capped at `maxSeconds`.
+ * `maxSeconds: 0` disables it. A delay only ever postpones the next attempt;
+ * nothing locks the user out.
+ */
+function delayForFailures (failures: number, backoff: BackoffCfg): number {
+  if (backoff.maxSeconds === 0 || failures <= backoff.freeFailures) return 0;
+  const exponent = Math.min(failures - backoff.freeFailures - 1, 30);
+  return Math.min(backoff.baseSeconds * 2 ** exponent, backoff.maxSeconds);
 }
 
 let _warnedLegacyMode = false;
@@ -316,5 +346,6 @@ async function _resetMFASingletons (): Promise<void> {
   _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, getMFAMethod, getMFAMethodForProfile, SmsMethod };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
+export type { AttemptsCfg, BackoffCfg };
 export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';

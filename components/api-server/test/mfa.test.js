@@ -34,6 +34,8 @@ const { getConfig } = require('@pryv/boiler');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { _resetMFASingletons } = require('business/src/mfa/index.ts');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
+const { getUsersRepository } = require('business/src/users/index.ts');
+const storage = require('storage');
 const crypto = require('node:crypto');
 
 const SMS_HOST = 'http://sms-mock.local';
@@ -552,6 +554,14 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         .set('Origin', 'http://test.pryv.local')
         .send({ username, password, appId: 'pryv-test' });
     }
+    /** The stored private profile of the test user, read straight from storage. */
+    async function storedProfile () {
+      const user = await (await getUsersRepository()).getUserByUsername(username);
+      const profile = (await storage.getStorageLayer()).profile;
+      const item = await new Promise((resolve, reject) =>
+        profile.findOne(user, { id: 'private' }, null, (err, res) => err ? reject(err) : resolve(res)));
+      return { user, profile, data: item?.data };
+    }
 
     describe('[MA10E] enrolment', function () {
       it('[MA10A] activate(totp)+confirm returns an otpauth URI + secret, then recovery codes', async function () {
@@ -654,19 +664,28 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       });
 
       it('[MA11F] five failed verifies invalidate the MFA session', async function () {
-        const loginRes = await login();
-        const token = loginRes.body.mfaToken;
-        for (let i = 0; i < 4; i++) {
-          const r = await coreRequest
+        // The per-session ceiling alone: with the default backoff (3 free
+        // failures) the 5th attempt would already be delayed (see [MA12D]).
+        const restore = injectTestConfigSnapshot({
+          services: { mfa: { ...totpTestConfig.services.mfa, attempts: { backoff: { maxSeconds: 0 } } } }
+        });
+        try {
+          const loginRes = await login();
+          const token = loginRes.body.mfaToken;
+          for (let i = 0; i < 4; i++) {
+            const r = await coreRequest
+              .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
+            assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+          }
+          const fifth = await coreRequest
             .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
-          assert.strictEqual(r.status, 400, `attempt ${i + 1} should be 400`);
+          assert.strictEqual(fifth.status, 401, 'the 5th failure should invalidate the session');
+          const after = await coreRequest
+            .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
+          assert.strictEqual(after.status, 401);
+        } finally {
+          restore();
         }
-        const fifth = await coreRequest
-          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
-        assert.strictEqual(fifth.status, 401, 'the 5th failure should invalidate the session');
-        const after = await coreRequest
-          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
-        assert.strictEqual(after.status, 401);
       });
 
       it('[MA11G] a code consumed by one login session cannot be replayed on another concurrent session', async function () {
@@ -682,6 +701,43 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const vB = await coreRequest
           .post(`/${username}/mfa/verify`).set('Authorization', b.body.mfaToken).send({ code });
         assert.strictEqual(vB.status, 400, 'replay on the concurrent session must be refused');
+      });
+
+      it('[MA11H] the same code verified concurrently on two sessions releases exactly one token', async function () {
+        // Both requests pass the replay pre-check at the same time (neither has
+        // consumed the step yet); only the storage-level compare-and-set can
+        // keep the second one out.
+        const a = await login();
+        const b = await login();
+        const code = totpCodeFor(secret, 0);
+        const [vA, vB] = await Promise.all([
+          coreRequest.post(`/${username}/mfa/verify`).set('Authorization', a.body.mfaToken).send({ code }),
+          coreRequest.post(`/${username}/mfa/verify`).set('Authorization', b.body.mfaToken).send({ code })
+        ]);
+        const statuses = [vA.status, vB.status].sort();
+        assert.deepStrictEqual(statuses, [200, 400], `exactly one verify may succeed: ${JSON.stringify([vA.body, vB.body])}`);
+        // The loser is answered exactly like a wrong code.
+        const loser = vA.status === 400 ? vA : vB;
+        assert.strictEqual(loser.body.error.data.id, 'invalid-mfa-code');
+        assert.strictEqual(loser.body.error.message, 'The provided MFA code is invalid.');
+      });
+
+      it('[MA11I] once a later step is consumed, an earlier in-drift code is refused', async function () {
+        const later = await login();
+        // Step and code from the same instant, so a step boundary between two
+        // clock reads cannot make them disagree.
+        const nowSec = Math.floor(Date.now() / 1000);
+        const laterStep = Math.floor(nowSec / 30) + 1;
+        const laterCode = totpCode(base32Decode(secret), { time: nowSec + 30, periodSeconds: 30, digits: 6 });
+        const vLater = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', later.body.mfaToken).send({ code: laterCode });
+        assert.strictEqual(vLater.status, 200, `a code one step ahead is inside the drift window: ${JSON.stringify(vLater.body)}`);
+        const earlier = await login();
+        const vEarlier = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', earlier.body.mfaToken).send({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(vEarlier.status, 400, 'the stored step must never move backwards');
+        const { data } = await storedProfile();
+        assert.strictEqual(data.mfa.totp.lastUsedStep, laterStep, 'the consumed later step stays stored');
       });
     });
 
@@ -707,35 +763,40 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     });
 
     // ------------------------------------------------------------------
-    // Per-account attempt limiter. The per-session ceiling alone is not a
-    // limit: re-authenticating used to hand out a fresh budget, so N logins
-    // bought 5N guesses. These tests pin that this is no longer true.
+    // Per-account backoff. The per-session ceiling alone is not a limit:
+    // re-authenticating used to hand out a fresh budget, so N logins bought 5N
+    // guesses. Failures therefore accrue per account, and past the free ones
+    // each failure delays the NEXT attempt. It is a delay, never a lockout: a
+    // caller holding the password must not be able to lock the real user out.
     // ------------------------------------------------------------------
-    describe('[MA12] per-account attempt limiter', function () {
+    describe('[MA12] per-account backoff', function () {
       const PER_SESSION = 5;
-      const PER_ACCOUNT = 8;
+      const FREE = 3;
       let restoreAttempts;
       let secret;
 
-      function withAttempts (attempts) {
+      function withAttempts (attempts = {}, backoff = {}) {
         return {
           services: {
             mfa: {
               ...totpTestConfig.services.mfa,
               attempts: {
                 perSession: PER_SESSION,
-                perAccount: PER_ACCOUNT,
-                // Long enough that the accrual window cannot expire part-way
-                // through a test on a slow run; these cases are about the
-                // ceiling, not about the window rolling over. A test that
-                // wants expiry sets its own value.
+                // Long enough that the window cannot lapse part-way through a
+                // test on a slow run.
                 perAccountWindowSeconds: 3600,
-                lockoutSeconds: 1,
-                ...attempts
+                ...attempts,
+                backoff: { freeFailures: FREE, baseSeconds: 1, maxSeconds: 2, ...backoff }
               }
             }
           }
         };
+      }
+
+      async function setUp (attempts, backoff) {
+        restoreAttempts = injectTestConfigSnapshot(withAttempts(attempts, backoff));
+        await _resetMFASingletons();
+        return await enrol();
       }
 
       async function enrol () {
@@ -750,18 +811,14 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       }
 
       /**
-       * One wrong guess on a brand-new login session.
-       *
-       * Asserts that the attempt actually REACHED the limiter. Without this,
-       * a request that failed for an unrelated reason would be counted by the
-       * caller as a consumed guess while the server never accrued it, and the
-       * mismatch would surface later as a confusing off-by-one in whichever
-       * assertion happened to run next, rather than here where it happened.
+       * One guess on a brand-new login session. Asserts the attempt reached
+       * the limiter, so a request failing for an unrelated reason cannot pass
+       * for a consumed guess and surface later as an off-by-one.
        */
       async function guessOnFreshLogin (code = '000000') {
         const loginRes = await login();
         assert.strictEqual(loginRes.status, 200,
-          `login itself must never be blocked by the MFA lock (got ${loginRes.status} ${JSON.stringify(loginRes.body)})`);
+          `login itself must never be blocked by the MFA backoff (got ${loginRes.status} ${JSON.stringify(loginRes.body)})`);
         const res = await coreRequest
           .post(`/${username}/mfa/verify`)
           .set('Authorization', loginRes.body.mfaToken)
@@ -771,80 +828,68 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         return res;
       }
 
+      /** `n` wrong guesses, each on a fresh login, none of which may be delayed. */
+      async function freeWrongGuesses (n) {
+        for (let i = 0; i < n; i++) {
+          const res = await guessOnFreshLogin();
+          assert.ok(res.status === 400 || res.status === 401, `guess ${i + 1}: ${res.status} ${JSON.stringify(res.body)}`);
+        }
+      }
+
+      function assertDelayed (res, expectedSeconds) {
+        assert.strictEqual(res.status, 429, `expected a backoff delay: ${res.status} ${JSON.stringify(res.body)}`);
+        assert.strictEqual(res.body.error.id, 'too-many-attempts');
+        assert.ok(res.headers['retry-after'] != null, 'a Retry-After header should be set');
+        const seconds = res.body.error.data.retryAfterSeconds;
+        assert.ok(Number.isInteger(seconds) && seconds >= 1, `retryAfterSeconds: ${seconds}`);
+        if (expectedSeconds != null) assert.strictEqual(seconds, expectedSeconds);
+        return seconds;
+      }
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
       afterEach(function () {
         if (restoreAttempts) restoreAttempts();
         restoreAttempts = null;
       });
 
-      it('[MA12A] fresh logins no longer buy a fresh budget; the account locks and even a correct code is refused', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts());
-        await _resetMFASingletons();
-        await enrol();
-
-        // The reported attack: one wrong guess per fresh login, repeatedly.
-        // The lock engages ON the perAccount-th guess (that one answers 429),
-        // so the total budget across all logins is exactly perAccount guesses
-        // rather than the perSession budget renewed on every login.
-        let guesses = 0;
-        let locked = null;
-        for (let i = 0; i < PER_ACCOUNT + 4; i++) {
-          const res = await guessOnFreshLogin();
-          guesses++;
-          if (res.status === 429) { locked = res; break; }
-          assert.ok(res.status === 400 || res.status === 401,
-            `guess ${i + 1} unexpected status ${res.status}: ${JSON.stringify(res.body)}`);
-        }
-
-        assert.ok(locked != null, 'the account must lock; it never did');
-        assert.strictEqual(guesses, PER_ACCOUNT,
-          `the lock must engage on guess ${PER_ACCOUNT}, it engaged on ${guesses}`);
-        // The point of the issue: the old behaviour would have allowed
-        // perSession guesses per login with no ceiling at all.
-        assert.ok(guesses < PER_SESSION * 3, 'three logins must not yield three full budgets');
-        assert.strictEqual(locked.body.error.id, 'too-many-attempts');
-        assert.ok(locked.headers['retry-after'] != null, 'a Retry-After header should be set');
-
-        // The reporter's "a correct code still logs in" must now be FALSE.
+      it('[MA12A] fresh logins do not buy a fresh budget: past the free failures the next attempt is delayed, even with a correct code', async function () {
+        await setUp();
+        // The free failures, one per fresh login: no delay yet.
+        await freeWrongGuesses(FREE);
+        // The first failure past them answers as a failure (not 429)...
+        const breaching = await guessOnFreshLogin();
+        assert.strictEqual(breaching.status, 400, 'the failing guess itself is answered as a failure');
+        // ...and delays the NEXT attempt, whatever the code.
         const correct = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assert.strictEqual(correct.status, 429, 'a correct code must be refused while locked');
-        assert.strictEqual(correct.body.error.id, 'too-many-attempts');
+        assertDelayed(correct, 1);
       });
 
-      it('[MA12B] the lock lifts on its own once lockoutSeconds elapses', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 1 }));
-        await _resetMFASingletons();
-        await enrol();
-
-        for (let i = 0; i < PER_ACCOUNT; i++) await guessOnFreshLogin();
-        const stillLocked = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assert.strictEqual(stillLocked.status, 429);
-
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-
-        const after = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assert.strictEqual(after.status, 200, `login should work after the lock expires: ${JSON.stringify(after.body)}`);
-        assert.ok(after.body.token != null);
+      it('[MA12B] the delay lifts on its own and doubles on the next failure', async function () {
+        await setUp({}, { maxSeconds: 60 });
+        await freeWrongGuesses(FREE + 1);
+        assertDelayed(await guessOnFreshLogin(), 1);
+        await sleep(1100);
+        const next = await guessOnFreshLogin();
+        assert.strictEqual(next.status, 400, `after the delay a guess is verified again: ${JSON.stringify(next.body)}`);
+        const doubled = assertDelayed(await guessOnFreshLogin(), 2);
+        await sleep(doubled * 1000 + 100);
+        const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(ok.status, 200, `a correct code logs in once the delay ran out: ${JSON.stringify(ok.body)}`);
       });
 
-      it('[MA12C] perAccount:0 disables the per-account limit (behaviour as before)', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts({ perAccount: 0 }));
-        await _resetMFASingletons();
-        await enrol();
-
-        // Well past the former ceiling: no lock, ever.
-        for (let i = 0; i < PER_ACCOUNT + 6; i++) {
+      it('[MA12C] backoff.maxSeconds:0 disables the per-account backoff', async function () {
+        await setUp({}, { maxSeconds: 0 });
+        for (let i = 0; i < FREE + 6; i++) {
           const res = await guessOnFreshLogin();
-          assert.notStrictEqual(res.status, 429, `guess ${i + 1} must not be throttled when perAccount is 0`);
+          assert.notStrictEqual(res.status, 429, `guess ${i + 1} must not be delayed when the backoff is off`);
         }
         const correct = await guessOnFreshLogin(totpCodeFor(secret, 0));
         assert.strictEqual(correct.status, 200, 'a correct code must still work');
       });
 
       it('[MA12D] the per-session ceiling is unchanged, and its failures also accrue per account', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts());
-        await _resetMFASingletons();
-        await enrol();
-
+        await setUp({}, { freeFailures: PER_SESSION + 2, maxSeconds: 60 });
         // Burn one whole session: 4 x 400 then a 401 that kills the session.
         const loginRes = await login();
         const token = loginRes.body.mfaToken;
@@ -856,112 +901,126 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const last = await coreRequest
           .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: '000000' });
         assert.strictEqual(last.status, 401, 'the per-session ceiling still invalidates the session');
-
-        // Those failures counted toward the account: the lock engages on the
-        // (PER_ACCOUNT - PER_SESSION)-th further guess, not on a fresh budget.
-        let further = 0;
-        for (let i = 0; i < PER_ACCOUNT + 2; i++) {
-          const res = await guessOnFreshLogin();
-          further++;
-          if (res.status === 429) break;
-        }
-        assert.strictEqual(further, PER_ACCOUNT - PER_SESSION,
-          'session failures must count toward the per-account tally, not grant a fresh budget');
+        // Those five counted: two more free failures, one that breaches, then a delay.
+        await freeWrongGuesses(3);
+        assertDelayed(await guessOnFreshLogin());
       });
 
-      it('[MA12E] mfa.recover lifts the lock along with the enrolment', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
-        await _resetMFASingletons();
-        const recoveryCodes = await enrol();
-
-        for (let i = 0; i < PER_ACCOUNT; i++) await guessOnFreshLogin();
-        const locked = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assert.strictEqual(locked.status, 429, 'precondition: the account is locked');
+      it('[MA12E] mfa.recover clears the tally along with the enrolment', async function () {
+        const recoveryCodes = await setUp({}, { baseSeconds: 3600, maxSeconds: 3600 });
+        await freeWrongGuesses(FREE + 1);
+        assertDelayed(await guessOnFreshLogin(totpCodeFor(secret, 0)));
 
         const recover = await coreRequest
           .post(`/${username}/mfa/recover`)
           .send({ username, password, recoveryCode: recoveryCodes[0] });
         assert.strictEqual(recover.status, 200, `recover failed: ${JSON.stringify(recover.body)}`);
-
-        // MFA is gone, so login returns a real token directly; the lock did
-        // not outlive the enrolment it was guarding.
-        const loginRes = await login();
-        assert.strictEqual(loginRes.status, 200);
-        assert.ok(loginRes.body.token != null, 'login must work after recovery');
-        assert.ok(loginRes.body.mfaToken == null);
+        // Re-enrolling goes through mfa.confirm, which a surviving delay would refuse.
+        await enrol();
+        const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(ok.status, 200, `the delay must not outlive the enrolment: ${JSON.stringify(ok.body)}`);
       });
 
-      it('[MA12F] the throttle never damages the enrolment, and a real success resets the tally', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts());
-        await _resetMFASingletons();
-        await enrol();
-
-        // Stop one short of the ceiling.
-        for (let i = 0; i < PER_ACCOUNT - 1; i++) {
-          const res = await guessOnFreshLogin();
-          assert.notStrictEqual(res.status, 429, `guess ${i + 1} should not lock yet`);
-        }
-
-        // The enrolment is intact despite all those throttle writes.
+      it('[MA12F] the tally never damages the enrolment, and a success resets it', async function () {
+        await setUp();
+        await freeWrongGuesses(FREE);
         const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assert.strictEqual(ok.status, 200, `enrolment must survive the throttle writes: ${JSON.stringify(ok.body)}`);
+        assert.strictEqual(ok.status, 200, `the enrolment must survive the tally writes: ${JSON.stringify(ok.body)}`);
+        // Reset: the same number of free failures is granted again.
+        await freeWrongGuesses(FREE);
+        const notDelayed = await guessOnFreshLogin();
+        assert.strictEqual(notDelayed.status, 400, 'the tally restarted from zero after the success');
+      });
 
-        // And the successful factor reset the tally: the same number of wrong
-        // guesses is accepted again rather than locking on the next one.
-        for (let i = 0; i < PER_ACCOUNT - 1; i++) {
+      it('[MA12G] the real user is never locked out: at the cap the wait is maxSeconds, then a correct code logs in', async function () {
+        this.timeout(30000);
+        await setUp({}, { baseSeconds: 1, maxSeconds: 2 });
+        // An attacker keeps guessing, waiting out each delay: failures past the
+        // free ones grow the delay 1, 2, 2, 2, ... (capped).
+        let failures = 0;
+        let lastDelay = 0;
+        while (failures < FREE + 5) {
           const res = await guessOnFreshLogin();
-          assert.notStrictEqual(res.status, 429,
-            `guess ${i + 1} after a success should not lock; the tally was not reset`);
+          if (res.status === 429) {
+            lastDelay = assertDelayed(res);
+            assert.ok(lastDelay <= 2, `a delay never exceeds maxSeconds (got ${lastDelay})`);
+            await sleep(lastDelay * 1000 + 100);
+            continue;
+          }
+          assert.ok(res.status === 400 || res.status === 401, `a verified wrong guess: ${res.status} ${JSON.stringify(res.body)}`);
+          failures++;
         }
+        const refused = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        const wait = assertDelayed(refused, 2);
+        await sleep(wait * 1000 + 100);
+        const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
+        assert.strictEqual(ok.status, 200, `the real user logs in after at most maxSeconds: ${JSON.stringify(ok.body)}`);
       });
 
       // mfa.recover is the last-resort path and is deliberately exempt from the
-      // limiter in BOTH its steps. These two pin that exemption from both
-      // sides: a recover failure must not consume the account's budget, and a
-      // locked account must not be refused recovery. The budget is checked
-      // behaviourally rather than by reading storage: if a recover attempt had
-      // accrued, the lock would arrive one guess early.
+      // limiter in BOTH its steps: a recover failure must not feed the tally,
+      // and an account in backoff must not be refused recovery. Checked
+      // behaviourally: had a recover attempt accrued, the delay would come one
+      // guess early.
       function recoverWith (body) {
         return coreRequest.post(`/${username}/mfa/recover`).send(body);
       }
 
-      it('[MA12H] a wrong password on recover neither feeds the lock nor is blocked by it', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
-        await _resetMFASingletons();
-        const codes = await enrol();
-
-        // One guess short of the ceiling.
-        for (let i = 0; i < PER_ACCOUNT - 1; i++) await guessOnFreshLogin();
-
+      it('[MA12H] a wrong password on recover neither feeds the tally nor is delayed by it', async function () {
+        const codes = await setUp({}, { baseSeconds: 3600, maxSeconds: 3600 });
+        await freeWrongGuesses(FREE - 1);
         const wrongPwd = await recoverWith({ username, password: 'wrong', recoveryCode: codes[0] });
         assert.strictEqual(wrongPwd.status, 401, 'a wrong password must stay 401, never 429');
         assert.strictEqual(wrongPwd.body.error.id, 'invalid-credentials');
-
-        // Budget untouched: the very next guess is still the one that locks.
-        const locking = await guessOnFreshLogin();
-        assert.strictEqual(locking.status, 429, 'the recover attempt must not have consumed the budget');
-
-        // And recovery stays reachable while the MFA step is locked.
-        const underLock = await recoverWith({ username, password: 'wrong', recoveryCode: codes[0] });
-        assert.strictEqual(underLock.status, 401, 'recover must never answer 429');
-        assert.strictEqual(underLock.body.error.id, 'invalid-credentials');
+        // Still one free failure left: this guess must not trigger a delay.
+        await freeWrongGuesses(1);
+        const stillFree = await guessOnFreshLogin();
+        assert.strictEqual(stillFree.status, 400, 'the recover attempt must not have been counted');
+        // Now in backoff: recovery stays reachable.
+        assertDelayed(await guessOnFreshLogin());
+        const underDelay = await recoverWith({ username, password: 'wrong', recoveryCode: codes[0] });
+        assert.strictEqual(underDelay.status, 401, 'recover must never answer 429');
       });
 
-      it('[MA12I] a wrong recovery code neither feeds the lock nor is blocked by it', async function () {
-        restoreAttempts = injectTestConfigSnapshot(withAttempts({ lockoutSeconds: 3600 }));
-        await _resetMFASingletons();
-        await enrol();
-
-        for (let i = 0; i < PER_ACCOUNT - 1; i++) await guessOnFreshLogin();
-
+      it('[MA12I] a wrong recovery code neither feeds the tally nor is delayed by it', async function () {
+        await setUp({}, { baseSeconds: 3600, maxSeconds: 3600 });
+        await freeWrongGuesses(FREE - 1);
         const badCode = await recoverWith({ username, password, recoveryCode: 'not-a-real-code' });
         assert.strictEqual(badCode.status, 400, 'a wrong recovery code must stay 400, never 429');
+        await freeWrongGuesses(1);
+        const stillFree = await guessOnFreshLogin();
+        assert.strictEqual(stillFree.status, 400, 'the recover attempt must not have been counted');
+        assertDelayed(await guessOnFreshLogin());
+        const underDelay = await recoverWith({ username, password, recoveryCode: 'not-a-real-code' });
+        assert.strictEqual(underDelay.status, 400, 'recover must never answer 429');
+      });
 
-        const locking = await guessOnFreshLogin();
-        assert.strictEqual(locking.status, 429, 'the recover attempt must not have consumed the budget');
+      it('[MA12J] concurrent wrong guesses each count', async function () {
+        await setUp({}, { freeFailures: 100, maxSeconds: 60 });
+        const N = 8;
+        const tokens = [];
+        for (let i = 0; i < N; i++) tokens.push((await login()).body.mfaToken);
+        const results = await Promise.all(tokens.map((t) =>
+          coreRequest.post(`/${username}/mfa/verify`).set('Authorization', t).send({ code: '000000' })));
+        assert.deepStrictEqual(results.map((r) => r.status), Array(N).fill(400));
+        const { data } = await storedProfile();
+        assert.strictEqual(data.mfaThrottle.failures, N, 'no failure may be lost to a concurrent one');
+      });
 
-        const underLock = await recoverWith({ username, password, recoveryCode: 'not-a-real-code' });
-        assert.strictEqual(underLock.status, 400, 'recover must never answer 429');
+      it('[MA12K] a tally stored by the former lockout counts, and its lock is not honoured', async function () {
+        await setUp();
+        const { user, profile } = await storedProfile();
+        const legacy = { count: FREE, windowStartedAt: Date.now(), lockedUntil: Date.now() + 3600 * 1000 };
+        await new Promise((resolve, reject) => profile.updateOne(user, { id: 'private' }, { data: { mfaThrottle: legacy } },
+          (err) => err ? reject(err) : resolve()));
+        // The stored lock is ignored: a guess is verified...
+        const guess = await guessOnFreshLogin();
+        assert.strictEqual(guess.status, 400, `a former lock must not be honoured: ${JSON.stringify(guess.body)}`);
+        // ...and the former count carried over: that was failure FREE + 1.
+        assertDelayed(await guessOnFreshLogin(), 1);
+        const { data } = await storedProfile();
+        assert.strictEqual(data.mfaThrottle.failures, FREE + 1);
+        assert.strictEqual(data.mfaThrottle.lockedUntil, undefined, 'the former shape is replaced');
       });
     });
   });

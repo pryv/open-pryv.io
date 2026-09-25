@@ -14,6 +14,7 @@
  */
 
 import type { Callback, UserOrId, StoredItem, Query, UpdateData, FindOptions } from '../_shared/types.ts';
+import type { JsonGuard, JsonSet } from '../_shared/jsonPath.ts';
 
 export interface CollectionInfo {
   name: string | null;
@@ -36,6 +37,14 @@ export interface UserStorage<T extends StoredItem = StoredItem> {
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void;
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void;
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void;
+  /**
+   * Conditional update of JSON values inside ONE item, atomic across processes:
+   * the sets are applied only if every guard holds, in a single statement.
+   * `query` must select at most one item: a query matching several would
+   * write them all and still answer false. Calls back `true` when the item
+   * matched and was written. Contract: interfaces/_shared/jsonPath.ts.
+   */
+  compareAndSetJson (userOrUserId: UserOrId, query: Query, guards: JsonGuard[], sets: JsonSet[], callback: Callback<boolean>): void;
 
   /** Soft-delete (stamps `deleted`); counts like updateMany. */
   delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void;
@@ -65,6 +74,7 @@ const REQUIRED_METHODS: string[] = [
   'findOneAndUpdate',
   'updateOne',
   'updateMany',
+  'compareAndSetJson',
   'delete',
   'removeOne',
   'removeMany',

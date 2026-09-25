@@ -183,7 +183,8 @@ services:
   #     selector, still honored via an in-memory shim that maps it onto
   #     methods.sms. Existing deployments need no change.
   # Category: MIXED. Method policy (active/defaultMethod/methods.*.active +
-  # TOTP digits/period/drift/issuer) is PLATFORM-WIDE (identical across cores).
+  # TOTP digits/period/drift/issuer) and the failed-attempt policy (`attempts`)
+  # are PLATFORM-WIDE (identical across cores).
   # `methods.totp.secretsKey` and SMS endpoint headers are SECRET-grade:
   # YAML-only, never PlatformDB, operator-sync responsibility.
   mfa:
@@ -232,17 +233,25 @@ services:
     sessions:
       ttlSeconds: 1800
     # Failed second-factor limits. `perSession` bounds one pending MFA session
-    # (the historical fixed limit); `perAccount` additionally accrues across
-    # logins, so re-authenticating no longer hands out a fresh budget. On
-    # breach the MFA STEP is locked for `lockoutSeconds` (password login and
-    # already-issued tokens are untouched) and the verify/confirm/challenge
-    # endpoints answer 429 too-many-attempts. Set perAccount: 0 to disable the
-    # per-account limit, e.g. when throttling at the edge instead.
+    # (the historical fixed limit). Failures also accrue per account across
+    # logins, so re-authenticating does not hand out a fresh budget: after
+    # `backoff.freeFailures` failures, each further one delays the next attempt
+    # by `backoff.baseSeconds`, doubling up to `backoff.maxSeconds`. During the
+    # delay the verify/confirm/challenge endpoints answer 429 too-many-attempts
+    # with Retry-After. It is a delay, never a lockout: the real user waits at
+    # most maxSeconds even under attack, and a success clears the tally. A
+    # failure older than `perAccountWindowSeconds` starts the tally afresh. Set
+    # backoff.maxSeconds: 0 to disable it, e.g. when throttling at the edge.
+    # PLATFORM-WIDE: set the same values on every core (a user's failures are
+    # counted on their home core, so differing values would give users on
+    # different cores different policies).
     attempts:
       perSession: 5
-      perAccount: 20
       perAccountWindowSeconds: 900
-      lockoutSeconds: 900
+      backoff:
+        freeFailures: 3
+        baseSeconds: 2
+        maxSeconds: 300
 
   # --- Mail delivery (welcome + reset-password) ---
   # `method` picks the transport:

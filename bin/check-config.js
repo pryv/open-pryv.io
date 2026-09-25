@@ -282,6 +282,27 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   warnings.push('service.account is not set — clients cannot link to the account pages. Set it to the root URL of your app-web-user-account deployment (the access.defaultAuthUrl without its trailing /auth).');
 }
 
+// services.mfa — the same check master.js runs at boot. The override is merged
+// over the shipped defaults first, as at boot, so a partial block is judged by
+// the configuration it actually produces.
+if (get('services.mfa') != null) {
+  try {
+    const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
+    const merge = (base, over) => {
+      if (over == null || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
+      const out = Object.assign({}, (base != null && typeof base === 'object' && !Array.isArray(base)) ? base : {});
+      for (const k of Object.keys(over)) out[k] = merge(out[k], over[k]);
+      return out;
+    };
+    const { describeMfaConfig } = require('../components/business/src/mfa/configCheck.ts');
+    const mfa = describeMfaConfig(merge(defaults.services && defaults.services.mfa, get('services.mfa')));
+    for (const p of mfa.problems) problems.push(`${p.path.join('.')}: ${p.message}`);
+    for (const w of mfa.warnings) warnings.push(w);
+  } catch (err) {
+    warnings.push(`services.mfa could not be checked here (${err.message}); master.js still checks it at boot.`);
+  }
+}
+
 // summary
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);

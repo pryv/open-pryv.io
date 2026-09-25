@@ -100,4 +100,23 @@ services:
       '  terms: https://example.com/terms\n  account: https://app.example.com'));
     assert.ok(!/service\.account/.test(withAccount.stdout), withAccount.stdout);
   });
+
+  it('[CKCF5] services.mfa gets the boot check, merged over the shipped defaults', () => {
+    const bad = runCheck(BASE + `
+services:
+  mfa:
+    defaultMethod: push
+`);
+    assert.strictEqual(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stderr, /services\.mfa\.defaultMethod: defaultMethod "push" is not an active MFA method/);
+    // A partial block is judged with the defaults filled in: no false problem.
+    const legacyKey = runCheck(BASE + `
+services:
+  mfa:
+    attempts:
+      lockoutSeconds: 900
+`);
+    assert.strictEqual(legacyKey.status, 0, legacyKey.stdout + legacyKey.stderr);
+    assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
+  });
 });
