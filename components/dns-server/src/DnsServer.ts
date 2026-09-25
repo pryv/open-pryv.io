@@ -383,8 +383,12 @@ class DnsServer {
   #answerStatic (response: DnsResponse, qname: string, qtype: number, entry: DnsRecordEntry) {
     const ttl = this.#ttl;
 
-    if (entry.cname && (qtype === Packet.TYPE.CNAME || qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
+    // RFC 1034 §3.6.2: a name that has a CNAME has no other data, and the
+    // CNAME answers every query type (the resolver follows it for AAAA, TXT,
+    // MX, ...). Never mix other records for the same name.
+    if (entry.cname) {
       response.answers.push(buildCNAME(qname, entry.cname, ttl));
+      return;
     }
     if (entry.a) {
       for (const addr of (Array.isArray(entry.a) ? entry.a : [entry.a])) {
@@ -457,8 +461,9 @@ class DnsServer {
     if (coreInfo.ipv6 && (qtype === Packet.TYPE.AAAA || qtype === Packet.TYPE.ANY)) {
       response.answers.push(buildAAAA(qname, coreInfo.ipv6, ttl));
     }
-    if (coreInfo.cname && !coreInfo.ip && !coreInfo.ipv6 &&
-        (qtype === Packet.TYPE.CNAME || qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
+    // A core reached by CNAME only (no ip / ipv6): the CNAME answers every
+    // query type (RFC 1034 §3.6.2), so an AAAA or TXT lookup follows it too.
+    if (coreInfo.cname && !coreInfo.ip && !coreInfo.ipv6) {
       response.answers.push(buildCNAME(qname, coreInfo.cname, ttl));
     }
   }

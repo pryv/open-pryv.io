@@ -36,6 +36,14 @@ consumers must await it. The SQLite events store's storage-infos method did not,
 harmless while the SQLite database answers synchronously but would report a pending
 promise as the event count the moment it does not. The call is now awaited and the local
 type admits both shapes, so dropping the `await` again is a type error. Tests `[SQSI]`.
+## Embedded DNS: a CNAME answers every query type
+
+A static or runtime DNS entry with a `cname`, and a core (or a username on a core) reached
+by CNAME only, answered the CNAME for A, CNAME and ANY queries only. AAAA, TXT, CAA, MX or
+HTTPS lookups on such a name got an empty NOERROR, so resolvers never followed the alias
+(an IPv6 client, or a CA checking CAA, saw "no records"). Per RFC 1034 §3.6.2 the CNAME is
+now returned for every query type, and an entry that has a `cname` no longer mixes other
+record types for the same name. Tests `[DN13]`, `[DN14]`, `[DN25]`, `[DN38]`.
 
 ## test: the CA warm also trusts backloop's public certificate, so CI needs no secret
 
