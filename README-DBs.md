@@ -13,9 +13,9 @@ Open Pryv.io v2 runs on two complementary engines for user-data storage:
   Art.17 right-to-be-forgotten semantics. Best fit for low-volume /
   single-tenant deployments.
 
-Both engines cover `baseStorage`, `dataStore`, and `auditStorage`.
-PostgreSQL additionally covers `seriesStorage` (HF time-series).
-InfluxDB remains an optional `seriesStorage` choice.
+Both engines cover `baseStorage`, `dataStore`, `seriesStorage` (HF
+time-series) and `auditStorage`. InfluxDB remains an optional
+`seriesStorage` choice.
 
 The **platform DB** is always [`rqlite`](https://rqlite.io/) (distributed
 SQLite, embedded — `bin/master.js` spawns and supervises `rqlited`).
@@ -27,7 +27,7 @@ Engine choice is per `storageType` in `config/default-config.yml`:
 storages:
   base:     { engine: postgresql }   # or sqlite
   data:     { engine: postgresql }   # or sqlite
-  series:   { engine: postgresql }   # or influxdb
+  series:   { engine: postgresql }   # or sqlite, influxdb
   audit:    { engine: sqlite }       # or postgresql
   platform: { engine: rqlite }        # or postgresql (single-core dnsLess only)
   file:     { engine: filesystem }   # or s3
@@ -59,10 +59,12 @@ allow user aliases.
 
 ### User account storage
 
-base code: [components/storage/src/userAccountStorage.ts](components/storage/src/userAccountStorage.ts)
+base code: [storages/engines/postgresql/src/userAccountStorage.ts](storages/engines/postgresql/src/userAccountStorage.ts) and [storages/engines/sqlite/src/userAccountStorage.ts](storages/engines/sqlite/src/userAccountStorage.ts)
 
-Per-user password + password history. SQLite file `account-1.0.0.sqlite`
-inside the per-user local directory.
+Per-user password + password history, account fields and per-store
+key-value data. PostgreSQL uses shared `user_id`-keyed tables
+(`passwords`, `account_fields`, `store_key_values`); SQLite uses the
+file `account-1.0.0.sqlite` inside the per-user local directory.
 
 ### Platform-wide shared storage
 
@@ -118,18 +120,18 @@ SQLite file).
 
 ### High-frequency series storage
 
-base code: [storages/engines/postgresql/src/dataStore](storages/engines/postgresql/src/dataStore) (series) and [storages/engines/influxdb](storages/engines/influxdb)
+base code: [storages/engines/postgresql/src/pg_connection.ts](storages/engines/postgresql/src/pg_connection.ts), [storages/engines/sqlite/src/seriesStorage](storages/engines/sqlite/src/seriesStorage) and [storages/engines/influxdb](storages/engines/influxdb)
 
 Engine choices for `seriesStorage`:
 
 - **PostgreSQL** (default) — same backend as baseStorage; HF points
   stored in a separate table family.
+- **SQLite**: per-user file
+  `<userLocalDirectory>/<userId>/series-<version>.sqlite`, so a
+  SQLite deployment needs no other database for HF series and user
+  deletion stays a file removal.
 - **InfluxDB** 1.x — kept as alternative for high-throughput HF
   workloads.
-
-A SQLite implementation of `seriesStorage` is **not yet available** —
-deployments choosing SQLite for baseStorage/dataStore must still pick
-PostgreSQL or InfluxDB for HF series.
 
 ### Audit storage
 
