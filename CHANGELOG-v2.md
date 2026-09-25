@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### New accounts get the CMC reserved streams at creation
+
+The reserved `:_cmc:` stream tree (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps` and the
+plugin-internal subtree) is now created together with the account, so a new account's
+first `streams.get` already lists `:_cmc:`, `:_cmc:inbox` and `:_cmc:apps`. Until now the
+tree appeared only on the first CMC read, write or access grant. Accounts created before
+this change, or whose creation-time attempt failed (it never fails the registration), are
+still provisioned on first touch as before. Clients that snapshot a fresh account's stream
+list will see these three streams.
+
 ## 2.0.0-rc.26 — 2026-09-24
 
 _(2.0.0-rc.25 carries the same changes but published no image: its build could not run the lib-js conformance suite, because backloop.dev stopped issuing certificates without a secret. Use rc.26.)_

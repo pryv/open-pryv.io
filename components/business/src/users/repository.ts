@@ -406,10 +406,20 @@ class UsersRepository {
       await this.compensateFailedInsert(user);
       throw err;
     }
-    // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
-    // auto-provisioning here. Lazy creation at first :_cmc:* write
-    // keeps the operational impact contained for now.
-    if (cmc != null && cmcLogger != null) { /* placeholder */ }
+    // Provision the reserved `:_cmc:*` parent tree now, so a new account's
+    // first `streams.get` already lists it. Idempotent (already-existing
+    // streams are skipped). Non-fatal: a failure here must not fail the
+    // registration, and the lazy path (first CMC read, write or grant)
+    // still provisions the tree for this account and for accounts created
+    // before this ran.
+    try {
+      await cmc.provisionUserStreams({ mall: this.mall, userId: user.id, logger: cmcLogger });
+    } catch (err) {
+      cmcLogger.warn('reserved-parent provisioning at user creation failed; the lazy path will retry', {
+        userId: user.id,
+        error: (err as Error)?.message ?? String(err)
+      });
+    }
     return user;
   }
 
