@@ -6,7 +6,8 @@
 
 The reserved `:_cmc:` stream tree (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps` and the
 plugin-internal subtree) is now created together with the account, so a new account's
-first `streams.get` already lists `:_cmc:`, `:_cmc:inbox` and `:_cmc:apps`. Until now the
+first `streams.get` (with a personal token, or an access whose permissions cover those
+streams) already lists `:_cmc:`, `:_cmc:inbox` and `:_cmc:apps`. Until now the
 tree appeared only on the first CMC read, write or access grant. Accounts created before
 this change, or whose creation-time attempt failed (it never fails the registration), are
 still provisioned on first touch as before. Clients that snapshot a fresh account's stream
