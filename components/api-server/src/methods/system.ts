@@ -277,7 +277,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     try {
       await fromCallback((cb: (err?: unknown, res?: unknown) => void) => userProfileStorage.findOneAndUpdate(
         context.user,
-        {},
+        // The private profile explicitly: `{}` matched whichever profile row
+        // came first, so on SQLite a user with a public or app profile kept
+        // their MFA enrolment after an admin reset.
+        { id: 'private' },
         // The throttle is a sibling key, so it must be cleared explicitly:
         // an admin reset that left a lock behind would strand the user.
         { $unset: { 'data.mfa': '', 'data.mfaThrottle': '' } },

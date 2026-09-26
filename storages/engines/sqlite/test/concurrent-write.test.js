@@ -41,6 +41,17 @@ describe('[UCSQ] userSQLite Storage concurent Writes', () => {
       assert.strictEqual(err.message, 'Failed write action on SQLite after 5 retries');
     }
   });
+
+  it('[UCS3] retries the extended busy codes too, and nothing else', async () => {
+    let calls = 0;
+    await concurrentSafeWrite.execute(() => {
+      calls++;
+      if (calls === 1) throw Object.assign(new Error(), { code: 'SQLITE_BUSY_SNAPSHOT' });
+      return true;
+    }, 3);
+    assert.strictEqual(calls, 2);
+    await assert.rejects(concurrentSafeWrite.execute(() => { throw Object.assign(new Error('x'), { code: 'SQLITE_CONSTRAINT' }); }, 3), /x/);
+  });
 });
 
 function mockBusyError () {

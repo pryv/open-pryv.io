@@ -26,6 +26,9 @@ const require = createRequire(import.meta.url);
  * is what makes a ceiling hold: a count followed by a separate write is a
  * check-then-act that every worker passes at once.
  *
+ * `set` also takes `ifEquals: <value>`: the write happens only while the
+ * current value equals it (compare-and-set), for read-modify-write updates.
+ *
  * Failure semantics: workers fast-fail. `get` returns null when no IPC
  * channel is available (single-process tests, run-from-CLI). `set` /
  * `delete` / `clear` throw in that case so callers learn early.
@@ -39,6 +42,7 @@ const SWEEP_INTERVAL_MS = 60_000;
 type StoreEntry = { value: unknown; expiresAt: number | null };
 /** Write only while the prefix holds fewer than `max` live entries. */
 type PrefixGuard = { prefix: string; max: number };
+type SetOpts = { ttlMs?: number; ifUnderPrefix?: PrefixGuard; ifEquals?: unknown };
 type KvMessage = {
   type: string;
   requestId?: string;
@@ -46,6 +50,7 @@ type KvMessage = {
   value?: unknown;
   ttlMs?: number;
   ifUnderPrefix?: PrefixGuard;
+  ifEquals?: unknown;
   ok?: boolean;
   error?: string;
 };
@@ -95,6 +100,20 @@ function _prefixHasRoom (store: Map<string, StoreEntry>, guard: PrefixGuard | un
   return true;
 }
 
+/**
+ * Compare-and-set guard: whether the live value under `key` equals `expected`
+ * (compared as JSON, the form values take across the IPC channel; a missing or
+ * expired entry equals only `null`). `undefined` means no guard. Checked and
+ * written in the same master-side step, so a read-modify-write that sends back
+ * what it read cannot overwrite another worker's write made in between.
+ */
+function _valueMatches (store: Map<string, StoreEntry>, key: string, expected: unknown): boolean {
+  if (expected === undefined) return true;
+  const entry = store.get(key);
+  const live = (entry == null || (entry.expiresAt != null && Date.now() > entry.expiresAt)) ? null : entry.value;
+  return JSON.stringify(live ?? null) === JSON.stringify(expected);
+}
+
 let _masterRunning = false;
 let _store: Map<string, StoreEntry> | null = null;
 let _sweepTimer: NodeJS.Timeout | null = null;
@@ -141,7 +160,7 @@ function masterStart (opts: { log?: (msg: string) => void; cluster?: ClusterLike
           const expiresAt = (typeof msg.ttlMs === 'number' && msg.ttlMs > 0)
             ? Date.now() + msg.ttlMs
             : null;
-          if (!_prefixHasRoom(_store!, msg.ifUnderPrefix, msg.key!)) {
+          if (!_valueMatches(_store!, msg.key!, msg.ifEquals) || !_prefixHasRoom(_store!, msg.ifUnderPrefix, msg.key!)) {
             return reply({ ok: true, value: false });
           }
           _store!.set(msg.key!, { value: msg.value, expiresAt });
@@ -306,8 +325,8 @@ class _InProcessStore {
   }
 
   async get (key: string): Promise<unknown> { return this._get(key); }
-  async set (key: string, value: unknown, { ttlMs, ifUnderPrefix }: { ttlMs?: number; ifUnderPrefix?: PrefixGuard } = {}): Promise<boolean> {
-    if (!_prefixHasRoom(this.store, ifUnderPrefix, key)) return false;
+  async set (key: string, value: unknown, { ttlMs, ifUnderPrefix, ifEquals }: SetOpts = {}): Promise<boolean> {
+    if (!_valueMatches(this.store, key, ifEquals) || !_prefixHasRoom(this.store, ifUnderPrefix, key)) return false;
     const expiresAt = (typeof ttlMs === 'number' && ttlMs > 0) ? Date.now() + ttlMs : null;
     this.store.set(key, { value: _isolate(value), expiresAt });
     return true;
@@ -370,9 +389,9 @@ function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fal
       const reply = await _request({ type: 'kv:get', key }, processHandle, timeoutMs) as { value?: unknown };
       return reply.value ?? null;
     },
-    async set (key: string, value: unknown, { ttlMs, ifUnderPrefix }: { ttlMs?: number; ifUnderPrefix?: PrefixGuard } = {}) {
-      const reply = await _request({ type: 'kv:set', key, value, ttlMs, ifUnderPrefix }, processHandle, timeoutMs) as { value?: unknown };
-      if (ifUnderPrefix == null) return true;
+    async set (key: string, value: unknown, { ttlMs, ifUnderPrefix, ifEquals }: SetOpts = {}) {
+      const reply = await _request({ type: 'kv:set', key, value, ttlMs, ifUnderPrefix, ifEquals }, processHandle, timeoutMs) as { value?: unknown };
+      if (ifUnderPrefix == null && ifEquals === undefined) return true;
       // A guarded write that cannot be told apart from an unguarded one would
       // silently disable the ceiling (an older master answers no value), so
       // an unusable reply fails loud instead.

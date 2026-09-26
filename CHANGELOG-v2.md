@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Profile: MFA state stays out of the profile methods (security)
+
+The private profile's `mfa` (the MFA enrolment) and `mfaThrottle` (the failed-attempt
+tally) are managed by the MFA methods only: `PUT /profile/private` refuses them with
+`400 invalid-operation` (writing nothing). `GET /profile/private` shows the enrolment
+without its secrets, `mfa: { method, content, totp: { confirmedAt, algorithm, digits,
+periodSeconds } }` (`content` is the account holder's own data, e.g. the phone an SMS
+method texts), and never shows `mfaThrottle`. Data exports built on that read (such as
+the subject account backup) therefore keep the subject's MFA data but no longer carry the
+encrypted TOTP secret, the replay step or the recovery-code hashes. The admin MFA reset (`DELETE /system/users/:username/mfa`) now always targets the
+private profile; on SQLite it could previously hit another profile of the user and leave
+the enrolment in place.
+Separately, the app profile of `/profile/app` is keyed by the access name, so an app access
+named `private` or `public` could read and write the user's private or public profile; such
+names now have no app profile (`400 invalid-operation`).
+
 ### MFA: the per-account limit is a backoff, not a lockout (security)
 
 Replaces the per-account lockout introduced in 2.0.0-rc.16 ("MFA: per-account

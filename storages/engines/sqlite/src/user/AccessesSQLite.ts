@@ -123,7 +123,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
       const res = this._updateManySync(udb, query, updateData);
       const res2 = this._findAndUpdateIfNeededSync(udb, { integrityBatchCode }, {}, updateIfNeeded);
       return { modifiedCount: res.modifiedCount, integrityRecomputed: res2.count };
-    })());
+    }).immediate());
   }
 
   updateOne (userOrUserId: UserOrId, query: Record<string, unknown>, update: AccessUpdate, callback: Callback<AccessItem | null>): void {
@@ -147,7 +147,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
         return this._findOneAndUpdateSync(udb, { id: accessData.id }, { integrity: accessData.integrity });
       }
       return accessData;
-    })());
+    }).immediate());
   }
 
   async findHistory (userOrUserId: UserOrId, baseId: string): Promise<AccessItem[]> {

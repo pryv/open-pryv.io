@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## SQLite: read-modify-write updates no longer lose concurrent writes
+
+`findOneAndUpdate`, `updateMany` and `findAndUpdateIfNeeded` read a row and write it back.
+With several API workers (separate processes) a write from another worker could land in
+between and be overwritten, e.g. an `$inc` counter losing increments. They now run under
+`BEGIN IMMEDIATE`, so the write lock spans the read and the write; a busy lock is retried
+as before. Test `[PXP1]`: 4 processes x 60 increments lost 3 to 8 of 240 without it.
+
+## cluster_kv: compare-and-set; MFA session attempts count under concurrency
+
+`set()` accepts `ifEquals` (write only while the current value equals it, checked in the
+same master-side step). The MFA session store records a failed attempt with it, so
+parallel wrong codes on one pending session each count toward `perSession`.
+
+## UserStorage conformance suite runs again
+
+`storages/interfaces/baseStorage/conformance/UserStorage.test.js` was run by no suite. It
+now runs on the profile collection for each engine (`[USCF]`), with its MongoDB-era
+assumptions corrected (`getCollectionInfo` has no `indexes`; `importAll` takes what
+`exportAll` produced, the backup round-trip), and gains the `[USUP]` update-path tests the
+shared update-path contract refers to.
+
 ## Storage: `UserStorage.compareAndSetJson`, an atomic conditional update of JSON values
 
 New method on every user-scoped collection (PostgreSQL and SQLite): the given JSON values

@@ -374,8 +374,13 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     });
   }
 
+  // The read-modify-write methods below run under BEGIN IMMEDIATE: the write
+  // lock is held from the read to the write, so another process (API worker)
+  // cannot write the same row in between and have its update lost. A busy lock
+  // is retried by `_userDbAndWrite`, which re-runs the whole read-modify-write.
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<TItem | null>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => this._findOneAndUpdateSync(udb, query, updatedData));
+    this._userDbAndWrite(userOrUserId, callback, (udb) =>
+      udb.db.transaction(() => this._findOneAndUpdateSync(udb, query, updatedData)).immediate());
   }
 
   /** Synchronous core of `findOneAndUpdate`, taking an already-acquired `udb`
@@ -396,7 +401,8 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => this._updateManySync(udb, query, updatedData));
+    this._userDbAndWrite(userOrUserId, callback, (udb) =>
+      udb.db.transaction(() => this._updateManySync(udb, query, updatedData)).immediate());
   }
 
   /**
@@ -713,7 +719,8 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   /** `updateIfNeededCallback` only ever receives non-null items — null rows
    *  are skipped before it is invoked (mirrors the PG base). */
   findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: TItem) => UpdateData | null, callback: Callback<{ count: number }>): void {
-    this._userDbAndWrite(userOrUserId, callback, (udb) => this._findAndUpdateIfNeededSync(udb, query, options, updateIfNeededCallback));
+    this._userDbAndWrite(userOrUserId, callback, (udb) =>
+      udb.db.transaction(() => this._findAndUpdateIfNeededSync(udb, query, options, updateIfNeededCallback)).immediate());
   }
 
   /** Synchronous core of `findAndUpdateIfNeeded`. See `_findOneAndUpdateSync`. */

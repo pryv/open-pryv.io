@@ -20,6 +20,47 @@ type ProfileResult = { profile?: Record<string, unknown> };
 type ProfileSet = { id: string; data: Record<string, unknown> } | null;
 
 /**
+ * Keys of the private profile that hold server-managed security state (the MFA
+ * enrolment and the failed-attempt tally). Only the mfa.* methods write them:
+ * profile updates refuse them. Reads show the enrolment through
+ * `mfaReadView` only, and never the tally.
+ */
+const RESERVED_PRIVATE_KEYS = ['mfa', 'mfaThrottle'];
+/** Profile ids that are not app profiles, even for an app access bearing that name. */
+const NON_APP_PROFILE_IDS = ['private', 'public'];
+/** TOTP enrolment fields a read may show: parameters, never the secret or the replay step. */
+const TOTP_READABLE = ['confirmedAt', 'algorithm', 'digits', 'periodSeconds'];
+
+type StoredMfaLike = { method?: string; content?: unknown; totp?: Record<string, unknown> };
+
+/**
+ * What the account holder sees of their MFA enrolment: the method, its content
+ * (their own data, e.g. the phone an SMS method texts; subject data exports rely
+ * on this) and the TOTP parameters. The encrypted TOTP secret, the replay step
+ * and the recovery-code hashes stay server-side.
+ */
+function mfaReadView (mfa: StoredMfaLike): Record<string, unknown> {
+  const view: Record<string, unknown> = {};
+  if (mfa.method !== undefined) view.method = mfa.method;
+  if (mfa.content !== undefined) view.content = mfa.content;
+  if (mfa.totp != null && typeof mfa.totp === 'object') {
+    const totp: Record<string, unknown> = {};
+    for (const k of TOTP_READABLE) if (mfa.totp[k] !== undefined) totp[k] = mfa.totp[k];
+    view.totp = totp;
+  }
+  return view;
+}
+
+function withoutReserved (id: string | undefined, data: Record<string, unknown>): Record<string, unknown> {
+  if (id !== 'private') return data;
+  const out = { ...data };
+  delete out.mfaThrottle;
+  if (out.mfa != null && typeof out.mfa === 'object') out.mfa = mfaReadView(out.mfa as StoredMfaLike);
+  else delete out.mfa;
+  return out;
+}
+
+/**
  * Profile methods implementation.
  */
 export default async function (api: { register: (...args: unknown[]) => void }) {
@@ -50,7 +91,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   function getProfile (context: MethodContext, params: ProfileGetParams, result: ProfileResult, next: MethodNext) {
     userProfileStorage.findOne(context.user, { id: params.id }, null, function (err: Error | null, profileSet: ProfileSet) {
       if (err) { return next(errors.unexpectedError(err)); }
-      result.profile = profileSet ? profileSet.data : {};
+      result.profile = profileSet ? withoutReserved(params.id, profileSet.data) : {};
       next();
     });
   }
@@ -68,6 +109,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     updateProfile);
 
   function updateProfile (context: MethodContext, params: ProfileUpdateParams, result: ProfileResult, next: MethodNext) {
+    if (params.id === 'private') {
+      const reserved = RESERVED_PRIVATE_KEYS.filter((k) => Object.hasOwn(params.update || {}, k));
+      if (reserved.length > 0) {
+        return next(errors.invalidOperation(
+          `The private profile keys ${reserved.join(', ')} are managed by the MFA methods and cannot be set here.`,
+          { keys: reserved }));
+      }
+    }
     userProfileStorage.findOne(context.user, { id: params.id }, null, function (err: Error | null, profileSet: ProfileSet) {
       if (err) return next(errors.unexpectedError(err));
       if (profileSet) return doUpdate();
@@ -81,7 +130,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       userProfileStorage.updateOne(context.user, { id: params.id }, { data: params.update },
         function (err: Error | null, updatedProfile: { data: Record<string, unknown> }) {
           if (err) return next(errors.unexpectedError(err));
-          result.profile = updatedProfile.data;
+          result.profile = withoutReserved(params.id, updatedProfile.data);
           next();
         });
     }
@@ -91,6 +140,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     if (!context.access.isApp()) {
       return next(errors.invalidOperation(
         'This resource is only available to app accesses.'));
+    }
+    // The app profile id is the access name, so an app access named "private"
+    // or "public" would otherwise reach the user's own profiles.
+    if (NON_APP_PROFILE_IDS.includes(context.access.name)) {
+      return next(errors.invalidOperation(
+        `An app access named "${context.access.name}" has no app profile: that name is reserved.`));
     }
     params.id = context.access.name;
     next();
