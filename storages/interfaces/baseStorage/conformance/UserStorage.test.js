@@ -10,7 +10,9 @@ const require = createRequire(import.meta.url);
 /**
  * UserStorage conformance test suite.
  * Tests the common BaseStorage contract: insertOne -> find -> findOne ->
- * updateOne -> delete -> findDeletions -> removeAll -> count.
+ * updateOne -> delete -> findDeletions -> removeAll -> count, the backup
+ * round-trip, and the update-path contract [USUP]. Run against a real
+ * collection on each engine by components/storage/test/unit/userStorageConformance.test.js.
  *
  * @param {Function} getStorage - function returning an initialized BaseStorage subclass instance
  * @param {Function} getUserId - function returning a unique userId for test isolation
@@ -38,11 +40,10 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
       validateUserStorage(storage);
     });
 
-    it('[US02] getCollectionInfo() must return name, indexes, and useUserId', () => {
+    it('[US02] getCollectionInfo() must return name and useUserId', () => {
       const info = storage.getCollectionInfo(userId);
       assert.ok(info.name, 'must have a collection name');
-      assert.ok(Array.isArray(info.indexes), 'must have indexes array');
-      assert.ok(info.useUserId, 'must have useUserId');
+      assert.strictEqual(info.useUserId, userId);
     });
 
     it('[US03] countAll() must return 0 initially', (done) => {
@@ -145,20 +146,17 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
         });
       });
 
-      it('[US13] importAll() must insert raw documents', (done) => {
-        const items = [
-          { _id: 'import-1', data: 'imported', userId },
-          { _id: 'import-2', data: 'imported2', userId }
-        ];
-        storage.importAll(userId, items, (err) => {
-          if (err) return done(err);
-          storage.exportAll(userId, (err2, docs) => {
-            if (err2) return done(err2);
-            assert.strictEqual(docs.length, 2);
-            // Clean up
-            storage.clearAll(userId, done);
-          });
-        });
+      it('[US13] importAll() restores what exportAll() produced (the backup round-trip)', async () => {
+        const call = (fn, ...args) => new Promise((resolve, reject) => fn.call(storage, userId, ...args, (err, res) => err ? reject(err) : resolve(res)));
+        await call(storage.insertOne, { id: 'import-1', data: { a: 1 } });
+        await call(storage.insertOne, { id: 'import-2', data: 'imported2' });
+        const byId = (docs) => [...docs].sort((x, y) => x.id.localeCompare(y.id));
+        const exported = byId(await call(storage.exportAll));
+        assert.strictEqual(exported.length, 2);
+        await call(storage.clearAll);
+        await call(storage.importAll, exported);
+        assert.deepStrictEqual(byId(await call(storage.exportAll)), exported);
+        await call(storage.clearAll);
       });
 
       it('[US14] importAll() with empty array must be a no-op', (done) => {
@@ -166,6 +164,34 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
           if (err) return done(err);
           done();
         });
+      });
+    });
+
+    // The shared update-path contract (interfaces/_shared/updatePath.ts): a
+    // JSON field merges ONE level, the object form's sub-keys are literal (they
+    // may contain dots), and a deeper dotted key is refused on every engine.
+    describe('[USUP] update paths on a JSON field', () => {
+      const call = (fn, ...args) => new Promise((resolve, reject) => fn.call(storage, userId, ...args, (err, res) => err ? reject(err) : resolve(res)));
+      const read = async () => (await call(storage.findOne, { id: 'upd' }, null)).data;
+
+      beforeEach(async () => {
+        await call(storage.removeAll);
+        await call(storage.insertOne, { id: 'upd', data: { keep: 1, drop: 2 } });
+      });
+
+      it('[USU1] $set and $unset of "field.key" touch that one entry', async () => {
+        await call(storage.updateOne, { id: 'upd' }, { $set: { 'data.added': 3 }, $unset: { 'data.drop': '' } });
+        assert.deepStrictEqual(await read(), { keep: 1, added: 3 });
+      });
+
+      it('[USU2] the object form merges one level, its sub-keys literal (dots included)', async () => {
+        await call(storage.updateOne, { id: 'upd' }, { data: { 'com.example.app': { x: 1 }, drop: null } });
+        assert.deepStrictEqual(await read(), { keep: 1, 'com.example.app': { x: 1 } });
+      });
+
+      it('[USU3] a deeper dotted key is refused and leaves the item untouched', async () => {
+        await assert.rejects(call(storage.updateOne, { id: 'upd' }, { $set: { 'data.a.b': 1 } }));
+        assert.deepStrictEqual(await read(), { keep: 1, drop: 2 });
       });
     });
   });

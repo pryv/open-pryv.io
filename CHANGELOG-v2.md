@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Profile: MFA state stays out of the profile methods (security)
+
+The private profile's `mfa` (the MFA enrolment) and `mfaThrottle` (the failed-attempt
+tally) are managed by the MFA methods only: `GET /profile/private` no longer returns them,
+and `PUT /profile/private` refuses them with `400 invalid-operation` (writing nothing).
+Separately, the app profile of `/profile/app` is keyed by the access name, so an app access
+named `private` or `public` could read and write the user's private or public profile; such
+names now have no app profile (`400 invalid-operation`).
+
 ### MFA: the per-account limit is a backoff, not a lockout (security)
 
 Replaces the per-account lockout introduced in 2.0.0-rc.16 ("MFA: per-account
