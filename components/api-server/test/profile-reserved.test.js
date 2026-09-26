@@ -11,8 +11,9 @@ const require = createRequire(import.meta.url);
 
 /**
  * Server-managed security state in the private profile (the MFA enrolment
- * `mfa` and the failed-attempt tally `mfaThrottle`) is neither returned by nor
- * writable through the profile methods, and an app access whose name is a
+ * `mfa` and the failed-attempt tally `mfaThrottle`) is not writable through the
+ * profile methods; reads show the enrolment without its secrets and never the
+ * tally. An app access whose name is a
  * non-app profile id ("private", "public") cannot reach those profiles.
  */
 
@@ -25,7 +26,18 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
   let privateAppToken;
   let publicAppToken;
   let user;
-  const MFA = { method: 'totp', totp: { secret: 'enc-envelope', lastUsedStep: 7 }, recoveryCodes: ['h1'] };
+  const MFA = {
+    method: 'totp',
+    content: { note: 'subject data' },
+    totp: { secret: 'enc-envelope', lastUsedStep: 7, confirmedAt: 1700000000000, digits: 6, periodSeconds: 30, algorithm: 'SHA1' },
+    recoveryCodes: ['h1']
+  };
+  // What a read may show: the method, the content, the TOTP parameters.
+  const MFA_VIEW = {
+    method: 'totp',
+    content: { note: 'subject data' },
+    totp: { confirmedAt: 1700000000000, algorithm: 'SHA1', digits: 6, periodSeconds: 30 }
+  };
   const THROTTLE = { failures: 2, lastFailureAt: 1, notBefore: 0 };
 
   before(async function () {
@@ -54,12 +66,13 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     return item.data;
   }
 
-  it('[PRS1] GET /profile/private omits mfa and mfaThrottle, and keeps the rest', async function () {
+  it('[PRS1] GET /profile/private shows the MFA enrolment without its secrets, never the tally, and keeps the rest', async function () {
     const res = await coreRequest.get(`/${username}/profile/private`).set('Authorization', personalToken);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.profile.language, 'fr');
-    assert.strictEqual(res.body.profile.mfa, undefined);
+    assert.deepStrictEqual(res.body.profile.mfa, MFA_VIEW);
     assert.strictEqual(res.body.profile.mfaThrottle, undefined);
+    assert.ok(!JSON.stringify(res.body).includes('enc-envelope'), 'the encrypted secret never leaves');
   });
 
   it('[PRS2] PUT /profile/private refuses mfa and mfaThrottle and leaves them untouched', async function () {
@@ -78,7 +91,8 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     const res = await coreRequest.put(`/${username}/profile/private`).set('Authorization', personalToken).send({ language: 'it' });
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.profile.language, 'it');
-    assert.strictEqual(res.body.profile.mfa, undefined);
+    assert.deepStrictEqual(res.body.profile.mfa, MFA_VIEW);
+    assert.strictEqual(res.body.profile.mfaThrottle, undefined);
     const data = await storedPrivate();
     assert.deepStrictEqual(data.mfa, MFA);
     assert.deepStrictEqual(data.mfaThrottle, THROTTLE);

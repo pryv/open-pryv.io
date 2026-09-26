@@ -21,17 +21,42 @@ type ProfileSet = { id: string; data: Record<string, unknown> } | null;
 
 /**
  * Keys of the private profile that hold server-managed security state (the MFA
- * enrolment and the failed-attempt tally). Only the mfa.* methods read or write
- * them: they are never returned by profile reads, and profile updates refuse them.
+ * enrolment and the failed-attempt tally). Only the mfa.* methods write them:
+ * profile updates refuse them. Reads show the enrolment through
+ * `mfaReadView` only, and never the tally.
  */
 const RESERVED_PRIVATE_KEYS = ['mfa', 'mfaThrottle'];
 /** Profile ids that are not app profiles, even for an app access bearing that name. */
 const NON_APP_PROFILE_IDS = ['private', 'public'];
+/** TOTP enrolment fields a read may show: parameters, never the secret or the replay step. */
+const TOTP_READABLE = ['confirmedAt', 'algorithm', 'digits', 'periodSeconds'];
+
+type StoredMfaLike = { method?: string; content?: unknown; totp?: Record<string, unknown> };
+
+/**
+ * What the account holder sees of their MFA enrolment: the method, its content
+ * (their own data, e.g. the phone an SMS method texts; subject data exports rely
+ * on this) and the TOTP parameters. The encrypted TOTP secret, the replay step
+ * and the recovery-code hashes stay server-side.
+ */
+function mfaReadView (mfa: StoredMfaLike): Record<string, unknown> {
+  const view: Record<string, unknown> = {};
+  if (mfa.method !== undefined) view.method = mfa.method;
+  if (mfa.content !== undefined) view.content = mfa.content;
+  if (mfa.totp != null && typeof mfa.totp === 'object') {
+    const totp: Record<string, unknown> = {};
+    for (const k of TOTP_READABLE) if (mfa.totp[k] !== undefined) totp[k] = mfa.totp[k];
+    view.totp = totp;
+  }
+  return view;
+}
 
 function withoutReserved (id: string | undefined, data: Record<string, unknown>): Record<string, unknown> {
   if (id !== 'private') return data;
   const out = { ...data };
-  for (const k of RESERVED_PRIVATE_KEYS) delete out[k];
+  delete out.mfaThrottle;
+  if (out.mfa != null && typeof out.mfa === 'object') out.mfa = mfaReadView(out.mfa as StoredMfaLike);
+  else delete out.mfa;
   return out;
 }
 

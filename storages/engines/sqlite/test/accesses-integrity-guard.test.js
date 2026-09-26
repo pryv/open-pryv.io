@@ -83,7 +83,13 @@ describe('[AITXS] AccessesSQLite integrity writes run in one better-sqlite3 tran
     };
     const fakeDb = {
       prepare: () => stmt,
-      transaction: (fn) => { state.txCalls++; return (...args) => fn(...args); }
+      // Like better-sqlite3: the wrapped function also has an `.immediate` form.
+      transaction: (fn) => {
+        state.txCalls++;
+        const run = (...args) => fn(...args);
+        run.immediate = (...args) => { state.immediate = true; return fn(...args); };
+        return run;
+      }
     };
     const fakeUdb = { db: fakeDb, ensureTable: async () => {} };
     UserBaseStorageDb.forUser = async () => fakeUdb;
@@ -96,6 +102,7 @@ describe('[AITXS] AccessesSQLite integrity writes run in one better-sqlite3 tran
       try {
         assert.ifError(err);
         assert.strictEqual(state.txCalls, 1, 'exactly one transaction opened');
+        assert.strictEqual(state.immediate, true, 'opened as BEGIN IMMEDIATE');
         assert.ok(state.writes >= 2, 'statement 1 + statement 2 both wrote');
         done();
       } catch (e) { done(e); }
@@ -108,6 +115,7 @@ describe('[AITXS] AccessesSQLite integrity writes run in one better-sqlite3 tran
       try {
         assert.ifError(err);
         assert.strictEqual(state.txCalls, 1, 'exactly one transaction opened');
+        assert.strictEqual(state.immediate, true, 'opened as BEGIN IMMEDIATE');
         assert.ok(state.writes >= 2, 'batch-unset + recompute both wrote');
         done();
       } catch (e) { done(e); }
