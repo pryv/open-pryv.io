@@ -25,8 +25,8 @@ const Profile = require('./Profile.ts').default;
  */
 interface KvClientLike {
   get: (key: string) => Promise<unknown>;
-  /** Resolves whether it wrote; an unguarded write (what this store makes)
-   * always does, so the result is not read here. */
+  /** Resolves whether it wrote: an unguarded write always does; the
+   * `ifEquals` write of recordFailedAttempt may not, and is retried. */
   set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;

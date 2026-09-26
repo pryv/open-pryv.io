@@ -40,7 +40,10 @@ async function execute (statement: () => void, retries = 100): Promise<void> {
       statement();
       return;
     } catch (err) {
-      if ((err as { code?: string }).code !== 'SQLITE_BUSY') {
+      // Extended codes too (SQLITE_BUSY_SNAPSHOT, SQLITE_BUSY_RECOVERY, ...):
+      // better-sqlite3 reports them by name, and they are just as retryable.
+      const code = (err as { code?: string }).code;
+      if (typeof code !== 'string' || !code.startsWith('SQLITE_BUSY')) {
         throw err;
       }
       const waitTime = i > (WAIT_LIST_MS.length - 1) ? 100 : WAIT_LIST_MS[i];

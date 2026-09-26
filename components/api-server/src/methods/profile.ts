@@ -85,7 +85,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   function updateProfile (context: MethodContext, params: ProfileUpdateParams, result: ProfileResult, next: MethodNext) {
     if (params.id === 'private') {
-      const reserved = RESERVED_PRIVATE_KEYS.filter((k) => k in (params.update || {}));
+      const reserved = RESERVED_PRIVATE_KEYS.filter((k) => Object.hasOwn(params.update || {}, k));
       if (reserved.length > 0) {
         return next(errors.invalidOperation(
           `The private profile keys ${reserved.join(', ')} are managed by the MFA methods and cannot be set here.`,

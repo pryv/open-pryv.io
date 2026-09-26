@@ -89,7 +89,7 @@ describe('[SYRO] system route', function () {
   });
 
   describe('[SY01] DELETE /mfa', () => {
-    let username, mfaPath, profilePath, res, profileRes, token, restOfProfile;
+    let username, userId, mfaPath, profilePath, res, profileRes, token, restOfProfile;
 
     before(async () => {
       username = charlatan.Lorem.characters(10);
@@ -98,18 +98,27 @@ describe('[SYRO] system route', function () {
       profilePath = `/${username}/profile/private`;
       restOfProfile = { restOfProfile: { something: '123' } };
       const user = await fixtures.user(username);
+      userId = user.attrs.id;
       await user.access({
         type: 'personal',
         token
       });
       await user.session(token);
-      await helpers.request(server.url)
-        .put(profilePath)
-        .set('authorization', token)
-        .send({
+      // MFA state is not writable through the profile methods, so it is seeded
+      // in storage. A public profile is stored FIRST, so a reset that does not
+      // target the private profile explicitly would hit the wrong row.
+      const profileStorage = (await require('storage').getStorageLayer()).profile;
+      const insert = (item) => new Promise((resolve, reject) =>
+        profileStorage.insertOne({ id: userId, username }, item, (err) => err ? reject(err) : resolve()));
+      await insert({ id: 'public', data: { shown: 'yes' } });
+      await insert({
+        id: 'private',
+        data: {
           mfa: { content: { phone: '123' }, recoveryCodes: ['1', '2', '3'] },
+          mfaThrottle: { failures: 2, lastFailureAt: 1, notBefore: 0 },
           restOfProfile
-        });
+        }
+      });
     });
     before(async () => {
       res = await helpers.request(server.url)
@@ -120,11 +129,20 @@ describe('[SYRO] system route', function () {
     it('[1V4D] should return 204', () => {
       assert.equal(res.status, 204);
     });
-    it('[3HE9] should delete the user\'s "mfa" profile property', async () => {
-      assert.equal(profileRes.body.profile.mfa, undefined);
+    it('[3HE9] should delete the user\'s "mfa" and "mfaThrottle" from the stored private profile', async () => {
+      // Read in storage: the profile methods never return these keys.
+      const profileStorage = (await require('storage').getStorageLayer()).profile;
+      const stored = await new Promise((resolve, reject) => profileStorage.findOne({ id: userId, username }, { id: 'private' }, null,
+        (err, item) => err ? reject(err) : resolve(item)));
+      assert.equal(stored.data.mfa, undefined);
+      assert.equal(stored.data.mfaThrottle, undefined);
     });
     it('[I2PU] should not delete anything else in the profile', () => {
       assert.deepEqual(profileRes.body.profile.restOfProfile, restOfProfile);
+    });
+    it('[SYM3] should leave the other profiles alone', async () => {
+      const pub = await helpers.request(server.url).get(`/${username}/profile/public`).set('authorization', token);
+      assert.deepEqual(pub.body.profile, { shown: 'yes' });
     });
   });
 });
