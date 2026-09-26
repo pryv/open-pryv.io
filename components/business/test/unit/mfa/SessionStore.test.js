@@ -108,4 +108,14 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.equal(fromB.id, token);
     assert.equal(fromB.context.user, 'alice');
   });
+
+  it('[MT6A] parallel failed attempts on one session each count', async () => {
+    // Several guesses in flight at once (possibly on different workers): a
+    // read-then-write counter lets them all read the same count.
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), { user: 'alice' });
+    const counts = await Promise.all(Array.from({ length: 10 }, () => store.recordFailedAttempt(token)));
+    assert.deepEqual([...counts].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert.equal((await store.get(token)).attempts, 10);
+  });
 });

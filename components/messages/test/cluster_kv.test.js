@@ -240,6 +240,30 @@ describe('[CLUSTERKV] clusterKv', function () {
     });
   });
 
+  describe('[CKVE] compare-and-set (ifEquals)', () => {
+    async function checks (client) {
+      await client.set('s/1', { attempts: 0, user: 'u' });
+      // Match (compared as JSON): written.
+      assert.equal(await client.set('s/1', { attempts: 1, user: 'u' }, { ifEquals: { attempts: 0, user: 'u' } }), true);
+      // Stale expectation: refused, nothing written.
+      assert.equal(await client.set('s/1', { attempts: 9, user: 'u' }, { ifEquals: { attempts: 0, user: 'u' } }), false);
+      assert.deepEqual(await client.get('s/1'), { attempts: 1, user: 'u' });
+      // A missing entry equals only null.
+      assert.equal(await client.set('s/none', 1, { ifEquals: { attempts: 0 } }), false);
+      assert.equal(await client.set('s/none', 1, { ifEquals: null }), true);
+    }
+
+    it('[CKE1] over the IPC channel', async () => {
+      await checks(wireClient().client);
+    });
+
+    it('[CKE2] in the in-process fallback, identically', async () => {
+      clusterKv._resetInProcessFallbackForTests();
+      await checks(clusterKv.clientFor({ processHandle: {} }));
+      clusterKv._resetInProcessFallbackForTests();
+    });
+  });
+
   describe('[CKVI] the in-process fallback isolates values like the IPC channel', () => {
     it('[CKVI1] mutating what was read back does not rewrite the stored value', async () => {
       clusterKv._resetInProcessFallbackForTests();

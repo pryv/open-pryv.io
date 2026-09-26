@@ -27,7 +27,7 @@ interface KvClientLike {
   get: (key: string) => Promise<unknown>;
   /** Resolves whether it wrote; an unguarded write (what this store makes)
    * always does, so the result is not read here. */
-  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<boolean>;
+  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
 }
@@ -118,11 +118,20 @@ class SessionStore {
    * limiter, which clears the session once the count reaches its ceiling.
    */
   async recordFailedAttempt (id: string): Promise<number> {
-    const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
-    if (!session) return 0;
-    session.attempts = (session.attempts ?? 0) + 1;
-    await this.kv.set(this.namespace + id, session, { ttlMs: this.ttlMilliseconds });
-    return session.attempts;
+    // Compare-and-set: parallel failed attempts on one session (possibly on
+    // different API workers) each count, instead of overwriting each other's
+    // increment and letting more guesses through than the ceiling allows.
+    for (let tries = 0; tries < 20; tries++) {
+      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      if (!session) return 0;
+      const next = { ...session, attempts: (session.attempts ?? 0) + 1 };
+      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) {
+        return next.attempts;
+      }
+    }
+    // Only a burst of concurrent failures on this very session gets here:
+    // fail closed, as if the ceiling were reached.
+    return Number.MAX_SAFE_INTEGER;
   }
 
   /**
