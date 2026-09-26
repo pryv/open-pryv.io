@@ -28,6 +28,7 @@ export type SqliteDb = {
   // Mirrors better-sqlite3: wrapping a fn returns a callable with the same
   // args that runs it in a transaction and forwards its return value (so a
   // no-arg fn returning a value — e.g. the accesses integrity tx — typechecks).
-  transaction: <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A) => R;
+  // `.immediate` runs it under BEGIN IMMEDIATE (the write lock is taken first).
+  transaction: <A extends unknown[], R>(fn: (...args: A) => R) => ((...args: A) => R) & { immediate: (...args: A) => R };
   close: () => void;
 };
