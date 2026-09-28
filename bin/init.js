@@ -964,7 +964,7 @@ async function main () {
   console.log('▸ DNS topology');
   console.log('  dnsLess OFF → each user gets a subdomain: https://alice.example.com/events');
   console.log('                (canonical Pryv shape; needs embedded DNS + delegated zone +');
-  console.log('                 port 53/udp on the host + LE wildcard cert via DNS-01)');
+  console.log('                 port 53 udp+tcp on the host + LE wildcard cert via DNS-01)');
   console.log('  dnsLess ON  → users share one FQDN: https://example.com/<username>/events');
   console.log('                (simpler single-host setup; no DNS server, HTTP-01 LE works)');
   const dnsLess = await askYesNo('Enable dnsLess mode?', false, 'dnsless');
@@ -1251,7 +1251,7 @@ async function main () {
     warnings.push('TLS disabled — auth flows expect HTTPS. Use this only for internal LAN / load-balancer-terminated deployments.');
   }
   if (!dnsLess) {
-    warnings.push('dns-active mode requires port 53/udp published + (for non-docker hosts) `setcap cap_net_bind_service=+ep $(which node)`.');
+    warnings.push('dns-active mode requires port 53 published over UDP and TCP + (for non-docker hosts) `setcap cap_net_bind_service=+ep $(which node)`.');
 
     // ── dns-active DNS-chain preflight (best-effort, never blocks) ──
     // Catches the three most common reasons LE DNS-01 issuance fails on first
@@ -1292,8 +1292,8 @@ async function main () {
     } else {
       console.log(`    ℹ No answer yet on ${dnsPublicIp}:53/udp (normal before first boot). After starting`);
       console.log(`      master.js, verify externally:  dig @${dnsPublicIp} SOA ${dnsDomain}`);
-      console.log('      If still silent, check the host firewall / AWS Security Group (53/udp) +');
-      console.log('      the docker `-p 53:53/udp` mapping.');
+      console.log('      If still silent, check the host firewall / AWS Security Group (53 udp+tcp) +');
+      console.log('      the docker `-p 53:53/udp -p 53:53/tcp` mapping.');
     }
   }
   if (leConfig && leConfig.staging) {
@@ -1315,7 +1315,8 @@ async function main () {
 
   // Host pre-flight notes for dns-active mode. The wizard runs inside the
   // container so it can't truly probe the host, but for dnsLess=false the
-  // operator MUST free UDP/53 on the host before `-p 53:53/udp` can bind.
+  // operator MUST free port 53 on the host before `-p 53:53/udp -p 53:53/tcp`
+  // can bind.
   // Ubuntu 24+ / Fedora / most modern Linux distros ship systemd-resolved
   // listening on 127.0.0.53:53 by default — it doesn't conflict with
   // Docker's 0.0.0.0:53 directly but breaks recursive resolution on the
@@ -1323,17 +1324,17 @@ async function main () {
   if (!dnsLess) {
     console.log();
     console.log('  ── Host pre-flight (Linux) ────────────────────────────');
-    console.log('  dns-active mode publishes UDP/53 to the host. Modern Linux distros');
+    console.log('  dns-active mode publishes UDP/53 and TCP/53 to the host. Modern Linux distros');
     console.log('  (Ubuntu 24/26, Fedora 40+, recent Debian) ship systemd-resolved');
-    console.log('  listening on 127.0.0.53:53. Before `docker run … -p 53:53/udp`, disable');
+    console.log('  listening on 127.0.0.53:53. Before `docker run … -p 53:53/udp -p 53:53/tcp`, disable');
     console.log('  the stub resolver and point /etc/resolv.conf at a public resolver:');
     console.log();
     console.log('      sudo systemctl disable --now systemd-resolved');
     console.log('      sudo rm /etc/resolv.conf');
     console.log('      echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf');
     console.log();
-    console.log('  Verify nothing else binds UDP/53 on the host:');
-    console.log('      sudo ss -ulnp | grep \':53 \'   # expect: no rows after the disable above');
+    console.log('  Verify nothing else binds UDP/53 or TCP/53 on the host:');
+    console.log('      sudo ss -tulnp | grep \':53 \'   # expect: no rows after the disable above');
     console.log();
   }
 
@@ -1506,7 +1507,7 @@ async function main () {
   } else {
     yamlBody += section(yaml, 'DNS topology — dns.active (subdomain per user)',
       ['Each user gets a subdomain: https://<user>.<domain>/events.',
-        'Requires embedded DNS server + delegated zone + port 53/udp on the host',
+        'Requires embedded DNS server + delegated zone + port 53 (udp+tcp) on the host',
         'and DNS-01 (wildcard) LE challenge.',
         'publicIp seeds the apex SOA + NS records + A core.<domain> on first boot.',
         'Operator-edited records under dns.records.root or via bin/dns-records.js win;',

@@ -122,7 +122,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    | `dns.active: true` + `dns.domain: X` | `X` + `*.X` | `dns-01` |
    | `core.url: https://Y/` (DNSless multi-core) | `Y` | `http-01` |
 
-   The embedded DNS server answers `_acme-challenge.X` transiently during DNS-01; you don't need to integrate certbot or a third-party DNS API.
+   The embedded DNS server answers `_acme-challenge.X` transiently during DNS-01; you don't need to integrate certbot or a third-party DNS API. It serves UDP and TCP on `dns.port` and answers RFC 2308 negative responses (the apex SOA in AUTHORITY on NXDOMAIN / NODATA; REFUSED for names outside `dns.domain`).
 
 4. **Storage engines are pluggable at runtime.** Engine choice is per-core. The config keys in `config/default-config.yml` are:
 

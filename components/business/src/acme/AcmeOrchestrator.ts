@@ -204,7 +204,7 @@ class AcmeOrchestrator {
       if (this.#hostSpec.challenge === 'dns-01') {
         this.#log('Hint (DNS-01): the embedded DNS server must answer TXT queries for');
         this.#log(`  _acme-challenge.${this.#hostSpec.commonName} — check that NS records for`);
-        this.#log('  the zone point at this host and UDP/53 is reachable from LE.');
+        this.#log('  the zone point at this host and 53 (UDP and TCP) is reachable from LE.');
       } else if (this.#hostSpec.challenge === 'http-01') {
         this.#log('Hint (HTTP-01): LE GETs http://' + this.#hostSpec.commonName + '/.well-known/acme-challenge/<token>');
         this.#log('  Ensure TCP/80 is published (-p 80:80) AND reachable from the public internet');

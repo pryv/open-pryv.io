@@ -80,6 +80,8 @@ dns:
   active: false           # true only if using embedded DNS server
 ```
 
+With `dns.active: true`, the embedded DNS server answers on `dns.port` over UDP and TCP (open both inbound) and returns RFC 2308 negative answers (NXDOMAIN / NODATA with the apex SOA from `dns.records.root.soa`), which validating resolvers and Let's Encrypt's CAA check require.
+
 Restart the existing core. It will now identify itself as `core-a` and be reachable at `https://core-a.mc.example.com/`. The embedded rqlited continues to run as a single-node cluster — until the first new core joins.
 
 **Verify:**
@@ -251,7 +253,7 @@ Before promoting a non-voter to voter, confirm it is reachable and fully caught 
 
 ### Health checks can strand an unreachable voter
 
-When a core binds privileged ports (443, 53/udp) **directly** (proxy disabled, master owns the port), an orchestrator's **zero-downtime / rolling health check** can start the new core's container, fail the check during the brief window where the old and new containers coexist (the privileged bind can't succeed twice), and **stop the new container** — but only *after* `--bootstrap` has already acked and joined the cluster as a voter. You're left with a registered-but-unreachable voter, which immediately triggers the quorum problem above.
+When a core binds privileged ports (443, 53 udp+tcp) **directly** (proxy disabled, master owns the port), an orchestrator's **zero-downtime / rolling health check** can start the new core's container, fail the check during the brief window where the old and new containers coexist (the privileged bind can't succeed twice), and **stop the new container**, but only *after* `--bootstrap` has already acked and joined the cluster as a voter. You're left with a registered-but-unreachable voter, which immediately triggers the quorum problem above.
 
 **Deploy contract for cores that bind privileged ports directly:**
 - **Disable zero-downtime / rolling health checks** for the core app (e.g. on Dokku, set `CHECKS` to skip or use `zero-downtime: false`), so the orchestrator does not start-then-stop a container that has already joined the cluster.

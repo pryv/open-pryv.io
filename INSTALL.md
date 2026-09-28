@@ -560,9 +560,11 @@ docker run \
   pryvio/open-pryv.io:2.0.0-rc.2
 ```
 
-The Dockerfile already declares `EXPOSE 80 443 3000 3001 4000 53/udp`; the
+The Dockerfile already declares `EXPOSE 80 443 3000 3001 4000 53/udp 53/tcp`; the
 `-p` flags above publish the relevant ones to the host. For DNS-active mode
-add `-p 53:53/udp`.
+add `-p 53:53/udp -p 53:53/tcp`: the embedded DNS server answers over UDP and
+TCP (RFC 7766 makes TCP mandatory), so the host firewall / cloud security group
+must allow **both UDP and TCP 53 inbound**.
 
 ### Dokku
 
@@ -584,10 +586,11 @@ dokku config:set open-pryv-io NODE_ENV=production PRYV_DATADIR=/app/data PRYV_LO
 
 **PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment. Open-Pryv.io v2 reads `storages.engines.postgresql.{host,port,database,user,password}` from `override-config.yml` directly — `DATABASE_URL` is **not** auto-consumed today. Populate the concrete keys in your override-config. A future `--from-database-url` convenience is tracked in the roadmap.
 
-**UDP port 53** for DNS-active mode (`dns.active: true` + embedded DNS server) is not supported by `dokku ports:set`. Workaround:
+**Port 53 (UDP and TCP)** for DNS-active mode (`dns.active: true` + embedded DNS server) is not supported by `dokku ports:set`. Workaround:
 
 ```bash
 dokku docker-options:add <app> deploy,run "-p 53:5353/udp"
+dokku docker-options:add <app> deploy,run "-p 53:5353/tcp"
 ```
 
 For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess.isActive: true` + `dnsLess.publicUrl: https://<reg-fqdn>` in `override-config.yml` and let the reverse proxy terminate TLS as usual.
@@ -600,19 +603,19 @@ dokku docker-options:add <app> deploy,run "-p 443:443/tcp"
 
 Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and `wget https://127.0.0.1:443` inside it succeeds.
 
-**Bare-metal embedded DNS (non-Docker)** — when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade — `apt install nodejs` wipes file capabilities**):
+**Bare-metal embedded DNS (non-Docker)**: when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind (UDP and TCP alike) unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade: `apt install nodejs` wipes file capabilities**):
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' "$(which node)"
 sudo getcap "$(which node)"   # expect: cap_net_bind_service=ep
 ```
 
-Without the cap, the embedded DNS server hangs silently — `dns2`'s `listen()` promise waits for a `'listening'` event that the failing UDP server never emits, and `master.js` stops mid-init right after `TCP pub/sub broker started`, never forking workers. (Docker images don't need this — `node` runs as PID 1 / root inside the container.)
+Without the cap, the embedded DNS server cannot bind and `master.js` fails fast: it exits with `Master startup failed: Error: DNS server failed to bind udp <ip>:53: …` (the same happens when another process already holds UDP or TCP 53). The cap covers both the UDP and the TCP listener. (Docker images don't need this: `node` runs as PID 1 / root inside the container.)
 
 **Native HTTPS (ports 80 / 443)** when running ACME directly inside the
 container (`letsEncrypt.enabled: true`) needs the same publishing dance —
 `dokku ports:add` only exposes ports declared in the Dockerfile's `EXPOSE`.
-Open-Pryv.io declares 80, 443, 3000, 3001, 4000 and 53/udp, so:
+Open-Pryv.io declares 80, 443, 3000, 3001, 4000, 53/udp and 53/tcp, so:
 
 ```bash
 dokku ports:add <app> http:80:80
