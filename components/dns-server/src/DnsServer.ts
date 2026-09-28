@@ -50,10 +50,11 @@ const TCP_IDLE_TIMEOUT_MS = 10000;
 /** DNS response codes used here (RFC 1035 section 4.1.1). */
 const RCODE_NXDOMAIN = 3;
 const RCODE_REFUSED = 5;
+const RCODE_SERVFAIL = 2;
 
 type DnsAnswer = Record<string, unknown>;
 type DnsQuestion = { name: string; type: number };
-type DnsHeader = { rcode: number; aa: number; ra: number; z: number };
+type DnsHeader = { rcode: number; aa: number; ra: number; z: number; tc: number };
 type DnsRequest = { questions: DnsQuestion[] };
 type DnsResponse = { header: DnsHeader; questions: DnsQuestion[]; answers: DnsAnswer[]; authorities: DnsAnswer[] };
 type DnsSendFn = (resp: DnsResponse) => void;
@@ -336,6 +337,7 @@ class DnsServer {
     response.header.aa = 1;
     response.header.ra = 0;
     response.header.z = 0;
+    response.header.tc = 0;
     response.header.rcode = 0;
     response.answers = [];
     response.authorities = [];
@@ -385,13 +387,17 @@ class DnsServer {
       }
     } catch (err: unknown) {
       this.#logger.warn(`DNS error for ${qname}: ${(err as Error).message}`);
+      // An internal failure is not a statement that the name does not exist:
+      // SERVFAIL is not cached as a negative answer and makes resolvers try
+      // the other nameservers (RFC 2308 section 7.1).
       response.answers = [];
-      this.#setNxdomain(response);
+      response.header.rcode = RCODE_SERVFAIL;
     }
 
     // RFC 2308 section 3: NXDOMAIN and NODATA answers carry the zone SOA in
     // the AUTHORITY section so resolvers can cache the negative answer.
-    if (response.header.rcode === RCODE_NXDOMAIN || response.answers.length === 0) {
+    if (response.header.rcode === RCODE_NXDOMAIN ||
+        (response.header.rcode === 0 && response.answers.length === 0)) {
       this.#addNegativeSoa(response, domain);
     }
 

@@ -96,6 +96,7 @@ function buildQuery (name, type, opts = {}) {
   q.header.id = queryId++;
   q.header.rd = 1;
   q.header.z = opts.z || 0;
+  q.header.tc = opts.tc || 0;
   q.questions.push({ name, type: typeValue, class: Packet.CLASS.IN });
   for (const a of (opts.answers || [])) q.answers.push(a);
   return q.toBuffer();
@@ -450,11 +451,12 @@ describe('[DNS] DNS Server', function () {
         [`unknown-user-xyz.${TEST_DOMAIN}`, 'A', 3]
       ];
       for (const [name, type, rcode] of cases) {
-        const res = await rawQuery(port, name, type, { z: 2 });
+        const res = await rawQuery(port, name, type, { z: 2, tc: 1 });
         const label = `${name} ${type}`;
         assert.strictEqual(res.header.rcode, rcode, label);
         assert.strictEqual(res.header.aa, 1, label + ': aa');
         assert.strictEqual(res.header.z, 0, label + ': z (AD/CD) cleared');
+        assert.strictEqual(res.header.tc, 0, label + ': tc not echoed');
         assert.strictEqual(res.header.ra, 0, label + ': ra');
         assert.strictEqual(res.header.rd, 1, label + ': rd echoed');
       }
@@ -496,10 +498,11 @@ describe('[DNS] DNS Server', function () {
       }
     });
 
-    it('[DN64] a platform failure answers NXDOMAIN with the apex SOA', async () => {
+    it('[DN64] a platform failure answers SERVFAIL, not a cacheable negative answer', async () => {
       const res = await rawQuery(port, `platform-failure.${TEST_DOMAIN}`, 'A');
-      assert.strictEqual(res.header.rcode, 3);
-      assertSoaAuthority(res, TEST_TTL, 'platform failure');
+      assert.strictEqual(res.header.rcode, 2);
+      assert.strictEqual(res.answers.length, 0);
+      assert.strictEqual(res.authorities.length, 0);
     });
 
     it('[DN65] positive answers carry no authority records', async () => {
