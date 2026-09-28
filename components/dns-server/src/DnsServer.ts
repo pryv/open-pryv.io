@@ -41,19 +41,35 @@ const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
 const RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa'];
 
 
+/**
+ * TCP connections that stay idle this long are dropped (RFC 7766 section 6.2.3
+ * recommends a short idle timeout so idle clients cannot exhaust connections).
+ */
+const TCP_IDLE_TIMEOUT_MS = 10000;
+
+/** DNS response codes used here (RFC 1035 section 4.1.1). */
+const RCODE_NXDOMAIN = 3;
+const RCODE_REFUSED = 5;
+
 type DnsAnswer = Record<string, unknown>;
 type DnsQuestion = { name: string; type: number };
+type DnsHeader = { rcode: number; aa: number; ra: number; z: number };
 type DnsRequest = { questions: DnsQuestion[] };
-type DnsResponse = { answers: DnsAnswer[]; header: { rcode: number; [k: string]: unknown }; [k: string]: unknown };
+type DnsResponse = { header: DnsHeader; questions: DnsQuestion[]; answers: DnsAnswer[]; authorities: DnsAnswer[] };
 type DnsSendFn = (resp: DnsResponse) => void;
 type Dns2EventHandler = (...args: unknown[]) => void;
-interface Dns2Server {
-  on: (event: string, handler: Dns2EventHandler) => void;
-  listen: (opts: { udp: { port: number; address: string; type: string } } | number, ip?: string) => Promise<void>;
-  close: () => Promise<void> | void;
-  addresses: () => { udp?: { address: string; port: number }; tcp?: { address: string; port: number } };
-  _udp6?: Dns2Server;
+type SocketAddress = { address: string; port: number };
+/** The part of a dgram.Socket / net.Server (dns2 UDP and TCP servers extend them) used here. */
+interface Dns2Listener {
+  on: (event: string, handler: Dns2EventHandler) => unknown;
+  once: (event: string, handler: Dns2EventHandler) => unknown;
+  removeListener: (event: string, handler: Dns2EventHandler) => unknown;
+  listen: (...args: unknown[]) => unknown;
+  close: () => unknown;
+  address: () => SocketAddress | string | null;
 }
+type ListenerKind = 'udp' | 'tcp' | 'udp6' | 'tcp6';
+type SoaRecord = { primary: string; admin: string; serial: number; refresh: number; retry: number; expiration: number; minimum: number };
 
 type DnsRecordEntry = {
   a?: string | string[];
@@ -75,7 +91,7 @@ class DnsServer {
   #config: BoilerConfig;
   #platform: PlatformLike;
   #logger: Logger;
-  #server!: Dns2Server;
+  #listeners: Map<ListenerKind, Dns2Listener> = new Map();
   #domain: string;
   #ttl: number;
   #rootRecords: Record<string, unknown>;
@@ -83,14 +99,16 @@ class DnsServer {
   #configKeys: Set<string>;          // Set of subdomain keys that came from YAML config (immutable)
   #platformRefreshTimer: NodeJS.Timeout | null = null;
   #platformRefreshIntervalMs: number;
+  #tcpIdleTimeoutMs: number;
 
   /**
    * @param opts.config - @pryv/boiler config
    * @param opts.platform - Platform instance (needs getAllDnsRecords/setDnsRecord/deleteDnsRecord for persistence; DNS-record methods are optional — absence disables PlatformDB persistence)
    * @param opts.logger - logger with .info/.warn/.error
    * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
+   * @param [opts.tcpIdleTimeoutMs] - override the TCP idle timeout (tests)
    */
-  constructor ({ config, platform, logger, platformRefreshIntervalMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number }) {
+  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number }) {
     this.#config = config;
     this.#platform = platform;
     this.#logger = logger;
@@ -102,48 +120,36 @@ class DnsServer {
     this.#staticEntries = Object.assign({}, configEntries);
     this.#configKeys = new Set(Object.keys(configEntries));
     this.#platformRefreshIntervalMs = platformRefreshIntervalMs ?? DEFAULT_PLATFORM_REFRESH_INTERVAL_MS;
+    this.#tcpIdleTimeoutMs = tcpIdleTimeoutMs ?? TCP_IDLE_TIMEOUT_MS;
   }
 
   /**
-   * Start the DNS server.
-   * @param opts.port - UDP port
+   * Start the DNS server: UDP and TCP (RFC 7766 makes TCP mandatory) on the
+   * same port and address, plus the same pair on the IPv6 address if set.
+   * Rejects if any socket fails to bind (port taken, missing capability) so
+   * the process fails fast instead of hanging.
+   * @param opts.port - UDP and TCP port
    * @param opts.ip - bind address (e.g. '0.0.0.0')
    * @param opts.ip6 - IPv6 bind address (null = disabled)
    */
   async start ({ port, ip, ip6 }: { port: number; ip: string; ip6?: string | null }) {
-    this.#server = dns2.createServer({
-      udp: true,
-      handle: (request: DnsRequest, send: DnsSendFn, rinfo: unknown) => {
-        this.#handleRequest(request, send, rinfo);
+    if (this.#getSoa() == null) {
+      this.#logger.warn('DNS: dns.records.root.soa is not set; negative answers carry no SOA ' +
+        '(RFC 2308), and resolvers such as Unbound 1.18+ discard them');
+    }
+    try {
+      await this.#listen('udp', dns2.createUDPServer({ type: 'udp4' }), (s) => s.listen(port, ip), `${ip}:${port}`);
+      await this.#listen('tcp', dns2.createTCPServer(), (s) => s.listen(port, ip), `${ip}:${port}`);
+      this.#logger.info(`DNS server listening on ${ip}:${port} udp+tcp (domain: ${this.#domain})`);
+      if (ip6) {
+        await this.#listen('udp6', dns2.createUDPServer({ type: 'udp6' }), (s) => s.listen(port, ip6), `[${ip6}]:${port}`);
+        // ipv6Only: a dual-stack '::' listener would collide with the IPv4 one.
+        await this.#listen('tcp6', dns2.createTCPServer(), (s) => s.listen({ port, host: ip6, ipv6Only: true }), `[${ip6}]:${port}`);
+        this.#logger.info(`DNS server listening on [${ip6}]:${port} udp+tcp (IPv6)`);
       }
-    });
-
-    this.#server.on('requestError', (...args: unknown[]) => {
-      const err = args[0] as Error;
-      this.#logger.warn('DNS request parse error: ' + err.message);
-    });
-
-    this.#server.on('error', (...args: unknown[]) => {
-      const err = args[0] as Error;
-      this.#logger.error('DNS server error: ' + err.message);
-    });
-
-    const listenOpts = {
-      udp: { port, address: ip, type: 'udp4' }
-    };
-
-    await this.#server.listen(listenOpts);
-    this.#logger.info(`DNS server listening on ${ip}:${port} (domain: ${this.#domain})`);
-
-    // If IPv6 is configured, start a second UDP6 server
-    if (ip6) {
-      this.#server._udp6 = dns2.createUDPServer({ type: 'udp6' });
-      this.#server._udp6!.on('request', (...args: unknown[]) => {
-        const [request, send, rinfo] = args as [DnsRequest, DnsSendFn, unknown];
-        this.#handleRequest(request, send, rinfo);
-      });
-      await this.#server._udp6!.listen(port, ip6);
-      this.#logger.info(`DNS server listening on [${ip6}]:${port} (IPv6)`);
+    } catch (err) {
+      await this.#closeListeners();
+      throw err;
     }
 
     // Load runtime DNS records from PlatformDB and start periodic
@@ -201,7 +207,11 @@ class DnsServer {
    * Get server addresses (for tests using ephemeral ports).
    */
   _getAddresses () {
-    return this.#server.addresses();
+    const addresses: Partial<Record<ListenerKind, SocketAddress>> = {};
+    for (const [kind, listener] of this.#listeners) {
+      addresses[kind] = listener.address() as SocketAddress;
+    }
+    return addresses;
   }
 
   /**
@@ -212,13 +222,68 @@ class DnsServer {
       clearInterval(this.#platformRefreshTimer);
       this.#platformRefreshTimer = null;
     }
-    if (this.#server) {
-      if (this.#server._udp6) {
-        this.#server._udp6.close();
-      }
-      await this.#server.close();
+    if (this.#listeners.size > 0) {
+      await this.#closeListeners();
       this.#logger.info('DNS server stopped');
     }
+  }
+
+  /**
+   * Bind one dns2 UDP or TCP server and wire it to the request handler.
+   * dns2's own `listen()` resolves on 'listening' and never rejects, so a bind
+   * error would leave the caller waiting forever: race 'listening' against
+   * 'error' instead.
+   */
+  async #listen (kind: ListenerKind, listener: Dns2Listener, doListen: (l: Dns2Listener) => unknown, where: string) {
+    listener.on('request', (...args: unknown[]) => {
+      const [request, send, rinfo] = args as [DnsRequest, DnsSendFn, unknown];
+      this.#handleRequest(request, send, rinfo);
+    });
+    listener.on('requestError', (...args: unknown[]) => {
+      this.#logger.warn(`DNS ${kind} request parse error: ${(args[0] as Error).message}`);
+    });
+    if (kind === 'tcp' || kind === 'tcp6') {
+      listener.on('connection', (...args: unknown[]) => {
+        const client = args[0] as { setTimeout: (ms: number, cb: () => void) => void; destroy: () => void };
+        client.setTimeout(this.#tcpIdleTimeoutMs, () => client.destroy());
+      });
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onError = (...args: unknown[]) => {
+        listener.removeListener('listening', onListening);
+        reject(new Error(`DNS server failed to bind ${kind} ${where}: ${(args[0] as Error).message}`));
+      };
+      const onListening = () => {
+        listener.removeListener('error', onError);
+        resolve();
+      };
+      listener.once('error', onError);
+      listener.once('listening', onListening);
+      this.#listeners.set(kind, listener);
+      doListen(listener);
+    });
+    listener.on('error', (...args: unknown[]) => {
+      this.#logger.error(`DNS ${kind} server error: ${(args[0] as Error).message}`);
+    });
+  }
+
+  /**
+   * Close every bound socket; tolerate sockets that never finished binding.
+   */
+  async #closeListeners () {
+    const closing = [];
+    for (const listener of this.#listeners.values()) {
+      closing.push(new Promise<void>((resolve) => {
+        listener.once('close', () => resolve());
+        try {
+          listener.close();
+        } catch {
+          resolve();
+        }
+      }));
+    }
+    this.#listeners.clear();
+    await Promise.all(closing);
   }
 
   /**
@@ -264,7 +329,16 @@ class DnsServer {
    * Handle an incoming DNS request.
    */
   async #handleRequest (request: DnsRequest, send: DnsSendFn, _rinfo: unknown) {
-    const response = Packet.createResponseFromRequest(request);
+    // dns2 builds the response in place from the request object: it echoes the
+    // request header (including the Z/AD/CD bits) and any records the query
+    // carried. Reset what an authoritative-only server must set itself.
+    const response: DnsResponse = Packet.createResponseFromRequest(request);
+    response.header.aa = 1;
+    response.header.ra = 0;
+    response.header.z = 0;
+    response.header.rcode = 0;
+    response.answers = [];
+    response.authorities = [];
     const question = request.questions[0];
     if (!question) {
       send(response);
@@ -273,18 +347,21 @@ class DnsServer {
 
     const qname = question.name.toLowerCase();
     const qtype = question.type;
+    const domain = (this.#domain || '').toLowerCase();
+
+    if (!domain || !(qname === domain || qname.endsWith('.' + domain))) {
+      // Not a zone we serve: REFUSED, not authoritative, no SOA (answering
+      // NXDOMAIN would be a claim about someone else's zone).
+      response.header.aa = 0;
+      response.header.rcode = RCODE_REFUSED;
+      send(response);
+      return;
+    }
 
     try {
-      if (!this.#domain || !qname.endsWith(this.#domain.toLowerCase())) {
-        // Not our domain — NXDOMAIN
-        this.#setNxdomain(response);
-        send(response);
-        return;
-      }
+      const prefix = qname === domain ? '' : qname.slice(0, -(domain.length + 1)); // strip '.domain'
 
-      const prefix = qname.slice(0, -(this.#domain.length + 1)); // strip '.domain'
-
-      if (prefix === '' || qname === this.#domain.toLowerCase()) {
+      if (prefix === '') {
         // Root domain query
         this.#answerRoot(response, qname, qtype);
       } else if (prefix === 'lsc') {
@@ -308,10 +385,37 @@ class DnsServer {
       }
     } catch (err: unknown) {
       this.#logger.warn(`DNS error for ${qname}: ${(err as Error).message}`);
+      response.answers = [];
       this.#setNxdomain(response);
     }
 
+    // RFC 2308 section 3: NXDOMAIN and NODATA answers carry the zone SOA in
+    // the AUTHORITY section so resolvers can cache the negative answer.
+    if (response.header.rcode === RCODE_NXDOMAIN || response.answers.length === 0) {
+      this.#addNegativeSoa(response, domain);
+    }
+
     send(response);
+  }
+
+  /**
+   * The apex SOA from `dns.records.root.soa` (YAML or seeded at boot), or null.
+   */
+  #getSoa (): SoaRecord | null {
+    const soa = (this.#rootRecords as { soa?: SoaRecord | null }).soa;
+    return soa || null;
+  }
+
+  /**
+   * Put the apex SOA in AUTHORITY with the negative-caching TTL
+   * min(SOA ttl, SOA minimum) (RFC 2308 section 5). No-op without a SOA.
+   */
+  #addNegativeSoa (response: DnsResponse, apex: string) {
+    const soa = this.#getSoa();
+    if (soa == null) return;
+    const minimum = Number(soa.minimum);
+    const negTtl = Number.isFinite(minimum) ? Math.min(this.#ttl, minimum) : this.#ttl;
+    response.authorities.push(buildSOA(apex, soa, negTtl));
   }
 
   /**
@@ -479,8 +583,8 @@ class DnsServer {
 /**
  * Factory function.
  */
-function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number }) {
-  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs });
+function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number }) {
+  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs });
 }
 
 export { DnsServer, createDnsServer };

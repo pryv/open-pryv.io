@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const assert = require('assert');
 const dns = require('dns');
 const dgram = require('dgram');
+const net = require('net');
 const dns2 = require('dns2');
 const { Packet } = dns2;
 const { createDnsServer } = require('../src/index.ts');
@@ -24,6 +25,7 @@ function createMockPlatform (opts = {}) {
   const coreInfos = opts.coreInfos || [];
   return {
     async getUserCore (username) {
+      if (username === 'platform-failure') throw new Error('simulated platform failure');
       return userCores[username] || null;
     },
     async getCoreInfo (coreId) {
@@ -84,17 +86,27 @@ function createMockLogger () {
 
 // Raw UDP query for record types not exposed by dns.Resolver (SOA, CAA)
 // and for NXDOMAIN checks (Resolver throws on NXDOMAIN instead of returning rcode)
+// opts.z: raw Z/AD/CD header bits (2 = AD, as dig sets by default)
+// opts.answers: records to smuggle into the query's answer section
+// opts.host: server address (IPv6 literal switches to udp6)
 let queryId = 1;
-async function rawQuery (port, name, type) {
+function buildQuery (name, type, opts = {}) {
   const typeValue = typeof type === 'number' ? type : Packet.TYPE[type];
   const q = new Packet();
   q.header.id = queryId++;
   q.header.rd = 1;
+  q.header.z = opts.z || 0;
   q.questions.push({ name, type: typeValue, class: Packet.CLASS.IN });
-  const buf = q.toBuffer();
+  for (const a of (opts.answers || [])) q.answers.push(a);
+  return q.toBuffer();
+}
+
+async function rawQuery (port, name, type, opts = {}) {
+  const buf = buildQuery(name, type, opts);
+  const host = opts.host || '127.0.0.1';
 
   return new Promise((resolve, reject) => {
-    const sock = dgram.createSocket('udp4');
+    const sock = dgram.createSocket(host.includes(':') ? 'udp6' : 'udp4');
     const timer = setTimeout(() => {
       sock.close();
       reject(new Error('DNS query timeout'));
@@ -109,8 +121,46 @@ async function rawQuery (port, name, type) {
       sock.close();
       reject(err);
     });
-    sock.send(buf, port, '127.0.0.1');
+    sock.send(buf, port, host);
   });
+}
+
+// Same query over TCP (RFC 1035 section 4.2.2: 2-byte length prefix).
+async function rawTcpQuery (port, name, type, opts = {}) {
+  const buf = buildQuery(name, type, opts);
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(buf.length);
+
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const sock = net.connect({ port, host: opts.host || '127.0.0.1' }, () => {
+      sock.write(Buffer.concat([len, buf]));
+    });
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error('DNS TCP query timeout'));
+    }, 5000);
+    sock.on('data', (chunk) => chunks.push(chunk));
+    sock.on('end', () => {
+      clearTimeout(timer);
+      const data = Buffer.concat(chunks);
+      resolve(Packet.parse(data.subarray(2, 2 + data.readUInt16BE(0))));
+    });
+    sock.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function assertSoaAuthority (res, ttl, label) {
+  assert.strictEqual(res.answers.length, 0, label + ': answers');
+  assert.strictEqual(res.authorities.length, 1, label + ': one SOA in authority');
+  const soa = res.authorities[0];
+  assert.strictEqual(soa.type, Packet.TYPE.SOA, label);
+  assert.strictEqual(soa.name, TEST_DOMAIN, label);
+  assert.strictEqual(soa.primary, 'ns1.test.pryv.me', label);
+  assert.strictEqual(soa.ttl, ttl, label + ': negative TTL');
 }
 
 describe('[DNS] DNS Server', function () {
@@ -118,6 +168,7 @@ describe('[DNS] DNS Server', function () {
 
   let server;
   let port;
+  let tcpPort;
   let resolver;
 
   const coreInfos = [
@@ -143,6 +194,7 @@ describe('[DNS] DNS Server', function () {
     await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
     const addrs = server._getAddresses();
     port = addrs.udp.port;
+    tcpPort = addrs.tcp.port;
 
     // Node.js dns.Resolver pointed at our test server
     resolver = new dns.promises.Resolver();
@@ -201,6 +253,7 @@ describe('[DNS] DNS Server', function () {
       assert.strictEqual(records[0].primary, 'ns1.test.pryv.me');
       assert.strictEqual(records[0].admin, 'admin.test.pryv.me');
       assert.strictEqual(records[0].serial, 2026032001);
+      assert.strictEqual(res.authorities.length, 0, 'an SOA query answers the SOA in ANSWER, not AUTHORITY');
     });
 
     it('[DN07] must resolve CAA record for root domain', async () => {
@@ -372,11 +425,212 @@ describe('[DNS] DNS Server', function () {
   // --- Not our domain ---
 
   describe('Non-matching domain', () => {
-    it('[DN50] must return NXDOMAIN for queries outside our domain', async () => {
+    it('[DN50] must return REFUSED for queries outside our domain', async () => {
       const res = await rawQuery(port, 'example.com', 'A');
       assert.strictEqual(res.answers.length, 0);
-      assert.strictEqual(res.header.rcode, 3); // NXDOMAIN
+      assert.strictEqual(res.header.rcode, 5); // REFUSED
+      assert.strictEqual(res.header.aa, 0, 'not authoritative for a foreign zone');
+      assert.strictEqual(res.authorities.length, 0, 'no SOA of ours for a foreign zone');
     });
+
+    it('[DN51] a name that only ends with the domain string is out of zone', async () => {
+      const res = await rawQuery(port, 'x' + TEST_DOMAIN, 'A');
+      assert.strictEqual(res.header.rcode, 5);
+      assert.strictEqual(res.answers.length, 0);
+    });
+  });
+
+  // --- Header flags and RFC 2308 negative answers ---
+
+  describe('Header flags', () => {
+    it('[DN60] answers are authoritative and never echo the AD bit', async () => {
+      const cases = [
+        [TEST_DOMAIN, 'A', 0],
+        [`api.${TEST_DOMAIN}`, 'AAAA', 0],
+        [`unknown-user-xyz.${TEST_DOMAIN}`, 'A', 3]
+      ];
+      for (const [name, type, rcode] of cases) {
+        const res = await rawQuery(port, name, type, { z: 2 });
+        const label = `${name} ${type}`;
+        assert.strictEqual(res.header.rcode, rcode, label);
+        assert.strictEqual(res.header.aa, 1, label + ': aa');
+        assert.strictEqual(res.header.z, 0, label + ': z (AD/CD) cleared');
+        assert.strictEqual(res.header.ra, 0, label + ': ra');
+        assert.strictEqual(res.header.rd, 1, label + ': rd echoed');
+      }
+    });
+
+    it('[DN61] records carried in the query are not echoed back', async () => {
+      const smuggled = { name: TEST_DOMAIN, type: Packet.TYPE.A, class: Packet.CLASS.IN, ttl: 1, address: '6.6.6.6' };
+      const res = await rawQuery(port, `unknown-user-xyz.${TEST_DOMAIN}`, 'A', { answers: [smuggled] });
+      assert.strictEqual(res.header.rcode, 3);
+      assert.strictEqual(res.answers.length, 0);
+    });
+  });
+
+  describe('Negative answers (RFC 2308)', () => {
+    it('[DN62] NODATA answers carry the apex SOA with the negative TTL', async () => {
+      const cases = [
+        [TEST_DOMAIN, 'SRV'], // apex, type not configured
+        [`api.${TEST_DOMAIN}`, 'AAAA'], // static entry without AAAA
+        [`bob.${TEST_DOMAIN}`, 'AAAA'], // username on an IPv4-only core
+        [`alice.${TEST_DOMAIN}`, 'TXT'], // username
+        [`core2.${TEST_DOMAIN}`, 'AAAA'], // coreId
+        [`lsc.${TEST_DOMAIN}`, 'TXT'], // cluster discovery
+        [`reg.${TEST_DOMAIN}`, 'TXT'] // reserved service name
+      ];
+      for (const [name, type] of cases) {
+        const res = await rawQuery(port, name, type);
+        assert.strictEqual(res.header.rcode, 0, `${name} ${type}: NOERROR`);
+        // min(defaultTTL 60, SOA minimum 86400)
+        assertSoaAuthority(res, TEST_TTL, `${name} ${type}`);
+      }
+    });
+
+    it('[DN63] NXDOMAIN answers carry the apex SOA', async () => {
+      await server.deleteStaticEntry('_acme-challenge');
+      for (const name of [`unknown-user-xyz.${TEST_DOMAIN}`, `_acme-challenge.${TEST_DOMAIN}`]) {
+        const res = await rawQuery(port, name, 'TXT');
+        assert.strictEqual(res.header.rcode, 3, name);
+        assertSoaAuthority(res, TEST_TTL, name);
+      }
+    });
+
+    it('[DN64] a platform failure answers NXDOMAIN with the apex SOA', async () => {
+      const res = await rawQuery(port, `platform-failure.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(res.header.rcode, 3);
+      assertSoaAuthority(res, TEST_TTL, 'platform failure');
+    });
+
+    it('[DN65] positive answers carry no authority records', async () => {
+      for (const [name, type] of [[TEST_DOMAIN, 'A'], [`alice.${TEST_DOMAIN}`, 'A'], [`www.${TEST_DOMAIN}`, 'AAAA']]) {
+        const res = await rawQuery(port, name, type);
+        assert.ok(res.answers.length > 0, `${name} ${type}`);
+        assert.strictEqual(res.authorities.length, 0, `${name} ${type}`);
+      }
+    });
+  });
+
+  // --- TCP (RFC 7766) ---
+
+  describe('TCP', () => {
+    it('[DN70] TCP answers match UDP for positive, NODATA and NXDOMAIN', async () => {
+      const cases = [
+        [`alice.${TEST_DOMAIN}`, 'A'],
+        [`api.${TEST_DOMAIN}`, 'AAAA'],
+        [`unknown-user-xyz.${TEST_DOMAIN}`, 'A'],
+        ['example.com', 'A']
+      ];
+      for (const [name, type] of cases) {
+        const viaUdp = await rawQuery(port, name, type, { z: 2 });
+        const viaTcp = await rawTcpQuery(tcpPort, name, type, { z: 2 });
+        const label = `${name} ${type}`;
+        for (const k of ['rcode', 'aa', 'z', 'ra']) {
+          assert.strictEqual(viaTcp.header[k], viaUdp.header[k], `${label}: header.${k}`);
+        }
+        assert.deepStrictEqual(viaTcp.answers, viaUdp.answers, label + ': answers');
+        assert.deepStrictEqual(viaTcp.authorities, viaUdp.authorities, label + ': authorities');
+      }
+      const soa = await rawTcpQuery(tcpPort, `api.${TEST_DOMAIN}`, 'AAAA');
+      assertSoaAuthority(soa, TEST_TTL, 'NODATA over TCP');
+    });
+  });
+});
+
+describe('[DNX] DNS Server: negative TTL, listeners and bind failures', function () {
+  this.timeout(30000);
+
+  const platform = createMockPlatform({ coreInfos: [{ id: 'core1', ip: '10.0.0.1' }], userCores: { alice: 'core1' } });
+
+  it('[DNX1] the negative TTL is the SOA minimum when it is below the default TTL', async () => {
+    const root = createMockConfig().get('dns:records:root');
+    const config = createMockConfig({
+      'dns:defaultTTL': 300,
+      'dns:records:root': { ...root, soa: { ...root.soa, minimum: 30 } }
+    });
+    const server = createDnsServer({ config, platform, logger: createMockLogger() });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    try {
+      const res = await rawQuery(server._getAddresses().udp.port, `nobody.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(res.header.rcode, 3);
+      assertSoaAuthority(res, 30, 'min(300, 30)');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNX2] without an apex SOA, negative answers have no authority and start() warns', async () => {
+    const root = createMockConfig().get('dns:records:root');
+    const warnings = [];
+    const logger = { ...createMockLogger(), warn (msg) { warnings.push(msg); } };
+    const config = createMockConfig({ 'dns:records:root': { ...root, soa: null } });
+    const server = createDnsServer({ config, platform, logger });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    try {
+      assert.ok(warnings.some(w => /soa/i.test(w)), 'expected a warning about the missing SOA');
+      const res = await rawQuery(server._getAddresses().udp.port, `nobody.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(res.header.rcode, 3);
+      assert.strictEqual(res.authorities.length, 0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNX3] with ip6 set, UDP6 and TCP6 listeners answer', async () => {
+    const server = createDnsServer({ config: createMockConfig(), platform, logger: createMockLogger() });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: '::1' });
+    try {
+      const addrs = server._getAddresses();
+      const viaUdp6 = await rawQuery(addrs.udp6.port, `alice.${TEST_DOMAIN}`, 'A', { host: '::1' });
+      const viaTcp6 = await rawTcpQuery(addrs.tcp6.port, `alice.${TEST_DOMAIN}`, 'A', { host: '::1' });
+      for (const res of [viaUdp6, viaTcp6]) {
+        assert.strictEqual(res.header.aa, 1);
+        assert.deepStrictEqual(res.answers.map(a => a.address), ['10.0.0.1']);
+      }
+    } finally {
+      await server.stop();
+    }
+    assert.deepStrictEqual(server._getAddresses(), {}, 'stop() closes every listener');
+  });
+
+  it('[DNX4] start() rejects, naming the port, when the TCP port is taken', async () => {
+    const blocker = net.createServer();
+    await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const takenPort = blocker.address().port;
+    const server = createDnsServer({ config: createMockConfig(), platform, logger: createMockLogger() });
+    try {
+      await assert.rejects(
+        server.start({ port: takenPort, ip: '127.0.0.1', ip6: null }),
+        (err) => err.message.includes(String(takenPort)) && /tcp/.test(err.message)
+      );
+      // The UDP socket bound before the TCP failure must have been released.
+      const probe = dgram.createSocket('udp4');
+      await new Promise((resolve, reject) => {
+        probe.once('error', reject);
+        probe.bind(takenPort, '127.0.0.1', resolve);
+      });
+      probe.close();
+    } finally {
+      await server.stop();
+      await new Promise((resolve) => blocker.close(resolve));
+    }
+  });
+
+  it('[DNX5] idle TCP connections are closed', async () => {
+    const server = createDnsServer({ config: createMockConfig(), platform, logger: createMockLogger(), tcpIdleTimeoutMs: 100 });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    try {
+      const closedAfter = await new Promise((resolve, reject) => {
+        const t0 = Date.now();
+        const sock = net.connect({ port: server._getAddresses().tcp.port, host: '127.0.0.1' });
+        const timer = setTimeout(() => { sock.destroy(); reject(new Error('idle connection was not closed')); }, 3000);
+        sock.on('error', () => {});
+        sock.on('close', () => { clearTimeout(timer); resolve(Date.now() - t0); });
+      });
+      assert.ok(closedAfter < 3000);
+    } finally {
+      await server.stop();
+    }
   });
 });
 
