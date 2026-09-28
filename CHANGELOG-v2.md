@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.27 — 2026-09-28
 
 ### Embedded DNS: TCP/53 and RFC-conformant answers (operator action: open TCP/53)
 
