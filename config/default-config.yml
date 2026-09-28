@@ -476,9 +476,9 @@ core:
 dns:
   domain: null           # primary domain (e.g. pryv.me); null = dnsLess mode
   active: false          # start DNS server (default off)
-  port: 5353             # UDP port (5353 for dev, 53 for prod via Docker mapping)
-  ip: '0.0.0.0'         # bind address
-  ip6: null              # IPv6 bind address (null = disabled)
+  port: 5353             # UDP and TCP port (5353 for dev, 53 in production, e.g. via Docker mapping)
+  ip: '0.0.0.0'         # bind address (UDP and TCP)
+  ip6: null              # IPv6 bind address, UDP and TCP (null = disabled)
   publicIp: null         # host's public IPv4 (single-core dns-active boot only).
                          # When set + dns.active + dns.domain, master.js seeds the
                          # apex SOA + NS into dns.records.root in-memory and writes

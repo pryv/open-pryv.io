@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## Embedded DNS server: header flags, SOA choke point, TCP listeners, fail-fast bind
+
+`components/dns-server`: dns2's `createResponseFromRequest` returns the request object
+itself, so the response echoed the request header (Z/AD/CD bits) and any records the query
+carried. `#handleRequest` now resets them (`aa = 1`, `ra = 0`, `z = 0`, `tc = 0`, empty
+answer and authority sections). After dispatch, a single choke point adds the apex SOA to
+AUTHORITY for every in-zone NXDOMAIN or NODATA, TTL `min(defaultTTL, soa.minimum)`;
+`start()` warns once when no apex SOA is configured. A platform-DB error answers SERVFAIL
+(no SOA), so resolvers neither cache it as "name does not exist" nor stop at this
+nameserver.
+Out-of-zone queries answer REFUSED with `aa = 0`, and the zone test is exact
+(`qname === domain || qname.endsWith('.' + domain)`).
+The server no longer goes through dns2's `createServer().listen()`, which never rejects and,
+with port 0, passes `{ port, address }` to `net.Server.listen` (which ignores `address`): it
+binds dns2 UDP and TCP servers directly (plus UDP6 / IPv6-only TCP6 when `dns.ip6` is set),
+racing each `listening` event against `error` so `start()` rejects on a bind failure and
+releases the sockets already bound. Idle TCP connections are closed after 10 s.
+`_getAddresses()` returns `{ udp, tcp, udp6?, tcp6? }`. Tests `[DN50]`-`[DN51]`,
+`[DN60]`-`[DN65]`, `[DN70]` (raw UDP and TCP clients) and `[DNX1]`-`[DNX5]` (negative TTL,
+missing SOA, IPv6 listeners, bind failure, idle timeout); `[DN06]` asserts an SOA query keeps
+the SOA in ANSWER.
+
 ## SQLite: read-modify-write updates no longer lose concurrent writes
 
 `findOneAndUpdate`, `updateMany` and `findAndUpdateIfNeeded` read a row and write it back.

@@ -89,10 +89,11 @@ RUN if [ "${IMAGE_TAG}" != "dev" ]; then \
     fi
 
 # 3000: API. 4000: HFS (multi-worker). 3001: previews. 443: native HTTPS
-# (when http.ssl.* set). 80: ACME HTTP-01 (DNS-01 is the default). 53/udp:
-# embedded DNS (when dns.enabled). EXPOSE is informational only — Dokku and
-# similar PaaS use it to know which container ports may be published.
-EXPOSE 80 443 3000 3001 4000 53/udp
+# (when http.ssl.* set). 80: ACME HTTP-01 (DNS-01 is the default).
+# 53/udp + 53/tcp: embedded DNS (when dns.active; RFC 7766 makes TCP
+# mandatory). EXPOSE is informational only: Dokku and similar PaaS use it to
+# know which container ports may be published.
+EXPOSE 80 443 3000 3001 4000 53/udp 53/tcp
 
 # Entry-point dispatcher: no args → normal master.js boot;
 # `init <path>` → interactive config wizard; `check-config <path>` → validate

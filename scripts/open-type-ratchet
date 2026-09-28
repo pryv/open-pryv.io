@@ -38,7 +38,9 @@ cd "$(dirname "$0")/.."
 # payload-specific fields, so the openness is load-bearing and enumerating would
 # misrepresent partial views as closed shapes. Raised by the four additions per
 # the rule above.
-MAX=224
+# 224->223: the embedded DNS server's response type now enumerates its header
+# and sections instead of leaving them open.
+MAX=223
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Embedded DNS: TCP/53 and RFC-conformant answers (operator action: open TCP/53)
+
+When `dns.active: true`, the embedded DNS server now also listens on **TCP** on `dns.port`
+/ `dns.ip` (and `dns.ip6` when set), as RFC 7766 requires. **Allow TCP 53 inbound** next to
+UDP 53 in the host firewall / cloud security group, and publish it in Docker
+(`-p 53:53/udp -p 53:53/tcp`; the image now `EXPOSE`s `53/tcp`). No new config key.
+
+- Negative answers (NXDOMAIN, and NOERROR with no data such as `CAA` on a name without CAA
+  records) now carry the apex SOA from `dns.records.root.soa` in the AUTHORITY section,
+  with the negative TTL `min(dns.defaultTTL, soa.minimum)` (RFC 2308). Resolvers such as
+  Unbound 1.18+ (used by Let's Encrypt and Quad9) discarded the previous SOA-less answers,
+  which made Let's Encrypt's CAA check fail (SERVFAIL) for every name of the domain.
+- Answers set the AA (authoritative) flag and no longer echo the query's AD/CD bits.
+- Queries for names outside `dns.domain` are answered **REFUSED** instead of NXDOMAIN
+  (monitoring that expected NXDOMAIN from these servers sees a different rcode). A name
+  that merely ends with the domain string (e.g. `notexample.com` for `example.com`) is now
+  out of zone.
+- A bind failure (port taken, missing `cap_net_bind_service`) now stops the boot with
+  `DNS server failed to bind …` instead of hanging silently. A deployment where another
+  process holds TCP 53 now fails at boot: free the port first.
+
 ### Profile: MFA state stays out of the profile methods (security)
 
 The private profile's `mfa` (the MFA enrolment) and `mfaThrottle` (the failed-attempt
