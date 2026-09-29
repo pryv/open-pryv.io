@@ -81,6 +81,10 @@ describe('[HSBT] hosted sites served by the real api-server', function () {
     assert.equal(api.status, 200);
     assert.ok(api.headers['api-version'], 'the API still answers');
     assert.ok(JSON.parse(api.body).api != null);
+    // Documented limitation: Socket.IO takes /socket.io/ before any other
+    // handler, on every Host (its engine re-orders the server's listeners)
+    const sio = await get(manager.url, '/socket.io/?EIO=4&transport=polling', 'sitehome.' + DOMAIN);
+    assert.notEqual(sio.headers['x-content-type-options'], 'nosniff', 'answered by Socket.IO, not by the site');
     await manager.stopAsync();
   });
 
