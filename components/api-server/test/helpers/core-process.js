@@ -15,6 +15,10 @@
  *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li')
  *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
  *   ADMIN_KEY       — auth:adminAccessKey
+ *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
+ *                     runs the DNS topology (dnsLess off, sites matched by Host),
+ *                     applies the same boot checks as the api-server (exit 1 on
+ *                     a missing folder) and serves the sites in front of express.
  *
  * Sends IPC 'ready' message when server is listening.
  */
@@ -82,6 +86,18 @@ const http = require('node:http');
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);
   config.set('http:ssl:keyFile', null);
+  const hostedSitesJson = process.env.HOSTED_SITES_JSON || null;
+  let sites = null;
+  if (hostedSitesJson != null) {
+    config.set('hostedSites', JSON.parse(hostedSitesJson));
+    config.set('dnsLess:isActive', false);
+    // Folders first, before the platform registration advertises the sites
+    const { parseHostedSites } = require('business/src/hostedSites.ts');
+    const { checkStaticSiteFolders } = require('api-server/src/hostedSitesIngress.ts');
+    sites = parseHostedSites(config);
+    const folderProblems = checkStaticSiteFolders(sites);
+    if (folderProblems.length > 0) throw new Error('Hosted sites cannot be served: ' + folderProblems.join('; '));
+  }
 
   // Boot application
   const app = getApplication(true);
@@ -104,8 +120,20 @@ const http = require('node:http');
   await require('api-server/src/methods/streams.ts').default(app.api);
   await require('api-server/src/methods/events.ts').default(app.api);
 
+  // Hosted sites in front of express, with the api-server's boot checks
+  let requestHandler = app.expressApp;
+  if (sites != null) {
+    const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('api-server/src/hostedSitesIngress.ts');
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const { getPlatform } = require('platform');
+    const problems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
+    if (problems.length > 0) throw new Error('Hosted sites cannot be served: ' + problems.join('; '));
+    const dispatch = buildHostedSitesIngress({ sites, domain, dnsLess: false, logger: { debug () {}, info () {}, warn () {}, error () {} } });
+    requestHandler = (req, res) => dispatch(req, res, app.expressApp);
+  }
+
   // Start HTTP server
-  const httpServer = http.createServer(app.expressApp);
+  const httpServer = http.createServer(requestHandler);
   await new Promise((resolve, reject) => {
     httpServer.listen(port, '127.0.0.1', () => resolve());
     httpServer.once('error', reject);

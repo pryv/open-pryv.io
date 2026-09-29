@@ -509,6 +509,23 @@ dns:
       caa: []
       soa: null
 
+# === MIXED ===
+# The NAME SET is PLATFORM-WIDE: every core lists the same names; the embedded DNS answers a
+# name with the cores that advertise it, and registration refuses it as a username on every core.
+# `static` paths are PER-CORE (each host's filesystem); `proxy` URLs and `headers` are
+# PLATFORM-WIDE by intent (keep them identical on every core, YAML-only).
+# --- Hosted sites (static folder or fixed proxy on a reserved name) ---
+# DNS topology (dns.domain set, dnsLess off): served on <name>.<dns.domain>, its own origin.
+# dnsLess: served under <publicUrl>/<name>/ (same origin as the API; build bundles with that base).
+# A core refuses to boot when a static folder has no index.html or when a user holds a site name.
+hostedSites: {}
+#  account:
+#    static: /srv/pryv/sites/account         # absolute folder holding index.html (404.html optional)
+#  docs:
+#    proxy: https://example.github.io/docs/  # fixed upstream; the request path and query are appended
+#    headers:                                 # optional, added to every response of this site
+#      content-security-policy: "default-src 'self'"
+
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---
 # Structure matches legacy /reg/hostings response for backward compatibility.

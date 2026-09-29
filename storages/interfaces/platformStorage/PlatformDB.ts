@@ -47,6 +47,13 @@ export interface CoreInfo {
    * `Platform.coreIdToUrl()` instead.
    */
   url?: string;
+  /**
+   * Hosted-site names this core serves (`hostedSites` keys), written by
+   * `Platform.registerSelf()` only when the core has some. The embedded DNS
+   * answers a site name with the cores that list it; every core reserves the
+   * names as usernames.
+   */
+  sites?: string[];
   [key: string]: unknown;
 }
 

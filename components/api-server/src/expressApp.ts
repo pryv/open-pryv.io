@@ -11,6 +11,7 @@ const express = require('express');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
+const { hostedSiteNames } = require('business/src/hostedSites.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -43,6 +44,11 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
     ignoredSubdomains.push('reg', 'access', 'mfa');
     const staticEntries = config.get('dns:staticEntries') || {};
     for (const name of Object.keys(staticEntries)) {
+      if (!ignoredSubdomains.includes(name)) ignoredSubdomains.push(name);
+    }
+    // Hosted-site names are answered before express; should a request for one
+    // reach express anyway, it must not be rewritten into a username path.
+    for (const name of hostedSiteNames(config)) {
       if (!ignoredSubdomains.includes(name)) ignoredSubdomains.push(name);
     }
 

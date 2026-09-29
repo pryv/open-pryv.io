@@ -252,7 +252,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           { usernameChangesUsed: used, usernameChangesLimit: limit }
         ));
       }
-      // Reserved words (mirrors registration).
+      // Reserved words and hosted-site names (mirrors registration).
+      await platform.refreshHostedSiteNames();
       if (platform.isUsernameReserved(newUsername)) {
         return next(errors.invalidOperation('This username is reserved.', { newUsername }));
       }

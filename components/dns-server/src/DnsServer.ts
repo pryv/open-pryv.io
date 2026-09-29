@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 const dns2 = require('dns2');
 const { Packet } = dns2;
 const { buildA, buildAAAA, buildCNAME, buildMX, buildNS, buildSOA, buildTXT, buildCAA } = require('./records.ts');
+const { hostedSiteNames } = require('business/src/hostedSites.ts');
 
 /**
  * Default interval for refreshing runtime DNS records from PlatformDB.
@@ -78,7 +79,7 @@ type DnsRecordEntry = {
   cname?: string;
   txt?: string | string[];
 };
-type CoreInfo = { ip?: string; ipv6?: string; cname?: string; [k: string]: unknown };
+type CoreInfo = { id?: string; ip?: string; ipv6?: string; cname?: string; sites?: string[]; [k: string]: unknown };
 type PlatformLike = {
   getAllDnsRecords?: () => Promise<Array<{ subdomain: string; records: DnsRecordEntry }>>;
   setDnsRecord?: (subdomain: string, records: DnsRecordEntry) => Promise<unknown>;
@@ -101,6 +102,10 @@ class DnsServer {
   #platformRefreshTimer: NodeJS.Timeout | null = null;
   #platformRefreshIntervalMs: number;
   #tcpIdleTimeoutMs: number;
+  #localSites: Set<string>;          // hosted-site names from this core's config
+  #advertisedSites: Set<string> = new Set(); // hosted-site names advertised by any core-info row (refreshed)
+  #coreId: string;
+  #coreIds: Set<string> = new Set(); // ids of every core-info row (refreshed), plus this core's
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -122,6 +127,9 @@ class DnsServer {
     this.#configKeys = new Set(Object.keys(configEntries));
     this.#platformRefreshIntervalMs = platformRefreshIntervalMs ?? DEFAULT_PLATFORM_REFRESH_INTERVAL_MS;
     this.#tcpIdleTimeoutMs = tcpIdleTimeoutMs ?? TCP_IDLE_TIMEOUT_MS;
+    this.#localSites = new Set(hostedSiteNames(config));
+    this.#coreId = (config.get('core:id') as string) || 'single';
+    this.#coreIds = new Set([this.#coreId]);
   }
 
   /**
@@ -179,12 +187,20 @@ class DnsServer {
    * DnsServer to be used with a minimal platform mock in tests).
    */
   async refreshFromPlatform () {
-    if (!this.#platform || typeof this.#platform.getAllDnsRecords !== 'function') {
+    if (!this.#platform) return;
+    await this.#refreshAdvertisedSites();
+    if (typeof this.#platform.getAllDnsRecords !== 'function') {
       return;
     }
     const persisted = await this.#platform.getAllDnsRecords!();
     const seenSubdomains = new Set<string>();
     for (const { subdomain, records } of persisted) {
+      if (this.#isHostedSite(subdomain)) {
+        // Kept in memory (it answers again if the site goes away), never served meanwhile
+        this.#logger.warn(
+          `DNS runtime record for '${subdomain}' is shadowed by a hosted site with that name; ignoring PlatformDB value`
+        );
+      }
       if (this.#configKeys.has(subdomain)) {
         // Config wins — log drift once per refresh if different
         this.#logger.warn(
@@ -375,6 +391,11 @@ class DnsServer {
         // precedence over operator-provided staticEntries with the same
         // name to keep behaviour consistent across deployments.
         await this.#answerClusterDiscovery(response, qname, qtype);
+      } else if (this.#isHostedSite(prefix)) {
+        // Hosted site (a reserved name serving a folder or a proxy): the
+        // cores that advertise it. Ahead of staticEntries, which may not
+        // reuse the name (config check), and of the username lookup.
+        await this.#answerHostedSite(response, qname, qtype, prefix);
       } else if (this.#staticEntries[prefix]) {
         // Static subdomain (www, sw, reg, _acme-challenge, etc.). Operator
         // overrides win over PlatformDB-derived core entries below.
@@ -478,6 +499,56 @@ class DnsServer {
     const ttl = this.#ttl;
 
     for (const core of cores) {
+      if ((qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY) && core.ip) {
+        response.answers.push(buildA(qname, core.ip, ttl));
+      }
+      if ((qtype === Packet.TYPE.AAAA || qtype === Packet.TYPE.ANY) && core.ipv6) {
+        response.answers.push(buildAAAA(qname, core.ipv6, ttl));
+      }
+    }
+  }
+
+  /**
+   * Re-read the hosted-site names advertised in the core-info rows. A failure
+   * keeps the previous set (the next refresh retries).
+   */
+  async #refreshAdvertisedSites () {
+    try {
+      const names = new Set<string>();
+      const coreIds = new Set<string>([this.#coreId]);
+      for (const core of await this.#platform.getAllCoreInfos()) {
+        if (typeof core.id === 'string') coreIds.add(core.id.toLowerCase());
+        if (Array.isArray(core.sites)) {
+          for (const name of core.sites) if (typeof name === 'string') names.add(name.toLowerCase());
+        }
+      }
+      this.#advertisedSites = names;
+      this.#coreIds = coreIds;
+    } catch (err: unknown) {
+      this.#logger.warn('DNS hosted-site refresh failed: ' + (err as Error).message);
+    }
+  }
+
+  #isHostedSite (name: string): boolean {
+    // A core's own name always answers with that core (the boot check refuses
+    // such a site name; this keeps a misconfigured core from taking it over).
+    if (this.#coreIds.has(name)) return false;
+    return this.#localSites.has(name) || this.#advertisedSites.has(name);
+  }
+
+  /**
+   * Answer `<site>.{domain}` with the A / AAAA of every core advertising the
+   * site (read fresh). A name configured here that no row advertises yet (this
+   * core's registration not replicated) answers with this core's own row.
+   */
+  async #answerHostedSite (response: DnsResponse, qname: string, qtype: number, name: string) {
+    const cores = await this.#platform.getAllCoreInfos();
+    let serving = cores.filter((core) => Array.isArray(core.sites) && core.sites.includes(name));
+    if (serving.length === 0 && this.#localSites.has(name)) {
+      serving = cores.filter((core) => core.id === this.#coreId);
+    }
+    const ttl = this.#ttl;
+    for (const core of serving) {
       if ((qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY) && core.ip) {
         response.answers.push(buildA(qname, core.ip, ttl));
       }

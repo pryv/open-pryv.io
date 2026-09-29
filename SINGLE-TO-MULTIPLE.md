@@ -190,6 +190,17 @@ curl -s 'https://core-a.mc.example.com/reg/cores?username=newuser'
 # → { core: { url: "https://core-b.mc.example.com" } }
 ```
 
+## Hosted sites across cores
+
+`hostedSites` (see INSTALL.md, "Hosted sites") names are platform-wide: list the same names
+in every core's `override-config.yml`. Each core advertises the names it serves in its
+core-info row; every core refuses all advertised names as usernames, even one missing from
+its own config, and the embedded DNS answers `<name>.<dns.domain>` with the cores that
+advertise it. A `static` site's folder is per-core: deploy it on every core that lists the
+site. A core whose folder is missing does not start, so it never advertises a site it cannot
+serve. The names appear in the `[platform-config-snapshot]` boot line (`hostedSites.names`),
+so a core with a different name set shows a different hash.
+
 ## Cluster security
 
 - **Raft channel uses mTLS.** Bootstrap-issued cores ship with `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` set in `override-config.yml`. Both ends of every Raft connection verify the peer's cert against the cluster CA — a stranger on the network cannot join or impersonate a peer.

@@ -29,6 +29,7 @@ const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHa
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
 const reservedWords = new Set(require('./reserved-words.json').list);
+const { hostedSiteNames } = require('business/src/hostedSites.ts');
 
 /**
  * Field name used when hashing a username as a key (i.e. when the
@@ -49,6 +50,10 @@ class Platform {
   initialized: boolean = false;
   // In-memory cache of coreId → public URL.
   #coreUrlCache: Map<string, string>;
+  // Hosted-site names reserved as usernames: this core's `hostedSites` keys
+  // plus the `sites` advertised by every core-info row, so a core whose config
+  // misses a name still refuses it. Refreshed with the core-info reads.
+  #hostedSiteNames: Set<string> = new Set();
 
   // Null in `cleartext` mode (default); a PiiHasher instance when
   // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
@@ -202,10 +207,11 @@ class Platform {
    * per-value / enumeration behaviour can be unit-tested directly. NOT part
    * of the production surface: init() is the only supported wiring path.
    */
-  _setDependenciesForTests (db: PlatformDB, hasher: InstanceType<typeof PiiHasher> | null = null) {
+  _setDependenciesForTests (db: PlatformDB, hasher: InstanceType<typeof PiiHasher> | null = null, config: Config | null = null) {
     this.#db = db;
     this.#piiHasher = hasher;
     this.#piiInitError = null;
+    if (config != null) this.#config = config;
   }
 
   /** Test-only: run the invitation-token key migration on demand (init() runs it at boot). */
@@ -463,6 +469,32 @@ class Platform {
       }
     }
     this.#coreUrlCache = fresh;
+    this.#setHostedSiteNames(cores);
+  }
+
+  /**
+   * Re-read the hosted-site names advertised by every core (plus this core's
+   * own). Registration and the change-username flow call it so a site added
+   * on another core after this one booted is still refused as a username.
+   */
+  async refreshHostedSiteNames (): Promise<void> {
+    this.#setHostedSiteNames(await this.#db.getAllCoreInfos());
+  }
+
+  #setHostedSiteNames (cores: CoreInfo[]) {
+    const names = new Set<string>(this.#localHostedSiteNames());
+    for (const info of cores) {
+      if (info && Array.isArray(info.sites)) {
+        for (const name of info.sites) {
+          if (typeof name === 'string') names.add(name.toLowerCase());
+        }
+      }
+    }
+    this.#hostedSiteNames = names;
+  }
+
+  #localHostedSiteNames (): string[] {
+    return this.#config == null ? [] : hostedSiteNames(this.#config);
   }
 
   /**
@@ -493,6 +525,10 @@ class Platform {
       hosting: (this.#config.get('core:hosting') as string) || undefined,
       available: this.#config.get('core:available') !== false
     };
+    // Advertise this core's hosted sites: the embedded DNS answers a site name
+    // with the cores that list it, and every core reserves it as a username.
+    const sites = this.#localHostedSiteNames().sort();
+    if (sites.length > 0) info.sites = sites;
     await this.#db.setCoreInfo(this.coreId, info);
     // Refresh the in-memory coreId→URL cache so this core's own entry is
     // visible immediately. NOTE: cache stays cold for changes made by OTHER
@@ -523,6 +559,9 @@ class Platform {
       'versioning.deletionMode': this.#config.get('versioning:deletionMode') || null,
       'uploads.maxSizeMb': this.#config.get('uploads:maxSizeMb') || null
     };
+    // Only when set, so the hash of a platform without hosted sites is unchanged.
+    const siteNames = this.#localHostedSiteNames().sort();
+    if (siteNames.length > 0) snapshot['hostedSites.names'] = siteNames;
     const adminKey = this.#config.get('auth:adminAccessKey');
     snapshot['auth.adminAccessKey.sha256'] = adminKey
       ? crypto.createHash('sha256').update(String(adminKey)).digest('hex').slice(0, 16)
@@ -925,7 +964,9 @@ class Platform {
     // 1. Check invitation token
     await this.#checkInvitationToken(invitationToken);
 
-    // 2. Check reserved usernames
+    // 2. Check reserved usernames (hosted-site names re-read first: another
+    //    core may have started advertising one since this core booted)
+    await this.refreshHostedSiteNames();
     if (this.#isUsernameReserved(username)) {
       throw errors.itemAlreadyExists('user', { username });
     }
@@ -1172,11 +1213,13 @@ class Platform {
   }
 
   /**
-   * Check if username is reserved (starts with "pryv" or in reserved words list).
+   * Check if username is reserved (starts with "pryv", in the reserved words
+   * list, or a hosted-site name of any core).
    */
   #isUsernameReserved (username: string) {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
+    if (this.#hostedSiteNames.has(lower)) return true;
     return reservedWords.has(lower);
   }
 
