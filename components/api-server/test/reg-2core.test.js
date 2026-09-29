@@ -45,6 +45,12 @@ const CORE_A_ID = 'core-a';
 const CORE_B_ID = 'core-b';
 const CORE_A_IP = '127.0.0.1';
 const CORE_B_IP = '127.0.0.2';
+const CORE_C_PORT = 13020;
+// Hosted sites: `sitehome` on both cores, `siteonly` on core A only (core B
+// must still refuse it as a username, from core A's advertisement).
+const SITE_DIR = '/tmp/rg2c-hosted-site';
+const SITE_BOTH = 'sitehome';
+const SITE_A_ONLY = 'siteonly';
 
 // Helper: HTTP request (no external deps)
 async function httpRequest (port, method, path, body, headers = {}) {
@@ -59,6 +65,19 @@ async function httpRequest (port, method, path, body, headers = {}) {
   let json;
   try { json = JSON.parse(text); } catch { json = text; }
   return { status: res.status, body: json, headers: res.headers };
+}
+
+// Helper: GET with an explicit Host header (fetch does not let a caller set Host)
+function getWithHost (port, reqPath, host) {
+  return new Promise((resolve, reject) => {
+    const r = require('node:http').request({ host: '127.0.0.1', port, path: reqPath, headers: { host } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    r.on('error', reject);
+    r.end();
+  });
 }
 
 // Helper: fork a core child process
@@ -209,6 +228,11 @@ describe('[RG2C] Two-core integration tests', function () {
     resolver = new dns.promises.Resolver();
     resolver.setServers([`127.0.0.1:${dnsPort}`]);
 
+    // The hosted site's folder (deployed on every core that serves it)
+    fs.rmSync(SITE_DIR, { recursive: true, force: true });
+    fs.mkdirSync(SITE_DIR, { recursive: true });
+    fs.writeFileSync(path.join(SITE_DIR, 'index.html'), '<p>rg2c hosted site</p>');
+
     // Start Core A and Core B
     const coreEnv = {
       DNS_DOMAIN: DOMAIN,
@@ -220,15 +244,20 @@ describe('[RG2C] Two-core integration tests', function () {
       ...coreEnv,
       CORE_PORT: String(CORE_A_PORT),
       CORE_ID: CORE_A_ID,
-      CORE_IP: CORE_A_IP
+      CORE_IP: CORE_A_IP,
+      HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
     });
 
     coreB = await startCore({
       ...coreEnv,
       CORE_PORT: String(CORE_B_PORT),
       CORE_ID: CORE_B_ID,
-      CORE_IP: CORE_B_IP
+      CORE_IP: CORE_B_IP,
+      HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR } })
     });
+
+    // The DNS server read the core-info rows before the cores registered
+    await dnsServer.refreshFromPlatform();
   });
 
   after(async function () {
@@ -241,6 +270,7 @@ describe('[RG2C] Two-core integration tests', function () {
     // Clean up rqlite data
     const fs = require('node:fs');
     fs.rmSync('/tmp/rqlite-2core-test', { recursive: true, force: true });
+    fs.rmSync(SITE_DIR, { recursive: true, force: true });
     // Clean up users created by child cores in shared MongoDB + PlatformDB
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
@@ -349,6 +379,56 @@ describe('[RG2C] Two-core integration tests', function () {
       const addresses = await resolver.resolve4(`lsc.${DOMAIN}`);
       assert.strictEqual(addresses.length, 2);
       assert.deepStrictEqual(addresses.sort(), [CORE_A_IP, CORE_B_IP].sort());
+    });
+  });
+
+  describe('Hosted sites', () => {
+    async function register (port, username) {
+      return httpRequest(port, 'POST', '/users', {
+        appId: 'test-2core-sites',
+        username,
+        password: 'testpassw0rd',
+        email: username + '-' + Date.now().toString(36) + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en'
+      });
+    }
+
+    it('[2C40] DNS answers a site with every core that advertises it', async () => {
+      const both = await resolver.resolve4(`${SITE_BOTH}.${DOMAIN}`);
+      assert.deepStrictEqual(both.sort(), [CORE_A_IP, CORE_B_IP].sort());
+      const onlyA = await resolver.resolve4(`${SITE_A_ONLY}.${DOMAIN}`);
+      assert.deepStrictEqual(onlyA, [CORE_A_IP]);
+    });
+
+    it('[2C41] each core serves the folder on the site Host; the API still answers', async () => {
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const site = await getWithHost(port, '/', `${SITE_BOTH}.${DOMAIN}`);
+        assert.strictEqual(site.status, 200, `core on ${port}`);
+        assert.strictEqual(site.body, '<p>rg2c hosted site</p>');
+        const api = await httpRequest(port, 'GET', '/reg/service/info');
+        assert.strictEqual(api.status, 200, `API on ${port}`);
+      }
+    });
+
+    it('[2C42] both cores refuse a site name as a username, including one only the other core serves', async () => {
+      for (const [port, name] of [[CORE_A_PORT, SITE_BOTH], [CORE_B_PORT, SITE_BOTH], [CORE_B_PORT, SITE_A_ONLY]]) {
+        const res = await register(port, name);
+        assert.strictEqual(res.status, 409, `${name} on ${port}: ${JSON.stringify(res.body)}`);
+        assert.strictEqual(res.body.error.id, 'item-already-exists');
+      }
+    });
+
+    it('[2C43] a core whose site folder is missing does not start', async () => {
+      await assert.rejects(() => startCore({
+        DNS_DOMAIN: DOMAIN,
+        RQLITE_URL,
+        ADMIN_KEY,
+        CORE_PORT: String(CORE_C_PORT),
+        CORE_ID: 'core-c',
+        CORE_IP: '127.0.0.3',
+        HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR + '-missing' } })
+      }), /exited with code 1/);
     });
   });
 
