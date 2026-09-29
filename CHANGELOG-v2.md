@@ -34,8 +34,10 @@ hostedSites:
   name that only another core serves.
 - **Boot refusals (new).** A core does not start when a `static` folder is missing or has no
   `index.html`, when an existing user holds a site name (rename the user or pick another
-  name), or when a name clashes with `reg`, `access`, `mfa`, `lsc`, `core.id` or a
-  `dns.staticEntries` key. `bin/check-config.js` reports the shape problems.
+  name), when a site name is the id of any core of the platform, or when a name clashes
+  with `reg`, `access`, `mfa`, `lsc` or a `dns.staticEntries` key. `bin/check-config.js`
+  reports the shape problems. In dnsLess, API root segments (`reg`, `system`, `www`,
+  `auth`, `users`, `oauth2`, `service`, `apps`) are refused as site names.
 - **Embedded DNS.** `<name>.<dns.domain>` answers the A / AAAA of the cores that serve the
   site, ahead of `dns.staticEntries` and usernames; a runtime DNS record with that name is
   shadowed (with a warning).

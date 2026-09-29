@@ -14,7 +14,9 @@
   only through express, same version 0.19.2).
 - Boot checks (`checkStaticSiteFolders`, `checkHostedSitesAtBoot`) run in `bin/master.js`
   before the platform registration (folders first, without the database) and again in each
-  api worker before it listens. `expressApp.ts` keeps site names out of `subdomainToPath`.
+  api worker before it listens; `checkHostedSitesAtBoot` also refuses a site name equal to
+  any core-info `id`, and the DNS server never treats a known core id as a site.
+  `expressApp.ts` keeps site names out of `subdomainToPath`.
 - `Platform`: `registerSelf()` writes `sites: [...]` into the core-info row when the core has
   sites; the platform-config snapshot gains `hostedSites.names` only when set (the hash of a
   platform without sites is unchanged); reserved-username checks consult this core's names

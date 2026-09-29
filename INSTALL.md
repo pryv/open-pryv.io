@@ -452,6 +452,7 @@ Boot checks (the core refuses to start, with a message naming the site):
 
 - a `static` folder that does not exist or holds no `index.html`;
 - an existing user whose username is a site name (rename the user, or pick another name);
+- a site name equal to the id of any core of the platform;
 - a name that clashes with `reg`, `access`, `mfa`, `lsc`, `core.id` or a
   `dns.staticEntries` key, or any other shape error (`bin/check-config.js` reports these
   too, without a database).
