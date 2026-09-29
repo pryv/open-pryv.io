@@ -205,7 +205,21 @@ async function start (opts: RqliteOpts): Promise<void> {
     log(`rqlited spawn error: ${err.message}`);
   });
 
+  // The master can leave through `process.exit()` (a failed boot check, a config
+  // validation error) without running `stop()`. rqlited is not in the same
+  // process group as far as signals go, so it would outlive the master, keep the
+  // data dir open, and a restarted master would then find a second rqlited on the
+  // same files (rqlite is a single-writer store). Terminate it on any exit.
+  const child = rqliteChild!;
+  const terminateOnExit = () => {
+    if (child.exitCode == null && child.signalCode == null) {
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
+  };
+  process.once('exit', terminateOnExit);
+
   rqliteChild!.on('exit', (code: number | null, signal: string | null) => {
+    process.removeListener('exit', terminateOnExit);
     log(`rqlited exited (code=${code} signal=${signal})`);
     rqliteChild = null;
   });

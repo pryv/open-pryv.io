@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## rqlited no longer outlives a master that exits early
+
+When the master left through `process.exit()` before its normal shutdown (a failed boot check
+such as a hosted-sites refusal, or a configuration validation error that lands after rqlited was
+spawned), the rqlited child kept running on the data directory. A restarted master then found
+that orphan answering on the rqlite port, treated it as its own, and a second rqlited could hold
+the same files, which rqlite (a single-writer store) does not survive. `rqliteProcess.start()` now
+registers an exit hook that sends SIGTERM to a still-running child. Test `[RQEX]` (a driver
+process exits right after the start; the fake rqlited must be gone).
+
 ## Hosted sites: dispatcher, shared validator, core-info advertisement
 
 - `components/business/src/hostedSites.ts`: the one `hostedSites` validator
