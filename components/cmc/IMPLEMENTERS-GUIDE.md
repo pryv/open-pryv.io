@@ -266,7 +266,7 @@ await patientConnection.api([
 
 // Hand-off flow, patient app holds an app/shared token; defer to app-web-user-account.
 const result = await pryv.cmc.requestAccept({
-  authUrl: 'https://pryv.github.io/app-web-user-account/cmc-accept',
+  authUrl: 'https://account.pryv.me/cmc-accept',
   pryvApi: 'https://reg.pryv.me/',
   capabilityUrl: 'https://AbC...Xyz@example.com/',
   scopeStreamId: ':_cmc:apps:patient:incoming'

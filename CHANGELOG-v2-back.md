@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## Account app links point at `https://account.pryv.me`
+
+The reference account app now has its own origin, served by the pryv.me platform itself. The
+install wizard (`bin/init.js`) offers `https://account.pryv.me` as the default app-web-user-account
+base URL, and the `bin/check-config.js` hint for a missing `access.defaultAuthUrl` and the cmc
+IMPLEMENTERS-GUIDE example use it. The GitHub Pages build
+(`https://pryv.github.io/app-web-user-account/`) stays online as a fallback demo.
+
 ## rqlited no longer outlives a master that exits early
 
 When the master left through `process.exit()` before its normal shutdown (a failed boot check
