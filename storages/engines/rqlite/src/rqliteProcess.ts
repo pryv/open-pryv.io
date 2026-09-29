@@ -201,18 +201,67 @@ async function start (opts: RqliteOpts): Promise<void> {
     if (line) log(`[rqlite:err] ${line}`);
   });
 
-  rqliteChild!.on('error', (err: Error) => {
+  // The master can leave through `process.exit()` without running `stop()`: a
+  // failed boot check after the spawn (hosted sites), the startup catch for
+  // anything that throws later in the boot (migrations, DNS, ACME, fork), or an
+  // uncaught exception. rqlited would then outlive the master, keep the data dir
+  // open, and a restarted master would find a second rqlited on the same files
+  // (rqlite is a single-writer store). Terminate it on any exit.
+  const child = rqliteChild!;
+
+  // If our own child dies before it is ready (typically: another rqlited already
+  // holds the port or the data dir), fail instead of letting the readiness poll
+  // report "ready" from whatever else answers on that port.
+  let rejectEarlyExit: (err: Error) => void = () => {};
+  const earlyExit = new Promise<never>((_resolve, reject) => { rejectEarlyExit = reject; });
+  earlyExit.catch(() => {}); // settled by the race below; avoid an unhandled rejection
+  const onEarlyExit = (code: number | null, signal: string | null) => {
+    rejectEarlyExit(new Error(`rqlited exited before becoming ready (code=${code} signal=${signal}); ` +
+      `something else may already hold port ${httpPort} or the data dir ${absDataDir}`));
+  };
+  child.on('error', (err: Error) => {
     log(`rqlited spawn error: ${err.message}`);
   });
+  const onSpawnError = (err: Error) => {
+    rejectEarlyExit(new Error(`rqlited could not be started: ${err.message}`));
+  };
+  child.once('exit', onEarlyExit);
+  child.once('error', onSpawnError);
+  const terminateOnExit = () => {
+    if (child.exitCode == null && child.signalCode == null) {
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
+  };
+  process.once('exit', terminateOnExit);
 
   rqliteChild!.on('exit', (code: number | null, signal: string | null) => {
+    process.removeListener('exit', terminateOnExit);
     log(`rqlited exited (code=${code} signal=${signal})`);
     rqliteChild = null;
   });
 
   // Wait for HTTP API to become ready
   const httpUrl = `http://127.0.0.1:${httpPort}`;
-  const elapsedMs = await waitForReady(httpUrl, readyTimeoutMs, warn);
+  let elapsedMs: number;
+  try {
+    elapsedMs = await Promise.race([waitForReady(httpUrl, readyTimeoutMs, warn), earlyExit]);
+  } finally {
+    child.removeListener('exit', onEarlyExit);
+    child.removeListener('error', onSpawnError);
+  }
+  // Readiness only proves that SOMETHING answers on the port: another rqlited
+  // (an orphan of a previous master, or one started by hand) answers at once,
+  // before our child has even failed to bind. Require the answering process to
+  // be our own child.
+  const answeringPid = await fetchStatusPid(httpUrl);
+  if (answeringPid !== child.pid) {
+    if (child.exitCode == null && child.signalCode == null) {
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    }
+    throw new Error(`rqlited exited before becoming ready: the rqlited answering on port ${httpPort} ` +
+      `(pid ${answeringPid ?? 'unknown'}) is not the one just started (pid ${child.pid}); another ` +
+      `rqlited already holds the port or the data dir ${absDataDir}. Stop it before starting the master.`);
+  }
   log(`rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
@@ -242,6 +291,21 @@ function stop (log: (msg: string) => void = console.log): Promise<void> {
  */
 function isRunning (): boolean {
   return rqliteChild != null && rqliteChild.exitCode == null;
+}
+
+/**
+ * The pid of the rqlited answering at `httpUrl` (`/status` -> `os.pid`), or
+ * null when it cannot be read.
+ */
+async function fetchStatusPid (httpUrl: string): Promise<number | null> {
+  try {
+    const res = await fetch(httpUrl + '/status');
+    if (!res.ok) return null;
+    const status = await res.json() as { os?: { pid?: unknown } };
+    return typeof status?.os?.pid === 'number' ? status.os.pid : null;
+  } catch {
+    return null;
+  }
 }
 
 function formatSeconds (ms: number): string {
