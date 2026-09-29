@@ -20,6 +20,8 @@ const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { WebhooksService } = require('webhooks/src/service.ts');
 const { buildHfsIngress } = require('./hfsIngress.ts');
+const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
+const { parseHostedSites } = require('business/src/hostedSites.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
 type AppInstance = {
   api: ApiSurface;
@@ -79,7 +81,25 @@ class Server {
       hfsPort: (config.get('http:hfsPort') as number) || 4000,
       logger: this.logger
     });
-    const requestHandler = (req: unknown, res: unknown) => hfsDispatch(req, res, app.expressApp);
+    // Hosted sites answer first: their traffic never reaches HFS or the API
+    // middleware. A site that cannot be served (no folder, or a user already
+    // holds its name) stops the boot, so this core never advertises it half-way.
+    const sites = parseHostedSites(config);
+    const siteProblems = await checkHostedSitesAtBoot(sites, await getUsersRepository());
+    if (siteProblems.length > 0) {
+      throw new Error('Hosted sites cannot be served: ' + siteProblems.join('; '));
+    }
+    for (const site of sites.values()) {
+      this.logger.info(`hosted site ${site.name}: ${site.kind === 'static' ? 'static ' + site.root : 'proxy ' + site.upstream}`);
+    }
+    const sitesDispatch = buildHostedSitesIngress({
+      sites,
+      domain: (config.get('dns:domain') as string) || null,
+      dnsLess: config.get('dnsLess:isActive') === true,
+      logger: this.logger
+    });
+    const toHfs = (req: unknown, res: unknown) => hfsDispatch(req, res, app.expressApp);
+    const requestHandler = (req: unknown, res: unknown) => sitesDispatch(req, res, toHfs);
     // Setup HTTP and register server; setup Socket.IO.
     let server: { address: () => { address: string; port: number }; listen: (...args: unknown[]) => unknown; once: (event: string, handler: (err?: Error) => void) => unknown; key?: unknown } | null = null;
     const serverInfos: { hostname: string | null } = {

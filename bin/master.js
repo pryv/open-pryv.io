@@ -226,6 +226,35 @@ if (cluster.isPrimary) {
       warn(`[oauth-client-account-migrate] failed: ${e.message}`);
     }
 
+    // --- Hosted sites boot check ---
+    // A site this core cannot serve stops the boot before the platform
+    // registration advertises it (the embedded DNS answers a site name with the
+    // cores that advertise it). The folders are checked first, without the
+    // database; then no existing user may hold a site name. The api workers
+    // repeat both checks before they listen.
+    {
+      const { parseHostedSites } = require('../components/business/src/hostedSites.ts');
+      const sites = parseHostedSites(config);
+      if (sites.size > 0) {
+        const { checkStaticSiteFolders, checkHostedSitesAtBoot } = require('../components/api-server/src/hostedSitesIngress.ts');
+        let problems = checkStaticSiteFolders(sites);
+        if (problems.length === 0) {
+          const { getUsersRepository } = require('../components/business/src/users/index.ts');
+          problems = await checkHostedSitesAtBoot(sites, await getUsersRepository());
+        }
+        if (problems.length > 0) {
+          for (const p of problems) {
+            logger.error('[hosted-sites] ' + p);
+            console.error('[master] [hosted-sites] ' + p);
+          }
+          process.exit(1);
+        }
+        for (const site of sites.values()) {
+          log(`[hosted-sites] ${site.name}: ${site.kind === 'static' ? 'static ' + site.root : 'proxy ' + site.upstream}`);
+        }
+      }
+    }
+
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'`,
     // populate PlatformDB from a Pug directory if it holds no templates yet.

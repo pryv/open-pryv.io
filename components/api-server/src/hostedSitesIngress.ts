@@ -329,4 +329,22 @@ function checkStaticSiteFolders (sites: Map<string, HostedSite>): string[] {
   return problems;
 }
 
-export { buildHostedSitesIngress, checkStaticSiteFolders };
+/**
+ * Every boot check a hosted site needs: servable folders, and no existing
+ * user holding a site name (serving the site would take over that user's
+ * subdomain). Returns one message per problem (empty when the core may start).
+ */
+async function checkHostedSitesAtBoot (
+  sites: Map<string, HostedSite>,
+  usersRepository: { usernameExistsOnPlatform: (username: string) => Promise<boolean> }
+): Promise<string[]> {
+  const problems = checkStaticSiteFolders(sites);
+  for (const name of sites.keys()) {
+    if (await usersRepository.usernameExistsOnPlatform(name)) {
+      problems.push(`hostedSites.${name}: a user named "${name}" already exists; rename that user or pick another site name`);
+    }
+  }
+  return problems;
+}
+
+export { buildHostedSitesIngress, checkStaticSiteFolders, checkHostedSitesAtBoot };
