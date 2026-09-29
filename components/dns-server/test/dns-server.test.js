@@ -856,3 +856,125 @@ describe('[DNP] DNS Server — PlatformDB persistence', function () {
     }
   });
 });
+
+// =============================================================================
+// Hosted sites: a reserved name answered with the cores that advertise it
+// =============================================================================
+
+describe('[DN7H] DNS Server: hosted sites', function () {
+  this.timeout(30000);
+
+  async function startWith ({ coreInfos, hostedSites, coreId = 'core1', persisted = [], logger = createMockLogger() }) {
+    const platform = createMockPlatform({ userCores: { sitedocs: 'core2' }, coreInfos });
+    platform.getAllDnsRecords = async () => persisted;
+    const overrides = { 'core:id': coreId };
+    if (hostedSites) overrides.hostedSites = hostedSites;
+    const server = createDnsServer({ config: createMockConfig(overrides), platform, logger, platformRefreshIntervalMs: 0 });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    return { server, port: server._getAddresses().udp.port };
+  }
+
+  function addresses (res, type) {
+    return res.answers.filter((a) => a.type === Packet.TYPE[type]).map((a) => a.address).sort();
+  }
+
+  it('[DN71] one of two cores advertises the site: one A record, the advertiser\'s', async () => {
+    const { server, port } = await startWith({
+      coreInfos: [
+        { id: 'core1', ip: '10.0.0.1', sites: ['account'] },
+        { id: 'core2', ip: '10.0.0.2' }
+      ]
+    });
+    try {
+      const res = await rawQuery(port, `account.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(res.header.rcode, 0);
+      assert.strictEqual(res.header.aa, 1);
+      assert.deepStrictEqual(addresses(res, 'A'), ['10.0.0.1']);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DN72] both cores advertise the site: two A records; AAAA from ipv6 only', async () => {
+    const { server, port } = await startWith({
+      coreInfos: [
+        { id: 'core1', ip: '10.0.0.1', ipv6: '2001:db8::1', sites: ['account'] },
+        { id: 'core2', ip: '10.0.0.2', sites: ['account'] },
+        { id: 'core3', ip: '10.0.0.3' },
+        { id: 'core4', cname: 'core4.external.com', sites: ['account'] }
+      ]
+    });
+    try {
+      assert.deepStrictEqual(addresses(await rawQuery(port, `account.${TEST_DOMAIN}`, 'A'), 'A'), ['10.0.0.1', '10.0.0.2']);
+      const aaaa = await rawQuery(port, `account.${TEST_DOMAIN}`, 'AAAA');
+      assert.strictEqual(aaaa.answers.length, 1);
+      assert.strictEqual(aaaa.answers[0].type, Packet.TYPE.AAAA);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DN73] a site configured here that no row advertises yet answers with this core', async () => {
+    const { server, port } = await startWith({
+      hostedSites: { account: { static: '/srv/account' } },
+      coreInfos: [
+        { id: 'core1', ip: '10.0.0.1' },
+        { id: 'core2', ip: '10.0.0.2' }
+      ]
+    });
+    try {
+      assert.deepStrictEqual(addresses(await rawQuery(port, `account.${TEST_DOMAIN}`, 'A'), 'A'), ['10.0.0.1']);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DN74] a runtime record with the site name is shadowed, with a warning at start', async () => {
+    const warnings = [];
+    const logger = Object.assign(createMockLogger(), { warn (msg) { warnings.push(msg); } });
+    const { server, port } = await startWith({
+      coreInfos: [{ id: 'core1', ip: '10.0.0.1', sites: ['account'] }],
+      persisted: [{ subdomain: 'account', records: { cname: 'pryv.github.io' } }],
+      logger
+    });
+    try {
+      const res = await rawQuery(port, `account.${TEST_DOMAIN}`, 'A');
+      assert.deepStrictEqual(addresses(res, 'A'), ['10.0.0.1']);
+      assert.ok(!res.answers.some((a) => a.type === Packet.TYPE.CNAME), 'the runtime CNAME must not be served');
+      assert.ok(warnings.some((w) => w.includes("'account'") && w.includes('hosted site')), warnings.join('|'));
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DN75] AAAA on IPv4-only advertisers is NODATA with the SOA', async () => {
+    const { server, port } = await startWith({
+      coreInfos: [{ id: 'core1', ip: '10.0.0.1', sites: ['account'] }]
+    });
+    try {
+      const res = await rawQuery(port, `account.${TEST_DOMAIN}`, 'AAAA');
+      assert.strictEqual(res.header.rcode, 0);
+      assertSoaAuthority(res, TEST_TTL, 'account AAAA');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DN76] the site answer takes precedence over a username of the same name', async () => {
+    // `sitedocs` is also mapped to core2 as a user in the mock platform
+    const { server, port } = await startWith({
+      coreInfos: [
+        { id: 'core1', ip: '10.0.0.1', sites: ['sitedocs'] },
+        { id: 'core2', ip: '10.0.0.2' }
+      ]
+    });
+    try {
+      assert.deepStrictEqual(addresses(await rawQuery(port, `sitedocs.${TEST_DOMAIN}`, 'A'), 'A'), ['10.0.0.1']);
+      // a plain user is still resolved through its core
+      const other = await rawQuery(port, `nobody-here.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(other.header.rcode, 3);
+    } finally {
+      await server.stop();
+    }
+  });
+});
