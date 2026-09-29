@@ -266,6 +266,28 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
+// hostedSites: shape only (this script has no database and does not read the
+// site folders; master.js checks the folders and the usernames at boot).
+if (get('hostedSites') != null) {
+  try {
+    const { describeHostedSites } = require('../components/business/src/hostedSites.ts');
+    const staticEntries = get('dns.staticEntries');
+    const report = describeHostedSites({
+      hostedSites: get('hostedSites'),
+      domain: get('dns.domain') || null,
+      // dnsLess.isActive defaults to true at runtime (see the topology check above)
+      dnsLessActive: get('dnsLess.isActive') !== false,
+      publicUrl: get('dnsLess.publicUrl') || null,
+      coreId: get('core.id') || null,
+      staticEntryNames: (staticEntries && typeof staticEntries === 'object') ? Object.keys(staticEntries) : []
+    });
+    for (const p of report.problems) problems.push(p);
+    for (const w of report.warnings) warnings.push(w);
+  } catch (err) {
+    warnings.push(`hostedSites could not be checked here (${err.message}); master.js still checks it at boot.`);
+  }
+}
+
 // access.defaultAuthUrl — not required at boot (master.js starts fine
 // without it) but the /reg/access flow silently returns `authUrl: null`,
 // which leaves every SDK unable to open the auth popup. Surface as a

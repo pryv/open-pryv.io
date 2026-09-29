@@ -322,6 +322,16 @@ function checkMfaConfig (config, problems) {
   }
 }
 
+// hostedSites shape (names, exactly one of static/proxy, upstream loop, header
+// allow-list, topology). The folder and username checks need the filesystem and
+// the users database: the api-server runs them before it listens.
+function checkHostedSites (config, problems) {
+  const { describeHostedSites, hostedSitesInputFromConfig } = require('../../components/business/src/hostedSites.ts');
+  for (const message of describeHostedSites(hostedSitesInputFromConfig(config)).problems) {
+    problems.push({ message, path: ['hostedSites'], payload: {} });
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -346,6 +356,7 @@ async function validate (config) {
   checkSsoConfig(config, problems);
   checkEmailVerificationGate(config, problems);
   checkMfaConfig(config, problems);
+  checkHostedSites(config, problems);
 
   return problems;
 }
@@ -455,6 +466,8 @@ function collectWarnings (config) {
   }
   const { describeMfaConfig } = require('../../components/business/src/mfa/configCheck.ts');
   warnings.push(...describeMfaConfig(config.get('services:mfa')).warnings);
+  const { describeHostedSites, hostedSitesInputFromConfig } = require('../../components/business/src/hostedSites.ts');
+  warnings.push(...describeHostedSites(hostedSitesInputFromConfig(config)).warnings);
   return warnings;
 }
 
@@ -481,6 +494,7 @@ module.exports = {
   checkSsoConfig,
   checkEmailVerificationGate,
   checkMfaConfig,
+  checkHostedSites,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES
