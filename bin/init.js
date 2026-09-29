@@ -1136,7 +1136,7 @@ async function main () {
   console.log('  Sets `access.defaultAuthUrl` (auth URL emitted by /reg/access) +');
   console.log('  `auth.passwordResetPageURL` + `service.account` (account pages) and adds the');
   console.log('  host to `auth.trustedApps`.');
-  const authUiUrl = (await ask('  app-web-user-account base URL', 'https://pryv.github.io/app-web-user-account', 'authui.url')).replace(/\/+$/, '');
+  const authUiUrl = (await ask('  app-web-user-account base URL', 'https://account.pryv.me', 'authui.url')).replace(/\/+$/, '');
   console.log();
 
   // 8. TLS strategy

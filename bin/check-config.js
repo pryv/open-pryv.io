@@ -294,7 +294,7 @@ if (get('hostedSites') != null) {
 // warning so hand-written configs that forgot this key are caught here
 // instead of at the implementer's first sign-in attempt.
 if (isMissingOrSentinel(get('access.defaultAuthUrl'))) {
-  warnings.push('access.defaultAuthUrl missing or unset — /reg/access responses will carry authUrl=null, breaking SDK sign-in flows. Set this to the URL of your app-web-user-account deployment (e.g. https://pryv.github.io/app-web-user-account/auth).');
+  warnings.push('access.defaultAuthUrl missing or unset — /reg/access responses will carry authUrl=null, breaking SDK sign-in flows. Set this to the URL of your app-web-user-account deployment (e.g. https://account.pryv.me/auth).');
 }
 
 // service.account — the account app root, served in service info. Without it
