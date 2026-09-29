@@ -105,6 +105,7 @@ class DnsServer {
   #localSites: Set<string>;          // hosted-site names from this core's config
   #advertisedSites: Set<string> = new Set(); // hosted-site names advertised by any core-info row (refreshed)
   #coreId: string;
+  #coreIds: Set<string> = new Set(); // ids of every core-info row (refreshed), plus this core's
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -128,6 +129,7 @@ class DnsServer {
     this.#tcpIdleTimeoutMs = tcpIdleTimeoutMs ?? TCP_IDLE_TIMEOUT_MS;
     this.#localSites = new Set(hostedSiteNames(config));
     this.#coreId = (config.get('core:id') as string) || 'single';
+    this.#coreIds = new Set([this.#coreId]);
   }
 
   /**
@@ -513,18 +515,24 @@ class DnsServer {
   async #refreshAdvertisedSites () {
     try {
       const names = new Set<string>();
+      const coreIds = new Set<string>([this.#coreId]);
       for (const core of await this.#platform.getAllCoreInfos()) {
+        if (typeof core.id === 'string') coreIds.add(core.id.toLowerCase());
         if (Array.isArray(core.sites)) {
           for (const name of core.sites) if (typeof name === 'string') names.add(name.toLowerCase());
         }
       }
       this.#advertisedSites = names;
+      this.#coreIds = coreIds;
     } catch (err: unknown) {
       this.#logger.warn('DNS hosted-site refresh failed: ' + (err as Error).message);
     }
   }
 
   #isHostedSite (name: string): boolean {
+    // A core's own name always answers with that core (the boot check refuses
+    // such a site name; this keeps a misconfigured core from taking it over).
+    if (this.#coreIds.has(name)) return false;
     return this.#localSites.has(name) || this.#advertisedSites.has(name);
   }
 

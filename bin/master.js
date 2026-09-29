@@ -230,8 +230,8 @@ if (cluster.isPrimary) {
     // A site this core cannot serve stops the boot before the platform
     // registration advertises it (the embedded DNS answers a site name with the
     // cores that advertise it). The folders are checked first, without the
-    // database; then no existing user may hold a site name. The api workers
-    // repeat both checks before they listen.
+    // database; then no core id and no existing user may be a site name. The
+    // api workers repeat the checks before they listen.
     {
       const { parseHostedSites } = require('../components/business/src/hostedSites.ts');
       const sites = parseHostedSites(config);
@@ -240,7 +240,8 @@ if (cluster.isPrimary) {
         let problems = checkStaticSiteFolders(sites);
         if (problems.length === 0) {
           const { getUsersRepository } = require('../components/business/src/users/index.ts');
-          problems = await checkHostedSitesAtBoot(sites, await getUsersRepository());
+          const { getPlatform } = require('../components/platform/src/index.ts');
+          problems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
         }
         if (problems.length > 0) {
           for (const p of problems) {

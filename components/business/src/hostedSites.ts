@@ -58,7 +58,7 @@ const DISTRIBUTION_NAMES = ['reg', 'access', 'mfa', 'lsc'];
  * In dnsLess mode a site lives at `/<name>/` on the one public host, so its
  * name must not be the first segment of an API route served there.
  */
-const DNSLESS_ROUTE_SEGMENTS = ['reg', 'system', 'www', 'auth', 'users', 'oauth2', 'service', 'socket'];
+const DNSLESS_ROUTE_SEGMENTS = ['reg', 'system', 'www', 'auth', 'users', 'oauth2', 'service', 'apps'];
 
 /** Operator headers that would break the response framing or set state. */
 const FORBIDDEN_HEADERS = new Set([

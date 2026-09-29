@@ -977,4 +977,18 @@ describe('[DN7H] DNS Server: hosted sites', function () {
       await server.stop();
     }
   });
+
+  it('[DN77] a site name equal to a core id never takes over that core\'s name', async () => {
+    const { server, port } = await startWith({
+      coreInfos: [
+        { id: 'core1', ip: '10.0.0.1', sites: ['core2'] },
+        { id: 'core2', ip: '10.0.0.2' }
+      ]
+    });
+    try {
+      assert.deepStrictEqual(addresses(await rawQuery(port, `core2.${TEST_DOMAIN}`, 'A'), 'A'), ['10.0.0.2']);
+    } finally {
+      await server.stop();
+    }
+  });
 });

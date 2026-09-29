@@ -113,7 +113,7 @@ describe('[HSCF] hostedSites configuration', function () {
   it('[HSC9] topology: without dns.domain the sites need dnsLess; dnsLess refuses API route names', function () {
     assert.ok(problemsOf({ a: { static: '/srv/x' } }, { domain: null }).some((m) => m.includes('set dns.domain')));
     assert.deepEqual(problemsOf({ account: { static: '/srv/x' } }, { domain: null, dnsLessActive: true }), []);
-    for (const name of ['system', 'www', 'auth', 'users', 'service']) {
+    for (const name of ['reg', 'system', 'www', 'auth', 'users', 'oauth2', 'service', 'apps']) {
       assert.ok(problemsOf({ [name]: { static: '/srv/x' } }, { domain: null, dnsLessActive: true }).some((m) => m.includes('API route')), name);
     }
     // the same names are fine on their own host in the DNS topology

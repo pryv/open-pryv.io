@@ -430,6 +430,31 @@ describe('[RG2C] Two-core integration tests', function () {
         HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR + '-missing' } })
       }), /exited with code 1/);
     });
+
+    it('[2C44] a core whose site name is another core\'s id does not start', async () => {
+      let started = null;
+      try {
+        started = await startCore({
+          DNS_DOMAIN: DOMAIN,
+          RQLITE_URL,
+          ADMIN_KEY,
+          CORE_PORT: String(CORE_C_PORT),
+          CORE_ID: 'core-c',
+          CORE_IP: '127.0.0.3',
+          HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
+        });
+      } catch (err) {
+        assert.match(err.message, /exited with code 1/);
+      }
+      if (started != null) {
+        await stopCore(started);
+        assert.fail('core-c must refuse a site named after core-b');
+      }
+      // core-b's own name still resolves to core-b, even if core-c's row
+      // (written before its boot check refused) advertises that name
+      await dnsServer.refreshFromPlatform();
+      assert.deepStrictEqual(await resolver.resolve4(`${CORE_B_ID}.${DOMAIN}`), [CORE_B_IP]);
+    });
   });
 
   describe('Admin endpoints across cores', () => {

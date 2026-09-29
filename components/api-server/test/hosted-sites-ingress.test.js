@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { buildHostedSitesIngress, checkStaticSiteFolders } = require('../src/hostedSitesIngress.ts');
+const { buildHostedSitesIngress, checkStaticSiteFolders, checkHostedSitesAtBoot } = require('../src/hostedSitesIngress.ts');
 const { describeHostedSites } = require('business/src/hostedSites.ts');
 
 const DOMAIN = 'pryv.test';
@@ -75,6 +75,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
     bareRoot = path.join(tmp, 'bare');
     fs.mkdirSync(bareRoot);
     fs.writeFileSync(path.join(bareRoot, 'index.html'), '<p>bare</p>');
+    fs.mkdirSync(path.join(root, 'café'));
+    fs.writeFileSync(path.join(root, 'café', 'index.html'), '<p>cafe</p>');
   });
 
   after(function () {
@@ -88,7 +90,7 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       const dispatch = buildHostedSitesIngress({
         sites: sitesOf({
           account: { static: root, headers: { 'content-security-policy': "default-src 'self'" } },
-          bare: { static: bareRoot }
+          bare: { static: bareRoot, headers: { 'cache-control': 'no-store' } }
         }),
         domain: DOMAIN,
         dnsLess: false,
@@ -122,6 +124,11 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       const redirect = await get('/nested?x=1');
       assert.equal(redirect.status, 301);
       assert.equal(redirect.headers.location, '/nested/?x=1');
+      // the redirect target stays percent-encoded
+      const cafe = await get('/caf%C3%A9');
+      assert.equal(cafe.status, 301);
+      assert.equal(cafe.headers.location, '/caf%C3%A9/');
+      assert.equal((await get(cafe.headers.location)).body, '<p>cafe</p>');
       assert.equal(fallbackCalls, 0);
     });
 
@@ -153,6 +160,9 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       const range = await get('/assets/app.js', { headers: { range: 'bytes=0-6' } });
       assert.equal(range.status, 206);
       assert.equal(range.body, 'console');
+      const unsatisfiable = await get('/assets/app.js', { headers: { range: 'bytes=1000-2000' } });
+      assert.equal(unsatisfiable.status, 416);
+      assert.equal(unsatisfiable.headers['content-range'], 'bytes */' + 'console.log(1);'.length);
     });
 
     it('[HSTD] encoded dot segments, NUL bytes and bad encodings never reach outside the folder', async function () {
@@ -200,6 +210,26 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       // the dnsLess prefix form is not a site path in the DNS topology
       assert.equal((await request(port, { path: '/account/', host: 'core.' + DOMAIN })).body, 'api');
       assert.equal(fallbackCalls, 6);
+    });
+
+    it('[HSTQ] no Host header (HTTP/1.0) falls through to the API', async function () {
+      const net = require('node:net');
+      const raw = await new Promise((resolve, reject) => {
+        const sock = net.connect(port, '127.0.0.1', () => sock.end('GET / HTTP/1.0\r\n\r\n'));
+        let data = '';
+        sock.on('data', (c) => { data += c; });
+        sock.on('end', () => resolve(data));
+        sock.on('error', reject);
+      });
+      assert.match(raw, /^HTTP\/1\.[01] 200/);
+      assert.ok(raw.endsWith('api'), raw);
+      assert.equal(fallbackCalls, 1);
+    });
+
+    it('[HSTR] the operator headers win over the ones send sets', async function () {
+      const r = await request(port, { path: '/', host: 'bare.' + DOMAIN });
+      assert.equal(r.status, 200);
+      assert.equal(r.headers['cache-control'], 'no-store');
     });
   });
 
@@ -272,13 +302,14 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
           'strict-transport-security': 'max-age=1; includeSubDomains',
           'content-security-policy': 'default-src *',
           'x-upstream-private': 'yes',
-          'access-control-allow-origin': '*'
+          'access-control-allow-origin': '*',
+          'cache-control': 'max-age=600'
         });
         res.end(req.method === 'HEAD' ? undefined : 'upstream:' + req.url);
       });
       upstreamPort = upstream.address().port;
       const dispatch = buildHostedSitesIngress({
-        sites: sitesOf({ docs: { proxy: `http://127.0.0.1:${upstreamPort}/docs`, headers: { 'x-frame-options': 'DENY' } } }),
+        sites: sitesOf({ docs: { proxy: `http://127.0.0.1:${upstreamPort}/docs`, headers: { 'x-frame-options': 'DENY', 'cache-control': 'no-store' } } }),
         domain: DOMAIN,
         dnsLess: false,
         logger: quietLogger,
@@ -342,6 +373,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.headers['access-control-allow-origin'], undefined);
       assert.equal(r.headers['x-content-type-options'], 'nosniff');
       assert.equal(r.headers['x-frame-options'], 'DENY');
+      // the operator's header wins over the upstream's allow-listed one
+      assert.equal(r.headers['cache-control'], 'no-store');
     });
 
     it('[HSTL] rewrites a Location inside the upstream base to the site; keeps others', async function () {
@@ -371,6 +404,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       const r = await get('/slow');
       assert.equal(r.status, 504);
       assert.equal(r.body, 'Gateway Timeout\n');
+      assert.equal(r.headers['x-content-type-options'], 'nosniff');
+      assert.equal(r.headers['x-frame-options'], 'DENY');
 
       const downDispatch = buildHostedSitesIngress({
         sites: sitesOf({ docs: { proxy: 'http://127.0.0.1:1/docs/' } }),
@@ -383,6 +418,7 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
         const d = await request(down.address().port, { path: '/x', host: 'docs.' + DOMAIN });
         assert.equal(d.status, 502);
         assert.equal(d.body, 'Bad Gateway\n');
+        assert.equal(d.headers['x-content-type-options'], 'nosniff');
       } finally {
         await close(down);
       }
@@ -408,6 +444,18 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(problems.length, 2);
       assert.ok(problems[0].includes('hostedSites.missing'));
       assert.ok(problems[1].includes('hostedSites.empty'));
+    });
+
+    it('[HSTS] a site name equal to a core id or to an existing username is reported', async function () {
+      const sites = sitesOf({ 'core-b': { static: root }, taken: { static: root }, free: { static: root } });
+      const problems = await checkHostedSitesAtBoot(
+        sites,
+        { usernameExistsOnPlatform: async (name) => name === 'taken' },
+        { getAllCoreInfos: async () => [{ id: 'core-a' }, { id: 'Core-B' }] }
+      );
+      assert.equal(problems.length, 2, problems.join('|'));
+      assert.ok(problems.some((p) => p.includes('hostedSites.core-b') && p.includes('id of a core')));
+      assert.ok(problems.some((p) => p.includes('hostedSites.taken') && p.includes('user')));
     });
   });
 });

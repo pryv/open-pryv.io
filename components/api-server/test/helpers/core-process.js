@@ -125,7 +125,8 @@ const http = require('node:http');
   if (sites != null) {
     const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('api-server/src/hostedSitesIngress.ts');
     const { getUsersRepository } = require('business/src/users/index.ts');
-    const problems = await checkHostedSitesAtBoot(sites, await getUsersRepository());
+    const { getPlatform } = require('platform');
+    const problems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
     if (problems.length > 0) throw new Error('Hosted sites cannot be served: ' + problems.join('; '));
     const dispatch = buildHostedSitesIngress({ sites, domain, dnsLess: false, logger: { debug () {}, info () {}, warn () {}, error () {} } });
     requestHandler = (req, res) => dispatch(req, res, app.expressApp);

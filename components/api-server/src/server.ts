@@ -22,6 +22,7 @@ const { WebhooksService } = require('webhooks/src/service.ts');
 const { buildHfsIngress } = require('./hfsIngress.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
+const { getPlatform } = require('platform');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
 type AppInstance = {
   api: ApiSurface;
@@ -82,10 +83,10 @@ class Server {
       logger: this.logger
     });
     // Hosted sites answer first: their traffic never reaches HFS or the API
-    // middleware. A site that cannot be served (no folder, or a user already
-    // holds its name) stops the boot, so this core never advertises it half-way.
+    // middleware. A site that cannot be served (no folder, or its name is a
+    // core id or a user's) stops the boot, so this core never advertises it half-way.
     const sites = parseHostedSites(config);
-    const siteProblems = await checkHostedSitesAtBoot(sites, await getUsersRepository());
+    const siteProblems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
     if (siteProblems.length > 0) {
       throw new Error('Hosted sites cannot be served: ' + siteProblems.join('; '));
     }

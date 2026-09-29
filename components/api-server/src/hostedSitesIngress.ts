@@ -175,7 +175,7 @@ function buildHostedSitesIngress (opts: {
       const real = await resolveInside(root, candidate);
       if (real != null && await isDirectory(real)) {
         // a folder without its trailing slash: relative asset URLs need it
-        res.writeHead(301, { location: prefix + segments.join('/') + '/' + search, 'content-length': 0 });
+        res.writeHead(301, { location: prefix + segments.map(encodeURIComponent).join('/') + '/' + search, 'content-length': 0 });
         res.end();
         return;
       }
@@ -194,14 +194,19 @@ function buildHostedSitesIngress (opts: {
       dotfiles: 'ignore',
       maxAge: 0
     });
-    stream.on('error', (err: Error & { status?: number }) => {
+    // The operator's headers win over what send sets (e.g. cache-control)
+    stream.on('headers', (out: ServerResponse) => {
+      for (const [name, value] of Object.entries(site.headers)) out.setHeader(name, value);
+    });
+    stream.on('error', (err: Error & { status?: number; headers?: OutgoingHttpHeaders }) => {
       if (res.headersSent) { res.destroy(); return; }
       if (err.status === 403 || err.status === 404) {
         notFound(req, res, site, root).catch(() => res.destroy());
         return;
       }
       if (err.status != null && err.status < 500) {
-        plain(res, err.status, http.STATUS_CODES[err.status] || 'Error', {}, req.method === 'HEAD');
+        // e.g. 416 carries the Content-Range of the full file
+        plain(res, err.status, http.STATUS_CODES[err.status] || 'Error', err.headers || {}, req.method === 'HEAD');
         return;
       }
       logger.warn(`[hosted-sites] ${site.name}: ${err.message}`);
@@ -222,6 +227,8 @@ function buildHostedSitesIngress (opts: {
   }
 
   function proxy (req: IncomingMessage, res: ServerResponse, site: ProxySite, subPath: string, search: string, prefix: string) {
+    // Before any answer, so 400 / 502 / 504 carry them too
+    setSiteHeaders(req, res, site);
     const base = new URL(site.upstream);
     const target = new URL(site.upstream);
     // Assigning the path cannot change the host, whatever the request holds.
@@ -248,7 +255,8 @@ function buildHostedSitesIngress (opts: {
         if (value == null) continue;
         outHeaders[name] = name === 'location' ? rewriteLocation(String(value), site, prefix) : value;
       }
-      setSiteHeaders(req, res, site);
+      // The operator's headers win over the upstream's
+      Object.assign(outHeaders, site.headers);
       res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
       pipeline(proxyRes, res, (err: NodeJS.ErrnoException | null) => {
         if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${req.url}: ${err.code ?? err.message}`);
@@ -330,15 +338,24 @@ function checkStaticSiteFolders (sites: Map<string, HostedSite>): string[] {
 }
 
 /**
- * Every boot check a hosted site needs: servable folders, and no existing
- * user holding a site name (serving the site would take over that user's
- * subdomain). Returns one message per problem (empty when the core may start).
+ * Every boot check a hosted site needs: servable folders, no core of the
+ * platform whose id is a site name (the site would take over
+ * `<coreId>.<domain>`), and no existing user holding a site name (it would
+ * take over that user's subdomain). Returns one message per problem (empty
+ * when the core may start).
  */
 async function checkHostedSitesAtBoot (
   sites: Map<string, HostedSite>,
-  usersRepository: { usernameExistsOnPlatform: (username: string) => Promise<boolean> }
+  usersRepository: { usernameExistsOnPlatform: (username: string) => Promise<boolean> },
+  platform: { getAllCoreInfos: () => Promise<Array<{ id?: string }>> }
 ): Promise<string[]> {
   const problems = checkStaticSiteFolders(sites);
+  const coreIds = new Set((await platform.getAllCoreInfos()).map((core) => String(core.id ?? '').toLowerCase()));
+  for (const name of sites.keys()) {
+    if (coreIds.has(name)) {
+      problems.push(`hostedSites.${name}: "${name}" is the id of a core of this platform; pick another site name`);
+    }
+  }
   for (const name of sites.keys()) {
     if (await usersRepository.usernameExistsOnPlatform(name)) {
       problems.push(`hostedSites.${name}: a user named "${name}" already exists; rename that user or pick another site name`);

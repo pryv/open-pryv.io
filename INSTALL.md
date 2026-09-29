@@ -419,7 +419,7 @@ Where the site answers:
 In dnsLess mode the site shares the API's origin (one host name, one certificate): build a
 bundle for that base (e.g. Vite `--base=/account/`), and prefer the DNS topology for
 anything that must not share an origin with the API. A site name cannot shadow an API route
-there (`reg`, `system`, `www`, `auth`, `users`, `oauth2`, `service`, `socket` are refused).
+there (`reg`, `system`, `www`, `auth`, `users`, `oauth2`, `service`, `apps` are refused; `access` is refused in every topology).
 Without `dns.domain` and without dnsLess there is no host name to match, and the boot is
 refused.
 
@@ -428,7 +428,9 @@ trailing slash redirects), `/page` serves `page.html`, a miss serves `404.html` 
 404 (or a plain-text 404), `ETag` / `Last-Modified` with `304`, `Range`, `HEAD`,
 `Cache-Control: public, max-age=0`. Dotfiles (e.g. a `.git` folder) and anything resolving
 outside the folder (a symlink pointing out) answer 404. No compression: put nginx in front
-for that. Files can be replaced at any time without a restart.
+for that. Files can be replaced at any time without a restart (writing in place, or swapping
+in a new folder by rename at the same path). The folder's real path is resolved at boot, so if `static` is itself
+a symlink that you re-point at a new release folder, restart the core afterwards.
 
 Proxy sites forward `GET` and `HEAD` only. Request headers are forwarded by allow-list
 (`accept`, `accept-encoding`, `accept-language`, `if-none-match`, `if-modified-since`,
