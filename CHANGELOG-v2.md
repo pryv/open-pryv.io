@@ -1,5 +1,46 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Hosted sites: serve a static folder or proxy a fixed upstream under a reserved name
+
+New config key `hostedSites` (default `{}`: nothing changes). Each entry turns a platform
+name into a web site instead of a user account:
+
+```yaml
+hostedSites:
+  account:
+    static: /srv/pryv/sites/account         # a folder holding index.html
+  docs:
+    proxy: https://example.github.io/docs/  # a fixed upstream
+    headers: { content-security-policy: "default-src 'self'" }
+```
+
+- **Where it answers.** DNS topology (`dns.domain` set, dnsLess off): on
+  `<name>.<dns.domain>`, its own origin. dnsLess: under `<dnsLess.publicUrl>/<name>/`
+  (`/<name>` redirects there), which is the **same origin as the API**, not a separate one;
+  bundles must be built for that base. Without `dns.domain` and without dnsLess the boot is
+  refused.
+- **Static**: GitHub Pages-like (`index.html`, `.html` fallback, `404.html` with status 404,
+  ETag / 304, Range, HEAD); dotfiles and anything outside the folder answer 404.
+- **Proxy**: GET and HEAD only, request and response headers by allow-list (no cookies,
+  `Authorization` or client address upstream; no `set-cookie` back), redirects inside the
+  upstream rewritten to the site, 502 / 504 on upstream failure or silence. An `http://`
+  upstream warns at boot; an upstream on the platform's own domain is refused.
+- Every site answer carries `nosniff`, a referrer policy, HSTS (this host only) over TLS and
+  the entry's `headers`; never the API's CORS or `api-version` headers.
+- **Reserved usernames.** A site name is refused at registration (`409 item-already-exists`)
+  and by the change-username method (`400 invalid-operation`) on every core, including a
+  name that only another core serves.
+- **Boot refusals (new).** A core does not start when a `static` folder is missing or has no
+  `index.html`, when an existing user holds a site name (rename the user or pick another
+  name), or when a name clashes with `reg`, `access`, `mfa`, `lsc`, `core.id` or a
+  `dns.staticEntries` key. `bin/check-config.js` reports the shape problems.
+- **Embedded DNS.** `<name>.<dns.domain>` answers the A / AAAA of the cores that serve the
+  site, ahead of `dns.staticEntries` and usernames; a runtime DNS record with that name is
+  shadowed (with a warning).
+- Known limitation: `/socket.io/` on a site host is still answered by the API's Socket.IO.
+
 ## 2.0.0-rc.27 — 2026-09-28
 
 ### Embedded DNS: TCP/53 and RFC-conformant answers (operator action: open TCP/53)

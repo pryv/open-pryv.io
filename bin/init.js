@@ -691,6 +691,16 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       clientSecret: <per-core secret>
 # #       label: Google
 
+# # hostedSites: a reserved name that serves a static folder (e.g. an auth /
+# # account UI bundle) or proxies a fixed upstream, instead of a user account.
+# # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}
+# # The core refuses to boot when the folder has no index.html or a user holds the name.
+# # hostedSites:
+# #   account:
+# #     static: /srv/pryv/sites/account
+# #   docs:
+# #     proxy: https://example.github.io/docs/
+
 ${HOSTINGS_BLOCK}
 ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # custom.systemStreams — extend the account schema (e.g. add 'phone',

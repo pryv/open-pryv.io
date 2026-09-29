@@ -15,7 +15,7 @@
  *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li')
  *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
  *   ADMIN_KEY       — auth:adminAccessKey
- *   HOSTED_SITES_JSON — optional `hostedSites` block (JSON). When set, the core
+ *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
  *                     a missing folder) and serves the sites in front of express.

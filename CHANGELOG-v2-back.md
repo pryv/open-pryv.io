@@ -1,5 +1,33 @@
 # Changelog - Internal (no API impact)
 
+## Hosted sites: dispatcher, shared validator, core-info advertisement
+
+- `components/business/src/hostedSites.ts`: the one `hostedSites` validator
+  (`describeHostedSites` never throws, `parseHostedSites` throws one error listing every
+  problem, `hostedSiteNames` for the reservation), used by `config/plugins/config-validation.js`
+  (boot refusal + http-upstream warning), `bin/check-config.js`, the platform, the DNS server
+  and the api-server.
+- `components/api-server/src/hostedSitesIngress.ts`: raw `http` dispatcher in front of the
+  HFS one (`server.ts` chain `sites -> hfs -> express`), built on `send` for static files
+  (plus a real-path containment check) and on `http(s).request` + `pipeline` for the proxy.
+  `send` is now a declared dependency (root and api-server `package.json`; it was present
+  only through express, same version 0.19.2).
+- Boot checks (`checkStaticSiteFolders`, `checkHostedSitesAtBoot`) run in `bin/master.js`
+  before the platform registration (folders first, without the database) and again in each
+  api worker before it listens. `expressApp.ts` keeps site names out of `subdomainToPath`.
+- `Platform`: `registerSelf()` writes `sites: [...]` into the core-info row when the core has
+  sites; the platform-config snapshot gains `hostedSites.names` only when set (the hash of a
+  platform without sites is unchanged); reserved-username checks consult this core's names
+  plus every row's `sites`, re-read at registration and change-username
+  (`refreshHostedSiteNames()`). `_setDependenciesForTests` takes an optional config.
+- `DnsServer`: hosted-site branch after the reserved service names; advertised names are
+  refreshed with the runtime records (start + every 30 s), the answer reads the core-info
+  rows fresh.
+- Tests: `[HSCF]` (business, validator), `[PLHS]` (platform, reservation and
+  advertisement), `[HSTI]` (dispatcher, raw servers), `[HSBT]` (real `bin/server` with a
+  site, and both boot refusals), `[DN7H]` (DNS), `[RG2C]` `[2C40]`-`[2C43]` (two cores; the
+  child core accepts `HOSTED_SITES_JSON`).
+
 ## Embedded DNS server: header flags, SOA choke point, TCP listeners, fail-fast bind
 
 `components/dns-server`: dns2's `createResponseFromRequest` returns the request object

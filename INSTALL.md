@@ -154,6 +154,7 @@ storages:
 Options:
 - Use the public Pryv assets: `https://pryv.github.io/assets-pryv.me/index.json`
 - Host your own and set the URL in config
+- Serve them from the core itself with a hosted site (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)), e.g. a `www` site whose folder holds `assets/index.json`, then set `service.assets.definitions: https://www.<dns.domain>/assets/index.json`
 
 ### Email
 
@@ -388,6 +389,77 @@ server {
 **HFS Host header** — The `proxy_set_header Host` for HFS locations must be a plain IP:port (e.g. `127.0.0.1:4000`), not the domain. The HFS `subdomainToPath` middleware extracts the subdomain from Host and prepends it to the URL path, which corrupts the route if a real domain is passed.
 
 **Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
+
+**Hosted sites behind nginx** - the in-process dispatcher recognises a hosted site by the `Host` header, so the `location /` block must keep `proxy_set_header Host $http_host;` (as in the sample). Alternatively serve the folder from nginx with its own `server` block and leave `hostedSites` for the name reservation and the DNS answer.
+
+## Hosted sites (static folder or fixed proxy on a reserved name)
+
+A platform name can serve a web site instead of a user account: a folder of static files
+(an auth / account UI bundle, a landing page, `assets/index.json`) or a fixed upstream that
+the core proxies. The name becomes a reserved username on every core.
+
+```yaml
+# override-config.yml
+hostedSites:
+  account:
+    static: /srv/pryv/sites/account         # absolute folder holding index.html (404.html optional)
+  docs:
+    proxy: https://example.github.io/docs/  # fixed upstream; the request path and query are appended
+    headers:                                 # optional, added to every response of this site
+      content-security-policy: "default-src 'self'"
+```
+
+Where the site answers:
+
+| Topology | URL of site `account` | Origin |
+|---|---|---|
+| DNS (`dns.domain` set, `dnsLess.isActive: false`) | `https://account.<dns.domain>/` | its own origin, covered by the `*.<dns.domain>` certificate |
+| dnsLess (`dnsLess.isActive: true`) | `<dnsLess.publicUrl>/account/` | **the same origin as the API**, not a separate one |
+
+In dnsLess mode the site shares the API's origin (one host name, one certificate): build a
+bundle for that base (e.g. Vite `--base=/account/`), and prefer the DNS topology for
+anything that must not share an origin with the API. A site name cannot shadow an API route
+there (`reg`, `system`, `www`, `auth`, `users`, `oauth2`, `service`, `socket` are refused).
+Without `dns.domain` and without dnsLess there is no host name to match, and the boot is
+refused.
+
+Static sites behave like GitHub Pages: `index.html` for a folder (a folder without its
+trailing slash redirects), `/page` serves `page.html`, a miss serves `404.html` with status
+404 (or a plain-text 404), `ETag` / `Last-Modified` with `304`, `Range`, `HEAD`,
+`Cache-Control: public, max-age=0`. Dotfiles (e.g. a `.git` folder) and anything resolving
+outside the folder (a symlink pointing out) answer 404. No compression: put nginx in front
+for that. Files can be replaced at any time without a restart.
+
+Proxy sites forward `GET` and `HEAD` only. Request headers are forwarded by allow-list
+(`accept`, `accept-encoding`, `accept-language`, `if-none-match`, `if-modified-since`,
+`range`, `user-agent`): cookies, `Authorization` and the client address never reach the
+upstream. Response headers are passed by allow-list too (content, caching and `location`
+headers); `set-cookie`, `strict-transport-security` and a CSP from the upstream are dropped.
+A redirect inside the upstream base is rewritten to the site. An unreachable upstream
+answers 502, a silent one 504 after 30 s. An `http://` upstream is accepted with a boot
+warning (the content travels in clear between the core and the upstream). An upstream on
+this platform's own domain is refused (it would loop).
+
+Every site answer carries `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security:
+max-age=31536000` when served over TLS (this host only, no `includeSubDomains`) and the
+site's `headers`. The API's CORS, JSON and `api-version` headers are never added, and the
+core never sets a cookie for a site.
+
+Boot checks (the core refuses to start, with a message naming the site):
+
+- a `static` folder that does not exist or holds no `index.html`;
+- an existing user whose username is a site name (rename the user, or pick another name);
+- a name that clashes with `reg`, `access`, `mfa`, `lsc`, `core.id` or a
+  `dns.staticEntries` key, or any other shape error (`bin/check-config.js` reports these
+  too, without a database).
+
+With the embedded DNS (`dns.active: true`), `<name>.<dns.domain>` answers the A / AAAA of
+the cores that serve the site. With an external DNS, point the name at those cores
+yourself.
+
+Known limitation: `/socket.io/` on a site host is still answered by the API's Socket.IO
+endpoint, which takes that path before any other handler.
 
 
 ## Data directories
