@@ -3,12 +3,18 @@
 ## rqlited no longer outlives a master that exits early
 
 When the master left through `process.exit()` before its normal shutdown (a failed boot check
-such as a hosted-sites refusal, or a configuration validation error that lands after rqlited was
-spawned), the rqlited child kept running on the data directory. A restarted master then found
-that orphan answering on the rqlite port, treated it as its own, and a second rqlited could hold
-the same files, which rqlite (a single-writer store) does not survive. `rqliteProcess.start()` now
-registers an exit hook that sends SIGTERM to a still-running child. Test `[RQEX]` (a driver
-process exits right after the start; the fake rqlited must be gone).
+after the spawn such as a hosted-sites refusal, the startup catch for anything that throws later
+in the boot, or an uncaught exception), the rqlited child kept running on the data directory on
+bare `node bin/master.js` starts (in a container the exit of PID 1 already takes it down). A
+restarted master then found that orphan answering on the rqlite port, treated it as its own, and
+a second rqlited could hold the same files, which rqlite (a single-writer store) does not
+survive. `rqliteProcess.start()` now registers an exit hook that sends SIGTERM to a still-running
+child. It also no longer trusts readiness alone: once `/readyz` answers, it reads `/status`
+(`os.pid`) and fails with an explicit error unless the answering rqlited is the child it just
+started, so an orphan or a hand-started rqlited on the same port is reported instead of silently
+used (the child is terminated). Tests `[RQEX]`: a driver process exits right after the start and
+the fake rqlited must be gone; a child that exits at once, or stays alive without binding, while
+another process answers on the port makes `start()` reject.
 
 ## Hosted sites: dispatcher, shared validator, core-info advertisement
 
