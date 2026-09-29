@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.28 — 2026-09-29
 
 ### Hosted sites: serve a static folder or proxy a fixed upstream under a reserved name
 
