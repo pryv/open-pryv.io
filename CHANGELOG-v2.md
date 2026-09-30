@@ -2,9 +2,10 @@
 
 ## 2.0.0-rc.29 - 2026-09-30
 
-No API change. The install wizard, the `bin/check-config.js` hint and the cmc implementers'
-guide point at the reference account app on its own origin, `https://account.pryv.me` (see
-`CHANGELOG-v2-back.md`).
+No API change. Security update of runtime dependencies (8 high and 3 moderate advisories
+cleared, including nodemailer SMTP credential disclosure across transports); the install wizard,
+the `bin/check-config.js` hint and the cmc implementers' guide point at the reference account app
+on its own origin, `https://account.pryv.me` (see `CHANGELOG-v2-back.md`).
 
 ## 2.0.0-rc.28 — 2026-09-29
 
