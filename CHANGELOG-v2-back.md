@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Dependencies: runtime advisories cleared (nodemailer 10)
+
+`npm audit` reported 8 high and 3 moderate advisories in runtime dependencies, all published
+after the previous sweep: nodemailer (TLS `servername` reused across transports by a
+process-global DNS cache, which can disclose SMTP credentials between tenants), axios, engine.io,
+undici, brace-expansion, multer, moment and fast-uri. Non-major updates clear all but nodemailer;
+the `overrides` pin moves from `^9.1.0` to `^10.0.13` (nodemailer 10's only breaking change is
+Node.js 20 or newer). `npm audit`: 0 vulnerabilities, runtime and dev.
+
 ## Account app links point at `https://account.pryv.me`
 
 The reference account app now has its own origin, served by the pryv.me platform itself. The
