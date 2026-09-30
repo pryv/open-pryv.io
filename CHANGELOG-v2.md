@@ -1,5 +1,11 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.29 - 2026-09-30
+
+No API change. The install wizard, the `bin/check-config.js` hint and the cmc implementers'
+guide point at the reference account app on its own origin, `https://account.pryv.me` (see
+`CHANGELOG-v2-back.md`).
+
 ## 2.0.0-rc.28 — 2026-09-29
 
 ### Hosted sites: serve a static folder or proxy a fixed upstream under a reserved name
