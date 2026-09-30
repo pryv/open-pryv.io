@@ -310,7 +310,7 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       });
       upstreamPort = upstream.address().port;
       const dispatch = buildHostedSitesIngress({
-        sites: sitesOf({ docs: { proxy: `http://127.0.0.1:${upstreamPort}/docs`, headers: { 'x-frame-options': 'DENY', 'cache-control': 'no-store' } } }),
+        sites: sitesOf({ docs: { proxy: `http://127.0.0.1:${upstreamPort}/docs`, headers: { 'cache-control': 'no-store' } } }),
         domain: DOMAIN,
         dnsLess: false,
         logger: quietLogger,

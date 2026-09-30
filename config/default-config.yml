@@ -529,7 +529,8 @@ hostedSites: {}
 #      content-security-policy: "default-src 'self'"   # sent as a second policy, cannot relax framing
 #    frameAncestors: ["'self'", "https://app.example.com"]  # optional CSP sources allowed to frame the
 #                                             # site (X-Frame-Options: SAMEORIGIN for ["'self'"] alone,
-#                                             # omitted for any other list)
+#                                             # omitted for any other list; keywords quoted,
+#                                             # 'none' only alone; x-frame-options not in headers)
 
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---

@@ -26,10 +26,17 @@ hostedSites:
 
 The answers then carry `frame-ancestors 'self' https://app.example.com`; `X-Frame-Options` is
 `SAMEORIGIN` for `["'self'"]` alone and omitted for any other list (it cannot express one).
-Entries with spaces, `;` or `,`, or an empty list, refuse the boot. A `content-security-policy`
-set in the site's `headers` is now sent as a second policy next to the anti-framing one
-(browsers enforce both); it can no longer be used to allow framing. An operator whose site must
-be framed sets `frameAncestors`.
+Entries with spaces, `;` or `,`, an empty list, an unquoted `self` / `none`, or `'none'` next to
+other entries (browsers would ignore it and allow the others) refuse the boot; keywords are
+case-insensitive.
+
+- **BREAKING (hosted sites that are framed on purpose).** A site framed by another page (an
+  embedded dashboard, say) is refused by browsers after the upgrade until its entry lists the
+  framing pages in `frameAncestors`.
+- **BREAKING (config).** `x-frame-options` in a site's `headers` refuses the boot: framing is set
+  with `frameAncestors`, since browsers follow the CSP `frame-ancestors` it sends. A
+  `content-security-policy` in the site's `headers` is now sent as a second policy next to the
+  anti-framing one (browsers enforce both); it can no longer be used to allow framing.
 
 ## 2.0.0-rc.28 — 2026-09-29
 

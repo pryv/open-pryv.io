@@ -74,6 +74,7 @@ const FORBIDDEN_HEADERS = new Set([
 const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
 /** One CSP source expression: no whitespace, no directive (;) or policy (,) separator. */
 const FRAME_SOURCE_RE = /^[^\s;,]+$/;
+const FRAME_KEYWORDS = new Set(["'self'", "'none'"]);
 
 function isPlainObject (v: unknown): v is Record<string, unknown> {
   return v != null && typeof v === 'object' && !Array.isArray(v);
@@ -157,6 +158,8 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
             siteProblems.push(`${where}.headers.${hName}: not a valid header name`);
           } else if (FORBIDDEN_HEADERS.has(lower)) {
             siteProblems.push(`${where}.headers.${hName}: this header cannot be set by configuration`);
+          } else if (lower === 'x-frame-options') {
+            siteProblems.push(`${where}.headers.${hName}: framing is set with ${where}.frameAncestors (browsers follow the CSP frame-ancestors it sends, not X-Frame-Options)`);
           } else if (typeof hValue !== 'string' || /[\r\n\0]/.test(hValue)) {
             siteProblems.push(`${where}.headers.${hName}: the value must be a single-line string`);
           } else {
@@ -172,7 +175,16 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
       if (!Array.isArray(fa) || fa.length === 0 || !fa.every((v) => typeof v === 'string' && FRAME_SOURCE_RE.test(v))) {
         siteProblems.push(`${where}.frameAncestors must be a non-empty list of CSP source expressions (e.g. "'self'", "https://app.example.com"), without spaces, ";" or ","`);
       } else {
-        frameAncestors = fa.slice();
+        // CSP keywords are case-insensitive: keep them lower-cased.
+        const list = fa.map((v) => (FRAME_KEYWORDS.has(v.toLowerCase()) ? v.toLowerCase() : v));
+        const bare = list.filter((v) => ['self', 'none'].includes(v.toLowerCase()));
+        if (bare.length > 0) {
+          siteProblems.push(`${where}.frameAncestors: write ${bare.map((v) => `"'${v.toLowerCase()}'"`).join(', ')} with the single quotes (unquoted, browsers read a host name)`);
+        } else if (list.includes("'none'") && list.length > 1) {
+          siteProblems.push(`${where}.frameAncestors: "'none'" must be the only entry (browsers ignore it next to others, which would allow them)`);
+        } else {
+          frameAncestors = list;
+        }
       }
     }
 

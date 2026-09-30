@@ -455,9 +455,11 @@ against clickjacking: `Content-Security-Policy: frame-ancestors 'none'` and
 (CSP source expressions, e.g. `"'self'"` or `"https://app.example.com"`; no spaces, `;` or
 `,`): the answers then carry `frame-ancestors <the list>`, plus `X-Frame-Options:
 SAMEORIGIN` when the list is `["'self'"]` alone (X-Frame-Options cannot express a list, so it
-is omitted otherwise). A `content-security-policy` in the site's `headers` is sent as a second
-policy next to the anti-framing one: browsers enforce both, so it can tighten framing but not
-relax it.
+is omitted otherwise). Write the keywords with their single quotes (`"'self'"`, `"'none'"`;
+unquoted, browsers read a host name), and `'none'` only alone. A `content-security-policy` in the
+site's `headers` is sent as a second policy next to the anti-framing one: browsers enforce both,
+so it can tighten framing but not relax it. `x-frame-options` cannot be set in `headers`: use
+`frameAncestors`.
 
 Boot checks (the core refuses to start, with a message naming the site):
 
