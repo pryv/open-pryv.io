@@ -53,7 +53,34 @@ const FORWARDED_RESPONSE_HEADERS = [
 
 const HSTS_VALUE = 'max-age=31536000';
 
-type Match = { site: HostedSite; subPath: string; search: string; prefix: string } | { redirect: string } | null;
+type Match = { site: HostedSite; subPath: string; search: string; prefix: string } | { site: HostedSite; redirect: string } | null;
+
+/**
+ * Anti-framing headers of a site: `frame-ancestors 'none'` + `X-Frame-Options:
+ * DENY` unless the site lists its allowed ancestors. X-Frame-Options cannot
+ * express a list, so it is only kept for `'none'` (DENY) or `'self'` alone
+ * (SAMEORIGIN); browsers that know CSP ignore it anyway.
+ */
+function frameHeadersOf (site: HostedSite): Record<string, string> {
+  const ancestors = site.frameAncestors ?? ["'none'"];
+  const headers: Record<string, string> = { 'content-security-policy': 'frame-ancestors ' + ancestors.join(' ') };
+  if (ancestors.length === 1 && ancestors[0] === "'none'") headers['x-frame-options'] = 'DENY';
+  if (ancestors.length === 1 && ancestors[0] === "'self'") headers['x-frame-options'] = 'SAMEORIGIN';
+  return headers;
+}
+
+/**
+ * Headers added to every answer of a site: the anti-framing ones, then the
+ * operator's. An operator CSP is sent as a second policy, so browsers enforce
+ * both: it can tighten framing, only `frameAncestors` can relax it.
+ */
+function responseHeadersOf (site: HostedSite): OutgoingHttpHeaders {
+  const headers: OutgoingHttpHeaders = frameHeadersOf(site);
+  for (const [name, value] of Object.entries(site.headers)) {
+    headers[name] = name === 'content-security-policy' ? [headers[name] as string, value] : value;
+  }
+  return headers;
+}
 
 function plain (res: ServerResponse, status: number, message: string, extra: OutgoingHttpHeaders = {}, head = false) {
   const body = message + '\n';
@@ -89,6 +116,9 @@ function buildHostedSitesIngress (opts: {
     }
     if (domain != null) byHost.set(site.name + '.' + domain, site);
   }
+  const responseHeaders = new Map<string, OutgoingHttpHeaders>();
+  for (const site of sites.values()) responseHeaders.set(site.name, responseHeadersOf(site));
+  const headersOf = (site: HostedSite) => responseHeaders.get(site.name) as OutgoingHttpHeaders;
   // Static roots resolved once: the containment check compares real paths.
   const realRoots = new Map<string, string>();
   for (const site of sites.values()) {
@@ -113,7 +143,7 @@ function buildHostedSitesIngress (opts: {
     if (m == null) return null;
     const site = sites.get(m[1]);
     if (site == null) return null;
-    if (m[2] == null) return { redirect: '/' + site.name + '/' + url.search };
+    if (m[2] == null) return { site, redirect: '/' + site.name + '/' + url.search };
     return { site, subPath: m[2], search: url.search, prefix: '/' + site.name + '/' };
   }
 
@@ -121,7 +151,7 @@ function buildHostedSitesIngress (opts: {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
     if ((req.socket as TLSSocket).encrypted) res.setHeader('strict-transport-security', HSTS_VALUE);
-    for (const [name, value] of Object.entries(site.headers)) res.setHeader(name, value);
+    for (const [name, value] of Object.entries(headersOf(site))) res.setHeader(name, value as string | string[]);
   }
 
   // ---------------------------------------------------------------- static
@@ -196,7 +226,7 @@ function buildHostedSitesIngress (opts: {
     });
     // The operator's headers win over what send sets (e.g. cache-control)
     stream.on('headers', (out: ServerResponse) => {
-      for (const [name, value] of Object.entries(site.headers)) out.setHeader(name, value);
+      for (const [name, value] of Object.entries(headersOf(site))) out.setHeader(name, value as string | string[]);
     });
     stream.on('error', (err: Error & { status?: number; headers?: OutgoingHttpHeaders }) => {
       if (res.headersSent) { res.destroy(); return; }
@@ -256,7 +286,7 @@ function buildHostedSitesIngress (opts: {
         outHeaders[name] = name === 'location' ? rewriteLocation(String(value), site, prefix) : value;
       }
       // The operator's headers win over the upstream's
-      Object.assign(outHeaders, site.headers);
+      Object.assign(outHeaders, headersOf(site));
       res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
       pipeline(proxyRes, res, (err: NodeJS.ErrnoException | null) => {
         if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${req.url}: ${err.code ?? err.message}`);
@@ -299,7 +329,7 @@ function buildHostedSitesIngress (opts: {
     // Sites take no request body: discard whatever came so the client can finish.
     req.resume();
     if ('redirect' in m) {
-      res.writeHead(301, { location: m.redirect, 'content-length': 0 });
+      res.writeHead(301, Object.assign({ location: m.redirect, 'content-length': 0 }, frameHeadersOf(m.site)));
       res.end();
       return;
     }

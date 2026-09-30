@@ -512,19 +512,25 @@ dns:
 # === MIXED ===
 # The NAME SET is PLATFORM-WIDE: every core lists the same names; the embedded DNS answers a
 # name with the cores that advertise it, and registration refuses it as a username on every core.
-# `static` paths are PER-CORE (each host's filesystem); `proxy` URLs and `headers` are
-# PLATFORM-WIDE by intent (keep them identical on every core, YAML-only).
+# `static` paths are PER-CORE (each host's filesystem); `proxy` URLs, `headers` and
+# `frameAncestors` are PLATFORM-WIDE by intent (keep them identical on every core, YAML-only).
 # --- Hosted sites (static folder or fixed proxy on a reserved name) ---
 # DNS topology (dns.domain set, dnsLess off): served on <name>.<dns.domain>, its own origin.
 # dnsLess: served under <publicUrl>/<name>/ (same origin as the API; build bundles with that base).
 # A core refuses to boot when a static folder has no index.html or when a user holds a site name.
+# Every site answer refuses to be framed (`Content-Security-Policy: frame-ancestors 'none'` +
+# `X-Frame-Options: DENY`, against clickjacking); `frameAncestors` lists who may frame it instead.
 hostedSites: {}
 #  account:
 #    static: /srv/pryv/sites/account         # absolute folder holding index.html (404.html optional)
 #  docs:
 #    proxy: https://example.github.io/docs/  # fixed upstream; the request path and query are appended
 #    headers:                                 # optional, added to every response of this site
-#      content-security-policy: "default-src 'self'"
+#      content-security-policy: "default-src 'self'"   # sent as a second policy, cannot relax framing
+#    frameAncestors: ["'self'", "https://app.example.com"]  # optional CSP sources allowed to frame the
+#                                             # site (X-Frame-Options: SAMEORIGIN for ["'self'"] alone,
+#                                             # omitted for any other list; keywords quoted,
+#                                             # 'none' only alone; x-frame-options not in headers)
 
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---

@@ -120,6 +120,39 @@ describe('[HSCF] hostedSites configuration', function () {
     assert.deepEqual(problemsOf({ www: { static: '/srv/x' } }), []);
   });
 
+  it('[HSFV] frameAncestors: a non-empty list of CSP source expressions, kept only when set', function () {
+    const r = describeHostedSites(dnsInput({
+      a: { static: '/srv/x', frameAncestors: ["'self'", 'https://app.example.com'] },
+      b: { proxy: 'https://e.org/', frameAncestors: ["'self'"] },
+      c: { static: '/srv/y' }
+    }));
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.sites.get('a').frameAncestors, ["'self'", 'https://app.example.com']);
+    assert.deepEqual(r.sites.get('b').frameAncestors, ["'self'"]);
+    assert.equal('frameAncestors' in r.sites.get('c'), false);
+    for (const bad of [[], "'self'", {}, [''], [3], ["'self'; script-src *"], ["'self', https://x.org"], ["'self' https://x.org"], ['https://x.org\r\nx-a: b']]) {
+      const p = problemsOf({ a: { static: '/srv/x', frameAncestors: bad } });
+      assert.ok(p.some((m) => m.includes('hostedSites.a.frameAncestors must be a non-empty list')), JSON.stringify(bad) + ': ' + p.join('|'));
+    }
+  });
+
+  it("[HSFW] frameAncestors keywords: quoted, 'none' alone, case-insensitive; X-Frame-Options is not a site header", function () {
+    const r = describeHostedSites(dnsInput({ a: { static: '/srv/x', frameAncestors: ["'SELF'", 'https://app.example.com'] }, b: { static: '/srv/y', frameAncestors: ["'None'"] } }));
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.sites.get('a').frameAncestors, ["'self'", 'https://app.example.com']);
+    assert.deepEqual(r.sites.get('b').frameAncestors, ["'none'"]);
+    for (const bare of [['self'], ['None', 'https://x.org']]) {
+      const p = problemsOf({ a: { static: '/srv/x', frameAncestors: bare } });
+      assert.ok(p.some((m) => m.includes('with the single quotes')), JSON.stringify(bare) + ': ' + p.join('|'));
+    }
+    const mixed = problemsOf({ a: { static: '/srv/x', frameAncestors: ["'none'", 'https://x.org'] } });
+    assert.ok(mixed.some((m) => m.includes('must be the only entry')), mixed.join('|'));
+    for (const name of ['x-frame-options', 'X-Frame-Options']) {
+      const p = problemsOf({ a: { static: '/srv/x', headers: { [name]: 'SAMEORIGIN' } } });
+      assert.ok(p.some((m) => m.includes('framing is set with hostedSites.a.frameAncestors')), name + ': ' + p.join('|'));
+    }
+  });
+
   it('[HSCA] parseHostedSites throws one error listing every problem; hostedSiteNames never throws', function () {
     const cfg = configOf({
       hostedSites: { reg: { static: '/srv/x' }, b: {} },

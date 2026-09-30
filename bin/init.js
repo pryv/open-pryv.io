@@ -695,11 +695,14 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # account UI bundle) or proxies a fixed upstream, instead of a user account.
 # # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}
 # # The core refuses to boot when the folder has no index.html or a user holds the name.
+# # Site answers refuse to be framed (clickjacking); frameAncestors lists who may frame it
+# # (keywords quoted, 'none' only alone; x-frame-options cannot be set in headers).
 # # hostedSites:
 # #   account:
 # #     static: /srv/pryv/sites/account
 # #   docs:
 # #     proxy: https://example.github.io/docs/
+# #     frameAncestors: ["'self'", "https://app.example.com"]
 
 ${HOSTINGS_BLOCK}
 ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
