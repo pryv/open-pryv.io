@@ -407,6 +407,7 @@ hostedSites:
     proxy: https://example.github.io/docs/  # fixed upstream; the request path and query are appended
     headers:                                 # optional, added to every response of this site
       content-security-policy: "default-src 'self'"
+    frameAncestors: ["'self'", "https://app.example.com"]  # optional, who may frame the site
 ```
 
 Where the site answers:
@@ -447,6 +448,16 @@ Every site answer carries `X-Content-Type-Options: nosniff`,
 max-age=31536000` when served over TLS (this host only, no `includeSubDomains`) and the
 site's `headers`. The API's CORS, JSON and `api-version` headers are never added, and the
 core never sets a cookie for a site.
+
+Every site answer (any status, including 404 and the redirects) also refuses to be framed,
+against clickjacking: `Content-Security-Policy: frame-ancestors 'none'` and
+`X-Frame-Options: DENY`. To let other pages frame a site, list them in `frameAncestors`
+(CSP source expressions, e.g. `"'self'"` or `"https://app.example.com"`; no spaces, `;` or
+`,`): the answers then carry `frame-ancestors <the list>`, plus `X-Frame-Options:
+SAMEORIGIN` when the list is `["'self'"]` alone (X-Frame-Options cannot express a list, so it
+is omitted otherwise). A `content-security-policy` in the site's `headers` is sent as a second
+policy next to the anti-framing one: browsers enforce both, so it can tighten framing but not
+relax it.
 
 Boot checks (the core refuses to start, with a message naming the site):
 

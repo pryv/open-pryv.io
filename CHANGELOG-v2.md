@@ -2,10 +2,34 @@
 
 ## 2.0.0-rc.29 - 2026-09-30
 
-No API change. Security update of runtime dependencies (8 high and 3 moderate advisories
-cleared, including nodemailer SMTP credential disclosure across transports); the install wizard,
-the `bin/check-config.js` hint and the cmc implementers' guide point at the reference account app
+Security update of runtime dependencies (8 high and 3 moderate advisories cleared, including
+nodemailer SMTP credential disclosure across transports); the install wizard, the
+`bin/check-config.js` hint and the cmc implementers' guide point at the reference account app
 on its own origin, `https://account.pryv.me` (see `CHANGELOG-v2-back.md`).
+
+### Security: hosted sites refuse to be framed (clickjacking)
+
+Hosted-site answers carried no framing policy, so any page could frame a hosted site (e.g. an
+account app's consent page) and trick a click. Every hosted-site answer, whatever its status
+(including 404, 405, 5xx and the redirects), now carries
+`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+
+New optional per-site key `hostedSites.<name>.frameAncestors`, a non-empty list of CSP source
+expressions allowed to frame the site:
+
+```yaml
+hostedSites:
+  account:
+    static: /srv/pryv/sites/account
+    frameAncestors: ["'self'", "https://app.example.com"]
+```
+
+The answers then carry `frame-ancestors 'self' https://app.example.com`; `X-Frame-Options` is
+`SAMEORIGIN` for `["'self'"]` alone and omitted for any other list (it cannot express one).
+Entries with spaces, `;` or `,`, or an empty list, refuse the boot. A `content-security-policy`
+set in the site's `headers` is now sent as a second policy next to the anti-framing one
+(browsers enforce both); it can no longer be used to allow framing. An operator whose site must
+be framed sets `frameAncestors`.
 
 ## 2.0.0-rc.28 — 2026-09-29
 

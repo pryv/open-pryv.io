@@ -120,6 +120,22 @@ describe('[HSCF] hostedSites configuration', function () {
     assert.deepEqual(problemsOf({ www: { static: '/srv/x' } }), []);
   });
 
+  it('[HSFV] frameAncestors: a non-empty list of CSP source expressions, kept only when set', function () {
+    const r = describeHostedSites(dnsInput({
+      a: { static: '/srv/x', frameAncestors: ["'self'", 'https://app.example.com'] },
+      b: { proxy: 'https://e.org/', frameAncestors: ["'self'"] },
+      c: { static: '/srv/y' }
+    }));
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.sites.get('a').frameAncestors, ["'self'", 'https://app.example.com']);
+    assert.deepEqual(r.sites.get('b').frameAncestors, ["'self'"]);
+    assert.equal('frameAncestors' in r.sites.get('c'), false);
+    for (const bad of [[], "'self'", {}, [''], [3], ["'self'; script-src *"], ["'self', https://x.org"], ["'self' https://x.org"], ['https://x.org\r\nx-a: b']]) {
+      const p = problemsOf({ a: { static: '/srv/x', frameAncestors: bad } });
+      assert.ok(p.some((m) => m.includes('hostedSites.a.frameAncestors must be a non-empty list')), JSON.stringify(bad) + ': ' + p.join('|'));
+    }
+  });
+
   it('[HSCA] parseHostedSites throws one error listing every problem; hostedSiteNames never throws', function () {
     const cfg = configOf({
       hostedSites: { reg: { static: '/srv/x' }, b: {} },

@@ -17,6 +17,11 @@ import path from 'node:path';
  *       proxy: https://example.github.io/docs/
  *       headers:
  *         content-security-policy: "default-src 'self'"
+ *       frameAncestors: ["'self'", "https://app.example.com"]
+ *
+ * Every site answer forbids framing by default (`frame-ancestors 'none'` +
+ * `X-Frame-Options: DENY`); `frameAncestors` lists the CSP source expressions
+ * allowed to frame the site instead.
  *
  * The name set is platform-wide (every core refuses it as a username and the
  * embedded DNS answers it with the cores that advertise it); `static` paths
@@ -26,8 +31,9 @@ import path from 'node:path';
  * filesystem or the network.
  */
 
-type StaticSite = { name: string; kind: 'static'; root: string; headers: Record<string, string> };
-type ProxySite = { name: string; kind: 'proxy'; upstream: string; headers: Record<string, string> };
+/** `frameAncestors` is set only when configured; unset means no framing at all. */
+type StaticSite = { name: string; kind: 'static'; root: string; headers: Record<string, string>; frameAncestors?: string[] };
+type ProxySite = { name: string; kind: 'proxy'; upstream: string; headers: Record<string, string>; frameAncestors?: string[] };
 type HostedSite = StaticSite | ProxySite;
 
 type HostedSitesInput = {
@@ -66,6 +72,8 @@ const FORBIDDEN_HEADERS = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'set-cookie', 'content-length', 'host'
 ]);
 const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+/** One CSP source expression: no whitespace, no directive (;) or policy (,) separator. */
+const FRAME_SOURCE_RE = /^[^\s;,]+$/;
 
 function isPlainObject (v: unknown): v is Record<string, unknown> {
   return v != null && typeof v === 'object' && !Array.isArray(v);
@@ -128,8 +136,8 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
       continue;
     }
     for (const key of Object.keys(entry)) {
-      if (!['static', 'proxy', 'headers'].includes(key)) {
-        siteProblems.push(`${where}.${key}: unknown key (expected static, proxy or headers)`);
+      if (!['static', 'proxy', 'headers', 'frameAncestors'].includes(key)) {
+        siteProblems.push(`${where}.${key}: unknown key (expected static, proxy, headers or frameAncestors)`);
       }
     }
     const hasStatic = entry.static != null && entry.static !== '';
@@ -155,6 +163,16 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
             headers[lower] = hValue;
           }
         }
+      }
+    }
+
+    let frameAncestors: string[] | null = null;
+    if (entry.frameAncestors != null) {
+      const fa = entry.frameAncestors;
+      if (!Array.isArray(fa) || fa.length === 0 || !fa.every((v) => typeof v === 'string' && FRAME_SOURCE_RE.test(v))) {
+        siteProblems.push(`${where}.frameAncestors must be a non-empty list of CSP source expressions (e.g. "'self'", "https://app.example.com"), without spaces, ";" or ","`);
+      } else {
+        frameAncestors = fa.slice();
       }
     }
 
@@ -191,7 +209,10 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
       problems.push(...siteProblems);
       continue;
     }
-    if (site != null) sites.set(name, site);
+    if (site != null) {
+      if (frameAncestors != null) site.frameAncestors = frameAncestors;
+      sites.set(name, site);
+    }
   }
   return { sites, problems, warnings };
 }

@@ -34,7 +34,7 @@ function request (port, { method = 'GET', path: reqPath = '/', host, headers = {
     const r = http.request({ host: '127.0.0.1', port, method, path: reqPath, headers: allHeaders }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, rawHeaders: res.rawHeaders, body: Buffer.concat(chunks).toString() }));
     });
     r.on('error', reject);
     r.end(body);
@@ -116,7 +116,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.headers['cache-control'], 'public, max-age=0');
       assert.equal(r.headers['x-content-type-options'], 'nosniff');
       assert.equal(r.headers['referrer-policy'], 'strict-origin-when-cross-origin');
-      assert.equal(r.headers['content-security-policy'], "default-src 'self'");
+      // the operator's CSP comes as a second policy after the anti-framing one
+      assert.equal(r.headers['content-security-policy'], "frame-ancestors 'none', default-src 'self'");
       assert.equal(r.headers['strict-transport-security'], undefined, 'no HSTS over plain http');
       assert.equal(r.headers['access-control-allow-origin'], undefined);
       assert.equal(r.headers['api-version'], undefined);
@@ -368,7 +369,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.headers.etag, '"v1"');
       assert.equal(r.headers['set-cookie'], undefined);
       assert.equal(r.headers['strict-transport-security'], undefined);
-      assert.equal(r.headers['content-security-policy'], undefined);
+      // the upstream's CSP is dropped; only the site's anti-framing policy is sent
+      assert.equal(r.headers['content-security-policy'], "frame-ancestors 'none'");
       assert.equal(r.headers['x-upstream-private'], undefined);
       assert.equal(r.headers['access-control-allow-origin'], undefined);
       assert.equal(r.headers['x-content-type-options'], 'nosniff');
@@ -428,6 +430,127 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       const loop = new Map([['docs', { name: 'docs', kind: 'proxy', upstream: 'https://other.' + DOMAIN + '/', headers: {} }]]);
       assert.throws(() => buildHostedSitesIngress({ sites: loop, domain: DOMAIN, dnsLess: false, logger: quietLogger }), /points at this platform/);
       assert.throws(() => buildHostedSitesIngress({ sites: sitesOf({ a: { static: root } }), domain: null, dnsLess: false, logger: quietLogger }), /dns.domain/);
+    });
+  });
+
+  describe('[HSFA] anti-framing headers', function () {
+    let front, port;
+    const DENY_CSP = "frame-ancestors 'none'";
+
+    before(async function () {
+      const dispatch = buildHostedSitesIngress({
+        sites: sitesOf({
+          account: { static: root },
+          bare: { static: bareRoot },
+          partner: { static: bareRoot, frameAncestors: ["'self'", 'https://app.example.com'] },
+          same: { static: bareRoot, frameAncestors: ["'self'"] },
+          tight: { static: bareRoot, headers: { 'content-security-policy': "default-src 'self'" } },
+          docs: { proxy: 'http://127.0.0.1:1/docs/' }
+        }),
+        domain: DOMAIN,
+        dnsLess: false,
+        logger: quietLogger
+      });
+      front = await listen((req, res) => dispatch(req, res, () => assert.fail('no fallback')));
+      port = front.address().port;
+    });
+    after(async function () { await close(front); });
+
+    const get = (site, p, extra = {}) => request(port, Object.assign({ path: p, host: site + '.' + DOMAIN }, extra));
+
+    function assertDenied (r, label) {
+      assert.equal(r.headers['content-security-policy'], DENY_CSP, label);
+      assert.equal(r.headers['x-frame-options'], 'DENY', label);
+    }
+
+    it('[HSF1] by default every answer of a static site forbids framing: 200, 301, 304, 404, 405', async function () {
+      const ok = await get('account', '/');
+      assert.equal(ok.status, 200);
+      assertDenied(ok, '200');
+      const redirect = await get('account', '/nested');
+      assert.equal(redirect.status, 301);
+      assertDenied(redirect, '301');
+      const asset = await get('account', '/assets/app.js');
+      const notModified = await get('account', '/assets/app.js', { headers: { 'if-none-match': asset.headers.etag } });
+      assert.equal(notModified.status, 304);
+      assertDenied(notModified, '304');
+      const custom404 = await get('account', '/nope');
+      assert.equal(custom404.status, 404);
+      assert.equal(custom404.body, '<p>custom 404</p>');
+      assertDenied(custom404, '404.html');
+      const plain404 = await get('bare', '/nope');
+      assert.equal(plain404.status, 404);
+      assert.equal(plain404.body, 'Not Found\n');
+      assertDenied(plain404, 'plain 404');
+      const post = await get('account', '/', { method: 'POST' });
+      assert.equal(post.status, 405);
+      assertDenied(post, '405');
+      assertDenied(await get('account', '/index.html%00.js'), '400');
+    });
+
+    it('[HSF2] a proxy site forbids framing too, even on a 502', async function () {
+      const r = await get('docs', '/x');
+      assert.equal(r.status, 502);
+      assertDenied(r, '502');
+    });
+
+    it('[HSF3] frameAncestors lists the allowed ancestors; X-Frame-Options is dropped as it cannot express a list', async function () {
+      for (const p of ['/', '/nope']) {
+        const r = await get('partner', p);
+        assert.equal(r.headers['content-security-policy'], "frame-ancestors 'self' https://app.example.com", p);
+        assert.equal(r.headers['x-frame-options'], undefined, p);
+      }
+    });
+
+    it("[HSF4] frameAncestors ['self'] alone maps to X-Frame-Options SAMEORIGIN", async function () {
+      const r = await get('same', '/');
+      assert.equal(r.status, 200);
+      assert.equal(r.headers['content-security-policy'], "frame-ancestors 'self'");
+      assert.equal(r.headers['x-frame-options'], 'SAMEORIGIN');
+    });
+
+    it('[HSF5] an operator CSP is sent as a separate policy and cannot drop the anti-framing one', async function () {
+      const r = await get('tight', '/');
+      const csp = [];
+      for (let i = 0; i < r.rawHeaders.length; i += 2) {
+        if (r.rawHeaders[i].toLowerCase() === 'content-security-policy') csp.push(r.rawHeaders[i + 1]);
+      }
+      assert.deepEqual(csp, [DENY_CSP, "default-src 'self'"]);
+      assert.equal(r.headers['x-frame-options'], 'DENY');
+    });
+
+    it('[HSF6] dnsLess: the /<name> redirect forbids framing', async function () {
+      const dispatch = buildHostedSitesIngress({
+        sites: sitesOf({ account: { static: root } }, { domain: null, dnsLessActive: true }),
+        domain: null,
+        dnsLess: true,
+        logger: quietLogger
+      });
+      const server = await listen((req, res) => dispatch(req, res, () => assert.fail('no fallback')));
+      try {
+        const r = await request(server.address().port, { path: '/account' });
+        assert.equal(r.status, 301);
+        assertDenied(r, 'dnsLess 301');
+      } finally {
+        await close(server);
+      }
+    });
+
+    it('[HSF7] the boot-time config validation refuses an invalid frameAncestors', function () {
+      const validation = require('../../../config/plugins/config-validation.js');
+      const values = {
+        hostedSites: { account: { static: root, frameAncestors: [] } },
+        'dns:domain': DOMAIN,
+        'dnsLess:isActive': false
+      };
+      const problems = [];
+      validation.checkHostedSites({ get: (key) => values[key] }, problems);
+      assert.equal(problems.length, 1, JSON.stringify(problems));
+      assert.ok(problems[0].message.includes('hostedSites.account.frameAncestors'));
+      values.hostedSites.account.frameAncestors = ["'self'"];
+      const none = [];
+      validation.checkHostedSites({ get: (key) => values[key] }, none);
+      assert.deepEqual(none, []);
     });
   });
 
