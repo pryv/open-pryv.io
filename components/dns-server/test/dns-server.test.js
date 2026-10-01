@@ -596,6 +596,26 @@ describe('[DNX] DNS Server: negative TTL, listeners and bind failures', function
     assert.deepStrictEqual(server._getAddresses(), {}, 'stop() closes every listener');
   });
 
+  it('[DNX6] ip 0.0.0.0 and ip6 :: on the same port both bind (IPv6-only sockets)', async () => {
+    // A port free for UDP and TCP on both families. On Linux a dual-stack '::'
+    // UDP socket fails with EADDRINUSE next to 0.0.0.0 (macOS allows it).
+    const holder = net.createServer();
+    await new Promise((resolve) => holder.listen(0, '0.0.0.0', resolve));
+    const port = holder.address().port;
+    await new Promise((resolve) => holder.close(resolve));
+    const server = createDnsServer({ config: createMockConfig(), platform, logger: createMockLogger() });
+    await server.start({ port, ip: '0.0.0.0', ip6: '::' });
+    try {
+      const addrs = server._getAddresses();
+      for (const kind of ['udp', 'tcp', 'udp6', 'tcp6']) assert.strictEqual(addrs[kind].port, port, kind);
+      const viaUdp6 = await rawQuery(port, `alice.${TEST_DOMAIN}`, 'A', { host: '::1' });
+      const viaUdp4 = await rawQuery(port, `alice.${TEST_DOMAIN}`, 'A', { host: '127.0.0.1' });
+      for (const res of [viaUdp6, viaUdp4]) assert.deepStrictEqual(res.answers.map(a => a.address), ['10.0.0.1']);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('[DNX4] start() rejects, naming the port, when the TCP port is taken', async () => {
     const blocker = net.createServer();
     await new Promise((resolve) => blocker.listen(0, '127.0.0.1', resolve));

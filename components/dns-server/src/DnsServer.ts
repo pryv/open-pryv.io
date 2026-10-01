@@ -151,8 +151,10 @@ class DnsServer {
       await this.#listen('tcp', dns2.createTCPServer(), (s) => s.listen(port, ip), `${ip}:${port}`);
       this.#logger.info(`DNS server listening on ${ip}:${port} udp+tcp (domain: ${this.#domain})`);
       if (ip6) {
-        await this.#listen('udp6', dns2.createUDPServer({ type: 'udp6' }), (s) => s.listen(port, ip6), `[${ip6}]:${port}`);
-        // ipv6Only: a dual-stack '::' listener would collide with the IPv4 one.
+        // ipv6Only on both: a dual-stack '::' listener would collide with the
+        // IPv4 one (EADDRINUSE on Linux). dns2 passes `type` to dgram.Socket
+        // as is, which also takes the socket options object.
+        await this.#listen('udp6', dns2.createUDPServer({ type: { type: 'udp6', ipv6Only: true } }), (s) => s.listen(port, ip6), `[${ip6}]:${port}`);
         await this.#listen('tcp6', dns2.createTCPServer(), (s) => s.listen({ port, host: ip6, ipv6Only: true }), `[${ip6}]:${port}`);
         this.#logger.info(`DNS server listening on [${ip6}]:${port} udp+tcp (IPv6)`);
       }
