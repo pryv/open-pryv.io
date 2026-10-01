@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## Platform DB integrity check
+
+- `PlatformDB` gains `checkStoreIntegrity()` (read-only), returning `{ ok, structural, duplicateKeys }`,
+  and the module exports `describePlatformIntegrity(report)` for the log and CLI lines.
+- rqlite: `PRAGMA integrity_check` plus `SELECT key, COUNT(*) … FROM keyValue NOT INDEXED GROUP BY
+  key HAVING COUNT(*) > 1`, both at `level=none` so each node reports its own SQLite file. The
+  `NOT INDEXED` scan matters: through a corrupted primary-key index a plain `GROUP BY` sees no
+  duplicate, and point lookups return the stale row (reproduced on a fabricated corrupted file).
+  An empty answer to the PRAGMA (rqlite did not run it) rejects as "not checked" rather than
+  reporting a corruption. Named `checkStoreIntegrity()` to keep it apart from
+  `Platform.checkIntegrity()` (user-mapping consistency, `system.checkPlatformIntegrity`).
+- PostgreSQL: the same duplicate scan in a transaction with index, index-only and bitmap scans
+  disabled; `structural` is null (no cheap built-in check without amcheck).
+- `bin/master.js` runs it once right after the storages barrel init, before migrations write;
+  a failure is logged as an error, an exception as a warning, the boot always continues.
+- Tests: `[PLIC01]`/`[PLIC02]` in the PlatformDB conformance suite (both engines), `[PIDS01]`-
+  `[PIDS04]` for the describer.
+
 ## Delegate consent: how the lineage reaches the CMC grant
 
 Internals of the API change "A delegate may accept a consent for the account it manages".

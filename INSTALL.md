@@ -914,6 +914,35 @@ Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-c
 - The single-core "find username by email" path in `auth.cores` surfaces "unknown" rather than attempting a HMAC username against the local users index.
 - Admin endpoints under `/reg/admin/servers/:server/users` return `username` fields as HMAC tokens — clients consuming these need to recognise the hashed shape.
 
+## Platform DB integrity
+
+A corrupted primary-key index on the platform DB raises no error by itself: upserts then store a key twice and lookups miss rows (user-to-core mappings, unique-field reservations, DNS records). Each core checks its own copy, read-only:
+
+- **At every boot**, `master.js` runs the check once and logs an `ERROR` naming the duplicated keys when it fails. It never blocks the boot.
+- **On demand**, `node bin/integrity-check.js --platform` (exit code `1` on failure, `--json` for the report). A run without `--user` checks the platform DB after the users.
+
+With rqlite, each node holds its own SQLite file, so run the check on every core (it reads the node the core talks to: with `storages.engines.rqlite.external` behind a load balancer, that is whichever node answered). It runs `PRAGMA integrity_check` and a duplicate-key scan that bypasses the index (`NOT INDEXED`). With PostgreSQL it runs the duplicate-key scan only (index scans disabled).
+
+**Repair (rqlite).** `REINDEX` and `DELETE … WHERE rowid = …` are refused on a corrupted table: rebuild it from its rows instead.
+
+1. Back up the node that failed the check, its own copy: `curl -s 'http://localhost:4001/db/backup?noleader' -o platform-backup.sqlite`.
+2. Inspect each duplicated key on that node: `POST /db/query?level=none` with `SELECT rowid, key, value FROM keyValue NOT INDEXED WHERE key = '<key>'` (at the default level a follower forwards the query to the leader, which shows the leader's rows). A write that missed the corrupted index inserted a new row, so the highest `rowid` is usually the latest value, but check before choosing.
+3. Rehearse on a copy of the backup with `sqlite3`, then send the rebuild as ONE transaction to the leader: it replays on every node, each rebuilding from its own rows. Rowids differ between nodes, so express a different choice by key and value, never by rowid, e.g. `WHERE (rowid IN (SELECT MAX(rowid) FROM keyValue NOT INDEXED GROUP BY key) AND key <> '<key>') OR (key = '<key>' AND value = '<chosen value>')`. The default keeps the newest row of each key:
+
+   ```bash
+   curl -s -XPOST 'http://localhost:4001/db/execute?transaction' -H 'Content-Type: application/json' -d '[
+     "CREATE TABLE keyValue_new (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+     "INSERT INTO keyValue_new (key, value) SELECT key, value FROM keyValue NOT INDEXED WHERE rowid IN (SELECT MAX(rowid) FROM keyValue NOT INDEXED GROUP BY key)",
+     "DROP TABLE keyValue",
+     "ALTER TABLE keyValue_new RENAME TO keyValue"
+   ]'
+   ```
+4. Re-run `node bin/integrity-check.js --platform` on every core. No restart is needed.
+
+If the rehearsal fails (e.g. `DROP TABLE` reports "database disk image is malformed": the damage is structural, not a missing index entry), do not send it to the cluster. If the damaged node is a follower and a healthy voter holds the data, recover it from that peer: stop that core, remove its rqlite data directory, and start it again so it rejoins and receives a fresh snapshot. Never do this on the only voter (a two-core setup with one voter and one non-voter has a single copy that counts): restore it instead from a healthy node's backup (`/db/backup?noleader` on that node, then `/db/load` on the leader).
+
+**Repair (PostgreSQL).** Delete the unwanted duplicates by `ctid` (`SELECT ctid, key, value FROM platform_kv WHERE key = '<key>'`, after `SET enable_indexscan = off; SET enable_bitmapscan = off;` in the same `psql` session), then `REINDEX TABLE platform_kv`.
+
 ## Troubleshooting
 
 ### Socket.IO: "Transport unknown" or "xhr poll error"

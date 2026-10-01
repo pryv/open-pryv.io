@@ -25,7 +25,8 @@ import type {
   TlsCertificate,
   CoreInfo,
   DnsRecord,
-  InvitationTokenInfo
+  InvitationTokenInfo,
+  PlatformIntegrityReport
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 
@@ -33,6 +34,7 @@ interface PgQueryResult { rows: Array<Record<string, unknown>>; rowCount?: numbe
 interface DbLike {
   ensureConnect: () => Promise<void>;
   query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
+  withTransaction: <T>(fn: (client: { query: DbLike['query'] }) => Promise<T>) => Promise<T>;
 }
 
 type Row = { key: string, value: string };
@@ -239,6 +241,25 @@ class DBpostgresql {
 
   async deleteInvitationToken (token: string): Promise<void> {
     await this.#delete('invitation/' + token);
+  }
+
+  // --- Integrity (read-only) --- //
+
+  /**
+   * Duplicate-key scan with index scans disabled for the transaction, so a
+   * corrupted primary-key index cannot hide its own duplicates. PostgreSQL has
+   * no cheap built-in structural check (that needs the amcheck extension):
+   * `structural` is null.
+   */
+  async checkStoreIntegrity (): Promise<PlatformIntegrityReport> {
+    const res = await this.db.withTransaction(async (client) => {
+      await client.query('SET LOCAL enable_indexscan = off');
+      await client.query('SET LOCAL enable_indexonlyscan = off');
+      await client.query('SET LOCAL enable_bitmapscan = off');
+      return client.query('SELECT key, COUNT(*) AS n FROM platform_kv GROUP BY key HAVING COUNT(*) > 1');
+    });
+    const duplicateKeys = res.rows.map((row) => ({ key: String(row.key), count: Number(row.n) }));
+    return { ok: duplicateKeys.length === 0, structural: null, duplicateKeys };
   }
 
   // --- DNS records --- //

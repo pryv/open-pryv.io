@@ -11,7 +11,8 @@ import type {
   TlsCertificate,
   CoreInfo,
   DnsRecord,
-  InvitationTokenInfo
+  InvitationTokenInfo,
+  PlatformIntegrityReport
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 
 // All queries here hit the `keyValue` table (key TEXT, value TEXT).
@@ -319,6 +320,27 @@ class DBrqlite {
   async deleteInvitationToken (token: string) {
     const key = 'invitation/' + token;
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
+  }
+
+  // --- Integrity (read-only) --- //
+
+  /**
+   * Checks THIS node's SQLite file (`level=none`: a node-local read, so a
+   * follower reports its own copy rather than the leader's). Each node holds
+   * an independent file, so corruption is per node.
+   */
+  async checkStoreIntegrity (): Promise<PlatformIntegrityReport> {
+    const structural = (await this.query('PRAGMA integrity_check', undefined, 'none'))
+      .map((row: Row) => String(row.integrity_check));
+    // The PRAGMA always answers at least one row: none means rqlite did not
+    // run it (e.g. not ready), which is "not checked", not a corruption.
+    if (structural.length === 0) throw new Error('PRAGMA integrity_check returned no row (rqlite not ready?)');
+    const duplicateKeys = (await this.query(
+      'SELECT key, COUNT(*) AS n FROM keyValue NOT INDEXED GROUP BY key HAVING COUNT(*) > 1',
+      undefined, 'none'
+    )).map((row: Row) => ({ key: row.key, count: Number(row.n) }));
+    const ok = structural.length === 1 && structural[0] === 'ok' && duplicateKeys.length === 0;
+    return { ok, structural, duplicateKeys };
   }
 
   // --- DNS records --- //

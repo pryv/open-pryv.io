@@ -8,14 +8,17 @@
  */
 
 // Standalone CLI for data integrity verification.
-// Recomputes integrity hashes on events and accesses and reports mismatches.
+// Recomputes integrity hashes on events and accesses and reports mismatches,
+// and checks this core's copy of the platform DB (structure + duplicate keys).
 //
 // Usage:
-//   node bin/integrity-check.js                    # check all users
+//   node bin/integrity-check.js                    # check all users + the platform DB
 //   node bin/integrity-check.js --user userId123   # check a single user
+//   node bin/integrity-check.js --platform         # check the platform DB only
 //   node bin/integrity-check.js --json             # output report as JSON
 
 const path = require('path');
+const { describePlatformIntegrity } = require('../storages/interfaces/platformStorage/PlatformDB.ts');
 
 require('@pryv/boiler').init({
   appName: 'integrity-check',
@@ -40,7 +43,7 @@ require('@pryv/boiler').init({
 
     if (args.help) {
       printUsage();
-      process.exit(0);
+      process.exit(args.usageError ? 1 : 0);
     }
 
     // Initialize storage
@@ -49,6 +52,17 @@ require('@pryv/boiler').init({
     const userLocalDirectory = require('storage').userLocalDirectory;
     await userLocalDirectory.init();
     await require('storages').init(config);
+
+    // Platform DB: this core's copy. Skipped for a single-user run.
+    let platformReport = null;
+    if (!args.user) {
+      platformReport = await require('storages').platformDB.checkStoreIntegrity();
+      if (args.platform) {
+        if (args.json) console.log(JSON.stringify(platformReport, null, 2));
+        else printPlatformReport(platformReport);
+        process.exit(platformReport.ok ? 0 : 1);
+      }
+    }
 
     const IntegrityCheck = require('business/src/integrity/IntegrityCheck.ts').default;
     const checker = new IntegrityCheck();
@@ -68,15 +82,20 @@ require('@pryv/boiler').init({
       });
     }
 
-    // Output
+    // Output. The JSON output stays the array of user reports; a platform DB
+    // failure goes to stderr there (use --platform --json for its report).
     if (args.json) {
       console.log(JSON.stringify(reports, null, 2));
+      if (platformReport && !platformReport.ok) {
+        console.error('Platform DB integrity FAILED: ' + JSON.stringify(platformReport));
+      }
     } else {
       printReport(reports);
+      if (platformReport) printPlatformReport(platformReport);
     }
 
-    // Exit: 1 if any errors, else 2 if any user could not be verified, else 0.
-    const hasErrors = reports.some(r => !r.ok);
+    // Exit: 1 if any errors (users or platform DB), else 2 if any user could not be verified, else 0.
+    const hasErrors = reports.some(r => !r.ok) || (platformReport != null && !platformReport.ok);
     const anyUnverified = reports.some(r => !r.verified);
     process.exit(hasErrors ? 1 : (anyUnverified ? 2 : 0));
   } catch (err) {
@@ -151,17 +170,29 @@ function printReport (reports) {
   }
 }
 
+function printPlatformReport (report) {
+  console.log('\n--- Platform DB (this core) ---\n');
+  for (const line of describePlatformIntegrity(report)) console.log(`  ${line}`);
+}
+
 function parseArgs (argv) {
-  const args = { user: null, json: false, help: false };
+  const args = { user: null, platform: false, json: false, help: false, usageError: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--user': case '-u': args.user = argv[++i]; break;
+      case '--platform': args.platform = true; break;
       case '--json': args.json = true; break;
       case '--help': case '-h': args.help = true; break;
       default:
         console.error(`Unknown argument: ${argv[i]}`);
         args.help = true;
+        args.usageError = true;
     }
+  }
+  if (args.user && args.platform) {
+    console.error('--user and --platform are exclusive');
+    args.help = true;
+    args.usageError = true;
   }
   return args;
 }
@@ -171,13 +202,15 @@ function printUsage () {
 Usage: node bin/integrity-check.js [options]
 
 Options:
-  --user, -u <userId>   Check a single user (default: all users)
+  --user, -u <userId>   Check a single user (default: all users and the platform DB)
+  --platform            Check this core's copy of the platform DB only
   --json                Output report as JSON
   --help, -h            Show this help
 
 Exit codes:
   0   All users verified and passed
-  1   One or more integrity errors found
+  1   One or more integrity errors found (users or platform DB), the platform DB
+      could not be checked, or invalid arguments
   2   One or more users could not be verified (integrity inactive or store unavailable)
 `);
 }
