@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing
 
