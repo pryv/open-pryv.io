@@ -925,7 +925,7 @@ Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-c
 A corrupted primary-key index on the platform DB raises no error by itself: upserts then store a key twice and lookups miss rows (user-to-core mappings, unique-field reservations, DNS records). Each core checks its own copy, read-only:
 
 - **At every boot**, `master.js` runs the check once and logs an `ERROR` naming the duplicated keys when it fails. It never blocks the boot.
-- **On demand**, `node bin/integrity-check.js --platform` (exit code `1` on failure, `--json` for the report). A run without `--user` checks the platform DB after the users.
+- **On demand**, `node bin/integrity-check.js --platform` (exit code `1` on failure or when the platform DB cannot be reached, `--json` for the report). A run without `--user` checks the platform DB after the users. On a core started with `--config <file>` (e.g. a multi-core joiner's host-config), pass the same `--config <file>` so the tool reads that core's storage and rqlite URL. Run it where the core's rqlited is reachable (e.g. inside the core's running container, not a one-off container where no rqlited runs).
 
 With rqlite, each node holds its own SQLite file, so run the check on every core (it reads the node the core talks to: with `storages.engines.rqlite.external` behind a load balancer, that is whichever node answered). It runs `PRAGMA integrity_check` and a duplicate-key scan that bypasses the index (`NOT INDEXED`). With PostgreSQL it runs the duplicate-key scan only (index scans disabled).
 
@@ -943,7 +943,7 @@ With rqlite, each node holds its own SQLite file, so run the check on every core
      "ALTER TABLE keyValue_new RENAME TO keyValue"
    ]'
    ```
-4. Re-run `node bin/integrity-check.js --platform` on every core. No restart is needed.
+4. Re-run `node bin/integrity-check.js --platform` on every core (adding `--config <file>` on a core started with one). No restart is needed.
 
 If the rehearsal fails (e.g. `DROP TABLE` reports "database disk image is malformed": the damage is structural, not a missing index entry), do not send it to the cluster. If the damaged node is a follower and a healthy voter holds the data, recover it from that peer: stop that core, remove its rqlite data directory, and start it again so it rejoins and receives a fresh snapshot. Never do this on the only voter (a two-core setup with one voter and one non-voter has a single copy that counts): restore it instead from a healthy node's backup (`/db/backup?noleader` on that node, then `/db/load` on the leader).
 

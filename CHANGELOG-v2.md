@@ -1,5 +1,20 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### `bin/integrity-check.js`: `--config <file>`, readable failure without rqlited
+
+- The tool now accepts `--config <file>` and layers that file on top of the default config, as the
+  core does. A core started with a host-config file (a multi-core joiner, for instance) can now be
+  checked with its own PG host, storage paths and rqlite URL:
+  `node bin/integrity-check.js --platform --config <file>`. It used to refuse the argument
+  (`Unknown argument: --config`).
+- When the platform DB cannot be reached (e.g. in a one-off container where no rqlited runs), the
+  tool exits `1` with `Platform DB unreachable at <url>: is rqlited running for this core?`
+  instead of a bare `Error: fetch failed`.
+- `--help` prints the tool's own usage again (it printed a generic options list); `-h` was not
+  affected.
+
 ## 2.0.0-rc.32 - 2026-10-01
 
 ### Consent invites inside the authorisation request (`cmcInvites`)

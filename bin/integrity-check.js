@@ -16,9 +16,27 @@
 //   node bin/integrity-check.js --user userId123   # check a single user
 //   node bin/integrity-check.js --platform         # check the platform DB only
 //   node bin/integrity-check.js --json             # output report as JSON
+//   node bin/integrity-check.js --platform --config config/host-config.yml
+//
+// A core started with `--config <file>` (e.g. a multi-core joiner layering a
+// host-config file for its PG host, storage paths and rqlite URL) must run this
+// tool with the same `--config <file>`, so it checks that core's own storage.
 
 const path = require('path');
 const { describePlatformIntegrity } = require('../storages/interfaces/platformStorage/PlatformDB.ts');
+
+// Before boiler init: its argv parser would otherwise answer `--help` itself.
+if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  printUsage();
+  process.exit(0);
+}
+
+// Layer the host-config file on top, as the other operator tools in `bin/` do
+// (`cmc-scrub-credentials.js`, `reconcile-user-cores.js`).
+const configFileArg = (() => {
+  const i = process.argv.indexOf('--config');
+  return i !== -1 && process.argv[i + 1] != null ? process.argv[i + 1] : null;
+})();
 
 require('@pryv/boiler').init({
   appName: 'integrity-check',
@@ -34,7 +52,9 @@ require('@pryv/boiler').init({
     file: path.resolve(__dirname, '../config/plugins/default-path.js')
   }, {
     plugin: require('../config/plugins/core-identity')
-  }]
+  }, ...(configFileArg != null
+    ? [{ scope: 'host-config', file: path.resolve(process.cwd(), configFileArg) }]
+    : [])]
 });
 
 (async () => {
@@ -51,7 +71,17 @@ require('@pryv/boiler').init({
     const config = await getConfig();
     const userLocalDirectory = require('storage').userLocalDirectory;
     await userLocalDirectory.init();
-    await require('storages').init(config);
+    try {
+      await require('storages').init(config);
+    } catch (err) {
+      // A run with no rqlited for this core (e.g. a one-off `dokku run`
+      // container) otherwise dies with a bare "fetch failed".
+      if (err instanceof TypeError && err.message === 'fetch failed') {
+        const url = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
+        throw new Error(`Platform DB unreachable at ${url}: is rqlited running for this core?`);
+      }
+      throw err;
+    }
 
     // Platform DB: this core's copy. Skipped for a single-user run.
     let platformReport = null;
@@ -182,6 +212,7 @@ function parseArgs (argv) {
       case '--user': case '-u': args.user = argv[++i]; break;
       case '--platform': args.platform = true; break;
       case '--json': args.json = true; break;
+      case '--config': i++; break; // file consumed by boiler at init
       case '--help': case '-h': args.help = true; break;
       default:
         console.error(`Unknown argument: ${argv[i]}`);
@@ -205,12 +236,14 @@ Options:
   --user, -u <userId>   Check a single user (default: all users and the platform DB)
   --platform            Check this core's copy of the platform DB only
   --json                Output report as JSON
+  --config <file>       Layer a host-config file on top of the default config;
+                        use the same file the core was started with
   --help, -h            Show this help
 
 Exit codes:
   0   All users verified and passed
   1   One or more integrity errors found (users or platform DB), the platform DB
-      could not be checked, or invalid arguments
+      could not be checked (e.g. rqlited unreachable), or invalid arguments
   2   One or more users could not be verified (integrity inactive or store unavailable)
 `);
 }
