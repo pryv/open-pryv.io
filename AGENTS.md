@@ -25,7 +25,7 @@ bin/              Entry points and admin CLIs
   dns-records.js    Persistent DNS record admin
   migrate-platform.js  Move platform data between rqlite and postgresql
   check-config.js / config-to-env.js  Validate a config / convert it to an env file
-  integrity-check.js Per-user integrity verification
+  integrity-check.js Per-user integrity verification + platform DB check (--platform)
   mail.js           Mail template admin (in-process email)
   observability.js  Optional APM admin (enable / disable / set-license-key)
 

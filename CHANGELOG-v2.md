@@ -1,5 +1,19 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Platform DB integrity: checked at every boot and by `bin/integrity-check.js`
+
+A corrupted primary-key index on the platform DB raises no error by itself: upserts then store a
+key twice and lookups miss rows (user-to-core mappings, unique-field reservations, DNS records).
+Each core now checks its own copy, read-only: once at boot (an `ERROR` naming the duplicated keys,
+the boot continues) and on demand with `node bin/integrity-check.js --platform` (exit code `1` on
+failure, `--json` for the report). A run of `bin/integrity-check.js` without `--user` also checks
+the platform DB after the users; its `--json` output is unchanged (a platform failure is reported
+on stderr and in the exit code). With rqlite the check runs `PRAGMA integrity_check` and a
+duplicate-key scan that bypasses the index; with PostgreSQL the duplicate-key scan only. INSTALL.md
+§ "Platform DB integrity" gives the repair (a table rebuild).
+
 ## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing

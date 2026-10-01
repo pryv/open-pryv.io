@@ -166,6 +166,21 @@ if (cluster.isPrimary) {
     // and must not be ordering-dependent on any optional block.
     await require('../storages/index.ts').init(config);
 
+    // Platform DB integrity, this core's copy, read-only: a corrupted
+    // primary-key index raises no error by itself (upserts duplicate keys,
+    // lookups miss rows), so say it loudly at boot. Never blocks the boot.
+    try {
+      const { describePlatformIntegrity } = require('../storages/interfaces/platformStorage/PlatformDB.ts');
+      const report = await require('../storages/index.ts').platformDB.checkIntegrity();
+      if (!report.ok) {
+        const msg = `[platform-integrity] ${describePlatformIntegrity(report).join('\n  ')}`;
+        logger.error(msg);
+        console.error(`[master] ERROR: ${msg}`);
+      }
+    } catch (e) {
+      warn(`[platform-integrity] check failed: ${e.message}`);
+    }
+
     // Run pending schema migrations before starting services.
     // Each migration-capable engine (see storages/interfaces/migrations/) gets
     // its pending up() calls applied in filename order; version bumps persist

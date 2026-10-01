@@ -105,6 +105,20 @@ export interface InvitationTokenEntry extends InvitationTokenInfo {
   id: string;
 }
 
+/**
+ * Result of `checkIntegrity()`, read on THIS node's copy of the platform data.
+ * A corrupted primary-key index raises no error by itself: upserts then
+ * duplicate keys and lookups miss rows, so the duplicate scan reads the table
+ * without that index.
+ */
+export interface PlatformIntegrityReport {
+  ok: boolean;
+  /** Engine structural check messages (`['ok']` when clean); null when the engine has none. */
+  structural: string[] | null;
+  /** Keys found more than once by a scan that bypasses the primary-key index. */
+  duplicateKeys: Array<{ key: string; count: number }>;
+}
+
 export interface PlatformDB {
   init (): Promise<void>;
 
@@ -227,6 +241,9 @@ export interface PlatformDB {
   getAllInvitationTokens (): Promise<InvitationTokenEntry[]>;
   updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
   deleteInvitationToken (token: string): Promise<void>;
+
+  // Integrity (read-only)
+  checkIntegrity (): Promise<PlatformIntegrityReport>;
 }
 
 /**
@@ -367,7 +384,9 @@ const PlatformDB: PlatformDB = {
 
   async updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void> { throw new Error('Not implemented'); },
 
-  async deleteInvitationToken (token: string): Promise<void> { throw new Error('Not implemented'); }
+  async deleteInvitationToken (token: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async checkIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties
@@ -387,4 +406,29 @@ function validatePlatformDB (instance: unknown): PlatformDB {
   return inst as unknown as PlatformDB;
 }
 
-export { PlatformDB, validatePlatformDB };
+const MAX_LISTED = 10;
+
+/**
+ * Human-readable lines for a `checkIntegrity()` report (CLI + boot log).
+ * Lists at most MAX_LISTED structural messages and duplicated keys.
+ */
+function describePlatformIntegrity (report: PlatformIntegrityReport): string[] {
+  if (report.ok) {
+    return [report.structural == null
+      ? 'OK (no duplicate keys; this engine has no structural check)'
+      : 'OK (structure and keys)'];
+  }
+  const lines = ['FAILED'];
+  if (report.structural != null && !(report.structural.length === 1 && report.structural[0] === 'ok')) {
+    lines.push(`structural check: ${report.structural.length} message(s)`);
+    for (const msg of report.structural.slice(0, MAX_LISTED)) lines.push(`  ${msg}`);
+  }
+  if (report.duplicateKeys.length > 0) {
+    lines.push(`${report.duplicateKeys.length} key(s) stored more than once (corrupted primary-key index):`);
+    for (const d of report.duplicateKeys.slice(0, MAX_LISTED)) lines.push(`  ${d.key} (x${d.count})`);
+  }
+  lines.push('Repair: rebuild the table from its distinct rows on this node (see INSTALL.md, "Platform DB integrity").');
+  return lines;
+}
+
+export { PlatformDB, validatePlatformDB, describePlatformIntegrity };
