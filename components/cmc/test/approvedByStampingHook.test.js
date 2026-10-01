@@ -105,6 +105,18 @@ describe('[APB] cmc/approvedByStampingHook', () => {
     assert.equal('approvedBy' in retyped.newEvent.content, false);
   });
 
+  it('[APB07] a malformed marker (no username or no relId) stamps nothing', async () => {
+    for (const delegation of [
+      { kind: 'delegate-pat', relId: 'rel1', delegate: {} },
+      { kind: 'delegate-pat', relId: '', delegate: DELEGATE },
+      { kind: 'delegate-pat', delegate: DELEGATE },
+    ]) {
+      const context = { access: { id: 'x', clientData: { delegation } }, newEvent: { type: 'consent/accept-cmc', content: { approvedBy: FORGED } } };
+      await run(stamp, context);
+      assert.equal('approvedBy' in context.newEvent.content, false, JSON.stringify(delegation));
+    }
+  });
+
   it('[APB06] an update of another type is left as it is', async () => {
     const context = { oldEvent: { type: 'note/txt', content: {} }, newEvent: { type: 'note/txt', content: { approvedBy: FORGED } } };
     await run(preserve, context);

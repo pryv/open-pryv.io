@@ -745,6 +745,30 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(calls.length, 1, 'only the offer was read');
     });
 
+    it('[HAL09] a failing relationship check keeps the storage error out of the failure detail', async () => {
+      const mall = storeMall([PAT_ROW]);
+      const { fetch } = okFetch();
+      const warned = [];
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: {
+          mall,
+          fetch,
+          triggerAccess: logicOf(PAT_ROW),
+          lineageOf,
+          relationshipExists: async () => { throw new Error('storage-internal-detail 10.0.0.5'); },
+          logger: { warn: (msg, meta) => warned.push({ msg, meta }) },
+        },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-delegation-ended');
+      assert.equal(JSON.stringify(r.detail).includes('storage-internal-detail'), false, JSON.stringify(r.detail));
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.ok(warned.some((w) => JSON.stringify(w.meta).includes('storage-internal-detail')), 'logged instead');
+    });
+
     it('[HAL04] the delegation ends while the grant is minted: the grant is deleted, nothing delivered', async () => {
       // the relationship is there before the mint, gone right after
       const mall = storeMall([PAT_ROW]);

@@ -576,7 +576,7 @@ async function resolveDelegationLineage (params: {
 async function delegationStillLive (params: {
   userId: string;
   lineage: DelegationLineage;
-  deps: { mall: MallLike } & DelegationDeps;
+  deps: { mall: MallLike } & DelegationDeps & Pick<OutboundDeps, 'logger'>;
 }): Promise<{ ok: true } | { ok: false; why: string }> {
   const { userId, lineage, deps } = params;
   if (deps.relationshipExists == null) {
@@ -587,7 +587,12 @@ async function delegationStillLive (params: {
   try {
     exists = await deps.relationshipExists(userId, lineage.relId);
   } catch (err: unknown) {
-    return { ok: false, why: 'the relationship check failed: ' + String((err as Error)?.message || err) };
+    // The storage message stays in the log: the failure detail is written on the
+    // trigger event, readable by every access that reads the owner's CMC scope.
+    deps.logger?.warn?.('cmc/handleAccept: the relationship check failed', {
+      userId, relId: lineage.relId, error: String((err as Error)?.message || err),
+    });
+    return { ok: false, why: 'the relationship check failed' };
   }
   if (!exists) return { ok: false, why: 'the relationship no longer exists' };
   if (deps.mall.accesses?.get != null || deps.mall.accesses?.getOne != null) {

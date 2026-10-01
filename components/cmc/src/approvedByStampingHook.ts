@@ -62,9 +62,13 @@ function approvedByFor (lineageOf: LineageOf, access: unknown): ApprovedBy | nul
   const lineage = lineageOf(access);
   if (lineage == null) return null;
   const delegate = isPlainObject(lineage.delegate) ? lineage.delegate : {};
+  // A malformed marker stamps nothing: handleAccept's lineage check is the one
+  // place that refuses it.
+  if (typeof delegate.username !== 'string' || delegate.username === '' ||
+      typeof lineage.relId !== 'string' || lineage.relId === '') return null;
   const record: ApprovedBy = {
-    delegate: { username: String(delegate.username ?? '') },
-    relId: String(lineage.relId ?? ''),
+    delegate: { username: delegate.username },
+    relId: lineage.relId,
   };
   if (typeof delegate.hostSlug === 'string' && delegate.hostSlug.length > 0) {
     record.delegate.hostSlug = delegate.hostSlug;

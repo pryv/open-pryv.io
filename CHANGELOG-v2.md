@@ -23,7 +23,8 @@ operator's `headers`), not only the anti-framing ones.
 
 A carer who manages an account through account delegation (a parent for a child) can now give
 the consent a cross-account messaging request asks for, with the delegate token: writing
-`consent/accept-cmc` with a delegate token (or an access it granted) is no longer refused.
+`consent/accept-cmc` with the delegate token is no longer refused (an app or shared access the
+delegate granted stays refused by the personal-token rule, as for any app).
 Publishing an offer (`consent/request-cmc`) and widening a grant (`consent/scope-update-cmc`)
 stay reserved to the account owner (`400`, `delegation-grant-requires-owner`), as does the
 OAuth2 consent.
@@ -47,8 +48,8 @@ OAuth2 consent.
   deletes the consent grants given through the relationship together with the other accesses
   granted through it (synchronously, before it answers), and each requester then receives
   `consent/revoke-cmc` in its inbox, as for a consent withdrawn with `accesses.delete`, instead
-  of meeting a dead token. Delivery is best-effort and never holds the detach. The account owner
-  can give such a consent again after the detach.
+  of meeting a dead token. Delivery is best-effort and never holds the detach. The requester may
+  invite again and the account owner may accept.
 
 ## 2.0.0-rc.29 - 2026-09-30
 
