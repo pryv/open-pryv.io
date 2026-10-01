@@ -23,6 +23,12 @@ anti-framing policy. The upstream CSP is now sent as a further policy after the 
 can tighten but never relax framing. The upstream `Permissions-Policy` is kept unless the
 site's `headers` set one. Static sites are unchanged.
 
+### Embedded DNS: `dns.ip6: '::'` next to `dns.ip: 0.0.0.0` now binds on Linux
+
+The IPv6 UDP socket of the embedded DNS server was dual-stack, so with `dns.ip6: '::'` and
+`dns.ip: 0.0.0.0` on the same port the boot failed on Linux with `EADDRINUSE`. It is now
+IPv6-only, like the IPv6 TCP listener already was.
+
 ## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing
