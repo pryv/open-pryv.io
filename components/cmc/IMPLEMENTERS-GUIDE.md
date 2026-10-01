@@ -239,6 +239,8 @@ The patient's app renders the consent screen.
 
 > **Token class.** `consent/accept-cmc` and `consent/scope-update-cmc` writes (which **mint or widen** access state on the user's account) require a **personal** access token. App- or shared-access tokens are rejected `400 invalid-operation` with `error.data.id === 'cmc-accept-requires-personal-token'`. The personal-token requirement enforces user-presence at the moment the trigger is recorded.
 >
+> **A delegate may accept for the account it manages.** On a platform with account delegation, a carer's delegate token for a managed account is personal-type and may write `consent/accept-cmc` there. The data grant then carries the delegation lineage (`clientData.delegation = { kind: 'delegated-child', relId, delegate, viaAccessId }`, from the delegate token, never from the content): `access-info` with the grant's token reports `delegation.isDelegatedAccess: true` with the delegate, and detaching the delegate deletes the grant and sends you `consent/revoke-cmc`. The accept event records `content.approvedBy = { delegate: { username, hostSlug }, relId }`, server-stamped (a client-supplied one is dropped). An accept still being processed when the delegation is detached fails with `cmc-handler-delegation-ended` and leaves no grant. `consent/request-cmc` and `consent/scope-update-cmc` stay reserved to the account owner for a delegate token (`delegation-grant-requires-owner`).
+>
 > **Revoke (`consent/revoke-cmc`) uses the standard access-permission gate, not the personal-token gate.** `handleRevoke` runs `triggerAccess.canDeleteAccess(target)` (the same primitive `accesses.delete` uses), which honours the `selfRevoke` feature permission on the target access. Apps holding a relationship's data-grant access can self-revoke directly via [`pryv.cmc.revokeAcceptance(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc), no hand-off needed. Unauthorised revokes fail with `error.data.id === 'cmc-revoke-forbidden'`.
 >
 > **Any revocation path is forwarded, including plain `accesses.delete`.** When a CMC relationship access is removed by a generic `accesses.delete` (e.g. an account's "connected apps" screen) rather than a `consent/revoke-cmc` trigger, the server still delivers the `consent/revoke-cmc` to the counterparty's `:_cmc:inbox`, carrying `content.accessId` (the revoked access) plus `appCode` / `offerEventId` / `acceptEventId` when resolvable. From the counterparty's point of view the two paths are indistinguishable, so your inbox observation logic needs no special-casing. The `content.accessId` on a revoke trigger is the authoritative selector of WHICH relationship to revoke, always send it (the `@pryv/cmc` helpers do); a revoke whose `accessId` no longer resolves fails with `cmc-revoke-counterparty-access-not-found` rather than guessing another relationship with the same counterparty.
@@ -861,6 +863,12 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
   failure?: { reason, detail? }
 }
 
+// Server-stamped when the accept is written with a delegate token (account
+// delegation); absent when the account owner accepts. Never taken from the app.
+{
+  approvedBy?: { delegate: { username: string, hostSlug?: string }, relId: string }
+}
+
 // What lands in the requester's :_cmc:inbox (delivered by the recipient's plugin)
 {
   from: { username, host },
@@ -1357,6 +1365,7 @@ npm package.
 | `HANDLER_DATA_GRANT_NAME_CONFLICT` | `cmc-handler-data-grant-name-conflict` | The data-grant access name collided with an existing access AND the deterministic uniquified retry collided too. Permanent (non-retryable), accept again with a different `accessName`. |
 | `HANDLER_DATA_GRANT_NO_APIENDPOINT` | `cmc-handler-data-grant-no-apiendpoint` | The created access lacks `apiEndpoint`. Wiring bug, surface for ops. |
 | `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
+| `HANDLER_DELEGATION_ENDED` | `cmc-handler-delegation-ended` | The accept was written with a delegate token (account delegation) and the delegation was detached before the accept completed. No data grant is left. Permanent (non-retryable); the account owner may accept again. |
 | `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
 | `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |
 | `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx. Exceptions: a 401/403 on the capability read becomes `CAPABILITY_INVALID`, and a refusal carrying the capability's own id (`cmc-capability-consumed`, `cmc-capability-invalidated`, `cmc-capability-already-accepted-by-you`) is reported as that id. `failure.detail` carries the peer's status and body in both cases. Not retried. |

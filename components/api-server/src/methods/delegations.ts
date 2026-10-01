@@ -367,6 +367,27 @@ export default async function produceDelegationsApiMethods (api: { register (...
   }
 
   /** Destroy a session by its id (the delegate PAT token IS the session id). */
+  // Detach deletes the consent grants a delegate gave through the
+  // relationship (it is the authoritative revocation, done before this runs);
+  // their requesters are then told through the same notification a consent
+  // withdrawal by `accesses.delete` sends: `consent/revoke-cmc` delivered to
+  // the requester's inbox, the invite it descends from marked revoked. Fire
+  // and forget, like on that route: a slow or unreachable requester never
+  // holds the detach.
+  const cmcConsentGrantsRevokedNotice = cmc.createAccessesDeletePostHook({
+    mall,
+    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    timeoutMs: 15_000,
+    logger: getLogger('cmc:delegation-detach'),
+  });
+  function notifyConsentGrantsRevoked (bUserId: string, grants: unknown[]): void {
+    Promise.resolve()
+      .then(() => cmcConsentGrantsRevokedNotice(bUserId, grants))
+      .catch((err: unknown) => {
+        logger.warn('detach: consent-grant revocation notice failed', { error: String((err as Error)?.message ?? err) });
+      });
+  }
+
   async function destroySession (token: string): Promise<void> {
     await fromCallback((cb: (e: unknown) => void) => sessionsStorage.destroy(token, cb));
   }
@@ -598,12 +619,14 @@ export default async function produceDelegationsApiMethods (api: { register (...
           resolveTarget,
           deliverInvite: makeDeliverInvite(),
           notifyDetach: makeNotifyDetach(delegateUsername),
+          notifyConsentGrantsRevoked,
         };
         const outcome = await delegation.detachDelegate(deps, {
           bUserId: context.user.id, bUsername: context.user.username, delegateUsername,
         });
         if (outcome.revokedChildAccesses) {
-          logger.info('detach revoked ' + outcome.revokedChildAccesses + ' access(es) granted through the delegation');
+          logger.info('detach revoked ' + outcome.revokedChildAccesses + ' access(es) granted through the delegation' +
+            (outcome.revokedConsentGrants ? ', ' + outcome.revokedConsentGrants + ' of them consent grant(s), requesters notified' : ''));
         }
         next();
       } catch (err) { next(toApiError(err)); }

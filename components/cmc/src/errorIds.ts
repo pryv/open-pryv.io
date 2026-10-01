@@ -136,6 +136,11 @@ const CmcErrorIds = {
   HANDLER_DATA_GRANT_NO_APIENDPOINT: 'cmc-handler-data-grant-no-apiendpoint',
   // Build of the data-grant payload threw before the access call.
   HANDLER_BUILD_DATA_GRANT_FAILED: 'cmc-handler-build-data-grant-failed',
+  // The accept was written through an account delegation (a delegate token)
+  // and that delegation no longer exists when the accept is processed (it
+  // was detached in between, or the approving access is gone). No data grant
+  // is left behind. Permanent: the delegation does not come back.
+  HANDLER_DELEGATION_ENDED: 'cmc-handler-delegation-ended',
   // Back-channel access mint failed (`handleIncomingAccept` couldn't
   // create the access; rare, usually a uniqueness collision the duplicate
   // handler should catch).

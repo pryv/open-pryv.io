@@ -19,6 +19,38 @@ Hosted sites, dnsLess topology: the `/<name>` → `/<name>/` redirect now carrie
 as every other answer of the site (`nosniff`, `Referrer-Policy`, HSTS over TLS and the
 operator's `headers`), not only the anti-framing ones.
 
+### A delegate may accept a consent for the account it manages
+
+A carer who manages an account through account delegation (a parent for a child) can now give
+the consent a cross-account messaging request asks for, with the delegate token: writing
+`consent/accept-cmc` with the delegate token is no longer refused (an app or shared access the
+delegate granted stays refused by the personal-token rule, as for any app).
+Publishing an offer (`consent/request-cmc`) and widening a grant (`consent/scope-update-cmc`)
+stay reserved to the account owner (`400`, `delegation-grant-requires-owner`), as does the
+OAuth2 consent.
+
+- **The data grant carries the delegation lineage.** The grant minted for such an accept carries
+  `clientData.delegation = { kind: 'delegated-child', relId, delegate, viaAccessId }`, taken from
+  the authenticated access (never from the request), like an access the delegate creates with
+  `accesses.create`. `access-info` with the grant's token reports
+  `delegation: { isDelegatedAccess: true, controlledUsername, delegate, grantedVia: 'app' }`, so
+  the requester can tell a consent was given by a delegate.
+- **The accept event records who approved.** It carries
+  `content.approvedBy = { delegate: { username, hostSlug }, relId }` (`hostSlug` when known),
+  stamped by the server when the event is written. A client-supplied `approvedBy` is dropped on
+  create, by any token, and an update keeps the stored value. An accept the account owner writes
+  has no `approvedBy`.
+- **An accept in progress when the delegation ends does not complete.** The relationship is
+  checked when the accept is processed and again once the grant exists: if the delegation was
+  detached in between, no grant is left and the accept fails with
+  `cmc-handler-delegation-ended` (not retried).
+- **Detach withdraws those consents and tells the requester.** `delegations.detachDelegate`
+  deletes the consent grants given through the relationship together with the other accesses
+  granted through it (synchronously, before it answers), and each requester then receives
+  `consent/revoke-cmc` in its inbox, as for a consent withdrawn with `accesses.delete`, instead
+  of meeting a dead token. Delivery is best-effort and never holds the detach. The requester may
+  invite again and the account owner may accept.
+
 ## 2.0.0-rc.29 - 2026-09-30
 
 Security update of runtime dependencies (8 high and 3 moderate advisories cleared, including

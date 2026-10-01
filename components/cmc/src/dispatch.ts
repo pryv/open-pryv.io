@@ -104,6 +104,11 @@ type DispatchDeps = {
   // unit-test contexts that mock dispatch directly — the chain check is
   // skipped in that case (gate is the primary guard).
   triggerAccess?: { canCreateAccess?: (payload: unknown) => boolean | Promise<boolean> };
+  // Account delegation (see handleAccept.ts): the delegation plugin's
+  // lineage reader, and a check that a relationship still exists on the
+  // account. Wired by the api-server for live and retry dispatch alike.
+  lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
+  relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
 };
 
 type DispatchResult = {

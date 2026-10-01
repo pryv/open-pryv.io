@@ -623,4 +623,276 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(mall.calls.accessesCreated.length, 0);
     });
   });
+
+  describe('[CMCHA-DEL] accept given through an account delegation', () => {
+    const DELEGATE = { username: 'parent', hostSlug: 'core-a' };
+    const LINEAGE = { kind: 'delegated-child', relId: 'rel1', delegate: DELEGATE, viaAccessId: 'pat1' };
+    const PAT_ROW = { id: 'pat1', type: 'personal', clientData: { delegation: { kind: 'delegate-pat', relId: 'rel1', delegate: DELEGATE } } };
+    const OWNER_ROW = { id: 'own1', type: 'personal', clientData: null };
+    const SELF = { username: 'kid', host: 'recipient.example.com' };
+
+    // Same contract as the delegation plugin's lineageOf.
+    function lineageOf (access) {
+      const d = access?.clientData?.delegation;
+      if (d == null || (d.kind !== 'delegate-pat' && d.kind !== 'delegated-child')) return null;
+      return { kind: 'delegated-child', relId: d.relId, delegate: d.delegate, viaAccessId: access.id };
+    }
+    // AccessLogic stand-in: the stored row plus the chain check.
+    const logicOf = (row) => ({ ...row, canCreateAccess: async () => true });
+
+    // A mall whose accesses persist, so re-reads see creates and deletes.
+    function storeMall (rows) {
+      const mall = fakeMall();
+      const list = rows.map((r) => ({ ...r }));
+      const baseCreate = mall.accesses.create.bind(mall.accesses);
+      mall.list = list;
+      mall.calls.accessesUpdated = [];
+      mall.accesses.create = async (userId, params) => {
+        const a = await baseCreate(userId, params);
+        a.id = 'grant-' + mall.calls.accessesCreated.length;
+        list.push(a);
+        return a;
+      };
+      mall.accesses.get = async () => list.slice();
+      mall.accesses.getOne = async (_u, { id }) => list.find((a) => a.id === id) ?? null;
+      mall.accesses.update = async (_u, { id, update }) => {
+        mall.calls.accessesUpdated.push({ id, update });
+        const a = list.find((x) => x.id === id);
+        Object.assign(a, update);
+        return a;
+      };
+      mall.accesses.delete = async (userId, { id }) => {
+        mall.calls.accessesDeleted.push({ userId, id });
+        const i = list.findIndex((a) => a.id === id);
+        if (i >= 0) list.splice(i, 1);
+      };
+      return mall;
+    }
+
+    function okFetch () {
+      return fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+    }
+
+    function relationshipSpy (answers) {
+      const calls = [];
+      const seq = Array.isArray(answers) ? answers.slice() : null;
+      const fn = async (userId, relId) => {
+        calls.push({ userId, relId });
+        return seq != null ? (seq.length > 1 ? seq.shift() : seq[0]) : answers;
+      };
+      fn.calls = calls;
+      return fn;
+    }
+
+    const trigger = (content = {}, extra = {}) => ({
+      ...ACCEPT_TRIGGER,
+      ...extra,
+      content: { ...ACCEPT_TRIGGER.content, ...content },
+    });
+    const APPROVED = { delegate: DELEGATE, relId: 'rel1' };
+
+    it('[HAL01] the grant carries the lineage of the writing access, beside its cmc record', async () => {
+      const mall = storeMall([PAT_ROW]);
+      const relationshipExists = relationshipSpy(true);
+      const { fetch, calls } = okFetch();
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      const created = mall.calls.accessesCreated[0];
+      assert.deepEqual(created.clientData.delegation, LINEAGE);
+      assert.equal(created.clientData.cmc.role, 'counterparty');
+      assert.equal(created.clientData.cmc.acceptEventId, 'evt-accept');
+      // checked before the mint and again after it
+      assert.deepEqual(relationshipExists.calls, [{ userId: 'u1', relId: 'rel1' }, { userId: 'u1', relId: 'rel1' }]);
+      assert.equal(calls.length, 2, 'offer read + accept delivered');
+      assert.equal(mall.calls.accessesDeleted.length, 0);
+    });
+
+    it('[HAL02] an owner accept: no lineage on the grant, no relationship check', async () => {
+      const mall = storeMall([OWNER_ROW]);
+      const relationshipExists = relationshipSpy(true);
+      const { fetch } = okFetch();
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger(),
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess: logicOf(OWNER_ROW), lineageOf, relationshipExists },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal('delegation' in mall.calls.accessesCreated[0].clientData, false);
+      assert.deepEqual(relationshipExists.calls, []);
+    });
+
+    it('[HAL03] the delegation ended before the accept is processed: no grant, nothing delivered', async () => {
+      const mall = storeMall([PAT_ROW]);
+      const { fetch, calls } = okFetch();
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists: relationshipSpy(false) },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-delegation-ended');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(calls.length, 1, 'only the offer was read');
+    });
+
+    it('[HAL09] a failing relationship check keeps the storage error out of the failure detail', async () => {
+      const mall = storeMall([PAT_ROW]);
+      const { fetch } = okFetch();
+      const warned = [];
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: {
+          mall,
+          fetch,
+          triggerAccess: logicOf(PAT_ROW),
+          lineageOf,
+          relationshipExists: async () => { throw new Error('storage-internal-detail 10.0.0.5'); },
+          logger: { warn: (msg, meta) => warned.push({ msg, meta }) },
+        },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-delegation-ended');
+      assert.equal(JSON.stringify(r.detail).includes('storage-internal-detail'), false, JSON.stringify(r.detail));
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.ok(warned.some((w) => JSON.stringify(w.meta).includes('storage-internal-detail')), 'logged instead');
+    });
+
+    it('[HAL04] the delegation ends while the grant is minted: the grant is deleted, nothing delivered', async () => {
+      // the relationship is there before the mint, gone right after
+      const mall = storeMall([PAT_ROW]);
+      const { fetch, calls } = okFetch();
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists: relationshipSpy([true, false]) },
+      });
+      assert.equal(r.reason, 'cmc-handler-delegation-ended', JSON.stringify(r));
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      assert.deepEqual(mall.calls.accessesDeleted.map((d) => d.id), ['grant-1']);
+      assert.equal(mall.list.some((a) => a.id === 'grant-1'), false, 'no grant left');
+      assert.equal(calls.length, 1, 'the accept is not delivered');
+
+      // same when the approving access is deleted in that window (detach
+      // deletes it first), the relationship anchor still being there
+      const mall2 = storeMall([PAT_ROW]);
+      const baseCreate = mall2.accesses.create;
+      mall2.accesses.create = async (u, p) => {
+        const a = await baseCreate(u, p);
+        mall2.list.splice(mall2.list.findIndex((x) => x.id === 'pat1'), 1);
+        return a;
+      };
+      const r2 = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall: mall2, fetch: okFetch().fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists: relationshipSpy(true) },
+      });
+      assert.equal(r2.reason, 'cmc-handler-delegation-ended', JSON.stringify(r2));
+      assert.equal(mall2.list.some((a) => a.id === 'grant-1'), false, 'no grant left');
+    });
+
+    it('[HAL05] the recorded approval must match the writing access: never minted unmarked or on the content\'s word', async () => {
+      // approvedBy present, writer resolves to no delegation
+      const mall = storeMall([OWNER_ROW]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall, fetch: okFetch().fetch, triggerAccess: logicOf(OWNER_ROW), lineageOf, relationshipExists: relationshipSpy(true) },
+      });
+      assert.equal(r.reason, 'cmc-handler-delegation-ended');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      // approvedBy naming another relationship than the writer's
+      const mall2 = storeMall([PAT_ROW]);
+      const r2 = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: { delegate: DELEGATE, relId: 'rel-other' } }),
+        selfIdentity: SELF,
+        deps: { mall: mall2, fetch: okFetch().fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists: relationshipSpy(true) },
+      });
+      assert.equal(r2.reason, 'cmc-handler-delegation-ended');
+      assert.equal(mall2.calls.accessesCreated.length, 0);
+    });
+
+    it('[HAL06] a retry (no request context) reads the writer back by createdBy', async () => {
+      for (const createdBy of ['pat1', 'pat1 caller-x']) {
+        const mall = storeMall([PAT_ROW]);
+        const r = await handleAccept({
+          userId: 'u1',
+          triggerEvent: trigger({ approvedBy: APPROVED }, { createdBy }),
+          selfIdentity: SELF,
+          deps: { mall, fetch: okFetch().fetch, lineageOf, relationshipExists: relationshipSpy(true) },
+        });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.deepEqual(mall.calls.accessesCreated[0].clientData.delegation, LINEAGE, createdBy);
+      }
+    });
+
+    it('[HAL07] a retry whose approving access is gone fails, and an unwired check never mints', async () => {
+      const mall = storeMall([]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }, { createdBy: 'pat1' }),
+        selfIdentity: SELF,
+        deps: { mall, fetch: okFetch().fetch, lineageOf, relationshipExists: relationshipSpy(true) },
+      });
+      assert.equal(r.reason, 'cmc-handler-delegation-ended');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      // no lineage reader wired at all, approval recorded: refused
+      const mall2 = storeMall([PAT_ROW]);
+      const r2 = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall: mall2, fetch: okFetch().fetch, triggerAccess: logicOf(PAT_ROW) },
+      });
+      assert.equal(r2.reason, 'cmc-handler-delegation-ended');
+      // lineage readable, relationship check not wired: refused
+      const mall3 = storeMall([PAT_ROW]);
+      const r3 = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall: mall3, fetch: okFetch().fetch, triggerAccess: logicOf(PAT_ROW), lineageOf },
+      });
+      assert.equal(r3.reason, 'cmc-handler-delegation-ended');
+      assert.equal(mall2.calls.accessesCreated.length + mall3.calls.accessesCreated.length, 0);
+    });
+
+    it('[HAL08] a grant reused from an earlier dispatch of the same accept is given the lineage', async () => {
+      const prior = {
+        id: 'grant-prior',
+        token: 'tok-p',
+        apiEndpoint: 'https://tok-p@recipient.example.com/',
+        clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' } },
+      };
+      const mall = storeMall([PAT_ROW, prior]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: trigger({ approvedBy: APPROVED }),
+        selfIdentity: SELF,
+        deps: { mall, fetch: okFetch().fetch, triggerAccess: logicOf(PAT_ROW), lineageOf, relationshipExists: relationshipSpy(true) },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.dataGrantAccessId, 'grant-prior');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.deepEqual(mall.calls.accessesUpdated, [{
+        id: 'grant-prior',
+        update: { clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' }, delegation: LINEAGE } },
+      }]);
+    });
+  });
 });

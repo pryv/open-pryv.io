@@ -34,7 +34,7 @@
 import * as C from './constants.ts';
 import { DelegationErrorIds } from './errorIds.ts';
 import * as store from './store.ts';
-import type { MallLike } from './store.ts';
+import type { MallLike, AccessRow } from './store.ts';
 import type { AnchorContent, MirrorContent } from './model.ts';
 import { delegationError } from './attach.ts';
 import type { Identity, TargetResolution, PeerResult, InvitePayload } from './attach.ts';
@@ -52,6 +52,15 @@ type DetachDeps = {
   deliverInvite: (target: TargetResolution, payload: InvitePayload) => Promise<PeerResult>;
   /** Best-effort A-notify for the active-teardown path (notify-marker channel). */
   notifyDetach: (notifyApiEndpoint: string, relId: string) => Promise<PeerResult>;
+  /**
+   * Tell the requesters of the consent grants the delegate gave (CMC data
+   * grants, `clientData.cmc.role === 'counterparty'`) that their grant is
+   * withdrawn: each receives the `consent/revoke-cmc` a consent withdrawal
+   * sends. Called with the grants as they were before deletion (the requester's
+   * endpoint lives on them). Best-effort, never blocks the teardown; absent →
+   * the grants are deleted without notice.
+   */
+  notifyConsentGrantsRevoked?: (bUserId: string, grants: AccessRow[]) => Promise<void> | void;
 };
 
 type NotifyDeps = {
@@ -100,7 +109,9 @@ function isGenuineLoginAccess (access: GateAccessLike): boolean {
  *     delete the PAT access (both required — deleting the access does not kill
  *     the session, and the session alone would let a re-issue resurrect the same
  *     token); (1b) delete every `delegated-child` access of the relationship
- *     (what the delegate granted on B); (2) delete the control access (after this, issueToken can mint no
+ *     (what the delegate granted on B, consent grants included); (1c)
+ *     best-effort tell the requester of each consent grant that it is
+ *     withdrawn; (2) delete the control access (after this, issueToken can mint no
  *     further PAT); (3) sweep any lingering invite capability; (4) delete the
  *     anchor; then (5) best-effort notify A via the notify-marker channel so A
  *     drops its mirror + notify access. If the notify is lost, A's mirror lingers
@@ -113,7 +124,7 @@ async function detachDelegate (deps: DetachDeps, params: {
   bUserId: string;
   bUsername: string;
   delegateUsername: string;
-}): Promise<{ revokedChildAccesses?: number }> {
+}): Promise<{ revokedChildAccesses?: number; revokedConsentGrants?: number }> {
   const { mall, now, self } = deps;
   const delegateUsername = String(params.delegateUsername || '').trim();
   if (delegateUsername.length === 0) {
@@ -163,12 +174,21 @@ async function detachDelegate (deps: DetachDeps, params: {
   }
 
   // (1b) every access the delegate granted on B through the delegation (app
-  // and shared accesses stamped `delegated-child`, grandchildren included):
+  // and shared accesses stamped `delegated-child`, grandchildren included,
+  // and the consent grants it gave by accepting a consent request):
   // revoking the delegation revokes what it granted. Right after the PAT, so
-  // nothing it minted outlives it.
+  // nothing it minted outlives it. Every one is deleted HERE, synchronously:
+  // the deletion is the authoritative revocation and never waits on a peer.
   const children = await store.findMarkerAccesses(mall, params.bUserId, relId, C.CLIENTDATA_KIND.DELEGATED_CHILD);
+  const consentGrants: AccessRow[] = [];
   for (const child of children) {
     await store.deleteAccessById(mall, params.bUserId, child.id);
+    if (isConsentGrant(child)) consentGrants.push(child);
+  }
+  // (1c) a consent grant has a requester on the other side holding its token:
+  // tell them it is withdrawn rather than leaving them a dead token.
+  if (consentGrants.length > 0 && deps.notifyConsentGrantsRevoked != null) {
+    try { await deps.notifyConsentGrantsRevoked(params.bUserId, consentGrants); } catch (_e) { /* best-effort: the grants are already gone */ }
   }
 
   // (2) control access — after this, issueToken authenticates nothing and can
@@ -191,7 +211,17 @@ async function detachDelegate (deps: DetachDeps, params: {
     try { await deps.notifyDetach(notifyEndpoint, relId); } catch (_e) { /* lazy reconciliation on A */ }
   }
   void now;
-  return { revokedChildAccesses: children.length };
+  return { revokedChildAccesses: children.length, revokedConsentGrants: consentGrants.length };
+}
+
+/**
+ * True for a CMC data grant: the access a consent accept mints, held by the
+ * requester (`clientData.cmc.role === 'counterparty'`). Read structurally so
+ * this plugin does not import the CMC plugin.
+ */
+function isConsentGrant (access: AccessRow): boolean {
+  const cmc = (access?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc;
+  return cmc != null && typeof cmc === 'object' && cmc.role === 'counterparty';
 }
 
 // =================================================== A-side: detach notify

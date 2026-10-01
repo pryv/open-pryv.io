@@ -399,14 +399,28 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // require a personal token. Non-personal tokens hand off to
   // app-web-user-account via @pryv/cmc helpers. Reuses AccessLogic.isPersonal().
   const cmcAcceptAccessGateHook = cmc.createCmcAcceptAccessGateHook({ errors });
-  // Those same triggers create or widen a data grant outside accesses.create,
-  // so it would carry no delegation lineage: refuse them to a token obtained
-  // through account delegation. Publishing an offer too: its capability
-  // access, and the back-channel access its acceptance creates, are written
-  // storage-direct on this account.
+  // A scope update widens a data grant outside accesses.create, with no
+  // delegation lineage: refuse it to a token obtained through account
+  // delegation. Publishing an offer too: its capability access, and the
+  // back-channel access its acceptance creates, are written storage-direct on
+  // this account. The accept is NOT in the set: its data grant carries the
+  // delegation lineage (handleAccept, from `triggerAccess`), so a delegate may
+  // accept a consent for the account it manages and detach revokes it.
   const delegationDelegatedGrantGuardHook = delegationActive
-    ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([...cmc.GATED_EVENT_TYPES, cmc.ET_REQUEST]))
+    ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([cmc.ET_SYSTEM_SCOPE_UPDATE, cmc.ET_REQUEST]))
     : delegationPassthrough;
+  // Delegation lineage reader for the CMC accept (approvedBy stamp + data
+  // grant marker). Null for every access when delegation is inactive, like
+  // the accesses.create lineage hook.
+  const delegationLineageOf = delegationActive
+    ? (access: unknown) => delegation.lineageOf(access)
+    : (_access: unknown) => null;
+  const delegationRelationshipExists = async (userId: string, relId: string): Promise<boolean> =>
+    (await delegation.store.findAnchorByRelId(mallForCmc, userId, relId)) != null;
+  // `content.approvedBy` on an accept: server-owned, stamped from the writing
+  // access when it is delegation-derived, a client-supplied one dropped.
+  const cmcApprovedByStampingHook = cmc.createApprovedByStampingHook({ lineageOf: delegationLineageOf });
+  const cmcApprovedByPreserveHook = cmc.createApprovedByPreserveHook();
   // Forge-prevention: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
   // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers
@@ -480,6 +494,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     timeoutMs: 15_000,
     logger: cmcDispatchLogger,
     selfIdentityFor: cmcSelfIdentityFor,
+    lineageOf: delegationLineageOf,
+    relationshipExists: delegationRelationshipExists,
   }, (context: MethodContext) => {
     // Per-request: bind a notifyEventChanged that fires pubsub for THIS
     // user. The dispatch loop's fire-and-forget events.update calls
@@ -526,6 +542,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     verifyCanCreateEventsOnStream,
     cmcContentValidationHook,
     cmcAcceptAccessGateHook,
+    // After the gate, so a refused write is never stamped; before the store.
+    cmcApprovedByStampingHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
     cmcCounterpartyFromStampingHook,
@@ -560,6 +578,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     config,
     mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
+    lineageOf: delegationLineageOf,
+    relationshipExists: delegationRelationshipExists,
     fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {
@@ -858,6 +878,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     applyPrerequisitesForUpdate,
     // after the prerequisites, which is what loads the event being updated
     delegationEventsUpdateGuardHook,
+    // an accept keeps its server-stamped `approvedBy` across content updates
+    cmcApprovedByPreserveHook,
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,

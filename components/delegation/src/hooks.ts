@@ -159,8 +159,10 @@ function isDelegationDerivedAccess (access: AccessLike | null | undefined): bool
  * events.create hook — refuse the consent triggers that create or widen a
  * durable data grant (`gatedEventTypes`, supplied by the host) when written
  * with a delegation-derived access. Those grants are made outside
- * accesses.create, carry no lineage marker and so would survive the end of
- * the delegation; until they do, only the account owner may make them.
+ * accesses.create; a trigger whose grant path does not record lineage would
+ * leave a grant that survives the end of the delegation, so only the account
+ * owner may write it. The host leaves out the trigger types whose grant path
+ * does record lineage (the CMC accept).
  */
 function createDelegatedGrantGuardHook (deps: Deps, gatedEventTypes: ReadonlySet<string>): Middleware {
   return function delegationDelegatedGrantGuard (context, _params, _result, next) {
@@ -181,6 +183,35 @@ type LineageContext = {
   access?: { id?: string; clientData?: ClientDataLike | null } | null;
 };
 
+/** The `delegated-child` marker a grant made by a delegation-derived access carries. */
+type ChildLineage = {
+  kind: string;
+  relId: unknown;
+  delegate: unknown;
+  viaAccessId: string | undefined;
+};
+
+/**
+ * The lineage marker to stamp on a grant made by `access`, or null when
+ * `access` is not delegation-derived (see `isDelegationDerivedAccess`).
+ *
+ * Read from the access's own forge-protected marker, never from request
+ * content: `{ kind: 'delegated-child', relId, delegate, viaAccessId }`, with
+ * `viaAccessId` the id of `access` itself. Shared by every grant path that
+ * records lineage (accesses.create here; the CMC accept, which mints its data
+ * grant outside accesses.create, through an injected dependency).
+ */
+function lineageOf (access: AccessLike | null | undefined): ChildLineage | null {
+  if (!isDelegationDerivedAccess(access)) return null;
+  const marker = access!.clientData!.delegation as MarkerLike;
+  return {
+    kind: C.CLIENTDATA_KIND.DELEGATED_CHILD,
+    relId: marker.relId,
+    delegate: marker.delegate,
+    viaAccessId: access!.id,
+  };
+}
+
 /**
  * accesses.create hook — lineage marker. An access created while
  * authenticated by a delegate PAT (or by an access such a PAT created) lives
@@ -195,19 +226,12 @@ type LineageContext = {
  */
 function createAccessCreateLineageHook (): Middleware {
   return function delegationAccessCreateLineageHook (context, params, _result, next) {
-    const creator = (context as LineageContext).access;
-    const kind = markerKind(creator);
-    if (kind !== C.CLIENTDATA_KIND.DELEGATE_PAT && kind !== C.CLIENTDATA_KIND.DELEGATED_CHILD) return next();
+    const lineage = lineageOf((context as LineageContext).access);
+    if (lineage == null) return next();
     if (params == null) return next();
-    const marker = creator!.clientData!.delegation as MarkerLike;
     params.clientData = {
       ...(params.clientData ?? {}),
-      delegation: {
-        kind: C.CLIENTDATA_KIND.DELEGATED_CHILD,
-        relId: marker.relId,
-        delegate: marker.delegate,
-        viaAccessId: creator!.id,
-      },
+      delegation: lineage,
     };
     next();
   };
@@ -491,6 +515,7 @@ export {
   createAccessCreateLineageHook,
   createDelegatedGrantGuardHook,
   isDelegationDerivedAccess,
+  lineageOf,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,

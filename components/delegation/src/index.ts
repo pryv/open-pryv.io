@@ -65,6 +65,7 @@ export const {
   createAccessCreateLineageHook,
   createDelegatedGrantGuardHook,
   isDelegationDerivedAccess,
+  lineageOf,
   createAccessesDeleteGuardHook,
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,

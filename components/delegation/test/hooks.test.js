@@ -24,6 +24,7 @@ const {
   createAccessCreateLineageHook,
   createDelegatedGrantGuardHook,
   isDelegationDerivedAccess,
+  lineageOf,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
@@ -304,6 +305,33 @@ describe('[DELHOOK] delegation/hooks', () => {
       }
       assert.equal(isDelegationDerivedAccess({ clientData: { x: 1 } }), false);
       assert.equal(isDelegationDerivedAccess(null), false);
+    });
+  });
+
+  describe('[DELHOOK-LO] lineageOf', () => {
+    const delegate = { username: 'parent', hostSlug: 'core-a' };
+
+    it('[DLO01] the delegate token: the marker a grant it makes carries, via itself', () => {
+      const pat = { id: 'pat1', type: 'personal', clientData: { delegation: { kind: 'delegate-pat', relId: 'rel1', delegate } } };
+      assert.deepEqual(lineageOf(pat), { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'pat1' });
+    });
+
+    it('[DLO02] an access the delegate granted: the same relationship, via that access', () => {
+      const child = { id: 'child1', clientData: { app: 1, delegation: { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'pat1' } } };
+      assert.deepEqual(lineageOf(child), { kind: 'delegated-child', relId: 'rel1', delegate, viaAccessId: 'child1' });
+    });
+
+    it('[DLO03] null for the owner, for plugin-owned markers, and for anything else', () => {
+      for (const access of [
+        { id: 'p', type: 'personal', clientData: null },
+        { id: 'p', type: 'personal' },
+        { id: 'a', clientData: { x: 1 } },
+        null,
+        undefined,
+        ...['control', 'notify', 'invite-capability', 'some-future-kind'].map((kind) => ({ id: 'k', clientData: { delegation: { kind, relId: 'rel1', delegate } } })),
+      ]) {
+        assert.equal(lineageOf(access), null, JSON.stringify(access));
+      }
     });
   });
 

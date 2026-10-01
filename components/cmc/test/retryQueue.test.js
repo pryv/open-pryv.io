@@ -179,6 +179,37 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(mall._events.get('r-1').content.status, 'succeeded');
     });
 
+    it('[RQC01] the trigger\'s writer survives the retry: snapshot keeps createdBy, the re-dispatched trigger carries it', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueRetry({
+        userId: 'u1',
+        trigger: { ...makeTrigger(), createdBy: 'pat1 caller' },
+        failureReason: 'cmc-handler-delivery-failed',
+        failureDetail: { peerReason: 'network' },
+        deps: { mall, dispatch: async () => ({}), dispatchDeps: {}, now: () => 0 },
+      });
+      assert.equal(ev.content.originalCreatedBy, 'pat1 caller');
+      const seen = [];
+      await processRetryEvent({
+        userId: 'u1',
+        retryEvent: ev,
+        deps: { mall, dispatch: async ({ event }) => { seen.push(event); return { handled: true, status: 'completed' }; }, dispatchDeps: {}, now: () => 10_000_000 },
+      });
+      assert.equal(seen[0].createdBy, 'pat1 caller');
+      // a snapshot taken before the field existed re-dispatches without it
+      const older = makeRetryEvent();
+      mall._events.set('r-1', older);
+      const seen2 = [];
+      await processRetryEvent({
+        userId: 'u1',
+        retryEvent: older,
+        deps: { mall, dispatch: async ({ event }) => { seen2.push(event); return { handled: true, status: 'completed' }; }, dispatchDeps: {}, now: () => 10_000 },
+      });
+      assert.equal('createdBy' in seen2[0], false);
+      // an accept given through an ended delegation is not retried
+      assert.equal(isRetryableReason('cmc-handler-delegation-ended'), false);
+    });
+
     it('[RQ09] reschedules when dispatch still fails retryably', async () => {
       const mall = fakeMall();
       mall._events.set('r-1', makeRetryEvent());
