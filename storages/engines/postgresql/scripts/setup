@@ -146,7 +146,9 @@ else
   # effective one is lower. Keep in sync with the block above.
   dev_max_connections=300
   current=$(grep -E '^[[:space:]]*max_connections[[:space:]]*=' "$PG_DATA_DIR/postgresql.conf" | tail -1 | sed -E 's/^[^=]*=[[:space:]]*([0-9]+).*/\1/')
-  if [[ -z "$current" || "$current" -lt "$dev_max_connections" ]]; then
+  if [[ -n "$current" && ! "$current" =~ ^[0-9]+$ ]]; then
+    echo "max_connections in postgresql.conf is not a plain number, left as is: check it is at least $dev_max_connections"
+  elif [[ -z "$current" || "$current" -lt "$dev_max_connections" ]]; then
     echo "max_connections = $dev_max_connections  # raised by scripts/setup (was ${current:-the default})" >> "$PG_DATA_DIR/postgresql.conf"
     echo "Raised max_connections from ${current:-the default} to $dev_max_connections in postgresql.conf: restart PostgreSQL to apply"
   fi
