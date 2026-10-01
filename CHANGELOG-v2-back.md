@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## PostgreSQL dev setup raises an older data dir's `max_connections`
+
+`storages/engines/postgresql/scripts/setup` appended its dev settings block (with
+`max_connections = 300`) only to a fresh `postgresql.conf`, so a data dir set up by an older
+version kept a lower value (50) and full local test runs failed with `53300 too many clients`.
+When the block already exists and the effective `max_connections` is lower than 300 (or unset),
+the script now appends `max_connections = 300` (the last setting wins) and asks for a restart.
+A higher value is left alone.
+
 ## Delegate consent: how the lineage reaches the CMC grant
 
 Internals of the API change "A delegate may accept a consent for the account it manages".

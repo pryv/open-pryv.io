@@ -139,6 +139,17 @@ max_connections = 300
 shared_buffers = 128MB
 PGCONF
   echo "Appended dev settings to postgresql.conf"
+else
+  # A data dir set up by an older version of this script keeps its lower
+  # max_connections (full test runs then fail with "too many clients"). The
+  # last setting in postgresql.conf wins: append the current value when the
+  # effective one is lower. Keep in sync with the block above.
+  dev_max_connections=300
+  current=$(grep -E '^[[:space:]]*max_connections[[:space:]]*=' "$PG_DATA_DIR/postgresql.conf" | tail -1 | sed -E 's/^[^=]*=[[:space:]]*([0-9]+).*/\1/')
+  if [[ -z "$current" || "$current" -lt "$dev_max_connections" ]]; then
+    echo "max_connections = $dev_max_connections  # raised by scripts/setup (was ${current:-the default})" >> "$PG_DATA_DIR/postgresql.conf"
+    echo "Raised max_connections from ${current:-the default} to $dev_max_connections in postgresql.conf: restart PostgreSQL to apply"
+  fi
 fi
 
 echo ""
