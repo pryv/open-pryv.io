@@ -14,6 +14,7 @@ const filesUploadSupport = require('./filesUploadSupport.ts').default;
 const initContext = require('./initContext.ts').default;
 const getAuth = require('./getAuth.ts').default;
 const loadAccess = require('./loadAccess.ts').default;
+const noSniff = require('./noSniff.ts').default;
 const notFound = require('./notFound.ts').default;
 const override = require('./override.ts').default;
 const requestTrace = require('./requestTrace.ts').default;
@@ -29,6 +30,7 @@ export {
   initContext,
   getAuth,
   loadAccess,
+  noSniff,
   notFound,
   override,
   requestTrace,

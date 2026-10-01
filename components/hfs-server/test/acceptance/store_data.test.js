@@ -434,6 +434,24 @@ describe('[SDHF] Storing data in a HF series', function () {
           assert.strictEqual(headers['access-control-allow-credentials'], 'true');
           assert.strictEqual(headers['access-control-allow-origin'], 'https://foo.bar.baz');
         });
+        it('[NSF2] every answer forbids MIME sniffing: success, error, body-parser error, OPTIONS', async () => {
+          const ok = await storeData(produceData());
+          assert.strictEqual(ok.status, 200);
+          assert.strictEqual(ok.headers['x-content-type-options'], 'nosniff', '200');
+          const invalid = await storeData({});
+          assert.strictEqual(invalid.status, 400);
+          assert.strictEqual(invalid.headers['x-content-type-options'], 'nosniff', '400');
+          const badJson = await server.request()
+            .post(`/USERNAME/events/${EVENT_ID}/series`)
+            .set('authorization', 'AUTH_TOKEN')
+            .set('content-type', 'application/json')
+            .send('{"format": "flatJSON"');
+          assert.ok(badJson.status >= 400, 'status ' + badJson.status);
+          assert.strictEqual(badJson.headers['x-content-type-options'], 'nosniff', 'body-parser error');
+          const options = await server.request().options(`/USERNAME/events/${EVENT_ID}/series`);
+          assert.strictEqual(options.status, 200);
+          assert.strictEqual(options.headers['x-content-type-options'], 'nosniff', 'OPTIONS');
+        });
         describe('[SD33] when request is malformed', function () {
           malformed('format is not flatJSON', {
             format: 'JSON',

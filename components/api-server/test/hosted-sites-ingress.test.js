@@ -536,6 +536,32 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       }
     });
 
+    it('[HSF8] dnsLess: the /<name> redirect carries the same site headers as the other answers', async function () {
+      const dispatch = buildHostedSitesIngress({
+        sites: sitesOf({
+          account: { static: root, headers: { 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'" } }
+        }, { domain: null, dnsLessActive: true }),
+        domain: null,
+        dnsLess: true,
+        logger: quietLogger
+      });
+      const server = await listen((req, res) => dispatch(req, res, () => assert.fail('no fallback')));
+      try {
+        const r = await request(server.address().port, { path: '/account?x=1' });
+        assert.equal(r.status, 301);
+        assert.equal(r.headers.location, '/account/?x=1');
+        assert.equal(r.headers['content-length'], '0');
+        assert.equal(r.headers['x-content-type-options'], 'nosniff');
+        assert.equal(r.headers['referrer-policy'], 'strict-origin-when-cross-origin');
+        assert.equal(r.headers['cache-control'], 'no-store');
+        assert.equal(r.headers['content-security-policy'], DENY_CSP + ", default-src 'self'");
+        assert.equal(r.headers['x-frame-options'], 'DENY');
+        assert.equal(r.headers['strict-transport-security'], undefined, 'no HSTS over plain http');
+      } finally {
+        await close(server);
+      }
+    });
+
     it('[HSF7] the boot-time config validation refuses an invalid frameAncestors', function () {
       const validation = require('../../../config/plugins/config-validation.js');
       const values = {

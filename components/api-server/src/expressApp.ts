@@ -23,6 +23,9 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   const requestTraceMiddleware = middleware.requestTrace(app, logging);
   // register common middleware
   app.disable('x-powered-by');
+  // First in the chain so every answer carries it, including the errors raised
+  // by the body parsers below and the HTML page of the OAuth2 routes.
+  app.use(middleware.noSniff);
   // Install middleware to hoist the username into the request path.
   //
   // NOTE Insert this bit in front of 'requestTraceMiddleware' to also see

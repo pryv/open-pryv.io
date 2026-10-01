@@ -208,6 +208,10 @@ function sendHtmlError (res: Response, status: number, message: string): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
+  // A page of the authorization server is never framed (clickjacking).
+  // X-Content-Type-Options comes from the API's express app, like every answer.
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('X-Frame-Options', 'DENY');
   res.end(`<!DOCTYPE html><html><head><title>OAuth error</title></head>` +
     `<body><h1>Authorization failed</h1><p>${escapeHtml(message)}</p></body></html>`);
 }

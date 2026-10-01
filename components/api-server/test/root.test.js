@@ -190,6 +190,28 @@ describe('[ROOT] root', function () {
       validation.checkMeta(res.body);
     });
 
+    it('[NSF1] every answer forbids MIME sniffing: success, error, body-parser error, OPTIONS', async function () {
+      const ok = await helpers.request(server.url)
+        .get('/' + username + '/events')
+        .set('Authorization', appAccessToken1);
+      assert.strictEqual(ok.status, 200);
+      assert.strictEqual(ok.headers['x-content-type-options'], 'nosniff', '200');
+      const notFound = await helpers.request(server.url)
+        .get('/' + username + '/bad-path');
+      assert.strictEqual(notFound.status, 404);
+      assert.strictEqual(notFound.headers['x-content-type-options'], 'nosniff', '404');
+      const badJson = await helpers.request(server.url)
+        .post('/' + username + '/streams')
+        .set('Authorization', appAccessToken1)
+        .set('Content-Type', 'application/json')
+        .send('{"name": "unterminated"');
+      assert.strictEqual(badJson.status, 400);
+      assert.strictEqual(badJson.headers['x-content-type-options'], 'nosniff', 'body-parser 400');
+      const options = await helpers.request(server.url).options('/');
+      assert.strictEqual(options.status, 200);
+      assert.strictEqual(options.headers['x-content-type-options'], 'nosniff', 'OPTIONS');
+    });
+
     it('[P06Y] should properly translate the Host header\'s username (i.e. subdomain)', async function () {
       const res = await helpers.request(server.url)
         .get('/events')
