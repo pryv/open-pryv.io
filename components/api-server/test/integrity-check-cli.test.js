@@ -33,21 +33,25 @@ function runCli (args) {
 describe('[ICKC] bin/integrity-check.js arguments', function () {
   this.timeout(60000);
 
-  let hostConfig;
+  let tmpDir, hostConfig;
   before(() => {
+    // Own sqlite dir, so the child never touches the suite's var-pryv/users.
     // Nothing listens on port 9 (discard); the URL can only come from this file.
-    hostConfig = path.join(os.tmpdir(), 'integrity-check-' + cuid.slug() + '.yml');
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'integrity-check-'));
+    hostConfig = path.join(tmpDir, 'host-config-' + cuid.slug() + '.yml');
     fs.writeFileSync(hostConfig, `
 storages:
   base:
     engine: sqlite
   engines:
+    sqlite:
+      path: ${path.join(tmpDir, 'users')}
     rqlite:
       url: http://127.0.0.1:9
 `);
   });
   after(() => {
-    fs.rmSync(hostConfig, { force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it('[ICKC1] --help prints the tool usage, including --config', () => {
@@ -68,6 +72,12 @@ storages:
     assert.strictEqual(res.status, 1, res.stdout + res.stderr);
     assert.doesNotMatch(res.stderr, /Unknown argument/);
     assert.match(res.stderr,
-      /Platform DB unreachable at http:\/\/127\.0\.0\.1:9: is rqlited running for this core\?/);
+      /Platform DB unreachable at http:\/\/127\.0\.0\.1:9( \([A-Z_]+\))?: is rqlited running for this core\?/);
+  });
+
+  it('[ICKC4] a --config file that does not exist is refused, exit 1', () => {
+    const res = runCli(['--platform', '--config', path.join(tmpDir, 'no-such-file.yml')]);
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /--config: file not found/);
   });
 });

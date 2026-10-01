@@ -31,12 +31,20 @@ if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
   process.exit(0);
 }
 
-// Layer the host-config file on top, as the other operator tools in `bin/` do
-// (`cmc-scrub-credentials.js`, `reconcile-user-cores.js`).
+// Boiler loads a `--config <file>` itself, above every other scope, as for
+// `bin/master.js`; the extra scope below mirrors the other operator tools in
+// `bin/` (`cmc-scrub-credentials.js`, `reconcile-user-cores.js`).
 const configFileArg = (() => {
   const i = process.argv.indexOf('--config');
   return i !== -1 && process.argv[i + 1] != null ? process.argv[i + 1] : null;
 })();
+// Boiler silently skips a missing file: refuse instead of checking the wrong target.
+if (process.argv.includes('--config') &&
+    (configFileArg == null || configFileArg.startsWith('-') ||
+     !require('fs').existsSync(path.resolve(process.cwd(), configFileArg)))) {
+  console.error(`--config: file not found: ${configFileArg ?? '(missing <file>)'}`);
+  process.exit(1);
+}
 
 require('@pryv/boiler').init({
   appName: 'integrity-check',
@@ -76,9 +84,11 @@ require('@pryv/boiler').init({
     } catch (err) {
       // A run with no rqlited for this core (e.g. a one-off `dokku run`
       // container) otherwise dies with a bare "fetch failed".
-      if (err instanceof TypeError && err.message === 'fetch failed') {
+      if (err instanceof TypeError && err.message === 'fetch failed' &&
+          (config.get('storages:platform:engine') || 'rqlite') === 'rqlite') {
         const url = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
-        throw new Error(`Platform DB unreachable at ${url}: is rqlited running for this core?`);
+        const code = err.cause?.code ? ` (${err.cause.code})` : '';
+        throw new Error(`Platform DB unreachable at ${url}${code}: is rqlited running for this core?`);
       }
       throw err;
     }

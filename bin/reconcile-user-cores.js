@@ -46,6 +46,13 @@ const configFileArg = (() => {
   const i = process.argv.indexOf('--config');
   return i !== -1 && process.argv[i + 1] != null ? process.argv[i + 1] : null;
 })();
+// Boiler silently skips a missing file: refuse instead of reconciling the wrong storage.
+if (process.argv.includes('--config') &&
+    (configFileArg == null || configFileArg.startsWith('-') ||
+     !require('fs').existsSync(path.resolve(process.cwd(), configFileArg)))) {
+  console.error(`--config: file not found: ${configFileArg ?? '(missing <file>)'}`);
+  process.exit(1);
+}
 
 require('@pryv/boiler').init({
   appName: 'reconcile-user-cores',

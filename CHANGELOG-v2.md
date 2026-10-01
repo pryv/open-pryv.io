@@ -14,6 +14,10 @@
   instead of a bare `Error: fetch failed`.
 - `--help` prints the tool's own usage again (it printed a generic options list); `-h` was not
   affected.
+- `bin/integrity-check.js`, `bin/cmc-scrub-credentials.js` and `bin/reconcile-user-cores.js` now
+  exit `1` with `--config: file not found` when the `--config` file is missing or not given. They
+  used to ignore it silently and run against the default config, i.e. possibly another storage
+  than the core's.
 
 ## 2.0.0-rc.32 - 2026-10-01
 
