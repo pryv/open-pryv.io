@@ -24,6 +24,7 @@ const accessState = require('./accessState.ts');
 const ErrorIds = require('errors').ErrorIds;
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
+const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:access');
@@ -218,6 +219,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     if (state.handoff != null) body.handoff = state.handoff;
     else body.token = state.token;
     if (state.delegation != null) body.delegation = state.delegation;
+    // What the page did with each consent invite of the request (a hint: the
+    // requester learns the truth from its own inbox).
+    if (state.cmcInviteOutcomes != null) body.cmcInvites = state.cmcInviteOutcomes;
     return body;
   }
 
@@ -281,11 +285,22 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         credentialHandoff = 'shared-secret';
       }
 
+      // Consent invites the user answers with the access. Same `!= null`
+      // rule as `consent`; the 201 echo is the app's detection signal.
+      let cmcInvites;
+      if (req.body.cmcInvites != null) {
+        cmcInvites = parseCmcInvites(req.body.cmcInvites);
+        if (typeof cmcInvites === 'string') {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message: cmcInvites } });
+        }
+      }
+
       const { key, state, expiresAt } = accessState.buildState({
         ...req.body,
         consent: consentForm,
         actAs: req.body.actAs ?? undefined,
-        credentialHandoff
+        credentialHandoff,
+        cmcInvites
       });
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
@@ -409,6 +424,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // core drops the field and echoes nothing, which is how a new client
       // learns it will get inline delivery instead.
       if (state.credentialHandoff !== undefined) created.credentialHandoff = state.credentialHandoff;
+      // Echoed only when sent and understood: an older core drops the field.
+      if (state.cmcInvites !== undefined) created.cmcInvites = state.cmcInvites;
       res.status(201).json(created);
     } catch (err) { next(err); }
   });
@@ -461,6 +478,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // Delivery mode, so the auth UI can decide whether to create the
         // secret itself (shape H) or post the token inline. Absent otherwise.
         if (state.credentialHandoff != null) response.credentialHandoff = state.credentialHandoff;
+        // Consent invites the page shows next to the app access. Absent otherwise.
+        if (state.cmcInvites != null) response.cmcInvites = state.cmcInvites;
       } else if (state.status === 'ACCEPTED') {
         // Either a one-time `handoff` key (no token here) or the inline
         // token; `delegation` rides at the top level in either shape.
@@ -594,6 +613,25 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         update = { ...req.body, delegation: undefined };
       }
 
+      // The outcome of each consent invite: an accepted grant only, one entry
+      // per invite of the request, checked before anything is written. Stored
+      // apart from the app's `cmcInvites`, which the poster cannot change.
+      let cmcInviteOutcomes;
+      if (req.body.cmcInvites != null) {
+        if (status !== 'ACCEPTED') {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'cmcInvites is only valid with status ACCEPTED' }
+          });
+        }
+        cmcInviteOutcomes = parseCmcInviteOutcomes(req.body.cmcInvites, pending.cmcInvites);
+        if (typeof cmcInviteOutcomes === 'string') {
+          return res.status(400).json({ error: { id: 'invalid-parameters', message: cmcInviteOutcomes } });
+        }
+      }
+      // The stored name is never read from the body: whatever the poster put
+      // under `cmcInviteOutcomes` is dropped here, validated outcomes or nothing.
+      update = { ...update, cmcInviteOutcomes };
+
       if (status === 'REDIRECTED') {
         if (!req.body.redirectUrl) {
           return res.status(400).json({
@@ -661,7 +699,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (apiErr != null) {
           return res.status(400).json({ error: { id: 'invalid-parameters', message: apiErr } });
         }
-        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed };
+        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed, cmcInviteOutcomes };
       } else if (status === 'ACCEPTED' && wantsHandoff && !isDelegatedGrant) {
         // Shape L on a request that asked for a hand-off, not delegated:
         // server conversion. Move the inline token into a one-time secret on
@@ -684,7 +722,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           ttlSeconds
         });
         if ('handoff' in result) {
-          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff };
+          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes };
         } else {
           // Fall back to inline delivery: never worse than today. Log the
           // reason class and the request key, never the token.
