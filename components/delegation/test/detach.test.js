@@ -222,6 +222,61 @@ describe('delegation detach — active teardown', function () {
     assert.deepEqual(left, ['granted-by-kid', 'other-relationship']);
   });
 
+  describe('[DDR] consent grants given through the delegation', function () {
+    const delegate = { username: NAME_A, hostSlug: HOST_SLUG };
+    const childMarker = (relId) => ({ kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId, delegate, viaAccessId: 'pat' });
+    const cmcGrant = (relId) => ({
+      cmc: { role: 'counterparty', appCode: 'study', counterparty: { username: 'doctor', host: 'peer.example.com', apiEndpoint: 'https://bc@peer.example.com/doctor/' } },
+      delegation: childMarker(relId),
+    });
+
+    it('[DDR01] a consent grant is deleted at detach and its requester is notified, after the deletion', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const grant = await mall.accesses.create(USER_B, { type: 'shared', name: 'consent-for-kid', clientData: cmcGrant('rel-1') });
+      const deps = makeDeps(mall);
+      const notices = [];
+      deps.notifyConsentGrantsRevoked = async (userId, grants) => {
+        const stillThere = (await mall.accesses.get(USER_B)).some((a) => a.id === grant.id);
+        notices.push({ userId, ids: grants.map((g) => g.id), stillThere, endpoint: grants[0]?.clientData?.cmc?.counterparty?.apiEndpoint });
+      };
+      await detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+      assert.deepEqual(notices, [{ userId: USER_B, ids: [grant.id], stillThere: false, endpoint: 'https://bc@peer.example.com/doctor/' }],
+        'the requester notice gets the grant as it was (its endpoint), once it is deleted');
+      assert.equal((await mall.accesses.get(USER_B)).some((a) => a.id === grant.id), false);
+    });
+
+    it('[DDR02] plain delegated accesses are deleted without a notice; another relationship\'s consent grant is untouched', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      await mall.accesses.create(USER_B, { type: 'app', name: 'app-for-kid', clientData: { delegation: childMarker('rel-1') } });
+      await mall.accesses.create(USER_B, { type: 'shared', name: 'other-consent', clientData: cmcGrant('rel-other') });
+      await mall.accesses.create(USER_B, { type: 'shared', name: 'owner-consent', clientData: { cmc: { role: 'counterparty' } } });
+      const deps = makeDeps(mall);
+      const notices = [];
+      deps.notifyConsentGrantsRevoked = async (_u, grants) => { notices.push(grants.map((g) => g.name)); };
+      const outcome = await detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+      assert.deepEqual(notices, [], 'no consent grant of this relationship, no notice');
+      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 0 });
+      const left = (await mall.accesses.get(USER_B)).map((a) => a.name).sort();
+      assert.deepEqual(left, ['other-consent', 'owner-consent']);
+    });
+
+    it('[DDR03] counts, and a failing notice does not stop the teardown', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      await mall.accesses.create(USER_B, { type: 'shared', name: 'consent-1', clientData: cmcGrant('rel-1') });
+      await mall.accesses.create(USER_B, { type: 'shared', name: 'consent-2', clientData: cmcGrant('rel-1') });
+      await mall.accesses.create(USER_B, { type: 'app', name: 'app-for-kid', clientData: { delegation: childMarker('rel-1') } });
+      const deps = makeDeps(mall);
+      deps.notifyConsentGrantsRevoked = async () => { throw new Error('peer unreachable'); };
+      const outcome = await detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+      assert.deepEqual(outcome, { revokedChildAccesses: 3, revokedConsentGrants: 2 });
+      assert.deepEqual(await mall.accesses.get(USER_B), [], 'every access of the relationship is gone, control and PAT included');
+      assert.equal(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null);
+    });
+  });
+
   it('tears down cleanly when no PAT was ever issued', async function () {
     const mall = makeFakeMall();
     await seedActiveRelationship(mall, { withPat: false });

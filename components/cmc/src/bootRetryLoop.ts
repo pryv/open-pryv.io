@@ -43,6 +43,11 @@ type BootDeps = {
   // Optional: a cluster worker id check. Defaults to checking the
   // node:cluster module if available.
   isLoopWorker?: () => boolean;
+  // Account delegation, forwarded to the dispatch (see handleAccept.ts): a
+  // retried accept given through a delegation must still find its lineage
+  // and its relationship.
+  lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
+  relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
 };
 
 function defaultIsLoopWorker (): boolean {
@@ -93,6 +98,8 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
       fetch: deps.fetch,
       logger: deps.logger,
       selfIdentityFor: deps.selfIdentityFor,
+      lineageOf: deps.lineageOf,
+      relationshipExists: deps.relationshipExists,
       // The retry loop OWNS the retry lifecycle: processRetryEvent
       // reschedules (or retires) the very event it is re-dispatching. The
       // dispatch it calls must therefore NOT also auto-enqueue a fresh retry

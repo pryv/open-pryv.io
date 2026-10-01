@@ -49,6 +49,28 @@ type OfferShape = {
 import type { CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
 type MallLike = { accesses: MallAccessesLike; events: MallEventsLike; streams?: MallStreamsLike };
 
+/**
+ * The `delegated-child` lineage marker a grant made through an account
+ * delegation carries (`clientData.delegation`). Produced by the delegation
+ * plugin's `lineageOf` from the writing access's own marker, injected so this
+ * plugin does not import the delegation plugin.
+ */
+type DelegationLineage = { kind: string; relId: string; delegate: unknown; viaAccessId: string };
+type LineageOf = (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
+
+/**
+ * Account-delegation deps for the accept path. Both are wired by the
+ * api-server; absent in unit dispatch with mocked deps.
+ *   - lineageOf: the marker a grant made by an access carries, or null when
+ *     the access is not delegation-derived.
+ *   - relationshipExists: true while the delegation `relId` still exists on
+ *     this account.
+ */
+type DelegationDeps = {
+  lineageOf?: LineageOf;
+  relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
+};
+
 
 type AcceptHandlerResult =
   | {
@@ -84,9 +106,9 @@ type AcceptHandlerResult =
  */
 async function handleAccept (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string };
   selfIdentity: { username: string; host: string };
-  deps: { mall: MallLike } & OutboundDeps;
+  deps: { mall: MallLike } & OutboundDeps & DelegationDeps;
 }): Promise<AcceptHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
   const { mall } = deps;
@@ -257,6 +279,24 @@ async function handleAccept (params: {
     }
   }
 
+  // 3c. Account delegation. An accept written with a delegation-derived
+  // token (a carer accepting for the account it manages) mints a grant that
+  // must end with the delegation: it carries the `delegated-child` lineage
+  // marker, so access-info names the delegate and detach revokes it. The
+  // lineage comes from the access that wrote the trigger, never from the
+  // content; the relationship must still exist when the accept is processed.
+  const lineageResult = await resolveDelegationLineage({ userId, triggerEvent, deps });
+  if (!lineageResult.ok) return lineageResult.failure;
+  const lineage = lineageResult.lineage;
+  if (lineage != null) {
+    const live = await delegationStillLive({ userId, lineage, deps });
+    if (!live.ok) return delegationEnded(live.why);
+    dataGrantPayload!.clientData = {
+      ...((dataGrantPayload!.clientData as Record<string, unknown> | undefined) ?? {}),
+      delegation: lineage,
+    };
+  }
+
   // 4. Create the local data-grant access. Accesses are unique on
   // (name, type, deviceName), so a fixed client-side accessName (typical
   // for apps passing their own app name on every accept) collides with
@@ -322,6 +362,32 @@ async function handleAccept (params: {
       ok: false,
       reason: 'cmc-handler-data-grant-no-apiendpoint',
     };
+  }
+
+  if (lineage != null) {
+    // A grant reused from an earlier dispatch of this same accept (minted
+    // before it carried lineage) is given the marker now.
+    const existing = (dataGrantAccess.clientData as { delegation?: { relId?: unknown } } | undefined)?.delegation;
+    if (existing?.relId !== lineage.relId) {
+      try {
+        await mall.accesses.update(userId, {
+          id: dataGrantAccess.id,
+          update: { clientData: { ...(dataGrantAccess.clientData ?? {}), delegation: lineage } },
+        });
+      } catch (err: unknown) {
+        await deleteGrantQuietly(mall, userId, dataGrantAccess.id!, deps);
+        return delegationEnded('the reused grant could not be given its lineage: ' + String((err as Error)?.message || err));
+      }
+    }
+    // Checked again now that the grant exists. A detach that ran while the
+    // grant was being minted either deleted the approving access already
+    // (caught here) or runs its sweep after this point and finds the grant
+    // by its marker. Either way no grant outlives the delegation.
+    const live = await delegationStillLive({ userId, lineage, deps });
+    if (!live.ok) {
+      await deleteGrantQuietly(mall, userId, dataGrantAccess.id!, deps);
+      return delegationEnded(live.why);
+    }
   }
 
   // 4. Deliver the accept response back to the requester via capability.
@@ -419,6 +485,145 @@ async function handleAccept (params: {
     // each relationship belongs to.
     requesterIdentity: counterparty,
   };
+}
+
+type AcceptFailure = { ok: false; reason: string; detail?: unknown };
+
+function delegationEnded (why: string): AcceptFailure {
+  return {
+    ok: false,
+    reason: CmcErrorIds.HANDLER_DELEGATION_ENDED,
+    detail: { message: 'the account delegation this accept was given through has ended: ' + why },
+  };
+}
+
+/** Normalise what `lineageOf` returned; null when it is not a usable marker. */
+function toLineage (raw: ReturnType<LineageOf> | undefined): DelegationLineage | null | 'malformed' {
+  if (raw == null) return null;
+  if (typeof raw.relId !== 'string' || raw.relId.length === 0 ||
+      typeof raw.viaAccessId !== 'string' || raw.viaAccessId.length === 0) {
+    return 'malformed';
+  }
+  return {
+    kind: String(raw.kind),
+    relId: raw.relId,
+    delegate: raw.delegate,
+    viaAccessId: raw.viaAccessId,
+  };
+}
+
+/**
+ * The delegation lineage of the access that wrote an accept trigger, or null
+ * for an accept the account owner wrote.
+ *
+ * Live dispatch carries the authenticated access (`deps.triggerAccess`). A
+ * retry has no request context: the trigger's `createdBy` (kept in the retry
+ * snapshot) names the access, which is read back from storage. In both cases
+ * the source is the access, never the trigger content.
+ *
+ * `content.approvedBy` is server-stamped from that same access when the
+ * trigger is written (approvedByStampingHook). When it is present the
+ * lineage MUST resolve, to the same relationship: if the approving access is
+ * gone or unknown, the accept fails rather than minting an unmarked grant.
+ */
+async function resolveDelegationLineage (params: {
+  userId: string;
+  triggerEvent: { content: Record<string, unknown>; createdBy?: string };
+  deps: { mall: MallLike } & DelegationDeps;
+}): Promise<{ ok: true; lineage: DelegationLineage | null } | { ok: false; failure: AcceptFailure }> {
+  const { userId, triggerEvent, deps } = params;
+  const approvedBy = triggerEvent.content?.approvedBy as { relId?: unknown } | undefined;
+  const claimsDelegation = approvedBy != null;
+
+  let raw: ReturnType<LineageOf> | undefined;
+  const triggerAccess = (deps as { triggerAccess?: unknown }).triggerAccess;
+  if (deps.lineageOf != null) {
+    if (triggerAccess != null) {
+      raw = deps.lineageOf(triggerAccess);
+    } else if (typeof triggerEvent.createdBy === 'string' && triggerEvent.createdBy.length > 0) {
+      const writer = await findAccessById(deps.mall, userId, accessIdOf(triggerEvent.createdBy));
+      if (writer == null) {
+        // The writing access no longer exists. For an owner accept that is
+        // harmless (it carried no lineage); for a delegate's it means the
+        // delegation was torn down.
+        if (claimsDelegation) return { ok: false, failure: delegationEnded('the approving access no longer exists') };
+      } else {
+        raw = deps.lineageOf(writer);
+      }
+    }
+  }
+
+  const lineage = toLineage(raw);
+  if (lineage === 'malformed') {
+    return { ok: false, failure: delegationEnded('the approving access carries an unreadable delegation marker') };
+  }
+  if (claimsDelegation) {
+    if (lineage == null) {
+      return { ok: false, failure: delegationEnded('the approving access cannot be resolved') };
+    }
+    if (approvedBy!.relId !== lineage.relId) {
+      return { ok: false, failure: delegationEnded('the recorded relationship does not match the approving access') };
+    }
+  }
+  return { ok: true, lineage };
+}
+
+/**
+ * True while the delegation a grant was given through still stands: its
+ * relationship anchor exists, and the access that approved still exists with
+ * the same relationship marker (detach deletes that access first).
+ */
+async function delegationStillLive (params: {
+  userId: string;
+  lineage: DelegationLineage;
+  deps: { mall: MallLike } & DelegationDeps;
+}): Promise<{ ok: true } | { ok: false; why: string }> {
+  const { userId, lineage, deps } = params;
+  if (deps.relationshipExists == null) {
+    // No way to verify: never mint a delegate's grant unverified.
+    return { ok: false, why: 'the relationship cannot be verified on this server' };
+  }
+  let exists = false;
+  try {
+    exists = await deps.relationshipExists(userId, lineage.relId);
+  } catch (err: unknown) {
+    return { ok: false, why: 'the relationship check failed: ' + String((err as Error)?.message || err) };
+  }
+  if (!exists) return { ok: false, why: 'the relationship no longer exists' };
+  if (deps.mall.accesses?.get != null || deps.mall.accesses?.getOne != null) {
+    const via = await findAccessById(deps.mall, userId, lineage.viaAccessId);
+    const viaLineage = via == null || deps.lineageOf == null ? null : toLineage(deps.lineageOf(via));
+    if (viaLineage == null || viaLineage === 'malformed' || viaLineage.relId !== lineage.relId) {
+      return { ok: false, why: 'the approving access no longer exists' };
+    }
+  }
+  return { ok: true };
+}
+
+/** `createdBy` is `<accessId>` or `<accessId> <callerId>`. */
+function accessIdOf (createdBy: string): string {
+  const separatorIndex = createdBy.indexOf(' ');
+  return separatorIndex === -1 ? createdBy : createdBy.slice(0, separatorIndex);
+}
+
+async function findAccessById (mall: MallLike, userId: string, accessId: string): Promise<CmcAccessLike | null> {
+  if (mall.accesses?.getOne != null) {
+    return await mall.accesses.getOne(userId, { id: accessId });
+  }
+  if (typeof mall.accesses?.get !== 'function') return null;
+  const list = await mall.accesses.get(userId, {});
+  return (Array.isArray(list) ? list : []).find((a) => a?.id === accessId) ?? null;
+}
+
+async function deleteGrantQuietly (mall: MallLike, userId: string, accessId: string, deps: OutboundDeps): Promise<void> {
+  try {
+    if (mall.accesses.delete != null) await mall.accesses.delete(userId, { id: accessId });
+  } catch (err: unknown) {
+    deps.logger?.error?.('cmc/handleAccept: a grant given through an ended delegation could not be deleted', {
+      accessId,
+      error: String((err as Error)?.message || err),
+    });
+  }
 }
 
 /**

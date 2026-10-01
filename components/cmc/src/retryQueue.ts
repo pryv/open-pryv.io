@@ -53,6 +53,7 @@ type EventLike = {
   type: string;
   content: Record<string, unknown>;
   time?: number;
+  createdBy?: string;
 };
 
 type RetryEvent = EventLike & { content: RetryContent };
@@ -61,6 +62,10 @@ type RetryContent = {
   originalType?: string;
   originalStreamIds?: string[];
   originalContent?: Record<string, unknown> | null;
+  // The access that wrote the trigger. A retry has no request context, so a
+  // handler that must know who wrote the trigger (the accept, to find the
+  // delegation an accept was given through) reads it back from here.
+  originalCreatedBy?: string | null;
   attempts?: number;
   lastFailureReason?: string;
   lastFailureDetail?: unknown;
@@ -140,6 +145,7 @@ async function enqueueRetry (params: {
     originalType: trigger.type,
     originalStreamIds: trigger.streamIds ?? [],
     originalContent: trigger.content ?? null,
+    originalCreatedBy: typeof trigger.createdBy === 'string' ? trigger.createdBy : null,
     attempts: 1,
     lastFailureReason: failureReason,
     lastFailureDetail: failureDetail ?? null,
@@ -194,6 +200,7 @@ async function processRetryEvent (params: {
     type: c.originalType!,
     content: c.originalContent ?? {},
   };
+  if (typeof c.originalCreatedBy === 'string') syntheticTrigger.createdBy = c.originalCreatedBy;
 
   const dispatched = await deps.dispatch({
     userId,
@@ -334,6 +341,9 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-counterparty-unknown',
   'cmc-handler-data-grant-no-apiendpoint',
   'cmc-handler-data-grant-name-conflict',
+  // An accept given through a delegation that has ended: re-running finds
+  // the same ended delegation.
+  'cmc-handler-delegation-ended',
   'cmc-handler-delivery-rejected',
   // The capability's own refusals, reported instead of delivery-rejected.
   ...CAPABILITY_REFUSAL_IDS,

@@ -1,5 +1,35 @@
 # Changelog - Internal (no API impact)
 
+## Delegate consent: how the lineage reaches the CMC grant
+
+Internals of the API change "A delegate may accept a consent for the account it manages".
+- The delegation plugin exports `lineageOf(access)`: the `delegated-child` marker a grant made by
+  a delegation-derived access carries (null otherwise); `createAccessCreateLineageHook` now uses
+  it. The api-server injects it into the CMC plugin, which still imports nothing from the
+  delegation plugin.
+- `events.ts`: the delegation grant guard is fed `consent/scope-update-cmc` and
+  `consent/request-cmc` only. New CMC hooks `createApprovedByStampingHook` (events.create, after
+  the accept gate) and `createApprovedByPreserveHook` (events.update, after the prerequisites).
+- `handleAccept`: lineage from `deps.triggerAccess` on live dispatch; on a retry, from the access
+  named by the trigger's `createdBy`, which the retry snapshot now keeps
+  (`content.originalCreatedBy`, restored on the re-dispatched trigger). A server-stamped
+  `approvedBy` whose lineage cannot be resolved, or names another relationship, fails the accept.
+  The relationship is checked before the mint (`relationshipExists`, wired to the anchor lookup)
+  and after it (anchor plus the approving access with the same marker); a grant minted across a
+  detach is deleted. A grant reused from an earlier dispatch of the same accept is given the
+  marker. New non-retryable reason `cmc-handler-delegation-ended`. Both deps are wired for the
+  retry loop too.
+- Detach: the grants are deleted with the other `delegated-child` accesses (synchronous, the
+  authoritative revocation), then the CMC grants among them (`clientData.cmc.role ===
+  'counterparty'`) go to the new `notifyConsentGrantsRevoked` dep, which the api-server wires to
+  the CMC `accesses.delete` post-hook (fire-and-forget). Writing a `consent/revoke-cmc` trigger
+  through the method pipeline was not used: the dispatch middleware runs it fire-and-forget and
+  `handleRevoke` deletes the grant only after its delivery attempts, so the grant would outlive
+  the detach answer by up to the delivery retries. Returns `revokedConsentGrants` beside
+  `revokedChildAccesses`.
+`[DLO01-03]`, `[APB01-06]`, `[HAL01-08]`, `[RQC01]`, `[DDR01-03]`, `[DCH14]` (rewritten),
+`[DCH15-19]`.
+
 ## Dependencies: runtime advisories cleared (nodemailer 10)
 
 `npm audit` reported 8 high and 3 moderate advisories in runtime dependencies, all published

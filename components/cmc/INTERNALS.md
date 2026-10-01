@@ -630,7 +630,7 @@ The CMC lifecycle triggers that **mint, widen, or delete** data-grant accesses o
 
 | Trigger | Gate at `events.create` | Per-handler permission check | Rationale |
 |---|---|---|---|
-| `consent/accept-cmc` (mint) | Personal-token only (`cmcAcceptAccessGateHook`) | `triggerAccess.canCreateAccess(dataGrantPayload)` in `handleAccept` | New access on the user's account → no existing access bounds the chain; user-presence enforced by the personal-token gate. |
+| `consent/accept-cmc` (mint) | Personal-token only (`cmcAcceptAccessGateHook`); a delegate token is personal-type and passes (see [Accept by a delegate](#accept-by-a-delegate-account-delegation)) | `triggerAccess.canCreateAccess(dataGrantPayload)` in `handleAccept`; for a delegate, the relationship check before and after the mint | New access on the user's account → no existing access bounds the chain; user-presence enforced by the personal-token gate. |
 | `consent/scope-update-cmc` (widen) | Personal-token only (same hook) | `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` in `handleSystemScopeUpdate` | Widens an existing access → user-presence enforced; chain check mirrors `accesses.update`'s `applyPrerequisitesForUpdate`. |
 | `consent/revoke-cmc` (delete) | NOT in the personal-token gate | `triggerAccess.canDeleteAccess(target)` in `handleRevoke` (per delete; covers data-grant + counterparty) | Contraction, not escalation, the target access bounds the impact. The standard `canDeleteAccess` honours the `selfRevoke` feature permission, so the relationship's own data-grant access can self-revoke from any holder. |
 
@@ -677,6 +677,15 @@ The hand-off + delivery paths the CMC plugin orchestrates itself use accesses th
 Both markers are plugin-stamped at mint time (`capability.ts` / `acceptOrchestration.ts`). User-initiated triggers never carry them; an app trying to spoof the marker is blocked by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook on `accesses.create` / `accesses.update`.
 
 Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited as `'skipped'` by dispatch's `isPeerDeliveredEvent` check on `OUTBOUND_LOOPABLE_TYPES` before `handleRevoke` runs.
+
+## Accept by a delegate (account delegation)
+
+A delegate token (account delegation) is personal-type, so it passes the mint gate. The delegation plugin's own events.create guard (`delegation-grant-requires-owner`) is fed `consent/scope-update-cmc` and `consent/request-cmc` only: the accept's grant records the delegation lineage, the other two paths do not.
+
+- **Stamp at write time** (`approvedByStampingHook.ts`, wired after the mint gate): any client-supplied `content.approvedBy` is deleted; when the writing access is delegation-derived, `approvedBy = { delegate: { username, hostSlug? }, relId }` is set from its marker. The marker is read by the delegation plugin's `lineageOf`, injected by the api-server (this plugin imports nothing from the delegation plugin). On `events.update` the stored value is put back (`createApprovedByPreserveHook`).
+- **Lineage on the grant** (`handleAccept`, step 3c): `lineageOf(triggerAccess)` on live dispatch; on a retry (no request context) the access named by the trigger's `createdBy`, kept in the retry snapshot as `originalCreatedBy`. The marker `{ kind: 'delegated-child', relId, delegate, viaAccessId }` goes on `clientData.delegation` beside `clientData.cmc`; a grant reused from an earlier dispatch of the same accept is updated with it. A recorded `approvedBy` whose lineage cannot be resolved, or names another relationship, fails the accept.
+- **The delegation must stand when the grant exists**: `relationshipExists(userId, relId)` (the api-server wires the relationship anchor lookup) before the mint; after it, the anchor again plus the approving access with the same marker (detach deletes that access first, then sweeps the relationship's marked accesses). A failed check deletes a freshly minted grant. Failure: `cmc-handler-delegation-ended`, non-retryable. Deps not wired: never mint a delegate's grant.
+- **Detach** (delegation plugin): deletes the relationship's marked accesses, consent grants included, then hands the consent grants (as they were before deletion) to the api-server, which runs the `accesses.delete` post-hook on them (flow 13's raw-delete notification): the requester receives `consent/revoke-cmc`. A `consent/revoke-cmc` trigger through `handleRevoke` was not used: its local delete runs after the delivery attempts, and the dispatch middleware does not await it.
 
 ## `handleIncomingAccept` back-channel mint stays direct
 

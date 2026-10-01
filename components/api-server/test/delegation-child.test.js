@@ -267,9 +267,9 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
     assert.strictEqual(info.body.delegation.grantedVia, 'app');
   });
 
-  it('[DCH14] a delegation-derived token cannot write a consent trigger that creates or widens a data grant, nor publish an offer', async function () {
+  it('[DCH14] a delegation-derived token cannot widen a data grant nor publish an offer; accepting a consent is no longer refused by this rule', async function () {
     const child = await createAccess(patToken, appFor('dch14-app'));
-    for (const type of ['consent/accept-cmc', 'consent/scope-update-cmc', 'consent/request-cmc']) {
+    for (const type of ['consent/scope-update-cmc', 'consent/request-cmc']) {
       for (const token of [patToken, child.token]) {
         const res = await coreRequest.post(bob.eventsPath).set('Authorization', token)
           .send({ streamIds: ['diary'], type, content: {} });
@@ -280,6 +280,13 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
       const own = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token)
         .send({ streamIds: ['diary'], type, content: {} });
       assert.ok(!JSON.stringify(own.body).includes('delegation-grant-requires-owner'), JSON.stringify(own.body));
+    }
+    // the accept's grant carries the delegation lineage, so the rule lets it
+    // through (other checks still apply: this content is not a valid accept)
+    for (const token of [patToken, child.token]) {
+      const res = await coreRequest.post(bob.eventsPath).set('Authorization', token)
+        .send({ streamIds: ['diary'], type: 'consent/accept-cmc', content: {} });
+      assert.ok(!JSON.stringify(res.body).includes('delegation-grant-requires-owner'), JSON.stringify(res.body));
     }
   });
 
@@ -308,5 +315,363 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
     assert.deepStrictEqual(all.filter((a) => a.clientData?.delegation != null), [], 'no delegation-marked access remains');
     const dead = await coreRequest.get(bob.eventsPath).set('Authorization', child.token);
     assert.ok([401, 403].includes(dead.status), 'the revoked app token no longer works');
+  });
+});
+
+/**
+ * [DCHC] a delegate (a carer managing the account) accepts a consent request
+ * for the account it manages, with the delegate token:
+ *   - the data grant carries the `delegated-child` lineage of the delegate
+ *     token, so access-info names the delegate and detach revokes it;
+ *   - the accept event records who approved, server-stamped
+ *     (`content.approvedBy`), never taken from the client;
+ *   - publishing an offer and widening a grant stay owner-only;
+ *   - detach deletes the grant at once and the requester receives
+ *     `consent/revoke-cmc`;
+ *   - an accept still in progress when the delegation is detached does not
+ *     complete and leaves no grant.
+ * Three accounts on one core: `kid` (managed), `carer` (delegate), `doctor`
+ * (requester). Outbound CMC HTTP goes through the in-process fetch shim.
+ */
+describe('[DCHC] consent accepted by a delegate for the account it manages (in-process integration)', function () {
+  this.timeout(120_000);
+
+  const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
+  const POLL_INTERVAL_MS = 100;
+  const POLL_TIMEOUT_MS = 40_000;
+
+  let kid, carer, doctor;
+  let fixtures;
+  let originalFetch;
+  // One-shot hold on the next offer read from the doctor's account, to keep
+  // an accept in progress while the test detaches the delegation.
+  let offerHold = null;
+  let rel; // current relationship: { patToken, patAccessId, relId }
+
+  function sleep (ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+  before(async function () {
+    await initTests();
+    await initCore();
+    await require('api-server/src/methods/delegations.ts').default(global.app.api);
+    originalFetch = globalThis.fetch;
+    const shim = buildFetchShim(originalFetch, global.coreServer);
+    globalThis.fetch = async (url, init) => {
+      const hold = offerHold;
+      // the offer is read with the invite's token as the authorization header
+      if (hold != null && (init?.method ?? 'GET').toUpperCase() === 'GET' &&
+          init?.headers?.authorization === hold.capabilityToken) {
+        offerHold = null;
+        hold.reached();
+        await hold.released;
+      }
+      return shim(url, init);
+    };
+    fixtures = getNewFixture();
+    kid = await makeActor('kid-' + cuid().slice(-8));
+    carer = await makeActor('carer-' + cuid().slice(-8));
+    doctor = await makeActor('doctor-' + cuid().slice(-8));
+    rel = await attach();
+  });
+
+  after(async function () {
+    if (originalFetch != null) globalThis.fetch = originalFetch;
+    if (fixtures != null) { try { await fixtures.clean(); } catch (_e) { /* best-effort */ } }
+  });
+
+  async function makeActor (username) {
+    const token = cuid();
+    const u = await fixtures.user(username);
+    await u.access({ token, type: 'personal' });
+    await u.session(token);
+    return {
+      username,
+      token,
+      streamsPath: '/' + username + '/streams',
+      accessesPath: '/' + username + '/accesses',
+      accessInfoPath: '/' + username + '/access-info',
+      eventsPath: '/' + username + '/events',
+      delegationsPath: '/' + username + '/delegations',
+    };
+  }
+
+  async function ensureStream (actor, token, params) {
+    const res = await coreRequest.post(actor.streamsPath).set('Authorization', token).send(params);
+    if (res.status !== 201 && res.body?.error?.id !== 'item-already-exists') {
+      throw new Error('ensureStream(' + params.id + '): ' + res.status + ' ' + JSON.stringify(res.body));
+    }
+  }
+
+  /** Attach `carer` as delegate of `kid`, issue the delegate token. */
+  async function attach () {
+    const reqRes = await coreRequest.post(kid.delegationsPath + '/attach-request')
+      .set('Authorization', kid.token).send({ delegateUsername: carer.username });
+    assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+    const accRes = await coreRequest.post(carer.delegationsPath + '/controlled/' + kid.username + '/accept')
+      .set('Authorization', carer.token).send({});
+    assert.strictEqual(accRes.status, 200, JSON.stringify(accRes.body));
+    const tokRes = await coreRequest.post(carer.delegationsPath + '/controlled/' + kid.username + '/token')
+      .set('Authorization', carer.token).send({});
+    assert.strictEqual(tokRes.status, 200, JSON.stringify(tokRes.body));
+    const info = await coreRequest.get(kid.accessInfoPath).set('Authorization', tokRes.body.token);
+    const list = await coreRequest.get(kid.delegationsPath + '/delegates').set('Authorization', kid.token);
+    const record = (list.body.delegates || []).find((d) => d.delegate?.username === carer.username);
+    assert.ok(record != null && typeof record.relId === 'string', JSON.stringify(list.body));
+    return { patToken: tokRes.body.token, patAccessId: base(info.body.id), relId: record.relId };
+  }
+
+  async function detach () {
+    const res = await coreRequest.delete(kid.delegationsPath + '/delegates/' + carer.username)
+      .set('Authorization', kid.token);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  }
+
+  /** The doctor publishes a consent request; returns its invite. */
+  async function invite (appId) {
+    const appRoot = ':_cmc:apps:' + appId;
+    const triggerStreamId = appRoot + ':study';
+    await ensureStream(doctor, doctor.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+    await ensureStream(doctor, doctor.token, { id: triggerStreamId, parentId: appRoot, name: 'Study' });
+    const res = await coreRequest.post(doctor.eventsPath).set('Authorization', doctor.token)
+      .send({ streamIds: [triggerStreamId], type: 'consent/request-cmc', content: requestContent(appId, doctor) });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    const capabilityUrl = res.body.event.content.capabilityUrl;
+    assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0);
+    return { appId, appRoot, triggerStreamId, capabilityUrl };
+  }
+
+  function requestContent (appId, requester) {
+    return {
+      to: null,
+      capabilityRequested: true,
+      request: {
+        title: { en: appId },
+        description: { en: 'consent requested in a delegation test' },
+        consent: { en: 'I consent.' },
+        permissions: [{ streamId: 'fertility', level: 'read' }],
+      },
+      requesterMeta: { username: requester.username, appId },
+    };
+  }
+
+  /** Write the accept on the kid's account with `token`. */
+  async function accept (inv, token, extraContent = {}) {
+    await ensureStream(kid, kid.token, { id: inv.appRoot, parentId: ':_cmc:apps', name: inv.appId });
+    const res = await coreRequest.post(kid.eventsPath).set('Authorization', token)
+      .send({
+        streamIds: [inv.appRoot],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl: inv.capabilityUrl, accessName: 'grant-' + inv.appId, ...extraContent },
+      });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+
+  async function settledTrigger (eventId) {
+    const t0 = Date.now();
+    let content;
+    while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+      const r = await coreRequest.get(kid.eventsPath + '/' + eventId).set('Authorization', kid.token);
+      content = r.body?.event?.content;
+      if (content?.status === 'completed' || content?.status === 'failed') return content;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    throw new Error('accept trigger did not settle: ' + JSON.stringify(content));
+  }
+
+  async function kidAccesses () {
+    const res = await coreRequest.get(kid.accessesPath).set('Authorization', kid.token);
+    return res.body.accesses || [];
+  }
+
+  async function kidAccess (id) {
+    return (await kidAccesses()).find((a) => base(a.id) === base(id));
+  }
+
+  async function pollDoctorInbox (type, predicate) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+      const res = await coreRequest.get(doctor.eventsPath).set('Authorization', doctor.token)
+        .query({ streams: [':_cmc:inbox'], types: [type], limit: 100 });
+      const match = (res.body?.events || []).find(predicate);
+      if (match != null) return match;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    throw new Error('poll timeout: ' + type + ' on the doctor\'s inbox');
+  }
+
+  async function countDoctorInbox (type) {
+    const res = await coreRequest.get(doctor.eventsPath).set('Authorization', doctor.token)
+      .query({ streams: [':_cmc:inbox'], types: [type], limit: 100 });
+    return (res.body?.events || []).length;
+  }
+
+  /** The back-channel handshake has reached the kid's grant (the requester's endpoint is known). */
+  async function backChannelReached (inv) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+      const match = (await kidAccesses()).find((a) => {
+        const rcs = a?.clientData?.cmc?.counterparty?.remoteChatStreamId;
+        return typeof rcs === 'string' && rcs.startsWith(inv.triggerStreamId + ':chats:');
+      });
+      if (match != null) return match;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    throw new Error('back-channel not reached for ' + inv.triggerStreamId);
+  }
+
+  const expectedApprovedBy = () => ({
+    delegate: rel.delegateHostSlug != null ? { username: carer.username, hostSlug: rel.delegateHostSlug } : { username: carer.username },
+    relId: rel.relId,
+  });
+
+  /** The token of a grant on the kid's account (the requester holds it). */
+  async function grantTokenOf (grantId) {
+    const grant = await kidAccess(grantId);
+    assert.ok(typeof grant?.token === 'string' && grant.token.length > 0, JSON.stringify(grant));
+    return grant.token;
+  }
+
+  /** The accept delivered to the doctor for the grant whose token is `grantToken`. */
+  function acceptDeliveredFor (grantToken) {
+    return pollDoctorInbox('consent/accept-cmc', (e) => {
+      const ep = e.content?.grantedAccess?.apiEndpoint;
+      if (typeof ep !== 'string') return false;
+      try { return decodeURIComponent(new URL(ep).username) === grantToken; } catch (_e) { return false; }
+    });
+  }
+
+  it('[DCH15] the delegate token accepts: approvedBy recorded, the grant carries the delegation lineage, access-info names the delegate', async function () {
+    const inv = await invite('dch15-' + cuid().slice(-6));
+    const event = await accept(inv, rel.patToken);
+    const approvedBy = event.content.approvedBy;
+    assert.strictEqual(approvedBy?.delegate?.username, carer.username, JSON.stringify(event.content));
+    assert.strictEqual(approvedBy.relId, rel.relId);
+    assert.deepStrictEqual(Object.keys(approvedBy).sort(), ['delegate', 'relId']);
+    rel.delegateHostSlug = approvedBy.delegate.hostSlug;
+
+    const settled = await settledTrigger(event.id);
+    assert.strictEqual(settled.status, 'completed', JSON.stringify(settled));
+    assert.deepStrictEqual(settled.approvedBy, approvedBy, 'the stamp survives the dispatch\'s status writes');
+
+    const grant = await kidAccess(settled.dataGrantAccessId);
+    assert.ok(grant != null, 'the data grant exists on the managed account');
+    assert.strictEqual(grant.clientData.cmc.role, 'counterparty');
+    assert.deepStrictEqual(grant.clientData.delegation, {
+      kind: 'delegated-child',
+      relId: rel.relId,
+      delegate: grant.clientData.delegation.delegate,
+      viaAccessId: rel.patAccessId,
+    });
+    assert.strictEqual(grant.clientData.delegation.delegate.username, carer.username);
+
+    // the requester receives the accept, and its view of the grant says it
+    // was granted through the delegation
+    const grantToken = await grantTokenOf(settled.dataGrantAccessId);
+    const delivered = await acceptDeliveredFor(grantToken);
+    assert.strictEqual(delivered.content.from?.username, kid.username);
+    const info = await coreRequest.get(kid.accessInfoPath).set('Authorization', grantToken);
+    assert.strictEqual(info.status, 200, JSON.stringify(info.body));
+    assert.strictEqual(info.body.delegation?.isDelegatedAccess, true, JSON.stringify(info.body));
+    assert.strictEqual(info.body.delegation.grantedVia, 'app');
+    assert.strictEqual(info.body.delegation.delegate.username, carer.username);
+  });
+
+  it('[DCH16] approvedBy cannot be supplied by a client, on create or on update', async function () {
+    const forged = { delegate: { username: 'someone-else' }, relId: 'forged-rel' };
+    // the owner: no approvedBy, and the grant carries no delegation lineage
+    const own = await accept(await invite('dch16a-' + cuid().slice(-6)), kid.token, { approvedBy: forged });
+    assert.strictEqual('approvedBy' in own.content, false, JSON.stringify(own.content));
+    const ownSettled = await settledTrigger(own.id);
+    assert.strictEqual(ownSettled.status, 'completed', JSON.stringify(ownSettled));
+    assert.strictEqual('approvedBy' in ownSettled, false);
+    const ownGrant = await kidAccess(ownSettled.dataGrantAccessId);
+    assert.strictEqual(ownGrant.clientData.delegation, undefined, JSON.stringify(ownGrant.clientData));
+
+    // the delegate: the stamp is the real one, whatever was sent
+    const viaPat = await accept(await invite('dch16b-' + cuid().slice(-6)), rel.patToken, { approvedBy: forged });
+    assert.deepStrictEqual(viaPat.content.approvedBy, expectedApprovedBy(), JSON.stringify(viaPat.content));
+    const patSettled = await settledTrigger(viaPat.id);
+    assert.strictEqual((await kidAccess(patSettled.dataGrantAccessId)).clientData.delegation.relId, rel.relId);
+
+    // an update keeps the stamp (owner or delegate), and cannot add one
+    for (const [token, content] of [[kid.token, { ...patSettled, approvedBy: forged }], [rel.patToken, { note: 'no approvedBy' }]]) {
+      const upd = await coreRequest.put(kid.eventsPath + '/' + viaPat.id).set('Authorization', token).send({ content });
+      assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+      assert.deepStrictEqual(upd.body.event.content.approvedBy, expectedApprovedBy(), JSON.stringify(upd.body.event.content));
+    }
+    const addUpd = await coreRequest.put(kid.eventsPath + '/' + own.id).set('Authorization', kid.token)
+      .send({ content: { ...ownSettled, approvedBy: forged } });
+    assert.strictEqual(addUpd.status, 200, JSON.stringify(addUpd.body));
+    assert.strictEqual('approvedBy' in addUpd.body.event.content, false, JSON.stringify(addUpd.body.event.content));
+  });
+
+  it('[DCH17] publishing an offer and widening a grant stay owner-only for the delegate token', async function () {
+    const appId = 'dch17-' + cuid().slice(-6);
+    const appRoot = ':_cmc:apps:' + appId;
+    await ensureStream(kid, kid.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+    const body = { streamIds: [appRoot], type: 'consent/request-cmc', content: requestContent(appId, kid) };
+    const refused = await coreRequest.post(kid.eventsPath).set('Authorization', rel.patToken).send(body);
+    assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+    assert.ok(JSON.stringify(refused.body).includes('delegation-grant-requires-owner'), JSON.stringify(refused.body));
+    // the same request by the owner is valid: the refusal is the delegation rule
+    const own = await coreRequest.post(kid.eventsPath).set('Authorization', kid.token).send(body);
+    assert.strictEqual(own.status, 201, JSON.stringify(own.body));
+
+    const widen = await coreRequest.post(kid.eventsPath).set('Authorization', rel.patToken)
+      .send({ streamIds: [appRoot], type: 'consent/scope-update-cmc', content: {} });
+    assert.strictEqual(widen.status, 400, JSON.stringify(widen.body));
+    assert.ok(JSON.stringify(widen.body).includes('delegation-grant-requires-owner'), JSON.stringify(widen.body));
+  });
+
+  it('[DCH18] detach deletes a grant the delegate gave, at once, and the requester receives consent/revoke-cmc', async function () {
+    const inv = await invite('dch18-' + cuid().slice(-6));
+    const event = await accept(inv, rel.patToken);
+    const settled = await settledTrigger(event.id);
+    assert.strictEqual(settled.status, 'completed', JSON.stringify(settled));
+    const grantId = base(settled.dataGrantAccessId);
+    await backChannelReached(inv);
+    const grantToken = await grantTokenOf(grantId);
+    await acceptDeliveredFor(grantToken);
+
+    await detach();
+
+    // gone when detach returns, not eventually
+    assert.strictEqual(await kidAccess(grantId), undefined, 'the grant is deleted by the detach itself');
+    const dead = await coreRequest.get(kid.accessInfoPath).set('Authorization', grantToken);
+    assert.ok([401, 403].includes(dead.status), 'the requester\'s token no longer works: ' + dead.status);
+    // and the requester is told
+    const revoke = await pollDoctorInbox('consent/revoke-cmc', (e) => base(e.content?.accessId) === grantId);
+    assert.strictEqual(revoke.content.appCode, inv.appId);
+    assert.strictEqual(revoke.content.from?.username, kid.username);
+  });
+
+  it('[DCH19] an accept still in progress when the delegation is detached does not complete and leaves no grant', async function () {
+    rel = await attach();
+    const inv = await invite('dch19-' + cuid().slice(-6));
+    let reached;
+    const atOfferRead = new Promise((resolve) => { reached = resolve; });
+    let release;
+    offerHold = {
+      capabilityToken: decodeURIComponent(new URL(inv.capabilityUrl).username),
+      reached,
+      released: new Promise((resolve) => { release = resolve; }),
+    };
+    const acceptsBefore = await countDoctorInbox('consent/accept-cmc');
+
+    const event = await accept(inv, rel.patToken);
+    assert.strictEqual(event.content.approvedBy?.relId, rel.relId);
+    // the dispatch is reading the offer: the accept is in progress
+    await Promise.race([atOfferRead, sleep(POLL_TIMEOUT_MS).then(() => { throw new Error('the accept never read the offer'); })]);
+    await detach();
+    release();
+
+    const settled = await settledTrigger(event.id);
+    assert.strictEqual(settled.status, 'failed', JSON.stringify(settled));
+    assert.strictEqual(settled.failure?.reason, 'cmc-handler-delegation-ended', JSON.stringify(settled));
+    const grants = (await kidAccesses()).filter((a) => a.clientData?.cmc?.acceptEventId === event.id);
+    assert.deepStrictEqual(grants, [], 'no grant for this accept');
+    await sleep(1000);
+    assert.strictEqual(await countDoctorInbox('consent/accept-cmc'), acceptsBefore, 'the requester never received an accept');
   });
 });
