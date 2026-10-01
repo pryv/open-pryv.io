@@ -251,7 +251,7 @@ class DBpostgresql {
    * no cheap built-in structural check (that needs the amcheck extension):
    * `structural` is null.
    */
-  async checkIntegrity (): Promise<PlatformIntegrityReport> {
+  async checkStoreIntegrity (): Promise<PlatformIntegrityReport> {
     const res = await this.db.withTransaction(async (client) => {
       await client.query('SET LOCAL enable_indexscan = off');
       await client.query('SET LOCAL enable_indexonlyscan = off');

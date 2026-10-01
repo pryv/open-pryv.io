@@ -171,7 +171,7 @@ if (cluster.isPrimary) {
     // lookups miss rows), so say it loudly at boot. Never blocks the boot.
     try {
       const { describePlatformIntegrity } = require('../storages/interfaces/platformStorage/PlatformDB.ts');
-      const report = await require('../storages/index.ts').platformDB.checkIntegrity();
+      const report = await require('../storages/index.ts').platformDB.checkStoreIntegrity();
       if (!report.ok) {
         const msg = `[platform-integrity] ${describePlatformIntegrity(report).join('\n  ')}`;
         logger.error(msg);

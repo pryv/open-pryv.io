@@ -942,11 +942,11 @@ export default function conformanceTests (getDB) {
       });
     });
 
-    describe('[PLIC] checkIntegrity()', () => {
+    describe('[PLIC] checkStoreIntegrity()', () => {
       it('[PLIC01] reports a healthy store as ok, with no duplicate keys', async () => {
         await db.setPlatformKv('plic/' + cuid(), 'v');
         await db.setUserCore('plic-' + cuid(), 'core-a');
-        const report = await db.checkIntegrity();
+        const report = await db.checkStoreIntegrity();
         assert.strictEqual(report.ok, true, JSON.stringify(report));
         assert.deepStrictEqual(report.duplicateKeys, []);
         // structural: the engine's own messages (['ok'] when clean), or null when it has none
@@ -957,7 +957,7 @@ export default function conformanceTests (getDB) {
         const key = 'plic/' + cuid();
         await db.setPlatformKv(key, 'before');
         const before = await db.exportAll();
-        await db.checkIntegrity();
+        await db.checkStoreIntegrity();
         assert.deepStrictEqual(await db.exportAll(), before);
         assert.strictEqual(await db.getPlatformKv(key), 'before');
       });

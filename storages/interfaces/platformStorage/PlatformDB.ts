@@ -106,7 +106,7 @@ export interface InvitationTokenEntry extends InvitationTokenInfo {
 }
 
 /**
- * Result of `checkIntegrity()`, read on THIS node's copy of the platform data.
+ * Result of `checkStoreIntegrity()`, read on THIS node's copy of the platform data.
  * A corrupted primary-key index raises no error by itself: upserts then
  * duplicate keys and lookups miss rows, so the duplicate scan reads the table
  * without that index.
@@ -243,7 +243,7 @@ export interface PlatformDB {
   deleteInvitationToken (token: string): Promise<void>;
 
   // Integrity (read-only)
-  checkIntegrity (): Promise<PlatformIntegrityReport>;
+  checkStoreIntegrity (): Promise<PlatformIntegrityReport>;
 }
 
 /**
@@ -386,7 +386,7 @@ const PlatformDB: PlatformDB = {
 
   async deleteInvitationToken (token: string): Promise<void> { throw new Error('Not implemented'); },
 
-  async checkIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
+  async checkStoreIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties
@@ -409,7 +409,7 @@ function validatePlatformDB (instance: unknown): PlatformDB {
 const MAX_LISTED = 10;
 
 /**
- * Human-readable lines for a `checkIntegrity()` report (CLI + boot log).
+ * Human-readable lines for a `checkStoreIntegrity()` report (CLI + boot log).
  * Lists at most MAX_LISTED structural messages and duplicated keys.
  */
 function describePlatformIntegrity (report: PlatformIntegrityReport): string[] {
