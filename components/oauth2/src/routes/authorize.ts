@@ -208,10 +208,14 @@ function sendHtmlError (res: Response, status: number, message: string): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
-  // A page of the authorization server is never framed (clickjacking).
+  // A page of the authorization server is never framed (clickjacking). The
+  // page loads nothing, so `default-src 'none'` costs nothing and neutralises
+  // any markup that would get in; its URL carries the client_id and never
+  // leaves as a referrer.
   // X-Content-Type-Options comes from the API's express app, like every answer.
-  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   res.end(`<!DOCTYPE html><html><head><title>OAuth error</title></head>` +
     `<body><h1>Authorization failed</h1><p>${escapeHtml(message)}</p></body></html>`);
 }

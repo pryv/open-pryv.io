@@ -446,7 +446,11 @@ describe('[SDHF] Storing data in a HF series', function () {
             .set('authorization', 'AUTH_TOKEN')
             .set('content-type', 'application/json')
             .send('{"format": "flatJSON"');
-          assert.ok(badJson.status >= 400, 'status ' + badJson.status);
+          // Known mismatch: the HFS error middleware maps the JSON parser's
+          // error to 500, where the API answers 400 to the same body. The
+          // status stays tolerant until that is fixed; the header check is the
+          // point of this test and is strict.
+          assert.ok([400, 500].includes(badJson.status), 'status ' + badJson.status);
           assert.strictEqual(badJson.headers['x-content-type-options'], 'nosniff', 'body-parser error');
           const options = await server.request().options(`/USERNAME/events/${EVENT_ID}/series`);
           assert.strictEqual(options.status, 200);

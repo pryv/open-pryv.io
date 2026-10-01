@@ -4,11 +4,16 @@
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing
 
-Every answer of the API (high-frequency series and previews included) now carries
-`X-Content-Type-Options: nosniff`, errors and `OPTIONS` included, so a browser never second-guesses the declared content type. The HTML error page of
+Every answer of the API (high-frequency series, previews and the Socket.IO HTTP transport
+included) now carries `X-Content-Type-Options: nosniff`, errors and `OPTIONS` included, so a
+browser never second-guesses the declared content type. Attachments are served with the content
+type the client declared when uploading them: with `nosniff` a browser no longer guesses a type
+instead (an attachment uploaded as `text/plain` is not rendered as an image cross-origin), so
+clients should declare the right type at upload. The HTML error page of
 `GET /oauth2/authorize` (missing `client_id` or `redirect_uri`, unknown client, unregistered `redirect_uri`) also carries
-`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`: a page of the
-authorization server is never framed.
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, `X-Frame-Options: DENY`
+and `Referrer-Policy: no-referrer`: a page of the authorization server is never framed, loads
+nothing and never leaks its URL as a referrer.
 
 Hosted sites, dnsLess topology: the `/<name>` → `/<name>/` redirect now carries the same headers
 as every other answer of the site (`nosniff`, `Referrer-Policy`, HSTS over TLS and the

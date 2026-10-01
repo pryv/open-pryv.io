@@ -84,7 +84,9 @@ describe('[HSBT] hosted sites served by the real api-server', function () {
     // Documented limitation: Socket.IO takes /socket.io/ before any other
     // handler, on every Host (its engine re-orders the server's listeners)
     const sio = await get(manager.url, '/socket.io/?EIO=4&transport=polling', 'sitehome.' + DOMAIN);
-    assert.notEqual(sio.headers['x-content-type-options'], 'nosniff', 'answered by Socket.IO, not by the site');
+    assert.match(sio.body, /^0\{"sid":/, 'answered by Socket.IO (an Engine.IO handshake), not by the site');
+    assert.equal(sio.headers['referrer-policy'], undefined, 'no site header on the Socket.IO answer');
+    assert.equal(sio.headers['x-content-type-options'], 'nosniff', 'Socket.IO answers carry nosniff too');
     await manager.stopAsync();
   });
 

@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { HttpHeaders } from 'business/src/types/public.ts';
-import type { Server as HttpServer } from 'node:http';
+import type { Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http';
 import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 /**
@@ -47,6 +47,17 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
   const storageLayer = await getStorageLayer();
   const io = socketIO.listen(server, {
     path: Paths.SocketIO
+  });
+  // Engine.IO answers its HTTP requests itself, ahead of the express app, so
+  // the API's `nosniff` middleware never sees them. Set the header before
+  // Engine.IO handles the request: this covers the polling handshake and
+  // polls as well as Engine.IO's own error answers (unknown transport, bad
+  // handshake, unknown session), which skip its 'headers' event.
+  const socketIOPathPrefix = Paths.SocketIO.replace(/\/$/, '') + '/';
+  server.prependListener('request', (req: IncomingMessage, res: ServerResponse) => {
+    if (req.url != null && req.url.startsWith(socketIOPathPrefix)) {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    }
   });
     // Manages socket.io connections and delivers method calls to the api.
   const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);

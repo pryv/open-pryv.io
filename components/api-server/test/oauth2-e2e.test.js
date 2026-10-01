@@ -594,15 +594,16 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(res.headers.location, undefined);
     });
 
-    it('[OAHX] the /authorize HTML error page refuses framing and MIME sniffing', async function () {
+    it('[OAHX] the /authorize HTML error page refuses framing, MIME sniffing, subresources and referrers', async function () {
       const res = await coreRequest
         .get('/oauth2/authorize')
         .query({ client_id: 'never-registered', redirect_uri: REDIRECT_URI, response_type: 'code' });
       assert.equal(res.status, 400);
       assert.match(res.headers['content-type'], /text\/html/);
       assert.equal(res.headers['x-content-type-options'], 'nosniff');
-      assert.equal(res.headers['content-security-policy'], "frame-ancestors 'none'");
+      assert.equal(res.headers['content-security-policy'], "default-src 'none'; frame-ancestors 'none'");
       assert.equal(res.headers['x-frame-options'], 'DENY');
+      assert.equal(res.headers['referrer-policy'], 'no-referrer');
     });
 
     it('[OE19] coarse scope tokens no longer exist → invalid_scope redirect', async function () {
