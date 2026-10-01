@@ -7,7 +7,7 @@
 import * as C from './constants.ts';
 
 /**
- * CMC plugin — `content.approvedBy` on a consent accept: who approved it, and
+ * CMC plugin: `content.approvedBy` on a consent accept, who approved it and
  * through which account delegation, when it was not the account owner.
  *
  * A delegate (a carer managing the account) may accept a consent for the
