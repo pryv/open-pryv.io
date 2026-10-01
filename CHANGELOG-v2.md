@@ -1,5 +1,33 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Consent invites inside the authorisation request (`cmcInvites`)
+
+An app can ask the user, in the same authorisation request (`POST /reg/access`), to also answer
+cross-account messaging invites it received: `cmcInvites: [{ capabilityUrl, mandatory?, for? }]`,
+1 to 8 entries, each `capabilityUrl` an absolute http(s) URL of at most 2048 characters,
+`mandatory` a boolean (default `false`), `for` `'self'` (default) or `'target'` (an account the
+user manages through account delegation, when the access is granted for it). A malformed list is refused
+`400 invalid-parameters`. The request's size ceiling (`access:maxRequestBytes`) still applies.
+
+- **Detection:** the 201 answer echoes the normalised `cmcInvites` (with `mandatory` and `for`
+  filled in) only when the core understood them; an older core drops the field. The NEED_SIGNIN
+  poll carries the same list for the auth page.
+- **Outcomes:** the auth page posts, with `status: 'ACCEPTED'`, one outcome per invite in the
+  request's order: `{ acceptEventId, dataGrantAccessId?, acceptedFor?: 'self' }`,
+  `{ declined: true }` or `{ reason }`. A list of the wrong length or shape, or one sent with
+  another status or on a request without invites, is refused `400` before anything is written.
+  The ACCEPTED bodies (POST answer and polls, inline or hand-off) carry it as `cmcInvites`.
+- **A hint, not a proof:** the outcomes are what the page reports; the requester learns the truth
+  from its own inbox (`consent/accept-cmc`). `mandatory` is enforced by the auth page: a declined
+  mandatory invite ends the request `REFUSED` with `reasonId: 'REFUSED_MANDATORY_CONSENT'`, and a
+  mandatory invite that could not be accepted with `reasonId: 'MANDATORY_CONSENT_FAILED'` (its
+  `message` names the invite and the platform's error id). The core stores both as given.
+- The capability URLs stay in the request, which lives in this core's memory only (at most one
+  hour, and 120 s after its outcome is first read) and is readable by whoever holds the poll key,
+  as the rest of the request is.
+
 ## 2.0.0-rc.31 - 2026-10-01
 
 ### Platform DB integrity: checked at every boot and by `bin/integrity-check.js`

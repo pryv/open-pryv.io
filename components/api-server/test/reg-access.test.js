@@ -1051,6 +1051,31 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(r2.body.secret, undefined, 'the credential must never be served twice');
     });
 
+    it('[RCI9] the shape-L conversion keeps the consent-invite outcomes beside the hand-off key', async () => {
+      const cmcInvites = [{ capabilityUrl: 'https://cap@doctor.example.com/' }];
+      const outcomes = [{ declined: true }];
+      const key = await createRequest({ credentialHandoff: 'shared-secret', cmcInvites });
+      const token = await mintApp([{ streamId: 'diary', level: 'read' }]);
+      const res = await coreRequest.post('/reg/access/' + key)
+        .send({ status: 'ACCEPTED', username, token, apiEndpoint: apiEndpoint(), cmcInvites: outcomes });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.handoff?.key, 'converted to a hand-off');
+      assert.strictEqual(res.body.token, undefined);
+      assert.deepStrictEqual(res.body.cmcInvites, outcomes);
+      assert.deepStrictEqual((await coreRequest.get('/reg/access/' + key)).body.cmcInvites, outcomes);
+
+      // and the inline fallback (shared secrets disabled) keeps them too
+      await withInjectedConfig({ sharedSecrets: { enabled: false } }, async () => {
+        const k2 = await createRequest({ credentialHandoff: 'shared-secret', cmcInvites });
+        const t2 = await mintApp([{ streamId: 'diary', level: 'read' }]);
+        const r2 = await coreRequest.post('/reg/access/' + k2)
+          .send({ status: 'ACCEPTED', username, token: t2, apiEndpoint: apiEndpoint(), cmcInvites: outcomes });
+        assert.strictEqual(r2.status, 200, JSON.stringify(r2.body));
+        assert.strictEqual(r2.body.token, t2, 'fell back to inline');
+        assert.deepStrictEqual(r2.body.cmcInvites, outcomes);
+      });
+    });
+
     it('[RA98] without credentialHandoff a shape-L accept is byte-identical to the legacy ACCEPTED body', async () => {
       const key = await createRequest({});
       const token = await mintApp([{ streamId: 'diary', level: 'read' }]);

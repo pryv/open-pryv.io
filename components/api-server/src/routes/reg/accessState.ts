@@ -67,6 +67,9 @@ type BuildStateParams = {
    * by the route; set only when the app sent it. Absence keeps today's
    * inline delivery. */
   credentialHandoff?: 'shared-secret';
+  /** Consent invites the user is asked to answer with the access, validated
+   * by the route (`cmcInvites.ts`); set only when the app sent them. */
+  cmcInvites?: unknown;
 };
 
 type AccessState = {
@@ -194,6 +197,7 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
   if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
   if (typeof params.actAs === 'string') state.actAs = params.actAs;
   if (params.credentialHandoff === 'shared-secret') state.credentialHandoff = 'shared-secret';
+  if (params.cmcInvites !== undefined) state.cmcInvites = params.cmcInvites;
   return { key, state, expiresAt };
 }
 
@@ -291,10 +295,14 @@ async function markDelivered (key: string, state: AccessState, retentionMs: numb
  * delivery; the route validates its shape (and that the request asked for it)
  * before it gets here. A state that carries `handoff` never carries `token`
  * (see `update()` below): the token moved into the referenced secret.
+ *
+ * `cmcInviteOutcomes` holds what the auth page did with each consent invite
+ * of the request (one entry per invite); the route validates it against the
+ * stored `cmcInvites`, which stays the app's and is not updatable.
  */
 const UPDATABLE_FIELDS = Object.freeze([
   'status', 'username', 'token', 'apiEndpoint',
-  'reasonId', 'message', 'redirectUrl', 'delegation', 'handoff'
+  'reasonId', 'message', 'redirectUrl', 'delegation', 'handoff', 'cmcInviteOutcomes'
 ]);
 
 /** Of those, the ones that carry free text and so must be strings. Whoever
