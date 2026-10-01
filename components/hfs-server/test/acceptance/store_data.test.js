@@ -93,6 +93,15 @@ describe('[SDHF] Storing data in a HF series', function () {
         .send(postData)
         .expect(200);
     }
+    it('[MJ40] a malformed JSON body is answered 400 invalid-request-structure, not 500', async () => {
+      const res = await server.request()
+        .post(`/${userId}/events/${eventId}/series`)
+        .set('authorization', accessToken)
+        .set('content-type', 'application/json')
+        .send('{"format": "flatJSON", "fields": [');
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error?.id, 'invalid-request-structure', JSON.stringify(res.body));
+    });
     it('[ZUBI] should convert timestamp to deltaTime', async () => {
       const nowPlus1Sec = nowEvent + 1;
       await storeData({ timestamp: nowPlus1Sec, value: 80.3 }, accessToken);
