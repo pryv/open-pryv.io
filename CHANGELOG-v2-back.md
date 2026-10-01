@@ -27,6 +27,31 @@ When the block already exists and the effective `max_connections` is lower than 
 the script now appends `max_connections = 300` (the last setting wins) and asks for a restart.
 A higher value is left alone.
 
+## Reviewed detach: internals; the CMC retry loop reads its queue again
+
+- Delegation plugin `detachDelegate`: the keep list is checked against the relationship's
+  `delegated-child` accesses before any write; the sweep re-reads them after the delegate token is
+  deleted, so a grant minted while the token was being removed is still caught by its marker. A
+  kept grant is updated through the mall with `clientData: { delegation: null }` only (the
+  one-level merge removes the key and leaves `clientData.cmc` as stored); the decision is written
+  on the grant's accept event (`clientData.cmc.acceptEventId`) through the new
+  `store.patchEventContent` (versioned, `modified` stamped), best-effort (a missing event or a
+  failed write is logged, the grant decision stands). Returns `keptConsentGrants` beside the two
+  existing counts.
+- CMC `handleAccept`: a grant reused from an earlier dispatch of the same accept is given its
+  delegation marker with `clientData: { delegation }` only, no longer re-sending the stored
+  `clientData` (a back-channel write in between would have been overwritten).
+- CMC: `approvedByStampingHook.ts` is now `acceptServerOwnedFieldsHook.ts`
+  (`createAcceptStampingHook`, `createAcceptPreserveHook`); the field list is
+  `constants.ACCEPT_SERVER_OWNED_FIELDS`. Server writers of the accept event go through the mall
+  and are not affected.
+- Fix: the CMC retry loop (`cmc.retryLoop.enabled`, off by default) read its queue with a bare
+  stream id, which the mall resolves to no store, so every pass threw and no retry was ever
+  processed. It now queries `{ any: [':_cmc:_internal:retries'] }`. Covered end to end by
+  `[DCH20]` (a delegate accept whose delivery fails once completes on the retry with its lineage);
+  the retry unit tests' fake mall now refuses a bare stream id like the real one.
+- Tests: `[DDK01-10]`, `[APB08-12]`, `[DCH20-24]`.
+
 ## Delegate consent: how the lineage reaches the CMC grant
 
 Internals of the API change "A delegate may accept a consent for the account it manages".

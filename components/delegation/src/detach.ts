@@ -61,7 +61,16 @@ type DetachDeps = {
    * the grants are deleted without notice.
    */
   notifyConsentGrantsRevoked?: (bUserId: string, grants: AccessRow[]) => Promise<void> | void;
+  /** Where a consent marker that could not be written is reported. */
+  logger?: { warn: (msg: string, ctx?: Record<string, unknown>) => void };
 };
+
+// Mirrors cmc/src/constants.ts ACCEPT_SERVER_OWNED_FIELDS (no cross-import);
+// [DCH22] and [DCH24] keep them in step.
+/** Content key a consent grant's accept event receives when the owner keeps it at detach. */
+const OWNER_CONFIRMED_AT = 'ownerConfirmedAt';
+/** Content key a consent grant's accept event receives when the grant ends at detach. */
+const WITHDRAWAL = 'withdrawal';
 
 type NotifyDeps = {
   mall: MallLike;
@@ -111,12 +120,21 @@ function isGenuineLoginAccess (access: GateAccessLike): boolean {
  *     token); (1b) delete every `delegated-child` access of the relationship
  *     (what the delegate granted on B, consent grants included); (1c)
  *     best-effort tell the requester of each consent grant that it is
- *     withdrawn; (2) delete the control access (after this, issueToken can mint no
+ *     withdrawn; a consent grant the owner chose to keep (`keepAccessIds`) is
+ *     not deleted: it loses its delegation marker and becomes the owner's own;
+ *     (2) delete the control access (after this, issueToken can mint no
  *     further PAT); (3) sweep any lingering invite capability; (4) delete the
  *     anchor; then (5) best-effort notify A via the notify-marker channel so A
  *     drops its mirror + notify access. If the notify is lost, A's mirror lingers
  *     until lazy reconciliation (a later getToken 401/403 flips it stale, or the
  *     user dismisses it) — there is NO background sweep.
+ *
+ * The owner's review: `keepAccessIds` names the consent grants the delegate
+ * gave that the owner keeps. Every id must be such a grant of THIS
+ * relationship, else the whole call is refused before anything is written.
+ * Nothing is kept by default. Each grant's accept event records the outcome:
+ * `content.ownerConfirmedAt` for a kept grant, `content.withdrawal` for a
+ * dropped one (best-effort; the grant decision itself is authoritative).
  *
  * Absent / already-detached relationship → a clean 404 (not a crash).
  */
@@ -124,12 +142,14 @@ async function detachDelegate (deps: DetachDeps, params: {
   bUserId: string;
   bUsername: string;
   delegateUsername: string;
-}): Promise<{ revokedChildAccesses?: number; revokedConsentGrants?: number }> {
+  keepAccessIds?: unknown;
+}): Promise<{ revokedChildAccesses?: number; revokedConsentGrants?: number; keptConsentGrants?: number }> {
   const { mall, now, self } = deps;
   const delegateUsername = String(params.delegateUsername || '').trim();
   if (delegateUsername.length === 0) {
     throw delegationError(DelegationErrorIds.UNKNOWN_USERNAME, 'A delegate username is required', 400);
   }
+  const keepIds = parseKeepList(params.keepAccessIds);
 
   const anchor = await store.findAnchorByDelegate(mall, params.bUserId, delegateUsername);
   if (anchor == null) {
@@ -138,6 +158,20 @@ async function detachDelegate (deps: DetachDeps, params: {
   }
   const content = anchor.content as AnchorContent;
   const relId = content.relId;
+
+  // Every access granted through the relationship, read BEFORE any write so a
+  // refused review changes nothing. Validation only: the sweep (1b) re-reads
+  // after the delegate token is gone.
+  const grantsBefore = await store.findMarkerAccesses(mall, params.bUserId, relId, C.CLIENTDATA_KIND.DELEGATED_CHILD);
+  if (keepIds.size > 0) {
+    const grantIds = new Set(grantsBefore.filter(isConsentGrant).map((a) => a.id));
+    for (const id of keepIds) {
+      if (!grantIds.has(id)) {
+        throw delegationError(DelegationErrorIds.INVALID_KEEP_LIST,
+          'keepAccessIds may only name consent grants given through this delegation', 400, { accessId: id });
+      }
+    }
+  }
 
   // -------- pending invite → cancel ----------------------------------------
   if (content.status === C.STATUS.INVITE) {
@@ -179,11 +213,29 @@ async function detachDelegate (deps: DetachDeps, params: {
   // revoking the delegation revokes what it granted. Right after the PAT, so
   // nothing it minted outlives it. Every one is deleted HERE, synchronously:
   // the deletion is the authoritative revocation and never waits on a peer.
+  // The exception is a consent grant the owner kept: it stays, without the
+  // delegation marker, so it no longer belongs to the relationship.
+  // Read AFTER step (1): a grant minted while the token was being removed
+  // passed its own post-mint check against a still-present token and is only
+  // caught here, by its marker.
   const children = await store.findMarkerAccesses(mall, params.bUserId, relId, C.CLIENTDATA_KIND.DELEGATED_CHILD);
   const consentGrants: AccessRow[] = [];
+  let kept = 0;
   for (const child of children) {
+    if (keepIds.has(child.id)) {
+      // Only the marker: the object form merges one level and `null` removes
+      // the key, so `clientData.cmc` is left as stored (a back-channel write
+      // since the read above is not overwritten).
+      await store.updateAccessFields(mall, params.bUserId, child.id, { clientData: { delegation: null } });
+      kept++;
+      await markAcceptEvent(deps, params.bUserId, child, { [OWNER_CONFIRMED_AT]: now() });
+      continue;
+    }
     await store.deleteAccessById(mall, params.bUserId, child.id);
-    if (isConsentGrant(child)) consentGrants.push(child);
+    if (isConsentGrant(child)) {
+      consentGrants.push(child);
+      await markAcceptEvent(deps, params.bUserId, child, { [WITHDRAWAL]: { at: now(), by: 'delegation-detach', relId } });
+    }
   }
   // (1c) a consent grant has a requester on the other side holding its token:
   // tell them it is withdrawn rather than leaving them a dead token.
@@ -210,8 +262,41 @@ async function detachDelegate (deps: DetachDeps, params: {
   if (notifyEndpoint != null) {
     try { await deps.notifyDetach(notifyEndpoint, relId); } catch (_e) { /* lazy reconciliation on A */ }
   }
-  void now;
-  return { revokedChildAccesses: children.length, revokedConsentGrants: consentGrants.length };
+  return { revokedChildAccesses: children.length - kept, revokedConsentGrants: consentGrants.length, keptConsentGrants: kept };
+}
+
+/**
+ * The keep list as a set of access ids: absent means keep nothing; anything but
+ * an array of non-empty strings is refused before the relationship is read.
+ */
+function parseKeepList (raw: unknown): Set<string> {
+  if (raw == null) return new Set();
+  if (!Array.isArray(raw) || raw.some((id) => typeof id !== 'string' || id.length === 0)) {
+    throw delegationError(DelegationErrorIds.INVALID_KEEP_LIST,
+      'keepAccessIds must be an array of access ids', 400);
+  }
+  return new Set(raw as string[]);
+}
+
+/**
+ * Record the owner's decision on the accept event of a consent grant (its id
+ * is on the grant, `clientData.cmc.acceptEventId`). Best-effort: the grant was
+ * already kept or deleted, which is the authoritative outcome; a missing event
+ * or a failed write is reported, never thrown.
+ */
+async function markAcceptEvent (deps: DetachDeps, bUserId: string, grant: AccessRow, patch: Record<string, unknown>): Promise<void> {
+  const acceptEventId = (grant.clientData as { cmc?: { acceptEventId?: unknown } } | null | undefined)?.cmc?.acceptEventId;
+  if (typeof acceptEventId !== 'string' || acceptEventId.length === 0) return;
+  try {
+    const written = await store.patchEventContent(deps.mall, bUserId, acceptEventId, patch, deps.now());
+    if (!written) {
+      deps.logger?.warn('detach: consent accept event not found, decision not recorded on it', { accessId: grant.id, acceptEventId });
+    }
+  } catch (err) {
+    deps.logger?.warn('detach: could not record the decision on the consent accept event', {
+      accessId: grant.id, acceptEventId, error: String((err as Error)?.message ?? err),
+    });
+  }
 }
 
 /**

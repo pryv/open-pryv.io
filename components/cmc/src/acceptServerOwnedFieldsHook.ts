@@ -7,26 +7,31 @@
 import * as C from './constants.ts';
 
 /**
- * CMC plugin: `content.approvedBy` on a consent accept, who approved it and
- * through which account delegation, when it was not the account owner.
+ * CMC plugin: the server-owned fields of a consent accept event.
  *
- * A delegate (a carer managing the account) may accept a consent for the
- * account it manages. The accept event then records
- * `content.approvedBy = { delegate: { username, hostSlug? }, relId }`, so the
- * managed person sees who gave the consent and through which relationship.
- * (`content.acceptedBy` is taken: the dispatch stamps it with the accepter's
- * data-grant endpoint.)
+ * Three content fields of `consent/accept-cmc` form the subject-side record of
+ * a consent, and only the server writes them (`ACCEPT_SERVER_OWNED_FIELDS`):
+ *   - `approvedBy = { delegate: { username, hostSlug? }, relId }`: who gave the
+ *     consent and through which account delegation, when it was not the
+ *     account owner. Stamped here, on create. (`content.acceptedBy` is taken:
+ *     the dispatch stamps it with the accepter's data-grant endpoint.)
+ *   - `ownerConfirmedAt` and `withdrawal`: the owner's decision on a consent a
+ *     delegate gave, written by the delegation plugin when the delegate is
+ *     removed (kept, or ended). Never written here.
  *
- * The field is server-owned:
- *   - events.create (`createApprovedByStampingHook`): any client-supplied
- *     `approvedBy` is removed, whoever writes; when the writing access is
- *     delegation-derived, the field is set from that access's own marker
+ * The rule, for any token:
+ *   - events.create (`createAcceptStampingHook`): the three fields are removed
+ *     from the client's content; when the writing access is
+ *     delegation-derived, `approvedBy` is set from that access's own marker
  *     (read by the injected `lineageOf`, the delegation plugin's reader, so
  *     this plugin does not import it). The content validator lets extra keys
- *     through, so without the removal a client could write the field itself.
- *   - events.update (`createApprovedByPreserveHook`): the stored value is
- *     kept, a client-supplied one is dropped. A content update replaces the
- *     content whole, so the stored value is put back explicitly.
+ *     through, so without the removal a client could write them itself.
+ *   - events.update (`createAcceptPreserveHook`): the stored values are kept,
+ *     client-supplied ones are dropped, the rest of the content is as sent. A
+ *     content update replaces the content whole, so the stored values are put
+ *     back explicitly.
+ * Server writers (the dispatch status stamps, the incoming accept, the
+ * delegation detach) go through the mall and never reach these hooks.
  *
  * The record is history; what the delegation controls is the data grant,
  * which carries the same lineage on its own forge-protected
@@ -80,11 +85,11 @@ function approvedByFor (lineageOf: LineageOf, access: unknown): ApprovedBy | nul
  * events.create hook. Wired after the CMC accept gate (so a refused write is
  * never stamped) and before the event is stored.
  */
-function createApprovedByStampingHook (deps: { lineageOf: LineageOf }): Middleware {
-  return function cmcApprovedByStampingHook (context, _params, _result, next) {
+function createAcceptStampingHook (deps: { lineageOf: LineageOf }): Middleware {
+  return function cmcAcceptStampingHook (context, _params, _result, next) {
     const event = context?.newEvent;
     if (event?.type !== C.ET_ACCEPT || !isPlainObject(event.content)) return next();
-    delete event.content.approvedBy;
+    for (const field of C.ACCEPT_SERVER_OWNED_FIELDS) delete event.content[field];
     const approvedBy = approvedByFor(deps.lineageOf, context.access);
     if (approvedBy != null) event.content.approvedBy = approvedBy;
     next();
@@ -96,18 +101,20 @@ function createApprovedByStampingHook (deps: { lineageOf: LineageOf }): Middlewa
  * stored event onto `context.oldEvent` and the merged one onto
  * `context.newEvent`.
  */
-function createApprovedByPreserveHook (): Middleware {
-  return function cmcApprovedByPreserveHook (context, _params, _result, next) {
+function createAcceptPreserveHook (): Middleware {
+  return function cmcAcceptPreserveHook (context, _params, _result, next) {
     const event = context?.newEvent;
     if (event?.type !== C.ET_ACCEPT || !isPlainObject(event.content)) return next();
     const old = context.oldEvent;
-    const stored = (old?.type === C.ET_ACCEPT && isPlainObject(old.content)) ? old.content.approvedBy : undefined;
+    const stored = (old?.type === C.ET_ACCEPT && isPlainObject(old.content)) ? old.content : {};
     // Copy: the merged event may share the content object with the update.
     const content: Record<string, unknown> = { ...event.content };
-    if (stored === undefined) {
-      delete content.approvedBy;
-    } else {
-      content.approvedBy = stored;
+    for (const field of C.ACCEPT_SERVER_OWNED_FIELDS) {
+      if (stored[field] === undefined) {
+        delete content[field];
+      } else {
+        content[field] = stored[field];
+      }
     }
     event.content = content;
     next();
@@ -115,7 +122,7 @@ function createApprovedByPreserveHook (): Middleware {
 }
 
 export {
-  createApprovedByStampingHook,
-  createApprovedByPreserveHook,
+  createAcceptStampingHook,
+  createAcceptPreserveHook,
   approvedByFor,
 };

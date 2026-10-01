@@ -59,6 +59,7 @@ type MallLike = {
   events: {
     create: (userId: string, params: Partial<EventLike>) => Promise<EventLike>;
     get: (userId: string, params?: Record<string, unknown>) => Promise<EventLike[]>;
+    getOne?: (userId: string, eventId: string) => Promise<EventLike | null>;
     update: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
     delete?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
   };
@@ -279,6 +280,24 @@ async function updateAccessFields (mall: MallLike, userId: string, accessId: str
   return (await mall.accesses.update(userId, { id: accessId, update })) as AccessRow;
 }
 
+/**
+ * Merge `patch` into the content of the event `eventId` (any stream, e.g. a
+ * consent accept event of the CMC plugin) and stamp `modified`, so a
+ * `modifiedSince` reader sees the change. False when the event is gone or the
+ * mall cannot read one event by id; nothing is written then.
+ *
+ * Versioned (no `skipVersioning`): the CMC status stamps skip it so a version
+ * row never snapshots a credential, but an event patched here is terminal and
+ * already scrubbed, and its history is part of the record.
+ */
+async function patchEventContent (mall: MallLike, userId: string, eventId: string, patch: Record<string, unknown>, modified: number): Promise<boolean> {
+  if (mall.events.getOne == null) return false;
+  const event = await mall.events.getOne(userId, eventId);
+  if (event == null) return false;
+  await mall.events.update(userId, { ...event, content: { ...(event.content || {}), ...patch }, modified });
+  return true;
+}
+
 // -------------------------------------------------------------------- helpers
 
 async function ignoreExists<T> (p: Promise<T>): Promise<T | undefined> {
@@ -329,4 +348,5 @@ export {
   findAccessByNameType,
   mintPersonalAccess,
   updateAccessFields,
+  patchEventContent,
 };

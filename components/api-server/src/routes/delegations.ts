@@ -12,6 +12,7 @@ const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
+const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 
 /**
  * Account-delegation routes.
@@ -53,7 +54,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   });
   // Authoritative detach (B, genuine login only) + local stale-mirror dismiss (A).
   expressApp.delete(Paths.Delegations + '/delegates/:delegate', setMethodId('delegations.detachDelegate'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
-    api.call(req.context, { username: req.params.delegate }, methodCallback(res, next, 200));
+    // The consent grants the owner keeps: `?keepAccessIds=<id>&keepAccessIds=<id>`.
+    const params: Record<string, unknown> = { username: req.params.delegate };
+    if (req.query?.keepAccessIds != null) params.keepAccessIds = req.query.keepAccessIds;
+    tryCoerceStringValues(params, { keepAccessIds: 'array' });
+    api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Delegations + '/controlled/:controlled', setMethodId('delegations.dismissControlled'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { username: req.params.controlled }, methodCallback(res, next, 200));

@@ -8,13 +8,14 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * [APB] `content.approvedBy` on a consent accept is server-owned: stamped
- * from the writing access's delegation marker on create, never taken from
- * the client, kept on update.
+ * [APB] The server-owned fields of a consent accept (`approvedBy`,
+ * `ownerConfirmedAt`, `withdrawal`): never taken from the client on create
+ * (`approvedBy` is stamped from the writing access's delegation marker), the
+ * stored values kept on update.
  */
 
 const assert = require('node:assert/strict');
-const { createApprovedByStampingHook, createApprovedByPreserveHook } = require('../src/approvedByStampingHook.ts');
+const { createAcceptStampingHook, createAcceptPreserveHook } = require('../src/acceptServerOwnedFieldsHook.ts');
 
 // Same contract as the delegation plugin's lineageOf: a marker for the
 // delegate token and its children, null otherwise.
@@ -33,9 +34,12 @@ const PAT = { id: 'pat1', type: 'personal', clientData: { delegation: { kind: 'd
 const OWNER = { id: 'own1', type: 'personal', clientData: null };
 const FORGED = { delegate: { username: 'someone-else' }, relId: 'rel-forged' };
 
-describe('[APB] cmc/approvedByStampingHook', () => {
-  const stamp = createApprovedByStampingHook({ lineageOf });
-  const preserve = createApprovedByPreserveHook();
+const CONFIRMED_AT = 1_700_000_100;
+const WITHDRAWAL = { at: 1_700_000_200, by: 'delegation-detach', relId: 'rel1' };
+
+describe('[APB] cmc/acceptServerOwnedFieldsHook', () => {
+  const stamp = createAcceptStampingHook({ lineageOf });
+  const preserve = createAcceptPreserveHook();
 
   it('[APB01] an owner accept carries no approvedBy: a client-supplied one is removed', async () => {
     for (const content of [{ capabilityUrl: 'https://t@x/', approvedBy: FORGED }, { capabilityUrl: 'https://t@x/' }]) {
@@ -121,5 +125,58 @@ describe('[APB] cmc/approvedByStampingHook', () => {
     const context = { oldEvent: { type: 'note/txt', content: {} }, newEvent: { type: 'note/txt', content: { approvedBy: FORGED } } };
     await run(preserve, context);
     assert.deepEqual(context.newEvent.content, { approvedBy: FORGED });
+  });
+
+  it('[APB08] an owner create cannot write any of the three fields', async () => {
+    const context = {
+      access: OWNER,
+      newEvent: { type: 'consent/accept-cmc', content: { capabilityUrl: 'https://t@x/', approvedBy: FORGED, ownerConfirmedAt: CONFIRMED_AT, withdrawal: WITHDRAWAL } },
+    };
+    await run(stamp, context);
+    assert.deepEqual(context.newEvent.content, { capabilityUrl: 'https://t@x/' });
+  });
+
+  it('[APB09] a delegate create cannot claim the owner confirmed or ended the consent', async () => {
+    const context = {
+      access: PAT,
+      newEvent: { type: 'consent/accept-cmc', content: { capabilityUrl: 'https://t@x/', ownerConfirmedAt: CONFIRMED_AT, withdrawal: WITHDRAWAL } },
+    };
+    await run(stamp, context);
+    assert.deepEqual(context.newEvent.content, {
+      capabilityUrl: 'https://t@x/',
+      approvedBy: { delegate: { username: 'parent', hostSlug: 'core-a' }, relId: 'rel1' },
+    });
+  });
+
+  it('[APB10] an update that omits the stored fields does not erase them', async () => {
+    const stored = { approvedBy: { delegate: DELEGATE, relId: 'rel1' }, ownerConfirmedAt: CONFIRMED_AT, withdrawal: WITHDRAWAL };
+    const context = {
+      oldEvent: { type: 'consent/accept-cmc', content: { status: 'completed', ...stored } },
+      newEvent: { type: 'consent/accept-cmc', content: { status: 'completed', note: 'edited' } },
+    };
+    await run(preserve, context);
+    assert.deepEqual(context.newEvent.content, { status: 'completed', note: 'edited', ...stored });
+  });
+
+  it('[APB11] an update that sends other values keeps the stored ones, and the rest as sent', async () => {
+    const stored = { approvedBy: { delegate: DELEGATE, relId: 'rel1' }, ownerConfirmedAt: CONFIRMED_AT, withdrawal: WITHDRAWAL };
+    const context = {
+      oldEvent: { type: 'consent/accept-cmc', content: { status: 'completed', note: 'before', ...stored } },
+      newEvent: {
+        type: 'consent/accept-cmc',
+        content: { status: 'completed', note: 'after', approvedBy: FORGED, ownerConfirmedAt: 1, withdrawal: { at: 1, by: 'someone', relId: 'x' } },
+      },
+    };
+    await run(preserve, context);
+    assert.deepEqual(context.newEvent.content, { status: 'completed', note: 'after', ...stored });
+  });
+
+  it('[APB12] an update cannot add the fields to an accept that has none', async () => {
+    const context = {
+      oldEvent: { type: 'consent/accept-cmc', content: { status: 'completed' } },
+      newEvent: { type: 'consent/accept-cmc', content: { status: 'completed', approvedBy: FORGED, ownerConfirmedAt: CONFIRMED_AT, withdrawal: WITHDRAWAL } },
+    };
+    await run(preserve, context);
+    assert.deepEqual(context.newEvent.content, { status: 'completed' });
   });
 });

@@ -346,6 +346,9 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
   // One-shot hold on the next offer read from the doctor's account, to keep
   // an accept in progress while the test detaches the delegation.
   let offerHold = null;
+  // One-shot 503 on the next write made with this capability token (the
+  // accept delivered to the requester), to send an accept down the retry path.
+  let failNextWriteWith = null;
   let rel; // current relationship: { patToken, patAccessId, relId }
 
   function sleep (ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
@@ -357,6 +360,12 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     originalFetch = globalThis.fetch;
     const shim = buildFetchShim(originalFetch, global.coreServer);
     globalThis.fetch = async (url, init) => {
+      if (failNextWriteWith != null && (init?.method ?? 'GET').toUpperCase() !== 'GET' &&
+          init?.headers?.authorization === failNextWriteWith) {
+        failNextWriteWith = null;
+        return new Response(JSON.stringify({ error: { id: 'unavailable', message: 'test: unavailable once' } }),
+          { status: 503, headers: { 'content-type': 'application/json' } });
+      }
       const hold = offerHold;
       // the offer is read with the invite's token as the authorization header
       if (hold != null && (init?.method ?? 'GET').toUpperCase() === 'GET' &&
@@ -402,27 +411,35 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     }
   }
 
-  /** Attach `carer` as delegate of `kid`, issue the delegate token. */
-  async function attach () {
+  /** Attach `delegate` (the carer by default) as delegate of `kid`, issue the delegate token. */
+  async function attach (delegate = carer) {
     const reqRes = await coreRequest.post(kid.delegationsPath + '/attach-request')
-      .set('Authorization', kid.token).send({ delegateUsername: carer.username });
+      .set('Authorization', kid.token).send({ delegateUsername: delegate.username });
     assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
-    const accRes = await coreRequest.post(carer.delegationsPath + '/controlled/' + kid.username + '/accept')
-      .set('Authorization', carer.token).send({});
+    const accRes = await coreRequest.post(delegate.delegationsPath + '/controlled/' + kid.username + '/accept')
+      .set('Authorization', delegate.token).send({});
     assert.strictEqual(accRes.status, 200, JSON.stringify(accRes.body));
-    const tokRes = await coreRequest.post(carer.delegationsPath + '/controlled/' + kid.username + '/token')
-      .set('Authorization', carer.token).send({});
+    const tokRes = await coreRequest.post(delegate.delegationsPath + '/controlled/' + kid.username + '/token')
+      .set('Authorization', delegate.token).send({});
     assert.strictEqual(tokRes.status, 200, JSON.stringify(tokRes.body));
     const info = await coreRequest.get(kid.accessInfoPath).set('Authorization', tokRes.body.token);
     const list = await coreRequest.get(kid.delegationsPath + '/delegates').set('Authorization', kid.token);
-    const record = (list.body.delegates || []).find((d) => d.delegate?.username === carer.username);
+    const record = (list.body.delegates || []).find((d) => d.delegate?.username === delegate.username);
     assert.ok(record != null && typeof record.relId === 'string', JSON.stringify(list.body));
     return { patToken: tokRes.body.token, patAccessId: base(info.body.id), relId: record.relId };
   }
 
-  async function detach () {
-    const res = await coreRequest.delete(kid.delegationsPath + '/delegates/' + carer.username)
-      .set('Authorization', kid.token);
+  /** Detach `delegate` (the carer by default); `keepAccessIds` are the consent grants the owner keeps. */
+  function detachRequest (delegate = carer, keepAccessIds = []) {
+    let req = coreRequest.delete(kid.delegationsPath + '/delegates/' + delegate.username);
+    if (keepAccessIds.length > 0) {
+      req = req.query(keepAccessIds.map((id) => 'keepAccessIds=' + encodeURIComponent(id)).join('&'));
+    }
+    return req.set('Authorization', kid.token);
+  }
+
+  async function detach (delegate = carer, keepAccessIds = []) {
+    const res = await detachRequest(delegate, keepAccessIds);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   }
 
@@ -673,5 +690,187 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     assert.deepStrictEqual(grants, [], 'no grant for this accept');
     await sleep(1000);
     assert.strictEqual(await countDoctorInbox('consent/accept-cmc'), acceptsBefore, 'the requester never received an accept');
+  });
+
+  /** A consent the delegate gave, fully established (delivered, back channel reached). */
+  async function consentGivenByDelegate (appPrefix) {
+    const inv = await invite(appPrefix + '-' + cuid().slice(-6));
+    const event = await accept(inv, rel.patToken);
+    const settled = await settledTrigger(event.id);
+    assert.strictEqual(settled.status, 'completed', JSON.stringify(settled));
+    const grantId = base(settled.dataGrantAccessId);
+    await backChannelReached(inv);
+    const grantToken = await grantTokenOf(grantId);
+    await acceptDeliveredFor(grantToken);
+    return { inv, event, grantId, grantToken };
+  }
+
+  async function kidEventContent (eventId) {
+    const res = await coreRequest.get(kid.eventsPath + '/' + eventId).set('Authorization', kid.token);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    return res.body.event.content;
+  }
+
+  /** One pass of the CMC retry loop for the kid, wired as the boot loop wires it, every retry due. */
+  async function runKidRetryPass () {
+    const cmc = require('cmc');
+    const delegation = require('delegation');
+    const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const config = await require('@pryv/boiler').ready();
+    const usersRepository = await getUsersRepository();
+    const mall = await buildMallForCmc();
+    const kidUserId = await usersRepository.getUserIdForUsername(kid.username);
+    const selfIdentityFor = async (userId) => {
+      const user = await usersRepository.getUserById(userId);
+      let host = config.get('dns:domain');
+      if (host == null || host === '') {
+        const apiUrl = config.get('service:api') || config.get('service:register');
+        try { host = new URL(apiUrl.replace('{username}', 'x')).host; } catch (_e) { host = 'localhost'; }
+      }
+      return { username: user?.username || 'unknown', host };
+    };
+    return cmc.retryQueue.runRetryLoop({
+      userId: kidUserId,
+      deps: {
+        mall,
+        dispatch: cmc.dispatch.dispatch,
+        dispatchDeps: {
+          mall,
+          fetch: (url, init) => globalThis.fetch(url, init),
+          selfIdentityFor,
+          lineageOf: (access) => delegation.lineageOf(access),
+          relationshipExists: async (userId, relId) => (await delegation.store.findAnchorByRelId(mall, userId, relId)) != null,
+          enqueueRetries: false,
+        },
+        now: () => Date.now() + 60_000,
+      },
+    });
+  }
+
+  /** A fresh relationship with the carer, whether or not an earlier test left one. */
+  async function freshRelationship () {
+    const list = await coreRequest.get(kid.delegationsPath + '/delegates').set('Authorization', kid.token);
+    if ((list.body.delegates || []).some((d) => d.delegate?.username === carer.username)) await detach();
+    rel = await attach();
+  }
+
+  it('[DCH20] a delegate accept whose delivery fails is retried with its lineage and completes with the marked grant', async function () {
+    await freshRelationship();
+    const inv = await invite('dch20-' + cuid().slice(-6));
+    failNextWriteWith = decodeURIComponent(new URL(inv.capabilityUrl).username);
+    const event = await accept(inv, rel.patToken);
+    const failed = await settledTrigger(event.id);
+    const unused503 = failNextWriteWith;
+    failNextWriteWith = null;
+    assert.strictEqual(unused503, null, 'the one-shot 503 was used by the accept delivery');
+    assert.strictEqual(failed.status, 'failed', 'the first delivery is answered 503: ' + JSON.stringify(failed));
+    // the grant minted before the failed delivery stays, marked, for the retry to reuse
+    const pending = (await kidAccesses()).filter((a) => a.clientData?.cmc?.acceptEventId === event.id);
+    assert.strictEqual(pending.length, 1, JSON.stringify(pending));
+    assert.strictEqual(pending[0].clientData.delegation?.relId, rel.relId, JSON.stringify(pending[0].clientData));
+
+    const pass = await runKidRetryPass();
+    assert.strictEqual(pass.succeeded, 1, JSON.stringify(pass));
+
+    const content = await kidEventContent(event.id);
+    assert.strictEqual(content.status, 'completed', JSON.stringify(content));
+    assert.deepStrictEqual(content.approvedBy, event.content.approvedBy, 'the approval record survives the retry');
+    assert.strictEqual(event.content.approvedBy?.relId, rel.relId);
+    const grant = await kidAccess(content.dataGrantAccessId);
+    assert.ok(grant != null, 'the retry completed with a grant');
+    assert.strictEqual(base(grant.id), base(pending[0].id), 'the retry reused the grant of the first attempt');
+    assert.strictEqual(grant.clientData.delegation?.kind, 'delegated-child', JSON.stringify(grant.clientData));
+    assert.strictEqual(grant.clientData.delegation.relId, rel.relId);
+    assert.strictEqual(grant.clientData.delegation.viaAccessId, rel.patAccessId, 'the lineage names the approving delegate token');
+    await acceptDeliveredFor(await grantTokenOf(grant.id));
+  });
+
+  it('[DCH21] a grant the owner keeps at detach still works, no longer reports the delegation, and the requester is told nothing', async function () {
+    await freshRelationship();
+    const { event, grantId, grantToken } = await consentGivenByDelegate('dch21');
+
+    await detach(carer, [grantId]);
+
+    const kept = await kidAccess(grantId);
+    assert.ok(kept != null, 'the kept grant is still there');
+    assert.strictEqual(kept.clientData.delegation, undefined, JSON.stringify(kept.clientData));
+    assert.strictEqual(kept.clientData.cmc.role, 'counterparty');
+    const info = await coreRequest.get(kid.accessInfoPath).set('Authorization', grantToken);
+    assert.strictEqual(info.status, 200, 'the requester\'s token still works: ' + JSON.stringify(info.body));
+    assert.strictEqual(info.body.delegation, undefined, JSON.stringify(info.body));
+    const content = await kidEventContent(event.id);
+    assert.strictEqual(typeof content.ownerConfirmedAt, 'number', JSON.stringify(content));
+    assert.strictEqual('withdrawal' in content, false);
+    assert.deepStrictEqual(content.approvedBy, event.content.approvedBy, 'who approved stays as history');
+    assert.strictEqual(event.content.approvedBy?.delegate?.username, carer.username);
+    const dead = await coreRequest.get(kid.accessInfoPath).set('Authorization', rel.patToken);
+    assert.ok([401, 403].includes(dead.status), 'the delegation itself is gone: ' + dead.status);
+    await sleep(1000);
+    const res = await coreRequest.get(doctor.eventsPath).set('Authorization', doctor.token)
+      .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 100 });
+    assert.strictEqual((res.body.events || []).filter((e) => base(e.content?.accessId) === grantId).length, 0,
+      'no revoke sent for the kept grant');
+  });
+
+  it('[DCH22] a grant the owner does not keep is deleted, the requester is told, and the accept event records the withdrawal', async function () {
+    await freshRelationship();
+    const { event, grantId } = await consentGivenByDelegate('dch22');
+
+    await detach();
+
+    assert.strictEqual(await kidAccess(grantId), undefined);
+    await pollDoctorInbox('consent/revoke-cmc', (e) => base(e.content?.accessId) === grantId);
+    const content = await kidEventContent(event.id);
+    assert.deepStrictEqual(Object.keys(content.withdrawal || {}).sort(), ['at', 'by', 'relId'], JSON.stringify(content));
+    assert.strictEqual(content.withdrawal.by, 'delegation-detach');
+    assert.strictEqual(content.withdrawal.relId, rel.relId);
+    assert.strictEqual(typeof content.withdrawal.at, 'number');
+    assert.strictEqual('ownerConfirmedAt' in content, false);
+  });
+
+  it('[DCH23] keeping a grant of another relationship is refused, and nothing changes', async function () {
+    const carer2 = await makeActor('carer2-' + cuid().slice(-8));
+    rel = await attach(carer2);
+    const { grantId: otherGrantId } = await consentGivenByDelegate('dch23b');
+    await freshRelationship();
+    const { grantId } = await consentGivenByDelegate('dch23a');
+    const before = (await kidAccesses()).map((a) => a.id).sort();
+
+    const res = await detachRequest(carer, [grantId, otherGrantId]);
+    assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.id, 'delegation-invalid-keep-list', JSON.stringify(res.body));
+
+    assert.deepStrictEqual((await kidAccesses()).map((a) => a.id).sort(), before, 'no access changed');
+    assert.strictEqual((await kidAccess(grantId)).clientData.delegation?.relId, rel.relId, 'the grant keeps its lineage');
+    const live = await coreRequest.get(kid.accessInfoPath).set('Authorization', rel.patToken);
+    assert.strictEqual(live.status, 200, 'the delegation is untouched');
+    const list = await coreRequest.get(kid.delegationsPath + '/delegates').set('Authorization', kid.token);
+    assert.ok((list.body.delegates || []).some((d) => d.relId === rel.relId), JSON.stringify(list.body));
+
+    await detach(carer2);
+    await detach();
+  });
+
+  it('[DCH24] the decision recorded on the accept event cannot be forged or erased through the API', async function () {
+    await freshRelationship();
+    // before detach: the delegate cannot write an owner confirmation
+    const forged = await accept(await invite('dch24a-' + cuid().slice(-6)), rel.patToken, { ownerConfirmedAt: 1, withdrawal: { at: 1, by: 'x', relId: 'y' } });
+    assert.strictEqual('ownerConfirmedAt' in forged.content, false, JSON.stringify(forged.content));
+    assert.strictEqual('withdrawal' in forged.content, false, JSON.stringify(forged.content));
+    await settledTrigger(forged.id);
+
+    const { event } = await consentGivenByDelegate('dch24b');
+    await detach();
+    const recorded = await kidEventContent(event.id);
+    assert.ok(recorded.withdrawal != null, JSON.stringify(recorded));
+
+    // the owner rewrites the content without it: it stays as recorded
+    const { withdrawal, ...rest } = recorded;
+    const upd = await coreRequest.put(kid.eventsPath + '/' + event.id).set('Authorization', kid.token)
+      .send({ content: { ...rest, note: 'edited by the owner' } });
+    assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+    assert.deepStrictEqual(upd.body.event.content.withdrawal, withdrawal);
+    assert.strictEqual(upd.body.event.content.note, 'edited by the owner');
   });
 });

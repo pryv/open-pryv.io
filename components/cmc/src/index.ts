@@ -43,7 +43,7 @@ const errorIds = require('./errorIds.ts');
 const capabilityResponseHook = require('./capabilityResponseHook.ts');
 const credentialScrub = require('./credentialScrub.ts');
 const credentialStashHook = require('./credentialStashHook.ts');
-const approvedByStampingHook = require('./approvedByStampingHook.ts');
+const acceptServerOwnedFieldsHook = require('./acceptServerOwnedFieldsHook.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -53,7 +53,7 @@ export {
   handleIncomingRevoke,
   anchorStreams, accessesUpdateHook, accessesDeleteHook, retryScheduler, bootRetryLoop,
   mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
-  credentialStashHook, approvedByStampingHook,
+  credentialStashHook, acceptServerOwnedFieldsHook,
 };
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
@@ -69,9 +69,10 @@ export const { hasCredential, scrubCredentials, takeCredentials, restoreCredenti
 // Pre-persist strip: takes the token out of a lifecycle record before it is
 // stored, and carries it on context.cmc.credentials for the dispatch loop.
 export const { createCredentialStashHook } = credentialStashHook;
-// `content.approvedBy` on a consent accept given through an account
-// delegation: stamped from the writing access on create, kept on update.
-export const { createApprovedByStampingHook, createApprovedByPreserveHook } = approvedByStampingHook;
+// The server-owned fields of a consent accept (`approvedBy`, `ownerConfirmedAt`,
+// `withdrawal`): dropped from a client create (`approvedBy` then stamped from
+// the writing access), kept from the stored event on a client update.
+export const { createAcceptStampingHook, createAcceptPreserveHook } = acceptServerOwnedFieldsHook;
 export const { mintCapability, gcCapability } = capability;
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;

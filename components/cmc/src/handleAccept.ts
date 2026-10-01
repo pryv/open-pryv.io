@@ -372,7 +372,10 @@ async function handleAccept (params: {
       try {
         await mall.accesses.update(userId, {
           id: dataGrantAccess.id,
-          update: { clientData: { ...(dataGrantAccess.clientData ?? {}), delegation: lineage } },
+          // Only the marker: the object form merges one level, so the rest of
+          // `clientData` is left as stored (a back-channel write since this
+          // grant was read is not overwritten).
+          update: { clientData: { delegation: lineage } },
         });
       } catch (err: unknown) {
         await deleteGrantQuietly(mall, userId, dataGrantAccess.id!, deps);
@@ -522,7 +525,7 @@ function toLineage (raw: ReturnType<LineageOf> | undefined): DelegationLineage |
  * the source is the access, never the trigger content.
  *
  * `content.approvedBy` is server-stamped from that same access when the
- * trigger is written (approvedByStampingHook). When it is present the
+ * trigger is written (acceptServerOwnedFieldsHook). When it is present the
  * lineage MUST resolve, to the same relationship: if the approving access is
  * gone or unknown, the accept fails rather than minting an unmarked grant.
  */

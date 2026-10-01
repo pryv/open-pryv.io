@@ -658,7 +658,17 @@ describe('[CMCHA] cmc/handleAccept', () => {
       mall.accesses.update = async (_u, { id, update }) => {
         mall.calls.accessesUpdated.push({ id, update });
         const a = list.find((x) => x.id === id);
-        Object.assign(a, update);
+        const { clientData, ...rest } = update;
+        Object.assign(a, rest);
+        // The storage contract for an object on a JSON field: merged one level
+        // into the stored object, a null entry removes the key.
+        if (clientData != null) {
+          const merged = { ...(a.clientData ?? {}) };
+          for (const [k, v] of Object.entries(clientData)) {
+            if (v === null) delete merged[k]; else merged[k] = v;
+          }
+          a.clientData = merged;
+        }
         return a;
       };
       mall.accesses.delete = async (userId, { id }) => {
@@ -889,10 +899,13 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.equal(r.dataGrantAccessId, 'grant-prior');
       assert.equal(mall.calls.accessesCreated.length, 0);
+      // only the marker is written: the stored cmc record is not re-sent
       assert.deepEqual(mall.calls.accessesUpdated, [{
         id: 'grant-prior',
-        update: { clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' }, delegation: LINEAGE } },
+        update: { clientData: { delegation: LINEAGE } },
       }]);
+      assert.deepEqual((await mall.accesses.getOne('u1', { id: 'grant-prior' })).clientData,
+        { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' }, delegation: LINEAGE });
     });
   });
 });
