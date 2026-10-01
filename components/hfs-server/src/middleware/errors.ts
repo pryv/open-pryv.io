@@ -9,7 +9,7 @@ import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errorHandling = require('errors').errorHandling;
-const { APIError } = require('errors');
+const { APIError, factory: errorsFactory } = require('errors');
 /** Produces a middleware function that will handle all errors and augment
  * them with a JSON error body.
  *
@@ -23,7 +23,11 @@ const { APIError } = require('errors');
 export default function produceErrorHandlingMiddleware (logger: unknown) {
   return function handleError (error: unknown, req: Request, res: Response, next: NextFunction) {
     let safeError;
-    if (error != null && error instanceof APIError) { safeError = error; } else {
+    if (error != null && error instanceof APIError) { safeError = error; } else if (typeof (error as { status?: unknown })?.status === 'number') {
+      // From Express' body parser (malformed JSON, body too large): the
+      // client's fault, answered like the API server does.
+      safeError = errorsFactory.invalidRequestStructure((error as Error).message);
+    } else {
       // Assume that we can toString the mystery object
       safeError = new APIError((error as { toString(): string }).toString());
     }

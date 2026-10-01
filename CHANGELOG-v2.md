@@ -53,6 +53,12 @@ an array param. Nothing is kept by default.
 
 The other accesses granted through the delegation are deleted as before, whatever the keep list.
 
+### Fixed: high-frequency series answer 400 to a malformed JSON body
+
+A request to the high-frequency series endpoints whose JSON body cannot be parsed (or is too large)
+is now answered `400` with `invalid-request-structure`, like every other API answer, instead of a
+`500` whose error id was the parser's message.
+
 ## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing
