@@ -145,6 +145,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
           res.on('end', () => {
             front.close(() => {
               assert.strictEqual(res.statusCode, 502);
+              assert.strictEqual(res.headers['x-content-type-options'], 'nosniff');
               const parsed = JSON.parse(body);
               assert.strictEqual(parsed.error.id, 'unexpected-error');
               done();
@@ -246,9 +247,10 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
 
     // Collects how the client's response went.
     function collect (req) {
-      const outcome = { status: null, body: '', received: 0, ended: false, closed: false };
+      const outcome = { status: null, headers: null, body: '', received: 0, ended: false, closed: false };
       req.on('response', (res) => {
         outcome.status = res.statusCode;
+        outcome.headers = res.headers;
         res.on('data', (chunk) => {
           outcome.received += chunk.length;
           if (outcome.received <= 4096) outcome.body += chunk;
@@ -391,6 +393,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       client.end('{}');
       assert.ok(await until(() => outcome.ended), 'the client must get an answer instead of waiting on a silent worker');
       assert.strictEqual(outcome.status, 504);
+      assert.strictEqual(outcome.headers['x-content-type-options'], 'nosniff');
       assert.strictEqual(JSON.parse(outcome.body).error.id, 'unexpected-error');
       assert.ok(await until(() => worker.socketClosed), 'the worker socket must be released');
       assert.strictEqual(warns.length, 1);

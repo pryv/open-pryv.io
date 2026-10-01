@@ -23,6 +23,7 @@ export default function expressApp (commonHeadersMiddleware: RequestHandler, err
     app.use(errorsMiddleware);
   }
   app.disable('x-powered-by');
+  app.use(middleware.noSniff);
   app.use(middleware.subdomainToPath([]));
   app.use(requestTraceMiddleware);
   app.use(express.json());

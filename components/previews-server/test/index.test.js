@@ -24,5 +24,13 @@ describe('[PIDX] (index)', function () {
       const res = await request.options(path());
       assert.strictEqual(res.statusCode, 200);
     });
+
+    it('[NSF3] every answer forbids MIME sniffing, errors included', async function () {
+      const options = await request.options(path());
+      assert.strictEqual(options.headers['x-content-type-options'], 'nosniff', 'OPTIONS');
+      const unknown = await request.get(path('/unknown-user-' + Date.now() + '/events/x')).ok(() => true);
+      assert.ok(unknown.statusCode >= 400, 'status ' + unknown.statusCode);
+      assert.strictEqual(unknown.headers['x-content-type-options'], 'nosniff', String(unknown.statusCode));
+    });
   });
 });

@@ -133,6 +133,18 @@ describe('[SK01] Socket.IO', function () {
     assert.strictEqual(res.headers['access-control-allow-credentials'], 'true');
   });
 
+  it('[NSF4] Engine.IO answers forbid MIME sniffing: polling handshake and Engine.IO error', async function () {
+    const handshake = await superagent
+      .get(server.url + '/socket.io/' + namespace + '?auth=' + token + '&EIO=4&transport=polling');
+    assert.strictEqual(handshake.status, 200);
+    assert.strictEqual(handshake.headers['x-content-type-options'], 'nosniff', 'handshake');
+    const unknownTransport = await superagent
+      .get(server.url + '/socket.io/?EIO=4&transport=bogus')
+      .ok(() => true);
+    assert.strictEqual(unknownTransport.status, 400);
+    assert.strictEqual(unknownTransport.headers['x-content-type-options'], 'nosniff', 'Engine.IO error');
+  });
+
   it('[VGKX] must connect with twice user name in the path (DnsLess)', function (done) {
     const dashUser = testData.users[4]; let dashRequest = null;
     async.series([

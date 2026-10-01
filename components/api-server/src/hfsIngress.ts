@@ -123,7 +123,7 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
       logger.warn(`[hfs-ingress] no data moved on the worker connection for ${upstreamIdleTimeoutMs} ms${res.writableNeedDrain ? ' (client not reading)' : ''} ${req.method} ${req.url}`);
       proxyReq.destroy();
       if (!res.headersSent) {
-        res.writeHead(504, { 'content-type': 'application/json' });
+        res.writeHead(504, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' });
         res.end(JSON.stringify({
           error: {
             id: 'unexpected-error',
@@ -144,7 +144,7 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
       }
       logger.warn(`[hfs-ingress] upstream error ${req.method} ${req.url}: ${err.message}`);
       if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'application/json' });
+        res.writeHead(502, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' });
         res.end(JSON.stringify({
           error: {
             id: 'unexpected-error',

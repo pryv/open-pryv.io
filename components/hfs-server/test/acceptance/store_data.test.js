@@ -434,6 +434,28 @@ describe('[SDHF] Storing data in a HF series', function () {
           assert.strictEqual(headers['access-control-allow-credentials'], 'true');
           assert.strictEqual(headers['access-control-allow-origin'], 'https://foo.bar.baz');
         });
+        it('[NSF2] every answer forbids MIME sniffing: success, error, body-parser error, OPTIONS', async () => {
+          const ok = await storeData(produceData());
+          assert.strictEqual(ok.status, 200);
+          assert.strictEqual(ok.headers['x-content-type-options'], 'nosniff', '200');
+          const invalid = await storeData({});
+          assert.strictEqual(invalid.status, 400);
+          assert.strictEqual(invalid.headers['x-content-type-options'], 'nosniff', '400');
+          const badJson = await server.request()
+            .post(`/USERNAME/events/${EVENT_ID}/series`)
+            .set('authorization', 'AUTH_TOKEN')
+            .set('content-type', 'application/json')
+            .send('{"format": "flatJSON"');
+          // Known mismatch: the HFS error middleware maps the JSON parser's
+          // error to 500, where the API answers 400 to the same body. The
+          // status stays tolerant until that is fixed; the header check is the
+          // point of this test and is strict.
+          assert.ok([400, 500].includes(badJson.status), 'status ' + badJson.status);
+          assert.strictEqual(badJson.headers['x-content-type-options'], 'nosniff', 'body-parser error');
+          const options = await server.request().options(`/USERNAME/events/${EVENT_ID}/series`);
+          assert.strictEqual(options.status, 200);
+          assert.strictEqual(options.headers['x-content-type-options'], 'nosniff', 'OPTIONS');
+        });
         describe('[SD33] when request is malformed', function () {
           malformed('format is not flatJSON', {
             format: 'JSON',

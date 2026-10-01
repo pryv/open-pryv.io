@@ -111,6 +111,7 @@ class Server {
     const config = this.config;
     const app = express();
     app.disable('x-powered-by');
+    app.use(middleware.noSniff);
     app.use(middleware.subdomainToPath([]));
     app.use(middleware.requestTrace(express, logger));
     app.use(express.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));

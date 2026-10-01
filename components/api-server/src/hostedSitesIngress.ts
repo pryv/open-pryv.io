@@ -329,7 +329,8 @@ function buildHostedSitesIngress (opts: {
     // Sites take no request body: discard whatever came so the client can finish.
     req.resume();
     if ('redirect' in m) {
-      res.writeHead(301, Object.assign({ location: m.redirect, 'content-length': 0 }, frameHeadersOf(m.site)));
+      setSiteHeaders(req, res, m.site);
+      res.writeHead(301, { location: m.redirect, 'content-length': 0 });
       res.end();
       return;
     }
