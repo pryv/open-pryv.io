@@ -52,6 +52,15 @@ function close (server) {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
+/** Each value of a response header sent several times, in order. */
+function rawValues (response, name) {
+  const values = [];
+  for (let i = 0; i < response.rawHeaders.length; i += 2) {
+    if (response.rawHeaders[i].toLowerCase() === name) values.push(response.rawHeaders[i + 1]);
+  }
+  return values;
+}
+
 describe('[HSTI] hosted sites in-process dispatcher', function () {
   let tmp, root, bareRoot;
 
@@ -301,7 +310,8 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
           etag: '"v1"',
           'set-cookie': 'sid=upstream',
           'strict-transport-security': 'max-age=1; includeSubDomains',
-          'content-security-policy': 'default-src *',
+          'content-security-policy': 'default-src *; frame-ancestors *',
+          'permissions-policy': 'camera=()',
           'x-upstream-private': 'yes',
           'access-control-allow-origin': '*',
           'cache-control': 'max-age=600'
@@ -369,14 +379,41 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.headers.etag, '"v1"');
       assert.equal(r.headers['set-cookie'], undefined);
       assert.equal(r.headers['strict-transport-security'], undefined);
-      // the upstream's CSP is dropped; only the site's anti-framing policy is sent
-      assert.equal(r.headers['content-security-policy'], "frame-ancestors 'none'");
+      // the upstream's CSP is a further policy after the site's anti-framing one:
+      // every policy is enforced, so its `frame-ancestors *` cannot relax framing
+      assert.deepEqual(rawValues(r, 'content-security-policy'), ["frame-ancestors 'none'", 'default-src *; frame-ancestors *']);
+      assert.equal(r.headers['permissions-policy'], 'camera=()');
       assert.equal(r.headers['x-upstream-private'], undefined);
       assert.equal(r.headers['access-control-allow-origin'], undefined);
       assert.equal(r.headers['x-content-type-options'], 'nosniff');
       assert.equal(r.headers['x-frame-options'], 'DENY');
       // the operator's header wins over the upstream's allow-listed one
       assert.equal(r.headers['cache-control'], 'no-store');
+    });
+
+    it('[HSPC] an operator CSP and Permissions-Policy: both CSPs follow the site one; the operator Permissions-Policy wins', async function () {
+      const dispatch = buildHostedSitesIngress({
+        sites: sitesOf({
+          docs: {
+            proxy: `http://127.0.0.1:${upstreamPort}/docs`,
+            headers: { 'content-security-policy': "img-src 'self'", 'permissions-policy': 'geolocation=()' }
+          }
+        }),
+        domain: DOMAIN,
+        dnsLess: false,
+        logger: quietLogger
+      });
+      const server = await listen((req, res) => dispatch(req, res, () => assert.fail('no fallback')));
+      try {
+        const r = await request(server.address().port, { path: '/p', host: 'docs.' + DOMAIN });
+        assert.equal(r.status, 200);
+        assert.deepEqual(rawValues(r, 'content-security-policy'),
+          ["frame-ancestors 'none'", "img-src 'self'", 'default-src *; frame-ancestors *']);
+        assert.equal(r.headers['permissions-policy'], 'geolocation=()');
+        assert.equal(r.headers['x-frame-options'], 'DENY');
+      } finally {
+        await close(server);
+      }
     });
 
     it('[HSTL] rewrites a Location inside the upstream base to the site; keeps others', async function () {

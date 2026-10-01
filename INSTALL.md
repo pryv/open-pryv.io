@@ -437,8 +437,10 @@ Proxy sites forward `GET` and `HEAD` only. Request headers are forwarded by allo
 (`accept`, `accept-encoding`, `accept-language`, `if-none-match`, `if-modified-since`,
 `range`, `user-agent`): cookies, `Authorization` and the client address never reach the
 upstream. Response headers are passed by allow-list too (content, caching and `location`
-headers); `set-cookie`, `strict-transport-security` and a CSP from the upstream are dropped.
-A redirect inside the upstream base is rewritten to the site. An unreachable upstream
+headers); `set-cookie` and `strict-transport-security` from the upstream are dropped. The
+upstream's `Content-Security-Policy` is kept as a further policy after the site's own (see the
+anti-framing paragraph below: it can tighten, never relax framing), and its `Permissions-Policy`
+is kept unless the site's `headers` set one. A redirect inside the upstream base is rewritten to the site. An unreachable upstream
 answers 502, a silent one 504 after 30 s. An `http://` upstream is accepted with a boot
 warning (the content travels in clear between the core and the upstream). An upstream on
 this platform's own domain is refused (it would loop).
@@ -457,8 +459,8 @@ against clickjacking: `Content-Security-Policy: frame-ancestors 'none'` and
 SAMEORIGIN` when the list is `["'self'"]` alone (X-Frame-Options cannot express a list, so it
 is omitted otherwise). Write the keywords with their single quotes (`"'self'"`, `"'none'"`;
 unquoted, browsers read a host name), and `'none'` only alone. A `content-security-policy` in the
-site's `headers` is sent as a second policy next to the anti-framing one: browsers enforce both,
-so it can tighten framing but not relax it. `x-frame-options` cannot be set in `headers`: use
+site's `headers` is sent as a second policy next to the anti-framing one (a proxy upstream's CSP
+as a third): browsers enforce all of them, so each can tighten framing but not relax it. `x-frame-options` cannot be set in `headers`: use
 `frameAncestors`.
 
 Boot checks (the core refuses to start, with a message naming the site):

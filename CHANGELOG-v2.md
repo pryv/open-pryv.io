@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Hosted sites: a proxy upstream's Content-Security-Policy and Permissions-Policy are kept
+
+A proxied hosted site used to lose its upstream's `Content-Security-Policy` and
+`Permissions-Policy` (the response allow-list did not include them), so it ran with only the
+anti-framing policy. The upstream CSP is now sent as a further policy after the site's own
+(anti-framing, then the operator's `headers` CSP if any): browsers enforce every policy, so it
+can tighten but never relax framing. The upstream `Permissions-Policy` is kept unless the
+site's `headers` set one. Static sites are unchanged.
+
 ## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing

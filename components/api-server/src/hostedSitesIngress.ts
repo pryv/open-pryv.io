@@ -30,7 +30,8 @@ import type { HostedSite, ProxySite, StaticSite } from 'business/src/hostedSites
  * Static sites behave like GitHub Pages: `index.html` for folders, `.html`
  * extension fallback, `404.html` (status 404) for misses, dotfiles and
  * anything resolving outside the folder answer 404. Proxy sites forward GET
- * and HEAD to a fixed upstream with allow-listed headers both ways.
+ * and HEAD to a fixed upstream with allow-listed headers both ways, plus the
+ * upstream's Content-Security-Policy and Permissions-Policy.
  *
  * Known limitation: `/socket.io/*` on a site host is taken by Socket.IO,
  * which is attached to the same server ahead of every other listener.
@@ -80,6 +81,29 @@ function responseHeadersOf (site: HostedSite): OutgoingHttpHeaders {
     headers[name] = name === 'content-security-policy' ? [headers[name] as string, value] : value;
   }
   return headers;
+}
+
+/**
+ * The upstream's own policies, on a proxied answer that already carries the
+ * site's headers. Its CSP is sent as a further policy: browsers enforce every
+ * policy, so it can narrow but never relax the anti-framing one. Its
+ * Permissions-Policy is kept unless the operator sets one for the site.
+ */
+function addUpstreamPolicies (outHeaders: OutgoingHttpHeaders, proxyRes: IncomingMessage) {
+  // A string-typed name: Node types this header as a single string, we send a list of policies.
+  const cspName: string = 'content-security-policy';
+  const upstreamCsp = proxyRes.headers[cspName];
+  if (upstreamCsp != null) {
+    const own = outHeaders[cspName];
+    outHeaders[cspName] = [
+      ...(Array.isArray(own) ? own : [String(own)]),
+      ...(Array.isArray(upstreamCsp) ? upstreamCsp : [upstreamCsp])
+    ];
+  }
+  const upstreamPermissions = proxyRes.headers['permissions-policy'];
+  if (upstreamPermissions != null && outHeaders['permissions-policy'] == null) {
+    outHeaders['permissions-policy'] = upstreamPermissions;
+  }
 }
 
 function plain (res: ServerResponse, status: number, message: string, extra: OutgoingHttpHeaders = {}, head = false) {
@@ -287,6 +311,7 @@ function buildHostedSitesIngress (opts: {
       }
       // The operator's headers win over the upstream's
       Object.assign(outHeaders, headersOf(site));
+      addUpstreamPolicies(outHeaders, proxyRes);
       res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
       pipeline(proxyRes, res, (err: NodeJS.ErrnoException | null) => {
         if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${req.url}: ${err.code ?? err.message}`);
