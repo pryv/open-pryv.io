@@ -278,7 +278,9 @@ async function runRetryLoop (params: {
   // server-side; here we pull broadly + filter client-side because mall.events.get
   // doesn't accept content filters uniformly.
   const events = await deps.mall.events.get(userId, {
-    streams: [C.NS_INTERNAL_RETRIES],
+    // The mall takes stream queries (`{ any: [...] }`), never bare ids: a bare
+    // id resolves no store and the read throws.
+    streams: [{ any: [C.NS_INTERNAL_RETRIES] }],
     limit,
   });
 

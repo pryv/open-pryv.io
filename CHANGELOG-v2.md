@@ -1,5 +1,31 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Removing a delegate: the account owner reviews the consents the delegate gave
+
+`delegations.detachDelegate` takes an optional `keepAccessIds`: the consent grants (cross-account
+messaging data grants) the delegate gave for the account that the account owner keeps. Over HTTP,
+`DELETE /delegations/delegates/<username>?keepAccessIds=<id>&keepAccessIds=<id>`; in a batch call,
+an array param. Nothing is kept by default.
+
+- **Every id must be a consent grant given through the relationship being removed** (an access of
+  the account carrying `clientData.cmc.role === 'counterparty'` and the delegation lineage of this
+  relationship). Otherwise the whole call is refused before anything is written: `400`,
+  `delegation-invalid-keep-list` (`error.data.accessId` names the first id refused). A keep list
+  that is not an array of ids is refused the same way.
+- **A kept grant** loses its delegation lineage (`clientData.delegation` is removed): it is then
+  the account owner's own consent, `access-info` with its token no longer reports a delegation,
+  and the requester is told nothing. Its accept event (`consent/accept-cmc`) records
+  `content.ownerConfirmedAt` (the detach time, seconds); `approvedBy` stays as history.
+- **A grant not kept** is deleted and its requester receives `consent/revoke-cmc`, as before. Its
+  accept event now records `content.withdrawal = { at, by: 'delegation-detach', relId }`, so every
+  consent a delegate gave carries its end on the managed account.
+- **`ownerConfirmedAt` and `withdrawal` are server-owned like `approvedBy`**: a client-supplied
+  value is dropped on create, by any token, and an update keeps the stored value.
+
+The other accesses granted through the delegation are deleted as before, whatever the keep list.
+
 ## 2.0.0-rc.30 - 2026-10-01
 
 ### Security: `X-Content-Type-Options: nosniff` on every API answer; the OAuth2 error page refuses framing

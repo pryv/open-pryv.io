@@ -88,6 +88,10 @@ const DelegationErrorIds = {
   // not record the delegation (OAuth2 consent, CMC data grants and offers). Only the
   // account owner may do so, until those paths carry the lineage marker.
   GRANT_REQUIRES_OWNER: 'delegation-grant-requires-owner',
+  // detachDelegate's `keepAccessIds` is not a list of strings, or names an
+  // access that is not a consent grant given through the relationship being
+  // removed. The whole call is refused before anything is written.
+  INVALID_KEEP_LIST: 'delegation-invalid-keep-list',
 } as const;
 
 type DelegationErrorId = (typeof DelegationErrorIds)[keyof typeof DelegationErrorIds];

@@ -49,7 +49,10 @@ function fakeMall () {
         }
         return ev;
       },
-      async get (_userId, _params) {
+      async get (_userId, params) {
+        // The real mall takes stream queries only: a bare id resolves no store.
+        assert.ok(params?.streams == null || params.streams.every((q) => q != null && typeof q === 'object'),
+          'mall.events.get needs stream queries ({ any: [...] }), got ' + JSON.stringify(params?.streams));
         return Array.from(events.values());
       },
     },

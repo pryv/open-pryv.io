@@ -419,8 +419,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     (await delegation.store.findAnchorByRelId(mallForCmc, userId, relId)) != null;
   // `content.approvedBy` on an accept: server-owned, stamped from the writing
   // access when it is delegation-derived, a client-supplied one dropped.
-  const cmcApprovedByStampingHook = cmc.createApprovedByStampingHook({ lineageOf: delegationLineageOf });
-  const cmcApprovedByPreserveHook = cmc.createApprovedByPreserveHook();
+  const cmcAcceptStampingHook = cmc.createAcceptStampingHook({ lineageOf: delegationLineageOf });
+  const cmcAcceptPreserveHook = cmc.createAcceptPreserveHook();
   // Forge-prevention: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
   // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers
@@ -543,7 +543,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcContentValidationHook,
     cmcAcceptAccessGateHook,
     // After the gate, so a refused write is never stamped; before the store.
-    cmcApprovedByStampingHook,
+    cmcAcceptStampingHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
     cmcCounterpartyFromStampingHook,
@@ -879,7 +879,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // after the prerequisites, which is what loads the event being updated
     delegationEventsUpdateGuardHook,
     // an accept keeps its server-stamped `approvedBy` across content updates
-    cmcApprovedByPreserveHook,
+    cmcAcceptPreserveHook,
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,

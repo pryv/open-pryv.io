@@ -59,6 +59,9 @@ function makeFakeMall () {
         if (Array.isArray(params.types)) list = list.filter((e) => params.types.includes(e.type));
         return list;
       },
+      async getOne (userId, eventId) {
+        return userEvents(userId).find((e) => e.id === eventId) ?? null;
+      },
       async update (userId, params) {
         const list = userEvents(userId);
         const idx = list.findIndex((e) => e.id === params.id);
@@ -93,7 +96,17 @@ function makeFakeMall () {
         const list = userAccesses(userId);
         const idx = list.findIndex((a) => a.id === params.id);
         if (idx < 0) return null;
-        const merged = { ...list[idx], ...(params.update || {}) };
+        const update = params.update || {};
+        const merged = { ...list[idx], ...update };
+        // The storage contract for an object on a JSON field: merged one level
+        // into the stored object, a null entry removes the key.
+        if (update.clientData != null && typeof update.clientData === 'object') {
+          const clientData = { ...(list[idx].clientData || {}) };
+          for (const [k, v] of Object.entries(update.clientData)) {
+            if (v === null) delete clientData[k]; else clientData[k] = v;
+          }
+          merged.clientData = clientData;
+        }
         list[idx] = merged;
         return merged;
       },
@@ -257,7 +270,7 @@ describe('delegation detach — active teardown', function () {
       deps.notifyConsentGrantsRevoked = async (_u, grants) => { notices.push(grants.map((g) => g.name)); };
       const outcome = await detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
       assert.deepEqual(notices, [], 'no consent grant of this relationship, no notice');
-      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 0 });
+      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 0, keptConsentGrants: 0 });
       const left = (await mall.accesses.get(USER_B)).map((a) => a.name).sort();
       assert.deepEqual(left, ['other-consent', 'owner-consent']);
     });
@@ -271,9 +284,185 @@ describe('delegation detach — active teardown', function () {
       const deps = makeDeps(mall);
       deps.notifyConsentGrantsRevoked = async () => { throw new Error('peer unreachable'); };
       const outcome = await detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
-      assert.deepEqual(outcome, { revokedChildAccesses: 3, revokedConsentGrants: 2 });
+      assert.deepEqual(outcome, { revokedChildAccesses: 3, revokedConsentGrants: 2, keptConsentGrants: 0 });
       assert.deepEqual(await mall.accesses.get(USER_B), [], 'every access of the relationship is gone, control and PAT included');
       assert.equal(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null);
+    });
+  });
+
+  describe('[DDK] the owner\'s review: consent grants kept or dropped', function () {
+    const delegate = { username: NAME_A, hostSlug: HOST_SLUG };
+    const childMarker = (relId) => ({ kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId, delegate, viaAccessId: 'pat' });
+
+    /** A consent grant given through `relId`, with its accept event on B. */
+    async function seedConsentGrant (mall, name, relId = 'rel-1') {
+      const accept = await mall.events.create(USER_B, {
+        streamIds: [':_cmc:apps:study:responses'],
+        type: 'consent/accept-cmc',
+        content: { status: 'completed', approvedBy: { delegate, relId } },
+      });
+      const grant = await mall.accesses.create(USER_B, {
+        type: 'shared',
+        name,
+        clientData: {
+          cmc: { role: 'counterparty', appCode: 'study', acceptEventId: accept.id, counterparty: { username: 'doctor', host: 'peer.example.com' } },
+          delegation: childMarker(relId),
+        },
+      });
+      return { grant, accept };
+    }
+
+    function detachWith (mall, keepAccessIds, spies = {}, onDestroySession = null) {
+      const deps = makeDeps(mall, spies);
+      if (onDestroySession != null) deps.destroySession = onDestroySession;
+      deps.notifyConsentGrantsRevoked = async (_u, grants) => { (spies.revoked ||= []).push(...grants.map((g) => g.id)); };
+      deps.logger = { warn: (msg) => { (spies.warned ||= []).push(msg); } };
+      return detach.detachDelegate(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A, keepAccessIds });
+    }
+
+    async function assertUntouched (mall, before) {
+      assert.deepEqual(await mall.accesses.get(USER_B), before, 'no access changed');
+      assert.notEqual(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null, 'the relationship is still there');
+    }
+
+    it('[DDK01] a keep list that is not an array of ids is refused before anything is written', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant } = await seedConsentGrant(mall, 'consent-1');
+      const before = structuredClone(await mall.accesses.get(USER_B));
+      for (const keepAccessIds of [grant.id, { id: grant.id }, [grant.id, 3], [''], [null]]) {
+        await assert.rejects(detachWith(mall, keepAccessIds),
+          (e) => e.id === 'delegation-invalid-keep-list' && e.httpStatus === 400, JSON.stringify(keepAccessIds));
+      }
+      await assertUntouched(mall, before);
+    });
+
+    it('[DDK02] a keep id that is not a consent grant of this relationship is refused, and nothing changes', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant } = await seedConsentGrant(mall, 'consent-1');
+      const { grant: otherRel } = await seedConsentGrant(mall, 'consent-other', 'rel-other');
+      const plainChild = await mall.accesses.create(USER_B, { type: 'app', name: 'app-for-kid', clientData: { delegation: childMarker('rel-1') } });
+      const ownerGrant = await mall.accesses.create(USER_B, { type: 'shared', name: 'owner-consent', clientData: { cmc: { role: 'counterparty' } } });
+      const pat = await store.findMarkerAccess(mall, USER_B, 'rel-1', C.CLIENTDATA_KIND.DELEGATE_PAT);
+      const before = structuredClone(await mall.accesses.get(USER_B));
+      for (const foreign of [otherRel.id, plainChild.id, ownerGrant.id, pat.id, 'no-such-access']) {
+        const spies = {};
+        await assert.rejects(detachWith(mall, [grant.id, foreign], spies),
+          (e) => e.id === 'delegation-invalid-keep-list' && e.httpStatus === 400 && e.data?.accessId === foreign, foreign);
+        assert.deepEqual(spies.destroyed || [], [], 'the delegate session is not destroyed');
+      }
+      await assertUntouched(mall, before);
+    });
+
+    it('[DDK03] a kept grant loses the delegation marker, stays the requester\'s, and its accept event records the owner\'s confirmation', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant, accept } = await seedConsentGrant(mall, 'consent-kept');
+      const spies = {};
+      const outcome = await detachWith(mall, [grant.id], spies);
+      const kept = (await mall.accesses.get(USER_B)).find((a) => a.id === grant.id);
+      assert.ok(kept != null, 'the kept grant still exists');
+      assert.equal('delegation' in kept.clientData, false, 'the delegation marker is removed, not set to null');
+      assert.deepEqual(kept.clientData.cmc, grant.clientData.cmc, 'the consent part is unchanged');
+      assert.equal(kept.token, grant.token, 'the requester keeps its token');
+      const event = await mall.events.getOne(USER_B, accept.id);
+      assert.equal(event.content.ownerConfirmedAt, nowSeconds());
+      assert.deepEqual(event.content.approvedBy, accept.content.approvedBy, 'who approved stays as history');
+      assert.deepEqual(spies.revoked || [], [], 'the requester of a kept grant is told nothing');
+      assert.deepEqual(outcome, { revokedChildAccesses: 0, revokedConsentGrants: 0, keptConsentGrants: 1 });
+      assert.equal(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null, 'the relationship itself is gone');
+    });
+
+    it('[DDK04] a grant not kept is deleted and its requester notified', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant: keep } = await seedConsentGrant(mall, 'consent-kept');
+      const { grant: drop } = await seedConsentGrant(mall, 'consent-dropped');
+      const spies = {};
+      const outcome = await detachWith(mall, [keep.id], spies);
+      const left = (await mall.accesses.get(USER_B)).map((a) => a.id);
+      assert.deepEqual(left, [keep.id]);
+      assert.deepEqual(spies.revoked, [drop.id]);
+      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 1, keptConsentGrants: 1 });
+    });
+
+    it('[DDK05] the other accesses granted through the delegation are deleted whatever the keep list', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant } = await seedConsentGrant(mall, 'consent-kept');
+      await mall.accesses.create(USER_B, { type: 'app', name: 'app-for-kid', clientData: { delegation: childMarker('rel-1') } });
+      const outcome = await detachWith(mall, [grant.id]);
+      assert.deepEqual((await mall.accesses.get(USER_B)).map((a) => a.name), ['consent-kept']);
+      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 0, keptConsentGrants: 1 });
+    });
+
+    it('[DDK06] an empty or absent keep list drops every consent grant', async function () {
+      for (const keepAccessIds of [[], undefined, null]) {
+        const mall = makeFakeMall();
+        await seedActiveRelationship(mall);
+        const { grant: g1 } = await seedConsentGrant(mall, 'consent-1');
+        const { grant: g2 } = await seedConsentGrant(mall, 'consent-2');
+        const spies = {};
+        const outcome = await detachWith(mall, keepAccessIds, spies);
+        assert.deepEqual(await mall.accesses.get(USER_B), [], String(keepAccessIds));
+        assert.deepEqual(spies.revoked, [g1.id, g2.id]);
+        assert.deepEqual(outcome, { revokedChildAccesses: 2, revokedConsentGrants: 2, keptConsentGrants: 0 });
+      }
+    });
+
+    it('[DDK07] a dropped grant\'s accept event records the withdrawal, a kept one\'s the confirmation only', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant: keep, accept: keptAccept } = await seedConsentGrant(mall, 'consent-kept');
+      const { accept: droppedAccept } = await seedConsentGrant(mall, 'consent-dropped');
+      await detachWith(mall, [keep.id]);
+      const dropped = await mall.events.getOne(USER_B, droppedAccept.id);
+      assert.deepEqual(dropped.content.withdrawal, { at: nowSeconds(), by: 'delegation-detach', relId: 'rel-1' });
+      assert.equal('ownerConfirmedAt' in dropped.content, false);
+      assert.equal(dropped.content.status, 'completed', 'the rest of the content is unchanged');
+      const kept = await mall.events.getOne(USER_B, keptAccept.id);
+      assert.equal(kept.content.ownerConfirmedAt, nowSeconds());
+      assert.equal('withdrawal' in kept.content, false);
+    });
+
+    it('[DDK08] a missing accept event is reported, and the teardown completes', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant, accept } = await seedConsentGrant(mall, 'consent-dropped');
+      await mall.events.delete(USER_B, accept);
+      const spies = {};
+      const outcome = await detachWith(mall, [], spies);
+      assert.deepEqual(spies.revoked, [grant.id]);
+      assert.equal(spies.warned?.length, 1);
+      assert.deepEqual(outcome, { revokedChildAccesses: 1, revokedConsentGrants: 1, keptConsentGrants: 0 });
+      assert.equal(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null);
+    });
+
+    it('[DDK09] a pending invite with a keep list is refused and stays pending', async function () {
+      const mall = makeFakeMall();
+      await store.createAnchor(mall, USER_B, {
+        relId: 'rel-2', delegate, status: C.STATUS.INVITE, requestedAt: nowSeconds(),
+      }, nowSeconds);
+      await assert.rejects(detachWith(mall, ['any-id']), (e) => e.id === 'delegation-invalid-keep-list');
+      assert.notEqual(await store.findAnchorByRelId(mall, USER_B, 'rel-2'), null);
+    });
+
+    it('[DDK10] a grant minted while the delegate token is being removed is still swept', async function () {
+      const mall = makeFakeMall();
+      await seedActiveRelationship(mall);
+      const { grant: early } = await seedConsentGrant(mall, 'consent-early');
+      let late = null;
+      const spies = {};
+      // step (1) runs after the keep list was checked: an accept completing now
+      // passes its post-mint check against the still-present token
+      const outcome = await detachWith(mall, [], spies, async () => {
+        late = (await seedConsentGrant(mall, 'consent-late')).grant;
+      });
+      assert.ok(late != null);
+      assert.deepEqual(await mall.accesses.get(USER_B), [], 'no marked grant outlives the delegation');
+      assert.deepEqual(spies.revoked, [early.id, late.id]);
+      assert.deepEqual(outcome, { revokedChildAccesses: 2, revokedConsentGrants: 2, keptConsentGrants: 0 });
     });
   });
 

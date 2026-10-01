@@ -609,7 +609,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // capability sweep, anchor) then best-effort A-notify; pending invite → cancel.
   api.register('delegations.detachDelegate',
     requireGenuineLogin,
-    async function (context: MethodContext, params: { username?: string }, result: Record<string, unknown>, next: MethodNext) {
+    async function (context: MethodContext, params: { username?: string; keepAccessIds?: unknown }, result: Record<string, unknown>, next: MethodNext) {
       try {
         const delegateUsername = String(params.username || '');
         const self = await selfIdentity(context.user.username);
@@ -620,13 +620,18 @@ export default async function produceDelegationsApiMethods (api: { register (...
           deliverInvite: makeDeliverInvite(),
           notifyDetach: makeNotifyDetach(delegateUsername),
           notifyConsentGrantsRevoked,
+          logger,
         };
         const outcome = await delegation.detachDelegate(deps, {
           bUserId: context.user.id, bUsername: context.user.username, delegateUsername,
+          keepAccessIds: params.keepAccessIds,
         });
         if (outcome.revokedChildAccesses) {
           logger.info('detach revoked ' + outcome.revokedChildAccesses + ' access(es) granted through the delegation' +
             (outcome.revokedConsentGrants ? ', ' + outcome.revokedConsentGrants + ' of them consent grant(s), requesters notified' : ''));
+        }
+        if (outcome.keptConsentGrants) {
+          logger.info('detach kept ' + outcome.keptConsentGrants + ' consent grant(s) at the owner\'s request');
         }
         next();
       } catch (err) { next(toApiError(err)); }
