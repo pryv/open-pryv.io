@@ -440,7 +440,11 @@ upstream. Response headers are passed by allow-list too (content, caching and `l
 headers); `set-cookie` and `strict-transport-security` from the upstream are dropped. The
 upstream's `Content-Security-Policy` is kept as a further policy after the site's own (see the
 anti-framing paragraph below: it can tighten, never relax framing), and its `Permissions-Policy`
-is kept unless the site's `headers` set one. A redirect inside the upstream base is rewritten to the site. An unreachable upstream
+is kept unless the site's `headers` set one. The upstream policy applies as written, under the
+site's origin: its `'self'` means the site, so absolute references back to the upstream's own
+host are blocked unless the policy lists that host. The site's `headers` cannot remove it (they
+only add policies), so a policy that breaks the page behind the core must be fixed on the
+upstream. A redirect inside the upstream base is rewritten to the site. An unreachable upstream
 answers 502, a silent one 504 after 30 s. An `http://` upstream is accepted with a boot
 warning (the content travels in clear between the core and the upstream). An upstream on
 this platform's own domain is refused (it would loop).
