@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.31 - 2026-10-01
 
 ### Platform DB integrity: checked at every boot and by `bin/integrity-check.js`
 
