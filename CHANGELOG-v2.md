@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.32 - 2026-10-01
 
 ### Consent invites inside the authorisation request (`cmcInvites`)
 
