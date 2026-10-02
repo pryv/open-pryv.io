@@ -697,9 +697,12 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # The core refuses to boot when the folder has no index.html or a user holds the name.
 # # Site answers refuse to be framed (clickjacking); frameAncestors lists who may frame it
 # # (keywords quoted, 'none' only alone; x-frame-options cannot be set in headers).
+# # hsts: auto (default) sends Strict-Transport-Security only when this core terminates
+# # TLS; set always when a proxy in front terminates TLS and the site is HTTPS-only.
 # # hostedSites:
 # #   account:
 # #     static: /srv/pryv/sites/account
+# #     hsts: auto
 # #   docs:
 # #     proxy: https://example.github.io/docs/
 # #     frameAncestors: ["'self'", "https://app.example.com"]

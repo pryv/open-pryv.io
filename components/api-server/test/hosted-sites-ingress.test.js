@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
+const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
 const { buildHostedSitesIngress, checkStaticSiteFolders, checkHostedSitesAtBoot } = require('../src/hostedSitesIngress.ts');
@@ -611,6 +612,107 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(problems.length, 1, JSON.stringify(problems));
       assert.ok(problems[0].message.includes('hostedSites.account.frameAncestors'));
       values.hostedSites.account.frameAncestors = ["'self'"];
+      const none = [];
+      validation.checkHostedSites({ get: (key) => values[key] }, none);
+      assert.deepEqual(none, []);
+    });
+  });
+
+  describe('[HSHT] Strict-Transport-Security per site (hsts)', function () {
+    const HSTS = 'max-age=31536000';
+    let plainServer, tlsServer, plainPort, tlsPort;
+
+    before(async function () {
+      this.timeout(20000);
+      const { generate } = require('business/src/acme/selfSignedPlaceholder.ts');
+      const { keyPem, certPem } = generate({ commonName: '*.' + DOMAIN });
+      const dispatch = buildHostedSitesIngress({
+        sites: sitesOf({
+          unset: { static: bareRoot },
+          auto: { static: bareRoot, hsts: 'auto' },
+          always: { static: bareRoot, hsts: 'always' },
+          never: { static: bareRoot, hsts: 'never' },
+          proxied: { proxy: 'http://127.0.0.1:1/docs/', hsts: 'always' }
+        }),
+        domain: DOMAIN,
+        dnsLess: false,
+        logger: quietLogger
+      });
+      const handler = (req, res) => dispatch(req, res, () => assert.fail('no fallback'));
+      plainServer = await listen(handler);
+      plainPort = plainServer.address().port;
+      tlsServer = https.createServer({ key: keyPem, cert: certPem }, handler);
+      await new Promise((resolve) => tlsServer.listen(0, '127.0.0.1', resolve));
+      tlsPort = tlsServer.address().port;
+    });
+    after(async function () {
+      await close(plainServer);
+      await close(tlsServer);
+    });
+
+    const overPlain = (site, p = '/', extra = {}) => request(plainPort, Object.assign({ path: p, host: site + '.' + DOMAIN }, extra));
+    function overTls (site, p = '/') {
+      return new Promise((resolve, reject) => {
+        const r = https.request({
+          host: '127.0.0.1', port: tlsPort, path: p, servername: site + '.' + DOMAIN, rejectUnauthorized: false, headers: { host: site + '.' + DOMAIN }
+        }, (res) => {
+          res.resume();
+          res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+        });
+        r.on('error', reject);
+        r.end();
+      });
+    }
+
+    it('[HSH1] always: every answer carries HSTS over a plain socket (200, 404, 405, proxy 502) and over TLS', async function () {
+      const ok = await overPlain('always');
+      assert.equal(ok.status, 200);
+      assert.equal(ok.headers['strict-transport-security'], HSTS);
+      const missing = await overPlain('always', '/nope');
+      assert.equal(missing.status, 404);
+      assert.equal(missing.headers['strict-transport-security'], HSTS);
+      const post = await overPlain('always', '/', { method: 'POST' });
+      assert.equal(post.status, 405);
+      assert.equal(post.headers['strict-transport-security'], HSTS);
+      const proxied = await overPlain('proxied', '/x');
+      assert.equal(proxied.status, 502);
+      assert.equal(proxied.headers['strict-transport-security'], HSTS);
+      assert.equal((await overTls('always')).headers['strict-transport-security'], HSTS);
+    });
+
+    it('[HSH2] never: no HSTS, over TLS nor over a plain socket', async function () {
+      const tls = await overTls('never');
+      assert.equal(tls.status, 200);
+      assert.equal(tls.headers['strict-transport-security'], undefined);
+      assert.equal((await overPlain('never')).headers['strict-transport-security'], undefined);
+    });
+
+    it('[HSH3] auto, set or unset: HSTS over TLS only, as before', async function () {
+      for (const site of ['unset', 'auto']) {
+        const tls = await overTls(site);
+        assert.equal(tls.status, 200, site);
+        assert.equal(tls.headers['strict-transport-security'], HSTS, site);
+        const plainAnswer = await overPlain(site);
+        assert.equal(plainAnswer.status, 200, site);
+        assert.equal(plainAnswer.headers['strict-transport-security'], undefined, site);
+      }
+    });
+
+    it('[HSH4] the boot-time config validation refuses an invalid hsts', function () {
+      const validation = require('../../../config/plugins/config-validation.js');
+      const values = {
+        hostedSites: { account: { static: root, hsts: 'yes' } },
+        'dns:domain': DOMAIN,
+        'dnsLess:isActive': false
+      };
+      for (const bad of ['yes', true, 'ALWAYS', '']) {
+        values.hostedSites.account.hsts = bad;
+        const problems = [];
+        validation.checkHostedSites({ get: (key) => values[key] }, problems);
+        assert.equal(problems.length, 1, JSON.stringify(bad) + ': ' + JSON.stringify(problems));
+        assert.ok(problems[0].message.includes('hostedSites.account.hsts'), JSON.stringify(bad));
+      }
+      values.hostedSites.account.hsts = 'always';
       const none = [];
       validation.checkHostedSites({ get: (key) => values[key] }, none);
       assert.deepEqual(none, []);

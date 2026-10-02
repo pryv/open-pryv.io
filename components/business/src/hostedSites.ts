@@ -18,10 +18,13 @@ import path from 'node:path';
  *       headers:
  *         content-security-policy: "default-src 'self'"
  *       frameAncestors: ["'self'", "https://app.example.com"]
+ *       hsts: always
  *
  * Every site answer forbids framing by default (`frame-ancestors 'none'` +
  * `X-Frame-Options: DENY`); `frameAncestors` lists the CSP source expressions
- * allowed to frame the site instead.
+ * allowed to frame the site instead. `hsts` decides when the answers carry
+ * Strict-Transport-Security: `auto` (default) when this core terminates TLS,
+ * `always` (a proxy in front terminates TLS), `never`.
  *
  * The name set is platform-wide (every core refuses it as a username and the
  * embedded DNS answers it with the cores that advertise it); `static` paths
@@ -31,9 +34,16 @@ import path from 'node:path';
  * filesystem or the network.
  */
 
-/** `frameAncestors` is set only when configured; unset means no framing at all. */
-type StaticSite = { name: string; kind: 'static'; root: string; headers: Record<string, string>; frameAncestors?: string[] };
-type ProxySite = { name: string; kind: 'proxy'; upstream: string; headers: Record<string, string>; frameAncestors?: string[] };
+/** When a site sends Strict-Transport-Security; `auto` = only over a TLS socket of this core. */
+type HstsMode = 'auto' | 'always' | 'never';
+const HSTS_MODES: HstsMode[] = ['auto', 'always', 'never'];
+
+/**
+ * `frameAncestors` is set only when configured; unset means no framing at all.
+ * `hsts` is set only when configured; unset means `auto`.
+ */
+type StaticSite = { name: string; kind: 'static'; root: string; headers: Record<string, string>; frameAncestors?: string[]; hsts?: HstsMode };
+type ProxySite = { name: string; kind: 'proxy'; upstream: string; headers: Record<string, string>; frameAncestors?: string[]; hsts?: HstsMode };
 type HostedSite = StaticSite | ProxySite;
 
 type HostedSitesInput = {
@@ -137,8 +147,8 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
       continue;
     }
     for (const key of Object.keys(entry)) {
-      if (!['static', 'proxy', 'headers', 'frameAncestors'].includes(key)) {
-        siteProblems.push(`${where}.${key}: unknown key (expected static, proxy, headers or frameAncestors)`);
+      if (!['static', 'proxy', 'headers', 'frameAncestors', 'hsts'].includes(key)) {
+        siteProblems.push(`${where}.${key}: unknown key (expected static, proxy, headers, frameAncestors or hsts)`);
       }
     }
     const hasStatic = entry.static != null && entry.static !== '';
@@ -188,6 +198,15 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
       }
     }
 
+    let hsts: HstsMode | null = null;
+    if (entry.hsts != null) {
+      if (!HSTS_MODES.includes(entry.hsts as HstsMode)) {
+        siteProblems.push(`${where}.hsts must be "auto" (Strict-Transport-Security only when this core terminates TLS, the default), "always" (a proxy in front terminates TLS) or "never"`);
+      } else {
+        hsts = entry.hsts as HstsMode;
+      }
+    }
+
     let site: HostedSite | null = null;
     if (hasStatic && !hasProxy) {
       if (typeof entry.static !== 'string' || !path.isAbsolute(entry.static)) {
@@ -223,6 +242,7 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
     }
     if (site != null) {
       if (frameAncestors != null) site.frameAncestors = frameAncestors;
+      if (hsts != null) site.hsts = hsts;
       sites.set(name, site);
     }
   }
@@ -268,4 +288,4 @@ function hostedSiteNames (config: ConfigReader): string[] {
 }
 
 export { describeHostedSites, hostedSitesInputFromConfig, parseHostedSites, hostedSiteNames, DNSLESS_ROUTE_SEGMENTS };
-export type { HostedSite, StaticSite, ProxySite, HostedSitesInput, HostedSitesReport };
+export type { HostedSite, StaticSite, ProxySite, HostedSitesInput, HostedSitesReport, HstsMode };

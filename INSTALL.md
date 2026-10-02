@@ -393,7 +393,7 @@ server {
 
 **Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
 
-**Hosted sites behind nginx** - the in-process dispatcher recognises a hosted site by the `Host` header, so the `location /` block must keep `proxy_set_header Host $http_host;` (as in the sample). Alternatively serve the folder from nginx with its own `server` block and leave `hostedSites` for the name reservation and the DNS answer.
+**Hosted sites behind nginx** - the in-process dispatcher recognises a hosted site by the `Host` header, so the `location /` block must keep `proxy_set_header Host $http_host;` (as in the sample). nginx terminates TLS there, so a site sends HSTS only with `hsts: always` (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)). Alternatively serve the folder from nginx with its own `server` block and leave `hostedSites` for the name reservation and the DNS answer.
 
 ## Hosted sites (static folder or fixed proxy on a reserved name)
 
@@ -411,6 +411,7 @@ hostedSites:
     headers:                                 # optional, added to every response of this site
       content-security-policy: "default-src 'self'"
     frameAncestors: ["'self'", "https://app.example.com"]  # optional, who may frame the site
+    hsts: auto                               # optional: auto (default), always or never
 ```
 
 Where the site answers:
@@ -457,6 +458,17 @@ Every site answer carries `X-Content-Type-Options: nosniff`,
 max-age=31536000` when served over TLS (this host only, no `includeSubDomains`) and the
 site's `headers`. The API's CORS, JSON and `api-version` headers are never added, and the
 core never sets a cookie for a site.
+
+When HSTS is sent is set per site with `hsts`, from the configuration only (no request
+header such as `X-Forwarded-Proto` is trusted):
+
+- `auto` (default): only when the request reached this core over TLS. Behind a proxy that
+  terminates TLS (nginx, a load balancer, Dokku) the core sees plain HTTP and sends none.
+- `always`: on every answer. Set it when a proxy in front terminates TLS and the site is
+  reachable over HTTPS only (plain HTTP redirected or closed): browsers then refuse plain
+  HTTP to that host for a year. In dnsLess mode the site shares the API's host, so this
+  applies to that whole host.
+- `never`: never, even over TLS.
 
 Every site answer (any status, including 404 and the redirects) also refuses to be framed,
 against clickjacking: `Content-Security-Policy: frame-ancestors 'none'` and
