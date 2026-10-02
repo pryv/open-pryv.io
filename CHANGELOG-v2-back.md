@@ -1,5 +1,38 @@
 # Changelog - Internal (no API impact)
 
+## Master shutdown waits for rqlited; periodic platform integrity check
+
+A follower's platform DB was found with table and index pages from two points in time. Cause:
+the master exited as soon as its last worker was gone, while rqlited was still taking its
+snapshot-on-close, and rqlited's stdout / stderr were pipes read by the master, so its next log
+line after the master exited killed it with SIGPIPE (reproduced). rqlite v9 is not crash-safe at
+that point: the snapshot store lost a WAL segment, and a later restore at boot copied stale pages
+into the live database.
+
+- `bin/master.js`: the shutdown sequence moves to `components/business/src/masterShutdown.ts`.
+  SIGTERM the workers and stop the master's services, wait for the workers (5 s, then SIGKILL),
+  then stop rqlited and wait for it to exit, then `process.exit(0)`. The cluster `exit` handler
+  no longer exits the master on its own when the last worker is gone. An overall deadline of 28 s
+  forces `exit(1)` if a step hangs (fits a 30 s supervisor stop timeout). Liveness is judged by
+  the worker state, since a worker leaves `cluster.workers` on exit and disconnect, in either
+  order.
+- `rqliteProcess.ts`: rqlited's stdout / stderr are no longer pipes read by the master. It
+  inherits the master's stdout / stderr (lines keep their rqlite prefixes, without the former
+  `[rqlite]` tag, and no longer go through the master's logger), or appends to
+  `storages.engines.rqlite.logFile` when set. Readiness was already polled over HTTP.
+- `rqliteProcess.stop()`: SIGKILL fallback raised from 5 s to 20 s, logged as an error ("rqlited
+  did not stop within 20.0s, killed: its snapshot may be incomplete"); the timer is cleared once
+  rqlited exits.
+- Periodic platform DB integrity check: the master re-runs the boot check
+  (`checkStoreIntegrity()`, this node's copy) every `storages.platform.integrityCheckIntervalMs`
+  (default 1 h, 0 disables; `storages/interfaces/platformStorage/integrityMonitor.ts`). ERROR at
+  every failed check, INFO once when it passes again, WARN when the check cannot run; checks never
+  overlap; the timer is unref'd and stopped at shutdown.
+- Tests: `[MSHD]` shutdown order (rqlited awaited before exit, a worker exit does not exit the
+  master, worker kill fallback, overall deadline), `[RQOU]` rqlited finishes its close after the
+  parent exits (fails with parent-read pipes), log file output, `stop()` waits and kills loudly,
+  `[PIMO]` periodic check scheduling and logging.
+
 ## Docs: storage-engine facts in AGENTS, INSTALL, SINGLE-TO-MULTIPLE
 
 - AGENTS.md: the SQLite engine lists `seriesStorage` (per its manifest); the config sample shows

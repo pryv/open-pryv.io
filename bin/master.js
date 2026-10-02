@@ -152,6 +152,9 @@ if (cluster.isPrimary) {
           // default; the boot fails (and the supervisor restarts the
           // container) when this budget is exceeded.
           readyTimeoutMs: rqliteConfig.readyTimeoutMs,
+          // rqlited writes to the master's stdout / stderr, or appends to
+          // this file when set; never to pipes the master reads.
+          logFile: rqliteConfig.logFile || null,
           log,
           warn
         });
@@ -169,9 +172,12 @@ if (cluster.isPrimary) {
     // Platform DB integrity, this core's copy, read-only: a corrupted
     // primary-key index raises no error by itself (upserts duplicate keys,
     // lookups miss rows), so say it loudly at boot. Never blocks the boot.
+    // Repeated periodically below (platformIntegrityMonitor).
+    let bootIntegrityOk = null;
     try {
       const { describePlatformIntegrity } = require('../storages/interfaces/platformStorage/PlatformDB.ts');
       const report = await require('../storages/index.ts').platformDB.checkStoreIntegrity();
+      bootIntegrityOk = report.ok;
       if (!report.ok) {
         const msg = `[platform-integrity] ${describePlatformIntegrity(report).join('\n  ')}`;
         logger.error(msg);
@@ -376,6 +382,22 @@ if (cluster.isPrimary) {
         .catch((err) => log(`[dpop-key-inventory-prune] failed: ${err.message}`));
     }, sweepIntervalMs);
     accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
+
+    // Periodic platform DB integrity check, this core's copy: the same
+    // read-only check as at boot. The copy can be damaged while the core runs
+    // (e.g. a snapshot restore inside rqlite) and nothing else would say so.
+    // ERROR at every failed check, INFO once when it passes again.
+    const { startPlatformIntegrityMonitor, resolveIntervalMs } = require('../storages/interfaces/platformStorage/integrityMonitor.ts');
+    const platformIntegrityMonitor = startPlatformIntegrityMonitor({
+      check: () => require('../storages/index.ts').platformDB.checkStoreIntegrity(),
+      intervalMs: resolveIntervalMs(config.get('storages:platform:integrityCheckIntervalMs')),
+      initialOk: bootIntegrityOk,
+      logger: {
+        info: log,
+        warn,
+        error: (msg) => { logger.error(msg); console.error(`[master] ERROR: ${msg}`); }
+      }
+    });
 
     // Start TCP pub/sub broker in master (workers connect as clients)
     const tcpPubsub = require('../components/messages/src/tcp_pubsub.ts');
@@ -597,7 +619,6 @@ if (cluster.isPrimary) {
 
     // Track worker types for targeted restart
     const workerTypes = new Map(); // worker.id → 'api' | 'hfs' | 'previews'
-    let shuttingDown = false;
     let apiWorkerId = 0;
     let hfsWorkerId = 0;
 
@@ -759,11 +780,37 @@ if (cluster.isPrimary) {
       }
     });
 
+    // --- Shutdown ---
+    // The master exits only after rqlited has exited: rqlited snapshots the
+    // platform DB when it closes, and leaving first can interrupt that
+    // snapshot (see components/business/src/masterShutdown.ts).
+    const { createMasterShutdown } = require('business/src/masterShutdown.ts');
+    const masterShutdown = createMasterShutdown({
+      cluster,
+      stopServices: async () => {
+        clearInterval(keepAlive);
+        clearInterval(accessStateSweep);
+        platformIntegrityMonitor.stop();
+        // Stop ACME orchestrator (clears intervals)
+        if (acmeOrchestrator) acmeOrchestrator.stop();
+        if (dnsServer) await dnsServer.stop();
+      },
+      stopRqlite: () => rqliteProcess.isRunning()
+        ? rqliteProcess.stop(log, (msg) => { logger.error(msg); console.error(`[master] ERROR: ${msg}`); })
+        : Promise.resolve(),
+      log,
+      warn,
+      exit: (code) => process.exit(code)
+    });
+
     // --- Worker lifecycle ---
     cluster.on('exit', (worker, code, signal) => {
       const type = workerTypes.get(worker.id);
       workerTypes.delete(worker.id);
-      if (shuttingDown) return;
+      if (masterShutdown.isShuttingDown()) {
+        masterShutdown.onWorkerExit();
+        return;
+      }
       log(`${type ?? 'unknown'} worker pid ${worker.process.pid} died (code=${code} signal=${signal}), restarting`);
       if (type === 'hfs') {
         forkHfsWorker();
@@ -774,46 +821,12 @@ if (cluster.isPrimary) {
       }
     });
 
-    const shutdown = async (sig) => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      log(`Received ${sig}, shutting down workers...`);
-      clearInterval(keepAlive);
-      clearInterval(accessStateSweep);
-      for (const id in cluster.workers) {
-        cluster.workers[id].process.kill('SIGTERM');
-      }
-      // Stop ACME orchestrator (clears intervals)
-      if (acmeOrchestrator) {
-        acmeOrchestrator.stop();
-      }
-      // Stop DNS server
-      if (dnsServer) {
-        await dnsServer.stop();
-      }
-      // Stop rqlited after workers (so they can flush)
-      if (rqliteProcess.isRunning()) {
-        await rqliteProcess.stop(log);
-      }
-      // Force exit after timeout
-      setTimeout(() => {
-        log('Shutdown timeout, forcing exit');
-        process.exit(1);
-      }, 10000).unref();
-    };
+    // A worker leaves `cluster.workers` once it has both exited and
+    // disconnected, in either order.
+    cluster.on('disconnect', () => masterShutdown.onWorkerExit());
 
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-
-    // Exit master when all workers have exited
-    cluster.on('exit', () => {
-      if (!shuttingDown) return;
-      const remaining = Object.keys(cluster.workers).length;
-      if (remaining === 0) {
-        log('All workers stopped, master exiting');
-        process.exit(0);
-      }
-    });
+    process.on('SIGTERM', () => masterShutdown.shutdown('SIGTERM'));
+    process.on('SIGINT', () => masterShutdown.shutdown('SIGINT'));
 
     log('Master process ready');
   })().catch(err => {

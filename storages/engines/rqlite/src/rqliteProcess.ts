@@ -29,6 +29,16 @@ let rqliteChild: ChildProcess | null = null;
  */
 const DEFAULT_READY_TIMEOUT_MS = 30000;
 
+/**
+ * How long `stop()` waits for rqlited to exit after SIGTERM before sending
+ * SIGKILL. rqlited takes a snapshot when it closes (tens of milliseconds
+ * normally, more on a large store or a slow disk); a SIGKILL in the middle of
+ * it can leave the snapshot store missing data, which a later restore copies
+ * into the live database. Kept above a slow snapshot and below a supervisor's
+ * stop timeout (systemd units commonly use 30 s).
+ */
+const STOP_KILL_TIMEOUT_MS = 20000;
+
 interface TlsConfig {
   caFile: string;
   certFile: string;
@@ -49,6 +59,12 @@ interface RqliteOpts {
   coreIp?: string | null;
   tls?: TlsConfig | null;
   readyTimeoutMs?: number;
+  /**
+   * File rqlited appends its stdout and stderr to. Null (default): rqlited
+   * writes to the master's own stdout and stderr. Never a pipe read by the
+   * master: rqlited must outlive the master's output handling, see `start()`.
+   */
+  logFile?: string | null;
   log?: (msg: string) => void;
   warn?: (msg: string) => void;
 }
@@ -187,19 +203,20 @@ async function start (opts: RqliteOpts): Promise<void> {
 
   log(`Starting rqlited: ${absBinPath} ${args.join(' ')}`);
 
-  rqliteChild = spawn(absBinPath, args, {
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  rqliteChild!.stdout!.on('data', (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) log(`[rqlite] ${line}`);
-  });
-
-  rqliteChild!.stderr!.on('data', (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) log(`[rqlite:err] ${line}`);
-  });
+  // rqlited's output must not go through pipes read by this process. When the
+  // reader is gone (the master exited, crashed, or stopped reading), the next
+  // line rqlited logs kills it with SIGPIPE, and rqlited logs while it takes
+  // its snapshot-on-close: dying there leaves the snapshot store missing data,
+  // which a later restore copies into the live database. It therefore writes
+  // straight to the master's own stdout / stderr (inherited file descriptors,
+  // owned by whatever collects the master's output), or to `logFile`.
+  const stdio = openOutput(opts.logFile, log);
+  try {
+    rqliteChild = spawn(absBinPath, args, { stdio });
+  } finally {
+    // The child holds its own copy of the descriptor.
+    if (typeof stdio[1] === 'number') fs.closeSync(stdio[1]);
+  }
 
   // The master can leave through `process.exit()` without running `stop()`: a
   // failed boot check after the spawn (hosted sites), the startup catch for
@@ -266,23 +283,30 @@ async function start (opts: RqliteOpts): Promise<void> {
 }
 
 /**
- * Stop the rqlited process gracefully.
+ * Stop the rqlited process gracefully. Resolves once rqlited has exited.
+ * SIGKILL after `killTimeoutMs`, logged as an error: a kill during the
+ * snapshot-on-close can leave the snapshot store incomplete.
  */
-function stop (log: (msg: string) => void = console.log): Promise<void> {
+function stop (log: (msg: string) => void = console.log,
+  error: (msg: string) => void = log,
+  killTimeoutMs: number = STOP_KILL_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve) => {
-    if (rqliteChild == null) return resolve();
+    const child = rqliteChild;
+    if (child == null) return resolve();
     log('Stopping rqlited...');
-    rqliteChild.once('exit', () => {
-      rqliteChild = null;
+    const killTimer = setTimeout(() => {
+      if (child.exitCode == null && child.signalCode == null) {
+        error(`rqlited did not stop within ${formatSeconds(killTimeoutMs)}, killed: its snapshot may be incomplete`);
+        child.kill('SIGKILL');
+      }
+    }, killTimeoutMs);
+    killTimer.unref();
+    child.once('exit', () => {
+      clearTimeout(killTimer);
+      if (rqliteChild === child) rqliteChild = null;
       resolve();
     });
-    rqliteChild.kill('SIGTERM');
-    // Force kill after 5s
-    setTimeout(() => {
-      if (rqliteChild != null) {
-        rqliteChild.kill('SIGKILL');
-      }
-    }, 5000).unref();
+    child.kill('SIGTERM');
   });
 }
 
@@ -306,6 +330,20 @@ async function fetchStatusPid (httpUrl: string): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * The stdio for rqlited: stdin ignored, stdout + stderr either inherited from
+ * this process or appended to `logFile` (relative paths resolve against the
+ * working directory, like `dataDir`).
+ */
+function openOutput (logFile: string | null | undefined, log: (msg: string) => void): ['ignore', 'inherit' | number, 'inherit' | number] {
+  if (logFile == null || logFile === '') return ['ignore', 'inherit', 'inherit'];
+  const absLogFile = path.isAbsolute(logFile) ? logFile : path.resolve(process.cwd(), logFile);
+  fs.mkdirSync(path.dirname(absLogFile), { recursive: true });
+  const fd = fs.openSync(absLogFile, 'a');
+  log(`rqlited output: ${absLogFile}`);
+  return ['ignore', fd, fd];
 }
 
 function formatSeconds (ms: number): string {
@@ -350,4 +388,4 @@ async function waitForExternal (url: string, timeoutMs: number | undefined, log:
   log(`External rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
-export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, DEFAULT_READY_TIMEOUT_MS };
+export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, DEFAULT_READY_TIMEOUT_MS, STOP_KILL_TIMEOUT_MS };
