@@ -10,7 +10,7 @@
   24.18.0). See "Node major bumps" below for pinning the version.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
-- **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
+- **InfluxDB** 1.x (optional, for high-throughput HF series; PostgreSQL, the default, and SQLite also serve as series engine)
 - **GraphicsMagick** (optional — for image previews): `apt install graphicsmagick`
 - [just](https://github.com/casey/just#installation) (task runner)
 
@@ -119,13 +119,13 @@ storages:
   base:
     engine: postgresql    # or sqlite
   platform:
-    engine: rqlite        # only supported value; master.js spawns the embedded rqlited
+    engine: rqlite        # default; master.js spawns the embedded rqlited (postgresql: single-core dnsLess only, see "Diskless" below)
   file:
     engine: filesystem
   series:
-    engine: postgresql    # or influxdb
+    engine: postgresql    # or sqlite, or influxdb
   audit:
-    engine: sqlite
+    engine: sqlite        # or postgresql
   engines:
     postgresql:
       host: localhost

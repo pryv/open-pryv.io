@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## Docs: storage-engine facts in AGENTS, INSTALL, SINGLE-TO-MULTIPLE
+
+- AGENTS.md: the SQLite engine lists `seriesStorage` (per its manifest); the config sample shows
+  the real default `series: postgresql` (was `influxdb`) and the alternatives per storage type.
+- INSTALL.md: the config sample no longer calls rqlite the only platform value (PostgreSQL is
+  valid for single-core dnsLess), lists SQLite for series and PostgreSQL for audit.
+- SINGLE-TO-MULTIPLE.md: rqlite is the default, not the only platform engine; a deployment on
+  `platform: postgresql` migrates its platform data back with `bin/migrate-platform.js` before
+  going multi-core; the joining core's base storage may be PostgreSQL or SQLite.
+
 ## Platform DB integrity check
 
 - `PlatformDB` gains `checkStoreIntegrity()` (read-only), returning `{ ok, structural, duplicateKeys }`,

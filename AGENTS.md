@@ -57,7 +57,7 @@ storages/         Plugin tree for storage engines (npm workspace)
     seriesStorage/  auditStorage/  backup/  migrations/
   engines/
     postgresql/     baseStorage, dataStore, seriesStorage, auditStorage, platformStorage, fileStorage (low-volume attachments)
-    sqlite/         per-user SQLite (baseStorage, dataStore, auditStorage)
+    sqlite/         per-user SQLite (baseStorage, dataStore, seriesStorage, auditStorage)
     rqlite/         distributed SQLite (platformStorage default; required multi-core)
     filesystem/     attachments + previews on disk (fileStorage)
     s3/             attachments on S3-compatible object stores (fileStorage)
@@ -128,11 +128,11 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
    ```yaml
    storages:
-     base:     { engine: postgresql }   # baseStorage + dataStore
+     base:     { engine: postgresql }   # baseStorage + dataStore, or sqlite
      platform: { engine: rqlite }       # platformStorage, or postgresql (single-core dnsLess only)
-     series:   { engine: influxdb }     # seriesStorage
+     series:   { engine: postgresql }   # seriesStorage, or sqlite, or influxdb
      file:     { engine: filesystem }   # fileStorage
-     audit:    { engine: sqlite }       # auditStorage
+     audit:    { engine: sqlite }       # auditStorage, or postgresql
      engines:
        postgresql: { host: 127.0.0.1, port: 5432, database: pryv-node, user: pryv, password: '', max: 20 }
        # sqlite, rqlite, influxdb, filesystem also configurable here
