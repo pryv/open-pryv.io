@@ -1,5 +1,26 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Attachments with an active content type are served in a sandbox
+
+- **Security.** An attachment keeps the content type declared at upload. When that type is one a
+  browser executes or renders as a document (`text/html`, `application/xhtml+xml`,
+  `image/svg+xml`, `text/xml`, `application/xml`, `text/xsl`, any `*+xml`, `text/javascript`,
+  `text/ecmascript`, `application/javascript`, `application/x-javascript`,
+  `application/ecmascript`; parameters and case ignored), `GET /events/{id}/{fileId}` (with an
+  `Authorization` header or a `readToken`) now also sends
+  `Content-Security-Policy: sandbox; default-src 'none'`, next to the
+  `Content-Disposition: attachment` every attachment already carries. Opened on the API origin,
+  such a file can no longer run scripts, load resources or reach the API with the viewer's
+  session. Uploads are not refused for their type, and other types (PNG, JPEG, PDF, JSON,
+  plain text, octet-stream, ...) are served as before.
+- **Apps:** a browser that renders such an attachment anyway (a frame or tab pointed at the
+  attachment URL, a client ignoring `Content-Disposition`) gets a sandboxed document: no script,
+  no style, no image loads. To display HTML or SVG attachments, fetch the content and render it
+  in the app's own sandbox. `<img src>` of an SVG attachment is not affected (an image does not
+  run scripts).
+
 ## 2.0.0-rc.33 - 2026-10-02
 
 ### Platform DB: the master waits for rqlited at shutdown; periodic integrity check
