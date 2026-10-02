@@ -19,6 +19,16 @@
   used to ignore it silently and run against the default config, i.e. possibly another storage
   than the core's.
 
+### `config/production-config.yml`: reset, verification and SSO landing pages on the account app
+
+`auth.passwordResetPageURL` and `auth.emailVerificationPageURL` pointed at the old app-web-auth3
+pages (`https://sw.pryv.me/access/reset-password.html`, `.../verify-email.html`), which answer 404:
+password-reset and email-verification emails sent users to a dead page. They now default to
+`https://account.pryv.me/reset-password` and `https://account.pryv.me/verify-email` (the commented
+`sso.landingPageURL` example to `/sso-signin`), pages of app-web-user-account that read the same
+link parameters. A platform that sets these keys in its own config is unaffected; one that relied
+on the shipped values should set them to its own account app.
+
 ## 2.0.0-rc.32 - 2026-10-01
 
 ### Consent invites inside the authorisation request (`cmcInvites`)
