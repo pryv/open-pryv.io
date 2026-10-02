@@ -13,8 +13,11 @@ header such as `X-Forwarded-Proto` is trusted):
 
 - `auto` (default, unchanged behaviour): HSTS only when this core terminates TLS.
 - `always`: HSTS on every answer. Set it when a proxy in front terminates TLS and the site is
-  HTTPS-only.
+  HTTPS-only (browsers only honour the header received over HTTPS). In dnsLess mode the site
+  shares the API's host, so this applies to that whole host.
 - `never`: no HSTS, even over TLS.
+
+A `strict-transport-security` set in the site's `headers` still replaces the built-in value.
 
 ```yaml
 hostedSites:

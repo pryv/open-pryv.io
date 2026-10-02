@@ -455,20 +455,24 @@ this platform's own domain is refused (it would loop).
 
 Every site answer carries `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security:
-max-age=31536000` when served over TLS (this host only, no `includeSubDomains`) and the
-site's `headers`. The API's CORS, JSON and `api-version` headers are never added, and the
+max-age=31536000` when served over TLS (by default, see `hsts` below; this host only, no
+`includeSubDomains`) and the site's `headers`. The API's CORS, JSON and `api-version` headers are never added, and the
 core never sets a cookie for a site.
 
-When HSTS is sent is set per site with `hsts`, from the configuration only (no request
-header such as `X-Forwarded-Proto` is trusted):
+Whether an answer carries HSTS is set per site with `hsts`, from the configuration only (no
+request header such as `X-Forwarded-Proto` is trusted):
 
 - `auto` (default): only when the request reached this core over TLS. Behind a proxy that
   terminates TLS (nginx, a load balancer, Dokku) the core sees plain HTTP and sends none.
 - `always`: on every answer. Set it when a proxy in front terminates TLS and the site is
   reachable over HTTPS only (plain HTTP redirected or closed): browsers then refuse plain
   HTTP to that host for a year. In dnsLess mode the site shares the API's host, so this
-  applies to that whole host.
+  applies to that whole host. The header only takes effect when the browser received it over
+  HTTPS (RFC 6797): on a site reachable over plain HTTP only it does nothing.
 - `never`: never, even over TLS.
+
+A `strict-transport-security` in the site's `headers` is sent as written and replaces the
+built-in value, whatever `hsts` says (e.g. to add `includeSubDomains` or `preload`).
 
 Every site answer (any status, including 404 and the redirects) also refuses to be framed,
 against clickjacking: `Content-Security-Policy: frame-ancestors 'none'` and
