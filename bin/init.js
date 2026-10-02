@@ -520,7 +520,7 @@ function section (yaml, title, doc, obj) {
  * coverage for the appendix is at `bin/test/init-appendix.test.js` (TODO
  * — currently exercised only by manual smoke tests).
  */
-function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', fileEngine = 'filesystem' }) {
+function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', fileEngine = 'filesystem', authUiUrl = 'https://account.example.com' }) {
   // Diskless platform storage — only meaningful for single-core dnsLess in
   // full PG mode; omitted entirely when the wizard already enabled it.
   const PLATFORM_DISKLESS_BLOCK = (dnsLess && platformEngine === 'rqlite')
@@ -683,7 +683,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # callback (NOT the landingPageURL host). Unrelated to legacy auth.ssoCookie*.
 # # sso:
 # #   enabled: true
-# #   landingPageURL: ${dnsLess ? 'https://auth.example.com/sso-signin' : 'https://sw.example.com/access/sso-signin'}
+# #   landingPageURL: ${authUiUrl}/sso-signin
 # #   providers:
 # #     google:
 # #       issuer: https://accounts.google.com
@@ -1588,7 +1588,8 @@ async function main () {
     dnsLess,
     dataFolder,
     platformEngine,
-    fileEngine
+    fileEngine,
+    authUiUrl
   });
   console.log();
   if (emitFile(absConfigPath, yamlBody + appendix)) {
