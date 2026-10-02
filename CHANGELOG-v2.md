@@ -1,5 +1,22 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Platform DB: rqlite 10.5.1 (was 9.4.5)
+
+- The image and `storages/engines/rqlite/scripts/setup` bundle rqlite 10.5.1. Under 9.x a node
+  killed while taking a snapshot could later restore stale pages into its copy of the platform DB
+  (keyValue index missing rows, a key stored twice); 10.x keeps that state crash-safe, checksums
+  its snapshot files and stops a node on a node-local SQLite error. No change to the flags or the
+  HTTP API the core uses.
+- **One-way data directory upgrade.** The first start converts the rqlite data directory and
+  rebuilds the node's database from its snapshot store; rqlite 9 cannot open it afterwards, so
+  rolling the image back to an older release needs the data directory restored from a backup.
+  Back up and check the snapshot store before upgrading, and upgrade every node of a cluster back
+  to back (followers first): see INSTALL.md, "Upgrading the bundled rqlite (9.x to 10.x)".
+- Native installs: `scripts/setup` keeps an existing `bin-ext/rqlited` and warns when its
+  version differs from the pinned one; replace it by hand as described there.
+
 ## 2.0.0-rc.33 - 2026-10-02
 
 ### Platform DB: the master waits for rqlited at shutdown; periodic integrity check

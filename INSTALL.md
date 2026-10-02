@@ -781,6 +781,26 @@ node bin/migrate.js up --target 3      # stop per-engine at version 3
 
 Set `migrations.autoRunOnStart: false` in config to disable auto-run at startup and rely on the CLI only.
 
+### Upgrading the bundled rqlite (9.x to 10.x)
+
+The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.5.1** (previously 9.4.5). rqlite 10 makes its snapshot store crash-safe at the point where a node killed during a snapshot could later restore stale pages into its copy of the platform DB under 9.x, checksums its snapshot files, and stops a node on a node-local SQLite error instead of letting it diverge silently. The flags and HTTP endpoints the core uses are unchanged.
+
+- **The data directory is upgraded in place, one way.** At its first start, rqlite 10 converts the directory (log line `upgraded v8 snapshot directory …/rsnapshots to …/wsnapshots`) and rebuilds the node's database from its snapshot store (`clean snapshot predates recording of snapshot index and term, full restore needed`, then `node restored`). rqlite 9 cannot open the directory afterwards: it stops with `panic: log not found`. Going back to an older release therefore needs the data directory restored from a backup (below).
+- **Back up every node first:** `curl -s 'http://localhost:4001/db/backup' -o platform-backup.sqlite` on the leader (`?noleader` on a follower for its own copy), and an archive of the rqlite data directory taken while the core is stopped.
+- **Check the snapshot store before the first rqlite 10 start.** That start replaces the database with the content of the snapshot store, so a store left inconsistent by an earlier interrupted snapshot would replace a healthy database. Stop the core cleanly (the stop leaves a `clean_snapshot` file and an empty `db.sqlite-wal` in the data directory), then compare the database with the newest snapshot, which must be identical, and make sure the snapshot store holds nothing else than `<id>.db` files and `<id>/meta.json` directories:
+
+  ```bash
+  cd var-pryv/rqlite-data
+  ls -la rsnapshots/
+  cmp db.sqlite "rsnapshots/$(ls rsnapshots | grep '\.db$' | sort -t- -k2,2n | tail -1)" && echo "store matches"
+  ```
+
+  On a follower that fails the check, move its data directory aside and start it again so it rejoins and receives a fresh snapshot from the leader (with the same rqlite version as the leader: a node cannot join a cluster of an older major), then repeat the check. On the leader, do not upgrade: back up with `/db/backup` and rebuild the platform DB from that backup (`/db/load` on a fresh leader, followers rejoined from scratch).
+- **Clusters: upgrade every node back to back, and never add or re-add a node while versions are mixed.** A node on 10 and a node on 9 replicate through the Raft log, but a snapshot transfer between the two majors fails in both directions, so a follower that falls behind the leader's log cannot catch up until both run 10, and a node on 10 cannot join a cluster still led by 9. Upgrading the non-voting followers first lets each one act as a canary for the leader and keeps a simple rollback for it (move its directory aside and rejoin with the old binary). Upgrade the leader right after.
+- **Verify every node** after its restart, each on its own copy (`level=none`, see "Platform DB integrity"): `PRAGMA integrity_check` returns `ok`, the same `keyValue` row count on every node, and `/status` reports the new version.
+- **Native installs:** `scripts/setup` never replaces an existing `bin-ext/rqlited` (it warns when the version differs from the pinned one). Replace the binary while the core is stopped, after the backup and the check above, and keep the old one next to it for a rollback. The release tarballs are at `https://github.com/rqlite/rqlite/releases/tag/v10.5.1` (Linux only; on macOS `scripts/setup` uses Homebrew's `rqlite`).
+- **Rollback:** stop the core, restore the archived data directory and the previous binary (writes made since the upgrade are lost; compare with a `/db/backup` taken from the upgraded node before stopping it), or start a fresh 9.x node and `/db/load` a backup taken from the upgraded node.
+
 ## First-boot DNS chain (dns-active mode)
 
 Before a dns-active deployment can issue a wildcard cert via Let's Encrypt DNS-01, the embedded DNS server must answer authoritatively for the zone: SOA + NS for the apex (`<domain>`), and an A record for `core.<domain>` (the canonical API hostname). Public recursors discard delegated answers when no SOA is present, so `acme-client`'s DNS-01 preflight errors with `No TXT records found for name: _acme-challenge.<domain>` before the LE round-trip even starts.

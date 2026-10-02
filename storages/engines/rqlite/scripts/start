@@ -15,6 +15,9 @@ SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 REPO_ROOT=${REPO_ROOT:-$SCRIPT_FOLDER/../../../..}
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$REPO_ROOT/var-pryv}
+# A fresh checkout has no var-pryv/ yet (setup creates it); without it the cd
+# below fails and every path would resolve under the filesystem root.
+mkdir -p "$VAR_PRYV_FOLDER"
 VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
 
 RQLITE_BIN=$REPO_ROOT/bin-ext/rqlited
