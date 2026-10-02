@@ -486,7 +486,7 @@ describe('[ACUP] accesses.update', function () {
     });
   });
 
-  describe('[ACUP-SYM] accesses.update accepts the same permission shape as accesses.create (B-2026-05-14-4)', function () {
+  describe('[ACUP-SYM] accesses.update accepts the same permission shape as accesses.create', function () {
     beforeEach(resetAccesses);
 
     it('[SYM01] accesses.update accepts a permission carrying defaultName + name (does not 400 OBJECT_ADDITIONAL_PROPERTIES)', async function () {

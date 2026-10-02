@@ -58,7 +58,7 @@ Request.prototype.login = function (this: any, user: any, callback: any) {
       // this, an AssertionError inside the superagent callback throws
       // synchronously, gets re-raised by boiler/src/logging.ts:153 as
       // an unhandledRejection, and kills the whole test runner before
-      // mocha can report the failing test (B-2026-05-29-4).
+      // mocha can report the failing test.
       try {
         assert.strictEqual(err?.message || null, null, `Request must be a success — login(${user.username}) got: ${err?.message || res?.statusCode || 'unknown'}`);
         assert.ok(res !== undefined, 'Request has a result');

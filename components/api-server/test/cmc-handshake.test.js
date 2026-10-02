@@ -1031,7 +1031,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   // alice-side accesses granting :_cmc:* perms confuse those lookups under
   // the current handleIncomingBackChannel matcher.
   describe('[CMCHS-AP] accesses.create accepts :_cmc:* permissions', function () {
-    // Regression for B-2026-05-21-4: `accesses.create` with a permission
+    // Regression: `accesses.create` with a permission
     // referencing a `:`-prefixed CMC stream-id (e.g. `:_cmc:apps:<app>`,
     // `:_cmc:inbox`) used to hit the local-store streamId regex in
     // ensureStream() and fail with invalid-request-structure
@@ -1059,7 +1059,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
     it('[AP02] creates an access mixing local + :_cmc:* perms in one call', async function () {
       // Mirrors the doctor-dashboard / app-web-auth-3 onboarding payload
-      // captured in B-2026-05-21-4: a real app permission alongside two
+      // that triggered the regression: a real app permission alongside two
       // CMC ones in a single accesses.create.
       const localStreamId = 'app-ap02-' + cuid().slice(-8);
       await ensureStream(alice.streamsPath, alice.token,
@@ -1101,7 +1101,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   });
 
   describe('[CMCHS-AP-PER-APP] accesses.{create,update} auto-provision per-app appScope roots', function () {
-    // Plan-driven: HDS handoff 2026-05-26 (B-2026-05-26-1). The 5 reserved
+    // Reported in the HDS handoff of 2026-05-26. The 5 reserved
     // parents under :_cmc:* are pre-provisioned at user creation
     // (provisioning.ts). Per-app sub-trees under :_cmc:apps:<app-code>
     // were historically created on-demand at CMC-acceptance time — but
@@ -1180,7 +1180,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
       // Update to add the per-app perm. Route auto-wraps body into {update}.
       // accesses.update now accepts the same `defaultName`/`name` extras as
-      // accesses.create (B-2026-05-14-4 symmetry fix); kept bare here so the
+      // accesses.create (symmetry fix); kept bare here so the
       // test exercises the minimal canonical shape.
       const updateRes = await coreRequest.put(alice.accessesPath + '/' + accessId)
         .set('Authorization', alice.token)

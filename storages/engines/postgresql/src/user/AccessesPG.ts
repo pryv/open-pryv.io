@@ -28,7 +28,8 @@ type Options = FindOptions;
 /** `this.db` is a `DatabasePG` at runtime; the base only types the query slice
  *  it needs (`PgDbLike`). The integrity-preserving update/delete run their two
  *  statements inside `withTransaction` so no other connection can observe the
- *  hash-less intermediate row (the B-2026-08-25-1 window). */
+ *  hash-less intermediate row (the window in which an access row is briefly
+ *  stored without its integrity hash). */
 type PgDbWithTx = PgDbLike & { withTransaction: <R>(fn: (client: PgDbLike) => Promise<R>) => Promise<R> };
 
 /**
@@ -139,7 +140,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     // Batch-unset (statement 1) and the per-row recompute pass (statement 2)
     // run inside ONE transaction, both on the tx client, so a concurrent
     // integrity scan on another connection never sees a soft-deleted row while
-    // its hash is transiently absent (B-2026-08-25-1).
+    // its hash is transiently absent.
     (this.db as PgDbWithTx).withTransaction(async (client: PgDbLike) => {
       const res = await new Promise<{ modifiedCount: number }>((resolve, reject) => {
         this._updateManyOn(client, userOrUserId, query, updateData,
@@ -180,7 +181,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     // Statement 1 (apply fields + unset integrity) and statement 2 (recompute +
     // set integrity) run inside ONE transaction, both on the tx client, so a
     // concurrent integrity scan on another connection never observes the row
-    // while its hash is transiently absent (B-2026-08-25-1).
+    // while its hash is transiently absent.
     (this.db as PgDbWithTx).withTransaction(async (client: PgDbLike) => {
       const accessData = await new Promise<AccessItem | null>((resolve, reject) => {
         this._findOneAndUpdateOn(client, userOrUserId, query, update,

@@ -65,7 +65,7 @@ describe('[AIGS] AccessesSQLite write-time integrity guard', function () {
 /**
  * The integrity-preserving update/delete write the row hash-less then restore
  * the hash. Both statements MUST run inside ONE better-sqlite3 transaction so no
- * other connection observes the hash-less intermediate (B-2026-08-25-1). This is
+ * other connection observes the hash-less intermediate. This is
  * the regression guard: it fails if the writes are not wrapped in a single
  * `db.transaction`. The per-user db is stubbed so no real SQLite file is touched.
  */

@@ -11,8 +11,8 @@ const assert = require('assert');
 const { BackupOrchestrator } = require('business/src/backup/BackupOrchestrator.ts');
 const { RestoreOrchestrator } = require('business/src/backup/RestoreOrchestrator.ts');
 
-// Direct unit tests for the shape-guard helpers added to address
-// B-2026-05-20-1 (bin/backup.js "items.filter is not a function" with no hint).
+// Direct unit tests for the shape-guard helpers added after bin/backup.js
+// crashed with "items.filter is not a function" and no hint.
 describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
   // Construct a bare instance — we never call init-dependent methods here,
   // only the pure _filterByTimestamp + _assertArray helpers, so the
@@ -38,7 +38,7 @@ describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
       assert.strictEqual(result[0].id, 'a');
     });
 
-    it('[BKP-SHAPE-03] throws a clear error when items is undefined (the B-2026-05-20-1 crash mode)', function () {
+    it('[BKP-SHAPE-03] throws a clear error when items is undefined (the original crash mode)', function () {
       assert.throws(
         () => orch._filterByTimestamp(undefined, 100, null, 'streams'),
         /Backup export shape mismatch: expected array from "streams".*got undefined/
@@ -46,7 +46,7 @@ describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
     });
 
     it('[BKP-SHAPE-04] throws a clear error when items is an object wrapper (e.g. {rows, data, items})', function () {
-      // This matches the "API response shape drift" hypothesis in the bug entry —
+      // This matches the "API response shape drift" hypothesis in the original report —
       // the underlying call returns {rows: [...]} instead of a bare array.
       assert.throws(
         () => orch._filterByTimestamp({ rows: [{ id: 'a' }] }, 100, null, 'events'),
