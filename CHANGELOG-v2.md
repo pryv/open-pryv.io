@@ -29,6 +29,12 @@ password-reset and email-verification emails sent users to a dead page. They now
 link parameters. A platform that sets these keys in its own config is unaffected; one that relied
 on the shipped values should set them to its own account app.
 
+The password-reset link also keeps a query the page URL already carries (e.g.
+`?pryvServiceInfoUrl=…` for an account app serving several platforms): the token is appended with
+`&` there, as the email-verification link already did, instead of a second `?` that folded it into
+the operator's parameter. The `bin/init.js` config appendix's SSO example now points at the account
+app URL given to the wizard.
+
 ## 2.0.0-rc.32 - 2026-10-01
 
 ### Consent invites inside the authorisation request (`cmcInvites`)

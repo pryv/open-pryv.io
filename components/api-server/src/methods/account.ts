@@ -348,7 +348,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     // per-request mail path.
     const passwordResetPageURL = getAuth().passwordResetPageURL;
     // Invariant: generatePasswordResetRequest ran earlier in this chain.
-    const resetLink = passwordResetPageURL + '?resetToken=' + encodeURIComponent(context.resetToken!);
+    // The page URL may already carry a query (e.g. `pryvServiceInfoUrl`): pick
+    // the separator, as for the verification link.
+    const separator = passwordResetPageURL.includes('?') ? '&' : '?';
+    const resetLink = passwordResetPageURL + separator + 'resetToken=' + encodeURIComponent(context.resetToken!);
     const recipient = {
       email: context.userBusiness!.email,
       name: context.userBusiness!.username,
