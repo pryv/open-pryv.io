@@ -98,13 +98,19 @@ class InfluxConnection {
 
   /**
    * Export all measurements and their points from the given database.
+   *
+   * `time` is exported in the format every series engine shares: a number of
+   * milliseconds (the PostgreSQL and SQLite engines export `delta_time / 1e6`).
+   * The raw query row carries a nanosecond Date object instead, which JSON
+   * turns into an ISO string that no engine's import accepts.
    */
   async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: InfluxQueryRow[] }> }> {
     const measurementRows = await this.conn.query('SHOW MEASUREMENTS', { database: name });
     const measurements: Array<{ measurement: string, points: InfluxQueryRow[] }> = [];
     for (const row of measurementRows) {
       const measurementName = row.name as string;
-      const points = await this.conn.query(`SELECT * FROM "${measurementName}"`, { database: name });
+      const rows = await this.conn.query(`SELECT * FROM "${measurementName}"`, { database: name });
+      const points = rows.map((r: InfluxQueryRow) => Object.assign({}, r, { time: timeToMillis(r.time) }));
       measurements.push({ measurement: measurementName, points });
     }
     return { measurements };
@@ -133,12 +139,34 @@ class InfluxConnection {
           measurement,
           tags,
           fields,
-          timestamp: p.time
+          timestamp: millisToNanoString(p.time)
         };
       });
       await this.conn.writePoints(writePoints, { database: name });
     }
   }
+}
+
+// A query row's `time` (a node-influx nanosecond Date) as milliseconds.
+function timeToMillis (time: unknown): unknown {
+  if (time != null && typeof (time as { getNanoTime?: unknown }).getNanoTime === 'function') {
+    return Number((time as { getNanoTime: () => string }).getNanoTime()) / 1e6;
+  }
+  if (time instanceof Date) return time.getTime();
+  return time;
+}
+
+// An exported `time` (milliseconds) as the nanosecond string node-influx
+// writes verbatim. The string reproduces the exported millisecond value
+// exactly; nanosecond precision is bounded by that shared millisecond format,
+// as on the other engines. An ISO date string is also accepted.
+function millisToNanoString (time: unknown): string {
+  if (time == null) throw new Error(`Series point has an invalid time: ${String(time)}`);
+  const millis = typeof time === 'string' && !/^-?[0-9.]+$/.test(time) ? Date.parse(time) : Number(time);
+  if (!Number.isFinite(millis)) throw new Error(`Series point has an invalid time: ${String(time)}`);
+  const whole = Math.trunc(millis);
+  const fractionNs = Math.round((millis - whole) * 1e6);
+  return (BigInt(whole) * 1000000n + BigInt(fractionNs)).toString();
 }
 
 export { InfluxConnection };

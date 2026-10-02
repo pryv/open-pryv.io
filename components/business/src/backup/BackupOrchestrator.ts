@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
+const { seriesNamespace } = require('business/src/series/namespace.ts');
 
 /**
  * Orchestrates full backup using existing storage layer methods.
@@ -75,7 +77,7 @@ class BackupOrchestrator {
    */
   async backupAllUsers (writer: BackupWriter, options: BackupOptions = {}) {
     const config = await this._getBackupConfig();
-    const coreVersion = require('storage/package.json').version;
+    const coreVersion = await getAPIVersion();
     const snapshotBefore = timestamp.now();
     const allUsers = await this.usersLocalIndex.getAllByUsername();
     const userManifests: UserManifest[] = [];
@@ -116,7 +118,7 @@ class BackupOrchestrator {
     const username = await this.usersLocalIndex.getUsername(userId);
     if (username == null) throw new Error(`User ${userId} not found in local index`);
     const config = await this._getBackupConfig();
-    const coreVersion = require('storage/package.json').version;
+    const coreVersion = await getAPIVersion();
     const snapshotBefore = timestamp.now();
 
     const perUserSince = this._buildPerUserSince(options);
@@ -259,7 +261,7 @@ class BackupOrchestrator {
     // Series (optional — skip if no series engine configured)
     if (this.seriesConnection) {
       try {
-        const seriesData = await this.seriesConnection.exportDatabase(userId);
+        const seriesData = await this.seriesConnection.exportDatabase(seriesNamespace(username));
         if (seriesData.measurements && seriesData.measurements.length > 0) {
           await userWriter.writeSeries(seriesData.measurements);
         }
@@ -450,7 +452,7 @@ type EventFilesLike = {
   getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<Readable>;
 };
 type SeriesConnectionLike = {
-  exportDatabase (userId: string): Promise<{ measurements?: unknown[] }>;
+  exportDatabase (namespace: string): Promise<{ measurements?: unknown[] }>;
 };
 type Manifest = {
   users: Array<{ userId: string; backupTimestamp?: number }>;

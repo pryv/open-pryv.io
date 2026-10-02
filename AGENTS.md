@@ -88,8 +88,18 @@ just test all                      # full suite, PostgreSQL baseStorage (default
 just test <component>              # single component, PostgreSQL baseStorage
 just test-sqlite all               # full suite, SQLite baseStorage
 just test-sqlite <component>       # single component, SQLite baseStorage
+just test-pg-influx <component>    # PostgreSQL base + InfluxDB series (needs a running influxd)
+just test-sqlite-influx <component> # SQLite base + InfluxDB series (needs a running influxd)
+just test-backup-roundtrip         # bin/backup.js across engines, PG -> SQLite -> PG -> SQLite
 just clean-test-data               # reset test DBs + per-user dirs
 ```
+
+The series engine defaults to the base engine; `storages__series__engine=<engine>` overrides it
+in any recipe (the influx recipes set it). `test-backup-roundtrip` seeds a fixture covering every
+backed-up collection (events, streams, accesses, profile, webhook, attachment, HF series), then
+compares the four bundles on counts and content; run it before a release and after any change to
+`components/business/src/backup/` or to an engine's `exportAll` / `importAll` /
+`exportDatabase` / `importDatabase`. It cleans the local test data on every leg.
 
 **Production-ish single node**:
 

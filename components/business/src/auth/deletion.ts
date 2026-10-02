@@ -12,6 +12,7 @@ const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { seriesNamespace } = require('business/src/series/namespace.ts');
 const errors = require('errors').factory;
 const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
@@ -106,7 +107,7 @@ class Deletion {
   async deleteHFData (_context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const conn = require('storages').seriesConnection;
     if (conn) {
-      await conn.dropDatabase(`user.${params.username}`);
+      await conn.dropDatabase(seriesNamespace(params.username));
     }
     next();
   }

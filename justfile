@@ -141,6 +141,42 @@ test-sqlite component *params:
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
+# Same as `test` (PostgreSQL baseStorage) but with InfluxDB as the seriesStorage.
+# Needs a running influxd at storages.engines.influxdb.{host,port}
+# (bundled: storages/engines/influxdb/scripts/setup, then .../start).
+[positional-arguments]
+test-pg-influx component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
+    STORAGE_ENGINE=postgresql storages__series__engine=influxdb NODE_ENV=test \
+        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+
+# Same as `test-sqlite` (SQLite baseStorage) but with InfluxDB as the seriesStorage.
+# Needs a running influxd, as for `test-pg-influx`.
+[positional-arguments]
+test-sqlite-influx component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
+    STORAGE_ENGINE=sqlite storages__series__engine=influxdb NODE_ENV=test \
+        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+
+# Backup/restore round trip across engines: PG -> SQLite -> PG -> SQLite with
+# bin/backup.js, on a fixture covering every collection (events, streams,
+# accesses, profile, webhook, attachment, HF series). Compares the four bundles
+# on counts AND content. Destructive for local dev data (cleans test data per
+# leg); needs PostgreSQL and rqlited. Driver: tools/backup-roundtrip/.
+[positional-arguments]
+test-backup-roundtrip *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tools/backup-roundtrip/backup-roundtrip.sh "$@"
+
 # The recipes below pass params with positional-arguments + "$@" for the same
 # reason as `test` (an unquoted {{params}} hands `--grep "A|B"` to the shell).
 

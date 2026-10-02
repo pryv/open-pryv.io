@@ -1,5 +1,29 @@
 # Changelog - Internal (no API impact)
 
+## Backups now carry HF series data; cross-engine backup round trip
+
+- **Fix: `bin/backup.js` backups contained no HF series data, on every engine, without any
+  warning.** HFS stores a user's points under the series namespace `user.<username>`, while backup
+  exported, restore imported and restore-with-overwrite dropped under the bare user id. The
+  namespace now comes from one helper (`components/business/src/series/namespace.ts`) used by
+  backup, restore, account deletion and HFS. Backups taken before this fix carry no series: take a
+  new backup after upgrading.
+- **Fix: series backed up on InfluxDB could not be restored.** The InfluxDB engine exported each
+  point's `time` as a date object (an ISO string once written to the backup), which its own
+  import refused. It now exports milliseconds of delta time like the PostgreSQL and SQLite
+  engines and imports that value exactly (nanosecond precision is bounded by the shared
+  millisecond format, as on the other engines), so series move between any two series engines.
+- **Fix: the backup manifest's `coreVersion` read `1.9.3`** (an internal package's version) on
+  every v2 core. It now reports the same version as `service/info`.
+- New `just test-backup-roundtrip` (`tools/backup-roundtrip/`): seeds a user with events, streams,
+  accesses, profile, a webhook, an attachment and HF series, then backs up and restores
+  PG -> SQLite -> PG -> SQLite and compares the four bundles on counts and content. It found both
+  series bugs above.
+- New `just test-pg-influx` / `just test-sqlite-influx`: the test matrices with InfluxDB as the
+  series engine (`storages__series__engine` is now honoured by the test helpers).
+- Tests: `[BKSR]` (series through backup and restore, on all four engine pairings), `[BKVR]`
+  (manifest version).
+
 ## rqlite 10.5.1
 
 - `Dockerfile`: `RQLITE_VERSION` 10.5.1 with the per-arch sha256 of the release tarballs

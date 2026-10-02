@@ -52,9 +52,10 @@ if (process.env.STORAGE_ENGINE) {
   // hardcoded 'filesystem' below (forced into the memory scope at :73)
   // shadows the override and the two sides split-brain.
   const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
+  const { resolveTestSeriesEngine } = require('./resolveTestSeriesEngine.ts');
   testConfig.storages = {
     base: { engine: eng },
-    series: { engine: eng },
+    series: { engine: resolveTestSeriesEngine(eng) },
     file: { engine: resolveTestFileEngine() },
     audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
   };
