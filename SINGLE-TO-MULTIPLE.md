@@ -2,13 +2,13 @@
 
 This guide covers upgrading a running single-core Open Pryv.io deployment to a multi-core setup with shared platform database (rqlite) and mutually-authenticated TLS on the Raft channel.
 
-Since v2 the platform DB is **always** rqlite — `bin/master.js` spawns and supervises an embedded `rqlited` in both single- and multi-core mode. Going multi-core no longer requires migrating any platform data; it's a config-only change followed by deploying additional cores.
+Since v2 the platform DB defaults to rqlite: `bin/master.js` spawns and supervises an embedded `rqlited` in both single- and multi-core mode. On rqlite, going multi-core requires no platform-data migration; it's a config-only change followed by deploying additional cores. A single-core dnsLess deployment that set `storages.platform.engine: postgresql` (the diskless shape) first moves its platform data back with `node bin/migrate-platform.js --from postgresql --to rqlite` (master stopped, PostgreSQL reachable, an rqlited started by hand on `storages.engines.rqlite.url`; see INSTALL.md, "Diskless"), then flips the engine to `rqlite`.
 
 ## Overview
 
 | | Single-core | Multi-core |
 |---|---|---|
-| Platform DB | rqlite (single node, embedded) | rqlite (clustered, embedded on every core, joined via DNS discovery) |
+| Platform DB | rqlite (single node, embedded) or PostgreSQL (dnsLess diskless shape, migrate first) | rqlite (clustered, embedded on every core, joined via DNS discovery) |
 | User routing | All users on one instance | Each core hosts a subset of users |
 | DNS | dnsLess (path-based) or single domain | `{username}.{domain}` subdomains |
 | Raft channel | local only (loopback) | mutually-authenticated TLS between cores |
@@ -16,9 +16,9 @@ Since v2 the platform DB is **always** rqlite — `bin/master.js` spawns and sup
 
 ## Prerequisites
 
-- Running single-core deployment with users and data (already using rqlite for platform — automatic since v2)
+- Running single-core deployment with users and data, on rqlite for platform (the default since v2; see above for a deployment on `platform: postgresql`)
 - DNS control for the target domain (wildcard A record needed)
-- A second machine or Dokku app for the second core (with its own PostgreSQL)
+- A second machine or Dokku app for the second core (with its own base storage: PostgreSQL by default, or SQLite; engine choice is per core)
 - `openssl` available on the existing core (used to mint the cluster CA on first run)
 
 ## How adding a core works
