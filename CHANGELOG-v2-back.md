@@ -40,6 +40,17 @@
   `/nodes?nonvoters`, `/remove`, `/db/backup` and `/db/load` are unchanged between 9.4.5 and 10.5.1.
   New in 10.x and not used: a web console under `/console` on the HTTP API (the HTTP API was
   already unauthenticated: keep it unreachable from outside the cluster).
+- Forwarded writes after a leader restart: rqlite 9.4.5's cluster client forwarded an execute with
+  no retry (`retries=0`), so a pooled connection to the restarted leader failed the request with
+  `read protobuf length: EOF`; 10.x makes a last attempt on a forced new connection. Reproduced
+  with a voter leader and a non-voter follower (leader SIGTERM + restart, then one write through
+  the follower): 9.4.5 failed every time, 10.5.1 never, nor a 9.4.5 leader with a 10.5.1 follower
+  (the rolling-upgrade window). No core-side retry: some platform writes (`DELETE … RETURNING`,
+  conditional upserts) are not safe to replay.
+
+## Comments and test titles: internal tracker ids removed
+
+- Comments and test titles no longer carry internal bug-tracker ids. No behaviour change.
 
 ## Master shutdown waits for rqlited; periodic platform integrity check
 
