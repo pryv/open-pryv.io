@@ -21,9 +21,11 @@
  *  4. exit(0).
  *
  * An overall deadline forces exit(1) if a step hangs. The defaults fit in a
- * 30 s supervisor stop timeout: 5 s for the workers, up to 20 s for rqlited.
+ * 30 s supervisor stop timeout: up to 2 s for the master's services, 5 s for
+ * the workers, up to 20 s for rqlited.
  */
 
+const DEFAULT_SERVICES_TIMEOUT_MS = 2000;
 const DEFAULT_WORKERS_TIMEOUT_MS = 5000;
 const DEFAULT_DEADLINE_MS = 28000;
 
@@ -45,6 +47,7 @@ interface MasterShutdownOpts {
   log: (msg: string) => void;
   warn?: (msg: string) => void;
   exit: (code: number) => void;
+  servicesTimeoutMs?: number;
   workersTimeoutMs?: number;
   deadlineMs?: number;
 }
@@ -65,6 +68,7 @@ function createMasterShutdown (opts: MasterShutdownOpts): MasterShutdown {
     log,
     warn = log,
     exit,
+    servicesTimeoutMs = DEFAULT_SERVICES_TIMEOUT_MS,
     workersTimeoutMs = DEFAULT_WORKERS_TIMEOUT_MS,
     deadlineMs = DEFAULT_DEADLINE_MS
   } = opts;
@@ -110,10 +114,22 @@ function createMasterShutdown (opts: MasterShutdownOpts): MasterShutdown {
       for (const w of liveWorkers()) {
         try { w.process.kill('SIGTERM'); } catch { /* already gone */ }
       }
+      // Bounded: e.g. the DNS server's close waits for open TCP connections.
+      let servicesTimer: NodeJS.Timeout | undefined;
       try {
-        await stopServices?.();
+        await Promise.race([
+          Promise.resolve().then(() => stopServices?.()),
+          new Promise<void>((resolve) => {
+            servicesTimer = setTimeout(() => {
+              warn(`Master services did not stop within ${servicesTimeoutMs} ms, continuing`);
+              resolve();
+            }, servicesTimeoutMs);
+          })
+        ]);
       } catch (err) {
         warn(`Stopping master services failed: ${(err as Error).message}`);
+      } finally {
+        clearTimeout(servicesTimer);
       }
       if (await waitForWorkers()) {
         log('All workers stopped');
@@ -144,5 +160,5 @@ function createMasterShutdown (opts: MasterShutdownOpts): MasterShutdown {
   };
 }
 
-export { createMasterShutdown, DEFAULT_WORKERS_TIMEOUT_MS, DEFAULT_DEADLINE_MS };
+export { createMasterShutdown, DEFAULT_SERVICES_TIMEOUT_MS, DEFAULT_WORKERS_TIMEOUT_MS, DEFAULT_DEADLINE_MS };
 export type { MasterShutdownOpts, MasterShutdown };

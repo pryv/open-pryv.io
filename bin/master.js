@@ -269,7 +269,7 @@ if (cluster.isPrimary) {
             logger.error('[hosted-sites] ' + p);
             console.error('[master] [hosted-sites] ' + p);
           }
-          process.exit(1);
+          throw new Error('hosted sites configuration is invalid (see above)');
         }
         for (const site of sites.values()) {
           log(`[hosted-sites] ${site.name}: ${site.kind === 'static' ? 'static ' + site.root : 'proxy ' + site.upstream}`);
@@ -829,8 +829,13 @@ if (cluster.isPrimary) {
     process.on('SIGINT', () => masterShutdown.shutdown('SIGINT'));
 
     log('Master process ready');
-  })().catch(err => {
+  })().catch(async err => {
     console.error('Master startup failed:', err);
+    // Let an rqlited started by this boot finish its snapshot-on-close first.
+    try {
+      const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess.ts');
+      if (rqliteProcess.isRunning()) await rqliteProcess.stop((msg) => console.log(`[master] ${msg}`));
+    } catch { /* exit anyway */ }
     process.exit(1);
   });
 } else {

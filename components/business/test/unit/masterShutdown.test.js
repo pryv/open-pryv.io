@@ -44,7 +44,7 @@ function fakeWorker (cluster, id, exitAfterMs, events) {
   return w;
 }
 
-function setup ({ workers = [20, 30], rqliteStopMs = 200, workersTimeoutMs, deadlineMs, stopRqlite } = {}) {
+function setup ({ workers = [20, 30], rqliteStopMs = 200, workersTimeoutMs, servicesTimeoutMs, deadlineMs, stopRqlite, stopServices } = {}) {
   const events = [];
   const cluster = new EventEmitter();
   cluster.workers = {};
@@ -55,7 +55,7 @@ function setup ({ workers = [20, 30], rqliteStopMs = 200, workersTimeoutMs, dead
   const logs = [];
   const shutdown = createMasterShutdown({
     cluster,
-    stopServices: () => { events.push('services:stopped'); },
+    stopServices: stopServices ?? (() => { events.push('services:stopped'); }),
     stopRqlite: stopRqlite ?? (() => new Promise((resolve) => {
       events.push('rqlite:stopping');
       setTimeout(() => { events.push('rqlite:exited'); resolve(); }, rqliteStopMs);
@@ -64,6 +64,7 @@ function setup ({ workers = [20, 30], rqliteStopMs = 200, workersTimeoutMs, dead
     warn: (m) => logs.push('WARN ' + m),
     exit: (code) => { events.push(`exit:${code}`); exitCodes.push(code); exited(code); },
     workersTimeoutMs,
+    servicesTimeoutMs,
     deadlineMs
   });
   // As bin/master.js wires it.
@@ -125,5 +126,17 @@ describe('[MSHD] master shutdown sequence', function () {
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(stops, 1);
     assert.deepEqual(exitCodes, [0]);
+  });
+
+  it('[MSH6] a hung service stop is bounded, and rqlited is still stopped and awaited', async () => {
+    const { shutdown, events, exitedP, logs } = setup({
+      workers: [10],
+      servicesTimeoutMs: 50,
+      stopServices: () => new Promise(() => {})
+    });
+    shutdown.shutdown('SIGTERM');
+    assert.equal(await exitedP, 0);
+    assert.ok(events.indexOf('exit:0') > events.indexOf('rqlite:exited'), events.join(', '));
+    assert.ok(logs.some((l) => /WARN Master services did not stop within 50 ms/.test(l)));
   });
 });

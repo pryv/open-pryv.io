@@ -10,7 +10,8 @@ that point: the snapshot store lost a WAL segment, and a later restore at boot c
 into the live database.
 
 - `bin/master.js`: the shutdown sequence moves to `components/business/src/masterShutdown.ts`.
-  SIGTERM the workers and stop the master's services, wait for the workers (5 s, then SIGKILL),
+  SIGTERM the workers and stop the master's services (bounded at 2 s: the DNS server's close
+  waits for open TCP connections), wait for the workers (5 s, then SIGKILL),
   then stop rqlited and wait for it to exit, then `process.exit(0)`. The cluster `exit` handler
   no longer exits the master on its own when the last worker is gone. An overall deadline of 28 s
   forces `exit(1)` if a step hangs (fits a 30 s supervisor stop timeout). Liveness is judged by
