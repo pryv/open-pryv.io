@@ -153,6 +153,26 @@ describe('[HSCF] hostedSites configuration', function () {
     }
   });
 
+  it('[HSCB] hsts: auto, always or never, kept only when set; anything else is refused', function () {
+    const r = describeHostedSites(dnsInput({
+      a: { static: '/srv/x', hsts: 'always' },
+      b: { proxy: 'https://e.org/', hsts: 'never' },
+      c: { static: '/srv/y', hsts: 'auto' },
+      d: { static: '/srv/z' }
+    }));
+    assert.deepEqual(r.problems, []);
+    assert.equal(r.sites.get('a').hsts, 'always');
+    assert.equal(r.sites.get('b').hsts, 'never');
+    assert.equal(r.sites.get('c').hsts, 'auto');
+    assert.equal('hsts' in r.sites.get('d'), false);
+    for (const bad of ['yes', 'Always', '', true, 1, ['always'], {}]) {
+      const p = problemsOf({ a: { static: '/srv/x', hsts: bad } });
+      assert.ok(p.some((m) => m.startsWith('hostedSites.a.hsts must be')), JSON.stringify(bad) + ': ' + p.join('|'));
+    }
+    const cfg = configOf({ hostedSites: { a: { static: '/srv/x', hsts: 'on' } }, 'dns:domain': 'pryv.test', 'dnsLess:isActive': false });
+    assert.throws(() => parseHostedSites(cfg), (err) => err.message.includes('hostedSites.a.hsts'));
+  });
+
   it('[HSCA] parseHostedSites throws one error listing every problem; hostedSiteNames never throws', function () {
     const cfg = configOf({
       hostedSites: { reg: { static: '/srv/x' }, b: {} },

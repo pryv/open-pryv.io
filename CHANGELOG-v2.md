@@ -22,6 +22,33 @@
   in the app's own sandbox. `<img src>` of an SVG attachment is not affected (an image does not
   run scripts).
 
+### Hosted sites: HSTS behind a TLS-terminating proxy (`hostedSites.<name>.hsts`)
+
+Hosted-site answers carried `Strict-Transport-Security` only when the request reached the core
+over TLS. Behind a proxy that terminates TLS (nginx, a load balancer, Dokku) the core sees plain
+HTTP, so the header was never sent although users reach the site over HTTPS.
+
+New optional per-site key `hostedSites.<name>.hsts`, set from the configuration only (no request
+header such as `X-Forwarded-Proto` is trusted):
+
+- `auto` (default, unchanged behaviour): HSTS only when this core terminates TLS.
+- `always`: HSTS on every answer. Set it when a proxy in front terminates TLS and the site is
+  HTTPS-only (browsers only honour the header received over HTTPS). In dnsLess mode the site
+  shares the API's host, so this applies to that whole host.
+- `never`: no HSTS, even over TLS.
+
+A `strict-transport-security` set in the site's `headers` still replaces the built-in value.
+
+```yaml
+hostedSites:
+  account:
+    static: /srv/pryv/sites/account
+    hsts: always
+```
+
+The header value is unchanged (`max-age=31536000`, this host only). Any other value refuses the
+boot.
+
 ## 2.0.0-rc.33 - 2026-10-02
 
 ### Platform DB: the master waits for rqlited at shutdown; periodic integrity check

@@ -106,6 +106,17 @@ function addUpstreamPolicies (outHeaders: OutgoingHttpHeaders, proxyRes: Incomin
   }
 }
 
+/**
+ * Whether an answer carries Strict-Transport-Security. `auto` (default) looks
+ * at this core's socket only; behind a proxy that terminates TLS the operator
+ * sets `always`. No request header (e.g. X-Forwarded-Proto) is trusted.
+ */
+function sendsHsts (req: IncomingMessage, site: HostedSite): boolean {
+  if (site.hsts === 'always') return true;
+  if (site.hsts === 'never') return false;
+  return (req.socket as TLSSocket).encrypted === true;
+}
+
 function plain (res: ServerResponse, status: number, message: string, extra: OutgoingHttpHeaders = {}, head = false) {
   const body = message + '\n';
   res.writeHead(status, Object.assign({
@@ -174,7 +185,7 @@ function buildHostedSitesIngress (opts: {
   function setSiteHeaders (req: IncomingMessage, res: ServerResponse, site: HostedSite) {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
-    if ((req.socket as TLSSocket).encrypted) res.setHeader('strict-transport-security', HSTS_VALUE);
+    if (sendsHsts(req, site)) res.setHeader('strict-transport-security', HSTS_VALUE);
     for (const [name, value] of Object.entries(headersOf(site))) res.setHeader(name, value as string | string[]);
   }
 

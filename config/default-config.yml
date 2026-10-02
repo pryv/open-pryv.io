@@ -539,6 +539,10 @@ hostedSites: {}
 #                                             # site (X-Frame-Options: SAMEORIGIN for ["'self'"] alone,
 #                                             # omitted for any other list; keywords quoted,
 #                                             # 'none' only alone; x-frame-options not in headers)
+#    hsts: auto                               # optional, when answers carry Strict-Transport-Security:
+#                                             # auto (default) only when this core terminates TLS,
+#                                             # always when a proxy in front terminates TLS and the
+#                                             # site is HTTPS-only, never
 
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---
