@@ -70,9 +70,10 @@ const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
 // green while still aligning the rest of the storage engine choice.
 if (process.env.STORAGE_ENGINE === 'sqlite') {
   const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
+  const { resolveTestSeriesEngine } = require('./resolveTestSeriesEngine.ts');
   const cfg = getConfigUnsafe(true);
   cfg.set('storages:base:engine', 'sqlite');
-  cfg.set('storages:series:engine', 'sqlite');
+  cfg.set('storages:series:engine', resolveTestSeriesEngine('sqlite'));
   // Honour `storages__file__engine` over the 'filesystem' default so this
   // memory-scope set agrees with the env source DIM-forked children read.
   cfg.set('storages:file:engine', resolveTestFileEngine());

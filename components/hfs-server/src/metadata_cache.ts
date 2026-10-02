@@ -14,6 +14,7 @@ const storage = require('storage');
 const MethodContext = require('business').MethodContext;
 const errors = require('errors').factory;
 const { SeriesRowType } = require('business').types;
+const { seriesNamespace } = require('business/src/series/namespace.ts');
 const { pubsub } = require('messages');
 const { getMall } = require('mall');
 // A single HFS server will keep at maximum this many credentials in cache.
@@ -68,7 +69,7 @@ class MetadataCache {
 
   // transport messages
   dropSeries (usernameEvent: UsernameEvent) {
-    return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, 'user.' + usernameEvent.username);
+    return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, seriesNamespace(usernameEvent.username));
   }
 
   invalidateEvent (usernameEvent: UsernameEvent) {
@@ -223,7 +224,7 @@ class SeriesMetadataImpl {
   }
 
   namespaceAndName () {
-    return [`user.${this.userName}`, `event.${this.eventId}`];
+    return [seriesNamespace(this.userName), `event.${this.eventId}`];
   }
 
   // Return the InfluxDB row type for the given event.

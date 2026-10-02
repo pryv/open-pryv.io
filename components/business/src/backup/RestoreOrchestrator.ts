@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
+const { seriesNamespace } = require('../series/namespace.ts');
 
 /**
  * Orchestrates restore from a backup archive into the current core.
@@ -162,7 +163,7 @@ class RestoreOrchestrator {
 
     // Clear existing data if overwrite requested
     if (opts.overwrite) {
-      await this._clearUserData(user, targetUserId);
+      await this._clearUserData(user, targetUserId, username);
     }
 
     // Import order matters for logical consistency:
@@ -276,7 +277,7 @@ class RestoreOrchestrator {
           seriesMeasurements.push(item);
         }
         if (seriesMeasurements.length > 0) {
-          await this.seriesConnection.importDatabase(targetUserId, { measurements: seriesMeasurements });
+          await this.seriesConnection.importDatabase(seriesNamespace(username), { measurements: seriesMeasurements });
         }
       } catch (e: unknown) {
         this.logger.warn(`Series import failed for user ${targetUserId}: ${(e as Error).message}`);
@@ -310,7 +311,7 @@ class RestoreOrchestrator {
     await userAudit.importAllEvents(auditEvents);
   }
 
-  async _clearUserData (user: UserRef, userId: string) {
+  async _clearUserData (user: UserRef, userId: string, username: string) {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
@@ -350,7 +351,7 @@ class RestoreOrchestrator {
     // Clear series
     if (this.seriesConnection) {
       try {
-        await this.seriesConnection.dropDatabase(userId);
+        await this.seriesConnection.dropDatabase(seriesNamespace(username));
       } catch (e: unknown) {
         this.logger.warn(`Series clear failed for user ${userId}: ${(e as Error).message}`);
       }
