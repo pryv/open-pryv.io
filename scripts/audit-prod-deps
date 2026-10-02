@@ -47,6 +47,17 @@ const ALLOWLIST = {
   // never request or user input, so the quadratic path is not reachable at
   // runtime. Drop this entry once boiler moves to js-yaml 5.x.
   'GHSA-5p4m-2wfm-xmqj': 'js-yaml !!omap quadratic CPU; reachable only via untrusted YAML, but js-yaml parses operator-controlled config files only (boiler nconf-yaml); fix is a non-backported 5.x major bump of the config parser',
+  // node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested
+  // DigestAlgorithm elements (signature forgery on VERIFY). Reached via
+  // acme-client (all releases up to 5.4.0 depend on node-forge ^1.3.1) and the
+  // self-signed placeholder (components/business/src/acme/selfSignedPlaceholder.ts).
+  // No code here verifies a signature with forge: ACME account keys and CSRs go
+  // through acme-client's native `crypto` API (AcmeClient.ts), and the
+  // placeholder only generates a key pair and signs its own certificate. No
+  // patched node-forge exists (1.4.0 is the latest and is affected), and npm's
+  // suggested fix is a downgrade to acme-client 2.x. Drop this entry once
+  // node-forge > 1.4.0 ships (bump or override it then).
+  'GHSA-86w9-cpqp-85rv': 'node-forge signature-verification forgery; forge never verifies signatures here (acme-client native crypto API for ACME, forge only signs the self-signed placeholder); no patched release exists',
 };
 
 let raw = '';
