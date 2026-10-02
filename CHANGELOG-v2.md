@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.33 - 2026-10-02
 
 ### `bin/integrity-check.js`: `--config <file>`, readable failure without rqlited
 
