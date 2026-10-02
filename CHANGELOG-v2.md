@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.34 - 2026-10-02
 
 ### Attachments with an active content type are served in a sandbox
 
@@ -56,6 +56,10 @@ boot.
   (keyValue index missing rows, a key stored twice); 10.x keeps that state crash-safe, checksums
   its snapshot files and stops a node on a node-local SQLite error. No change to the flags or the
   HTTP API the core uses.
+- **Fix (multi-core).** After the leader core restarted, the first platform write a follower core
+  forwarded to it failed once with `read protobuf length: EOF` (rqlite 9 reused a stale connection
+  to the restarted leader without retrying). rqlite 10 retries on a new connection, so the write
+  succeeds.
 - **One-way data directory upgrade.** The first start converts the rqlite data directory and
   rebuilds the node's database from its snapshot store; rqlite 9 cannot open it afterwards, so
   rolling the image back to an older release needs the data directory restored from a backup.
