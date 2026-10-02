@@ -75,17 +75,33 @@ const ACTIVE_CONTENT_TYPES = new Set([
   'text/xml',
   'application/xml',
   'text/xsl',
+  'multipart/x-mixed-replace',
+  // The HTML spec's JavaScript MIME types.
   'text/javascript',
   'text/ecmascript',
+  'text/x-javascript',
+  'text/x-ecmascript',
+  'text/jscript',
+  'text/livescript',
+  'text/javascript1.0',
+  'text/javascript1.1',
+  'text/javascript1.2',
+  'text/javascript1.3',
+  'text/javascript1.4',
+  'text/javascript1.5',
   'application/javascript',
   'application/x-javascript',
-  'application/ecmascript'
+  'application/ecmascript',
+  'application/x-ecmascript'
 ]);
 const ACTIVE_CONTENT_CSP = "sandbox; default-src 'none'";
 
 // True when the (declared) content type is one a browser can execute or render
 // as a document. Parameters (`; charset=...`) and case are ignored; an empty or
-// missing type is not active.
+// missing type is not active. Uploads already store a normalised type (the
+// multipart parser keeps a lowercase `type/subtype` and falls back to
+// `text/plain` when it cannot parse one), so the lenient parsing here is
+// defence in depth for types written by other paths.
 function isActiveContentType (contentType: string | null | undefined): boolean {
   if (typeof contentType !== 'string') return false;
   const essence = contentType.split(';')[0].trim().toLowerCase();

@@ -120,7 +120,8 @@ describe('[ACTY] attachments with an active content type', function () {
     const { isActiveContentType } = require('../src/middleware/attachment-access.ts');
     for (const t of ['text/html', 'TEXT/HTML; charset=utf-8', 'application/xhtml+xml', 'image/svg+xml',
       'text/xml', 'application/xml', 'application/rss+xml', 'text/javascript', 'application/javascript',
-      'application/ecmascript', ' text/html ']) {
+      'application/ecmascript', ' text/html ', 'multipart/x-mixed-replace', 'text/x-javascript',
+      'application/x-ecmascript', 'text/javascript1.5']) {
       assert.strictEqual(isActiveContentType(t), true, t);
     }
     for (const t of ['image/png', 'image/jpeg', 'application/pdf', 'application/json', 'text/plain',

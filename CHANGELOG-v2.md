@@ -6,9 +6,10 @@
 
 - **Security.** An attachment keeps the content type declared at upload. When that type is one a
   browser executes or renders as a document (`text/html`, `application/xhtml+xml`,
-  `image/svg+xml`, `text/xml`, `application/xml`, `text/xsl`, any `*+xml`, `text/javascript`,
-  `text/ecmascript`, `application/javascript`, `application/x-javascript`,
-  `application/ecmascript`; parameters and case ignored), `GET /events/{id}/{fileId}` (with an
+  `image/svg+xml`, `text/xml`, `application/xml`, `text/xsl`, any `*+xml`,
+  `multipart/x-mixed-replace`, and the JavaScript types (`text/javascript`, `application/javascript`
+  and their legacy variants); parameters and case ignored),
+  `GET /{username}/events/{id}/{fileId}[/{fileName}]` (with an
   `Authorization` header or a `readToken`) now also sends
   `Content-Security-Policy: sandbox; default-src 'none'`, next to the
   `Content-Disposition: attachment` every attachment already carries. Opened on the API origin,
