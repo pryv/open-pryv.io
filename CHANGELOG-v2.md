@@ -2,6 +2,25 @@
 
 ## 2.0.0-rc.33 - 2026-10-02
 
+### Platform DB: the master waits for rqlited at shutdown; periodic integrity check
+
+- **Fix (data integrity).** At shutdown the master could exit before its embedded rqlited had
+  finished the snapshot it writes on close, and rqlited's output went to pipes the master read, so
+  the master's exit killed it mid-snapshot. With rqlite 9.x an interrupted snapshot can be restored
+  at the next boot and corrupt the node's copy of the platform DB (keyValue index missing rows, a
+  key stored twice). The master now stops the workers, then rqlited, and exits only once rqlited
+  has exited. rqlited writes to the master's own stdout/stderr (or to
+  `storages.engines.rqlite.logFile` when set), so its output no longer depends on the master.
+- **Give the master at least 30 s to stop** (systemd `TimeoutStopSec`, Docker `docker stop -t 30`
+  / compose `stop_grace_period: 30s`; Dokku's default is 30 s). The sequence is bounded at 28 s.
+- **Upgrading from rc.32 or older:** the running (old) master still has the bug when it is stopped
+  for the upgrade. Stop rqlited first (`kill -TERM` on the rqlited child, wait for
+  `rqlited exited (code=0` in the master's log), then restart. After any restart, check each node
+  with a `level=none` read (INSTALL.md, "Platform DB integrity").
+- **Periodic check.** The master re-runs the platform DB integrity check every
+  `storages.platform.integrityCheckIntervalMs` (default 1 h, `0` disables) and logs an ERROR at
+  every failed check, INFO when it passes again. Repair: INSTALL.md, "Platform DB integrity".
+
 ### `bin/integrity-check.js`: `--config <file>`, readable failure without rqlited
 
 - The tool now accepts `--config <file>` and layers that file on top of the default config, as the
