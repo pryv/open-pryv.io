@@ -72,6 +72,17 @@ boot.
 - Native installs: `scripts/setup` keeps an existing `bin-ext/rqlited` and warns when its
   version differs from the pinned one; replace it by hand as described there.
 
+### Backups carry high-frequency series data
+
+- **Fix (data loss in backups).** `bin/backup.js` backups contained no high-frequency series
+  data, on every series engine, and nothing warned: backup and restore addressed each user's
+  series under a different key than the one the series are stored under. Backups taken before
+  this release carry no series: **take a new backup after upgrading**.
+- **Fix (InfluxDB).** Series backed up from the InfluxDB series engine could not be restored
+  (point times were written in a format its import refused). Series now move between any two
+  series engines.
+- The backup manifest's `coreVersion` now reports the core's release (it read `1.9.3`).
+
 ## 2.0.0-rc.33 - 2026-10-02
 
 ### Platform DB: the master waits for rqlited at shutdown; periodic integrity check
