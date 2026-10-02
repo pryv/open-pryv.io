@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## rqlite 10.5.1
+
+- `Dockerfile`: `RQLITE_VERSION` 10.5.1 with the per-arch sha256 of the release tarballs
+  (amd64 `f0ebf593…49b0d`, arm64 `e0a05fa2…49a76`).
+- `storages/engines/rqlite/scripts/setup`: pins 10.5.1 (CI and fresh Linux setups download it;
+  macOS still links Homebrew's `rqlite`). An existing `bin-ext/rqlited` of another version is kept
+  and reported with a warning, since moving a data directory to rqlite 10 is one way.
+- `storages/engines/rqlite/scripts/start`: creates `var-pryv/` when it is missing (a fresh checkout
+  that never ran setup resolved every path under `/`).
+- `just clean-test-data` also removes rqlite 10's `wal-staging/` directory.
+- Verified with rqlite 10.5.1: the rqlite engine suite (platform DB conformance, read levels,
+  rqliteProcess including mTLS) and the two-core tests. Flags passed by `rqliteProcess.buildArgs`,
+  `level=none|weak|strong`, `/readyz`, `/status` (`os.pid`, `store.raft.applied_index`),
+  `/nodes?nonvoters`, `/remove`, `/db/backup` and `/db/load` are unchanged between 9.4.5 and 10.5.1.
+  New in 10.x and not used: a web console under `/console` on the HTTP API (the HTTP API was
+  already unauthenticated: keep it unreachable from outside the cluster).
+
 ## Master shutdown waits for rqlited; periodic platform integrity check
 
 A follower's platform DB was found with table and index pages from two points in time. Cause:

@@ -9,7 +9,7 @@ set -e
 #                                   so operators can bind-mount /app/var-pryv/... without shadowing)
 #   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
 
-RQLITE_VERSION=9.4.5
+RQLITE_VERSION=10.5.1
 
 # Detect OS / arch
 case "$(uname)" in
@@ -64,14 +64,24 @@ echo ""
 echo "Checking for rqlited ($RQLITE_BIN_DIR/rqlited)..."
 
 if [[ -x "$RQLITE_BIN_DIR/rqlited" ]]; then
-  echo "...already installed ($($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1))"
+  INSTALLED_VERSION_LINE=$($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1)
+  echo "...already installed ($INSTALLED_VERSION_LINE)"
+  # An existing binary is never replaced here: a data directory opened by rqlite
+  # 10 cannot be opened again by 9.x, so moving a node to another major is a
+  # deliberate, backed-up step (INSTALL.md, "Upgrading the bundled rqlite").
+  # Linux only: on macOS the binary comes from Homebrew, whatever its version.
+  if [[ "$RQLITE_OS" == "linux" && "$INSTALLED_VERSION_LINE" != "rqlited v$RQLITE_VERSION "* ]]; then
+    echo "Warning: this repo pins rqlite v$RQLITE_VERSION, the installed rqlited is a different version."
+    echo "         To install the pinned version, follow INSTALL.md \"Upgrading the bundled rqlite\""
+    echo "         (back up first), then remove $RQLITE_BIN_DIR/rqlited and re-run this script."
+  fi
 else
   echo "...installing rqlite v$RQLITE_VERSION ($RQLITE_OS-$RQLITE_ARCH)"
   echo ""
 
   mkdir -p "$RQLITE_BIN_DIR"
 
-  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v9.4.5
+  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v10.5.1
   # only linux-* assets ship). Fall back to Homebrew's native arm64 bottle,
   # which tracks the same upstream version, then symlink binaries in.
   if [[ "$RQLITE_OS" == "darwin" ]]; then

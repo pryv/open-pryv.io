@@ -295,7 +295,7 @@ When running behind nginx (including Dokku), each core needs:
 2. **Socket.IO** — WebSocket upgrade location for `/socket.io/`.
 3. **Upload size** — `client_max_body_size` matching `uploads.maxSizeMb`.
 
-The rqlite Raft port (default 4002) does **not** go through nginx — it's a peer-to-peer mTLS connection between cores. Open it in any firewall between cores.
+The rqlite Raft port (default 4002) does **not** go through nginx: it's a peer-to-peer mTLS connection between cores. Open it in any firewall between cores. Keep rqlite's HTTP port (default 4001) closed to the outside: it is unauthenticated, and cores replicate and forward writes over the Raft port.
 
 ## Rollback
 
