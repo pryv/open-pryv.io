@@ -177,8 +177,8 @@ services:
     from: { name: 'Example', address: 'no-reply@example.com' }
     smtp: { host: smtp.example.com, port: 587, auth: { user: '...', pass: '...' } }
 auth:
-  # Where the verification link lands: the /verify-email page of your auth UI.
-  emailVerificationPageURL: https://auth.example.com/verify-email
+  # Where the verification link lands: the /verify-email page of your account app.
+  emailVerificationPageURL: https://account.example.com/verify-email
 ```
 
 **Email verification is on by default.** An address added to an account is sent a
