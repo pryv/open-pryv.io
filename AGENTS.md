@@ -131,11 +131,11 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
      base:     { engine: postgresql }   # baseStorage + dataStore, or sqlite
      platform: { engine: rqlite }       # platformStorage, or postgresql (single-core dnsLess only)
      series:   { engine: postgresql }   # seriesStorage, or sqlite, or influxdb
-     file:     { engine: filesystem }   # fileStorage
+     file:     { engine: filesystem }   # fileStorage, or s3, or postgresql (low-volume attachments)
      audit:    { engine: sqlite }       # auditStorage, or postgresql
      engines:
        postgresql: { host: 127.0.0.1, port: 5432, database: pryv-node, user: pryv, password: '', max: 20 }
-       # sqlite, rqlite, influxdb, filesystem also configurable here
+       # sqlite, rqlite, influxdb, filesystem, s3 also configurable here
    ```
 
    The `pluginLoader` reads `storages/engines/<name>/manifest.json` to see which `storageTypes` each engine provides. From code:

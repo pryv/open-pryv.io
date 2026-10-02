@@ -2,13 +2,13 @@
 
 This guide covers upgrading a running single-core Open Pryv.io deployment to a multi-core setup with shared platform database (rqlite) and mutually-authenticated TLS on the Raft channel.
 
-Since v2 the platform DB defaults to rqlite: `bin/master.js` spawns and supervises an embedded `rqlited` in both single- and multi-core mode. On rqlite, going multi-core requires no platform-data migration; it's a config-only change followed by deploying additional cores. A single-core dnsLess deployment that set `storages.platform.engine: postgresql` (the diskless shape) first moves its platform data back with `node bin/migrate-platform.js --from postgresql --to rqlite` (master stopped), then flips the engine to `rqlite`.
+Since v2 the platform DB defaults to rqlite: `bin/master.js` spawns and supervises an embedded `rqlited` in both single- and multi-core mode. On rqlite, going multi-core requires no platform-data migration; it's a config-only change followed by deploying additional cores. A single-core dnsLess deployment that set `storages.platform.engine: postgresql` (the diskless shape) first moves its platform data back with `node bin/migrate-platform.js --from postgresql --to rqlite` (master stopped, PostgreSQL reachable, an rqlited started by hand on `storages.engines.rqlite.url`; see INSTALL.md, "Diskless"), then flips the engine to `rqlite`.
 
 ## Overview
 
 | | Single-core | Multi-core |
 |---|---|---|
-| Platform DB | rqlite (single node, embedded) | rqlite (clustered, embedded on every core, joined via DNS discovery) |
+| Platform DB | rqlite (single node, embedded) or PostgreSQL (dnsLess diskless shape, migrate first) | rqlite (clustered, embedded on every core, joined via DNS discovery) |
 | User routing | All users on one instance | Each core hosts a subset of users |
 | DNS | dnsLess (path-based) or single domain | `{username}.{domain}` subdomains |
 | Raft channel | local only (loopback) | mutually-authenticated TLS between cores |
