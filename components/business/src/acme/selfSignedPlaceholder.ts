@@ -119,7 +119,7 @@ function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: string)
 
   // Restore branch: check the materialized layout FIRST, before any
   // existence check on the configured ssl paths. The bug we're closing
-  // (B-2026-06-03 RC.1 blocker): on every container restart, the
+  // (a release-candidate blocker): on every container restart, the
   // worker-config paths (`http.ssl.*`) may still hold a stale placeholder
   // from a previous boot's selfSignedPlaceholder.ensure() (which was
   // never overwritten by the in-memory hot-swap — that only mutates

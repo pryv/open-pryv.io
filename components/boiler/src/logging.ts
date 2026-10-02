@@ -262,7 +262,7 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   // In test mode we skip the handler entirely so mocha's own
   // `uncaughtException` listener can mark the active test as failed
   // and proceed. An AssertionError inside a superagent callback
-  // (B-2026-05-29-4 family) used to kill the whole worker because
+  // used to kill the whole worker because
   // this handler ran first and rethrew before mocha saw it.
   if (!config.get('logs:skipUncaughtException') && process.env.NODE_ENV !== 'test') {
     process.on('uncaughtException', function (err) {

@@ -40,7 +40,7 @@ if (process.env.STORAGE_ENGINE) {
   const eng = process.env.STORAGE_ENGINE;
   // Do NOT override `platform.engine` here. rqlite is the only
   // supported platform engine; the PG + Mongo PlatformDB impls are
-  // intentionally incomplete (B-2026-05-21-1). Sequential matrices got
+  // intentionally incomplete. Sequential matrices got
   // away with the override because the storages barrel always inits
   // early enough that the default-config value (`rqlite`) wins.
   // Parallel mode's per-worker `beforeAll` setup pushes

@@ -117,8 +117,8 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
 
     // Batch-unset (statement 1) and the per-row recompute pass (statement 2)
     // run inside ONE better-sqlite3 transaction so a concurrent integrity scan
-    // never sees a soft-deleted row while its hash is transiently absent
-    // (B-2026-08-25-1). The tx body must be synchronous — hence the *Sync cores.
+    // never sees a soft-deleted row while its hash is transiently absent.
+    // The tx body must be synchronous — hence the *Sync cores.
     this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
       const res = this._updateManySync(udb, query, updateData);
       const res2 = this._findAndUpdateIfNeededSync(udb, { integrityBatchCode }, {}, updateIfNeeded);
@@ -137,7 +137,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     // Statement 1 (apply fields + unset integrity) and statement 2 (recompute +
     // set integrity) run inside ONE better-sqlite3 transaction so a concurrent
     // integrity scan never observes the row while its hash is transiently
-    // absent (B-2026-08-25-1). The tx body must be synchronous.
+    // absent. The tx body must be synchronous.
     this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
       const accessData = this._findOneAndUpdateSync(udb, query, update);
       if (accessData?.id == null) return accessData ?? null;

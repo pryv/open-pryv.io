@@ -67,7 +67,7 @@ describe('[AIGP] AccessesPG write-time integrity guard', function () {
  * The integrity-preserving update/delete write the row hash-less in statement 1
  * and restore the hash in statement 2. Both MUST run inside one transaction, on
  * the transaction CLIENT — never the pool (`this.db.query`). A pool-issued
- * statement escapes the transaction (reinstating the B-2026-08-25-1 window) AND
+ * statement escapes the transaction (reinstating the hash-less window) AND
  * self-deadlocks on the transaction's row lock. This is the regression guard for
  * that constraint: it fails if any statement inside the wrap runs on the pool.
  */

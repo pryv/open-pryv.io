@@ -379,9 +379,9 @@ function getMochaHooks (isParallelMode = false) {
     //   - isParallelMode arg: caller explicitly opts out (e.g. components
     //     without platform/usersIndex storage like business / webhooks).
     //   - process.env.MOCHA_PARALLEL === '1': parallel mode globally
-    //     skips the per-test platform check pending B-2026-05-29-2 (1-user
+    //     skips the per-test platform check pending a fix for a 1-user
     //     drift between platform DB and users repository per test under
-    //     parallel-worker setup). The clean()-time integrityFinalCheck on
+    //     parallel-worker setup. The clean()-time integrityFinalCheck on
     //     events + accesses still runs in both modes.
     ...((isParallelMode || process.env.MOCHA_PARALLEL === '1')
       ? {}
@@ -395,7 +395,7 @@ function getMochaHooks (isParallelMode = false) {
             // before the test-scope `injectTestConfig(testConfig)` has applied
             // the `STORAGE_ENGINE=sqlite` override staged by helpers-c.ts —
             // locking pluginLoader to the default engine across the whole
-            // suite (B-2026-05-23-1). Pure-unit Pattern C tests that run
+            // suite. Pure-unit Pattern C tests that run
             // before any `initCore()` don't manipulate storage state anyway,
             // so skipping the check pre-initCore is safe.
             const storages = require('storages');

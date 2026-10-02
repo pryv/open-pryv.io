@@ -341,7 +341,7 @@ class Platform {
    * several values under one field (e.g. multiple verified emails), not just
    * a single derived value. Robust to runtime changes in
    * `accountStreams.{uniqueFieldNames,indexedFieldNames}` — those are mutable
-   * module-level bindings rebound by `reloadForTests` (see B-2026-05-29-2):
+   * module-level bindings rebound by `reloadForTests`:
    * a fixture user created under one systemStreams config can be removed
    * under another without leaking the custom-field entries.
    *

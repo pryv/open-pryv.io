@@ -27,7 +27,7 @@ const { getConfigUnsafe } = require('@pryv/boiler');
  */
 const deps = testHelpers.dependencies;
 // Lazy deep-clone getter. Two failure modes are closed:
-//   1. Shared nconf reference leak (B-2026-05-21-2 root cause):
+//   1. Shared nconf reference leak (root cause of a cross-test config leak):
 //      `nconf.get()` returns nested objects that share refs with the live
 //      literal stores. `injectTestConfig(...)` later in a test would
 //      mutate `deps.settings.storages.platform.engine` through that

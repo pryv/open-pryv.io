@@ -235,7 +235,7 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   if (!o.isParallel) return o;
 
   config.set('storages:engines:postgresql:database', o.postgresqlDatabase);
-  // B-2026-05-22-2 — shrink the PG pool in parallel mode so workers
+  // Shrink the PG pool in parallel mode so workers
   // each running DIM-spawned child api-servers don't saturate PG's
   // default `max_connections=100`.
   //

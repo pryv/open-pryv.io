@@ -146,7 +146,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           // This login minted a fresh session (no matching one existed). Record
           // it so that if a concurrent same-appId login wins the token rotation
           // below, we may safely destroy this orphan session (it is ours alone,
-          // never a session reused/shared through getMatching). See B-2026-09-17-5.
+          // never a session reused/shared through getMatching).
           context.sessionGenerated = true;
           next();
         });
@@ -241,8 +241,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // We minted a fresh token but the row still carries an older one. If that
       // token still has a LIVE session, a concurrent login is using it (it just
       // wrote the row and returned that token to its client): ADOPT it rather than
-      // rotate it away, which would strand that login (403 on first use,
-      // B-2026-09-17-5). Only rotate when the previous session is truly dead.
+      // rotate it away, which would strand that login (403 on first use).
+      // Only rotate when the previous session is truly dead.
       sessionsStorage.get(previousToken as string, (err: Error | null, session?: unknown) => {
         if (err != null) return callback(errors.unexpectedError(err));
         if (session != null) return adopt(previousToken, existing);
