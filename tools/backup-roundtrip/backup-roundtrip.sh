@@ -1,16 +1,15 @@
 #!/bin/bash
-# Backup/restore round-trip: PG → SQLite → PG → SQLite.
+# Backup/restore round trip: PG -> SQLite -> PG -> SQLite.
 #
-# Verifies that bin/backup.js produces engine-agnostic bundles that can
-# be restored across engine boundaries without data loss. Built from
-# the perf-vs.sh start/stop+engine-swap pattern.
+# Verifies that bin/backup.js produces engine-agnostic bundles that can be
+# restored across engine boundaries without data loss.
 #
 # Steps:
-#   Leg 1 — PG: clean → start master → seed fixture → stop → backup A
-#   Leg 2 — SQLite: clean → restore A → backup B
-#   Leg 3 — PG: clean → restore B → backup C
-#   Leg 4 — SQLite: clean → restore C → backup D
-#   Compare A vs B vs C vs D via backup-rt-diff.js (counts, then content), and
+#   Leg 1, PG: clean, start master, seed fixture, stop, backup A
+#   Leg 2, SQLite: clean, restore A, backup B
+#   Leg 3, PG: clean, restore B, backup C
+#   Leg 4, SQLite: clean, restore C, backup D
+#   Compare A, B, C and D with backup-rt-diff.js (counts, then content), and
 #   require every seeded collection to be present in A.
 #
 # The fixture covers every collection a backup carries: events, streams,
@@ -18,13 +17,18 @@
 #
 # ⚑ Destructive for the local dev data: each leg runs `just clean-test-data`
 # and the script temporarily replaces config/override-config.yml (restored on
-# exit). Needs PostgreSQL and rqlited (:4001) running, like the test matrices.
+# exit). Needs PostgreSQL and rqlited running, like the test matrices; their
+# endpoints are read the way `just clean-test-data` reads them (environment
+# overrides, then config/test-config.yml), so both address the same instances.
 #
 # Usage: just test-backup-roundtrip [options]
 #    or: tools/backup-roundtrip/backup-roundtrip.sh [options]
-#   --port N        Master HTTP port (default: 3000)
-#   --keep          Don't clean up backup dirs / override-config at end
-#   --backup-dir DIR  Where backup dirs are written (default: /tmp/rt-<ts>)
+#   --port N          Master HTTP port (default: 3000; must be free)
+#   --keep            Keep the run directory (bundles, master log) on success
+#   --backup-dir DIR  Parent directory for the run directory rt-<ts>
+#                     (default: the system temp directory). Only rt-<ts> is
+#                     ever deleted, never DIR itself.
+# A failed run always keeps its run directory and prints where it is.
 
 set -euo pipefail
 
@@ -36,27 +40,40 @@ SCRIPT_DIR="$SC/tools/backup-roundtrip"
 PORT=3000
 KEEP=0
 TS="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR=""
+PARENT_DIR="${TMPDIR:-/tmp}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --port)       PORT="$2"; shift 2 ;;
     --keep)       KEEP=1; shift ;;
-    --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
+    --backup-dir) PARENT_DIR="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-[ -z "$BACKUP_DIR" ] && BACKUP_DIR="/tmp/rt-$TS"
-mkdir -p "$BACKUP_DIR"
+BACKUP_DIR="${PARENT_DIR%/}/rt-$TS"
 
 TARGET="http://127.0.0.1:$PORT"
 OVERRIDE="$SC/config/override-config.yml"
 OVERRIDE_BAK=""
 MASTER_PID=""
-MASTER_LOG="/tmp/rt-master-$TS.log"
+MASTER_LOG="$BACKUP_DIR/master.log"
+
+# Same resolution as `just clean-test-data`: env overrides win, then
+# config/test-config.yml, then the canonical ports.
+TCFG="$SC/config/test-config.yml"
+PG_HOST="${storages__engines__postgresql__host:-$(awk '/[[:space:]]postgresql:/{f=1} f&&/host:/{print $2; exit}' "$TCFG" 2>/dev/null)}"
+PG_HOST="${PG_HOST:-127.0.0.1}"
+PG_PORT="${storages__engines__postgresql__port:-$(awk '/[[:space:]]postgresql:/{f=1} f&&/port:/{print $2; exit}' "$TCFG" 2>/dev/null)}"
+PG_PORT="${PG_PORT:-5432}"
+RQLITE_URL="$(awk '/[[:space:]]rqlite:/{f=1} f&&/url:/{print $2; exit}' "$TCFG" 2>/dev/null)"
+RQLITE_URL="${RQLITE_URL:-http://localhost:4001}"
+if [ -n "${storages__engines__rqlite__host:-}${storages__engines__rqlite__port:-}" ]; then
+  RQLITE_URL="http://${storages__engines__rqlite__host:-localhost}:${storages__engines__rqlite__port:-4001}"
+fi
 
 cleanup () {
+  local status=$?
   if [ -n "$MASTER_PID" ] && kill -0 "$MASTER_PID" 2>/dev/null; then
     echo "[cleanup] stopping master pid=$MASTER_PID"
     kill -TERM "$MASTER_PID" 2>/dev/null || true
@@ -68,11 +85,36 @@ cleanup () {
   elif [ -z "$OVERRIDE_BAK" ] && [ -f "$OVERRIDE" ]; then
     rm -f "$OVERRIDE"
   fi
-  if [ "$KEEP" = "0" ]; then
+  if [ "$status" -ne 0 ]; then
+    echo "✗ round trip failed (exit $status); run directory kept: $BACKUP_DIR"
+  elif [ "$KEEP" = "0" ]; then
     rm -rf "$BACKUP_DIR"
   fi
 }
-trap cleanup EXIT INT TERM
+port_is_free () {
+  [ -z "$(lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null || true)" ]
+}
+
+# Pre-flight checks, before anything is created or changed.
+if ! port_is_free; then
+  echo "✗ port $PORT is already in use; stop that process or pass --port"
+  exit 1
+fi
+if ! (exec 3<>"/dev/tcp/$PG_HOST/$PG_PORT") 2>/dev/null; then
+  echo "✗ PostgreSQL is not reachable at $PG_HOST:$PG_PORT"
+  exit 1
+fi
+if ! curl -s -o /dev/null "$RQLITE_URL/status"; then
+  echo "✗ rqlited is not reachable at $RQLITE_URL"
+  exit 1
+fi
+
+mkdir -p "$BACKUP_DIR"
+trap cleanup EXIT
+# An interrupt must stop the run, not resume the next leg: exit, and let the
+# EXIT trap clean up once.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -f "$OVERRIDE" ]; then
   OVERRIDE_BAK="$OVERRIDE.bak.rt-$TS"
@@ -126,25 +168,21 @@ storages:
     filesystem:
       attachmentsDirPath: $SC/var-pryv/attachments
       previewsDirPath: $SC/var-pryv/previews
+    postgresql:
+      host: $PG_HOST
+      port: $PG_PORT
     rqlite:
-      url: http://localhost:4001
+      url: $RQLITE_URL
       external: true
 EOF
 }
 
-stop_existing_master () {
-  local existing
-  existing="$(lsof -ti tcp:"$PORT" 2>/dev/null || true)"
-  if [ -n "$existing" ]; then
-    kill -TERM $existing 2>/dev/null || true
-    sleep 3
-    kill -KILL $existing 2>/dev/null || true
-  fi
-}
-
 start_master () {
+  if ! port_is_free; then
+    echo "✗ port $PORT is in use before starting the master"
+    exit 1
+  fi
   cd "$SC"
-  : > "$MASTER_LOG"
   NODE_ENV=production node bin/master.js --config "$OVERRIDE" >> "$MASTER_LOG" 2>&1 &
   MASTER_PID=$!
   cd "$SC"
@@ -168,7 +206,7 @@ wait_for_ready () {
   local elapsed=0
   while ! curl -s -o /dev/null "$TARGET/" 2>/dev/null; do
     if [ "$elapsed" -ge "$timeout" ]; then
-      echo "  ✗ server did not become ready within ${timeout}s — see $MASTER_LOG"
+      echo "  ✗ server did not become ready within ${timeout}s, see $MASTER_LOG"
       tail -40 "$MASTER_LOG" || true
       exit 1
     fi
@@ -177,8 +215,8 @@ wait_for_ready () {
   done
 }
 
-# Seed a small fixture: 1 user with N events.
-# Returns the username + personal token via stdout (last two lines).
+# Seed the fixture user (see the header for what it contains).
+# Progress goes to stderr; nothing is printed on stdout.
 seed_fixture () {
   local ADMIN="rt-admin"
   local USERNAME="rtuser$(date +%s | tail -c 7)"
@@ -263,8 +301,6 @@ seed_fixture () {
   fi
 
   echo "  ✓ seeded user=$USERNAME: 11 notes (1 with attachment), profile, app access + webhook, series event with 3 points" >&2
-  echo "$USERNAME"
-  echo "$TOKEN"
 }
 
 run_leg () {
@@ -276,17 +312,16 @@ run_leg () {
 
   echo ""
   echo "──────────────────────────────────────────────"
-  echo " Leg $LEG_NAME — engine=$ENGINE  action=$ACTION  out=$OUT_BUNDLE"
+  echo " Leg $LEG_NAME: engine=$ENGINE  action=$ACTION  out=$OUT_BUNDLE"
   echo "──────────────────────────────────────────────"
-
-  stop_existing_master
-  MASTER_PID=""
 
   write_override "$ENGINE"
 
   echo "[leg] cleaning test data"
   cd "$SC"
-  just clean-test-data > /dev/null 2>&1
+  if ! just clean-test-data > "$BACKUP_DIR/clean-test-data.log" 2>&1; then
+    echo "  ✗ just clean-test-data failed:"; tail -20 "$BACKUP_DIR/clean-test-data.log"; exit 1
+  fi
   cd "$SC"
 
   if [ "$ACTION" = "seed" ]; then
@@ -294,7 +329,7 @@ run_leg () {
     start_master
     wait_for_ready
     echo "[leg] seeding fixture user"
-    seed_fixture > /tmp/rt-fixture-$TS.txt
+    seed_fixture
     stop_master
   elif [ "${ACTION%% *}" = "restore" ]; then
     local SRC="${ACTION#restore }"

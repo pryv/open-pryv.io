@@ -9,9 +9,9 @@
  * SQLite implementation of the `SeriesConnection` interface
  * (see `storages/interfaces/seriesStorage/SeriesConnection.ts`).
  *
- * Architecture: per-user SQLite file at
- * `<userLocalDirectory>/<userId>/series-<version>.sqlite`. The
- * "database name" parameter on the interface is treated as the userId;
+ * Architecture: one SQLite file per series namespace, at
+ * `<userLocalDirectory>/<namespace>/series-<version>.sqlite`. The
+ * "database name" parameter on the interface is the namespace (`user.<username>`);
  * "measurement" is the eventId. Connection handles are cached in an
  * LRU so repeated writes to the same user don't re-open the file.
  *
@@ -65,7 +65,7 @@ class SeriesConnectionSQLite {
 
   /**
    * Ensures the per-user file exists. No-op if already open.
-   * "name" = userId.
+   * "name" = the series namespace (`user.<username>`).
    */
   async createDatabase (name: string): Promise<void> {
     this.logger.debug(`createDatabase: ${name}`);

@@ -42,7 +42,7 @@ class PGSeriesConnection {
   }
 
   async writeMeasurement (name: string, points: Array<{ fields: FieldsObj, timestamp: number }>, options: { database: string }): Promise<void> {
-    const userId = options.database;
+    const namespace = options.database;
     this.logger.debug(`writeMeasurement: ${name} (${points.length} points)`);
 
     if (points.length === 0) return;
@@ -50,12 +50,12 @@ class PGSeriesConnection {
     await batchUpsert(this.db, points.map(point => {
       const deltaTime = point.timestamp;
       const pointTime = typeof deltaTime === 'number' ? deltaTime : Number(deltaTime);
-      return [userId, name, pointTime, deltaTime, JSON.stringify(point.fields)];
+      return [namespace, name, pointTime, deltaTime, JSON.stringify(point.fields)];
     }));
   }
 
   async writePoints (points: Array<{ measurement: string, fields: FieldsObj, timestamp: number }>, options: { database: string }): Promise<void> {
-    const userId = options.database;
+    const namespace = options.database;
     this.logger.debug(`writePoints: ${points.length} points`);
 
     if (points.length === 0) return;
@@ -63,7 +63,7 @@ class PGSeriesConnection {
     await batchUpsert(this.db, points.map(point => {
       const deltaTime = point.timestamp;
       const pointTime = typeof deltaTime === 'number' ? deltaTime : Number(deltaTime);
-      return [userId, point.measurement, pointTime, deltaTime, JSON.stringify(point.fields)];
+      return [namespace, point.measurement, pointTime, deltaTime, JSON.stringify(point.fields)];
     }));
   }
 
@@ -76,7 +76,7 @@ class PGSeriesConnection {
   }
 
   async query (queryStr: string, options: { database: string }): Promise<Array<Record<string, unknown>>> {
-    const userId = options.database;
+    const namespace = options.database;
     const singleLine = queryStr.replace(/\s+/g, ' ').trim();
     this.logger.debug(`query: ${singleLine}`);
 
@@ -84,7 +84,7 @@ class PGSeriesConnection {
     if (/^SHOW\s+MEASUREMENTS$/i.test(singleLine)) {
       const res = await this.db.query(
         'SELECT DISTINCT event_id AS name FROM series_data WHERE user_id = $1',
-        [userId]
+        [namespace]
       );
       return res.rows;
     }
@@ -96,7 +96,7 @@ class PGSeriesConnection {
     }
 
     const conditions: string[] = ['user_id = $1', 'event_id = $2'];
-    const params: unknown[] = [userId, parsed.measurement];
+    const params: unknown[] = [namespace, parsed.measurement];
     let idx = 3;
 
     for (const cond of parsed.conditions) {
@@ -122,7 +122,7 @@ class PGSeriesConnection {
   }
 
   /**
-   * Get list of databases (user_ids that have series data).
+   * Get list of databases (the series namespaces, `user.<username>`, that have data; stored in the `user_id` column).
    */
   async getDatabases (): Promise<string[]> {
     const res = await this.db.query(

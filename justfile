@@ -171,8 +171,11 @@ test-sqlite-influx component *params:
 # accesses, profile, webhook, attachment, HF series). Compares the four bundles
 # on counts AND content. Destructive for local dev data (cleans test data per
 # leg); needs PostgreSQL and rqlited. Driver: tools/backup-roundtrip/.
+[positional-arguments]
 test-backup-roundtrip *params:
-    tools/backup-roundtrip/backup-roundtrip.sh {{params}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tools/backup-roundtrip/backup-roundtrip.sh "$@"
 
 # The recipes below pass params with positional-arguments + "$@" for the same
 # reason as `test` (an unquoted {{params}} hands `--grep "A|B"` to the shell).

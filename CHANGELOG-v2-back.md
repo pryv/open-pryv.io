@@ -10,8 +10,9 @@
   new backup after upgrading.
 - **Fix: series backed up on InfluxDB could not be restored.** The InfluxDB engine exported each
   point's `time` as a date object (an ISO string once written to the backup), which its own
-  import refused. It now exports milliseconds like the PostgreSQL and SQLite engines and imports
-  them exactly, so series move between any two series engines.
+  import refused. It now exports milliseconds of delta time like the PostgreSQL and SQLite
+  engines and imports that value exactly (nanosecond precision is bounded by the shared
+  millisecond format, as on the other engines), so series move between any two series engines.
 - **Fix: the backup manifest's `coreVersion` read `1.9.3`** (an internal package's version) on
   every v2 core. It now reports the same version as `service/info`.
 - New `just test-backup-roundtrip` (`tools/backup-roundtrip/`): seeds a user with events, streams,

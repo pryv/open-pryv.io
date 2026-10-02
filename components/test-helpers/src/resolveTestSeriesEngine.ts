@@ -18,8 +18,18 @@
  * forked child server reads, and the two sides would use different series
  * engines.
  */
+let noticeShown = false;
+
 export function resolveTestSeriesEngine (baseEngine: string | undefined, env: Record<string, string | undefined> = process.env): string | undefined {
-  return env.storages__series__engine || baseEngine;
+  const override = env.storages__series__engine;
+  if (override == null || override === '') return baseEngine;
+  // An exported variable would otherwise move every suite to another series
+  // engine without any sign in the output.
+  if (!noticeShown) {
+    noticeShown = true;
+    console.log(`[test-helpers] series engine: ${override} (from storages__series__engine)`);
+  }
+  return override;
 }
 
 export default { resolveTestSeriesEngine };

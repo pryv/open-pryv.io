@@ -452,7 +452,7 @@ type EventFilesLike = {
   getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<Readable>;
 };
 type SeriesConnectionLike = {
-  exportDatabase (userId: string): Promise<{ measurements?: unknown[] }>;
+  exportDatabase (namespace: string): Promise<{ measurements?: unknown[] }>;
 };
 type Manifest = {
   users: Array<{ userId: string; backupTimestamp?: number }>;

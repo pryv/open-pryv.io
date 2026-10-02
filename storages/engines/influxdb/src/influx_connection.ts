@@ -157,9 +157,11 @@ function timeToMillis (time: unknown): unknown {
 }
 
 // An exported `time` (milliseconds) as the nanosecond string node-influx
-// writes verbatim. A string keeps nanosecond values above 2^53 exact; an ISO
-// date string is also accepted.
+// writes verbatim. The string reproduces the exported millisecond value
+// exactly; nanosecond precision is bounded by that shared millisecond format,
+// as on the other engines. An ISO date string is also accepted.
 function millisToNanoString (time: unknown): string {
+  if (time == null) throw new Error(`Series point has an invalid time: ${String(time)}`);
   const millis = typeof time === 'string' && !/^-?[0-9.]+$/.test(time) ? Date.parse(time) : Number(time);
   if (!Number.isFinite(millis)) throw new Error(`Series point has an invalid time: ${String(time)}`);
   const whole = Math.trunc(millis);

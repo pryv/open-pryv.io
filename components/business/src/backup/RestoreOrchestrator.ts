@@ -524,8 +524,8 @@ type AuditStorageLike = {
   deleteUser (userId: string): Promise<unknown>;
 };
 type SeriesConnectionLike = {
-  importDatabase (userId: string, data: { measurements: unknown[] }): Promise<unknown>;
-  dropDatabase (userId: string): Promise<unknown>;
+  importDatabase (namespace: string, data: { measurements: unknown[] }): Promise<unknown>;
+  dropDatabase (namespace: string): Promise<unknown>;
 };
 type UserManifest = { userId: string; username: string };
 type Manifest = { formatVersion: string; backupType: string; users: UserManifest[] };
