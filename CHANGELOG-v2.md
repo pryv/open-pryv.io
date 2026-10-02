@@ -12,8 +12,12 @@
 - **One-way data directory upgrade.** The first start converts the rqlite data directory and
   rebuilds the node's database from its snapshot store; rqlite 9 cannot open it afterwards, so
   rolling the image back to an older release needs the data directory restored from a backup.
-  Back up and check the snapshot store before upgrading, and upgrade every node of a cluster back
-  to back (followers first): see INSTALL.md, "Upgrading the bundled rqlite (9.x to 10.x)".
+  Upgrade from 2.0.0-rc.33 or later (older masters could interrupt rqlited's snapshot on stop),
+  back up and check the snapshot store before the first start, and upgrade every node of a
+  cluster back to back (followers first): see INSTALL.md, "Upgrading the bundled rqlite (9.x to
+  10.x)".
+- Keep rqlite's HTTP port (4001) closed to the outside: rqlite 10 also serves an unauthenticated
+  web console there.
 - Native installs: `scripts/setup` keeps an existing `bin-ext/rqlited` and warns when its
   version differs from the pinned one; replace it by hand as described there.
 
