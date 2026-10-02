@@ -145,7 +145,10 @@ storages:
       dataDir: /path/to/data/rqlite-data
       binPath: /path/to/rqlited        # default: bin-ext/rqlited
       readyTimeoutMs: 30000            # boot budget for rqlited's HTTP API; raise on slow nodes
+      logFile: null                    # null: rqlited writes to the master's stdout/stderr; or a file it appends to
 ```
+
+On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30`, or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
 
 ### Assets
 
@@ -925,6 +928,7 @@ Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-c
 A corrupted primary-key index on the platform DB raises no error by itself: upserts then store a key twice and lookups miss rows (user-to-core mappings, unique-field reservations, DNS records). Each core checks its own copy, read-only:
 
 - **At every boot**, `master.js` runs the check once and logs an `ERROR` naming the duplicated keys when it fails. It never blocks the boot.
+- **Periodically while the core runs**, `master.js` repeats the same check every `storages.platform.integrityCheckIntervalMs` (default `3600000`, one hour; `0` disables it). It logs an `ERROR` at every failed check, an `INFO` line once when the check passes again, and a `WARNING` when the check cannot run (e.g. rqlited unreachable).
 - **On demand**, `node bin/integrity-check.js --platform` (exit code `1` on failure or when the platform DB cannot be reached, `--json` for the report). A run without `--user` checks the platform DB after the users. On a core started with `--config <file>` (e.g. a multi-core joiner's host-config), pass the same `--config <file>` so the tool reads that core's storage and rqlite URL. Run it where the core's rqlited is reachable (e.g. inside the core's running container, not a one-off container where no rqlited runs).
 
 With rqlite, each node holds its own SQLite file, so run the check on every core (it reads the node the core talks to: with `storages.engines.rqlite.external` behind a load balancer, that is whichever node answered). It runs `PRAGMA integrity_check` and a duplicate-key scan that bypasses the index (`NOT INDEXED`). With PostgreSQL it runs the duplicate-key scan only (index scans disabled).
@@ -943,7 +947,15 @@ With rqlite, each node holds its own SQLite file, so run the check on every core
      "ALTER TABLE keyValue_new RENAME TO keyValue"
    ]'
    ```
-4. Re-run `node bin/integrity-check.js --platform` on every core (adding `--config <file>` on a core started with one). No restart is needed.
+4. Verify EVERY node, each on its own copy: re-run `node bin/integrity-check.js --platform` on every core (adding `--config <file>` on a core started with one; it reads with `level=none`), and check the rebuild itself with `level=none` reads on each node, because at the default level a follower forwards the read to the leader and answers with the leader's copy. A rebuild can fail on a follower alone (e.g. its copy holds a duplicate that the new table's primary key refuses) and leave that node's old table in place without any error on the leader. Right after the rebuild, on each node:
+
+   ```bash
+   curl -s -XPOST 'http://localhost:4001/db/query?level=none' -H 'Content-Type: application/json' --data-binary @- <<'EOF'
+   ["SELECT sql FROM sqlite_master WHERE name = 'keyValue'", "SELECT MIN(rowid), COUNT(*) FROM keyValue"]
+   EOF
+   ```
+
+   A rebuilt table reads `CREATE TABLE "keyValue" …` (quoted name, from the rename) and its rowids start at `1`; the same row count on every node. No restart is needed.
 
 If the rehearsal fails (e.g. `DROP TABLE` reports "database disk image is malformed": the damage is structural, not a missing index entry), do not send it to the cluster. If the damaged node is a follower and a healthy voter holds the data, recover it from that peer: stop that core, remove its rqlite data directory, and start it again so it rejoins and receives a fresh snapshot. Never do this on the only voter (a two-core setup with one voter and one non-voter has a single copy that counts): restore it instead from a healthy node's backup (`/db/backup?noleader` on that node, then `/db/load` on the leader).
 

@@ -164,6 +164,8 @@ describe('[RG2C] Two-core integration tests', function () {
       raftPort: RQLITE_RAFT_PORT,
       dnsDomain: null,
       coreIp: null,
+      // rqlited's own output: to a file, not the test runner's stdout.
+      logFile: '/tmp/rqlite-2core-test.log',
       log: (msg) => { if (process.env.LOGS) console.log('[rqlite]', msg); }
     });
 

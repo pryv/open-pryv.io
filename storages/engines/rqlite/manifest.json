@@ -10,6 +10,7 @@
       "binPath":  { "type": "string",  "default": "bin-ext/rqlited",                 "description": "rqlited binary path" },
       "external":  { "type": "boolean", "default": false,                          "description": "When true, rqlited is already running at `url` and is not spawned or owned by this process; the master only waits for it to answer /readyz" },
       "readyTimeoutMs": { "type": "number", "default": 30000, "description": "Milliseconds to wait for rqlited's HTTP API (/readyz) at boot before failing the start; applies to the managed process and to external: true" },
+      "logFile": { "type": "string", "default": null, "description": "File the managed rqlited appends its stdout and stderr to; null = the master's own stdout and stderr (never pipes read by the master)" },
       "tls": {
         "type": "object",
         "default": null,

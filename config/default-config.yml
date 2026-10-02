@@ -43,6 +43,10 @@ storages:
     # process or data dir). Going multi-core later requires migrating the
     # platform data back to rqlite (`node bin/migrate-platform.js`).
     engine: rqlite
+    # PER-CORE. The master re-runs the boot-time platform DB integrity check
+    # (this core's copy, read-only) at this interval and logs an ERROR when it
+    # fails, INFO once when it passes again. 0 disables. Default: 1 hour.
+    integrityCheckIntervalMs: 3600000
   series:
     engine: postgresql      # seriesStorage. Default since 2026-05-12; raw deploys typically don't ship influxd. Set `engine: influxdb` here in override-config.yml to opt back in (requires a running influxd on http.ip:storages.engines.influxdb.port).
   file:
@@ -111,6 +115,10 @@ storages:
                                       # A boot that exceeds it fails and is retried by the supervisor;
                                       # raise it on nodes with a large platform dataset or slow disks.
                                       # Applies to the managed process and to `external: true`.
+      logFile: null                   # null = the spawned rqlited writes to the master's own stdout/stderr.
+                                      # A path (relative to service-core root) = rqlited appends its output
+                                      # there instead (rotate with copytruncate). Never piped through the
+                                      # master: rqlited must keep logging while it closes, after the master.
       # tls: null = plain TCP for Raft (single-core / VPN-protected multi-core).
       # To enable mutually-authenticated TLS on the Raft channel, set all of
       # caFile / certFile / keyFile to PEM files on disk. See

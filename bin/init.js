@@ -810,6 +810,18 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #     rqlite:
 # #       readyTimeoutMs: 60000
 
+# # storages.engines.rqlite.logFile: by default the embedded rqlited writes
+# # to the master's own output; set a path to have it append there instead.
+# # storages.platform.integrityCheckIntervalMs: the master re-checks this
+# # core's platform DB copy at this interval (default 3600000 = 1 h, 0 = off)
+# # and logs an ERROR when the check fails.
+# # storages:
+# #   platform:
+# #     integrityCheckIntervalMs: 3600000
+# #   engines:
+# #     rqlite:
+# #       logFile: var-pryv/logs/rqlited.log
+
 # # core.url — pin this core's externally-reachable URL when 'dns.active'
 # # is false but you still want a stable identity (DNSless multi-core).
 # # core:
