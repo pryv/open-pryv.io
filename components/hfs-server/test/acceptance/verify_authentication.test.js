@@ -73,12 +73,17 @@ describe('[METC] Metadata Cache', function () {
 
     // stubbing the value of loader here.
     const cache = new MetadataCache(null, loaderStub, config);
-    await cache.init();
+    try {
+      await cache.init();
 
-    const a = await cache.forSeries('foo', '1234', '5678');
-    const b = await cache.forSeries('foo', '1234', '5678');
+      const a = await cache.forSeries('foo', '1234', '5678');
+      const b = await cache.forSeries('foo', '1234', '5678');
 
-    assert.strictEqual(a, 1);
-    assert.strictEqual(b, 1);
+      assert.strictEqual(a, 1);
+      assert.strictEqual(b, 1);
+    } finally {
+      // Its `series` is null: left subscribed, a series deletion would throw here.
+      cache.close();
+    }
   });
 });
