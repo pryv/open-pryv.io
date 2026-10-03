@@ -14,6 +14,7 @@ const http = require('http');
 const express = require('express');
 const util = require('util');
 const middleware = require('middleware');
+const { hostToPath } = require('./hostToPath.ts');
 const errorsMiddleware = require('./middleware/errors.ts').default;
 const controllerFactory = require('./web/controller.ts').default;
 const getAuth = require('middleware/src/getAuth.ts').default;
@@ -112,7 +113,7 @@ class Server {
     const app = express();
     app.disable('x-powered-by');
     app.use(middleware.noSniff);
-    app.use(middleware.subdomainToPath([]));
+    app.use(hostToPath(config));
     app.use(middleware.requestTrace(express, logger));
     app.use(express.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));
     app.use(middleware.override);

@@ -11,7 +11,7 @@ const express = require('express');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
-const { hostedSiteNames } = require('business/src/hostedSites.ts');
+const { usernameInHost, ignoredUsernameSubdomains } = require('business/src/usernameSubdomains.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -34,26 +34,16 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   const ignorePaths = Object.values(Paths)
     .filter((e) => typeof e === 'string')
     .filter((e) => e.indexOf(Paths.Params.Username) < 0);
-  if (!config.get('dnsLess:isActive')) {
-    const coreId = config.get('core:id');
-    const ignoredSubdomains = coreId && coreId !== 'single' ? [coreId] : [];
-    // Also keep distribution-reserved service subdomains out of the
-    // username-rewriter. Without this, e.g. `access.pryv.me/service/info`
-    // (6 chars, matches username regex) gets rewritten to
-    // `/access/service/info` and falls through to the username router.
-    // reg/access/mfa are the distribution's reserved names
-    // (see DnsServer.RESERVED_SERVICE_NAMES); operator-owned staticEntries
-    // names (sw, mail, etc.) are harvested from config too.
-    ignoredSubdomains.push('reg', 'access', 'mfa');
-    const staticEntries = config.get('dns:staticEntries') || {};
-    for (const name of Object.keys(staticEntries)) {
-      if (!ignoredSubdomains.includes(name)) ignoredSubdomains.push(name);
-    }
-    // Hosted-site names are answered before express; should a request for one
-    // reach express anyway, it must not be rewritten into a username path.
-    for (const name of hostedSiteNames(config)) {
-      if (!ignoredSubdomains.includes(name)) ignoredSubdomains.push(name);
-    }
+  if (usernameInHost(config)) {
+    // Keep the core's own subdomain and the distribution-reserved service
+    // subdomains out of the username-rewriter. Without this, e.g.
+    // `access.pryv.me/service/info` (6 chars, matches username regex) gets
+    // rewritten to `/access/service/info` and falls through to the username
+    // router. reg/access/mfa are the distribution's reserved names (see
+    // DnsServer.RESERVED_SERVICE_NAMES); operator-owned staticEntries names
+    // (sw, mail, etc.) and hosted-site names (answered before express) are
+    // harvested from config too. The HFS worker uses the same list.
+    const ignoredSubdomains = ignoredUsernameSubdomains(config);
 
     // When Host matches a reserved service subdomain (reg/access/mfa), the
     // client-facing URL is rootless — e.g. `reg.pryv.me/perki/server` or
