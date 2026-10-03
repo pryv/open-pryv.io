@@ -312,3 +312,39 @@ describe('[EP01] event previews', function () {
     });
   });
 });
+
+describe('[EP04] previews cache clean-up', function () {
+  const os = require('node:os');
+  const nodePath = require('node:path');
+  const Cache = require('../src/cache.ts').default;
+
+  function recordingLogger () {
+    const calls = [];
+    const record = (level) => (msg) => calls.push({ level, msg });
+    return { calls, debug: record('debug'), info: record('info'), warn: record('warn'), error: record('error') };
+  }
+
+  let tmpDir;
+  before(function () {
+    tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'previews-cache-'));
+  });
+  after(function () {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('[K7NQ] must treat a missing previews folder as nothing to clean', async function () {
+    const logger = recordingLogger();
+    const cache = new Cache({ rootPath: nodePath.join(tmpDir, 'never-created'), maxAge: 1, logger });
+    await cache.cleanUp();
+    assert.strictEqual(cache.cleanUpInProgress, false);
+    assert.deepStrictEqual(logger.calls.filter((c) => c.level !== 'debug'), []);
+  });
+
+  it('[W3ZD] must still fail on other errors reading the previews folder', async function () {
+    const notADir = nodePath.join(tmpDir, 'a-file');
+    fs.writeFileSync(notADir, 'x');
+    const cache = new Cache({ rootPath: notADir, maxAge: 1, logger: recordingLogger() });
+    await assert.rejects(() => cache.cleanUp(), { code: 'ENOTDIR' });
+    assert.strictEqual(cache.cleanUpInProgress, false);
+  });
+});

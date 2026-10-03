@@ -48,20 +48,34 @@ class Cache {
       throw new Error('Clean-up is already in progress.');
     }
     this.cleanUpInProgress = true;
-    const cutoffTime = timestamp.now() - this.settings.maxAge;
-    const files = await getFiles(this.settings.rootPath);
-    for (const file of files) {
+    try {
+      const cutoffTime = timestamp.now() - this.settings.maxAge;
+      let files: string[];
       try {
-        const value = await xattr.get(file, Cache.LastAccessedXattrKey);
-        if (value != null && +value.toString() < cutoffTime) {
-          fs.unlinkSync(file);
-        }
+        files = await getFiles(this.settings.rootPath);
       } catch (err) {
-        // log and ignore file
-        this.settings.logger.warn(`Could not process file "${file}": ${err}`);
+        const e = err as NodeJS.ErrnoException;
+        // the root folder is only created with the first preview: nothing to clean
+        if (e.code === 'ENOENT' && e.path === this.settings.rootPath) {
+          this.settings.logger.debug(`Nothing to clean: "${this.settings.rootPath}" does not exist`);
+          return;
+        }
+        throw err;
       }
+      for (const file of files) {
+        try {
+          const value = await xattr.get(file, Cache.LastAccessedXattrKey);
+          if (value != null && +value.toString() < cutoffTime) {
+            fs.unlinkSync(file);
+          }
+        } catch (err) {
+          // log and ignore file
+          this.settings.logger.warn(`Could not process file "${file}": ${err}`);
+        }
+      }
+    } finally {
+      this.cleanUpInProgress = false;
     }
-    this.cleanUpInProgress = false;
   }
 }
 async function getFiles (dir: string): Promise<string[]> {

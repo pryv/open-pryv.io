@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## Previews cache clean-up no longer fails before the first preview
+
+- **Fix: the nightly previews cache clean-up logged `Unhandled API error (Error): ENOENT ...
+  scandir '<previewsDirPath>'`** on cores that had never generated a preview, because the previews
+  folder is only created with the first preview. A missing previews folder now means nothing to
+  clean (logged at debug level); any other error reading it still fails the clean-up. The
+  in-progress flag is now also reset when a clean-up fails.
+
 ## Backups now carry HF series data; cross-engine backup round trip
 
 - **Fix: `bin/backup.js` backups contained no HF series data, on every engine, without any
