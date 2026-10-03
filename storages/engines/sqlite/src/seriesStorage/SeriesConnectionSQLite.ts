@@ -73,8 +73,12 @@ class SeriesConnectionSQLite {
   }
 
   /**
-   * Wipes the per-user series file entirely (Art.17 unlink). Both
-   * the cached handle and the on-disk file go.
+   * Wipes the namespace's series file entirely (Art.17 unlink): the cached
+   * handle, the file and its WAL / SHM siblings, then the namespace directory
+   * when nothing else is in it. The directory is named after the namespace
+   * (`user.<username>`), so leaving it behind would keep a trace of a deleted
+   * account. Resolves the path without creating it, so dropping a namespace
+   * that never had series creates nothing.
    */
   async dropDatabase (name: string): Promise<void> {
     this.logger.debug(`dropDatabase: ${name}`);
@@ -83,11 +87,20 @@ class SeriesConnectionSQLite {
       cached.close();
       this.cache.delete(name);
     }
-    const dbPath = await this.pathForUser(name);
+    const dirPath = _internals.userLocalDirectory.getPathForUser(name);
+    const dbPath = path.join(dirPath, `${FILE_PREFIX}-${VERSION}.sqlite`);
+    for (const file of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
+      try {
+        await fs.unlink(file);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+    }
     try {
-      await fs.unlink(dbPath);
+      await fs.rmdir(dirPath); // only succeeds when empty
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw err;
     }
   }
 
