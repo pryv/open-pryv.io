@@ -2190,6 +2190,40 @@ transport failures) is logged server-side instead.
 
 ## 2.0.0-rc.5 — 2026-06-25
 
+### On-demand encrypted backups (`bin/backup.js`)
+
+The full-platform backup tool can now **encrypt its output on demand** so that
+plaintext PHI/PII never touches the destination disk — the bytes written to the
+backup media are ciphertext only. Encryption is **opt-in**: without the flags
+below, backups behave exactly as before (plaintext JSONL, same filenames).
+
+Two key models:
+
+- **Recipient public key (recommended)** — `--recipient-pubkey <pem>`. A fresh
+  random data key encrypts the backup and is itself wrapped with the recipient's
+  RSA public key (RSA-OAEP, SHA-256). The backup-producing host holds **no secret
+  that can decrypt its own output**; only the holder of the matching private key
+  can restore (`--private-key <pem>`, plus `--private-key-passphrase` if the key
+  is protected).
+- **Passphrase** — `--encrypt-passphrase <s>` (or the `PRYV_BACKUP_PASSPHRASE`
+  env var, which keeps the secret out of the process list). The data key is
+  scrypt-derived from the passphrase. Simpler, but the operator can decrypt its
+  own backups. Restore with `--decrypt-passphrase <s>` / `PRYV_BACKUP_PASSPHRASE`.
+
+Format: each file is encrypted independently (streaming AES-256-GCM in
+authenticated chunks; a per-file subkey is HKDF-derived from a random salt), so
+chunking, `--incremental`, `--no-compress` and single-`--user` restore all keep
+working. A small cleartext `encryption.json` at the backup root records the key
+model and the wrapped data key — crypto headers only, never user data;
+`manifest.json` and every per-user file (including the user manifest and
+attachments) are encrypted. Restore auto-detects an encrypted backup from that
+file.
+
+Disaster-recovery note: **a lost key (or passphrase) makes the backup
+unrecoverable** — that is the point of the feature. For an `--incremental` run
+over an already-encrypted backup, supply the matching secret so the tool can read
+the previous manifest.
+
 ### Optional encryption-at-rest image variant
 
 A new published image variant `pryvio/open-pryv.io-encrypted` adds optional
@@ -2282,39 +2316,7 @@ without bouncing through the auth pages.
 
 This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
 
-### On-demand encrypted backups (`bin/backup.js`)
-
-The full-platform backup tool can now **encrypt its output on demand** so that
-plaintext PHI/PII never touches the destination disk — the bytes written to the
-backup media are ciphertext only. Encryption is **opt-in**: without the flags
-below, backups behave exactly as before (plaintext JSONL, same filenames).
-
-Two key models:
-
-- **Recipient public key (recommended)** — `--recipient-pubkey <pem>`. A fresh
-  random data key encrypts the backup and is itself wrapped with the recipient's
-  RSA public key (RSA-OAEP, SHA-256). The backup-producing host holds **no secret
-  that can decrypt its own output**; only the holder of the matching private key
-  can restore (`--private-key <pem>`, plus `--private-key-passphrase` if the key
-  is protected).
-- **Passphrase** — `--encrypt-passphrase <s>` (or the `PRYV_BACKUP_PASSPHRASE`
-  env var, which keeps the secret out of the process list). The data key is
-  scrypt-derived from the passphrase. Simpler, but the operator can decrypt its
-  own backups. Restore with `--decrypt-passphrase <s>` / `PRYV_BACKUP_PASSPHRASE`.
-
-Format: each file is encrypted independently (streaming AES-256-GCM in
-authenticated chunks; a per-file subkey is HKDF-derived from a random salt), so
-chunking, `--incremental`, `--no-compress` and single-`--user` restore all keep
-working. A small cleartext `encryption.json` at the backup root records the key
-model and the wrapped data key — crypto headers only, never user data;
-`manifest.json` and every per-user file (including the user manifest and
-attachments) are encrypted. Restore auto-detects an encrypted backup from that
-file.
-
-Disaster-recovery note: **a lost key (or passphrase) makes the backup
-unrecoverable** — that is the point of the feature. For an `--incremental` run
-over an already-encrypted backup, supply the matching secret so the tool can read
-the previous manifest.
+(On-demand encrypted backups were listed here until 2026-10; they first shipped in 2.0.0-rc.5 and are described there.)
 
 ## 2.0.0-rc.3 — 2026-06-17
 
