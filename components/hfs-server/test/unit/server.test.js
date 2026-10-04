@@ -19,6 +19,10 @@ describe('[HFSV] Server', () => {
     await application.init();
     server = application.server;
   });
+  after(() => {
+    // Its metadata cache listens on the process-wide pubsub; release it for later suites.
+    application.context.metadata.close();
+  });
   function toUrl (path) {
     const baseUrl = server.baseUrl;
     return new URL(path, baseUrl).toString();

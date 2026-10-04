@@ -41,6 +41,9 @@ class MetadataCache {
   mall: unknown;
 
   config: { get: (key: string) => unknown };
+
+  // Removers for the listeners added to the process-wide `pubsub.series`.
+  unsubscribers: Array<() => void> = [];
   constructor (series: SeriesRepoLike, metadataLoader: MetadataLoader, config: { get: (key: string) => unknown }) {
     this.loader = metadataLoader;
     this.series = series;
@@ -85,8 +88,20 @@ class MetadataCache {
   }
 
   subscribeToNotifications () {
-    pubsub.series.on(pubsub.SERIES_UPDATE_EVENTID_USERNAME, this.invalidateEvent.bind(this));
-    pubsub.series.on(pubsub.SERIES_DELETE_EVENTID_USERNAME, this.dropSeries.bind(this));
+    this.unsubscribers.push(
+      pubsub.series.onAndGetRemovable(pubsub.SERIES_UPDATE_EVENTID_USERNAME, this.invalidateEvent.bind(this)),
+      pubsub.series.onAndGetRemovable(pubsub.SERIES_DELETE_EVENTID_USERNAME, this.dropSeries.bind(this))
+    );
+  }
+
+  /**
+   * Stops listening to `pubsub.series`. `pubsub` is a process-wide singleton,
+   * so a cache that is dropped without this keeps receiving (and acting on)
+   * series updates and deletions.
+   */
+  close () {
+    for (const unsubscribe of this.unsubscribers) unsubscribe();
+    this.unsubscribers = [];
   }
 
   // cache logic
