@@ -804,28 +804,29 @@ The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.
 - **The data directory is upgraded in place, one way.** At its first start, rqlite 10 converts the directory (log line `upgraded v8 snapshot directory …/rsnapshots to …/wsnapshots`) and rebuilds the node's database from its snapshot store (`clean snapshot predates recording of snapshot index and term, full restore needed`, then `node restored`). rqlite 9 cannot open the directory afterwards: it stops with `panic: log not found`. Going back to an older release therefore needs the data directory restored from a backup (below).
 - **Back up every node first:** `curl -s 'http://localhost:4001/db/backup' -o platform-backup.sqlite` on the leader (`?noleader` on a follower for its own copy), and an archive of the rqlite data directory taken while the core is stopped.
 - **Upgrade from 2.0.0-rc.33 or later.** Up to rc.32 the master could exit before rqlited finished its snapshot on close, which is exactly what leaves the snapshot store inconsistent. Stopping an older release for this upgrade (including replacing its container by the new image) risks the damage this upgrade then restores. Move to rc.33 first, still on rqlite 9, or stop an older core as described in "Platform DB integrity" (rqlited first, then the master).
-- **Check the snapshot store before the first rqlite 10 start.** That start replaces the database with the content of the snapshot store, so a store left inconsistent by an earlier interrupted snapshot would replace a healthy database. Stop the core cleanly (the stop leaves a `clean_snapshot` file and an empty `db.sqlite-wal` in the data directory), then compare the database with the newest snapshot (with Docker, run this in the volume that holds the rqlite data). Only the newest snapshot matters: rqlite 10 converts that one (its `<id>.db` file and `<id>/meta.json`) and deletes the rest of the store. An empty `<id>.data` file inside a snapshot's directory is normal (rqlite 9 leaves one when a snapshot found no change), while a `*.tmp` entry in `rsnapshots/` or a non-empty extra file inside the newest snapshot's directory means the last snapshot did not complete: start the core again on the old version, stop it cleanly, and check again.
+- **Check the snapshot store before the first rqlite 10 start.** That start replaces the database with the content of the snapshot store, so a store left inconsistent by an earlier interrupted snapshot would replace a healthy database. Stop the core cleanly (the stop leaves a `clean_snapshot` file and an empty `db.sqlite-wal` in the data directory), then compare the database with the newest snapshot. Run the commands below on the host, in bash, with the `sqlite3` client installed (the image ships neither; with Docker, `cd` into the volume that holds the rqlite data). Only the newest snapshot matters: rqlite 10 converts that one (its `<id>.db` file and `<id>/meta.json`) and deletes the rest of the store. An empty `<id>.data` file inside a snapshot's directory is normal (rqlite 9 leaves one when a snapshot found no change), while a `*.tmp` entry in `rsnapshots/` or a non-empty extra file inside the newest snapshot's directory means the last snapshot did not complete: start the core again on the old version, stop it cleanly, and check again.
 
   ```bash
   cd var-pryv/rqlite-data
   test -f clean_snapshot && test ! -s db.sqlite-wal && echo "clean stop"
-  ls -la rsnapshots/ rsnapshots/*/
+  ls -laR rsnapshots/
   N="rsnapshots/$(ls rsnapshots | grep '\.db$' | sort -t- -k2,2n | tail -1)"
   cmp db.sqlite "$N" && echo "store matches (identical files)"
   ```
 
-  Identical files settle it. On a node that received writes since its last snapshot, the two files can differ in a few bytes of page layout while holding the same rows (rewriting a row with the same value moves free space inside a page). Then compare the content: both must pass `integrity_check`, and their rows must be identical:
+  Identical files settle it. The two files can also differ in a few bytes of page layout while holding the same rows (most likely a row rewritten with the same value, which moves free space inside a page; seen on a production leader). Then compare the content: both must pass `integrity_check`, and their schema and rows must be identical. `immutable=1` reads each file on its own, as rqlite 10 copies it, so a leftover `-wal` file is not folded in:
 
   ```bash
   for f in db.sqlite "$N"; do
+    echo "$f:"
     sqlite3 "file:$f?mode=ro&immutable=1" "PRAGMA integrity_check; SELECT COUNT(*) FROM keyValue; SELECT COUNT(*) FROM keyValue NOT INDEXED;"
   done
-  diff <(sqlite3 "file:db.sqlite?mode=ro&immutable=1" "SELECT key, value FROM keyValue ORDER BY key") \
-       <(sqlite3 "file:$N?mode=ro&immutable=1" "SELECT key, value FROM keyValue ORDER BY key") \
-    && echo "store matches (same rows)"
+  q="SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name; SELECT key, value FROM keyValue ORDER BY key;"
+  diff <(sqlite3 "file:db.sqlite?mode=ro&immutable=1" "$q") <(sqlite3 "file:$N?mode=ro&immutable=1" "$q") \
+    && echo "store matches (same schema and rows)"
   ```
 
-  Each file must answer `ok` and the same count twice (rows equal to rows read without the index). Any other result means the store does not match.
+  Each file must answer `ok` and the same count twice (rows equal to rows read without the index). Any other result means the store does not match. Different rows do not necessarily mean corruption (the Raft log can hold writes made after the snapshot), but the remedy is the same: start the core again on the old version, stop it cleanly, and check again.
 
   If the stop was not clean (no `clean_snapshot`, or a non-empty `db.sqlite-wal`), start the core again on the OLD binary or image, stop it cleanly, and repeat the check. On a follower whose store still does not match, move its data directory aside and start it again so it rejoins and receives a fresh snapshot from the leader (with the same rqlite version as the leader: a node cannot join a cluster of an older major), then repeat the check. On the leader, do not upgrade: back up with `/db/backup` and rebuild the platform DB from that backup (`/db/load` on a fresh leader, followers rejoined from scratch).
 - **Clusters: upgrade every node back to back, and never add or re-add a node while versions are mixed.** A node on 10 and a node on 9 replicate through the Raft log, but a snapshot transfer between the two majors fails in both directions, so a follower that falls behind the leader's log cannot catch up until both run 10, and a node on 10 cannot join a cluster still led by 9. Upgrading the non-voting followers first lets each one act as a canary for the leader and keeps a simple rollback for it (move its directory aside and rejoin with the old binary). Upgrade the leader right after.

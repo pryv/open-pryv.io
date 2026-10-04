@@ -4,9 +4,10 @@
 
 - "Upgrading the bundled rqlite (9.x to 10.x)" asked for `db.sqlite` to be byte-identical to the newest
   snapshot. On a production leader the two differed in one page-header byte while holding exactly the
-  same rows (a row rewritten with the same value moves free space inside a page), so the strict check
-  would have blocked a safe upgrade. Identical files still settle it; otherwise both files must pass
-  `integrity_check` and hold the same rows (commands in INSTALL.md). An empty `<id>.data` file in a
+  same rows (most likely a row rewritten with the same value, which moves free space inside a page), so
+  the strict check would have blocked a safe upgrade. Identical files still settle it; otherwise both
+  files must pass `integrity_check` and hold the same schema and rows (commands in INSTALL.md, run on
+  the host with the `sqlite3` client). An empty `<id>.data` file in a
   snapshot directory is now documented as normal (rqlite 9 writes one when a snapshot found no change).
 
 ## Backups now carry HF series data; cross-engine backup round trip
