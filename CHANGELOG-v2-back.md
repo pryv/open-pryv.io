@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## `node-forge` declared
+
+- The self-signed placeholder certificate (`components/business/src/acme/selfSignedPlaceholder.ts`)
+  requires `node-forge` directly, but it was only installed as a dependency of `acme-client`. It is
+  now declared in `package.json` (`^1.4.0`, the same copy `acme-client` uses, deduplicated). The
+  runtime advisory on node-forge <= 1.4.0 stays allowlisted in `scripts/audit-prod-deps` until a
+  fixed release exists; open-pryv.io only generates and signs with it, never verifies signatures.
+
 ## Backups now carry HF series data; cross-engine backup round trip
 
 - **Fix: `bin/backup.js` backups contained no HF series data, on every engine, without any

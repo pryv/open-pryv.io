@@ -24,8 +24,8 @@ const require = createRequire(import.meta.url);
  * placeholder is only ever served during the brief window before the first
  * ACME order completes — typically seconds for HTTP-01, minutes for DNS-01.
  *
- * Pure node:crypto + node-forge (already a transitive of acme-client). No
- * shell-out to openssl, no extra dep.
+ * Pure node:crypto + node-forge (declared in package.json; acme-client
+ * depends on the same copy). No shell-out to openssl.
  */
 
 const fs = require('node:fs');
