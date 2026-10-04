@@ -16,6 +16,7 @@ const { databaseFixture } = require('test-helpers');
 const { MetadataLoader, MetadataCache } = require('../../src/metadata_cache.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
+const { pubsub } = require('messages');
 
 describe('[METL] Metadata Loader', function () {
   let storageLayer, pryv, mall;
@@ -72,6 +73,7 @@ describe('[METC] Metadata Cache', function () {
     };
 
     // stubbing the value of loader here.
+    const listenersBefore = pubsub.series.listenerCount(pubsub.SERIES_UPDATE_EVENTID_USERNAME);
     const cache = new MetadataCache(null, loaderStub, config);
     try {
       await cache.init();
@@ -85,5 +87,6 @@ describe('[METC] Metadata Cache', function () {
       // Its `series` is null: left subscribed, a series deletion would throw here.
       cache.close();
     }
+    assert.strictEqual(pubsub.series.listenerCount(pubsub.SERIES_UPDATE_EVENTID_USERNAME), listenersBefore);
   });
 });
