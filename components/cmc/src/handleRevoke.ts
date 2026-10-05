@@ -59,10 +59,13 @@ const require = createRequire(import.meta.url);
  * best-effort delivery, not a second policy: on this side the revocation is
  * complete the moment step 5 returns.
  *
- * A local delete that throws is different: if the access is still there the
- * revocation did not happen, so the handler fails with
+ * A step 5 delete that throws is different: if the relationship access is
+ * still there the revocation did not happen, so the handler fails with
  * `cmc-revoke-delete-failed` (retryable) rather than letting the trigger read
- * `completed`, and records nothing (no invite stamp, no withdrawal).
+ * `completed`, and records nothing (no invite stamp, no withdrawal). The
+ * retry does not repeat a delivery the failed attempt already made (its
+ * failure detail says `peerNotified: true`). A failed step 3 delete stays a
+ * warning.
  */
 
 const C = require('./constants.ts');
@@ -73,7 +76,7 @@ const inviteState = require('./inviteState.ts');
 const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acceptWithdrawal.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
-import type { OutboundDeps } from './_types.ts';
+import type { OutboundDeps, RetryContext } from './_types.ts';
 
 type Counterparty = { username: string; host: string };
 
@@ -124,6 +127,8 @@ async function handleRevoke (params: {
   selfIdentity: Counterparty;
   deps: {
     mall: MallLike;
+    // Set on a re-dispatch by the retry loop (see peerAlreadyNotified).
+    retryContext?: RetryContext;
     notifyEventChanged?: (userId: string, event: { id?: string }) => void;
   } & OutboundDeps;
 }): Promise<RevokeHandlerResult> {
@@ -288,16 +293,16 @@ async function handleRevoke (params: {
   }
 
   // Step 3: delete the data-grant first (revokes peer's read immediately).
+  // A failure here stays a warning: this legacy pairing is never minted by
+  // the current code, and the trigger names the relationship access (step
+  // 5), whose survival alone fails the revoke. A retry could not complete a
+  // trigger whose relationship access is already gone.
   const deletedIds: string[] = [];
-  // Accesses whose delete threw: checked again at the end, and a survivor
-  // fails the trigger instead of letting it read `completed`.
-  const failedDeleteIds: string[] = [];
   if (dataGrantAccess != null && mall.accesses.delete != null) {
     try {
       await mall.accesses.delete(userId, { id: dataGrantAccess.id });
       deletedIds.push(dataGrantAccess.id);
     } catch (err: unknown) {
-      failedDeleteIds.push(dataGrantAccess.id);
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete data-grant access', {
         accessId: dataGrantAccess.id,
         error: String((err as Error)?.message || err),
@@ -317,7 +322,15 @@ async function handleRevoke (params: {
   let peerNotified = false;
   let peerDeliveryStatus: number | undefined;
   let deliveryFailure: { reason: string; status?: number } | undefined;
-  if (typeof remoteApiEndpoint === 'string' && remoteApiEndpoint.length > 0) {
+  const priorDelivery = peerAlreadyNotified(deps.retryContext, counterpartyAccess.id);
+  if (priorDelivery != null) {
+    // A retry of a revoke whose previous attempt reached the peer and then
+    // failed to delete locally. The peer has already torn down its side,
+    // including the token this endpoint carries, so a second POST could only
+    // be refused and would report the peer as never told.
+    peerNotified = true;
+    peerDeliveryStatus = priorDelivery.peerDeliveryStatus;
+  } else if (typeof remoteApiEndpoint === 'string' && remoteApiEndpoint.length > 0) {
     // `accessId` is REQUIRED by the peer's revoke content schema
     // (validators.validateRevoke) — without it the peer's content
     // validation hook rejects the inbox write with 400 and the
@@ -366,12 +379,13 @@ async function handleRevoke (params: {
   }
 
   // Step 5: delete the counterparty-access.
+  let counterpartyDeleteThrew = false;
   if (mall.accesses.delete != null) {
     try {
       await mall.accesses.delete(userId, { id: counterpartyAccess.id });
       deletedIds.push(counterpartyAccess.id);
     } catch (err: unknown) {
-      failedDeleteIds.push(counterpartyAccess.id);
+      counterpartyDeleteThrew = true;
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete counterparty access', {
         accessId: counterpartyAccess.id,
         error: String((err as Error)?.message || err),
@@ -412,18 +426,20 @@ async function handleRevoke (params: {
     });
   }
 
-  // A delete that threw is only a failure if the access is still there: one
-  // removed meanwhile by another path (a raw delete racing this trigger) is
-  // the end state we wanted. A survivor fails the trigger, so it never reads
-  // `completed` while a grant still works; the reason is retryable, and the
-  // retry finds the surviving access by the trigger's `accessId` again.
-  if (failedDeleteIds.length > 0) {
-    const surviving = await survivingAccessIds(mall, userId, failedDeleteIds);
+  // A delete of the relationship access that threw is only a failure if the
+  // access is still there: one removed meanwhile by another path (a raw
+  // delete racing this trigger) is the end state we wanted. A survivor fails
+  // the trigger, so it never reads `completed` while the grant still works;
+  // the reason is retryable, the retry finds the surviving access by the
+  // trigger's `accessId` again, and the delivery outcome rides in the detail
+  // so the retry does not re-deliver what the peer already received.
+  if (counterpartyDeleteThrew) {
+    const surviving = await survivingAccessIds(mall, userId, [counterpartyAccess.id]);
     if (surviving.length > 0) {
       return {
         ok: false,
         reason: CmcErrorIds.REVOKE_DELETE_FAILED,
-        detail: { accessIds: surviving, deletedAccessIds: deletedIds, peerNotified, deliveryFailure },
+        detail: { accessIds: surviving, deletedAccessIds: deletedIds, peerNotified, peerDeliveryStatus, deliveryFailure },
       };
     }
   }
@@ -435,6 +451,22 @@ async function handleRevoke (params: {
     peerDeliveryStatus,
     deliveryFailure,
   };
+}
+
+/**
+ * On a retry, whether the previous attempt of this revoke already delivered
+ * it to the peer for this same relationship access: it failed with
+ * `cmc-revoke-delete-failed`, its detail says `peerNotified: true`, and the
+ * access it left in place is this one. Returns that detail, or null (live
+ * dispatch, another failure, or a delivery that did not land, which the
+ * retry must attempt again).
+ */
+function peerAlreadyNotified (retryContext: RetryContext | undefined, accessId: string): { peerDeliveryStatus?: number } | null {
+  if (retryContext == null || retryContext.lastFailureReason !== CmcErrorIds.REVOKE_DELETE_FAILED) return null;
+  const detail = retryContext.lastFailureDetail as { peerNotified?: unknown; peerDeliveryStatus?: unknown; accessIds?: unknown } | null;
+  if (detail?.peerNotified !== true) return null;
+  if (!Array.isArray(detail.accessIds) || !detail.accessIds.includes(accessId)) return null;
+  return typeof detail.peerDeliveryStatus === 'number' ? { peerDeliveryStatus: detail.peerDeliveryStatus } : {};
 }
 
 /**

@@ -2390,6 +2390,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         await sleep(100);
         assert.ok(eventsChangedForBob() >= 1, 'CN58: an eventsChanged notification must follow the stamp');
       } finally {
+        // Not a true restore (pubsub exposes no getter for the notifier in
+        // place): leave the plain forwarder to the shared list, which is what
+        // the shared helper installs; suites that need their own install it.
         pubsub.setTestNotifier({ emit: (...args) => forward(args) });
       }
       const { withdrawal } = stamped.content;

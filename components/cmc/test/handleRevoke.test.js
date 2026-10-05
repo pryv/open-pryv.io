@@ -668,11 +668,78 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(r.reason, 'cmc-revoke-delete-failed');
       assert.deepEqual(r.detail.accessIds, ['acc-counterparty']);
       assert.deepEqual(r.detail.deletedAccessIds, []);
+      // the delivery outcome rides along, for the retry
+      assert.equal(r.detail.peerNotified, true);
+      assert.equal(r.detail.peerDeliveryStatus, 201);
       assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
       assert.equal(mall.state.eventsUpdated.length, 0);
     });
 
-    it('[HR35] a delete that throws because the access is already gone still completes', async () => {
+    it('[HR37] a retry whose previous attempt reached the peer does not deliver again', async () => {
+      const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const retryContext = {
+        attempts: 1,
+        lastFailureReason: 'cmc-revoke-delete-failed',
+        lastFailureDetail: { accessIds: ['acc-counterparty'], peerNotified: true, peerDeliveryStatus: 201 },
+      };
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: { id: 'revoke-trigger-1', type: 'consent/revoke-cmc', streamIds: [':_cmc:apps:my-app'], content: { accessId: 'acc-counterparty' } },
+        selfIdentity: SELF,
+        deps: { mall, fetch, retryContext },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 0, 'no second delivery');
+      assert.equal(r.peerNotified, true);
+      assert.equal(r.peerDeliveryStatus, 201);
+      assert.equal(r.deliveryFailure, undefined);
+      assert.deepEqual(r.deletedAccessIds, ['acc-counterparty']);
+      assert.equal(mall.state.events.get('accept-x').content.withdrawal.by, 'revoke-cmc');
+    });
+
+    it('[HR38] a retry delivers again when the previous attempt did not reach the peer, or concerned another access or failure', async () => {
+      const contexts = [
+        { attempts: 1, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: { accessIds: ['acc-counterparty'], peerNotified: false } },
+        { attempts: 1, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: { accessIds: ['acc-other'], peerNotified: true } },
+        { attempts: 1, lastFailureReason: 'cmc-revoke-delivery-threw', lastFailureDetail: { accessIds: ['acc-counterparty'], peerNotified: true } },
+        { attempts: 1, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: null },
+      ];
+      for (const retryContext of contexts) {
+        const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+        const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+        const r = await handleRevoke({
+          userId: 'u1',
+          triggerEvent: { id: 'revoke-trigger-1', type: 'consent/revoke-cmc', streamIds: [':_cmc:apps:my-app'], content: { accessId: 'acc-counterparty' } },
+          selfIdentity: SELF,
+          deps: { mall, fetch, retryContext },
+        });
+        assert.equal(r.ok, true, JSON.stringify(retryContext));
+        assert.equal(calls.length, 1, 'delivered: ' + JSON.stringify(retryContext));
+      }
+    });
+
+    it('[HR39] a failed delete of the legacy paired data grant stays a warning: the revoke completes', async () => {
+      const warned = [];
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const deleteOk = mall.accesses.delete;
+      mall.accesses.delete = async (userId, params) => {
+        if (params.id === 'acc-data-grant') throw new Error('storage down');
+        return deleteOk(userId, params);
+      };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: { type: 'consent/revoke-cmc', streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'], content: {} },
+        selfIdentity: SELF,
+        deps: { mall, fetch, logger: { warn: (m) => warned.push(m) } },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.deletedAccessIds, ['acc-counterparty']);
+      assert.ok(warned.some((m) => /data-grant/.test(m)), JSON.stringify(warned));
+    });
+
+    it('[HR35] a delete that threw while the access was removed by another path still completes', async () => {
       // a raw delete raced the trigger: the end state is the one wanted
       const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
       mall.accesses.delete = async (_userId, params) => {

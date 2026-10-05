@@ -160,4 +160,13 @@ export type MallLike = {
   streams: MallStreamsLike;
 };
 
+/** What the retry loop knows of the previous attempt of the trigger it
+ * re-dispatches (retryQueue.processRetryEvent). Absent on a live dispatch.
+ * `lastFailureDetail` is the handler's own failure detail, stored as is. */
+export type RetryContext = {
+  attempts: number;
+  lastFailureReason: string | null;
+  lastFailureDetail: unknown;
+};
+
 export type { LogFn, CmcLogger, FetchInit, FetchLike, OutboundDeps };

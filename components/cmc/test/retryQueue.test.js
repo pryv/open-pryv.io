@@ -213,6 +213,22 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(isRetryableReason('cmc-handler-delegation-ended'), false);
     });
 
+    it('[RQ16] the re-dispatch carries the previous attempt as retryContext, beside the other deps', async () => {
+      const mall = fakeMall();
+      const detail = { accessIds: ['acc-1'], peerNotified: true };
+      mall._events.set('r-1', makeRetryEvent({ attempts: 2, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: detail }));
+      const dispatchDeps = { marker: 'kept' };
+      const seen = [];
+      await processRetryEvent({
+        userId: 'u1',
+        retryEvent: mall._events.get('r-1'),
+        deps: { mall, dispatch: async ({ deps }) => { seen.push(deps); return { handled: true, status: 'completed' }; }, dispatchDeps, now: () => 10_000_000 },
+      });
+      assert.equal(seen[0].marker, 'kept');
+      assert.deepEqual(seen[0].retryContext, { attempts: 2, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: detail });
+      assert.equal('retryContext' in dispatchDeps, false, 'the shared deps are not mutated');
+    });
+
     it('[RQ09] reschedules when dispatch still fails retryably', async () => {
       const mall = fakeMall();
       mall._events.set('r-1', makeRetryEvent());

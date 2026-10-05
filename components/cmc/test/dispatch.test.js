@@ -1060,6 +1060,71 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.deepEqual(last.content.failure.detail.accessIds, ['acc-grant']);
       assert.equal(created.filter((e) => e.type === 'cmc-internal/retry-cmc').length, 1, 'retryable: a retry is queued');
     });
+
+    // The first attempt delivers, then fails to delete; the retry must delete
+    // without delivering again (the peer already tore down the token the
+    // endpoint carries), and report the peer as told.
+    async function firstAttemptThenRetry ({ firstDelivery }) {
+      const { processRetryEvent } = require('../src/retryQueue.ts');
+      const mall = fakeMall();
+      const grant = {
+        id: 'acc-grant',
+        type: 'shared',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            counterparty: { username: 'provider-a', host: 'example.com', apiEndpoint: 'https://peer-tok@example.com/' },
+          },
+        },
+      };
+      let present = true;
+      mall.accesses.get = async () => (present ? [grant] : []);
+      let failDelete = true;
+      mall.accesses.delete = async () => {
+        if (failDelete) throw new Error('storage down');
+        present = false;
+      };
+      const created = [];
+      mall.events.create = async (userId, params) => { const ev = { id: 'retry-' + created.length, ...params }; created.push(ev); return ev; };
+      const { fetch, calls } = fakeFetch([firstDelivery, { status: 403, body: { error: 'gone' } }, { status: 403, body: {} }, { status: 403, body: {} }]);
+      const deps = makeDeps({ mall, fetch });
+      const first = await dispatch({
+        userId: 'u1',
+        event: { id: 'evt-revoke', type: 'consent/revoke-cmc', streamIds: [':_cmc:apps:my-app'], content: { accessId: 'acc-grant' } },
+        deps,
+      });
+      assert.equal(first.status, 'failed');
+      const retryEvent = created.find((e) => e.type === 'cmc-internal/retry-cmc');
+      assert.ok(retryEvent != null, 'a retry is queued');
+      const deliveriesBeforeRetry = calls.length;
+
+      failDelete = false;
+      const retried = await processRetryEvent({
+        userId: 'u1',
+        retryEvent: { ...retryEvent, content: { ...retryEvent.content, nextAttemptAfter: 0 } },
+        deps: { mall, dispatch, dispatchDeps: deps, now: () => Date.now() },
+      });
+      const last = mall.calls.eventsUpdated.filter((u) => u.id === 'evt-revoke').at(-1);
+      return { retried, last, deliveriesBeforeRetry, deliveriesTotal: calls.length };
+    }
+
+    it('[CD26] a retry after a delivered first attempt deletes without delivering again and reports the peer as told', async () => {
+      const { retried, last, deliveriesBeforeRetry, deliveriesTotal } = await firstAttemptThenRetry({ firstDelivery: { status: 201, body: {} } });
+      assert.equal(deliveriesBeforeRetry, 1);
+      assert.equal(deliveriesTotal, 1, 'no second delivery');
+      assert.equal(retried.outcome, 'succeeded');
+      assert.equal(last.content.status, 'completed');
+      assert.equal(last.content.peerNotified, true);
+      assert.equal(last.content.deliveryFailure, undefined);
+    });
+
+    it('[CD27] a retry after an undelivered first attempt delivers again', async () => {
+      const { retried, deliveriesBeforeRetry, deliveriesTotal } = await firstAttemptThenRetry({ firstDelivery: { status: 400, body: { error: 'nope' } } });
+      assert.equal(deliveriesBeforeRetry, 1);
+      assert.equal(deliveriesTotal, 2, 'the retry tries the peer again');
+      assert.equal(retried.outcome, 'succeeded');
+    });
   });
 });
 
