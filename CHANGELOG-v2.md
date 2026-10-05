@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.35 - 2026-10-05
 
 ### High-frequency series on dnsLess cores with a username-looking host name
 
