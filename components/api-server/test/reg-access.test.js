@@ -978,11 +978,11 @@ describe('[RGAC] Register access authorization', () => {
       const poll = await coreRequest.get('/reg/access/' + plainKey);
       assert.ok(!('actAsManagedOnly' in poll.body), JSON.stringify(poll.body));
 
-      // a request created with it: a REDIRECTED post carrying false does not clear it
+      // a request created with it: a REFUSED post carrying false does not clear it
       const managedKey = await newKey({ actAs: 'allow', actAsManagedOnly: true });
-      const redirected = await coreRequest.post('/reg/access/' + managedKey)
-        .send({ status: 'REDIRECTED', redirectUrl: 'https://other.example.com/reg/access/x', actAsManagedOnly: false });
-      assert.strictEqual(redirected.status, 301, JSON.stringify(redirected.body));
+      const refused = await coreRequest.post('/reg/access/' + managedKey)
+        .send({ status: 'REFUSED', reasonId: 'REFUSED_BY_USER', message: 'no', actAsManagedOnly: false });
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
       assert.strictEqual((await accessState.get(managedKey)).actAsManagedOnly, true, 'kept in the stored request');
     });
   });
