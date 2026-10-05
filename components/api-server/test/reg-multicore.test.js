@@ -707,9 +707,10 @@ describe('[RGMC] register: multi-core', function () {
   });
 
   // ----------------------------------------------------------------
-  // 4. /reg/access REDIRECTED flow
+  // 4. /reg/access has no REDIRECTED outcome: a request stays on the core
+  //    that created it
   // ----------------------------------------------------------------
-  describe('[MC04] /reg/access REDIRECTED', function () {
+  describe('[MC04] /reg/access REDIRECTED is refused', function () {
     let request;
 
     before(async function () {
@@ -722,51 +723,33 @@ describe('[RGMC] register: multi-core', function () {
       await accessState.clear();
     });
 
-    it('[MC04A] must accept REDIRECTED status with redirectUrl', async function () {
+    it('[MC04D] a REDIRECTED post is refused with 400 and the request stays pending; no outcome stores a redirectUrl', async function () {
       const createRes = await request.post('/reg/access')
         .send({
           requestingAppId: 'test-app',
           requestedPermissions: [{ streamId: 'diary', level: 'read' }]
         });
+      assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
       const key = createRes.body.key;
 
       const redirectUrl = buildCoreUrl(CORE_B) + 'reg/access/' + key;
-      const redirectRes = await request.post('/reg/access/' + key)
-        .send({ status: 'REDIRECTED', redirectUrl });
-      assert.strictEqual(redirectRes.status, 301);
-      assert.strictEqual(redirectRes.body.status, 'REDIRECTED');
-      assert.strictEqual(redirectRes.body.poll, redirectUrl);
-    });
+      for (const body of [{ status: 'REDIRECTED', redirectUrl }, { status: 'REDIRECTED' }]) {
+        const res = await request.post('/reg/access/' + key).send(body);
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      }
+      const poll = await request.get('/reg/access/' + key);
+      assert.strictEqual(poll.status, 201);
+      assert.strictEqual(poll.body.status, 'NEED_SIGNIN');
+      assert.ok(!('redirectUrl' in poll.body), JSON.stringify(poll.body));
+      assert.ok(!('redirectUrl' in await accessState.get(key)), 'nothing stored');
 
-    it('[MC04B] poll must return REDIRECTED with new poll URL', async function () {
-      const createRes = await request.post('/reg/access')
-        .send({
-          requestingAppId: 'test-app',
-          requestedPermissions: [{ streamId: 'diary', level: 'read' }]
-        });
-      const key = createRes.body.key;
-
-      const redirectUrl = buildCoreUrl(CORE_B) + 'reg/access/newkey123';
-      await request.post('/reg/access/' + key)
-        .send({ status: 'REDIRECTED', redirectUrl });
-
-      const pollRes = await request.get('/reg/access/' + key);
-      assert.strictEqual(pollRes.status, 301);
-      assert.strictEqual(pollRes.body.status, 'REDIRECTED');
-      assert.strictEqual(pollRes.body.poll, redirectUrl);
-    });
-
-    it('[MC04C] must return 400 for REDIRECTED without redirectUrl', async function () {
-      const createRes = await request.post('/reg/access')
-        .send({
-          requestingAppId: 'test-app',
-          requestedPermissions: [{ streamId: 'diary', level: 'read' }]
-        });
-      const key = createRes.body.key;
-
-      const res = await request.post('/reg/access/' + key)
-        .send({ status: 'REDIRECTED' });
-      assert.strictEqual(res.status, 400);
+      // an outcome post carrying a redirectUrl does not store it either
+      const refused = await request.post('/reg/access/' + key)
+        .send({ status: 'REFUSED', reasonId: 'REFUSED_BY_USER', message: 'no', redirectUrl });
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+      assert.ok(!('redirectUrl' in refused.body));
+      assert.ok(!('redirectUrl' in await accessState.get(key)), 'not an updatable field');
     });
   });
 

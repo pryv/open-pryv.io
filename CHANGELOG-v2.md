@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### No `REDIRECTED` outcome for an authorisation request
+
+- **BREAKING (security hardening).** `POST /reg/access/{key}` no longer accepts
+  `status: 'REDIRECTED'` (answered `400 invalid-parameters`, like any other unknown status), a
+  `redirectUrl` is no longer stored from any outcome post, and the poll never answers
+  `REDIRECTED`. The status let anyone holding a request key store an unvalidated URL served to the
+  authentication page under a field pages are written to follow. No shipped authentication page
+  ever sent it: a request stays on the core that created it (its poll URL is that core's own) and
+  a credential for an account on another core travels by the shared-secret hand-off.
+
 ### Client addresses only from trusted proxies (`http.trustedProxies`)
 
 - **Security.** The client address recorded in the audit log (`source.ip`, on API calls,
