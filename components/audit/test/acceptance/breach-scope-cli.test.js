@@ -32,6 +32,10 @@ function runCli (args) {
 }
 
 describe('[BRSC] bin/breach-scope.js CLI', function () {
+  // Every case spawns the CLI as a child process (a full node boot), which can
+  // take over mocha's 2 s default on a loaded machine: the timeout belongs to
+  // the whole suite, not only to the before hook.
+  this.timeout(60000);
   let username, personalToken, appAccessId;
   let basePath, tmpDir;
   let sinceIso, untilIso;
