@@ -322,6 +322,16 @@ describe('[CKBJ] consumer.consume clock-skew check', function () {
     assert.ok(logs.some((l) => l.startsWith('clock-skew check skipped: no server time')));
   });
 
+  it('[CKB8] a probe transport error names the probe and sends no ack', async () => {
+    const { opts, acks, bundlePath } = setup(0, {
+      clockProbe: async () => { throw new Error('connect ECONNREFUSED'); }
+    });
+    await assert.rejects(consumer.consume(opts),
+      /clock probe GET https:\/\/core-a\.mc\.example\.com\/ failed: connect ECONNREFUSED/);
+    assert.equal(acks.length, 0);
+    assert.equal(fs.existsSync(bundlePath), true);
+  });
+
   it('[CKB7] probes the ack origin with the same CA trust as the ack', async () => {
     const pinned = setup(0);
     await consumer.consume(pinned.opts);

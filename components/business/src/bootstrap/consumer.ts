@@ -187,7 +187,12 @@ async function checkClockSkew ({ origin, caCertPem, clockSkewSeconds, clockProbe
     log('clock-skew check skipped: disabled (--bootstrap-clock-skew-seconds 0)');
     return;
   }
-  const probe = await clockProbe(origin + '/', caCertPem);
+  let probe: ClockProbeResult;
+  try {
+    probe = await clockProbe(origin + '/', caCertPem);
+  } catch (err) {
+    throw new Error(`clock probe GET ${origin}/ failed: ${(err as Error).message}`);
+  }
   if (probe == null) {
     log(`clock-skew check skipped: no server time in the answer from ${origin}`);
     return;

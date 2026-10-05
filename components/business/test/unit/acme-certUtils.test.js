@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { splitCertChain, parseValidity, checkValidityWindow, hostnameToDirName } = require('../../src/acme/certUtils.ts');
+const { splitCertChain, parseValidity, checkValidityWindow, clockSkewSecondsFromConfig, hostnameToDirName } = require('../../src/acme/certUtils.ts');
 
 describe('[CERTUTILS] certUtils', () => {
   describe('splitCertChain()', () => {
@@ -141,6 +141,20 @@ describe('[CERTUTILS] certUtils', () => {
       assert.ok(verdict.detail.includes(new Date(nowMs).toISOString()));
       assert.ok(verdict.detail.includes(new Date(issuedAt).toISOString()));
       assert.ok(verdict.detail.includes(new Date(expiresAt).toISOString()));
+    });
+  });
+
+  describe('[CKCF] clockSkewSecondsFromConfig()', () => {
+    it('[CKC1] keeps numbers >= 0, including 0 (disabled)', () => {
+      assert.equal(clockSkewSecondsFromConfig(45), 45);
+      assert.equal(clockSkewSecondsFromConfig('10'), 10);
+      assert.equal(clockSkewSecondsFromConfig(0), 0);
+    });
+    it('[CKC2] falls back to 30 when unset or invalid', () => {
+      assert.equal(clockSkewSecondsFromConfig(undefined), 30);
+      assert.equal(clockSkewSecondsFromConfig(null), 30);
+      assert.equal(clockSkewSecondsFromConfig('thirty'), 30);
+      assert.equal(clockSkewSecondsFromConfig(-5), 30);
     });
   });
 

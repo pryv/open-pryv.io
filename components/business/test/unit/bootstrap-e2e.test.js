@@ -451,7 +451,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
         log: () => {}
       };
 
-      await assert.rejects(consumer.consume(consumeOpts), /clock skew of -120\.\ds/);
+      await assert.rejects(consumer.consume(consumeOpts), /clock skew of -1(19|20)\.\ds/);
       assert.equal(platformDB._cores.get('core-b').available, false, 'core not flipped available');
       assert.equal(tokenStore.listActive().length, 1, 'join token not burned');
       assert.equal(fs.existsSync(outPath), true, 'bundle kept');

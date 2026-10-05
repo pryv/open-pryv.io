@@ -30,7 +30,7 @@ const require = createRequire(import.meta.url);
 const { CertRenewer, PlatformDBDnsWriter } = require('./CertRenewer.ts');
 const { FileMaterializer, runRotateScript } = require('./FileMaterializer.ts');
 const { deriveHostnames } = require('./deriveHostnames.ts');
-const { checkValidityWindow } = require('./certUtils.ts');
+const { checkValidityWindow, clockSkewSecondsFromConfig } = require('./certUtils.ts');
 
 const DAY_MS = 24 * 3600 * 1000;
 const DEFAULT_RENEW_INTERVAL_MS = DAY_MS;
@@ -81,6 +81,7 @@ class AcmeOrchestrator {
   #dnsWriter: DnsWriterLike;
   #http01Store: Http01StoreLike | undefined;
   #log: LogLine;
+  #lastRefusalReason: string | null = null;
   #renewTimer: NodeJS.Timeout | null = null;
   #materializeTimer: NodeJS.Timeout | null = null;
   #currentRenewIntervalMs = 0;
@@ -268,9 +269,11 @@ class AcmeOrchestrator {
     const result = await this.#fileMaterializer.checkOnce();
     if (result.rotated) {
       this.#log(`materialized ${this.#hostSpec.commonName}: ${result.reason}`);
-    } else if (result.reason?.startsWith('validity-')) {
+    } else if (result.reason?.startsWith('validity-') && result.reason !== this.#lastRefusalReason) {
+      // logged on change only: the tick runs every minute
       this.#log(`not materialized ${this.#hostSpec.commonName}: ${result.reason}`);
     }
+    this.#lastRefusalReason = result.reason?.startsWith('validity-') ? result.reason : null;
     return result;
   }
 
@@ -379,7 +382,7 @@ function build (opts: BuildOpts = {} as BuildOpts) {
       ? 'https://acme-staging-v02.api.letsencrypt.org/directory'
       : 'https://acme-v02.api.letsencrypt.org/directory')) as string;
 
-  const clockSkewSeconds = Number(config.get('cluster:clockSkewSeconds') ?? 30);
+  const clockSkewSeconds = clockSkewSecondsFromConfig(config.get('cluster:clockSkewSeconds'));
 
   const certRenewer = new CertRenewer({
     platformDB, atRestKey, email, directoryUrl, acmeLib

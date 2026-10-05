@@ -89,6 +89,18 @@ function checkValidityWindow (pem: string, { nowMs = Date.now(), skewMs = 30_000
   };
 }
 
+const DEFAULT_CLOCK_SKEW_SECONDS = 30;
+
+/**
+ * `cluster.clockSkewSeconds` as a number of seconds; 0 disables the check.
+ * Anything that is not a number >= 0 falls back to the default so a typo
+ * never silently disables it.
+ */
+function clockSkewSecondsFromConfig (value: unknown): number {
+  const seconds = Number(value ?? DEFAULT_CLOCK_SKEW_SECONDS);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_CLOCK_SKEW_SECONDS;
+}
+
 /**
  * Derive a filesystem-safe directory name for a hostname. Wildcards
  * ('*.domain.com') become 'wildcard.domain.com' — matches the letsEncrypt
@@ -103,5 +115,5 @@ function hostnameToDirName (hostname: string): string {
   return hostname;
 }
 
-export { splitCertChain, parseValidity, checkValidityWindow, hostnameToDirName };
+export { splitCertChain, parseValidity, checkValidityWindow, clockSkewSecondsFromConfig, hostnameToDirName };
 export type { ValidityVerdict };

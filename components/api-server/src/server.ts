@@ -24,7 +24,7 @@ const { buildHfsIngress } = require('./hfsIngress.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { getPlatform } = require('platform');
-const { checkValidityWindow } = require('business/src/acme/certUtils.ts');
+const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
 type AppInstance = {
   api: ApiSurface;
@@ -347,7 +347,7 @@ function buildHttpsOptions (config: BoilerConfig): HttpsOptions {
  * Null when the check is disabled (`0`).
  */
 function certValidityVerdict (config: BoilerConfig, cert: Buffer): ValidityVerdict | null {
-  const skewSeconds = Number(config.get('cluster:clockSkewSeconds') ?? 30);
+  const skewSeconds = clockSkewSecondsFromConfig(config.get('cluster:clockSkewSeconds'));
   if (!(skewSeconds > 0)) return null;
   return checkValidityWindow(cert.toString('utf8'), { skewMs: skewSeconds * 1000 });
 }

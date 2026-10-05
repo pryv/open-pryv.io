@@ -805,7 +805,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # cluster:
 # #   discoveryEnabled: false
 
-# # cluster.clockSkewSeconds — tolerance (seconds) when checking that the local
+# # cluster.clockSkewSeconds: tolerance (seconds) when checking that the local
 # # clock falls inside a TLS certificate's validity window; a certificate
 # # outside it is not materialized nor hot-swapped. 0 disables. Keep the host
 # # clock synchronized (chronyd / ntpd).
