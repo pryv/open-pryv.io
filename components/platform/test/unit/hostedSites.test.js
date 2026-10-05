@@ -76,6 +76,14 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
     assert.equal(platform.isUsernameReserved('someuser'), false);
   });
 
+  it('[PLH6] path segments the core routes itself are reserved usernames', async () => {
+    const { platform } = makePlatform();
+    for (const name of ['users', 'oauth2', 'previews', 'series', 'system', 'Previews']) {
+      assert.equal(platform.isUsernameReserved(name), true, name);
+    }
+    assert.equal(platform.isUsernameReserved('preview1'), false);
+  });
+
   it('[PLH4] registerSelf advertises the sorted site names and the snapshot carries them', async () => {
     const { platform, db } = makePlatform({ config: { hostedSites: { zsite: { static: '/srv/z' }, account: { proxy: 'https://e.org/' } } } });
     await platform.registerSelf();

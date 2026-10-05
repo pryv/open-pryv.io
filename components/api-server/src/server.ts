@@ -22,6 +22,8 @@ const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { trustedProxiesSummary } = require('middleware/src/clientIp.ts');
 const { WebhooksService } = require('webhooks/src/service.ts');
 const { buildHfsIngress } = require('./hfsIngress.ts');
+const { buildPreviewsIngress } = require('./previewsIngress.ts');
+const { usernameInHost } = require('business/src/usernameSubdomains.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { getPlatform } = require('platform');
@@ -102,7 +104,23 @@ class Server {
       dnsLess: config.get('dnsLess:isActive') === true,
       logger: this.logger
     });
-    const toHfs = (req: unknown, res: unknown) => hfsDispatch(req, res, app.expressApp);
+    // Image previews, the same way: `/{user}/previews/events/{id}` (or
+    // `/previews/events/{id}` with the username in the host) goes to the previews
+    // worker. Not built when the worker is disabled: those URLs then reach
+    // express and get its 404.
+    const toExpress = app.expressApp;
+    const previewsDispatch = config.get('cluster:previewsWorker') === false
+      ? null
+      : buildPreviewsIngress({
+        previewsHost: (config.get('http:ip') as string) || '127.0.0.1',
+        previewsPort: (config.get('http:previewsPort') as number) || 3001,
+        usernameInHost: usernameInHost(config),
+        logger: this.logger
+      });
+    const toPreviews = previewsDispatch == null
+      ? toExpress
+      : (req: unknown, res: unknown) => previewsDispatch(req, res, toExpress);
+    const toHfs = (req: unknown, res: unknown) => hfsDispatch(req, res, toPreviews);
     const requestHandler = (req: unknown, res: unknown) => sitesDispatch(req, res, toHfs);
     // Setup HTTP and register server; setup Socket.IO.
     let server: { address: () => { address: string; port: number }; listen: (...args: unknown[]) => unknown; once: (event: string, handler: (err?: Error) => void) => unknown; key?: unknown } | null = null;
