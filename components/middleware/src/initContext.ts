@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
 import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
+import { clientIp } from './clientIp.ts';
 const require = createRequire(import.meta.url);
 
 const { MethodContext } = require('business');
@@ -24,7 +25,7 @@ export default function initContext (storageLayer: unknown, customAuthStepFn: Cu
     const authorizationHeader = req.headers.authorization;
     const contextSource = {
       name: 'http',
-      ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
+      ip: clientIp(req)
     };
     // We should not do this, but we're doing it.
     req.context = new MethodContext(contextSource, req.params.username, authorizationHeader, customAuthStepFn, req.headers, req.query, req.tracing);

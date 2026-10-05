@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
  * Note: Debug tests with: DEBUG=engine,socket.io* npm test --grep="Socket"
  */
 const cluster = require('node:cluster');
+const { clientIp } = require('middleware/src/clientIp.ts');
 const socketIO = require('socket.io')({
   cors: {
     origin: true,
@@ -37,7 +38,7 @@ type SocketLike = {
     query: Record<string, string | undefined>;
     headers: HttpHeaders;
   };
-  request: { connection: { remoteAddress?: string } };
+  request: { socket?: { remoteAddress?: string }; connection?: { remoteAddress?: string } };
   methodContext?: unknown;
 };
 // Initializes the SocketIO subsystem.
@@ -98,8 +99,7 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
       if (query.auth == null) { throw new Error("Missing 'auth' parameter with a valid access token."); }
       const contextSource = {
         name: 'socket.io',
-        ip: socket.handshake.headers['x-forwarded-for'] ||
-                    socket.request.connection.remoteAddress
+        ip: clientIp({ headers: socket.handshake.headers, socket: socket.request.socket ?? socket.request.connection })
       };
       const context = new MethodContext(contextSource, userName, query.auth, customAuthStepFn);
       // Initailizing Context

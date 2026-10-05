@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Client address resolution shared by every consumer
+
+- `components/middleware/src/clientIp.ts` (`proxy-addr` 2.0.7, now a declared dependency; it was
+  already installed through express): `configureTrustedProxies`, `clientIp`, `trustedProxyFn`,
+  `checkTrustedProxiesConfig`. Used by `initContext`, `setMinimalMethodContext`, socket.io, the HFS
+  dispatcher (`hfsIngress.ts` rewrites `X-Forwarded-For`), the HFS worker (`requestClientIp`) and
+  `oauth2/src/externalUri.ts`; the API, HFS and previews express apps set `trust proxy` to the same
+  function, so `req.ip` / `req.protocol` agree. Config validation (`checkTrustedProxies`, plus a
+  warning when loopback is left out while HFS workers run) and the offline `bin/check-config.js`
+  mirror; install wizard template and appendix.
+- Tests: `[CLIP]` resolver, `[CVTP]` validation, `[ASIP]` audit source end to end, `[HF2X]` HFS
+  dispatcher header, `[EXUR]` + `[DPN13]` DPoP URI; `[HFI2]` updated (an untrusted peer now wins).
+
 ## `node-forge` declared
 
 - The self-signed placeholder certificate (`components/business/src/acme/selfSignedPlaceholder.ts`)

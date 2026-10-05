@@ -18,6 +18,7 @@ const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
+const { trustedProxiesSummary } = require('middleware/src/clientIp.ts');
 const { WebhooksService } = require('webhooks/src/service.ts');
 const { buildHfsIngress } = require('./hfsIngress.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
@@ -227,6 +228,7 @@ class Server {
     const serverUrl = protocol + '://' + hostnameStr + ':' + address.port;
     logger.debug('listening on ' + serverUrl);
     logger.info(`Core Server (API module) listening on ${serverUrl}`);
+    logger.info(`client address attribution: X-Forwarded-For trusted from ${trustedProxiesSummary()} (http.trustedProxies)`);
     // Warning if ignoring forbidden updates
     if (config.get('updates:ignoreProtectedFields')) {
       logger.warn('Server configuration has "ignoreProtectedFieldUpdates" set to true: ' +

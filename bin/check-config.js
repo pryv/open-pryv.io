@@ -325,6 +325,20 @@ if (get('services.mfa') != null) {
   }
 }
 
+// http.trustedProxies: the same check master.js runs at boot (every entry an
+// IP, a CIDR or a proxy-addr name; loopback needed while HFS workers run).
+if (get('http.trustedProxies') != null) {
+  try {
+    const { checkTrustedProxiesConfig } = require('../components/middleware/src/clientIp.ts');
+    const hfsWorkers = get('cluster.hfsWorkers') ?? 1; // shipped default
+    const report = checkTrustedProxiesConfig(get('http.trustedProxies'), hfsWorkers);
+    for (const p of report.problems) problems.push(p.message);
+    for (const w of report.warnings) warnings.push(w);
+  } catch (err) {
+    warnings.push(`http.trustedProxies could not be checked here (${err.message}); master.js still checks it at boot.`);
+  }
+}
+
 // summary
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);

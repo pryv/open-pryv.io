@@ -311,6 +311,26 @@ dnsLess:
 NODE_ENV=production node bin/master.js --config override.yml
 ```
 
+### Client addresses behind a proxy (`http.trustedProxies`)
+
+The client address recorded in the audit log (`source.ip`), and the host a DPoP proof is
+checked against, come from `X-Forwarded-For` / `X-Forwarded-Host` / `X-Forwarded-Proto` only
+when the request arrives from a proxy listed in `http.trustedProxies` (IPs, CIDRs, or the names
+`loopback`, `linklocal`, `uniquelocal`). The default, `['loopback']`, covers nginx on the same
+host and the core's own HFS dispatcher: nothing to configure. A proxy on another host, or one
+reaching the core over a Docker bridge (Dokku's nginx, for instance, arrives from `172.17.0.1`),
+must be listed, or every request is recorded with the proxy's address:
+
+```yaml
+http:
+  trustedProxies: ['loopback', '172.17.0.1']
+```
+
+Make the proxy overwrite the header with the address it sees (`proxy_set_header
+X-Forwarded-For $remote_addr;`), not append to it. A core exposed directly (Options B and C)
+keeps the default: clients cannot choose the address recorded for them. The boot log names the
+list in use (`client address attribution: X-Forwarded-For trusted from [...]`).
+
 ### Ports exposed by master.js
 
 | Port | Service | Description |

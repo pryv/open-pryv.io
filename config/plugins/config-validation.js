@@ -332,6 +332,14 @@ function checkHostedSites (config, problems) {
   }
 }
 
+// http.trustedProxies: every entry must compile (IP, CIDR or a proxy-addr name).
+function checkTrustedProxies (config, problems) {
+  const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
+  for (const p of checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).problems) {
+    problems.push({ message: p.message, path: p.path, payload: {} });
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -357,6 +365,7 @@ async function validate (config) {
   checkEmailVerificationGate(config, problems);
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
+  checkTrustedProxies(config, problems);
 
   return problems;
 }
@@ -468,6 +477,8 @@ function collectWarnings (config) {
   warnings.push(...describeMfaConfig(config.get('services:mfa')).warnings);
   const { describeHostedSites, hostedSitesInputFromConfig } = require('../../components/business/src/hostedSites.ts');
   warnings.push(...describeHostedSites(hostedSitesInputFromConfig(config)).warnings);
+  const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
+  warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   return warnings;
 }
 
@@ -495,6 +506,7 @@ module.exports = {
   checkEmailVerificationGate,
   checkMfaConfig,
   checkHostedSites,
+  checkTrustedProxies,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES

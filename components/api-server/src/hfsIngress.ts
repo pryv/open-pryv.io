@@ -7,7 +7,8 @@
 import { createRequire } from 'node:module';
 import { pipeline } from 'node:stream';
 import type { Logger } from '@pryv/boiler';
-import type { ClientRequest, IncomingMessage, ServerResponse } from 'http';
+import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'http';
+import { clientIp } from 'middleware/src/clientIp.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -65,12 +66,18 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
   const upstreamIdleTimeoutMs = opts.upstreamIdleTimeoutMs ?? DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS;
 
   function proxy (req: IncomingMessage, res: ServerResponse): void {
+    // The worker sees this hop as a loopback peer, which it trusts: hand it the
+    // client address resolved here, never the client's own X-Forwarded-For.
+    const headers: IncomingHttpHeaders = { ...req.headers };
+    const client = clientIp(req);
+    if (client == null) delete headers['x-forwarded-for'];
+    else headers['x-forwarded-for'] = client;
     const proxyReq: ClientRequest = http.request({
       host: hfsHost,
       port: hfsPort,
       method: req.method,
       path: req.url,
-      headers: req.headers
+      headers
     }, (proxyRes: IncomingMessage) => {
       // The client may have left while the worker was still working on the
       // request (its body was complete, so the request-side hook below did not

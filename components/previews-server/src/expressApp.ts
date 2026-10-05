@@ -11,11 +11,15 @@ const require = createRequire(import.meta.url);
 
 const express = require('express');
 const middleware = require('middleware');
+const { getConfigSync } = require('@pryv/boiler');
+const { configureTrustedProxies, trustedProxyFn } = require('middleware/src/clientIp.ts');
 /**
  * The Express app definition.
  */
 export default function expressApp (commonHeadersMiddleware: RequestHandler, errorsMiddleware: ErrorRequestHandler, requestTraceMiddleware: RequestHandler) {
   const app = express();
+  configureTrustedProxies(getConfigSync().get('http:trustedProxies'));
+  app.set('trust proxy', trustedProxyFn());
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.
    **/

@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
+import { clientIp } from './clientIp.ts';
 const require = createRequire(import.meta.url);
 
 const { DummyTracing } = require('tracing');
@@ -15,7 +16,6 @@ type UserSlot = { id: string | undefined | null; username: string };
 type MinimalContextRequest = Request & {
   context?: unknown;
   tracing?: unknown;
-  connection: { remoteAddress?: string };
 };
 
 class MinimalMethodContext {
@@ -31,10 +31,9 @@ class MinimalMethodContext {
 
   _tracing: unknown;
   constructor (req: MinimalContextRequest) {
-    const xff = req.headers['x-forwarded-for'];
     this.source = {
       name: 'http',
-      ip: (Array.isArray(xff) ? xff[0] : xff) || req.connection.remoteAddress || ''
+      ip: clientIp(req) || ''
     };
     this.originalQuery = structuredClone(req.query) as Record<string, unknown>;
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }

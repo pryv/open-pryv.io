@@ -3,6 +3,7 @@ env: production
 http:
   ip: 127.0.0.1
   port: 9000
+  trustedProxies: ['loopback']   # see default-config.yml
 storages:
   engines:
     mongodb:
