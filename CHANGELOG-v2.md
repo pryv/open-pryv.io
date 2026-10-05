@@ -21,7 +21,7 @@
   own account (a storage error), the trigger was still stamped `status: 'completed'` while the
   access kept working. It is now stamped `failed` with `failure.reason: 'cmc-revoke-delete-failed'`
   (`failure.detail.accessIds` names the accesses still in place) and retried like other transient
-  failures, without delivering the revocation again to a requester the first attempt reached;
+  failures, without delivering the revocation again to a peer the first attempt reached;
   nothing is recorded as revoked or withdrawn until the delete succeeds. An access found
   already gone (deleted meanwhile by another path) still completes.
 
