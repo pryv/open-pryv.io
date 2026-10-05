@@ -253,7 +253,7 @@ dnsLess:
 NODE_ENV=production node bin/master.js --config override.yml
 ```
 
-**Note**: When using built-in HTTPS, the public API port also routes HFS series and previews traffic in-process. Clients only need access to the configured `http.port` (typically `:443`); HFS and previews stay on their internal ports (`:4000` / `:3001`) and are reached via dispatchers in front of the api-server.
+**Note**: When using built-in HTTPS, the public API port also routes HFS series traffic in-process: clients only need access to the configured `http.port` (typically `:443`), and HFS stays on its internal port (`:4000`), reached through a dispatcher in front of the api-server. Image previews are not routed this way: the previews worker listens only on its internal port (`:3001`), so previews are available to clients only where a proxy routes `/{user}/events/{id}.jpg` to it.
 
 > **HFS in standalone mode**: high-frequency series endpoints (`/{user}/events/{id}/series`, `/{user}/series/batch`) are routed from the public port to the HFS worker on `:4000` by an in-process dispatcher in api-server. Set `cluster.hfsWorkers: 1` (or more) to enable HFS; SDKs read `features.noHF` on `/service/info` to know whether the cluster serves HFS (auto-derived from `cluster.hfsWorkers` — explicit `service.features.noHF` in config takes precedence).
 >
@@ -326,8 +326,11 @@ http:
   trustedProxies: ['loopback', '172.17.0.1']
 ```
 
-Make the proxy overwrite the header with the address it sees (`proxy_set_header
-X-Forwarded-For $remote_addr;`), not append to it. A core exposed directly (Options B and C)
+Make the proxy overwrite all three headers with what it sees, never append to them or pass the
+client's own through: `proxy_set_header X-Forwarded-For $remote_addr;`, `proxy_set_header
+X-Forwarded-Host $http_host;`, `proxy_set_header X-Forwarded-Proto $scheme;` (a trusted proxy
+that forwards a client-sent `X-Forwarded-Host` lets that client pick the host a DPoP proof is
+checked against). A core exposed directly (Options B and C)
 keeps the default: clients cannot choose the address recorded for them. The boot log names the
 list in use (`client address attribution: X-Forwarded-For trusted from [...]`).
 
@@ -365,6 +368,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -376,6 +380,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -388,6 +393,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host 127.0.0.1:4000;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -396,6 +402,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host 127.0.0.1:4000;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }

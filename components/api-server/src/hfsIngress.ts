@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { pipeline } from 'node:stream';
 import type { Logger } from '@pryv/boiler';
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'http';
-import { clientIp } from 'middleware/src/clientIp.ts';
+import { clientIp, trustedProxyFn } from 'middleware/src/clientIp.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -72,6 +72,12 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logg
     const client = clientIp(req);
     if (client == null) delete headers['x-forwarded-for'];
     else headers['x-forwarded-for'] = client;
+    // Host / scheme forwarding headers likewise only pass on from a trusted peer.
+    const peer = req.socket?.remoteAddress;
+    if (peer == null || !trustedProxyFn()(peer, 0)) {
+      delete headers['x-forwarded-host'];
+      delete headers['x-forwarded-proto'];
+    }
     const proxyReq: ClientRequest = http.request({
       host: hfsHost,
       port: hfsPort,

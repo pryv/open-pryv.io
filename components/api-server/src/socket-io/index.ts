@@ -37,8 +37,8 @@ type SocketLike = {
   handshake: {
     query: Record<string, string | undefined>;
     headers: HttpHeaders;
+    address?: string;
   };
-  request: { socket?: { remoteAddress?: string }; connection?: { remoteAddress?: string } };
   methodContext?: unknown;
 };
 // Initializes the SocketIO subsystem.
@@ -99,7 +99,9 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
       if (query.auth == null) { throw new Error("Missing 'auth' parameter with a valid access token."); }
       const contextSource = {
         name: 'socket.io',
-        ip: clientIp({ headers: socket.handshake.headers, socket: socket.request.socket ?? socket.request.connection })
+        // engine.io records the peer at handshake time; the handshake's own socket
+        // may already be closed when a later call is audited.
+        ip: clientIp({ headers: socket.handshake.headers, socket: { remoteAddress: socket.handshake.address } })
       };
       const context = new MethodContext(contextSource, userName, query.auth, customAuthStepFn);
       // Initailizing Context

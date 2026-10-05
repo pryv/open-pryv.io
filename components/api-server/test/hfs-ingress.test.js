@@ -113,9 +113,10 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
     // The worker trusts this hop (loopback): it must receive the client address
     // resolved here, never the client's own X-Forwarded-For.
     describe('[HF2X] X-Forwarded-For handed to the worker', function () {
-      const { configureTrustedProxies } = require('middleware/src/clientIp.ts');
+      const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
+      const saved = currentTrustedProxies();
       const noFallback = () => assert.fail('fallback must not be called for HFS path');
-      afterEach(function () { configureTrustedProxies(null); });
+      afterEach(function () { configureTrustedProxies(saved); });
 
       it('[HF2D] no client header: the worker gets the peer address', function (done) {
         buildAndDispatch('/alice/events/cuid-1/series', noFallback, function (err) {

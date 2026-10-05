@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 
 const { getConfig } = require('@pryv/boiler');
 const { pollUntil } = require('test-helpers');
-const { configureTrustedProxies } = require('middleware/src/clientIp.ts');
+const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
 
 /**
  * The audit log's `source.ip` honours X-Forwarded-For only from a trusted
@@ -23,6 +23,7 @@ const { configureTrustedProxies } = require('middleware/src/clientIp.ts');
 describe('[ASIP] audit source ip behind trusted proxies', () => {
   let username, basePath, actionsToken, personalToken;
   let savedIntegrityCheck;
+  let savedTrustedProxies = null; // the running list, read once the core has configured it
 
   before(async function () {
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
@@ -31,6 +32,7 @@ describe('[ASIP] audit source ip behind trusted proxies', () => {
     const config = await getConfig();
     if (!config.get('audit:active')) { this.skip(); return; }
     await initCore();
+    savedTrustedProxies = currentTrustedProxies();
     const fixtures = getNewFixture();
     username = cuid();
     basePath = '/' + username;
@@ -44,7 +46,7 @@ describe('[ASIP] audit source ip behind trusted proxies', () => {
   });
 
   after(async function () {
-    configureTrustedProxies(null);
+    if (savedTrustedProxies != null) configureTrustedProxies(savedTrustedProxies);
     const { getUsersRepository } = require('business/src/users/index.ts');
     await (await getUsersRepository()).deleteAll();
     if (savedIntegrityCheck != null) process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
@@ -84,7 +86,7 @@ describe('[ASIP] audit source ip behind trusted proxies', () => {
     try {
       assert.strictEqual(await recordedIp('14', '203.0.113.9'), '127.0.0.1');
     } finally {
-      configureTrustedProxies(null);
+      configureTrustedProxies(savedTrustedProxies);
     }
   });
 });

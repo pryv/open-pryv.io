@@ -109,14 +109,15 @@ describe('[DPOP-RS] DPoP sender-constraint enforcement on the resource server', 
   it('[DPN13] forwarding headers from an untrusted peer are ignored: a proof minted for that host is refused', async function () {
     // Trusting nobody makes this loopback test client a client reaching the
     // core directly: its X-Forwarded-Host must not pick the proof's host.
-    const { configureTrustedProxies } = require('middleware/src/clientIp.ts');
+    const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
+    const saved = currentTrustedProxies();
     configureTrustedProxies([]);
     try {
       const proof = await makeProof(key, { htm: 'GET', path: path(), accessToken: boundToken });
       const res = await accessInfo().set('Authorization', 'DPoP ' + boundToken).set('DPoP', proof);
       assert.equal(res.status, 403, JSON.stringify(res.body));
     } finally {
-      configureTrustedProxies(null);
+      configureTrustedProxies(saved);
     }
     // Same proof shape from a trusted peer still passes.
     const proof = await makeProof(key, { htm: 'GET', path: path(), accessToken: boundToken });

@@ -45,9 +45,22 @@ function configureTrustedProxies (list: string[] | null | undefined): void {
   trustedList = next;
 }
 
-/** The compiled trust function, for express's `trust proxy` setting. */
+/** The current compiled trust function. */
 function trustedProxyFn (): TrustFn {
   return trustFn;
+}
+
+/**
+ * For express's `trust proxy` setting: always defers to the current list, so
+ * a later `configureTrustedProxies` reaches `req.ip` / `req.protocol` too.
+ */
+function expressTrustProxy (addr: string, index: number): boolean {
+  return trustFn(addr, index);
+}
+
+/** The configured list (a copy), e.g. to restore it after a test changed it. */
+function currentTrustedProxies (): string[] {
+  return [...trustedList];
 }
 
 /** The configured list, for the boot log. */
@@ -111,4 +124,4 @@ function clientIp (req: RequestLike): string | null {
   return normaliseIp(isIP(resolved) ? resolved : peer);
 }
 
-export { configureTrustedProxies, trustedProxyFn, trustedProxiesSummary, checkTrustedProxiesConfig, clientIp, normaliseIp, DEFAULT_TRUSTED_PROXIES };
+export { configureTrustedProxies, trustedProxyFn, expressTrustProxy, currentTrustedProxies, trustedProxiesSummary, checkTrustedProxiesConfig, clientIp, normaliseIp, DEFAULT_TRUSTED_PROXIES };

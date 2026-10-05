@@ -10,13 +10,14 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { externalRequestUri } = require('../src/externalUri.ts');
-const { configureTrustedProxies } = require('middleware/src/clientIp.ts');
+const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
 
 // The URI a DPoP proof must name. Forwarding headers pick the host and scheme
 // only when they come from a trusted proxy; otherwise a client reaching the
 // core directly could make a proof minted for another host pass.
 describe('[EXUR] client-facing request URI for DPoP', function () {
-  afterEach(function () { configureTrustedProxies(null); });
+  const saved = currentTrustedProxies();
+  afterEach(function () { configureTrustedProxies(saved); });
 
   function req (peer, headers, extra = {}) {
     return Object.assign({ originalUrl: '/alice/events?limit=1', headers, socket: { remoteAddress: peer } }, extra);

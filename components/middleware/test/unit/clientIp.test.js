@@ -8,18 +8,19 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const { clientIp, configureTrustedProxies, trustedProxiesSummary } = require('../../src/clientIp.ts');
+const { clientIp, configureTrustedProxies, currentTrustedProxies, trustedProxiesSummary } = require('../../src/clientIp.ts');
 
 // The audit log's source.ip comes from here: X-Forwarded-For must only be
 // believed from a trusted proxy, or any client chooses its recorded address.
 describe('[CLIP] client address behind trusted proxies', function () {
+  const saved = currentTrustedProxies();
   function req (peer, xff) {
     const headers = xff == null ? {} : { 'x-forwarded-for': xff };
     return { headers, socket: { remoteAddress: peer } };
   }
 
   afterEach(function () {
-    configureTrustedProxies(null); // back to the default
+    configureTrustedProxies(saved);
   });
 
   it('[CLI1] no header: the TCP peer', function () {

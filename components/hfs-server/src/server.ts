@@ -15,7 +15,7 @@ const express = require('express');
 const util = require('util');
 const middleware = require('middleware');
 const { hostToPath } = require('./hostToPath.ts');
-const { configureTrustedProxies, trustedProxyFn } = require('middleware/src/clientIp.ts');
+const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 const errorsMiddleware = require('./middleware/errors.ts').default;
 const controllerFactory = require('./web/controller.ts').default;
 const getAuth = require('middleware/src/getAuth.ts').default;
@@ -115,7 +115,7 @@ class Server {
     // Same trusted proxies as the API server: the core's HFS dispatcher reaches
     // this worker over loopback with the resolved client in X-Forwarded-For.
     configureTrustedProxies(config.get('http:trustedProxies') as string[] | undefined);
-    app.set('trust proxy', trustedProxyFn());
+    app.set('trust proxy', expressTrustProxy);
     app.disable('x-powered-by');
     app.use(middleware.noSniff);
     app.use(hostToPath(config));

@@ -243,6 +243,35 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    // A socket.io call's audit source is the client address resolved at
+    // handshake time: from a trusted (loopback) peer, the forwarded client.
+    it('[SKCI] audits socket.io calls with the client address from the handshake', async function () {
+      const { pollUntil } = require('test-helpers');
+      // A dedicated app access: its audit rows are this test's socket.io call only
+      // (other tests in this suite make socket.io calls with the shared token).
+      const created = await superagent.post(server.url + namespace + '/accesses')
+        .set('Authorization', token)
+        .send({ name: 'skip-audit-' + Date.now(), permissions: [{ streamId: '*', level: 'read' }] });
+      const appToken = created.body.access.token;
+      const appAccessId = created.body.access.id;
+      const url = server.url + namespace + '?' + queryString.stringify({ auth: appToken });
+      const conn = io.connect(url, { forceNew: true, extraHeaders: { 'X-Forwarded-For': '203.0.113.5' } });
+      cleanupConnections.push(conn);
+      await new Promise((resolve, reject) => { conn.once('connect', resolve); conn.once('connect_error', reject); });
+
+      await new Promise((resolve, reject) => conn.emit('events.get', { limit: 1 }, (err) => err ? reject(err) : resolve()));
+      const isMarked = (e) => e.content?.source?.name === 'socket.io';
+      const rows = await pollUntil(async () => {
+        const res = await superagent.get(server.url + namespace + '/events')
+          .set('Authorization', token)
+          .query({ streams: JSON.stringify([':_audit:access-' + appAccessId]), limit: 20 });
+        return res.body.events ?? [];
+      }, (rows) => rows.some(isMarked));
+      const row = rows.find(isMarked);
+      assert.ok(row, 'audit row of the socket.io call: ' + JSON.stringify(rows.map((e) => ({ s: e.content?.source, q: e.content?.query, a: e.content?.action })).slice(0, 5)));
+      assert.deepStrictEqual(row.content.source, { name: 'socket.io', ip: '203.0.113.5' });
+    });
+
     it('[O3SW] must properly route method call messages for streams and return the results', function (done) {
       ioCons.con = connect(namespace, { auth: token });
       const expected = structuredClone(testData.streams);
