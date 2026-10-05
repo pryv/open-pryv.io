@@ -62,6 +62,10 @@ type BuildStateParams = {
    * the accounts the user controls), 'deny' (the signed-in account only),
    * or a username to preselect. Validated by the route; set only when sent. */
   actAs?: string;
+  /** The access must be granted for an account the user manages, not for
+   * the signed-in account. A hint the auth page enforces; validated by the
+   * route (requires `actAs`); set only when sent and true. Not updatable. */
+  actAsManagedOnly?: true;
   /** Delivery mode the app asked for. 'shared-secret' means the ACCEPTED
    * body must carry a one-time hand-off key instead of the token. Validated
    * by the route; set only when the app sent it. Absence keeps today's
@@ -87,6 +91,8 @@ type AccessState = {
   expireAfter?: number;
   /** See `BuildStateParams.consent`: set only for an annotated request. */
   consent?: unknown;
+  /** See `BuildStateParams.actAsManagedOnly`: set only when sent and true. */
+  actAsManagedOnly?: true;
   /** See `BuildStateParams.credentialHandoff`: set only for a request that
    * asked for shared-secret delivery. */
   credentialHandoff?: 'shared-secret';
@@ -196,6 +202,7 @@ function buildState (params: BuildStateParams): { key: string; state: AccessStat
   }
   if (typeof params.token === 'string' && params.token !== '') state.token = params.token;
   if (typeof params.actAs === 'string') state.actAs = params.actAs;
+  if (params.actAsManagedOnly === true) state.actAsManagedOnly = true;
   if (params.credentialHandoff === 'shared-secret') state.credentialHandoff = 'shared-secret';
   if (params.cmcInvites !== undefined) state.cmcInvites = params.cmcInvites;
   return { key, state, expiresAt };
