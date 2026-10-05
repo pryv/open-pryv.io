@@ -153,11 +153,11 @@ class AcmeOrchestrator {
 
     // Always materialize — every core publishes the current cert to disk.
     this.#materializeTimer = setInterval(() => {
-      this.triggerMaterialize().catch(err => this.#log('materialize tick error: ' + err.message));
+      this.triggerMaterialize().catch(err => this.#logMaterializeError('materialize tick', err));
     }, this.#materializeIntervalMs);
     // Prime immediately so a freshly-booted core doesn't wait a minute
     // for its first cert write.
-    this.triggerMaterialize().catch(err => this.#log('initial materialize error: ' + err.message));
+    this.triggerMaterialize().catch(err => this.#logMaterializeError('initial materialize', err));
 
     // Only start the renew loop if (renewer AND we have what we need for the
     // configured challenge type). http-01 needs the store; dns-01 needs the
@@ -189,6 +189,17 @@ class AcmeOrchestrator {
     } else {
       this.#log(`renew tick cadence = ${Math.round(intervalMs / 3600000)}h (steady-state)`);
     }
+  }
+
+  // A follower core whose tick falls while the platform DB leader restarts
+  // gets `503 leader not found`: expected, and the next tick heals it.
+  #logMaterializeError (phase: string, err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/\(503\).*leader not found/i.test(msg)) {
+      this.#log(`${phase}: platform DB leader unavailable (restarting?), retrying on the next tick`);
+      return;
+    }
+    this.#log(`${phase} error: ${msg}`);
   }
 
   // Verbose error logger for renew failures: prints the full error message

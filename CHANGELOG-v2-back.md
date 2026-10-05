@@ -25,6 +25,14 @@
   dispatcher header, `[SKCI]` socket.io audit source, `[EXUR]` + `[DPN13]` DPoP URI; `[HFI2]`
   updated (an untrusted peer now wins).
 
+## Let's Encrypt materialize tick: no error line while the platform DB leader restarts
+
+- On a follower core, a certificate materialize tick that runs while the platform DB leader
+  restarts got `rqlite query failed (503): leader not found` and logged it as
+  `materialize tick error`. It is expected and healed by the next tick, so it is now logged as
+  `materialize tick: platform DB leader unavailable (restarting?), retrying on the next tick`.
+  Other tick failures are still logged as errors.
+
 ## `node-forge` declared
 
 - The self-signed placeholder certificate (`components/business/src/acme/selfSignedPlaceholder.ts`)
