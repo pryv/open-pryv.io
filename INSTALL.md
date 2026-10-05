@@ -875,10 +875,10 @@ The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.
     && echo "store matches (same schema and rows)"
   ```
 
-  Without the `sqlite3` client on the host (common on Dokku hosts), run the same content check with the SQLite module built into Node, inside the core's own image, the core still stopped. The data directory is mounted read-only and each file is opened with the same `mode=ro&immutable=1` URI as above. Set `DATA` to the host directory that holds the rqlite data (on Dokku `/var/lib/dokku/data/storage/<app>/rqlite-data`) and `IMAGE` to the image the core runs (on Dokku `dokku/<app>:latest`):
+  Without the `sqlite3` client on the host (common on Dokku hosts), run the same content check with the SQLite module built into Node, inside the core's own image, the core still stopped. The data directory is mounted read-only and each file is opened with the same `mode=ro&immutable=1` URI as above. Set `DATA` to the host directory that holds the rqlite data (on Dokku `/var/lib/dokku/data/storage/<app>/rqlite-data`) and `IMAGE` to the image the core runs (on Dokku `dokku/<app>:latest`). `--entrypoint node` is needed with `-w`: the image's entrypoint script is found relative to its own working directory:
 
   ```bash
-  docker run --rm -i -v "$DATA":/data:ro -w /data "$IMAGE" node - <<'EOF'
+  docker run --rm -i --entrypoint node -v "$DATA":/data:ro -w /data "$IMAGE" - <<'EOF'
   const { DatabaseSync } = require('node:sqlite');
   const fs = require('node:fs');
   const index = (f) => Number(f.split('-')[1]);
