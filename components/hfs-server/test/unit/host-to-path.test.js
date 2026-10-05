@@ -45,4 +45,9 @@ describe('[HTP1] HFS host-to-path rewriting', function () {
     assert.strictEqual(rewrite(cfg, 'core-use1.pryv.me', '/alice/events/ev1/series'), '/alice/events/ev1/series');
     assert.strictEqual(rewrite(cfg, 'access.pryv.me', '/alice/events/ev1/series'), '/alice/events/ev1/series');
   });
+
+  it('[HTP5] username in host: the worker\'s own /system routes are not prefixed', function () {
+    const cfg = config({ 'dnsLess:isActive': false });
+    assert.strictEqual(rewrite(cfg, 'alice.pryv.me', '/system/status'), '/system/status');
+  });
 });

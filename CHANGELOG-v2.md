@@ -14,8 +14,9 @@
 
 - **Fix (privacy).** Deleting an account removed its high-frequency series file but left an empty
   directory named after the account's username under the users directory. The directory is now
-  removed too. Directories left by earlier deletions are empty and can be removed by hand: they
-  are named `user.<username>` under `var-pryv/users/`.
+  removed too. Directories left by earlier deletions are empty and can be removed by hand; they
+  are named `user.<username>`, a few levels under `var-pryv/users/`:
+  `find var-pryv/users -type d -name 'user.*' -empty -delete`.
 
 ## 2.0.0-rc.34 - 2026-10-02
 

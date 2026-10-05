@@ -389,7 +389,7 @@ server {
 
 ### Important nginx notes
 
-**HFS Host header** — The `proxy_set_header Host` for the path-style HFS locations should be a plain IP:port (e.g. `127.0.0.1:4000`). With the username in the host (`dns.domain` set), the HFS worker moves the host's first label into the URL path, so a public host name there would corrupt the route. In dnsLess mode the HFS worker leaves the host alone, as the api-server does, so the plain IP:port is harmless and keeps the same config valid in both modes.
+**HFS Host header**: the `proxy_set_header Host` for the path-style HFS locations should be a plain IP:port (e.g. `127.0.0.1:4000`). With the username in the host (`dns.domain` set), the HFS worker moves the host's first label into the URL path, so a public host name there would corrupt the route. In dnsLess mode the HFS worker leaves the host alone, as the api-server does, so the plain IP:port is harmless and keeps the same config valid in both modes.
 
 **Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
 

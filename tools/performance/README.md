@@ -143,7 +143,7 @@ Results are in `results/` as paired JSON + markdown files:
 
 Result files can be committed to git for historical comparison.
 
-## Direct Usage (without helper scripts)
+## Direct Usage
 
 From `tools/performance/`:
 
