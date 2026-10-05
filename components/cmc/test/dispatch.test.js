@@ -1022,6 +1022,45 @@ describe('[CMCDISP] cmc/dispatch', () => {
       }
     });
   });
+
+  describe('[CMCDISP-RVF] a revoke whose local delete fails', () => {
+    it('[CD25] ends failed with cmc-revoke-delete-failed, and a retry is queued', async () => {
+      const mall = fakeMall();
+      const grant = {
+        id: 'acc-grant',
+        type: 'shared',
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            counterparty: { username: 'provider-a', host: 'example.com', apiEndpoint: 'https://peer-tok@example.com/' },
+          },
+        },
+      };
+      mall.accesses.get = async () => [grant];
+      mall.accesses.delete = async () => { throw new Error('storage down'); };
+      const created = [];
+      mall.events.create = async (userId, params) => { created.push(params); return { id: 'retry-1', ...params }; };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-revoke',
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app'],
+          content: { accessId: 'acc-grant' },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'failed');
+      assert.equal(r.reason, 'cmc-revoke-delete-failed');
+      const last = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1];
+      assert.equal(last.content.status, 'failed');
+      assert.equal(last.content.failure.reason, 'cmc-revoke-delete-failed');
+      assert.deepEqual(last.content.failure.detail.accessIds, ['acc-grant']);
+      assert.equal(created.filter((e) => e.type === 'cmc-internal/retry-cmc').length, 1, 'retryable: a retry is queued');
+    });
+  });
 });
 
 function makeDeps ({ mall, fetch }) {

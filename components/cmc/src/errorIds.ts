@@ -239,6 +239,12 @@ const CmcErrorIds = {
   // Delivery was attempted (endpoint present) and failed after the bounded
   // in-request retries — peer down, network, or a 4xx rejection.
   REVOKE_DELIVERY_FAILED: 'cmc-revoke-delivery-failed',
+  // A local delete of the relationship access (or its legacy paired data
+  // grant) threw and the access is still there: the revocation did not take
+  // effect on this side, so the trigger fails instead of reading `completed`.
+  // Retryable (a storage hiccup): the retry resolves the surviving access by
+  // the trigger's `accessId` and deletes it again.
+  REVOKE_DELETE_FAILED: 'cmc-revoke-delete-failed',
 
   // --- Scope-update (response to a collector's scope request) ---
   // A `consent/scope-update-cmc` carrying `scopeRequestEventId` is resolved

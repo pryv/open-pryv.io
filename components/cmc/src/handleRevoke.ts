@@ -58,6 +58,11 @@ const require = createRequire(import.meta.url);
  * until their operator script prunes it. That is the residual cost of
  * best-effort delivery, not a second policy: on this side the revocation is
  * complete the moment step 5 returns.
+ *
+ * A local delete that throws is different: if the access is still there the
+ * revocation did not happen, so the handler fails with
+ * `cmc-revoke-delete-failed` (retryable) rather than letting the trigger read
+ * `completed`, and records nothing (no invite stamp, no withdrawal).
  */
 
 const C = require('./constants.ts');
@@ -284,11 +289,15 @@ async function handleRevoke (params: {
 
   // Step 3: delete the data-grant first (revokes peer's read immediately).
   const deletedIds: string[] = [];
+  // Accesses whose delete threw: checked again at the end, and a survivor
+  // fails the trigger instead of letting it read `completed`.
+  const failedDeleteIds: string[] = [];
   if (dataGrantAccess != null && mall.accesses.delete != null) {
     try {
       await mall.accesses.delete(userId, { id: dataGrantAccess.id });
       deletedIds.push(dataGrantAccess.id);
     } catch (err: unknown) {
+      failedDeleteIds.push(dataGrantAccess.id);
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete data-grant access', {
         accessId: dataGrantAccess.id,
         error: String((err as Error)?.message || err),
@@ -362,24 +371,29 @@ async function handleRevoke (params: {
       await mall.accesses.delete(userId, { id: counterpartyAccess.id });
       deletedIds.push(counterpartyAccess.id);
     } catch (err: unknown) {
+      failedDeleteIds.push(counterpartyAccess.id);
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete counterparty access', {
         accessId: counterpartyAccess.id,
         error: String((err as Error)?.message || err),
       });
     }
   }
+  const counterpartyDeleted = deletedIds.includes(counterpartyAccess.id);
 
   // Step 6: on the requester side, mark the single-use invite this relationship
   // descends from as `revoked`. Nothing to do for an open-link invite: the
   // deleted access was this subject's join, so they can accept the link again.
+  // Only once the relationship access is gone (a retry stamps it then).
   // Best-effort.
-  const stamp = await inviteState.stampRevokedFromRelationship({
-    userId,
-    relationshipCmc: counterpartyAccess.clientData?.cmc,
-    deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
-  });
-  if (!stamp.ok) {
-    deps.logger?.warn?.('cmc/handleRevoke: invite not stamped revoked (non-fatal)', { reason: stamp.reason });
+  if (counterpartyDeleted) {
+    const stamp = await inviteState.stampRevokedFromRelationship({
+      userId,
+      relationshipCmc: counterpartyAccess.clientData?.cmc,
+      deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+    });
+    if (!stamp.ok) {
+      deps.logger?.warn?.('cmc/handleRevoke: invite not stamped revoked (non-fatal)', { reason: stamp.reason });
+    }
   }
 
   // Step 6b: on the accepter side, record the withdrawal on the person's own
@@ -387,7 +401,7 @@ async function handleRevoke (params: {
   // side, whose record is the invite stamped above. Only once the grant is
   // actually gone: the record is never overwritten, so a stamp for a grant
   // whose delete failed would outlive the grant's real end. Best-effort.
-  if (deletedIds.includes(counterpartyAccess.id)) {
+  if (counterpartyDeleted) {
     await acceptWithdrawal.stampWithdrawalOnAccept({
       userId,
       relationshipCmc: counterpartyAccess.clientData?.cmc,
@@ -398,6 +412,22 @@ async function handleRevoke (params: {
     });
   }
 
+  // A delete that threw is only a failure if the access is still there: one
+  // removed meanwhile by another path (a raw delete racing this trigger) is
+  // the end state we wanted. A survivor fails the trigger, so it never reads
+  // `completed` while a grant still works; the reason is retryable, and the
+  // retry finds the surviving access by the trigger's `accessId` again.
+  if (failedDeleteIds.length > 0) {
+    const surviving = await survivingAccessIds(mall, userId, failedDeleteIds);
+    if (surviving.length > 0) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.REVOKE_DELETE_FAILED,
+        detail: { accessIds: surviving, deletedAccessIds: deletedIds, peerNotified, deliveryFailure },
+      };
+    }
+  }
+
   return {
     ok: true,
     deletedAccessIds: deletedIds,
@@ -405,6 +435,20 @@ async function handleRevoke (params: {
     peerDeliveryStatus,
     deliveryFailure,
   };
+}
+
+/**
+ * Of `ids`, the accesses that still exist. A failed read counts them all as
+ * surviving: never report a revocation done on a guess.
+ */
+async function survivingAccessIds (mall: MallLike, userId: string, ids: string[]): Promise<string[]> {
+  try {
+    const list = await mall.accesses.get(userId, {});
+    const present = new Set((Array.isArray(list) ? list : []).map((a) => a?.id));
+    return ids.filter((id) => present.has(id));
+  } catch (_e) {
+    return ids;
+  }
 }
 
 /**

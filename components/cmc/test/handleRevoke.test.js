@@ -660,14 +660,41 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
     });
 
-    it('[HR34] a grant whose delete failed is not recorded as withdrawn', async () => {
+    it('[HR34] a grant whose delete failed fails the revoke and is not recorded as withdrawn', async () => {
       const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
       mall.accesses.delete = async (_userId, params) => { throw new Error('cannot delete ' + params.id); };
       const r = await revokeWithTrigger(mall);
-      assert.equal(r.ok, true);
-      assert.equal(r.deletedAccessIds.includes('acc-counterparty'), false);
+      assert.equal(r.ok, false, 'the grant survives: the revoke must not read done');
+      assert.equal(r.reason, 'cmc-revoke-delete-failed');
+      assert.deepEqual(r.detail.accessIds, ['acc-counterparty']);
+      assert.deepEqual(r.detail.deletedAccessIds, []);
       assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
       assert.equal(mall.state.eventsUpdated.length, 0);
+    });
+
+    it('[HR35] a delete that throws because the access is already gone still completes', async () => {
+      // a raw delete raced the trigger: the end state is the one wanted
+      const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+      mall.accesses.delete = async (_userId, params) => {
+        mall.state.list = mall.state.list.filter((a) => a.id !== params.id);
+        throw new Error('unknown resource ' + params.id);
+      };
+      const r = await revokeWithTrigger(mall);
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.deletedAccessIds, []);
+      // the path that deleted it records the withdrawal, not this one
+      assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
+    });
+
+    it('[HR36] on the requester side, a failed delete leaves the invite unstamped and fails the revoke', async () => {
+      const mall = richMall([STAMPED_COUNTERPARTY_ACCESS],
+        { id: 'invite-x', type: 'consent/request-cmc', content: { status: 'accepted' } });
+      mall.accesses.delete = async () => { throw new Error('storage down'); };
+      const r = await revoke(mall);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-revoke-delete-failed');
+      assert.equal(mall.state.events.get('invite-x').content.status, 'accepted');
+      assert.equal(require('../src/retryQueue.ts').isRetryableReason(r.reason, r.detail), true);
     });
   });
 

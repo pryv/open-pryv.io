@@ -15,6 +15,15 @@
   the delete answers, and the user's socket clients receive `eventsChanged` when it does. Apps listing a person's consents should treat an accept event with
   `withdrawal` as ended (`@pryv/cmc` 3.18.0 does by default).
 
+### A consent revocation that did not take effect no longer reads completed
+
+- **Fix.** When a `consent/revoke-cmc` could not delete the relationship access on the writer's
+  own account (a storage error), the trigger was still stamped `status: 'completed'` while the
+  access kept working. It is now stamped `failed` with `failure.reason: 'cmc-revoke-delete-failed'`
+  (`failure.detail.accessIds` names the accesses still in place) and retried like other transient
+  failures; nothing is recorded as revoked or withdrawn until the delete succeeds. An access found
+  already gone (deleted meanwhile by another path) still completes.
+
 ### `cmcInvites[].accessName` (#147)
 
 - An invite of an authorisation request (`POST /reg/access`) may name the data grant the person
