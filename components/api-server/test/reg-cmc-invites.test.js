@@ -156,6 +156,39 @@ describe('[RCIV] consent invites in an access request (cmcInvites)', () => {
     assert.ok(!('cmcInvites' in poll.body));
   });
 
+  it('[RCI10] an invite may name its data grant (accessName), echoed on that entry only', async () => {
+    const named = [{ capabilityUrl: INVITE_A, accessName: '  Dr. Who: diary ' }, { capabilityUrl: INVITE_B }];
+    const expected = [
+      { capabilityUrl: INVITE_A, mandatory: false, for: 'self', accessName: '  Dr. Who: diary ' },
+      { capabilityUrl: INVITE_B, mandatory: false, for: 'self' }
+    ];
+    const res = await create({ cmcInvites: named });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    assert.deepStrictEqual(res.body.cmcInvites, expected);
+    assert.ok(!('accessName' in res.body.cmcInvites[1]));
+    const poll = await coreRequest.get('/reg/access/' + res.body.key);
+    assert.strictEqual(poll.body.status, 'NEED_SIGNIN');
+    assert.deepStrictEqual(poll.body.cmcInvites, expected);
+    assert.ok(!('accessName' in poll.body.cmcInvites[1]));
+
+    // the outcomes post is unchanged
+    const post = await coreRequest.post('/reg/access/' + res.body.key).send({ ...ACCEPT, cmcInvites: OUTCOMES });
+    assert.strictEqual(post.status, 200, JSON.stringify(post.body));
+    assert.deepStrictEqual(post.body.cmcInvites, OUTCOMES);
+  });
+
+  it('[RCI11] an invite with a malformed accessName is refused with 400 and nothing is stored', async () => {
+    for (const accessName of ['', 'n'.repeat(257), 42, {}, null]) {
+      const res = await create({ cmcInvites: [{ capabilityUrl: INVITE_A, accessName }] });
+      assert.strictEqual(res.status, 400, JSON.stringify(accessName).slice(0, 40));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.ok(!('key' in res.body), 'no request was created');
+    }
+    // the bound is inclusive
+    const longest = await create({ cmcInvites: [{ capabilityUrl: INVITE_A, accessName: 'n'.repeat(256) }] });
+    assert.strictEqual(longest.status, 201, JSON.stringify(longest.body).slice(0, 200));
+  });
+
   it('[RCI6] the request size ceiling still applies to invites', async () => {
     const big = Array.from({ length: 8 }, (_v, i) => ({ capabilityUrl: 'https://c' + i + '@x.example.com/' + 'a'.repeat(2000) }));
     const res = await create({ cmcInvites: big, clientData: { note: 'n'.repeat(2000) } });
