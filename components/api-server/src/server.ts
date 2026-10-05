@@ -109,7 +109,8 @@ class Server {
     // worker. Not built when the worker is disabled: those URLs then reach
     // express and get its 404.
     const toExpress = app.expressApp;
-    const previewsDispatch = config.get('cluster:previewsWorker') === false
+    // Same reading as bin/master.js, which forks the worker on `?? true`.
+    const previewsDispatch = !(config.get('cluster:previewsWorker') ?? true)
       ? null
       : buildPreviewsIngress({
         previewsHost: (config.get('http:ip') as string) || '127.0.0.1',

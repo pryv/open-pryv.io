@@ -9,8 +9,13 @@
   `cluster.previewsWorker` is not false), then express. Uses the default `node:http` import: a
   namespace import kept a test interceptor's wrapped `http.request` in the test process.
 - `components/platform/src/Platform.ts`: route-segment usernames reserved (`ROUTE_SEGMENT_NAMES`).
+- `components/utils/src/redactUrl.ts` shared by the proxy core, `middleware/src/requestTrace.ts`
+  (morgan `combined` with a `:redacted-url` token) and `errors/src/errorHandling.ts` (`logError`).
+  `check_username` consults `Platform.isUsernameReserved`. The previews dispatcher is built on the
+  same `cluster.previewsWorker` reading as `bin/master.js` (`?? true`).
 - Tests: `[PVI]` matcher + dispatch (incl. redaction, 502, 504), `[PVE2]` end to end through the
-  real previews worker, `[PLH6]` reserved names.
+  real previews worker, `[PVW1]` the dispatcher wired into an api-server instance, `[PLH6]`
+  reserved names, `[RCK1]` check_username, `[RDLG]` redacted request and error logs.
 
 ## Client address resolution shared by every consumer
 

@@ -438,6 +438,8 @@ server {
 
 **HFS Host header**: the `proxy_set_header Host` for the path-style HFS locations should be a plain IP:port (e.g. `127.0.0.1:4000`). With the username in the host (`dns.domain` set), the HFS worker moves the host's first label into the URL path, so a public host name there would corrupt the route. In dnsLess mode the HFS worker leaves the host alone, as the api-server does, so the plain IP:port is harmless and keeps the same config valid in both modes.
 
+**Previews Host header**: the previews location keeps the client Host (`$http_host`), unlike HFS. With the username in the host, the URL the worker receives (`/events/{id}`) carries no username, and the worker takes it from the Host. In dnsLess mode the user is in the path and the Host is not read.
+
 **Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
 
 **Hosted sites behind nginx** - the in-process dispatcher recognises a hosted site by the `Host` header, so the `location /` block must keep `proxy_set_header Host $http_host;` (as in the sample). nginx terminates TLS there, so a site sends HSTS only with `hsts: always` (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)). Alternatively serve the folder from nginx with its own `server` block and leave `hostedSites` for the name reservation and the DNS answer.

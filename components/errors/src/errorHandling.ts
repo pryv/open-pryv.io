@@ -11,6 +11,8 @@
 import type { APIError as APIErrorType } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
+// Logged URLs never carry the access token (`?auth=`).
+import { redactUrl } from 'utils/src/redactUrl.ts';
 
 type LogFnLike = (msg: string, metadata?: unknown) => void;
 type ReqLike = { url?: string, method?: string, body?: unknown } | null;
@@ -42,7 +44,7 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
   const metadata: ErrorLogMetadata = {};
   if (req) {
     metadata.context = {
-      location: req.url,
+      location: redactUrl(req.url),
       method: req.method,
       data: req.body
     };

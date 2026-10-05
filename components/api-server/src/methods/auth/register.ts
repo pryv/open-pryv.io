@@ -102,10 +102,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     checkUniqueField);
 
   /**
-   * Check if username is taken
+   * Check if username is taken, or reserved (registration would refuse it).
    */
   async function checkUsername (_context: MethodContext, params: CheckUsernameParams, result: ResultBag, next: MethodNext) {
-    result.reserved = await usersRepository.usernameExistsOnPlatform(params.username);
+    result.reserved = platform.isUsernameReserved(params.username) ||
+      await usersRepository.usernameExistsOnPlatform(params.username);
     if (result.reserved == null) {
       return next(errors.unexpectedError('username reserved cannot be null'));
     }

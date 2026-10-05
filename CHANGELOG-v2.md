@@ -37,7 +37,12 @@
 - Usernames `users`, `oauth2`, `previews`, `series` and `system` are reserved: they are path
   segments the core routes itself, and on a dnsLess core such a user would lose part of its own
   API to them (existing accounts are not affected).
-- Log lines of the in-process dispatchers no longer include `?auth=` tokens.
+- **Security (logs).** Request logs no longer include access tokens passed as `?auth=` (preview
+  and attachment links): the request trace of the API, HFS and previews servers, the error log's
+  request location, and the in-process dispatchers write `auth=***`.
+- **Fix.** `GET /reg/{username}/check_username` now answers `reserved: true` for a name that
+  registration refuses (reserved words, `pryv…`, hosted-site and route-segment names), not only
+  for a name already taken.
 
 ## 2.0.0-rc.35 - 2026-10-05
 

@@ -12,6 +12,7 @@ import { pipeline } from 'node:stream';
 import type { Logger } from '@pryv/boiler';
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { clientIp, trustedProxyFn } from 'middleware/src/clientIp.ts';
+import { redactUrl } from 'utils/src/redactUrl.ts';
 
 /**
  * Proxy core shared by the in-process dispatchers that route part of the
@@ -27,15 +28,6 @@ import { clientIp, trustedProxyFn } from 'middleware/src/clientIp.ts';
 // nginx's default proxy_read_timeout / proxy_send_timeout, which the
 // documented nginx front applies to the same traffic.
 const DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS = 60_000;
-
-/**
- * A URL as it may be logged: the `auth` query value (an access token, the
- * only way an <img> tag can send one) replaced by `***`.
- */
-function redactUrl (url: string | undefined): string {
-  if (url == null) return '';
-  return url.replace(/([?&]auth=)[^&#]*/g, '$1***');
-}
 
 type WorkerProxyOptions = {
   /** Log prefix, e.g. `hfs` -> `[hfs-ingress]`. */
