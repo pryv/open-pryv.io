@@ -80,7 +80,7 @@ export { produceConnection, produceStorageConnection };
 // --------------------------------------------------------- test server context
 logger.debug('creating new test-server context');
 const { TestServerContext } = testHelpers;
-const spawnContext = new TestServerContext('test/support/child_process');
+const spawnContext = new TestServerContext('test/support/child_process', 'hfsPort');
 
 after(() => {
   logger.debug('shutting down test-server context');
