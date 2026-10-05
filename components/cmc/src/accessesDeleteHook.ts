@@ -41,12 +41,20 @@
  * access the revoke arrived through, which is our access on their account. So
  * a raw `accesses.delete` here ends both halves of the relationship, each
  * deleted by the server hosting it — as long as delivery succeeds.
+ *
+ * On the person's own side the delete is recorded too: on the accepter side
+ * (the deleted access is the data grant) the `consent/accept-cmc` event the
+ * grant was minted from gets `content.withdrawal` with
+ * `by: 'accesses.delete'` (acceptWithdrawal.ts), so a lister of the person's
+ * consents no longer reads it as given. Written before the peer delivery, so a
+ * relationship without a peer endpoint is still recorded.
  */
 
 import * as C from './constants.ts';
 import * as outbound from './outbound.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as inviteState from './inviteState.ts';
+import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
 
 // Outbound delivery deps + an optional mall so the hook can also do local
@@ -60,6 +68,9 @@ type DeleteHookResult = {
   reason?: string;
   peerNotified?: boolean;
   peerDeliveryStatus?: number;
+  /** Whether the withdrawal was recorded on the accept event (accepter side);
+   * absent when no `mall` dep was wired. */
+  withdrawalStamped?: boolean;
 };
 
 /**
@@ -110,6 +121,22 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         }
       }
 
+      // The person's own record: on the accepter side, mark the accept event
+      // the deleted data grant was minted from as withdrawn. Best-effort;
+      // skipped on the requester side and when no `mall` dep was wired.
+      let withdrawalStamped: boolean | undefined;
+      if (deps.mall != null) {
+        const withdrawal = await acceptWithdrawal.stampWithdrawalOnAccept({
+          userId,
+          relationshipCmc: cmc,
+          by: 'accesses.delete',
+          accessId: access.id,
+          deps: { mall: deps.mall, logger: deps.logger },
+        });
+        withdrawalStamped = withdrawal.ok && withdrawal.written;
+      }
+      const stampedField = withdrawalStamped !== undefined ? { withdrawalStamped } : {};
+
       // Peer delivery path. Requester side stores it on
       // `counterparty.apiEndpoint` (stamped by handleIncomingAccept);
       // the accepter side mirrors it there too once the back-channel
@@ -131,7 +158,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           accessId: access.id,
           reason: 'cmc-revoke-no-peer-endpoint',
         });
-        results.push({ accessId: access.id, attempted: false, reason: 'cmc-revoke-no-peer-endpoint' });
+        results.push({ accessId: access.id, attempted: false, reason: 'cmc-revoke-no-peer-endpoint', ...stampedField });
         continue;
       }
 
@@ -198,6 +225,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         peerNotified: delivered,
         peerDeliveryStatus: lastStatus,
         ...(delivered ? {} : { reason: lastReason }),
+        ...stampedField,
       });
     }
 

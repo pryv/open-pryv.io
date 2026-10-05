@@ -223,8 +223,8 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
   });
 
   // ---- local invite bookkeeping (optional mall dep) ----
-  function fakeMallWithInvite (invite) {
-    const events = new Map([[invite.id, invite]]);
+  function fakeMallWithInvite (...stored) {
+    const events = new Map(stored.map((e) => [e.id, e]));
     const calls = { eventsUpdated: [] };
     return {
       calls,
@@ -296,5 +296,103 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     const second = JSON.parse(calls[1].init.body).content;
     assert.equal(first.inviteEventId, 'invite-evt-1');
     assert.equal('inviteEventId' in second, false);
+  });
+
+  // ---- withdrawal recorded on the person's accept event (accepter side) ----
+  const ACCEPT_EVENT = {
+    id: 'evt-accept-1',
+    type: 'consent/accept-cmc',
+    streamIds: [':_cmc:apps:my-app'],
+    content: { status: 'completed', approvedBy: { accessId: 'acc-personal' } },
+  };
+
+  it('[DH16] deleting an accepter-side data grant records the withdrawal on its accept event; delivery still happens', async () => {
+    const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithInvite(structuredClone(ACCEPT_EVENT));
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const before = Date.now() / 1000;
+    const results = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+
+    assert.equal(results[0].withdrawalStamped, true);
+    assert.equal(results[0].peerNotified, true);
+    assert.equal(calls.length, 1, 'the peer delivery is still attempted');
+    const stored = mall.eventById('evt-accept-1');
+    const { withdrawal, ...rest } = stored.content;
+    assert.deepEqual(Object.keys(withdrawal).sort(), ['accessId', 'at', 'by']);
+    assert.equal(withdrawal.by, 'accesses.delete');
+    assert.equal(withdrawal.accessId, 'acc-data-grant');
+    assert.equal(typeof withdrawal.at, 'number');
+    assert.ok(withdrawal.at >= before && withdrawal.at <= Date.now() / 1000 + 1, 'at is in seconds');
+    assert.equal(stored.modified, withdrawal.at);
+    assert.deepEqual(rest, ACCEPT_EVENT.content, 'the rest of the record is kept');
+  });
+
+  it('[DH17] deleting a requester-side relationship (capabilityId key) leaves the accept event untouched', async () => {
+    const { fetch } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithInvite(
+      structuredClone(ACCEPT_EVENT),
+      { id: 'invite-dh', type: 'consent/request-cmc', content: { status: 'accepted' } }
+    );
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const requester = structuredClone(REQUESTER_SIDE_WITH_CAP);
+    // the requester holds the PEER's accept event id: never resolved locally
+    requester.clientData.cmc.acceptEventId = 'evt-accept-1';
+    const results = await hook('u1', [requester]);
+
+    assert.equal(results[0].withdrawalStamped, false);
+    assert.equal(mall.eventById('evt-accept-1').content.withdrawal, undefined);
+    assert.deepEqual(mall.calls.eventsUpdated.map((e) => e.id), ['invite-dh'], 'only the invite is stamped');
+  });
+
+  it('[DH18] an accept event already carrying a withdrawal (detach) is not overwritten', async () => {
+    const { fetch } = fakeFetch({ status: 201, body: {} });
+    const detached = { at: 1700000000, by: 'delegation-detach', relId: 'rel-1' };
+    const mall = fakeMallWithInvite({ ...structuredClone(ACCEPT_EVENT), content: { ...ACCEPT_EVENT.content, withdrawal: detached } });
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const results = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+    // a hook that fires twice writes once
+    await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+
+    assert.equal(results[0].withdrawalStamped, false);
+    assert.deepEqual(mall.eventById('evt-accept-1').content.withdrawal, detached);
+    assert.equal(mall.calls.eventsUpdated.length, 0);
+  });
+
+  it('[DH19] a missing accept event or one of another type writes nothing; without a peer endpoint it is still recorded', async () => {
+    for (const stored of [[], [{ id: 'evt-accept-1', type: 'consent/request-cmc', content: { status: 'accepted' } }]]) {
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const mall = fakeMallWithInvite(...stored);
+      const hook = createAccessesDeletePostHook({ fetch, mall });
+      const results = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+      assert.equal(results[0].withdrawalStamped, false);
+      assert.equal(results[0].peerNotified, true, 'delivery unaffected');
+      assert.equal(calls.length, 1);
+      assert.equal(mall.calls.eventsUpdated.length, 0);
+    }
+
+    const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithInvite(structuredClone(ACCEPT_EVENT));
+    const hook = createAccessesDeletePostHook({ fetch, mall, logger: { error () {} } });
+    const noEndpoint = structuredClone(ACCEPTER_SIDE_LEGACY_ACCESS);
+    delete noEndpoint.clientData.cmc.backChannelApiEndpoint;
+    const results = await hook('u1', [noEndpoint]);
+    assert.equal(results[0].reason, 'cmc-revoke-no-peer-endpoint');
+    assert.equal(results[0].withdrawalStamped, true);
+    assert.equal(calls.length, 0);
+    assert.equal(mall.eventById('evt-accept-1').content.withdrawal.by, 'accesses.delete');
+  });
+
+  it('[DH20] a failing event read is logged and never makes the hook throw', async () => {
+    const warned = [];
+    const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+    const mall = fakeMallWithInvite();
+    mall.events.getOne = async () => { throw new Error('store down'); };
+    const hook = createAccessesDeletePostHook({ fetch, mall, logger: { warn: (msg) => warned.push(msg) } });
+    const results = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+
+    assert.equal(results[0].withdrawalStamped, false);
+    assert.equal(results[0].peerNotified, true);
+    assert.equal(calls.length, 1);
+    assert.ok(warned.some((m) => /acceptWithdrawal/.test(m)), JSON.stringify(warned));
   });
 });

@@ -38,6 +38,9 @@ const require = createRequire(import.meta.url);
  *   5. Delete our counterparty-access — this is the step that actually
  *      enforces the revocation on our side (it destroys the token the
  *      peer was using against this account).
+ *   6. Record it: on the requester side the single-use invite is stamped
+ *      `revoked`; on the accepter side the person's `consent/accept-cmc`
+ *      gets `content.withdrawal` (`by: 'revoke-cmc'`). Best-effort.
  *
  * There is NO pre-acceptance revoke flow through this handler: a
  * requester cancels an open invite via `consent/invalidate-link-cmc`,
@@ -62,6 +65,7 @@ const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const relationshipKey = require('./relationshipKey.ts');
 const inviteState = require('./inviteState.ts');
+const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acceptWithdrawal.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps } from './_types.ts';
@@ -377,6 +381,18 @@ async function handleRevoke (params: {
   if (!stamp.ok) {
     deps.logger?.warn?.('cmc/handleRevoke: invite not stamped revoked (non-fatal)', { reason: stamp.reason });
   }
+
+  // Step 6b: on the accepter side, record the withdrawal on the person's own
+  // `consent/accept-cmc` event (acceptWithdrawal.ts). Skipped on the requester
+  // side, whose record is the invite stamped above. Best-effort.
+  await acceptWithdrawal.stampWithdrawalOnAccept({
+    userId,
+    relationshipCmc: counterpartyAccess.clientData?.cmc,
+    by: 'revoke-cmc',
+    accessId: counterpartyAccess.id,
+    revokeEventId: triggerEvent.id,
+    deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+  });
 
   return {
     ok: true,

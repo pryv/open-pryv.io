@@ -19,7 +19,10 @@
  *   2. BOOKKEEP — when this account published the invite the relationship
  *      descends from (requester side), mark a single-use invite `revoked`.
  *      An open-link invite needs nothing: the deleted access was the
- *      subject's join, so they can accept the same link again.
+ *      subject's join, so they can accept the same link again. When this
+ *      account accepted (the revoke arrived through a data grant), record the
+ *      withdrawal on the person's `consent/accept-cmc` instead
+ *      (`content.withdrawal`, `by: 'peer-revoke'`, acceptWithdrawal.ts).
  *
  * Enforcement runs FIRST because the failure modes are not symmetric: a crash
  * between the two leaves a stale invite status (cosmetic) whereas the opposite
@@ -43,6 +46,7 @@
  */
 
 import * as inviteState from './inviteState.ts';
+import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as slugMod from './slug.ts';
 
@@ -154,6 +158,25 @@ async function handleIncomingRevoke (params: {
   });
   const inviteRevoked = stamp.ok && stamp.written;
   const reason: string | undefined = stamp.ok ? stamp.skipped : stamp.reason;
+
+  // On the accepter side (the revoke arrived through a data grant), record the
+  // withdrawal on the person's own `consent/accept-cmc` event, for every grant
+  // the teardown destroyed: each re-accept minted its own grant from its own
+  // accept event. The helper skips the requester side. Best-effort.
+  for (const accessId of deletedAccessIds) {
+    const deleted = accessId === createdByAccess.id
+      ? createdByAccess
+      : accessList.find((a) => a?.id === accessId);
+    if (deleted == null) continue;
+    await acceptWithdrawal.stampWithdrawalOnAccept({
+      userId,
+      relationshipCmc: deleted.clientData?.cmc,
+      by: 'peer-revoke',
+      accessId,
+      revokeEventId: typeof event.id === 'string' ? event.id : null,
+      deps: { mall, logger, notifyEventChanged: deps.notifyEventChanged },
+    });
+  }
 
   // Step 3 — ENRICH. The arrival names the SENDER's access id, which this
   // account has never seen. Add the ids this side already holds for the

@@ -873,4 +873,20 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     assert.deepStrictEqual(upd.body.event.content.withdrawal, withdrawal);
     assert.strictEqual(upd.body.event.content.note, 'edited by the owner');
   });
+
+  it('[DCH25] the revocation notice that follows a detach does not overwrite the detach\'s withdrawal record', async function () {
+    await freshRelationship();
+    const { event, grantId } = await consentGivenByDelegate('dch25');
+
+    await detach();
+
+    // the notice runs the accesses.delete post-hook on the deleted grant; its
+    // delivery to the requester is the last thing it does
+    await pollDoctorInbox('consent/revoke-cmc', (e) => base(e.content?.accessId) === grantId);
+    await sleep(300);
+    const content = await kidEventContent(event.id);
+    assert.deepStrictEqual(Object.keys(content.withdrawal || {}).sort(), ['at', 'by', 'relId'], JSON.stringify(content));
+    assert.strictEqual(content.withdrawal.by, 'delegation-detach');
+    assert.strictEqual(content.withdrawal.relId, rel.relId);
+  });
 });

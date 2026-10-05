@@ -324,6 +324,58 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.equal(warns.some((m) => String(m).includes('was NOT torn down')), true);
   });
 
+  describe('[CMCIR-WD] the withdrawal is recorded on the accepter\'s accept event', () => {
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    function seedAccept (mall, id) {
+      mall.eventsById.set(id, { id, type: 'consent/accept-cmc', content: { status: 'completed' } });
+    }
+
+    it('[CIR22] accepter side: each destroyed grant\'s accept event gets by peer-revoke with the arrival id', async () => {
+      const mall = fakeMall();
+      seedAccept(mall, 'accept-1');
+      seedAccept(mall, 'accept-2');
+      seedBackChannel(mall, 'grant-1', { counterparty: SUBJECT, scopeStreamId: SCOPE, acceptEventId: 'accept-1' });
+      // an earlier accept of the same relationship minted its own grant
+      seedBackChannel(mall, 'grant-2', { counterparty: SUBJECT, scopeStreamId: SCOPE, acceptEventId: 'accept-2' });
+      const res = await handleIncomingRevoke({
+        userId: 'u1',
+        event: { id: 'arrival-1', type: 'consent/revoke-cmc', createdBy: 'grant-1', content: {} },
+        deps: { mall },
+      });
+      assert.equal(res.ok, true);
+      assert.deepEqual(res.deletedAccessIds.sort(), ['grant-1', 'grant-2']);
+      for (const [acceptId, grantId] of [['accept-1', 'grant-1'], ['accept-2', 'grant-2']]) {
+        const { withdrawal, status } = mall.eventsById.get(acceptId).content;
+        assert.deepEqual(Object.keys(withdrawal).sort(), ['accessId', 'at', 'by', 'revokeEventId']);
+        assert.equal(withdrawal.by, 'peer-revoke');
+        assert.equal(withdrawal.accessId, grantId);
+        assert.equal(withdrawal.revokeEventId, 'arrival-1');
+        assert.equal(status, 'completed');
+      }
+      // enforcement first, the record after
+      assert.ok(mall.calls.order.indexOf('delete:grant-1') < mall.calls.order.indexOf('event:accept-1'));
+    });
+
+    it('[CIR23] requester side: no accept event is stamped', async () => {
+      const mall = fakeMall();
+      // the back-channel holds the PEER's accept event id; an event with the
+      // same id here is not ours to mark
+      seedAccept(mall, 'peer-accept-1');
+      seedInvite(mall, 'invite-23');
+      seedBackChannel(mall, 'bc-23', {
+        capabilityId: 'cap-23', inviteEventId: 'invite-23', acceptEventId: 'peer-accept-1', counterparty: SUBJECT,
+      });
+      const res = await handleIncomingRevoke({
+        userId: 'u1',
+        event: { id: 'arrival-23', type: 'consent/revoke-cmc', createdBy: 'bc-23', content: {} },
+        deps: { mall },
+      });
+      assert.equal(res.inviteRevoked, true);
+      assert.equal(mall.eventsById.get('peer-accept-1').content.withdrawal, undefined);
+      assert.equal(mall.calls.eventsUpdated.some((e) => e.id === 'peer-accept-1'), false);
+    });
+  });
+
   describe('[CMCIR-ENRICH] the arrival is enriched with ids this side holds', () => {
     // The revoke names the SENDER's access id, which this account never saw.
     // The receiver adds its own handles for the relationship so an app can

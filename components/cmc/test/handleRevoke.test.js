@@ -615,6 +615,50 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(accepter.state.eventsUpdated.length, 0);
       assert.equal(accepter.state.updated.length, 0);
     });
+
+    // Accepter side: the relationship access is the data grant, stamped with
+    // the LOCAL accept event id and no capabilityId key.
+    const ACCEPTER_GRANT = structuredClone(COUNTERPARTY_ACCESS);
+    ACCEPTER_GRANT.clientData.cmc.acceptEventId = 'accept-x';
+    const ACCEPT = { id: 'accept-x', type: 'consent/accept-cmc', content: { status: 'completed' } };
+
+    async function revokeWithTrigger (mall) {
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      return handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          id: 'revoke-trigger-1',
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app'],
+          content: { accessId: 'acc-counterparty' },
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch, logger: { warn () {} } },
+      });
+    }
+
+    it('[HR32] on the accepter side, records the withdrawal on the accept event with the trigger id', async () => {
+      const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+      const r = await revokeWithTrigger(mall);
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.deletedAccessIds, ['acc-counterparty']);
+      const { withdrawal } = mall.state.events.get('accept-x').content;
+      assert.deepEqual(Object.keys(withdrawal).sort(), ['accessId', 'at', 'by', 'revokeEventId']);
+      assert.equal(withdrawal.by, 'revoke-cmc');
+      assert.equal(withdrawal.accessId, 'acc-counterparty');
+      assert.equal(withdrawal.revokeEventId, 'revoke-trigger-1');
+      assert.equal(mall.state.events.get('accept-x').content.status, 'completed', 'the rest of the record is kept');
+    });
+
+    it('[HR33] a failing withdrawal write keeps the revoke ok with its deleted accesses', async () => {
+      const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+      mall.events.update = async () => { throw new Error('store down'); };
+      const r = await revokeWithTrigger(mall);
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.deletedAccessIds, ['acc-counterparty']);
+      assert.equal(r.peerNotified, true);
+      assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
+    });
   });
 
   describe('[CMCHR-FAIL] handleRevoke failure paths', () => {
