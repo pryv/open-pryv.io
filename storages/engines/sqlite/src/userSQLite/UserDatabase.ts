@@ -106,7 +106,10 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
 
   this.eventQueries.getAll = prepareGetAllQuery(this.db, 'events');
 
-  fullTextSearch.setupForTable(this.db, 'events', tableSchemas.events, ['streamIds']);
+  // Every statement is IF NOT EXISTS: re-running the whole setup after SQLITE_BUSY is safe.
+  await concurrentSafeWrite.execute(() => {
+    fullTextSearch.setupForTable(this.db, 'events', tableSchemas.events, ['streamIds']);
+  });
   this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term like ?');
 
   this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ?');
