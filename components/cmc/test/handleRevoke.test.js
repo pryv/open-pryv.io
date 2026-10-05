@@ -659,6 +659,16 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(r.peerNotified, true);
       assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
     });
+
+    it('[HR34] a grant whose delete failed is not recorded as withdrawn', async () => {
+      const mall = richMall([ACCEPTER_GRANT], structuredClone(ACCEPT));
+      mall.accesses.delete = async (_userId, params) => { throw new Error('cannot delete ' + params.id); };
+      const r = await revokeWithTrigger(mall);
+      assert.equal(r.ok, true);
+      assert.equal(r.deletedAccessIds.includes('acc-counterparty'), false);
+      assert.equal(mall.state.events.get('accept-x').content.withdrawal, undefined);
+      assert.equal(mall.state.eventsUpdated.length, 0);
+    });
   });
 
   describe('[CMCHR-FAIL] handleRevoke failure paths', () => {

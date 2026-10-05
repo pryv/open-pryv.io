@@ -384,15 +384,19 @@ async function handleRevoke (params: {
 
   // Step 6b: on the accepter side, record the withdrawal on the person's own
   // `consent/accept-cmc` event (acceptWithdrawal.ts). Skipped on the requester
-  // side, whose record is the invite stamped above. Best-effort.
-  await acceptWithdrawal.stampWithdrawalOnAccept({
-    userId,
-    relationshipCmc: counterpartyAccess.clientData?.cmc,
-    by: 'revoke-cmc',
-    accessId: counterpartyAccess.id,
-    revokeEventId: triggerEvent.id,
-    deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
-  });
+  // side, whose record is the invite stamped above. Only once the grant is
+  // actually gone: the record is never overwritten, so a stamp for a grant
+  // whose delete failed would outlive the grant's real end. Best-effort.
+  if (deletedIds.includes(counterpartyAccess.id)) {
+    await acceptWithdrawal.stampWithdrawalOnAccept({
+      userId,
+      relationshipCmc: counterpartyAccess.clientData?.cmc,
+      by: 'revoke-cmc',
+      accessId: counterpartyAccess.id,
+      revokeEventId: triggerEvent.id,
+      deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
+    });
+  }
 
   return {
     ok: true,
