@@ -1,5 +1,25 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Clock-skew checks at core join and at TLS certificate load
+
+- **Joining a cluster.** `bin/master.js --bootstrap` now compares the new core's clock with the
+  issuing core's (its API root `meta.serverTime`, else the HTTP `Date` header) before sending the
+  ack, and refuses the join when they differ by more than 30 s: the master exits 1, the join token
+  is not used and the bundle file is kept, so fixing the clock and re-running the same command
+  succeeds. New flag `--bootstrap-clock-skew-seconds <n>` (default 30, `0` disables). When the
+  answer carries no server time the check is skipped with a log line.
+- **Loading a TLS certificate.** New config key `cluster.clockSkewSeconds` (default 30, `0`
+  disables). A certificate from the Let's Encrypt engine whose validity window does not contain
+  the local clock (with that tolerance on `notBefore`) is not written to disk, mirrored to
+  `http.ssl.*` nor hot-swapped into the workers; the core logs `refusing to materialize ...`,
+  keeps the previous certificate and retries every minute. A worker asked to reload such a
+  certificate keeps its current one. A custom certificate outside its window at boot is reported
+  with a warning (never refused, so the worker does not crash-loop).
+- **Scope.** These are checks at join and at certificate load. Clock synchronization itself
+  (chronyd / ntpd) stays the host's job; there is no periodic clock polling.
+
 ## 2.0.0-rc.34 - 2026-10-02
 
 ### Attachments with an active content type are served in a sandbox

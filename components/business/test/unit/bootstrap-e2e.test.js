@@ -56,9 +56,15 @@ function makeFakeDB () {
  * /system/admin/cores/ack — mirrors the route wired in api-server's
  * routes/system.js but without the full express stack.
  */
-async function startAckServer ({ tokenStore, platformDB }) {
+async function startAckServer ({ tokenStore, platformDB, clock = { offsetMs: 0 } }) {
   const handle = ackHandler.makeHandler({ tokenStore, platformDB });
   const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/') {
+      // root answer of a core: meta.serverTime in Unix seconds
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ meta: { serverTime: (Date.now() + clock.offsetMs) / 1000 } }));
+      return;
+    }
     if (req.method !== 'POST' || req.url !== '/system/admin/cores/ack') {
       res.statusCode = 404; res.end(); return;
     }
@@ -408,6 +414,53 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
       );
       // Pre-registration also gone
       assert.equal(platformDB._cores.get('core-b'), undefined);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('[CKE2] a skewed joiner is refused before the ack, and the same bundle joins once the clock is right', async () => {
+    const platformDB = makeFakeDB();
+    const tokensPath = path.join(tmp, 'tokens.json');
+    const tokenStore = new TokenStore({ path: tokensPath });
+    const clock = { offsetMs: 120_000 };
+    const { server, baseUrl } = await startAckServer({ tokenStore, platformDB, clock });
+
+    try {
+      const outPath = path.join(tmp, 'bundle.age');
+      const issued = await cliOps.newCore({
+        platformDB,
+        caDir: path.join(tmp, 'ca'),
+        tokensPath,
+        dnsDomain: 'mc.example.com',
+        ackUrlBase: baseUrl,
+        secrets: {
+          adminAccessKey: 'admin-key-0123456789abcdef0123',
+          filesReadTokenSecret: 'files-secret-0123456789abcdef0'
+        },
+        rqlite: { raftPort: 4002, httpPort: 4001 },
+        coreId: 'core-b',
+        ip: '203.0.113.7',
+        outPath
+      });
+      const consumeOpts = {
+        bundlePath: outPath,
+        passphrase: issued.passphrase,
+        configDir: path.join(tmp, 'cfg'),
+        tlsDir: path.join(tmp, 'tls'),
+        log: () => {}
+      };
+
+      await assert.rejects(consumer.consume(consumeOpts), /clock skew of -120\.\ds/);
+      assert.equal(platformDB._cores.get('core-b').available, false, 'core not flipped available');
+      assert.equal(tokenStore.listActive().length, 1, 'join token not burned');
+      assert.equal(fs.existsSync(outPath), true, 'bundle kept');
+
+      clock.offsetMs = 0;
+      const result = await consumer.consume(consumeOpts);
+      assert.equal(result.coreId, 'core-b');
+      assert.equal(platformDB._cores.get('core-b').available, true);
+      assert.equal(tokenStore.listActive().length, 0);
     } finally {
       await new Promise(resolve => server.close(resolve));
     }

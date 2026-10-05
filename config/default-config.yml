@@ -564,6 +564,13 @@ cluster:
     path: /etc/pryv/ca                            # cluster CA private key + cert (back this up!)
   tokens:
     path: /var/lib/pryv/bootstrap-tokens.json     # one-time join-token store
+  # A TLS certificate whose validity window does not contain the local clock
+  # (with this tolerance on notBefore) is not materialized from PlatformDB nor
+  # hot-swapped into the workers, and is reported at boot. 0 disables.
+  # The join check of `bin/master.js --bootstrap` runs before this config is
+  # loaded: it takes `--bootstrap-clock-skew-seconds` (same default) instead.
+  # Clock synchronization itself (chronyd / ntpd) stays the host's job.
+  clockSkewSeconds: 30
 
 # === PLATFORM-WIDE ===
 # `piiMode` decides whether PlatformDB stores PII as HMAC-SHA-256 tokens

@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
+import type { ValidityVerdict } from 'business/src/acme/certUtils.ts';
 const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized
 const { getApplication } = require('api-server/src/application.ts');
@@ -23,6 +24,7 @@ const { buildHfsIngress } = require('./hfsIngress.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { getPlatform } = require('platform');
+const { checkValidityWindow } = require('business/src/acme/certUtils.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
 type AppInstance = {
   api: ApiSurface;
@@ -121,7 +123,13 @@ class Server {
       });
       this.logger.info('SSL Mode using backloop.dev certificates');
     } else if (config.get('http:ssl:keyFile')) { // https with local files
-      const httpsServer = https.createServer(buildHttpsOptions(config), requestHandler);
+      const httpsOptions = buildHttpsOptions(config);
+      // Warn only: refusing here would crash-loop the worker.
+      const verdict = certValidityVerdict(config, httpsOptions.cert);
+      if (verdict != null && !verdict.ok) {
+        this.logger.warn('TLS certificate at http.ssl.certFile: ' + verdict.detail);
+      }
+      const httpsServer = https.createServer(httpsOptions, requestHandler);
       server = httpsServer;
       serverInfos.hostname = 'custom-according-to-your-ssl-cert';
       this.logger.info('SSL Mode using custom certificates');
@@ -301,6 +309,13 @@ class Server {
     }
     try {
       const options = buildHttpsOptions(this.config);
+      // Keep the previous context rather than swap in a cert that the local
+      // clock says is not (or no longer) valid.
+      const verdict = certValidityVerdict(this.config, options.cert);
+      if (verdict != null && !verdict.ok) {
+        this.logger.error('reloadTls refused: ' + verdict.detail);
+        return { reloaded: false, reason: 'validity-' + verdict.reason };
+      }
       this.httpsServer.setSecureContext(options);
       this.logger.info('TLS context reloaded from disk');
       return { reloaded: true };
@@ -324,6 +339,17 @@ function buildHttpsOptions (config: BoilerConfig): HttpsOptions {
     options.ca = [fs.readFileSync(config.get('http:ssl:caFile') as string)];
   }
   return options;
+}
+
+/**
+ * Validity-window verdict for the served certificate against the local
+ * clock, with `cluster.clockSkewSeconds` of tolerance on notBefore.
+ * Null when the check is disabled (`0`).
+ */
+function certValidityVerdict (config: BoilerConfig, cert: Buffer): ValidityVerdict | null {
+  const skewSeconds = Number(config.get('cluster:clockSkewSeconds') ?? 30);
+  if (!(skewSeconds > 0)) return null;
+  return checkValidityWindow(cert.toString('utf8'), { skewMs: skewSeconds * 1000 });
 }
 
 export default Server;

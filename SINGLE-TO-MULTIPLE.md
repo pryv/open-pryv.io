@@ -20,6 +20,7 @@ Since v2 the platform DB defaults to rqlite: `bin/master.js` spawns and supervis
 - DNS control for the target domain (wildcard A record needed)
 - A second machine or Dokku app for the second core (with its own base storage: PostgreSQL by default, or SQLite; engine choice is per core)
 - `openssl` available on the existing core (used to mint the cluster CA on first run)
+- A synchronized clock on every host (chronyd / ntpd): the join is refused when the new core's clock differs from the existing core's by more than 30 s
 
 ## How adding a core works
 
@@ -161,9 +162,12 @@ node bin/master.js \
 
 For a ≥3-core HA cluster, add `--bootstrap-as-voter` to each core that should vote.
 
+> **Clock check.** Before the ack, the new core reads the existing core's time (`meta.serverTime` of its API root, else the HTTP `Date` header) and refuses the join when the two clocks differ by more than 30 s: the master exits 1, the join token is not used and the bundle file is kept, so fix the clock and run the same command again. `--bootstrap-clock-skew-seconds <n>` changes the threshold (`0` disables the check).
+
 The master process:
 - decrypts and validates the bundle,
 - writes `override-config.yml` to its config directory and `/etc/pryv/tls/{ca,node}.{crt,key}` (mode 0600 for the key),
+- checks its clock against the existing core's and refuses the join on more than 30 s of skew (see above),
 - POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA (or, with `--bootstrap-ack-trust-system-ca`, verified against the system CA store),
 - on success, deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
 - continues into normal startup — `rqlited` joins the cluster over mTLS.

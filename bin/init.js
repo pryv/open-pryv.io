@@ -805,6 +805,13 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # cluster:
 # #   discoveryEnabled: false
 
+# # cluster.clockSkewSeconds — tolerance (seconds) when checking that the local
+# # clock falls inside a TLS certificate's validity window; a certificate
+# # outside it is not materialized nor hot-swapped. 0 disables. Keep the host
+# # clock synchronized (chronyd / ntpd).
+# # cluster:
+# #   clockSkewSeconds: 30
+
 # # storages.engines.rqlite.readyTimeoutMs — how long the master waits for
 # # the embedded rqlited's HTTP API at boot (default 30000 ms). Raise it if
 # # this node logs "rqlited did not become ready" and restarts on boot.

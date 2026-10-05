@@ -26,6 +26,9 @@ const Bundle = require('../../src/bootstrap/Bundle.ts');
 const BundleEncryption = require('../../src/bootstrap/BundleEncryption.ts');
 const consumer = require('../../src/bootstrap/consumer.ts');
 
+// The clock-skew probe is covered by [CKBJ]/[CKPB]; keep it off the network here.
+const consume = (opts) => consumer.consume({ clockSkewSeconds: 0, ...opts });
+
 const PASSPHRASE = 'pass-9876';
 
 function writeBundle (tmp, ackUrl = 'https://core-a.mc.example.com/system/admin/cores/ack') {
@@ -91,7 +94,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
       return { statusCode: 200, body: { ok: true, cluster: { cores: [{ id: 'core-a' }, { id: 'core-b' }] } } };
     };
 
-    const result = await consumer.consume({
+    const result = await consume({
       bundlePath,
       passphrase: PASSPHRASE,
       configDir: path.join(tmp, 'config'),
@@ -123,7 +126,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
       return { statusCode: 200, body: { ok: true, cluster: { cores: [] } } };
     };
 
-    const result = await consumer.consume({
+    const result = await consume({
       bundlePath,
       passphrase: PASSPHRASE,
       configDir: path.join(tmp, 'config'),
@@ -144,7 +147,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
     const fakeClient = async () => ({ statusCode: 401, body: { error: { id: 'token-invalid' } } });
 
     await assert.rejects(
-      consumer.consume({
+      consume({
         bundlePath,
         passphrase: PASSPHRASE,
         configDir: path.join(tmp, 'config'),
@@ -164,7 +167,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
     fs.writeFileSync(passphraseFile, PASSPHRASE + '\n'); // trailing newline must be stripped
     const fakeClient = async () => ({ statusCode: 200, body: { ok: true, cluster: { cores: [] } } });
 
-    const result = await consumer.consume({
+    const result = await consume({
       bundlePath,
       passphraseFile,
       configDir: path.join(tmp, 'config'),
@@ -178,7 +181,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
   it('rejects when neither passphrase nor passphraseFile is given', async () => {
     const { bundlePath } = writeBundle(tmp);
     await assert.rejects(
-      consumer.consume({
+      consume({
         bundlePath,
         configDir: path.join(tmp, 'config'),
         tlsDir: path.join(tmp, 'tls'),
@@ -191,7 +194,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
 
   it('rejects when bundle file is missing', async () => {
     await assert.rejects(
-      consumer.consume({
+      consume({
         bundlePath: path.join(tmp, 'nope.age'),
         passphrase: PASSPHRASE,
         configDir: path.join(tmp, 'config'),
@@ -208,7 +211,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
     const fakeClient = async () => { posted = true; return { statusCode: 200, body: {} }; };
 
     await assert.rejects(
-      consumer.consume({
+      consume({
         bundlePath,
         passphrase: 'wrong-pass',
         configDir: path.join(tmp, 'config'),
@@ -227,7 +230,7 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
     const passphraseFile = path.join(tmp, 'empty.txt');
     fs.writeFileSync(passphraseFile, '');
     await assert.rejects(
-      consumer.consume({
+      consume({
         bundlePath,
         passphraseFile,
         configDir: path.join(tmp, 'config'),
@@ -236,5 +239,148 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
       }),
       /passphrase file is empty/
     );
+  });
+});
+
+describe('[CKBJ] consumer.consume clock-skew check', function () {
+  this.timeout(20_000);
+  let tmp;
+
+  before(function () {
+    try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); } catch {
+      this.skip();
+    }
+  });
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-consume-skew-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  function setup (probeResult, extra = {}) {
+    const { bundlePath, caCertPem } = writeBundle(tmp);
+    const acks = [];
+    const probes = [];
+    const logs = [];
+    const opts = {
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config'),
+      tlsDir: path.join(tmp, 'tls'),
+      httpClient: async (url, body, ca) => {
+        acks.push({ url, body, ca });
+        return { statusCode: 200, body: { cluster: { cores: [] } } };
+      },
+      clockProbe: async (origin, ca) => {
+        probes.push({ origin, ca });
+        if (probeResult === 'none') return null;
+        const localMs = Date.now();
+        return { serverTimeMs: localMs + probeResult, rttMs: 12, localMs };
+      },
+      log: (m) => logs.push(m),
+      ...extra
+    };
+    return { opts, acks, probes, logs, bundlePath, caCertPem };
+  }
+
+  it('[CKB1] refuses the join before the ack when the issuer clock is 120s ahead', async () => {
+    const { opts, acks, logs, bundlePath } = setup(120_000);
+    await assert.rejects(consumer.consume(opts), /clock skew of -120\.0s .* exceeds 30s; the join token was not used/);
+    assert.equal(acks.length, 0, 'no ack sent');
+    assert.equal(fs.existsSync(bundlePath), true, 'bundle kept for the re-run');
+    assert.ok(logs.some((l) => l.includes('Fix this host\'s clock')));
+  });
+
+  it('[CKB2] refuses a local clock that is ahead too', async () => {
+    const { opts, acks } = setup(-120_000);
+    await assert.rejects(consumer.consume(opts), /clock skew of \+120\.0s/);
+    assert.equal(acks.length, 0);
+  });
+
+  it('[CKB3] acks when the skew is within the threshold', async () => {
+    const { opts, acks, logs } = setup(10_000);
+    const result = await consumer.consume(opts);
+    assert.equal(result.bundleDeleted, true);
+    assert.equal(acks.length, 1);
+    assert.ok(logs.some((l) => l.startsWith('clock check vs https://core-a.mc.example.com: skew=-10.0s')));
+  });
+
+  it('[CKB4] a custom threshold applies', async () => {
+    const { opts, acks } = setup(10_000, { clockSkewSeconds: 5 });
+    await assert.rejects(consumer.consume(opts), /exceeds 5s/);
+    assert.equal(acks.length, 0);
+  });
+
+  it('[CKB5] clockSkewSeconds 0 disables the probe', async () => {
+    const { opts, acks, probes } = setup(3_600_000, { clockSkewSeconds: 0 });
+    await consumer.consume(opts);
+    assert.equal(probes.length, 0);
+    assert.equal(acks.length, 1);
+  });
+
+  it('[CKB6] continues with a warning when the answer carries no server time', async () => {
+    const { opts, acks, logs } = setup('none');
+    await consumer.consume(opts);
+    assert.equal(acks.length, 1);
+    assert.ok(logs.some((l) => l.startsWith('clock-skew check skipped: no server time')));
+  });
+
+  it('[CKB7] probes the ack origin with the same CA trust as the ack', async () => {
+    const pinned = setup(0);
+    await consumer.consume(pinned.opts);
+    assert.deepEqual(pinned.probes, [{ origin: 'https://core-a.mc.example.com/', ca: pinned.caCertPem }]);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-consume-skew-'));
+    const system = setup(0, { trustSystemCa: true });
+    await consumer.consume(system.opts);
+    assert.deepEqual(system.probes, [{ origin: 'https://core-a.mc.example.com/', ca: '' }]);
+  });
+});
+
+describe('[CKPB] consumer.defaultClockProbe', function () {
+  const http = require('node:http');
+  let server, origin, handler;
+
+  before((done) => {
+    server = http.createServer((req, res) => handler(req, res));
+    server.listen(0, '127.0.0.1', () => {
+      origin = `http://127.0.0.1:${server.address().port}/`;
+      done();
+    });
+  });
+  after((done) => { server.close(done); });
+
+  it('[CKP1] reads meta.serverTime (seconds) and asks for JSON', async () => {
+    let accept;
+    handler = (req, res) => {
+      accept = req.headers.accept;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ meta: { serverTime: 1700000000.5 } }));
+    };
+    const r = await consumer.defaultClockProbe(origin, '');
+    assert.equal(accept, 'application/json');
+    assert.equal(r.serverTimeMs, 1700000000500);
+    assert.ok(r.rttMs >= 0);
+    assert.ok(Math.abs(r.localMs - Date.now()) < 60_000);
+  });
+
+  it('[CKP2] falls back to the Date header', async () => {
+    handler = (req, res) => {
+      res.setHeader('content-type', 'text/html');
+      res.setHeader('date', 'Tue, 14 Nov 2023 22:13:20 GMT');
+      res.end('<html></html>');
+    };
+    const r = await consumer.defaultClockProbe(origin, '');
+    assert.equal(r.serverTimeMs, Date.parse('Tue, 14 Nov 2023 22:13:20 GMT'));
+  });
+
+  it('[CKP3] resolves null when there is no server time at all', async () => {
+    handler = (req, res) => {
+      res.sendDate = false;
+      res.end('{}');
+    };
+    assert.equal(await consumer.defaultClockProbe(origin, ''), null);
+  });
+
+  it('[CKP4] rejects on a transport error', async () => {
+    await assert.rejects(consumer.defaultClockProbe('http://127.0.0.1:1/', ''));
   });
 });

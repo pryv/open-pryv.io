@@ -30,6 +30,7 @@ const require = createRequire(import.meta.url);
 const { CertRenewer, PlatformDBDnsWriter } = require('./CertRenewer.ts');
 const { FileMaterializer, runRotateScript } = require('./FileMaterializer.ts');
 const { deriveHostnames } = require('./deriveHostnames.ts');
+const { checkValidityWindow } = require('./certUtils.ts');
 
 const DAY_MS = 24 * 3600 * 1000;
 const DEFAULT_RENEW_INTERVAL_MS = DAY_MS;
@@ -267,6 +268,8 @@ class AcmeOrchestrator {
     const result = await this.#fileMaterializer.checkOnce();
     if (result.rotated) {
       this.#log(`materialized ${this.#hostSpec.commonName}: ${result.reason}`);
+    } else if (result.reason?.startsWith('validity-')) {
+      this.#log(`not materialized ${this.#hostSpec.commonName}: ${result.reason}`);
     }
     return result;
   }
@@ -376,6 +379,8 @@ function build (opts: BuildOpts = {} as BuildOpts) {
       ? 'https://acme-staging-v02.api.letsencrypt.org/directory'
       : 'https://acme-v02.api.letsencrypt.org/directory')) as string;
 
+  const clockSkewSeconds = Number(config.get('cluster:clockSkewSeconds') ?? 30);
+
   const certRenewer = new CertRenewer({
     platformDB, atRestKey, email, directoryUrl, acmeLib
   });
@@ -384,6 +389,9 @@ function build (opts: BuildOpts = {} as BuildOpts) {
     certRenewer,
     tlsDir,
     hostname: hostSpec.commonName,
+    validateCert: clockSkewSeconds > 0
+      ? (pem: string) => checkValidityWindow(pem, { skewMs: clockSkewSeconds * 1000 })
+      : () => ({ ok: true }),
     onRotate: async (certPath: string, keyPath: string, hostname: string) => {
       if (typeof onRotate === 'function') {
         try { await onRotate(certPath, keyPath, hostname); } catch (err) {
