@@ -37,7 +37,8 @@ const DynamicInstanceManager = tested.DynamicInstanceManager;
 
 dependencies.settings = getConfigUnsafe(true).get();
 dependencies.instanceManager = new DynamicInstanceManager({
-  serverFilePath: path.resolve(__dirname, '../../src/server.ts')
+  serverFilePath: path.resolve(__dirname, '../../src/server.ts'),
+  listenKey: 'previewsPort'
 });
 
 before(async function () {

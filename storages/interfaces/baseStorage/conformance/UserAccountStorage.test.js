@@ -131,6 +131,14 @@ export default function conformanceTests (getStorage, cleanupFn) {
         assert.ok(all.key1 != null);
         assert.ok(all.key2 != null);
       });
+
+      it('[UAK1] setting a key to null removes it', async () => {
+        const kvStore = storage.getKeyValueDataForStore(storeId);
+        await kvStore.set(userId, 'key3', 'value3');
+        await kvStore.set(userId, 'key3', null);
+        assert.strictEqual(await kvStore.get(userId, 'key3'), null);
+        assert.ok(!('key3' in await kvStore.getAll(userId)));
+      });
     });
 
     describe('clearHistory()', () => {

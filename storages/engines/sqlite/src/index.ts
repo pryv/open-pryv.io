@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 import type { Logger } from '@pryv/boiler';
 import type { UserOrId } from '../../../interfaces/_shared/types.ts';
@@ -222,9 +223,11 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
       const udb = await openUserBaseStorageDbSafe(userId);
       if (!udb) continue;
       try {
-        udb.db.prepare(`DELETE FROM ${collectionName}`).run();
-      } catch (_e) {
-        // Table may not exist for this user — already cleared.
+        await concurrentSafeWrite.execute(() => { udb.db.prepare(`DELETE FROM ${collectionName}`).run(); });
+      } catch (e) {
+        // Table may not exist for this user: already cleared. Anything else
+        // (a write that stayed busy) must not leave rows behind silently.
+        if (!/no such table/.test((e as Error).message)) throw e;
       }
     }
   };

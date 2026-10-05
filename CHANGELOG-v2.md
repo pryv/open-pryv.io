@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Data stores: removing a key-value entry on SQLite
+
+- **Fix.** On the SQLite storage engine, a data store's per-account key-value storage refused to
+  remove an entry (`set(key, null)` failed with a SQL syntax error). PostgreSQL was not affected.
+
 ## 2.0.0-rc.36 - 2026-10-05
 
 ### Consent withdrawal recorded on the person's own record (#146)

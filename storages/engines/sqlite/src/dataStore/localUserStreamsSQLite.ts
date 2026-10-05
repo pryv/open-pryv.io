@@ -13,6 +13,7 @@ const assert = require('assert');
 const ds = require('@pryv/datastore');
 const { treeUtils } = require('utils');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
+const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { _internals } = require('../_internals.ts');
 import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 
@@ -112,19 +113,23 @@ const userStreams = ds.createUserStreams({
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable('streams', { withDeleted: true, withHeadId: false });
 
-    const existing = udb.db.prepare('SELECT id FROM streams WHERE id = ?').get(streamData.id);
     const dataJson = JSON.stringify({
       name: null,
       parentId: null,
       path: streamData.id + '/'
     });
-    if (existing) {
-      udb.db.prepare('UPDATE streams SET deleted = ?, data = ? WHERE id = ?')
-        .run(streamData.deleted, dataJson, streamData.id);
-    } else {
-      udb.db.prepare('INSERT INTO streams (id, deleted, data) VALUES (?, ?, ?)')
-        .run(streamData.id, streamData.deleted, dataJson);
-    }
+    // The connection has no busy timeout: another process writing the same
+    // user file makes a bare write fail with SQLITE_BUSY ("database is locked").
+    await concurrentSafeWrite.execute(() => {
+      const existing = udb.db.prepare('SELECT id FROM streams WHERE id = ?').get(streamData.id);
+      if (existing) {
+        udb.db.prepare('UPDATE streams SET deleted = ?, data = ? WHERE id = ?')
+          .run(streamData.deleted, dataJson, streamData.id);
+      } else {
+        udb.db.prepare('INSERT INTO streams (id, deleted, data) VALUES (?, ?, ?)')
+          .run(streamData.id, streamData.deleted, dataJson);
+      }
+    });
   },
 
   async create (this: Store, userId: string, streamData: StoredStream): Promise<StoredStream> {

@@ -36,7 +36,13 @@ let spawnCounter = 0;
  *   // use manager.url for HTTP requests
  *   // use manager.on('test-*', callback) for notifications
  *
- * @param config Must contain `serverFilePath`
+ * @param config Must contain `serverFilePath`. Optional `listenKey`: the `http:*`
+ *   port key the spawned server listens on (`port` for an api-server, the default;
+ *   `previewsPort` / `hfsPort` for a worker). Optional `workerPorts`: explicit
+ *   `{ hfsPort?, previewsPort? }` for the keys the server does NOT listen on, e.g.
+ *   a test's stub upstream; any key left out gets a port that drops every
+ *   connection, so an api-server's dispatchers never proxy to itself or to a
+ *   foreign process.
  * @param options Optional: { messagePrefix: string } for message filtering
  */
 class DynamicInstanceManager extends EventEmitter {
@@ -150,12 +156,11 @@ class DynamicInstanceManager extends EventEmitter {
           this.logger.debug(`Allocated new port: HTTP ${httpPort}`);
         }
 
-        // Configure HTTP — set all port keys so any server type gets the right port
+        // Configure HTTP: the key the server listens on gets the allocated port, the
+        // other worker keys an explicit upstream or a port that drops every connection.
         settingsCopy.http = settingsCopy.http || {};
-        settingsCopy.http.port = httpPort;
-        settingsCopy.http.hfsPort = httpPort;
-        settingsCopy.http.previewsPort = httpPort;
         settingsCopy.http.ip = settingsCopy.http.ip || '127.0.0.1';
+        Object.assign(settingsCopy.http, portAllocator.childPortSettings(httpPort, await portAllocator.deadEndPort(), this.config.listenKey, this.config.workerPorts));
 
         // Configure test notifications (IPC-based, no port needed)
         settingsCopy.testNotifications = { enabled: true };

@@ -1,5 +1,32 @@
 # Changelog - Internal (no API impact)
 
+## SQLite busy retries on every per-user write; test spawners without self-dispatch
+
+- `storages/engines/sqlite`: per-user connections run with `busy_timeout = 0` and retry
+  `SQLITE_BUSY` through `concurrentSafeWrite.execute`; three writes skipped it and now go through
+  it: `localUserStreamsSQLite.createDeleted` (deletion records, written by test fixtures: the
+  intermittent `database is locked` in SQLite matrix runs), `clearCollection` (fixture clean-up,
+  which also stopped swallowing every error: only a missing table is ignored), and the
+  full-text-search setup in `UserDatabase.init` (two workers opening an account's events file
+  for the first time at once). Test `[USBZ]` holds the write lock from a second connection.
+  `usersLocalIndex` now awaits its retried writes in `init` and `deleteAll`: a busy table
+  creation was retried detached while the next statement already used the table.
+- `userAccountStorage` (SQLite account file: passwords, account fields, data-store key-values)
+  joins the same model: it relied on better-sqlite3's default 5 s busy wait, which blocks the
+  whole event loop while another process writes the account. Every write now retries through
+  `execute`; two concurrent opens of the same account keep one connection. Tests `[UASB1]`
+  (writes wait for a held lock) and `[UASB2]` (the event loop keeps running meanwhile).
+  Conformance `[UAK1]`: a key-value `set(key, null)` removes the key (the SQLite statement had a
+  stray parenthesis).
+- `test-helpers`: `portAllocator.childPortSettings` + `deadEndPort`. `DynamicInstanceManager`
+  (options `listenKey`, `workerPorts`) and `TestServerContext` (`listenKey`) give the spawned
+  server's own port only to the key it listens on; an api-server child's `hfsPort` /
+  `previewsPort` point at an explicit stub or at a port this process holds that drops every
+  connection, never at itself. `[PVW1]` uses a stub previews worker; `[PVW3]` checks a test
+  instance no longer answers its own preview URLs.
+- `[RG2C]`: the registration the later tests depend on runs in a `before` hook, so a `--grep`
+  that selects them without `[2C10]` no longer fails.
+
 ## INSTALL: the rqlite 10 snapshot-store check without the `sqlite3` client
 
 - "Upgrading the bundled rqlite (9.x to 10.x)" required the `sqlite3` client on the host for the

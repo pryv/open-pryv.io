@@ -19,6 +19,7 @@ const supertest = require('supertest');
 const { deepMerge } = require('utils');
 const { Fuse } = require('./condition_variable.ts');
 const portAllocator = require('./portAllocator.ts');
+import type { ListenKey } from './portAllocator.ts';
 
 const logger = require('@pryv/boiler').getLogger('test-server-context');
 
@@ -40,17 +41,24 @@ let spawnCounter = 0;
  */
 class TestServerContext {
   childPath: string;
+  listenKey: ListenKey;
   shuttingDown: boolean;
   allocated: ProcessProxy[];
 
-  constructor (childPath?: string) {
+  /**
+   * @param childPath default: the api-server child
+   * @param listenKey the `http:*` port key the child listens on (`hfsPort` for an HFS child)
+   */
+  constructor (childPath?: string, listenKey: ListenKey = 'port') {
     this.childPath = childPath || path.resolve(__dirname, '../../api-server/test/helpers/child_process');
+    this.listenKey = listenKey;
     this.shuttingDown = false;
     this.allocated = [];
   }
 
   async spawn (customSettings?: any) {
     const port = await portAllocator.allocatePort();
+    const deadEnd = await portAllocator.deadEndPort();
 
     const proxy = this.forkChild();
     this.allocated.push(proxy);
@@ -91,7 +99,7 @@ class TestServerContext {
     }
 
     const settings = deepMerge({
-      http: { port, hfsPort: port, previewsPort: port },
+      http: portAllocator.childPortSettings(port, deadEnd, this.listenKey),
       testNotifications: { enabled: true }
     }, engineSettings, customSettings || {});
 

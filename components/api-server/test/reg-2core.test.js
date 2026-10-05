@@ -323,9 +323,12 @@ describe('[RG2C] Two-core integration tests', function () {
   describe('Registration + PlatformDB replication', () => {
     const testUser = 'tc' + Date.now().toString(36);
     const testEmail = testUser + '@test.example.com';
+    let registration;
 
-    it('[2C10] must register a user on Core A', async () => {
-      const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+    // In a hook, not in [2C10] itself: the tests below need the user even when
+    // a --grep selects them without [2C10].
+    before(async () => {
+      registration = await httpRequest(CORE_A_PORT, 'POST', '/users', {
         appId: 'test-2core',
         username: testUser,
         password: 'testpassw0rd',
@@ -333,9 +336,12 @@ describe('[RG2C] Two-core integration tests', function () {
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
         language: 'en'
       });
+    });
+
+    it('[2C10] must register a user on Core A', async () => {
       // Accept 201 (created) or 200
-      assert.ok(res.status === 201 || res.status === 200,
-        `Expected 200/201 but got ${res.status}: ${JSON.stringify(res.body)}`);
+      assert.ok(registration.status === 201 || registration.status === 200,
+        `Expected 200/201 but got ${registration.status}: ${JSON.stringify(registration.body)}`);
     });
 
     it('[2C11] Core B must see the user via /reg/cores lookup', async () => {

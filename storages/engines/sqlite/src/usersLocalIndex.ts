@@ -39,18 +39,18 @@ class DBIndex {
     this.db = new SQLite3(basePath + '/user-index.db');
     await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(this.db);
 
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE TABLE IF NOT EXISTS id4name (username TEXT PRIMARY KEY, userId TEXT NOT NULL);').run();
     });
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE INDEX IF NOT EXISTS id4name_id ON id4name(userId);').run();
     });
     // Alias index (many aliases : one userId), kept apart from id4name so the
     // 1:1 username<->userId mapping stays canonical.
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE TABLE IF NOT EXISTS alias4id (alias TEXT PRIMARY KEY, userId TEXT NOT NULL);').run();
     });
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE INDEX IF NOT EXISTS alias4id_id ON alias4id(userId);').run();
     });
 
@@ -113,10 +113,10 @@ class DBIndex {
   }
 
   async deleteAll (): Promise<void> {
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       return this.queryDeleteAll.run();
     });
-    concurrentSafeWrite.execute(() => {
+    await concurrentSafeWrite.execute(() => {
       return this.queryDeleteAllAliases.run();
     });
   }

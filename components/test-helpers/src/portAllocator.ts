@@ -105,4 +105,49 @@ function reset (basePort: any) {
   nextPort = basePort || (BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN)));
 }
 
-export { allocatePort, allocatePorts, isPortAvailable, reset };
+type ListenKey = 'port' | 'hfsPort' | 'previewsPort';
+type WorkerPorts = { hfsPort?: number, previewsPort?: number };
+
+let deadEndPortPromise: Promise<number> | null = null;
+
+/**
+ * A port held by this process that drops every connection, for worker keys
+ * that must lead nowhere: an allocated-but-unbound port could be taken by
+ * another test process meanwhile.
+ */
+function deadEndPort (): Promise<number> {
+  if (deadEndPortPromise == null) {
+    deadEndPortPromise = new Promise((resolve, reject) => {
+      const server = net.createServer((socket: { destroy: () => void }) => socket.destroy());
+      server.on('error', (err: Error) => {
+        deadEndPortPromise = null; // let the next caller try again
+        reject(err);
+      });
+      server.listen(0, DEFAULT_HOST, () => {
+        server.unref();
+        resolve(server.address().port);
+      });
+    });
+  }
+  return deadEndPortPromise;
+}
+
+/**
+ * The `http` port keys of a spawned test server. The key it listens on gets
+ * `port`; `http.port` is always `port` too (a worker's url). The other worker
+ * keys get the explicit `workerPorts` value or `deadEnd`: never the server's
+ * own port, or an api-server would dispatch HFS / previews paths to itself,
+ * and never a default port that another local process may hold.
+ */
+function childPortSettings (port: number, deadEnd: number, listenKey: ListenKey = 'port', workerPorts: WorkerPorts = {}) {
+  const settings: { port: number, hfsPort: number, previewsPort: number } = {
+    port,
+    hfsPort: workerPorts.hfsPort ?? deadEnd,
+    previewsPort: workerPorts.previewsPort ?? deadEnd
+  };
+  settings[listenKey] = port;
+  return settings;
+}
+
+export { allocatePort, allocatePorts, isPortAvailable, reset, childPortSettings, deadEndPort };
+export type { ListenKey, WorkerPorts };
