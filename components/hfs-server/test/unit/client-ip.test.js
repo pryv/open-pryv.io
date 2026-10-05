@@ -7,7 +7,7 @@
 
 /**
  * HF requests build a method context to resolve the access. Its source must
- * carry the requesting client's ip, taken like the API server takes it,
+ * carry the requesting client's ip, resolved like the API server resolves it,
  * not a placeholder.
  */
 
@@ -24,9 +24,12 @@ const STOP = new Error('stop after capture');
 
 describe('[HFIP] HF series client ip', () => {
   describe('[HFI1] requestClientIp', () => {
-    it('[HFI2] prefers the X-Forwarded-For header set by the front proxy', () => {
-      const req = { headers: { 'x-forwarded-for': '203.0.113.7' }, socket: { remoteAddress: '10.0.0.1' } };
-      assert.strictEqual(requestClientIp(req), '203.0.113.7');
+    it('[HFI2] reads X-Forwarded-For from a trusted (loopback) peer, ignores it from any other', () => {
+      // The core's own HFS dispatcher reaches the worker over loopback.
+      const viaDispatcher = { headers: { 'x-forwarded-for': '203.0.113.7' }, socket: { remoteAddress: '127.0.0.1' } };
+      assert.strictEqual(requestClientIp(viaDispatcher), '203.0.113.7');
+      const direct = { headers: { 'x-forwarded-for': '203.0.113.7' }, socket: { remoteAddress: '10.0.0.1' } };
+      assert.strictEqual(requestClientIp(direct), '10.0.0.1', 'an untrusted peer cannot choose its address');
     });
 
     it('[HFI3] falls back to the socket peer address, then to null', () => {
@@ -79,10 +82,12 @@ describe('[HFIP] HF series client ip', () => {
       return new Promise((resolve) => handler(req, {}, (err) => resolve(err)));
     }
     const headers = { authorization: 'token', 'x-forwarded-for': '203.0.113.7' };
+    // As forwarded by the core's HFS dispatcher: a loopback peer, trusted by default.
+    const socket = { remoteAddress: '127.0.0.1' };
 
     it('[HFI8] store and query series data', async () => {
       const { calls, controller } = setup();
-      const req = { params: { user_name: 'user', event_id: 'event' }, headers, query: {}, body: {} };
+      const req = { params: { user_name: 'user', event_id: 'event' }, headers, socket, query: {}, body: {} };
       assert.strictEqual(await call(controller.storeSeriesData, req), STOP);
       assert.strictEqual(await call(controller.querySeriesData, req), STOP);
       assert.deepStrictEqual(calls.map(c => c[3]), ['203.0.113.7', '203.0.113.7']);
@@ -92,6 +97,7 @@ describe('[HFIP] HF series client ip', () => {
       const { calls, controller } = setup();
       const req = {
         params: { user_name: 'user' },
+        socket,
         headers,
         body: { format: 'seriesBatch', data: [{ eventId: 'event', data: { format: 'flatJSON', fields: ['deltaTime', 'value'], points: [[0, 1]] } }] }
       };

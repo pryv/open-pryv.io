@@ -13,20 +13,29 @@
  * transport's own view. Query and fragment are dropped — htu is
  * compared without them (RFC 9449 §4.3).
  *
- * TRUST ASSUMPTION: X-Forwarded-Host / X-Forwarded-Proto are taken as
- * authoritative for the client-facing host/scheme. A deployment
- * accepting DPoP MUST therefore run behind a proxy that overwrites these
- * headers with the real values (see the `oauth.dpop` config comment) —
- * the same trusted-proxy posture required for client-IP attribution.
- * The path segment comes from `originalUrl`, not headers, so
+ * X-Forwarded-Host / X-Forwarded-Proto are only read when the request
+ * comes from a trusted proxy (`http.trustedProxies`, the same list as the
+ * client address in the audit log). From any other peer they are ignored
+ * and the transport's own view is used (`Host`, and `req.protocol`, which
+ * express computes with the same trust setting): otherwise a client
+ * reaching the core directly could make a proof minted for another host
+ * pass. The path segment comes from `originalUrl`, not headers, so
  * cross-endpoint replay stays blocked by the path compare regardless.
  */
+import { trustedProxyFn } from 'middleware/src/clientIp.ts';
 
 export interface UriSource {
   protocol?: string;
   originalUrl?: string;
   url?: string;
   headers?: Record<string, unknown>;
+  socket?: { remoteAddress?: string; encrypted?: boolean } | null;
+  connection?: { remoteAddress?: string } | null;
+}
+
+function fromTrustedProxy (req: UriSource): boolean {
+  const peer = req.socket?.remoteAddress ?? req.connection?.remoteAddress;
+  return peer != null && trustedProxyFn()(peer, 0);
 }
 
 function firstHeaderValue (raw: unknown): string | null {
@@ -39,8 +48,10 @@ function firstHeaderValue (raw: unknown): string | null {
 
 export function externalRequestUri (req: UriSource): string {
   const headers = req.headers ?? {};
-  const proto = firstHeaderValue(headers['x-forwarded-proto']) ?? req.protocol ?? 'http';
-  const host = firstHeaderValue(headers['x-forwarded-host']) ?? firstHeaderValue(headers.host);
+  const forwarded = fromTrustedProxy(req);
+  const ownProto = req.protocol ?? (req.socket?.encrypted ? 'https' : 'http');
+  const proto = (forwarded ? firstHeaderValue(headers['x-forwarded-proto']) : null) ?? ownProto;
+  const host = (forwarded ? firstHeaderValue(headers['x-forwarded-host']) : null) ?? firstHeaderValue(headers.host);
   if (host == null) throw new Error('cannot reconstruct the request URI: no Host header');
   const rawPath = req.originalUrl ?? req.url ?? '/';
   const path = rawPath.split('?')[0].split('#')[0];

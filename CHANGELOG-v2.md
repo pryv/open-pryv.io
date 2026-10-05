@@ -1,5 +1,29 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Client addresses only from trusted proxies (`http.trustedProxies`)
+
+- **Security.** The client address recorded in the audit log (`source.ip`, on API calls,
+  socket.io calls and high-frequency series) was taken from the `X-Forwarded-For` header as
+  sent, so on a core exposed directly (built-in TLS) any client could choose the address
+  recorded for it. It is now resolved with a trusted-proxy list, `http.trustedProxies` (IPs,
+  CIDRs, or `loopback` / `linklocal` / `uniquelocal`; default `['loopback']`): the header is read
+  only when the request comes from a listed proxy, from the right, and the first untrusted
+  address is the client. The core's own HFS dispatcher now hands the resolved address to the HFS
+  worker instead of the client's header.
+- **Security (DPoP).** `X-Forwarded-Host` / `X-Forwarded-Proto`, used to rebuild the URI a DPoP
+  proof must name, are read under the same rule. A client reaching the core directly can no
+  longer make a proof minted for another host pass.
+- **BREAKING for proxies that are not on the same host.** A proxy on another host, or one
+  reaching the core over a Docker bridge (Dokku's nginx arrives from `172.17.0.1`), must be added
+  to `http.trustedProxies`, or every request is recorded with the proxy's address and DPoP
+  proofs naming the public host are refused. nginx on the same host and a directly exposed core
+  need nothing. The list in use is in the boot log; an entry that is not an IP, a CIDR or a known
+  name refuses the boot. See INSTALL.md, "Client addresses behind a proxy".
+- **Fix (previews worker).** The username-in-host rewrite is decided like the API server and the
+  HFS worker. INSTALL no longer states that previews are routed through the public port.
+
 ## 2.0.0-rc.35 - 2026-10-05
 
 ### High-frequency series on dnsLess cores with a username-looking host name

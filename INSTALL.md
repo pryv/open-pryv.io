@@ -255,7 +255,7 @@ NODE_ENV=production node bin/master.js --config override.yml
 
 At boot, a certificate whose validity window does not contain the host's clock is reported with a warning (`TLS certificate at http.ssl.certFile: local clock ... is outside the certificate validity window ...`): either the host clock is wrong or the certificate is stale. Tolerance on `notBefore`: `cluster.clockSkewSeconds` (default 30 s, `0` disables).
 
-**Note**: When using built-in HTTPS, the public API port also routes HFS series and previews traffic in-process. Clients only need access to the configured `http.port` (typically `:443`); HFS and previews stay on their internal ports (`:4000` / `:3001`) and are reached via dispatchers in front of the api-server.
+**Note**: When using built-in HTTPS, the public API port also routes HFS series traffic in-process: clients only need access to the configured `http.port` (typically `:443`), and HFS stays on its internal port (`:4000`), reached through a dispatcher in front of the api-server. Image previews are not routed this way: the previews worker listens only on its internal port (`:3001`), so previews are available to clients only where a proxy routes `/{user}/events/{id}.jpg` to it.
 
 > **HFS in standalone mode**: high-frequency series endpoints (`/{user}/events/{id}/series`, `/{user}/series/batch`) are routed from the public port to the HFS worker on `:4000` by an in-process dispatcher in api-server. Set `cluster.hfsWorkers: 1` (or more) to enable HFS; SDKs read `features.noHF` on `/service/info` to know whether the cluster serves HFS (auto-derived from `cluster.hfsWorkers` — explicit `service.features.noHF` in config takes precedence).
 >
@@ -315,6 +315,29 @@ dnsLess:
 NODE_ENV=production node bin/master.js --config override.yml
 ```
 
+### Client addresses behind a proxy (`http.trustedProxies`)
+
+The client address recorded in the audit log (`source.ip`), and the host a DPoP proof is
+checked against, come from `X-Forwarded-For` / `X-Forwarded-Host` / `X-Forwarded-Proto` only
+when the request arrives from a proxy listed in `http.trustedProxies` (IPs, CIDRs, or the names
+`loopback`, `linklocal`, `uniquelocal`). The default, `['loopback']`, covers nginx on the same
+host and the core's own HFS dispatcher: nothing to configure. A proxy on another host, or one
+reaching the core over a Docker bridge (Dokku's nginx, for instance, arrives from `172.17.0.1`),
+must be listed, or every request is recorded with the proxy's address:
+
+```yaml
+http:
+  trustedProxies: ['loopback', '172.17.0.1']
+```
+
+Make the proxy overwrite all three headers with what it sees, never append to them or pass the
+client's own through: `proxy_set_header X-Forwarded-For $remote_addr;`, `proxy_set_header
+X-Forwarded-Host $http_host;`, `proxy_set_header X-Forwarded-Proto $scheme;` (a trusted proxy
+that forwards a client-sent `X-Forwarded-Host` lets that client pick the host a DPoP proof is
+checked against). A core exposed directly (Options B and C)
+keeps the default: clients cannot choose the address recorded for them. The boot log names the
+list in use (`client address attribution: X-Forwarded-For trusted from [...]`).
+
 ### Ports exposed by master.js
 
 | Port | Service | Description |
@@ -349,6 +372,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -360,6 +384,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -372,6 +397,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host 127.0.0.1:4000;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -380,6 +406,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host 127.0.0.1:4000;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }

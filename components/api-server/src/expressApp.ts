@@ -12,6 +12,7 @@ const middleware = require('middleware');
 const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
 const { usernameInHost, ignoredUsernameSubdomains } = require('business/src/usernameSubdomains.ts');
+const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -19,6 +20,10 @@ const { usernameInHost, ignoredUsernameSubdomains } = require('business/src/user
 async function expressAppInit (logging: { getLogger: (name: string) => unknown }) {
   const config = await getConfig();
   const app = express(); // register common middleware
+  // Client addresses (audit source.ip, req.ip) honour X-Forwarded-For only from
+  // http.trustedProxies.
+  configureTrustedProxies(config.get('http:trustedProxies'));
+  app.set('trust proxy', expressTrustProxy);
   const commonHeadersMiddleware = await middleware.commonHeaders();
   const requestTraceMiddleware = middleware.requestTrace(app, logging);
   // register common middleware

@@ -617,6 +617,14 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # image for the complete field surface + defaults.
 # ─────────────────────────────────────────────────────────────────────
 
+# # http.trustedProxies: whose X-Forwarded-For is believed for the client
+# # address recorded in the audit log. The default (loopback) is right for a
+# # core exposed directly and for a proxy on the same host. A proxy reaching
+# # the core over a Docker bridge (e.g. Dokku nginx) or from another host must
+# # be listed, or every request is recorded with the proxy's address.
+# http:
+#   trustedProxies: ['loopback', '172.17.0.1']   # Docker bridge gateway
+
 # # services.email — password-reset + welcome emails over in-process SMTP.
 # # Skip the wizard's microservice path unless you run a separate service-mail
 # # container. The 'in-process' method renders + sends from the api-server.
@@ -1415,7 +1423,11 @@ async function main () {
       // certs the public API + HFS + previews all route through the same
       // TLS port (in-process dispatchers per INSTALL.md Option C). With
       // tls=none we stay on the legacy :3000 plain-HTTP convention.
-      port: tlsStrategy === 'none' ? 3000 : 443
+      port: tlsStrategy === 'none' ? 3000 : 443,
+      // Only these peers' X-Forwarded-For is believed for the recorded client
+      // address (audit). Loopback covers a same-host proxy and the core's own
+      // HFS dispatcher; see the appendix for a proxy on a Docker bridge.
+      trustedProxies: ['loopback']
     },
     service: {
       name: serviceName,
@@ -1552,7 +1564,9 @@ async function main () {
       { dns: config.dns, dnsLess: config.dnsLess });
   }
 
-  const httpDoc = ['Workers bind on `port`.'];
+  const httpDoc = ['Workers bind on `port`.',
+    'trustedProxies: proxies whose X-Forwarded-For is believed for the audit client address',
+    '(loopback = same-host proxy + the core\'s HFS dispatcher; list a remote or Docker-bridge proxy).'];
   if (config.http.ssl) {
     httpDoc.push('http.ssl.{keyFile,certFile} are populated at first boot by master.js',
       '(selfSignedPlaceholder seeds them; ACME rotates them on issuance).');

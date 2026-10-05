@@ -70,7 +70,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
 
     beforeEach(function () { lastUpstreamReq = null; });
 
-    function buildAndDispatch (path, fallback, cb) {
+    function buildAndDispatch (path, fallback, cb, extraHeaders = {}) {
       const dispatcher = buildHfsIngress({
         hfsHost: '127.0.0.1',
         hfsPort: upstream.address().port,
@@ -84,7 +84,7 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
           port,
           method: 'POST',
           path,
-          headers: { 'content-type': 'application/json' }
+          headers: Object.assign({ 'content-type': 'application/json' }, extraHeaders)
         }, (res) => {
           let body = '';
           res.on('data', (c) => { body += c; });
@@ -107,6 +107,40 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
         assert.strictEqual(lastUpstreamReq.url, '/alice/events/cuid-1/series');
         assert.strictEqual(lastUpstreamReq.method, 'POST');
         done();
+      });
+    });
+
+    // The worker trusts this hop (loopback): it must receive the client address
+    // resolved here, never the client's own X-Forwarded-For.
+    describe('[HF2X] X-Forwarded-For handed to the worker', function () {
+      const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
+      const saved = currentTrustedProxies();
+      const noFallback = () => assert.fail('fallback must not be called for HFS path');
+      afterEach(function () { configureTrustedProxies(saved); });
+
+      it('[HF2D] no client header: the worker gets the peer address', function (done) {
+        buildAndDispatch('/alice/events/cuid-1/series', noFallback, function (err) {
+          if (err) return done(err);
+          assert.strictEqual(lastUpstreamReq.headers['x-forwarded-for'], '127.0.0.1');
+          done();
+        });
+      });
+
+      it('[HF2E] a chain from a trusted peer is replaced by its resolved client, not appended to', function (done) {
+        buildAndDispatch('/alice/events/cuid-1/series', noFallback, function (err) {
+          if (err) return done(err);
+          assert.strictEqual(lastUpstreamReq.headers['x-forwarded-for'], '203.0.113.7');
+          done();
+        }, { 'x-forwarded-for': '1.2.3.4, 203.0.113.7' });
+      });
+
+      it('[HF2F] trusting nobody: a client header is overwritten with the peer', function (done) {
+        configureTrustedProxies([]);
+        buildAndDispatch('/alice/events/cuid-1/series', noFallback, function (err) {
+          if (err) return done(err);
+          assert.strictEqual(lastUpstreamReq.headers['x-forwarded-for'], '127.0.0.1');
+          done();
+        }, { 'x-forwarded-for': '1.2.3.4' });
       });
     });
 

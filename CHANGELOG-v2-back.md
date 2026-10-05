@@ -1,5 +1,30 @@
 # Changelog - Internal (no API impact)
 
+## Client address resolution shared by every consumer
+
+- `components/middleware/src/clientIp.ts` (`proxy-addr` 2.0.7, now a declared dependency; it was
+  already installed through express): `configureTrustedProxies`, `clientIp`, `trustedProxyFn`,
+  `checkTrustedProxiesConfig`. Used by `initContext`, `setMinimalMethodContext`, socket.io, the HFS
+  dispatcher (`hfsIngress.ts` rewrites `X-Forwarded-For`), the HFS worker (`requestClientIp`) and
+  `oauth2/src/externalUri.ts`; the API, HFS and previews express apps set `trust proxy` to the same
+  function, so `req.ip` / `req.protocol` agree. Config validation (`checkTrustedProxies`, plus a
+  warning when loopback is left out while HFS workers run) and the offline `bin/check-config.js`
+  mirror; install wizard template and appendix.
+- socket.io reads the peer from the handshake (`socket.handshake.address`, recorded by engine.io
+  at connect time), not from the handshake request's socket, which may be closed by the time a
+  call is audited. The HFS dispatcher also drops `X-Forwarded-Host` / `X-Forwarded-Proto` from an
+  untrusted peer. Express's `trust proxy` defers to the current list (`expressTrustProxy`).
+- nginx sample and INSTALL set `X-Forwarded-Host $http_host` next to `X-Forwarded-For`: a
+  trusted proxy that passes a client's own `X-Forwarded-Host` through would let it pick the DPoP
+  host.
+- Previews worker: the username-in-host rewrite is decided like the API server and the HFS
+  worker (`usernameSubdomains.ts`); INSTALL no longer claims previews are routed in-process.
+- `config/production-config.yml`: the leftover `storages.engines.mongodb` block is removed
+  (MongoDB is no longer an engine).
+- Tests: `[CLIP]` resolver, `[CVTP]` validation, `[ASIP]` audit source end to end, `[HF2X]` HFS
+  dispatcher header, `[SKCI]` socket.io audit source, `[EXUR]` + `[DPN13]` DPoP URI; `[HFI2]`
+  updated (an untrusted peer now wins).
+
 ## `node-forge` declared
 
 - The self-signed placeholder certificate (`components/business/src/acme/selfSignedPlaceholder.ts`)

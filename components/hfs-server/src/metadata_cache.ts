@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { IncomingHttpHeaders } from 'node:http';
+import { clientIp } from 'middleware/src/clientIp.ts';
 const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
@@ -272,15 +274,12 @@ async function definePermissions (access: AccessModel, event: EventModel) {
   }
 }
 /**
- * Client ip of an HF request, taken the same way the API server's method
- * context takes it: the `X-Forwarded-For` header set by the front proxy,
- * else the socket peer address.
+ * Client ip of an HF request, resolved the same way the API server's method
+ * context resolves it: `X-Forwarded-For` only from a trusted proxy (the core's
+ * own HFS dispatcher reaches this worker over loopback), else the socket peer.
  */
-function requestClientIp (req: { headers: Record<string, unknown>; socket?: { remoteAddress?: string } }): string | null {
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff !== '') return xff;
-  if (Array.isArray(xff) && xff.length > 0) return String(xff[0]);
-  return req.socket?.remoteAddress ?? null;
+function requestClientIp (req: { headers: IncomingHttpHeaders; socket?: { remoteAddress?: string } }): string | null {
+  return clientIp(req);
 }
 
 export { MetadataLoader, MetadataCache, requestClientIp };

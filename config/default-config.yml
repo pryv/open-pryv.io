@@ -23,6 +23,14 @@ http:
   port: 3000
   hfsPort: 4000
   previewsPort: 3001
+  # Proxies whose X-Forwarded-For header is believed when recording the client
+  # address (audit `source.ip`). IPs, CIDRs, or the names loopback, linklocal,
+  # uniquelocal. The default covers a proxy on the same host and the core's own
+  # HFS dispatcher. A core exposed directly keeps it: clients cannot choose
+  # their recorded address. Behind a proxy on another host or a Docker bridge
+  # (e.g. Dokku), list it: ['172.17.0.1'], ['loopback', '10.0.0.0/8'].
+  # [] = never read the header.
+  trustedProxies: ['loopback']
 
 # === PER-CORE / BOOTSTRAP: storage engines ===
 # Engine choice is per-core (flexibility for staging/migration).
@@ -742,15 +750,15 @@ oauth:
   #
   # ⚠️ DEPLOYMENT REQUIREMENT: a DPoP proof binds to the CLIENT-FACING
   # request URI (method + scheme + host + path). The server reconstructs
-  # that URI from the X-Forwarded-Host / X-Forwarded-Proto headers,
-  # falling back to the connection's own host/proto. So any deployment
-  # that accepts DPoP MUST sit behind a reverse proxy that OVERWRITES
-  # (not appends to) these headers with the true client-facing values —
-  # otherwise a client could spoof X-Forwarded-Host to satisfy a proof
-  # minted for another host, and a proxy that omits X-Forwarded-Proto on
-  # a TLS-terminated connection makes every proof's https scheme mismatch
-  # (legitimate clients get 403). This is the same trusted-proxy posture
-  # already required for correct client-IP and rate-limit attribution.
+  # that URI from the X-Forwarded-Host / X-Forwarded-Proto headers when the
+  # request comes from a proxy listed in http.trustedProxies, and from the
+  # connection's own host/proto otherwise (so a client reaching the core
+  # directly cannot pick the host its proof is checked against). Behind a
+  # proxy, list it in http.trustedProxies (loopback, the default, covers a
+  # proxy on the same host) and make it OVERWRITE these headers with the
+  # true client-facing values: a proxy that omits X-Forwarded-Proto on a
+  # TLS-terminated connection makes every proof's https scheme mismatch
+  # (legitimate clients get 403).
   dpop:
     clockSkewSeconds: 120          # seconds (± around now)
     # Operator revoke-by-key propagation: `bin/oauth-client.js revoke-key <jkt>`

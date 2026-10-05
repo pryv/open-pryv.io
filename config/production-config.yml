@@ -3,14 +3,9 @@ env: production
 http:
   ip: 127.0.0.1
   port: 9000
+  trustedProxies: ['loopback']   # see default-config.yml
 storages:
   engines:
-    mongodb:
-      authUser: api-server
-      authPassword: OVERRIDE ME
-      host: 127.0.0.1
-      port: 27017
-      name: pryv-node
     filesystem:
       # Attachments co-locate under the user local directory
       # (storages:engines:sqlite:path); no separate attachments directory.
