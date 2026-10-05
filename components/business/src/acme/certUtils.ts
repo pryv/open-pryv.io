@@ -45,6 +45,62 @@ function parseValidity (pem: string): { issuedAt: number; expiresAt: number; sub
   };
 }
 
+type ValidityVerdict =
+  | { ok: true; notBefore?: number; notAfter?: number }
+  | {
+    ok: false;
+    reason: 'not-yet-valid' | 'expired' | 'unparseable';
+    notBefore?: number;
+    notAfter?: number;
+    nowMs: number;
+    detail: string;
+  };
+
+/**
+ * Check that the local clock falls inside a certificate's validity window.
+ * A bundle is judged on its leaf. `skewMs` tolerates a certificate whose
+ * notBefore is slightly ahead of the local clock (issuers backdate it, but a
+ * few seconds of lead must not refuse a good certificate); an expired
+ * certificate is refused strictly.
+ */
+function checkValidityWindow (pem: string, { nowMs = Date.now(), skewMs = 30_000 }: { nowMs?: number; skewMs?: number } = {}): ValidityVerdict {
+  let notBefore: number;
+  let notAfter: number;
+  try {
+    const leafPem = splitCertChain(pem).leafPem;
+    const validity = parseValidity(leafPem);
+    notBefore = validity.issuedAt;
+    notAfter = validity.expiresAt;
+  } catch (err) {
+    return { ok: false, reason: 'unparseable', nowMs, detail: 'certificate cannot be parsed: ' + (err as Error).message };
+  }
+  let reason: 'not-yet-valid' | 'expired' | null = null;
+  if (notBefore > nowMs + skewMs) reason = 'not-yet-valid';
+  else if (notAfter < nowMs) reason = 'expired';
+  if (reason == null) return { ok: true, notBefore, notAfter };
+  const iso = (ms: number) => new Date(ms).toISOString();
+  return {
+    ok: false,
+    reason,
+    notBefore,
+    notAfter,
+    nowMs,
+    detail: `local clock ${iso(nowMs)} is outside the certificate validity window [${iso(notBefore)}, ${iso(notAfter)}]: either this host's clock is wrong or the stored certificate is stale`
+  };
+}
+
+const DEFAULT_CLOCK_SKEW_SECONDS = 30;
+
+/**
+ * `cluster.clockSkewSeconds` as a number of seconds; 0 disables the check.
+ * Anything that is not a number >= 0 falls back to the default so a typo
+ * never silently disables it.
+ */
+function clockSkewSecondsFromConfig (value: unknown): number {
+  const seconds = Number(value ?? DEFAULT_CLOCK_SKEW_SECONDS);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_CLOCK_SKEW_SECONDS;
+}
+
 /**
  * Derive a filesystem-safe directory name for a hostname. Wildcards
  * ('*.domain.com') become 'wildcard.domain.com' — matches the letsEncrypt
@@ -59,4 +115,5 @@ function hostnameToDirName (hostname: string): string {
   return hostname;
 }
 
-export { splitCertChain, parseValidity, hostnameToDirName };
+export { splitCertChain, parseValidity, checkValidityWindow, clockSkewSecondsFromConfig, hostnameToDirName };
+export type { ValidityVerdict };

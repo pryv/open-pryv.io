@@ -15,6 +15,11 @@
 //   node bin/master.js --bootstrap <bundle-file> --bootstrap-passphrase-file <path>
 //                      [--bootstrap-tls-dir <path>] [--bootstrap-config-dir <path>]
 //                      [--bootstrap-ack-trust-system-ca] [--bootstrap-as-voter]
+//                      [--bootstrap-clock-skew-seconds <n>]
+//
+// --bootstrap-clock-skew-seconds: before the ack, compare this host's clock
+//   with the issuing core's and refuse the join (exit 1, join token not used)
+//   when they differ by more than <n> seconds. Default 30; 0 disables.
 //
 // --bootstrap-ack-trust-system-ca: verify the ack POST against the system CA
 //   store instead of pinning the cluster CA. Needed when the existing core's
@@ -857,13 +862,20 @@ function parseBootstrapArgs (argv) {
   const out = { enabled: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-voter') { out.asVoter = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; }
+    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-voter') { out.asVoter = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; } else if (a === '--bootstrap-clock-skew-seconds') { out.clockSkewSeconds = argv[++i]; }
   }
   if (out.enabled) {
     if (!out.bundlePath) throw new Error('--bootstrap requires <bundle-file>');
     if (!out.passphraseFile) throw new Error('--bootstrap requires --bootstrap-passphrase-file');
     out.tlsDir = out.tlsDir || DEFAULT_TLS_DIR;
     out.configDir = out.configDir || BASE_CONFIG_DIR;
+    if (out.clockSkewSeconds != null) {
+      const seconds = Number(out.clockSkewSeconds);
+      if (out.clockSkewSeconds === '' || !Number.isFinite(seconds) || seconds < 0) {
+        throw new Error('--bootstrap-clock-skew-seconds requires a number of seconds >= 0');
+      }
+      out.clockSkewSeconds = seconds;
+    }
   }
   return out;
 }
@@ -880,6 +892,8 @@ async function runBootstrap (args) {
     // Default to non-voter join (safe by default). --bootstrap-as-voter opts
     // into a voting node for >=3-core HA clusters.
     asNonVoter: args.asVoter !== true,
+    // Undefined keeps the consumer's default (30 s); 0 disables the check.
+    clockSkewSeconds: args.clockSkewSeconds,
     log: (m) => console.log('[bootstrap] ' + m)
   });
   console.log('[bootstrap] joined cluster as ' + result.coreId);

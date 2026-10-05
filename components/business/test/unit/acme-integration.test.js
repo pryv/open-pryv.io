@@ -158,7 +158,7 @@ describe('[ACMEINT] ACME integration (rqlite + real cert material)', function ()
       platformDB: db, atRestKey, email: 'ops@ex.com', acmeLib
     });
     const fileMaterializer = new FileMaterializer({
-      certRenewer, tlsDir: tmp, hostname: 'integration.test', log: () => {}
+      certRenewer, tlsDir: tmp, hostname: 'integration.test', log: () => {}, validateCert: () => ({ ok: true })
     });
     const dnsWriter = new PlatformDBDnsWriter({ platformDB: db, waitMs: 0 });
 

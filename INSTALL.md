@@ -253,6 +253,8 @@ dnsLess:
 NODE_ENV=production node bin/master.js --config override.yml
 ```
 
+At boot, a certificate whose validity window does not contain the host's clock is reported with a warning (`TLS certificate at http.ssl.certFile: local clock ... is outside the certificate validity window ...`): either the host clock is wrong or the certificate is stale. Tolerance on `notBefore`: `cluster.clockSkewSeconds` (default 30 s, `0` disables).
+
 **Note**: When using built-in HTTPS, the public API port also routes HFS series and previews traffic in-process. Clients only need access to the configured `http.port` (typically `:443`); HFS and previews stay on their internal ports (`:4000` / `:3001`) and are reached via dispatchers in front of the api-server.
 
 > **HFS in standalone mode**: high-frequency series endpoints (`/{user}/events/{id}/series`, `/{user}/series/batch`) are routed from the public port to the HFS worker on `:4000` by an in-process dispatcher in api-server. Set `cluster.hfsWorkers: 1` (or more) to enable HFS; SDKs read `features.noHF` on `/service/info` to know whether the cluster serves HFS (auto-derived from `cluster.hfsWorkers` — explicit `service.features.noHF` in config takes precedence).
@@ -289,6 +291,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 Paste the resulting string into the YAML (mode 0600 on the override file — it carries admin-level material). In a multi-core deployment every core must have the **same** `atRestKey`; `certRenewer: true` is set on exactly one core (usually the cluster CA holder).
 
 The core derives hostnames from your topology — wildcards for `dns.domain`, single host for `dnsLess.publicUrl` or `core.url` — so there is no separate `hostnames` list to keep in sync. The renewer handles initial issuance, renewal (default 30 days before expiry), and cluster-wide replication via rqlite. Cert files land at `var-pryv/tls/<hostname>/{fullchain.pem,privkey.pem}` (wildcards become `wildcard.<apex>`). Operators with a reverse proxy can point `letsEncrypt.onRotateScript` at a script (`nginx -s reload`, `systemctl reload caddy`, …) — see `SINGLE-TO-MULTIPLE.md` for the multi-core walkthrough and the Cluster security section below.
+
+A renewed certificate is written to disk and hot-swapped only when the host's clock falls inside its validity window (tolerance `cluster.clockSkewSeconds`, default 30 s, `0` disables). Otherwise the core logs `refusing to materialize <hostname>: ...`, keeps serving the previous certificate and retries every minute, so fixing the clock (chronyd / ntpd) is enough to recover.
 
 When `letsEncrypt.enabled: false` (the default), everything in Options A and B works exactly as before.
 

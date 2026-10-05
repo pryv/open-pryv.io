@@ -27,6 +27,9 @@ function makeFakeRenewer (sequence) {
   };
 }
 
+// The fixtures below use placeholder PEM strings: skip the validity-window check.
+const ALWAYS_VALID = () => ({ ok: true });
+
 const mkCert = (leaf, key, issuedAt = 1000, expiresAt = 2000) => ({
   certPem: leaf,
   chainPem: '',
@@ -60,7 +63,8 @@ describe('[FILEMAT] FileMaterializer', () => {
         tlsDir: tmp,
         hostname: '*.example.com',
         onRotate: async (c, k, h) => { rotated = { c, k, h }; },
-        log: () => {}
+        log: () => {},
+        validateCert: ALWAYS_VALID
       });
       const r = await fm.checkOnce();
       assert.equal(r.rotated, true);
@@ -77,7 +81,7 @@ describe('[FILEMAT] FileMaterializer', () => {
       const renewer = makeFakeRenewer([{
         'host.test': { certPem: 'LEAF', chainPem: 'CHAIN', keyPem: 'K', issuedAt: 1, expiresAt: 2 }
       }]);
-      const fm = new FileMaterializer({ certRenewer: renewer, tlsDir: tmp, hostname: 'host.test', log: () => {} });
+      const fm = new FileMaterializer({ certRenewer: renewer, tlsDir: tmp, hostname: 'host.test', log: () => {}, validateCert: ALWAYS_VALID });
       await fm.checkOnce();
       assert.equal(fs.readFileSync(fm.certPath, 'utf8'), 'LEAFCHAIN');
     });
@@ -91,7 +95,8 @@ describe('[FILEMAT] FileMaterializer', () => {
         tlsDir: tmp,
         hostname: 'h.test',
         onRotate: async () => { hookCalls++; },
-        log: () => {}
+        log: () => {},
+        validateCert: ALWAYS_VALID
       });
       const r1 = await fm.checkOnce();
       const r2 = await fm.checkOnce();
@@ -112,7 +117,8 @@ describe('[FILEMAT] FileMaterializer', () => {
         tlsDir: tmp,
         hostname: 'h.test',
         onRotate: async () => { rotations.push('rotated'); },
-        log: () => {}
+        log: () => {},
+        validateCert: ALWAYS_VALID
       });
       await fm.checkOnce();
       const r = await fm.checkOnce();
@@ -126,7 +132,7 @@ describe('[FILEMAT] FileMaterializer', () => {
     it('returns { rotated:false, reason:"no-cert-in-platformdb" } when there\'s nothing stored', async () => {
       const renewer = makeFakeRenewer([null]);
       const fm = new FileMaterializer({
-        certRenewer: renewer, tlsDir: tmp, hostname: 'h.test', log: () => {}
+        certRenewer: renewer, tlsDir: tmp, hostname: 'h.test', log: () => {}, validateCert: ALWAYS_VALID
       });
       const r = await fm.checkOnce();
       assert.equal(r.rotated, false);
@@ -141,13 +147,77 @@ describe('[FILEMAT] FileMaterializer', () => {
         tlsDir: tmp,
         hostname: 'h.test',
         onRotate: async () => { throw new Error('reload-nginx failed'); },
-        log: () => {}
+        log: () => {},
+        validateCert: ALWAYS_VALID
       });
       // Should NOT throw
       const r = await fm.checkOnce();
       assert.equal(r.rotated, true);
       assert.equal(fs.readFileSync(fm.certPath, 'utf8'), 'LEAF');
     });
+  });
+});
+
+describe('[CKFM] FileMaterializer validity-window gate', () => {
+  let tmp;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-fm-')); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('[CKF1] writes nothing and skips onRotate while the cert is outside the window, then self-heals', async () => {
+    const c = mkCert('LEAF', 'KEY');
+    const renewer = makeFakeRenewer([{ 'h.test': c }]);
+    const logs = [];
+    let hookCalls = 0;
+    let verdict = { ok: false, reason: 'not-yet-valid', nowMs: 0, detail: 'clock is behind' };
+    const fm = new FileMaterializer({
+      certRenewer: renewer,
+      tlsDir: tmp,
+      hostname: 'h.test',
+      onRotate: async () => { hookCalls++; },
+      log: (msg) => logs.push(msg),
+      validateCert: () => verdict
+    });
+
+    const r1 = await fm.checkOnce();
+    const r2 = await fm.checkOnce();
+    assert.deepEqual(r1, { rotated: false, reason: 'validity-not-yet-valid' });
+    assert.deepEqual(r2, { rotated: false, reason: 'validity-not-yet-valid' });
+    assert.equal(fs.existsSync(fm.certPath), false);
+    assert.equal(fs.existsSync(fm.keyPath), false);
+    assert.equal(hookCalls, 0);
+    const refusals = logs.filter((l) => l.startsWith('refusing to materialize h.test: clock is behind'));
+    assert.equal(refusals.length, 1, 'refusal logged once per cert: ' + JSON.stringify(logs));
+
+    verdict = { ok: true };
+    const r3 = await fm.checkOnce();
+    assert.equal(r3.rotated, true);
+    assert.equal(r3.reason, 'initial-write');
+    assert.equal(fs.readFileSync(fm.certPath, 'utf8'), 'LEAF');
+    assert.equal(hookCalls, 1);
+  });
+
+  it('[CKF2] keeps the previous on-disk cert when a refused cert arrives', async () => {
+    const renewer = makeFakeRenewer([{ 'h.test': mkCert('OLD', 'K1') }, { 'h.test': mkCert('NEW', 'K2') }]);
+    const fm = new FileMaterializer({
+      certRenewer: renewer,
+      tlsDir: tmp,
+      hostname: 'h.test',
+      log: () => {},
+      validateCert: (pem) => pem === 'OLD' ? { ok: true } : { ok: false, reason: 'expired', nowMs: 0, detail: 'expired' }
+    });
+    await fm.checkOnce();
+    const r = await fm.checkOnce();
+    assert.deepEqual(r, { rotated: false, reason: 'validity-expired' });
+    assert.equal(fs.readFileSync(fm.certPath, 'utf8'), 'OLD');
+    assert.equal(fs.readFileSync(fm.keyPath, 'utf8'), 'K1');
+  });
+
+  it('[CKF3] the default validator refuses an unparseable cert', async () => {
+    const renewer = makeFakeRenewer([{ 'h.test': mkCert('LEAF', 'KEY') }]);
+    const fm = new FileMaterializer({ certRenewer: renewer, tlsDir: tmp, hostname: 'h.test', log: () => {} });
+    const r = await fm.checkOnce();
+    assert.deepEqual(r, { rotated: false, reason: 'validity-unparseable' });
+    assert.equal(fs.existsSync(fm.certPath), false);
   });
 });
 

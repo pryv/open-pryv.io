@@ -42,6 +42,8 @@ interface HttpResponse {
   body: unknown;
 }
 type HttpClient = (url: string, payload: Record<string, unknown>, caCertPem: string) => Promise<HttpResponse>;
+type ClockProbeResult = { serverTimeMs: number; rttMs: number; localMs: number } | null;
+type ClockProbe = (originUrl: string, caCertPem: string) => Promise<ClockProbeResult>;
 
 interface ConsumeOpts {
   bundlePath: string;
@@ -52,6 +54,8 @@ interface ConsumeOpts {
   httpClient?: HttpClient;
   trustSystemCa?: boolean;
   asNonVoter?: boolean;
+  clockSkewSeconds?: number;
+  clockProbe?: ClockProbe;
   log?: (msg: string) => void;
 }
 
@@ -71,6 +75,11 @@ interface ConsumeResult {
  * @param opts.tlsDir
  * @param [opts.httpClient] - (url, body, caCertPem) => Promise<{ statusCode, body }>;
  *                                       defaults to a CA-pinned node https POST
+ * @param [opts.clockSkewSeconds] - refuse the join (before the ack) when this
+ *                                  core's clock differs from the issuing core's
+ *                                  by more; default 30, 0 disables
+ * @param [opts.clockProbe] - (originUrl, caCertPem) => Promise<{ serverTimeMs, rttMs, localMs } | null>;
+ *                            defaults to a GET of the issuing core's root
  * @param [opts.log] - logger; default = console.log
  *   coreId: string,
  *   ackResponse: Object,
@@ -85,6 +94,8 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     httpClient = defaultHttpClient,
     trustSystemCa = false,
     asNonVoter = true,
+    clockSkewSeconds = 30,
+    clockProbe = defaultClockProbe,
     log = (m: string) => console.log('[bootstrap] ' + m)
   } = opts || ({} as ConsumeOpts);
 
@@ -126,6 +137,13 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     log('ack-trust-system-ca: verifying ack against the system CA store ' +
       '(transport trust = DNS + public CA; join token remains the authenticator)');
   }
+
+  // Check this core's clock against the issuing core's BEFORE the ack: once
+  // acked, the token is burned and the cluster considers this core up.
+  await checkClockSkew({
+    origin: new URL(applied.ackUrl).origin, caCertPem: ackCa, clockSkewSeconds, clockProbe, log
+  });
+
   log(`Acking to ${applied.ackUrl} ...`);
   const ackResponse = await httpClient(
     applied.ackUrl,
@@ -162,6 +180,79 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     tlsPaths: applied.tlsPaths,
     bundleDeleted
   };
+}
+
+async function checkClockSkew ({ origin, caCertPem, clockSkewSeconds, clockProbe, log }: { origin: string; caCertPem: string; clockSkewSeconds: number; clockProbe: ClockProbe; log: (msg: string) => void }): Promise<void> {
+  if (!(clockSkewSeconds > 0)) {
+    log('clock-skew check skipped: disabled (--bootstrap-clock-skew-seconds 0)');
+    return;
+  }
+  let probe: ClockProbeResult;
+  try {
+    probe = await clockProbe(origin + '/', caCertPem);
+  } catch (err) {
+    throw new Error(`clock probe GET ${origin}/ failed: ${(err as Error).message}`);
+  }
+  if (probe == null) {
+    log(`clock-skew check skipped: no server time in the answer from ${origin}`);
+    return;
+  }
+  const skewMs = probe.localMs - probe.serverTimeMs;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const skewText = (skewMs >= 0 ? '+' : '-') + (Math.abs(skewMs) / 1000).toFixed(1) + 's';
+  const facts = `local=${iso(probe.localMs)} issuer=${iso(probe.serverTimeMs)} rtt=${probe.rttMs}ms`;
+  if (Math.abs(skewMs) > clockSkewSeconds * 1000) {
+    log(`clock skew of ${skewText} vs the issuing core ${origin} exceeds ${clockSkewSeconds}s (${facts}). ` +
+      'Fix this host\'s clock (chronyd/ntpd) and re-run --bootstrap; raise ' +
+      '--bootstrap-clock-skew-seconds or pass 0 to override.');
+    throw new Error(`clock skew of ${skewText} vs the issuing core exceeds ${clockSkewSeconds}s; the join token was not used`);
+  }
+  log(`clock check vs ${origin}: skew=${skewText} ${facts} threshold=${clockSkewSeconds}s`);
+}
+
+/**
+ * Default clockProbe: GET the issuing core's root with `Accept:
+ * application/json` (same transport trust as the ack) and read
+ * `meta.serverTime` (Unix seconds), falling back to the `Date` header.
+ * The local time is the midpoint of the request. Resolves null when the
+ * answer carries no server time; rejects on transport errors.
+ */
+function defaultClockProbe (originUrl: string, caCertPem: string): Promise<ClockProbeResult> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(originUrl);
+    const isHttps = u.protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const options: Record<string, unknown> = {
+      method: 'GET',
+      hostname: u.hostname,
+      port: u.port || (isHttps ? 443 : 80),
+      path: u.pathname + u.search,
+      headers: { accept: 'application/json' }
+    };
+    if (isHttps) {
+      if (caCertPem) options.ca = caCertPem;
+      options.rejectUnauthorized = true;
+    }
+    const t0 = Date.now();
+    const req = lib.request(options, (res: IncomingMessage) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => {
+        const t1 = Date.now();
+        const timing = { rttMs: t1 - t0, localMs: Math.round((t0 + t1) / 2) };
+        let serverTime: unknown = null;
+        try { serverTime = JSON.parse(Buffer.concat(chunks).toString('utf8'))?.meta?.serverTime; } catch { /* not JSON */ }
+        if (typeof serverTime === 'number' && Number.isFinite(serverTime)) {
+          return resolve({ serverTimeMs: Math.round(serverTime * 1000), ...timing });
+        }
+        const dateMs = Date.parse(String(res.headers.date ?? ''));
+        if (Number.isFinite(dateMs)) return resolve({ serverTimeMs: dateMs, ...timing });
+        resolve(null);
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 function resolvePassphrase ({ passphrase, passphraseFile }: { passphrase?: string; passphraseFile?: string }): string {
@@ -226,4 +317,4 @@ function defaultHttpClient (url: string, payload: Record<string, unknown>, caCer
 }
 
 // defaultHttpClient is exported so master.js can use it directly
-export { consume, defaultHttpClient };
+export { consume, defaultHttpClient, defaultClockProbe };

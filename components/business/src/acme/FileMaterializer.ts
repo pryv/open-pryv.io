@@ -32,12 +32,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { hostnameToDirName } = require('./certUtils.ts');
+const { hostnameToDirName, checkValidityWindow } = require('./certUtils.ts');
+
+import type { ValidityVerdict } from './certUtils.ts';
 
 type CertRecord = { certPem: string; chainPem?: string; keyPem: string; expiresAt: number };
 type CertRenewer = { getCertificate (hostname: string): Promise<CertRecord | null> };
 type OnRotateFn = (certPath: string, keyPath: string, hostname: string) => Promise<unknown>;
 type LogLine = (msg: string) => void;
+type ValidateCertFn = (pem: string) => ValidityVerdict;
 type WriteOpts = { mode?: number; [k: string]: unknown };
 
 class FileMaterializer {
@@ -46,6 +49,8 @@ class FileMaterializer {
   #hostname: string;
   #onRotate: OnRotateFn;
   #log: LogLine;
+  #validateCert: ValidateCertFn;
+  #lastRefusedFingerprint: string | null = null;
 
   /**
    * @param opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
@@ -53,8 +58,10 @@ class FileMaterializer {
    * @param opts.hostname     - which hostname this core cares about (e.g. '*.mc.example.com')
    * @param [opts.onRotate] - (certPath, keyPath, hostname) => Promise; called after a successful swap
    * @param [opts.log]      - default: console.log
+   * @param [opts.validateCert] - (pem) => verdict; a cert outside the local clock's validity
+   *                              window is not written. Default: checkValidityWindow, 30 s skew.
    */
-  constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: { certRenewer?: CertRenewer; tlsDir?: string; hostname?: string; onRotate?: OnRotateFn; log?: LogLine } = {}) {
+  constructor ({ certRenewer, tlsDir, hostname, onRotate, log, validateCert }: { certRenewer?: CertRenewer; tlsDir?: string; hostname?: string; onRotate?: OnRotateFn; log?: LogLine; validateCert?: ValidateCertFn } = {}) {
     if (certRenewer == null) throw new Error('FileMaterializer: certRenewer is required');
     if (!tlsDir) throw new Error('FileMaterializer: tlsDir is required');
     if (!hostname) throw new Error('FileMaterializer: hostname is required');
@@ -63,6 +70,7 @@ class FileMaterializer {
     this.#hostname = hostname;
     this.#onRotate = onRotate || (async () => {});
     this.#log = log || ((msg: string) => console.log('[fm] ' + msg));
+    this.#validateCert = validateCert || ((pem: string) => checkValidityWindow(pem));
   }
 
   get hostDir () {
@@ -89,6 +97,21 @@ class FileMaterializer {
     if (onDisk != null && sha256(onDisk) === sha256(incoming)) {
       return { rotated: false, reason: 'unchanged' };
     }
+
+    // A cert outside the local clock's validity window would fail every
+    // handshake: write nothing, so neither the on-disk copy, the http.ssl.*
+    // mirror nor the workers change. The next tick retries (self-heals once
+    // the clock is fixed); the refusal is logged once per cert.
+    const verdict = this.#validateCert(incoming);
+    if (!verdict.ok) {
+      const fingerprint = sha256(incoming);
+      if (fingerprint !== this.#lastRefusedFingerprint) {
+        this.#lastRefusedFingerprint = fingerprint;
+        this.#log(`refusing to materialize ${this.#hostname}: ${verdict.detail}`);
+      }
+      return { rotated: false, reason: 'validity-' + verdict.reason };
+    }
+    this.#lastRefusedFingerprint = null;
 
     fs.mkdirSync(this.hostDir, { recursive: true });
     writeAtomic(this.certPath, incoming, { mode: 0o644 });
