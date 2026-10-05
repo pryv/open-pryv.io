@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## INSTALL: the rqlite 10 snapshot-store check without the `sqlite3` client
+
+- "Upgrading the bundled rqlite (9.x to 10.x)" required the `sqlite3` client on the host for the
+  content comparison, which hosts such as Dokku production machines often lack. The section now
+  gives the same check run with Node's built-in `node:sqlite` inside the core's own image
+  (`docker run --rm -i` with the rqlite data directory mounted read-only): each file opened
+  `mode=ro&immutable=1`, `integrity_check`, the `keyValue` row count with and without the index,
+  and the schema and rows of `db.sqlite` against the newest snapshot.
+
 ## In-process dispatchers share one proxy core; previews dispatcher
 
 - `components/api-server/src/workerIngress.ts` (`buildWorkerProxy`, `redactUrl`): the proxy core
