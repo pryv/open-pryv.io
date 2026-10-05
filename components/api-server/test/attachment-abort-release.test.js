@@ -221,12 +221,29 @@ describe('[ATAB] attachment downloads release the file when the client goes away
       };
     }
 
-    const start = await counts();
+    // The earlier tests share this user's audit log: on a fast runner one of
+    // their "aborted" downloads can complete, and its audit write may land
+    // late. Take the baseline only once the count has stopped moving.
+    async function settledCounts () {
+      let previous = await counts();
+      const started = Date.now();
+      while (Date.now() - started < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const next = await counts();
+        if (next.valid === previous.valid && next.error === previous.error) return next;
+        previous = next;
+      }
+      return previous;
+    }
+
+    const start = await settledCounts();
     const full = await coreRequest.get('/' + username + '/events/' + eventId + '/' + fileId)
       .set('Authorization', token);
     assert.strictEqual(full.status, 200);
     // Proves the audit path is live, so the unchanged count below means something.
-    assert.ok(await until(async () => (await counts()).valid === start.valid + 1),
+    assert.ok(await until(async () => (await counts()).valid >= start.valid + 1),
+      'a completed download must write a valid audit record');
+    assert.strictEqual((await settledCounts()).valid, start.valid + 1,
       'a completed download must write exactly one valid audit record');
 
     const afterFull = await counts();
