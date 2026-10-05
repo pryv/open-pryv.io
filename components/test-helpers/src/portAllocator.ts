@@ -119,7 +119,10 @@ function deadEndPort (): Promise<number> {
   if (deadEndPortPromise == null) {
     deadEndPortPromise = new Promise((resolve, reject) => {
       const server = net.createServer((socket: { destroy: () => void }) => socket.destroy());
-      server.on('error', reject);
+      server.on('error', (err: Error) => {
+        deadEndPortPromise = null; // let the next caller try again
+        reject(err);
+      });
       server.listen(0, DEFAULT_HOST, () => {
         server.unref();
         resolve(server.address().port);

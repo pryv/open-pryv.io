@@ -350,18 +350,26 @@ async function openUserDB (userId: string): Promise<SQLite3Instance> {
   const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
   const dbPath = path.join(userPath, `account-${VERSION}.sqlite`);
   const db = new SQLite3(dbPath, DB_OPTIONS);
-  // Like the other per-user files: no busy timeout (it would block the event
-  // loop while another process writes this account), every write retries SQLITE_BUSY.
-  await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(db);
-  // Every statement is IF NOT EXISTS: re-running them all after SQLITE_BUSY is safe.
-  await concurrentSafeWrite.execute(() => {
-    db.prepare('CREATE TABLE IF NOT EXISTS passwords (time REAL PRIMARY KEY, hash TEXT NOT NULL, createdBy TEXT NOT NULL);').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS passwords_hash ON passwords(hash);').run();
-    db.prepare('CREATE TABLE IF NOT EXISTS storeKeyValueData (storeId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (storeId, key));').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS storeKeyValueData_storeId ON storeKeyValueData(storeId);').run();
-    db.prepare('CREATE TABLE IF NOT EXISTS account_fields (field TEXT NOT NULL, value TEXT, time REAL NOT NULL, createdBy TEXT NOT NULL, PRIMARY KEY (field, time));').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS account_fields_field ON account_fields(field);').run();
-  });
+  try {
+    // Like the other per-user files: no busy timeout (it would block the event
+    // loop while another process writes this account), every write retries
+    // SQLITE_BUSY. While a write waits, the LRU may evict and close this
+    // connection (CACHE_SIZE other accounts opened meanwhile): the write then
+    // fails loudly ("connection is not open"), as with the other per-user caches.
+    await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(db);
+    // Every statement is IF NOT EXISTS: re-running them all after SQLITE_BUSY is safe.
+    await concurrentSafeWrite.execute(() => {
+      db.prepare('CREATE TABLE IF NOT EXISTS passwords (time REAL PRIMARY KEY, hash TEXT NOT NULL, createdBy TEXT NOT NULL);').run();
+      db.prepare('CREATE INDEX IF NOT EXISTS passwords_hash ON passwords(hash);').run();
+      db.prepare('CREATE TABLE IF NOT EXISTS storeKeyValueData (storeId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (storeId, key));').run();
+      db.prepare('CREATE INDEX IF NOT EXISTS storeKeyValueData_storeId ON storeKeyValueData(storeId);').run();
+      db.prepare('CREATE TABLE IF NOT EXISTS account_fields (field TEXT NOT NULL, value TEXT, time REAL NOT NULL, createdBy TEXT NOT NULL, PRIMARY KEY (field, time));').run();
+      db.prepare('CREATE INDEX IF NOT EXISTS account_fields_field ON account_fields(field);').run();
+    });
+  } catch (err) {
+    db.close();
+    throw err;
+  }
   // A concurrent open of the same account may have finished first: keep one connection.
   const cached = dbCache!.get(userId) as SQLite3Instance | undefined;
   if (cached != null) {

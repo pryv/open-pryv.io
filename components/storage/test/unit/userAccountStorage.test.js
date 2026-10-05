@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
 const cuid = require('cuid');
 const { userLocalDirectory, getUserAccountStorage } = require('storage');
@@ -40,7 +41,9 @@ describe('[UASB] SQLite account storage writes while another connection holds th
     storage = await getUserAccountStorage();
     await storage.addPasswordHash(userId, 'hash-0', 'test', 1);
     const SQLite3 = require('better-sqlite3');
-    other = new SQLite3(path.join(userLocalDirectory.getPathForUser(userId), 'account-1.0.0.sqlite'));
+    const accountFile = path.join(userLocalDirectory.getPathForUser(userId), 'account-1.0.0.sqlite');
+    assert.ok(fs.existsSync(accountFile), `expected the account file at ${accountFile}`);
+    other = new SQLite3(accountFile);
   });
 
   afterEach(function () {
