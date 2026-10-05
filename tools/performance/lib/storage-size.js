@@ -15,9 +15,10 @@ const scRoot = new URL('../../..', import.meta.url).pathname;
  */
 export function snapshotStorageSizes () {
   return {
-    mongodb: dirSize(path.join(scRoot, 'var-pryv/mongodb-data')),
-    sqlite: dirSize(path.join(scRoot, 'var-pryv/users'), '*.db*'),
-    influxdb: dirSize('/var/lib/influxdb'),
+    postgresql: dirSize(path.join(scRoot, 'var-pryv/postgresql-data')),
+    rqlite: dirSize(path.join(scRoot, 'var-pryv/rqlite-data')),
+    sqlite: dirSize(path.join(scRoot, 'var-pryv/users'), '*.sqlite*'),
+    influxdb: dirSize(path.join(scRoot, 'var-pryv/influxdb-data')),
     userDirs: dirSize(path.join(scRoot, 'var-pryv/users')),
     syslogSize: fileSize('/var/log/syslog'),
     syslogLines: lineCount('/var/log/syslog')

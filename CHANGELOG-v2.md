@@ -1,5 +1,23 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### High-frequency series on dnsLess cores with a username-looking host name
+
+- **Fix.** On a dnsLess core whose public host name starts with a label that looks like a
+  username (5 characters or more, e.g. `api-core1.example.com`), every high-frequency series
+  request through the API port (`/{username}/events/{id}/series`, `/{username}/series/batch`)
+  answered `404 unknown-resource`. The HFS worker now decides whether the host carries a
+  username exactly as the API server does. Other API calls were not affected.
+
+### Account deletion on the SQLite series engine leaves no directory
+
+- **Fix (privacy).** Deleting an account removed its high-frequency series file but left an empty
+  directory named after the account's username under the users directory. The directory is now
+  removed too. Directories left by earlier deletions are empty and can be removed by hand; they
+  are named `user.<username>`, a few levels under `var-pryv/users/`:
+  `find var-pryv/users -type d -name 'user.*' -empty -delete`.
+
 ## 2.0.0-rc.34 - 2026-10-02
 
 ### Attachments with an active content type are served in a sandbox

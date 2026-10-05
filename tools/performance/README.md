@@ -13,41 +13,26 @@ Requires:
 
 ## Quick Start
 
-Using operator-local wrapper scripts (run from the workspace directory that contains your `open-pryv.io` checkout and `_local/scripts/`; see Direct Usage below for the script-free path):
+Run the benchmark commands from `tools/performance/`; the `just` commands run from the repository root.
 
 ```bash
-# 1. Clean databases (server stopped)
-_local/scripts/perf-clean.sh --hard
+# 1. Clean databases (server stopped; wipes the local test and dev data)
+just clean-test-data
 
 # 2. Start open-pryv.io
-cd open-pryv.io && just start-deps    # terminal 1
-cd open-pryv.io && just start-master  # terminal 2
+just start-deps    # terminal 1
+just start-master  # terminal 2
 
 # 3. Seed test data
-_local/scripts/perf-seed.sh --users 3 --events 50000 --profile manual
+node datasets/seed.js --target http://127.0.0.1:3000 --users 3 --events 50000 --profile manual
 
 # 4. Run all scenarios (one combined result file)
-_local/scripts/perf-run.sh all --concurrency 10 --duration 30
-
-# Or full cycle in one command (prompts to start server after clean)
-_local/scripts/perf-full.sh --users 3 --events 50000 --duration 30
-
-# Or compare PostgreSQL vs SQLite end-to-end (script controls server)
-_local/scripts/perf-vs.sh --users 3 --events 10000 --duration 15
+node bin/run-benchmark.js --all --concurrency 10 --duration 30
 ```
 
-## Helper Scripts
-
-All wrapper scripts run from that same workspace directory.
-
-| Script | Purpose |
-|--------|---------|
-| `_local/scripts/perf-clean.sh` | Clean benchmark data (soft: API delete, hard: wipe DBs) |
-| `_local/scripts/perf-seed.sh` | Seed test users with realistic data |
-| `_local/scripts/perf-run.sh` | Run benchmark scenarios |
-| `_local/scripts/perf-full.sh` | Full cycle: clean → seed → run all (single engine) |
-| `_local/scripts/perf-vs.sh` | Run the full benchmark for PostgreSQL AND SQLite back-to-back, then produce a Markdown comparison. Manages the server (start/stop) and `config/override-config.yml` for each leg. |
-| `_local/scripts/perf-compare.sh` | Compare two result files |
+To compare two configurations (for example PostgreSQL and SQLite), run the cycle once per
+configuration, changing `storages` in `config/override-config.yml` and restarting between runs,
+then compare the two result files (see [Comparing Results](#comparing-results)).
 
 ## Scenarios
 
@@ -81,41 +66,41 @@ Both profiles create 2 series events per user with 100K data points each (for HF
 
 ### Single scenario
 ```bash
-_local/scripts/perf-run.sh events-create --concurrency 10 --duration 30
+node bin/run-benchmark.js --scenario events-create --concurrency 10 --duration 30
 ```
 
 ### All scenarios (one combined result file)
 ```bash
-_local/scripts/perf-run.sh all --concurrency 10 --duration 30
+node bin/run-benchmark.js --all --concurrency 10 --duration 30
 ```
 
 ### Concurrency sweep
 ```bash
-_local/scripts/perf-run.sh events-create --sweep 1,5,10,25,50 --duration 15
+node bin/run-benchmark.js --scenario events-create --sweep 1,5,10,25,50 --duration 15
 ```
 Runs the scenario at each concurrency level and produces a comparison table showing the saturation curve.
 
 ## Cleanup
 
 ```bash
-# Soft clean — delete seeded users via API (server must be running)
-_local/scripts/perf-clean.sh
+# Soft clean: delete the seeded users via the API (server running)
+node datasets/seed.js --clean
 
-# Hard clean — wipe SQLite, MongoDB, user dirs (server should be stopped)
-_local/scripts/perf-clean.sh --hard
+# Hard clean: wipe the local databases and user dirs (server stopped)
+just clean-test-data   # from the repository root; then: rm -f datasets/seed-result.json
 
 # Also remove result files
-_local/scripts/perf-clean.sh --results
+rm -f results/*.json results/*.md
 ```
 
 ## Comparing Results
 
 ```bash
 # Print comparison to console
-_local/scripts/perf-compare.sh results/run-a.json results/run-b.json
+node bin/compare.js results/run-a.json results/run-b.json
 
 # Save comparison to file
-_local/scripts/perf-compare.sh results/run-a.json results/run-b.json --output comparison.md
+node bin/compare.js results/run-a.json results/run-b.json --output comparison.md
 ```
 
 Shows: config differences, throughput delta (absolute + %), latency comparison, storage growth comparison.
@@ -131,10 +116,11 @@ Shows: config differences, throughput delta (absolute + %), latency comparison, 
 - RSS memory (peak + average) across master + all worker processes
 - CPU usage (peak + average)
 
-### Storage
-- MongoDB data directory size
-- rqlite snapshot + per-user audit SQLite file sizes
-- InfluxDB data directory size
+### Storage (Linux only, local instance)
+- PostgreSQL data directory size (`var-pryv/postgresql-data`, the bundled engine)
+- rqlite data directory size (`var-pryv/rqlite-data`)
+- Per-user SQLite file sizes (base storage, audit, series under `var-pryv/users`)
+- InfluxDB data directory size (`var-pryv/influxdb-data`)
 - User directories total size
 - Syslog file size and line count (audit overhead)
 
@@ -157,9 +143,9 @@ Results are in `results/` as paired JSON + markdown files:
 
 Result files can be committed to git for historical comparison.
 
-## Direct Usage (without helper scripts)
+## Direct Usage
 
-From `service-core/tools/performance/`:
+From `tools/performance/`:
 
 ```bash
 # Seed
@@ -186,8 +172,8 @@ node bin/compare.js results/run-a.json results/run-b.json
 All commands accept `--target` to benchmark a remote server:
 
 ```bash
-_local/scripts/perf-seed.sh --target https://host:3000 --users 3 --events 50000
-_local/scripts/perf-run.sh all --target https://host:3000 --concurrency 10
+node datasets/seed.js --target https://host:3000 --users 3 --events 50000
+node bin/run-benchmark.js --all --target https://host:3000 --concurrency 10
 ```
 
 Note: resource monitoring and storage tracking only work for local instances.

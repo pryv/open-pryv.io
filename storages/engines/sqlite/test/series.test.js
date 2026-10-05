@@ -115,4 +115,25 @@ describe('[SQSR] SQLite series', function () {
 
     await conn.dropDatabase(targetUser);
   });
+
+  // The series directory is named after the namespace (`user.<username>`): an
+  // account deletion that left it behind would keep a trace of the username.
+  it('[SQ07] dropDatabase leaves nothing behind, and creates nothing for an unknown namespace', async function () {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const ns = 'user.sqsrdrop' + cuid.slug();
+    await conn.writeMeasurement('event.drop', [{ fields: { value: 1 }, timestamp: 1e9 }], { database: ns });
+    const dbPath = await conn.pathForUser(ns);
+    const dir = path.dirname(dbPath);
+    assert.ok(fs.existsSync(dbPath), 'the series file must exist before the drop');
+
+    await conn.dropDatabase(ns);
+    assert.ok(!fs.existsSync(dbPath), 'the series file must be gone');
+    assert.ok(!fs.existsSync(dir), 'the namespace directory must be gone');
+
+    const never = 'user.sqsrnever' + cuid.slug();
+    await conn.dropDatabase(never);
+    const neverDir = require('storage/src/userLocalDirectory.ts').getPathForUser(never);
+    assert.ok(!fs.existsSync(neverDir), 'dropping a namespace that never had series must not create its directory');
+  });
 });

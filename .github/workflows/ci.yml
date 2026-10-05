@@ -268,14 +268,6 @@ jobs:
   # OFFICIAL release path: tag-push → CI runs tests → builds + pushes
   # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub.
   # This is the channel implementers + downstream consumers pull from.
-  #
-  # SIDE CHANNEL for in-house iteration (NOT a release): build on mbp2
-  # + tar+scp to test-temp.datasafe.dev for quick smoke without going
-  # through Docker Hub:
-  #   ./_local/scripts/rc-build-and-push.sh [--tag <tag>] [--force]
-  #   ./_local/scripts/rc-smoketest.sh [--host <fqdn>]
-  # The side channel doesn't replace the tag-push release; it's just
-  # the dev-loop tool while iterating on RC fixes.
   docker:
     needs: [test-postgres, lint, typecheck, prod-boot-smoke, security-audit, sbom]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')

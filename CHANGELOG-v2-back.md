@@ -25,6 +25,18 @@
   files must pass `integrity_check` and hold the same schema and rows (commands in INSTALL.md, run on
   the host with the `sqlite3` client). An empty `<id>.data` file in a
   snapshot directory is now documented as normal (rqlite 9 writes one when a snapshot found no change).
+## Username-in-host decision shared by the API server and the HFS worker
+
+- `components/business/src/usernameSubdomains.ts`: `usernameInHost(config)` and
+  `ignoredUsernameSubdomains(config)` (core id, reg/access/mfa, `dns.staticEntries`, hosted
+  sites), used by `api-server/src/expressApp.ts` and the new `hfs-server/src/hostToPath.ts`. In
+  username-in-host mode the HFS worker now also leaves the core's own and the reserved subdomains
+  alone. Test `[HTP1]`.
+- SQLite series engine: `dropDatabase` removes the WAL/SHM siblings and the empty namespace
+  directory, and no longer creates the directory of a namespace it is asked to drop. Test `[SQ07]`.
+- Benchmark tool (`tools/performance/`): storage sizes measure PostgreSQL, rqlite, SQLite and
+  InfluxDB under `var-pryv/`; the README runs everything from the repository.
+- Docs: nginx sample names `letsEncrypt.tlsDir`; the HFS Host note explains both URL modes.
 
 ## Backups now carry HF series data; cross-engine backup round trip
 
