@@ -303,5 +303,32 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
       orch.stop();
       orch.stop(); // second call is a no-op
     });
+
+    async function firstMaterializeLog (error) {
+      const logs = [];
+      const orch = new AcmeOrchestrator({
+        hostSpec: { commonName: '*.ex.com', altNames: [], challenge: 'dns-01' },
+        certRenewer: makeFakeRenewer(),
+        fileMaterializer: { async checkOnce () { throw error; } },
+        dnsWriter: dummyDnsWriter,
+        isRenewer: false,
+        materializeIntervalMs: 100_000,
+        log: (m) => logs.push(m)
+      });
+      orch.start();
+      await new Promise((resolve) => setImmediate(resolve));
+      orch.stop();
+      return logs.filter((l) => l.startsWith('initial materialize'));
+    }
+
+    it('[ACLU1] a platform DB without leader is logged as a retry, not an error', async () => {
+      const logs = await firstMaterializeLog(new Error('rqlite query failed (503): leader not found'));
+      assert.deepEqual(logs, ['initial materialize: platform DB leader unavailable (restarting?), retrying on the next tick']);
+    });
+
+    it('[ACLU2] any other failure is still logged as an error with its message', async () => {
+      const logs = await firstMaterializeLog(new Error('rqlite query failed (500): boom'));
+      assert.deepEqual(logs, ['initial materialize error: rqlite query failed (500): boom']);
+    });
   });
 });
