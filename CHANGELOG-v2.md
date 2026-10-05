@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.36 - 2026-10-05
 
 ### Consent withdrawal recorded on the person's own record (#146)
 
