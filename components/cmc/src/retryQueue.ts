@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, RetryContext } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -202,10 +202,21 @@ async function processRetryEvent (params: {
   };
   if (typeof c.originalCreatedBy === 'string') syntheticTrigger.createdBy = c.originalCreatedBy;
 
+  // Tell the handler what the previous attempt reported, so it can avoid
+  // repeating a step that already took effect (a revoke whose delivery
+  // reached the peer before the local delete failed).
+  const retryContext: RetryContext = {
+    attempts: c.attempts ?? 1,
+    lastFailureReason: c.lastFailureReason ?? null,
+    lastFailureDetail: c.lastFailureDetail ?? null,
+  };
+  const dispatchDeps = deps.dispatchDeps != null && typeof deps.dispatchDeps === 'object'
+    ? { ...deps.dispatchDeps, retryContext }
+    : deps.dispatchDeps;
   const dispatched = await deps.dispatch({
     userId,
     event: syntheticTrigger,
-    deps: deps.dispatchDeps,
+    deps: dispatchDeps,
   });
 
   // Success path: dispatch returned status='completed' (handler ok).
@@ -331,7 +342,8 @@ async function runRetryLoop (params: {
  *
  * Retryable: the delivery-failed family (5xx / network / timeout) +
  * data-grant-create-failed (transient storage hiccup) +
- * delivery-threw (network exception).
+ * delivery-threw (network exception) + cmc-revoke-delete-failed (a local
+ * delete that threw and left the access in place).
  */
 const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-wrong-type',

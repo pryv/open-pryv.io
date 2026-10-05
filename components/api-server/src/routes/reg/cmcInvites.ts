@@ -19,6 +19,11 @@
  * from its own inbox (`consent/accept-cmc`), and `mandatory` is enforced by
  * the trusted auth page (a declined mandatory invite ends the request
  * REFUSED with `reasonId: 'REFUSED_MANDATORY_CONSENT'`), not re-verified here.
+ *
+ * An invite may carry `accessName`, the name the app wants on the data grant
+ * the user mints by accepting it. The core stores it as sent and echoes it
+ * with the invite; it never uses it. The auth page passes it to the accept,
+ * which names the grant with it (and handles a name collision there).
  */
 
 /** At most this many invites in one request. */
@@ -28,7 +33,7 @@ const MAX_URL_LENGTH = 2048;
 /** Longest id or reason string in an outcome. */
 const MAX_FIELD_LENGTH = 256;
 
-type CmcInvite = { capabilityUrl: string; mandatory: boolean; for: 'self' | 'target' };
+type CmcInvite = { capabilityUrl: string; mandatory: boolean; for: 'self' | 'target'; accessName?: string };
 type CmcInviteAccepted = { acceptEventId: string; dataGrantAccessId?: string; acceptedFor?: 'self' };
 type CmcInviteOutcome = CmcInviteAccepted | { declined: true } | { reason: string };
 
@@ -54,26 +59,36 @@ function isHttpUrl (value: string): boolean {
 
 /**
  * The `cmcInvites` of a new access request, as a clean copy (`mandatory`
- * defaults to false, `for` to `'self'`), or an error message.
+ * defaults to false, `for` to `'self'`, `accessName` present only when sent),
+ * or an error message.
  */
 function parseCmcInvites (value: unknown): CmcInvite[] | string {
   const message = 'cmcInvites must be an array of 1 to ' + MAX_INVITES +
-    " { capabilityUrl, mandatory?, for?: 'self' | 'target' }";
+    " { capabilityUrl, mandatory?, for?: 'self' | 'target', accessName? }";
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_INVITES) return message;
   const clean: CmcInvite[] = [];
   for (const entry of value) {
     if (!isPlainObject(entry)) return message;
-    if (Object.keys(entry).some((k) => !['capabilityUrl', 'mandatory', 'for'].includes(k))) return message;
+    if (Object.keys(entry).some((k) => !['capabilityUrl', 'mandatory', 'for', 'accessName'].includes(k))) return message;
     if (!isBoundedString(entry.capabilityUrl, MAX_URL_LENGTH) || !isHttpUrl(entry.capabilityUrl)) {
       return 'cmcInvites[].capabilityUrl must be an absolute http(s) URL of at most ' + MAX_URL_LENGTH + ' characters';
     }
     if (entry.mandatory !== undefined && typeof entry.mandatory !== 'boolean') return message;
     if (entry.for !== undefined && entry.for !== 'self' && entry.for !== 'target') return message;
-    clean.push({
+    // An absent option is omitted, not nulled, in an array entry: `null` is
+    // a value sent, and refused like any other wrong one.
+    if (entry.accessName !== undefined && !isBoundedString(entry.accessName, MAX_FIELD_LENGTH)) {
+      return 'cmcInvites[].accessName must be a non-empty string of at most ' + MAX_FIELD_LENGTH + ' characters';
+    }
+    const invite: CmcInvite = {
       capabilityUrl: entry.capabilityUrl,
       mandatory: entry.mandatory === true,
       for: entry.for === 'target' ? 'target' : 'self'
-    });
+    };
+    // Set only when sent, so an entry without it stays byte-identical. Stored
+    // as sent, not trimmed: the core never normalises access names.
+    if (entry.accessName !== undefined) invite.accessName = entry.accessName;
+    clean.push(invite);
   }
   return clean;
 }

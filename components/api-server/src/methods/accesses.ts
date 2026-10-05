@@ -926,8 +926,15 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (params.accessToDelete != null) deleted.push(params.accessToDelete);
     if (Array.isArray(params.relatedAccessesToDelete)) deleted.push(...params.relatedAccessesToDelete);
     if (deleted.length > 0 && context?.user?.id != null) {
+      // The hook may change the user's events (the invite stamped revoked,
+      // the withdrawal on the accept event) after this call answered: tell
+      // the user's socket clients, as the CMC dispatch does for its stamps.
+      const username = context.user.username;
+      const notifyEventChanged = () => {
+        if (username != null) pubsub.notifications.emit(username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
+      };
       Promise.resolve()
-        .then(() => cmcAccessesDeleteHook(context.user.id, deleted))
+        .then(() => cmcAccessesDeleteHook(context.user.id, deleted, notifyEventChanged))
         .catch((err: unknown) => {
           getLogger('cmc:accesses-delete-hook').warn('cmc/accessesDeleteHook: uncaught error', {
             error: String((err as Error)?.message ?? err),

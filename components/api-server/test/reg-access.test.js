@@ -929,6 +929,62 @@ describe('[RGAC] Register access authorization', () => {
       const poll = await coreRequest.get('/reg/access/' + key);
       assert.deepStrictEqual(Object.keys(poll.body).sort(), ['apiEndpoint', 'status', 'token', 'username']);
     });
+
+    it('[RAM01] actAsManagedOnly is stored and echoed on the 201 and the NEED_SIGNIN poll only when sent and true', async () => {
+      for (const actAs of ['allow', 'kiduser']) {
+        const res = await coreRequest.post('/reg/access').send({ ...BODY, actAs, actAsManagedOnly: true });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        assert.strictEqual(res.body.actAsManagedOnly, true);
+        const poll = await coreRequest.get('/reg/access/' + res.body.key);
+        assert.strictEqual(poll.body.status, 'NEED_SIGNIN');
+        assert.strictEqual(poll.body.actAs, actAs);
+        assert.strictEqual(poll.body.actAsManagedOnly, true);
+        assert.strictEqual((await accessState.get(res.body.key)).actAsManagedOnly, true);
+      }
+      for (const extra of [{}, { actAsManagedOnly: null }, { actAsManagedOnly: false }, { actAs: 'deny', actAsManagedOnly: false }]) {
+        const res = await coreRequest.post('/reg/access').send({ ...BODY, actAs: 'allow', ...extra });
+        assert.strictEqual(res.status, 201, JSON.stringify(extra) + ' ' + JSON.stringify(res.body));
+        assert.ok(!('actAsManagedOnly' in res.body), 'absent from the 201: ' + JSON.stringify(extra));
+        const poll = await coreRequest.get('/reg/access/' + res.body.key);
+        assert.ok(!('actAsManagedOnly' in poll.body), 'absent from the poll: ' + JSON.stringify(extra));
+        assert.ok(!('actAsManagedOnly' in await accessState.get(res.body.key)), 'not stored: ' + JSON.stringify(extra));
+      }
+    });
+
+    it('[RAM02] a malformed or contradictory actAsManagedOnly is refused with 400 and nothing is stored', async () => {
+      const bad = [
+        ...['true', 1, {}, [true]].map((actAsManagedOnly) => ({ actAs: 'allow', actAsManagedOnly })),
+        { actAsManagedOnly: true },
+        { actAs: null, actAsManagedOnly: true },
+        { actAs: 'deny', actAsManagedOnly: true }
+      ];
+      for (const extra of bad) {
+        const res = await coreRequest.post('/reg/access').send({ ...BODY, ...extra });
+        assert.strictEqual(res.status, 400, JSON.stringify(extra));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+        assert.match(res.body.error.message, /actAsManagedOnly/);
+        assert.ok(!('key' in res.body), 'no request was created: ' + JSON.stringify(extra));
+      }
+    });
+
+    it('[RAM03] actAsManagedOnly is not updatable by the outcome post', async () => {
+      // a request created without it: an ACCEPTED post carrying it adds nothing
+      const plainKey = await newKey({ actAs: 'allow' });
+      const post = await coreRequest.post('/reg/access/' + plainKey)
+        .send({ ...ACCEPT_KID, actAsManagedOnly: true });
+      assert.strictEqual(post.status, 200, JSON.stringify(post.body));
+      assert.ok(!('actAsManagedOnly' in post.body), JSON.stringify(post.body));
+      assert.ok(!('actAsManagedOnly' in await accessState.get(plainKey)), 'not added to the stored request');
+      const poll = await coreRequest.get('/reg/access/' + plainKey);
+      assert.ok(!('actAsManagedOnly' in poll.body), JSON.stringify(poll.body));
+
+      // a request created with it: a REFUSED post carrying false does not clear it
+      const managedKey = await newKey({ actAs: 'allow', actAsManagedOnly: true });
+      const refused = await coreRequest.post('/reg/access/' + managedKey)
+        .send({ status: 'REFUSED', reasonId: 'REFUSED_BY_USER', message: 'no', actAsManagedOnly: false });
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+      assert.strictEqual((await accessState.get(managedKey)).actAsManagedOnly, true, 'kept in the stored request');
+    });
   });
 
   describe('credential hand-off (shared-secret delivery)', () => {

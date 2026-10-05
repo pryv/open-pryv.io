@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { CmcLogger, OutboundDeps, RetryContext } from './_types.ts';
 import type { CredentialStash } from './credentialScrub.ts';
 const require = createRequire(import.meta.url);
 
@@ -109,6 +109,10 @@ type DispatchDeps = {
   // account. Wired by the api-server for live and retry dispatch alike.
   lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
+  // Set by the retry loop on a re-dispatch: what the previous attempt
+  // reported. Handlers read it to skip a step that already took effect
+  // (handleRevoke: a delivery the peer already received). Absent live.
+  retryContext?: RetryContext;
 };
 
 type DispatchResult = {

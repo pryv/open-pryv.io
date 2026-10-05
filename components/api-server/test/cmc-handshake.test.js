@@ -2328,4 +2328,144 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'CN39: acceptEventId must match the accepter\'s own grant');
     });
   });
+
+  describe('[CMCHS-WD] the withdrawal is recorded on the accepter\'s own accept event', function () {
+    const { integrity } = require('business');
+
+    // The accepter's grant for one relationship, with the LOCAL accept event
+    // id it was minted from.
+    async function grantWithAccept (h) {
+      const grant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const acceptEventId = grant.clientData?.cmc?.acceptEventId;
+      assert.ok(typeof acceptEventId === 'string', 'premise: the grant names its accept event: ' + JSON.stringify(grant.clientData));
+      const before = await readEvent(bob, acceptEventId);
+      assert.strictEqual(before.type, 'consent/accept-cmc');
+      assert.strictEqual(before.content.withdrawal, undefined, 'premise: the accept event reads as given');
+      return { grant, acceptEventId };
+    }
+
+    async function readEvent (actor, eventId) {
+      const res = await coreRequest.get(actor.eventsPath + '/' + eventId).set('Authorization', actor.token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.event;
+    }
+
+    async function pollWithdrawal (actor, eventId, label) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const event = await readEvent(actor, eventId);
+        if (event.content?.withdrawal != null) return event;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ': the accept event never received a withdrawal');
+    }
+
+    // The stored integrity of the stamped event must match a recomputation,
+    // i.e. the server-side write went through the integrity-setting path.
+    function assertIntegrity (event, label) {
+      if (!integrity.events.isActive) return;
+      assert.ok(typeof event.integrity === 'string', label + ': the event carries an integrity');
+      assert.strictEqual(integrity.events.compute(event).integrity, event.integrity,
+        label + ': the integrity must match the stamped content');
+    }
+
+    it('[CN58] the accepter\'s raw accesses.delete marks the accept event; the client cannot remove or change the mark', async function () {
+      const h = await runFreshHandshake('wd-a', 'wd-app-a');
+      const { grant, acceptEventId } = await grantWithAccept(h);
+      // the handshake has settled: from here, capture bob's notifications (other
+      // suites install their own test notifier, so install one for this test,
+      // still forwarding to the shared helper's list)
+      await sleep(500);
+      const { pubsub } = require('messages');
+      const forward = (args) => { if (Array.isArray(global.testMsgs)) global.testMsgs.push(args); };
+      const seen = [];
+      pubsub.setTestNotifier({ emit: (...args) => { seen.push(args); forward(args); } });
+      const eventsChangedForBob = () => seen.filter((m) => m[0] === 'test-events-changed' && m[1] === bob.username).length;
+      let stamped;
+      try {
+        const delRes = await coreRequest.delete(bob.accessesPath + '/' + grant.id).set('Authorization', bob.token);
+        assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+        stamped = await pollWithdrawal(bob, acceptEventId, 'CN58');
+        // the stamp lands after the delete answered: socket clients are told
+        await sleep(100);
+        assert.ok(eventsChangedForBob() >= 1, 'CN58: an eventsChanged notification must follow the stamp');
+      } finally {
+        // Not a true restore (pubsub exposes no getter for the notifier in
+        // place): leave the plain forwarder to the shared list, which is what
+        // the shared helper installs; suites that need their own install it.
+        pubsub.setTestNotifier({ emit: (...args) => forward(args) });
+      }
+      const { withdrawal } = stamped.content;
+      assert.deepStrictEqual(Object.keys(withdrawal).sort(), ['accessId', 'at', 'by']);
+      assert.strictEqual(withdrawal.by, 'accesses.delete');
+      assert.strictEqual(withdrawal.accessId, grant.id);
+      assert.strictEqual(typeof withdrawal.at, 'number');
+      assertIntegrity(stamped, 'CN58');
+
+      // the requester is told as before
+      await pollInboxFor(alice.eventsPath, alice.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === bob.username && e.content?.accessId === grant.id);
+
+      // a client update can neither erase nor rewrite the server-owned mark
+      const { withdrawal: _w, ...withoutMark } = stamped.content;
+      for (const content of [withoutMark, { ...withoutMark, withdrawal: { at: 1, by: 'forged', accessId: 'x' } }]) {
+        const upd = await coreRequest.put(bob.eventsPath + '/' + acceptEventId)
+          .set('Authorization', bob.token)
+          .send({ content });
+        assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+        assert.deepStrictEqual(upd.body.event.content.withdrawal, withdrawal);
+      }
+      const after = await readEvent(bob, acceptEventId);
+      assert.deepStrictEqual(after.content.withdrawal, withdrawal);
+      assertIntegrity(after, 'CN58 after the client update');
+    });
+
+    it('[CN59] the accepter\'s consent/revoke-cmc marks the accept event with the trigger id', async function () {
+      const h = await runFreshHandshake('wd-b', 'wd-app-b');
+      const { grant, acceptEventId } = await grantWithAccept(h);
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: grant.id, reason: { en: 'CN59 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      const stamped = await pollWithdrawal(bob, acceptEventId, 'CN59');
+      assert.strictEqual(stamped.content.withdrawal.by, 'revoke-cmc');
+      assert.strictEqual(stamped.content.withdrawal.accessId, grant.id);
+      assert.strictEqual(stamped.content.withdrawal.revokeEventId, revRes.body.event.id);
+      assertIntegrity(stamped, 'CN59');
+    });
+
+    it('[CN60] the requester\'s withdrawal marks the accepter\'s accept event with the arrival id', async function () {
+      const h = await runFreshHandshake('wd-c', 'wd-app-c');
+      const { grant, acceptEventId } = await grantWithAccept(h);
+      // the requester's back-channel for this relationship: the counterparty
+      // access holding channel permissions under its scope
+      const accesses = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body?.accesses || [];
+      const backChannel = accesses.find((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+        (a.permissions || []).some((p) => typeof p?.streamId === 'string' && p.streamId.startsWith(h.triggerStreamId + ':')));
+      assert.ok(backChannel != null, 'premise: the requester holds a back-channel for the relationship');
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: backChannel.id, reason: { en: 'CN60 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      const arrival = await pollInboxFor(bob.eventsPath, bob.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === alice.username && e.content?.dataGrantAccessId === grant.id);
+      const stamped = await pollWithdrawal(bob, acceptEventId, 'CN60');
+      assert.strictEqual(stamped.content.withdrawal.by, 'peer-revoke');
+      assert.strictEqual(stamped.content.withdrawal.accessId, grant.id);
+      assert.strictEqual(stamped.content.withdrawal.revokeEventId, arrival.id);
+      assertIntegrity(stamped, 'CN60');
+    });
+  });
 });

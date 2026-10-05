@@ -271,6 +271,30 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
+      // The app requires the access to be granted for an account the user
+      // manages, never for the signed-in account itself. A hint for the
+      // trusted auth page, like `actAs`: the core cannot verify it (it does
+      // not know the user's managed accounts) and does not enforce it. It
+      // requires `actAs` ('allow' or a username), so an older page that does
+      // not know the field still offers the account chooser rather than
+      // skipping the step; `'deny'` contradicts it. `false` is "not sent".
+      let actAsManagedOnly: true | undefined;
+      if (req.body.actAsManagedOnly != null) {
+        if (typeof req.body.actAsManagedOnly !== 'boolean') {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'actAsManagedOnly must be a boolean' }
+          });
+        }
+        if (req.body.actAsManagedOnly === true) {
+          if (req.body.actAs == null || req.body.actAs === 'deny') {
+            return res.status(400).json({
+              error: { id: 'invalid-parameters', message: "actAsManagedOnly requires actAs 'allow' or a username" }
+            });
+          }
+          actAsManagedOnly = true;
+        }
+      }
+
       // Delivery mode. Absent means today's inline delivery. The only value
       // the server understands is 'shared-secret'; anything else fails loud
       // (the authUrl precedent) rather than degrading silently. The 201 echo
@@ -299,6 +323,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         ...req.body,
         consent: consentForm,
         actAs: req.body.actAs ?? undefined,
+        actAsManagedOnly,
         credentialHandoff,
         cmcInvites
       });
@@ -426,6 +451,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       if (state.credentialHandoff !== undefined) created.credentialHandoff = state.credentialHandoff;
       // Echoed only when sent and understood: an older core drops the field.
       if (state.cmcInvites !== undefined) created.cmcInvites = state.cmcInvites;
+      // Echoed only when sent and true: the app's detection signal, an older
+      // core drops the field and echoes nothing.
+      if (state.actAsManagedOnly === true) created.actAsManagedOnly = true;
       res.status(201).json(created);
     } catch (err) { next(err); }
   });
@@ -475,6 +503,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (state.token != null) response.token = state.token;
         // Who the app wants the access for; absent when it did not say.
         if (state.actAs != null) response.actAs = state.actAs;
+        // Only an account the user manages may receive the access. Absent otherwise.
+        if (state.actAsManagedOnly === true) response.actAsManagedOnly = true;
         // Delivery mode, so the auth UI can decide whether to create the
         // secret itself (shape H) or post the token inline. Absent otherwise.
         if (state.credentialHandoff != null) response.credentialHandoff = state.credentialHandoff;

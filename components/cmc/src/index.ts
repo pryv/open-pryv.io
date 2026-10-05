@@ -44,6 +44,7 @@ const capabilityResponseHook = require('./capabilityResponseHook.ts');
 const credentialScrub = require('./credentialScrub.ts');
 const credentialStashHook = require('./credentialStashHook.ts');
 const acceptServerOwnedFieldsHook = require('./acceptServerOwnedFieldsHook.ts');
+const acceptWithdrawal = require('./acceptWithdrawal.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -53,7 +54,7 @@ export {
   handleIncomingRevoke,
   anchorStreams, accessesUpdateHook, accessesDeleteHook, retryScheduler, bootRetryLoop,
   mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
-  credentialStashHook, acceptServerOwnedFieldsHook,
+  credentialStashHook, acceptServerOwnedFieldsHook, acceptWithdrawal,
 };
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
@@ -73,6 +74,8 @@ export const { createCredentialStashHook } = credentialStashHook;
 // `withdrawal`): dropped from a client create (`approvedBy` then stamped from
 // the writing access), kept from the stored event on a client update.
 export const { createAcceptStampingHook, createAcceptPreserveHook } = acceptServerOwnedFieldsHook;
+// The `withdrawal` marker a teardown path writes on the person's accept event.
+export const { stampWithdrawalOnAccept } = acceptWithdrawal;
 export const { mintCapability, gcCapability } = capability;
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
