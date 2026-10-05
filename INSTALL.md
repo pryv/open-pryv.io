@@ -853,7 +853,7 @@ The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.
 - **The data directory is upgraded in place, one way.** At its first start, rqlite 10 converts the directory (log line `upgraded v8 snapshot directory …/rsnapshots to …/wsnapshots`) and rebuilds the node's database from its snapshot store (`clean snapshot predates recording of snapshot index and term, full restore needed`, then `node restored`). rqlite 9 cannot open the directory afterwards: it stops with `panic: log not found`. Going back to an older release therefore needs the data directory restored from a backup (below).
 - **Back up every node first:** `curl -s 'http://localhost:4001/db/backup' -o platform-backup.sqlite` on the leader (`?noleader` on a follower for its own copy), and an archive of the rqlite data directory taken while the core is stopped.
 - **Upgrade from 2.0.0-rc.33 or later.** Up to rc.32 the master could exit before rqlited finished its snapshot on close, which is exactly what leaves the snapshot store inconsistent. Stopping an older release for this upgrade (including replacing its container by the new image) risks the damage this upgrade then restores. Move to rc.33 first, still on rqlite 9, or stop an older core as described in "Platform DB integrity" (rqlited first, then the master).
-- **Check the snapshot store before the first rqlite 10 start.** That start replaces the database with the content of the snapshot store, so a store left inconsistent by an earlier interrupted snapshot would replace a healthy database. Stop the core cleanly (the stop leaves a `clean_snapshot` file and an empty `db.sqlite-wal` in the data directory), then compare the database with the newest snapshot. Run the commands below on the host, in bash, with the `sqlite3` client installed (the image ships neither; with Docker, `cd` into the volume that holds the rqlite data). Only the newest snapshot matters: rqlite 10 converts that one (its `<id>.db` file and `<id>/meta.json`) and deletes the rest of the store. An empty `<id>.data` file inside a snapshot's directory is normal (rqlite 9 leaves one when a snapshot found no change), while a `*.tmp` entry in `rsnapshots/` or a non-empty extra file inside the newest snapshot's directory means the last snapshot did not complete: start the core again on the old version, stop it cleanly, and check again.
+- **Check the snapshot store before the first rqlite 10 start.** That start replaces the database with the content of the snapshot store, so a store left inconsistent by an earlier interrupted snapshot would replace a healthy database. Stop the core cleanly (the stop leaves a `clean_snapshot` file and an empty `db.sqlite-wal` in the data directory), then compare the database with the newest snapshot. Run the commands below on the host, in bash, with the `sqlite3` client installed (the image ships neither; with Docker, `cd` into the volume that holds the rqlite data); a host without `sqlite3` can run the content check in the core's image instead (below). Only the newest snapshot matters: rqlite 10 converts that one (its `<id>.db` file and `<id>/meta.json`) and deletes the rest of the store. An empty `<id>.data` file inside a snapshot's directory is normal (rqlite 9 leaves one when a snapshot found no change), while a `*.tmp` entry in `rsnapshots/` or a non-empty extra file inside the newest snapshot's directory means the last snapshot did not complete: start the core again on the old version, stop it cleanly, and check again.
 
   ```bash
   cd var-pryv/rqlite-data
@@ -874,6 +874,33 @@ The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.
   diff <(sqlite3 "file:db.sqlite?mode=ro&immutable=1" "$q") <(sqlite3 "file:$N?mode=ro&immutable=1" "$q") \
     && echo "store matches (same schema and rows)"
   ```
+
+  Without the `sqlite3` client on the host (common on Dokku hosts), run the same content check with the SQLite module built into Node, inside the core's own image, the core still stopped. The data directory is mounted read-only and each file is opened with the same `mode=ro&immutable=1` URI as above. Set `DATA` to the host directory that holds the rqlite data (on Dokku `/var/lib/dokku/data/storage/<app>/rqlite-data`) and `IMAGE` to the image the core runs (on Dokku `dokku/<app>:latest`):
+
+  ```bash
+  docker run --rm -i -v "$DATA":/data:ro -w /data "$IMAGE" node - <<'EOF'
+  const { DatabaseSync } = require('node:sqlite');
+  const fs = require('node:fs');
+  const index = (f) => Number(f.split('-')[1]);
+  const newest = fs.readdirSync('rsnapshots').filter((f) => f.endsWith('.db'))
+    .sort((a, b) => index(a) - index(b)).pop();
+  const content = [];
+  for (const f of ['db.sqlite', 'rsnapshots/' + newest]) {
+    const db = new DatabaseSync('file:' + f + '?mode=ro&immutable=1', { readOnly: true });
+    const all = (sql) => db.prepare(sql).all();
+    console.log(f + ':', all('PRAGMA integrity_check').map((r) => r.integrity_check).join(' '),
+      all('SELECT COUNT(*) AS n FROM keyValue')[0].n, all('SELECT COUNT(*) AS n FROM keyValue NOT INDEXED')[0].n);
+    content.push(JSON.stringify([
+      all('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name'),
+      all('SELECT key, value FROM keyValue ORDER BY key')
+    ]));
+    db.close();
+  }
+  console.log(content[0] === content[1] ? 'store matches (same schema and rows)' : 'store does NOT match');
+  EOF
+  ```
+
+  It picks the newest snapshot the same way as `$N` above and prints, for each file, the `integrity_check` answer, the row count and the row count read without the index, then whether schema and rows are identical.
 
   Each file must answer `ok` and the same count twice (rows equal to rows read without the index). Any other result means the store does not match. Different rows do not necessarily mean corruption (the Raft log can hold writes made after the snapshot), but the remedy is the same: start the core again on the old version, stop it cleanly, and check again.
 
