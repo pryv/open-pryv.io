@@ -518,12 +518,6 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
         response.reasonId = state.reasonId;
         response.message = state.message;
-      } else if (state.status === 'REDIRECTED') {
-        // Multi-core: auth moved to another core; the SDK follows the
-        // new poll URL. The auth UI receives the same field via the
-        // POST update response and redirects the browser.
-        response.poll = state.redirectUrl;
-        response.redirectUrl = state.redirectUrl;
       }
 
       // First read of a decided outcome starts the retention window: the
@@ -542,9 +536,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     try {
       const { status } = req.body;
 
-      if (!status || !['ACCEPTED', 'REFUSED', 'ERROR', 'REDIRECTED'].includes(status)) {
+      // There is no REDIRECTED outcome: a request stays on the core that
+      // created it (the poll URL is that core's own), and a credential for an
+      // account on another core travels by the shared-secret hand-off.
+      if (!status || !['ACCEPTED', 'REFUSED', 'ERROR'].includes(status)) {
         return res.status(400).json({
-          error: { id: 'invalid-parameters', message: 'status must be ACCEPTED, REFUSED, ERROR, or REDIRECTED' }
+          error: { id: 'invalid-parameters', message: 'status must be ACCEPTED, REFUSED or ERROR' }
         });
       }
 
@@ -565,7 +562,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
 
       // A hand-off describes an accepted grant only (like the delegation hint).
       // Refuse it on any other status BEFORE anything is written: `handoff` is
-      // an updatable field, so a REFUSED/ERROR/REDIRECTED post carrying one
+      // an updatable field, so a REFUSED/ERROR post carrying one
       // would otherwise store an unvalidated object, and a later legitimate
       // inline ACCEPTED would then drop the real token (the state store clears
       // the token whenever a handoff is present) and serve the poisoned body.
@@ -661,14 +658,6 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // The stored name is never read from the body: whatever the poster put
       // under `cmcInviteOutcomes` is dropped here, validated outcomes or nothing.
       update = { ...update, cmcInviteOutcomes };
-
-      if (status === 'REDIRECTED') {
-        if (!req.body.redirectUrl) {
-          return res.status(400).json({
-            error: { id: 'invalid-parameters', message: 'REDIRECTED requires redirectUrl' }
-          });
-        }
-      }
 
       // A request created with a consent form is the only one whose
       // ACCEPTED is checked: the server reads the access the page just
@@ -785,9 +774,6 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (state.status === 'REFUSED' || state.status === 'ERROR') {
           response.reasonId = state.reasonId;
           response.message = state.message;
-        } else if (state.status === 'REDIRECTED') {
-          response.poll = state.redirectUrl;
-          response.redirectUrl = state.redirectUrl;
         }
       }
       res.status(state.code).json(response);

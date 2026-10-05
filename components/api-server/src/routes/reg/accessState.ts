@@ -309,7 +309,7 @@ async function markDelivered (key: string, state: AccessState, retentionMs: numb
  */
 const UPDATABLE_FIELDS = Object.freeze([
   'status', 'username', 'token', 'apiEndpoint',
-  'reasonId', 'message', 'redirectUrl', 'delegation', 'handoff', 'cmcInviteOutcomes'
+  'reasonId', 'message', 'delegation', 'handoff', 'cmcInviteOutcomes'
 ]);
 
 /** Of those, the ones that carry free text and so must be strings. Whoever
@@ -318,7 +318,7 @@ const UPDATABLE_FIELDS = Object.freeze([
  * string as large as the body limit, held under that key until the request
  * expires. `delegation` and `handoff` are shape-checked by the route. */
 const STRING_UPDATABLE_FIELDS = Object.freeze([
-  'username', 'token', 'apiEndpoint', 'reasonId', 'message', 'redirectUrl'
+  'username', 'token', 'apiEndpoint', 'reasonId', 'message'
 ]);
 
 /** Marks a refusal the route turns into a status code rather than a 500. */
@@ -356,8 +356,6 @@ async function update (key: string, update: Partial<AccessState>, opts: { maxByt
     state.code = 200;
   } else if (update.status === 'REFUSED' || update.status === 'ERROR') {
     state.code = 403;
-  } else if (update.status === 'REDIRECTED') {
-    state.code = 301;
   }
   // The ceiling applies to EVERY write of a request, not only its creation:
   // the outcome post rewrites the same entry, so a ceiling checked once at
