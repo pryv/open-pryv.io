@@ -350,12 +350,49 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     const mall = fakeMallWithInvite({ ...structuredClone(ACCEPT_EVENT), content: { ...ACCEPT_EVENT.content, withdrawal: detached } });
     const hook = createAccessesDeletePostHook({ fetch, mall });
     const results = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
-    // a hook that fires twice writes once
+    // a second fire skips as well
     await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
 
     assert.equal(results[0].withdrawalStamped, false);
     assert.deepEqual(mall.eventById('evt-accept-1').content.withdrawal, detached);
     assert.equal(mall.calls.eventsUpdated.length, 0);
+  });
+
+  it('[DH21] a hook that fires twice in sequence on a fresh accept event writes once', async () => {
+    const { fetch } = fakeFetch([{ status: 201, body: {} }, { status: 201, body: {} }]);
+    const mall = fakeMallWithInvite(structuredClone(ACCEPT_EVENT));
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const first = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+    const firstWithdrawal = structuredClone(mall.eventById('evt-accept-1').content.withdrawal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const second = await hook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]);
+
+    assert.equal(first[0].withdrawalStamped, true);
+    assert.equal(second[0].withdrawalStamped, false);
+    assert.equal(mall.calls.eventsUpdated.length, 1);
+    assert.equal(firstWithdrawal.by, 'accesses.delete');
+    assert.deepEqual(mall.eventById('evt-accept-1').content.withdrawal, firstWithdrawal, 'at unchanged');
+  });
+
+  it('[DH22] the per-call notifyEventChanged is told of each event the hook changed', async () => {
+    const notified = [];
+    const notify = (userId, event) => notified.push(userId + ':' + event.id);
+
+    const accepterMall = fakeMallWithInvite(structuredClone(ACCEPT_EVENT));
+    const accepterHook = createAccessesDeletePostHook({ fetch: fakeFetch({ status: 201, body: {} }).fetch, mall: accepterMall });
+    await accepterHook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS], notify);
+    assert.deepEqual(notified, ['u1:evt-accept-1'], 'the withdrawal');
+
+    notified.length = 0;
+    const requesterMall = fakeMallWithInvite({ id: 'invite-dh', type: 'consent/request-cmc', content: { status: 'accepted' } });
+    const requesterHook = createAccessesDeletePostHook({ fetch: fakeFetch({ status: 201, body: {} }).fetch, mall: requesterMall });
+    await requesterHook('u2', [REQUESTER_SIDE_WITH_CAP], notify);
+    assert.deepEqual(notified, ['u2:invite-dh'], 'the invite stamp');
+
+    // without it the hook works as before
+    const plainMall = fakeMallWithInvite(structuredClone(ACCEPT_EVENT));
+    const plainHook = createAccessesDeletePostHook({ fetch: fakeFetch({ status: 201, body: {} }).fetch, mall: plainMall });
+    assert.equal((await plainHook('u1', [ACCEPTER_SIDE_LEGACY_ACCESS]))[0].withdrawalStamped, true);
   });
 
   it('[DH19] a missing accept event or one of another type writes nothing; without a peer endpoint it is still recorded', async () => {

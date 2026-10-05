@@ -27,9 +27,12 @@
  *
  * Rules: accepter side only (the data grant carries the LOCAL accept event id;
  * the requester's back-channel carries the peer's, and a `capabilityId` key);
- * the first writer wins, an existing `withdrawal` is never overwritten (detach
- * stamps before the delete hook fires, and a hook that fires twice writes
- * once); the write is versioned, so the record's previous state stays
+ * among writers in sequence the first wins, an existing `withdrawal` is never
+ * overwritten (detach stamps before the delete hook fires, and a hook that
+ * fires twice in sequence writes once); the check is a read then a write, not
+ * a compare-and-set, so two concurrent stampers may both write an equivalent
+ * record (same `accessId`); callers stamp only once the grant is gone; the
+ * write is versioned, so the record's previous state stays
  * demonstrable. Best-effort: never throws, and a caller never fails a
  * teardown on it.
  */
@@ -81,7 +84,7 @@ async function stampWithdrawalOnAccept (params: {
     return { ok: true, written: false, skipped: 'not-accepter-side' };
   }
   const acceptEventId = relationshipCmc.acceptEventId;
-  const events = deps.mall?.events;
+  const events = deps.mall.events;
   if (events?.getOne == null || events?.update == null) {
     return { ok: true, written: false, skipped: 'mall-events-unavailable' };
   }

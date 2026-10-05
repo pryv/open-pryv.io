@@ -12,7 +12,7 @@
   `revokeEventId` is the inbox arrival). A delegation detach keeps its existing
   `'delegation-detach'` marker. The field is server-owned (it cannot be written, changed or erased
   through the API) and never overwritten once set; after `accesses.delete` it lands shortly after
-  the delete answers. Apps listing a person's consents should treat an accept event with
+  the delete answers, and the user's socket clients receive `eventsChanged` when it does. Apps listing a person's consents should treat an accept event with
   `withdrawal` as ended (`@pryv/cmc` 3.18.0 does by default).
 
 ### `cmcInvites[].accessName` (#147)

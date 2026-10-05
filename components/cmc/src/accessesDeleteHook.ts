@@ -68,14 +68,20 @@ type DeleteHookResult = {
   reason?: string;
   peerNotified?: boolean;
   peerDeliveryStatus?: number;
-  /** Whether the withdrawal was recorded on the accept event (accepter side);
-   * absent when no `mall` dep was wired. */
+  /** Whether the withdrawal was recorded on the accept event: false when
+   * nothing was written (requester side, a skip, a failure), absent when no
+   * `mall` dep was wired. */
   withdrawalStamped?: boolean;
 };
 
+/** Told when the hook changed an event of the user (the invite stamp, the
+ * withdrawal), so a socket client sees it live. Per call: the wiring site
+ * knows the username, the factory does not. Best-effort. */
+type NotifyEventChanged = (userId: string, event: { id?: string }) => void;
+
 /**
  * Build a post-hook callable. Invocation:
- * `await hook(userId, deletedAccesses)` where `deletedAccesses` are the
+ * `await hook(userId, deletedAccesses, notifyEventChanged?)` where `deletedAccesses` are the
  * full access objects captured BEFORE deletion (the route's target +
  * cascade). `userId` is an interface seam only — every input access is
  * already scoped to that user by the caller; nothing here re-reads by
@@ -86,7 +92,8 @@ type DeleteHookResult = {
 function createAccessesDeletePostHook (deps: DeleteHookDeps) {
   return async function accessesDeletePostHook (
     userId: string,
-    deletedAccesses: CmcAccessLike[]
+    deletedAccesses: CmcAccessLike[],
+    notifyEventChanged?: NotifyEventChanged
   ): Promise<DeleteHookResult[]> {
     const results: DeleteHookResult[] = [];
     if (!Array.isArray(deletedAccesses)) return results;
@@ -111,7 +118,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         const stamp = await inviteState.stampRevokedFromRelationship({
           userId,
           relationshipCmc: cmc,
-          deps: { mall: deps.mall, logger: deps.logger },
+          deps: { mall: deps.mall, logger: deps.logger, notifyEventChanged },
         });
         if (!stamp.ok) {
           deps.logger?.warn?.('cmc/accessesDeleteHook: invite not stamped revoked (non-fatal)', {
@@ -131,7 +138,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           relationshipCmc: cmc,
           by: 'accesses.delete',
           accessId: access.id,
-          deps: { mall: deps.mall, logger: deps.logger },
+          deps: { mall: deps.mall, logger: deps.logger, notifyEventChanged },
         });
         withdrawalStamped = withdrawal.ok && withdrawal.written;
       }

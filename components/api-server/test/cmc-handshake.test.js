@@ -2372,11 +2372,18 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     it('[CN58] the accepter\'s raw accesses.delete marks the accept event; the client cannot remove or change the mark', async function () {
       const h = await runFreshHandshake('wd-a', 'wd-app-a');
       const { grant, acceptEventId } = await grantWithAccept(h);
+      // the handshake has settled: bob's events notifications are quiet
+      await sleep(500);
+      const notifiedBefore = global.notifications.eventsChanged(bob.username);
 
       const delRes = await coreRequest.delete(bob.accessesPath + '/' + grant.id).set('Authorization', bob.token);
       assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
 
       const stamped = await pollWithdrawal(bob, acceptEventId, 'CN58');
+      // the stamp lands after the delete answered: socket clients are told
+      await sleep(100);
+      assert.ok(global.notifications.eventsChanged(bob.username) > notifiedBefore,
+        'CN58: an eventsChanged notification must follow the stamp');
       const { withdrawal } = stamped.content;
       assert.deepStrictEqual(Object.keys(withdrawal).sort(), ['accessId', 'at', 'by']);
       assert.strictEqual(withdrawal.by, 'accesses.delete');
