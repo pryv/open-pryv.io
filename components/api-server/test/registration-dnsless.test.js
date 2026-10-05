@@ -359,6 +359,14 @@ describe('[BMM2] registration: DNS-less', () => {
       assert.strictEqual(res.body.reserved, true);
     });
 
+    it('[RCK1] a reserved username is reported reserved (registration would refuse it)', async () => {
+      for (const name of ['previews', 'pryvtesting']) {
+        const res = await request.get(path(name));
+        assert.strictEqual(res.status, 200, name);
+        assert.strictEqual(res.body.reserved, true, name);
+      }
+    });
+
     it('[H09H] when checking a too short username, it should respond with status 400 and the correct error', async () => {
       const res = await request.get(path('a'.repeat(USERNAME_MIN_LENGTH - 1)));
       const body = res.body;

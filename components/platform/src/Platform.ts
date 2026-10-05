@@ -29,6 +29,10 @@ const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHa
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
 const reservedWords = new Set(require('./reserved-words.json').list);
+// First path segments the core routes itself, outside any user. On a dnsLess
+// core a user with one of these names would lose part of its own API to them
+// (e.g. its batch call `POST /users` is the registration route).
+const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
 const { hostedSiteNames } = require('business/src/hostedSites.ts');
 
 /**
@@ -1214,11 +1218,12 @@ class Platform {
 
   /**
    * Check if username is reserved (starts with "pryv", in the reserved words
-   * list, or a hosted-site name of any core).
+   * list, a path segment the core routes itself, or a hosted-site name of any core).
    */
   #isUsernameReserved (username: string) {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
+    if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
     if (this.#hostedSiteNames.has(lower)) return true;
     return reservedWords.has(lower);
   }

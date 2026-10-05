@@ -22,7 +22,27 @@
   need nothing. The list in use is in the boot log; an entry that is not an IP, a CIDR or a known
   name refuses the boot. See INSTALL.md, "Client addresses behind a proxy".
 - **Fix (previews worker).** The username-in-host rewrite is decided like the API server and the
-  HFS worker. INSTALL no longer states that previews are routed through the public port.
+  HFS worker.
+
+### Image previews reachable again on the public port
+
+- **Fix.** Image previews were unreachable for clients: the previews worker listens only on its
+  internal port, and nothing on the public port routed to it (unlike high-frequency series), so a
+  core terminating TLS itself answered 404 to every preview. The public port now routes the
+  preview URL to the worker, in-process: `{apiEndpoint}previews/events/{id}` with optional
+  `.jpg` / `.jpeg`, `w` / `h` and `auth` (i.e. `/{username}/previews/events/{id}` on a dnsLess
+  core, `/previews/events/{id}` on `{username}.{domain}`). The nginx sample and INSTALL.md carry
+  the matching location for deployments behind nginx. The worker's `clean-up-cache` maintenance
+  call is not exposed.
+- Usernames `users`, `oauth2`, `previews`, `series` and `system` are reserved: they are path
+  segments the core routes itself, and on a dnsLess core such a user would lose part of its own
+  API to them (existing accounts are not affected).
+- **Security (logs).** Request logs no longer include access tokens passed as `?auth=` (preview
+  and attachment links): the request trace of the API, HFS and previews servers, the error log's
+  request location, and the in-process dispatchers write `auth=***`.
+- **Fix.** `GET /reg/{username}/check_username` now answers `reserved: true` for a name that
+  registration refuses (reserved words, `pryv…`, hosted-site and route-segment names), not only
+  for a name already taken.
 
 ## 2.0.0-rc.35 - 2026-10-05
 

@@ -255,7 +255,7 @@ NODE_ENV=production node bin/master.js --config override.yml
 
 At boot, a certificate whose validity window does not contain the host's clock is reported with a warning (`TLS certificate at http.ssl.certFile: local clock ... is outside the certificate validity window ...`): either the host clock is wrong or the certificate is stale. Tolerance on `notBefore`: `cluster.clockSkewSeconds` (default 30 s, `0` disables).
 
-**Note**: When using built-in HTTPS, the public API port also routes HFS series traffic in-process: clients only need access to the configured `http.port` (typically `:443`), and HFS stays on its internal port (`:4000`), reached through a dispatcher in front of the api-server. Image previews are not routed this way: the previews worker listens only on its internal port (`:3001`), so previews are available to clients only where a proxy routes `/{user}/events/{id}.jpg` to it.
+**Note**: When using built-in HTTPS, the public API port also routes HFS series traffic in-process: clients only need access to the configured `http.port` (typically `:443`), and HFS stays on its internal port (`:4000`), reached through a dispatcher in front of the api-server. Image previews are routed the same way: `/{user}/previews/events/{id}` (or `/previews/events/{id}` with the username in the host) goes to the previews worker on its internal port (`:3001`).
 
 > **HFS in standalone mode**: high-frequency series endpoints (`/{user}/events/{id}/series`, `/{user}/series/batch`) are routed from the public port to the HFS worker on `:4000` by an in-process dispatcher in api-server. Set `cluster.hfsWorkers: 1` (or more) to enable HFS; SDKs read `features.noHF` on `/service/info` to know whether the cluster serves HFS (auto-derived from `cluster.hfsWorkers` — explicit `service.features.noHF` in config takes precedence).
 >
@@ -344,7 +344,7 @@ list in use (`client address attribution: X-Forwarded-For trusted from [...]`).
 |------|---------|-------------|
 | 3000 | API (N workers) | REST endpoints, Socket.IO, registration |
 | 4000 | HFS (M workers) | `/{user}/events/{id}/series`, `/{user}/series/batch` |
-| 3001 | Previews (0-1) | Image preview generation (internal) |
+| 3001 | Previews (0-1) | `/{user}/previews/events/{id}` on the public port, served as `/{user}/events/{id}` |
 
 ### nginx configuration
 
@@ -355,6 +355,10 @@ upstream api_backend {
 
 upstream hfs_backend {
     server 127.0.0.1:4000;
+}
+
+upstream previews_backend {
+    server 127.0.0.1:3001;
 }
 
 server {
@@ -409,6 +413,18 @@ server {
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
+
+    # Image previews: the worker expects the URL without `previews/`; keep the
+    # client Host (with the username in the host, the worker reads it there)
+    location ~ ^/(?:[^/]+/)?previews/events/ {
+        rewrite ^/((?:[^/]+/)?)previews/(events/.*)$ /$1$2 break;
+        proxy_pass http://previews_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 
 server {
@@ -421,6 +437,8 @@ server {
 ### Important nginx notes
 
 **HFS Host header**: the `proxy_set_header Host` for the path-style HFS locations should be a plain IP:port (e.g. `127.0.0.1:4000`). With the username in the host (`dns.domain` set), the HFS worker moves the host's first label into the URL path, so a public host name there would corrupt the route. In dnsLess mode the HFS worker leaves the host alone, as the api-server does, so the plain IP:port is harmless and keeps the same config valid in both modes.
+
+**Previews Host header**: the previews location keeps the client Host (`$http_host`), unlike HFS. With the username in the host, the URL the worker receives (`/events/{id}`) carries no username, and the worker takes it from the Host. In dnsLess mode the user is in the path and the Host is not read.
 
 **Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
 
@@ -1061,6 +1079,10 @@ io(endpoint, { transports: ['websocket'] });
 The HFS runs on port 4000. If your reverse proxy only forwards to 3000, series endpoints return 404. Add the HFS nginx locations shown above.
 
 The `Host` header sent to HFS must be a plain IP:port — see "HFS Host header" above.
+
+### Previews: 404 on `/previews/events/...`
+
+Previews are served by the previews worker on port 3001 (`cluster.previewsWorker`, on by default). With built-in HTTPS the public port routes `/{user}/previews/events/{id}` to it; behind your own proxy, add the previews location shown above. `/previews/clean-up-cache` is an internal maintenance call and is deliberately not routed. A client URL without the `previews/` segment (`/{user}/events/{id}.jpg`) is an event lookup, not a preview, and answers 404.
 
 ### Previews: "Could not load the sharp module"
 
