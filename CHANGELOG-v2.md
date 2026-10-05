@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Consent withdrawal recorded on the person's own record (#146)
+
+- When a cross-account consent ends, the `consent/accept-cmc` event in the person's
+  `:_cmc:apps:<app>` scope now carries `content.withdrawal = { at, by, accessId, revokeEventId? }`
+  (`at` in seconds), whatever ended it: `accesses.delete` on the data grant
+  (`by: 'accesses.delete'`), a `consent/revoke-cmc` written by the person (`'revoke-cmc'`,
+  `revokeEventId` is that trigger), a revocation by the requester (`'peer-revoke'`,
+  `revokeEventId` is the inbox arrival). A delegation detach keeps its existing
+  `'delegation-detach'` marker. The field is server-owned (it cannot be written, changed or erased
+  through the API) and never overwritten once set; after `accesses.delete` it lands shortly after
+  the delete answers. Apps listing a person's consents should treat an accept event with
+  `withdrawal` as ended (`@pryv/cmc` 3.18.0 does by default).
+
+### `cmcInvites[].accessName` (#147)
+
+- An invite of an authorisation request (`POST /reg/access`) may name the data grant the person
+  mints by accepting it: `accessName`, 1 to 256 characters, stored as sent and echoed with the
+  invite on the 201 and on the NEED_SIGNIN poll (absent when not sent). The core never uses it;
+  the authentication page passes it to the accept. An older core refuses an entry carrying it with
+  `400 invalid-parameters`.
+
+### `actAsManagedOnly` (#148)
+
+- An authorisation request (`POST /reg/access`) may require the access to be granted for an
+  account the user manages: `actAsManagedOnly: true`, with `actAs: 'allow'` or a username; refused
+  with `400 invalid-parameters` with `actAs: 'deny'`, without `actAs`, or when not a boolean.
+  Stored and echoed on the 201 and on the NEED_SIGNIN poll only when sent and `true` (`false` is
+  treated as not sent); the outcome post cannot add or clear it. The core does not enforce it, the
+  authentication page does. An older core drops the field (no echo); an older page behaves per
+  `actAs`.
+
 ### Client addresses only from trusted proxies (`http.trustedProxies`)
 
 - **Security.** The client address recorded in the audit log (`source.ip`, on API calls,
