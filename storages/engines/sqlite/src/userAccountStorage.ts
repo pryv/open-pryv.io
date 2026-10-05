@@ -20,6 +20,7 @@ const SQLite3 = require('better-sqlite3');
 const { LRUCache: LRU } = require('lru-cache');
 const timestamp = require('unix-timestamp');
 const { _internals } = require('./_internals.ts');
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 const encryption = require('utils').encryption;
 
 const CACHE_SIZE = 100;
@@ -91,7 +92,9 @@ async function getPasswordHash (userId: string): Promise<string | undefined> {
 async function addPasswordHash (userId: string, passwordHash: string, createdBy: string, time: number = timestamp.now()): Promise<{ time: number, hash: string, createdBy: string }> {
   const db = await getUserDB(userId);
   const result = { time, hash: passwordHash, createdBy };
-  db.prepare('INSERT INTO passwords (time, hash, createdBy) VALUES (@time, @hash, @createdBy)').run(result);
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('INSERT INTO passwords (time, hash, createdBy) VALUES (@time, @hash, @createdBy)').run(result);
+  });
   return result;
 }
 
@@ -142,9 +145,11 @@ async function getAccountField (userId: string, field: string): Promise<unknown 
 async function setAccountField (userId: string, field: string, value: unknown, createdBy: string, time: number = timestamp.now()): Promise<{ field: string, value: unknown, time: number, createdBy: string }> {
   const db = await getUserDB(userId);
   const item = { field, value: JSON.stringify(value), time, createdBy };
-  db.prepare(
-    'INSERT INTO account_fields (field, value, time, createdBy) VALUES (@field, @value, @time, @createdBy)'
-  ).run(item);
+  await concurrentSafeWrite.execute(() => {
+    db.prepare(
+      'INSERT INTO account_fields (field, value, time, createdBy) VALUES (@field, @value, @time, @createdBy)'
+    ).run(item);
+  });
   return { field, value, time, createdBy };
 }
 
@@ -164,7 +169,9 @@ async function getAccountFieldHistory (userId: string, field: string, limit?: nu
 
 async function deleteAccountField (userId: string, field: string): Promise<void> {
   const db = await getUserDB(userId);
-  db.prepare('DELETE FROM account_fields WHERE field = ?').run(field);
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('DELETE FROM account_fields WHERE field = ?').run(field);
+  });
 }
 
 /**
@@ -198,7 +205,9 @@ async function _getAllStoreData (userId: string): Promise<Array<{ storeId: strin
  */
 async function _clearStoreData (userId: string): Promise<void> {
   const db = await getUserDB(userId);
-  db.prepare('DELETE FROM storeKeyValueData').run();
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('DELETE FROM storeKeyValueData').run();
+  });
 }
 
 // PER-STORE KEY-VALUE DB
@@ -237,16 +246,20 @@ class StoreKeyValueData {
   async set (userId: string, key: string, value: unknown): Promise<void> {
     const db = await getUserDB(userId);
     if (value == null) {
-      db.prepare('DELETE FROM storeKeyValueData WHERE storeId = @storeId AND key = @key)').run({
-        storeId: this.storeId,
-        key
+      await concurrentSafeWrite.execute(() => {
+        db.prepare('DELETE FROM storeKeyValueData WHERE storeId = @storeId AND key = @key').run({
+          storeId: this.storeId,
+          key
+        });
       });
     } else {
       const valueStr = JSON.stringify(value);
-      db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
-        storeId: this.storeId,
-        key,
-        value: valueStr
+      await concurrentSafeWrite.execute(() => {
+        db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
+          storeId: this.storeId,
+          key,
+          value: valueStr
+        });
       });
     }
   }
@@ -259,7 +272,9 @@ class StoreKeyValueData {
  */
 async function clearHistory (userId: string): Promise<void> {
   const db = await getUserDB(userId);
-  db.prepare('DELETE FROM passwords').run();
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('DELETE FROM passwords').run();
+  });
 }
 
 // MIGRATION METHODS
@@ -300,10 +315,12 @@ async function _importAll (userId: string, data: ImportData): Promise<void> {
     const db = await getUserDB(userId);
     for (const kv of data.storeKeyValues) {
       const valueStr = typeof kv.value === 'string' ? kv.value : JSON.stringify(kv.value);
-      db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
-        storeId: kv.storeId,
-        key: kv.key,
-        value: valueStr
+      await concurrentSafeWrite.execute(() => {
+        db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
+          storeId: kv.storeId,
+          key: kv.key,
+          value: valueStr
+        });
       });
     }
   }
@@ -318,7 +335,9 @@ async function _clearAll (userId: string): Promise<void> {
   await clearHistory(userId);
   await _clearStoreData(userId);
   const db = await getUserDB(userId);
-  db.prepare('DELETE FROM account_fields').run();
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('DELETE FROM account_fields').run();
+  });
 }
 
 // DB HELPERS
@@ -331,14 +350,24 @@ async function openUserDB (userId: string): Promise<SQLite3Instance> {
   const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
   const dbPath = path.join(userPath, `account-${VERSION}.sqlite`);
   const db = new SQLite3(dbPath, DB_OPTIONS);
-  db.pragma('journal_mode = WAL');
-  db.unsafeMode(true);
-  db.prepare('CREATE TABLE IF NOT EXISTS passwords (time REAL PRIMARY KEY, hash TEXT NOT NULL, createdBy TEXT NOT NULL);').run();
-  db.prepare('CREATE INDEX IF NOT EXISTS passwords_hash ON passwords(hash);').run();
-  db.prepare('CREATE TABLE IF NOT EXISTS storeKeyValueData (storeId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (storeId, key));').run();
-  db.prepare('CREATE INDEX IF NOT EXISTS storeKeyValueData_storeId ON storeKeyValueData(storeId);').run();
-  db.prepare('CREATE TABLE IF NOT EXISTS account_fields (field TEXT NOT NULL, value TEXT, time REAL NOT NULL, createdBy TEXT NOT NULL, PRIMARY KEY (field, time));').run();
-  db.prepare('CREATE INDEX IF NOT EXISTS account_fields_field ON account_fields(field);').run();
+  // Like the other per-user files: no busy timeout (it would block the event
+  // loop while another process writes this account), every write retries SQLITE_BUSY.
+  await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(db);
+  // Every statement is IF NOT EXISTS: re-running them all after SQLITE_BUSY is safe.
+  await concurrentSafeWrite.execute(() => {
+    db.prepare('CREATE TABLE IF NOT EXISTS passwords (time REAL PRIMARY KEY, hash TEXT NOT NULL, createdBy TEXT NOT NULL);').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS passwords_hash ON passwords(hash);').run();
+    db.prepare('CREATE TABLE IF NOT EXISTS storeKeyValueData (storeId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (storeId, key));').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS storeKeyValueData_storeId ON storeKeyValueData(storeId);').run();
+    db.prepare('CREATE TABLE IF NOT EXISTS account_fields (field TEXT NOT NULL, value TEXT, time REAL NOT NULL, createdBy TEXT NOT NULL, PRIMARY KEY (field, time));').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS account_fields_field ON account_fields(field);').run();
+  });
+  // A concurrent open of the same account may have finished first: keep one connection.
+  const cached = dbCache!.get(userId) as SQLite3Instance | undefined;
+  if (cached != null) {
+    db.close();
+    return cached;
+  }
   dbCache!.set(userId, db);
   return db;
 }

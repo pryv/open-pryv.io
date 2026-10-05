@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Data stores: removing a key-value entry on SQLite
+
+- **Fix.** On the SQLite storage engine, a data store's per-account key-value storage refused to
+  remove an entry (`set(key, null)` failed with a SQL syntax error). PostgreSQL was not affected.
+
 ### Client addresses only from trusted proxies (`http.trustedProxies`)
 
 - **Security.** The client address recorded in the audit log (`source.ip`, on API calls,
