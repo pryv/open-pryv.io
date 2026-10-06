@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### A server-written event field no longer overwrites a concurrent client update
+
+- **Fix.** The fields the server writes onto an existing event (a CMC trigger's `status` and
+  `failure`, the `withdrawal` on a consent record, an invite's state, the outcome recorded on a
+  scope update, the enrichment of a revoke arrival, a delegation record, an email record's status,
+  a series event's `duration`, an attachment added or removed) are now applied onto the event as
+  stored at write time. Before, such a write was built from the copy the server had read earlier,
+  so an `events.update` landing in between was overwritten with that copy. The client's own change
+  survives; the server-owned field is set alongside it.
+
 ## 2.0.0-rc.38 - 2026-10-06
 
 ### CMC: `features.chat` decides whether a relationship gets a chat channel (#149)
