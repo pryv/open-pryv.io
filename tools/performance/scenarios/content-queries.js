@@ -59,7 +59,7 @@ export async function run (config, seedData) {
       conditions: (idx) => [{ path: 'drug.codes.atc', eq: CODES[idx % CODES.length] }]
     },
     {
-      name: 'in-16-and-eq', // HDS checklist-prefill shape
+      name: 'in-16-and-eq', // checklist-prefill shape
       conditions: () => [{ path: 'drug.codes.atc', in: CODES }, { path: 'taken', eq: true }]
     },
     {

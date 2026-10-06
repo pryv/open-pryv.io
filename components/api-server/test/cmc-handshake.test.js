@@ -1112,7 +1112,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   });
 
   describe('[CMCHS-AP-PER-APP] accesses.{create,update} auto-provision per-app appScope roots', function () {
-    // Reported in the HDS handoff of 2026-05-26. The 5 reserved
+    // Reported by an implementer on 2026-05-26. The 5 reserved
     // parents under :_cmc:* are pre-provisioned at user creation
     // (provisioning.ts). Per-app sub-trees under :_cmc:apps:<app-code>
     // were historically created on-demand at CMC-acceptance time — but
