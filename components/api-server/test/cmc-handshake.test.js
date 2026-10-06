@@ -2706,5 +2706,56 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         []
       );
     });
+
+    it('[CN69] a self-relationship made before the refusal: deleting its access records the withdrawal on its accept', async function () {
+      // The shape a self-accept left: ONE relationship access (the data grant
+      // reused as the back-channel), capabilityId key, no acceptEventId, its
+      // own token as the peer endpoint; the accept names it as its data grant.
+      const appId = 'self-legacy-app';
+      const appRoot = ':_cmc:apps:' + appId;
+      const scope = appRoot + ':study-legacy';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+      await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: appRoot, name: 'study-legacy' });
+      const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const mall = await buildMallForCmc();
+      const aliceUserId = await (await getUsersRepository()).getUserIdForUsername(alice.username);
+      const cmc = {
+        role: 'counterparty',
+        appCode: appId,
+        scopeStreamId: scope,
+        capabilityId: 'cap-legacy-self',
+        counterparty: { username: alice.username, host: 'x.pryv.me' },
+      };
+      const access = await mall.accesses.create(aliceUserId, {
+        name: 'legacy-self-' + Date.now(),
+        type: 'shared',
+        permissions: [{ streamId: scope, level: 'read' }],
+        clientData: { cmc },
+      });
+      const selfEndpoint = 'https://' + access.token + '@' + alice.username + '.x.pryv.me/';
+      await mall.accesses.update(aliceUserId, {
+        id: access.id,
+        update: { clientData: { cmc: { ...cmc, counterparty: { ...cmc.counterparty, apiEndpoint: selfEndpoint }, backChannelApiEndpoint: selfEndpoint } } },
+      });
+      const accept = await mall.events.create(aliceUserId, {
+        streamIds: [appRoot],
+        type: 'consent/accept-cmc',
+        content: { status: 'completed', dataGrantAccessId: access.id },
+      });
+
+      const del = await coreRequest.delete(alice.accessesPath + '/' + access.id).set('Authorization', alice.token);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      let withdrawal;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const ev = (await coreRequest.get(alice.eventsPath + '/' + accept.id).set('Authorization', alice.token)).body.event;
+        withdrawal = ev?.content?.withdrawal;
+        if (withdrawal != null) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(withdrawal?.by, 'accesses.delete', JSON.stringify(withdrawal));
+      assert.strictEqual(withdrawal.accessId, access.id);
+    });
   });
 });

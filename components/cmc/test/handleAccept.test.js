@@ -589,6 +589,37 @@ describe('[CMCHA] cmc/handleAccept', () => {
       }
     });
 
+    it('[HA48] a capability token that is one of the account\'s own accesses is refused before the offer is read, whatever the identity', async () => {
+      const mall = fakeMall();
+      mall.accesses.get = async () => [{ id: 'acc-cap', token: 'Tok' }, { id: 'acc-other', token: 'other' }];
+      const { fetch, calls } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: { id: 'evt-accept-own', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:my-app'], content: { capabilityUrl: 'https://Tok@example.com/' } },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-self-accept-forbidden');
+      assert.equal(calls.length, 0, 'the offer is not even read');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+
+      // another account's capability passes
+      mall.accesses.get = async () => [{ id: 'acc-other', token: 'other' }];
+      const { fetch: fetch2 } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const ok = await handleAccept({
+        userId: 'u1',
+        triggerEvent: { id: 'evt-accept-own-2', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:my-app'], content: { capabilityUrl: 'https://Tok@example.com/' } },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch: fetch2 },
+      });
+      assert.equal(ok.ok, true, JSON.stringify(ok));
+    });
+
     it('[HA47] the same username on another platform is another account', async () => {
       const { r, mall } = await acceptOfferFrom('alice', 'other.example.org');
       assert.equal(r.ok, true);

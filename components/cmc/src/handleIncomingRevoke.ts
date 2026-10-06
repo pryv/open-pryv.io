@@ -173,6 +173,7 @@ async function handleIncomingRevoke (params: {
       relationshipCmc: deleted.clientData?.cmc,
       by: 'peer-revoke',
       accessId,
+      access: deleted,
       revokeEventId: typeof event.id === 'string' ? event.id : null,
       deps: { mall, logger, notifyEventChanged: deps.notifyEventChanged },
     });

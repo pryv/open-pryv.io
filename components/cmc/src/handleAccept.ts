@@ -125,6 +125,13 @@ async function handleAccept (params: {
   }
   const accessName = (triggerEvent.content as { accessName?: string })?.accessName;
 
+  // An account cannot consent to itself. The capability access lives on the
+  // requester's account, so a capability token that is one of our own
+  // accesses means we made this offer, whatever identity it was stamped with.
+  if (await isOwnCapability(mall, userId, capabilityUrl)) {
+    return { ok: false, reason: CmcErrorIds.SELF_ACCEPT_FORBIDDEN };
+  }
+
   // 1. Read the offer.
   let offer: OfferShape | undefined;
   try {
@@ -160,8 +167,8 @@ async function handleAccept (params: {
   if (counterparty == null) {
     return { ok: false, reason: 'cmc-handler-counterparty-unknown' };
   }
-  // An account cannot consent to itself: refused before any stream or access
-  // exists, so no self-relationship is ever provisioned.
+  // Same account by identity (covers a capability served by another core
+  // for this account): refused before any stream or access exists.
   if (sameIdentity(counterparty, selfIdentity)) {
     return { ok: false, reason: CmcErrorIds.SELF_ACCEPT_FORBIDDEN };
   }
@@ -857,6 +864,23 @@ function inferCounterparty (offer: OfferShape, capabilityUrl: string): { usernam
   }
   if (host == null) return null;
   return { username, host };
+}
+
+/** Whether the capability URL's token is one of this account's own accesses. */
+async function isOwnCapability (mall: MallLike, userId: string, capabilityUrl: string): Promise<boolean> {
+  let token: string;
+  try {
+    token = new URL(capabilityUrl).username;
+  } catch (_e) {
+    return false;
+  }
+  if (token.length === 0 || typeof mall.accesses?.get !== 'function') return false;
+  try {
+    const accesses = await mall.accesses.get(userId, {});
+    return Array.isArray(accesses) && accesses.some((a) => (a as { token?: string })?.token === token);
+  } catch (_e) {
+    return false;
+  }
 }
 
 /** Same account: both identities give the same counterparty slug (the key both sides use). */
