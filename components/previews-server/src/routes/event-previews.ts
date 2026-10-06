@@ -18,6 +18,11 @@ const childProcess = require('child_process');
 const CronJob = require('cron').CronJob;
 const errors = require('errors').factory;
 const sharp = require('sharp');
+// Previews are raster thumbnails. SVG would be decoded by librsvg, a large
+// native parser reached here with user-supplied files, so its loaders are
+// blocked for this worker: an SVG attachment is answered like any other
+// unsupported format (sharp reports "unsupported image format").
+sharp.block({ operation: ['VipsForeignLoadSvg'] });
 const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const getAuth = require('middleware/src/getAuth.ts').default;
