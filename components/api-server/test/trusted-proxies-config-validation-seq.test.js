@@ -68,13 +68,20 @@ describe('[CVTP] config-validation http.trustedProxies', () => {
 
   it('[CVT5] a list that trusts every client is refused', () => {
     // (0.0.0.0/0 and ::/0 do not compile in proxy-addr: refused as malformed entries, see [CVT2])
-    for (const list of [['::/1'], ['loopback', '::/2']]) {
+    // IPv6 everyone (::/1, ::/2) and IPv4 everyone (::ffff:0.0.0.0/96, two /1 halves)
+    for (const list of [['::/1'], ['loopback', '::/2'], ['::ffff:0.0.0.0/96'], ['0.0.0.0/1', '128.0.0.0/1']]) {
       const problems = [];
       validation.checkTrustedProxies(fakeConfig(list), problems);
       assert.strictEqual(problems.length, 1, JSON.stringify(list) + ' ' + JSON.stringify(problems));
-      assert.match(problems[0].message, /trusts every address/);
+      assert.match(problems[0].message, /trusts every client/);
       assert.deepStrictEqual(problems[0].path, ['http', 'trustedProxies']);
     }
+    // the advisory's own misconfiguration matches nobody on a fixed proxy-addr: refused, located
+    const shortMapped = [];
+    validation.checkTrustedProxies(fakeConfig(['loopback', '::ffff:10.0.0.0/8']), shortMapped);
+    assert.strictEqual(shortMapped.length, 1, JSON.stringify(shortMapped));
+    assert.match(shortMapped[0].message, /matches no client/);
+    assert.deepStrictEqual(shortMapped[0].path, ['http', 'trustedProxies', 1]);
     const problems = [];
     validation.checkTrustedProxies(fakeConfig(['loopback', '::ffff:10.0.0.0/104', '10.0.0.0/8']), problems);
     assert.deepStrictEqual(problems, [], 'a correctly written mapped subnet is accepted');

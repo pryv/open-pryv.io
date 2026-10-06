@@ -9,8 +9,10 @@
   `::ffff:10.0.0.0/8` instead of `::ffff:10.0.0.0/104`) matched every IPv4 client, so any client
   could choose the address recorded for it (GHSA-jqcg-44mw-7w3h). Lists in plain IPv4 notation, the
   names `loopback` / `linklocal` / `uniquelocal`, and the default `['loopback']` were not affected.
-- **Boot check.** A `http.trustedProxies` list that would trust every client (for example `::/1`)
-  now refuses the boot with a message naming the cause.
+- **Boot check.** A `http.trustedProxies` list that would trust every client (for example `::/1`
+  or `::ffff:0.0.0.0/96`), or a subnet that matches no client (the short mapped prefix above: on
+  2.0.8 it matches nobody, so the proxy would be recorded instead of the client), now refuses the boot
+  with a message naming the entry. The same check runs when a worker process applies the list.
 
 ### Data stores: removing a key-value entry on SQLite
 

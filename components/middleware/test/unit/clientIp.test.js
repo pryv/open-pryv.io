@@ -74,4 +74,16 @@ describe('[CLIP] client address behind trusted proxies', function () {
   it('[CLIA] an entry proxy-addr cannot compile is refused', function () {
     assert.throws(() => configureTrustedProxies(['not-a-cidr/99']));
   });
+
+  it('[CLIB] a list that trusts every client, or an entry that matches nobody, is refused at runtime too', function () {
+    configureTrustedProxies(['loopback', '10.0.0.0/8']);
+    for (const list of [['::/1'], ['::ffff:0.0.0.0/96'], ['loopback', '::ffff:10.0.0.0/8']]) {
+      assert.throws(() => configureTrustedProxies(list), /trusts every client|matches no client/, JSON.stringify(list));
+      assert.deepStrictEqual(currentTrustedProxies(), ['loopback', '10.0.0.0/8'], 'previous list kept');
+    }
+    // the spoof still fails after a refused update
+    assert.strictEqual(clientIp(req('198.51.100.9', '1.2.3.4')), '198.51.100.9');
+    configureTrustedProxies(['::ffff:10.0.0.0/104']);
+    assert.strictEqual(clientIp(req('::ffff:10.1.2.3', '198.51.100.20')), '198.51.100.20');
+  });
 });
