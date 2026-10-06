@@ -94,6 +94,20 @@ function checkTrustedProxiesConfig (list: unknown, hfsWorkers: unknown): { probl
       problems.push({ message: `http.trustedProxies[${i}] '${entry}': ${(e as Error).message}`, path: [...path, i] });
     }
   });
+  // A list that trusts a documentation-only address (TEST-NET-2, the IPv6 discard prefix) trusts
+  // every client, so any client could choose the address recorded for it: 0.0.0.0/0, ::/0, or an
+  // IPv4-mapped IPv6 subnet with a short prefix (::ffff:10.0.0.0/8 instead of ::ffff:10.0.0.0/104).
+  if (problems.length === 0) {
+    const trust = proxyaddr.compile(list as string[]);
+    if (trust('198.51.100.7', 0) || trust('100::7', 0)) {
+      problems.push({
+        message: 'http.trustedProxies trusts every address (an entry such as 0.0.0.0/0, ::/0, or an ' +
+          'IPv4-mapped IPv6 subnet with a short prefix like ::ffff:10.0.0.0/8). Write IPv4 subnets in ' +
+          'IPv4 notation, e.g. 10.0.0.0/8',
+        path
+      });
+    }
+  }
   if (problems.length === 0 && Number(hfsWorkers) > 0 && !proxyaddr.compile(list as string[])('127.0.0.1', 0)) {
     warnings.push('http.trustedProxies does not include loopback while HFS workers run: high-frequency ' +
       'series requests forwarded by the core itself will be recorded as coming from 127.0.0.1. ' +

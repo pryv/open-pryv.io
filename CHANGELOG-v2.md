@@ -2,6 +2,16 @@
 
 ## 2.0.0-rc.37 - 2026-10-06
 
+### Trusted proxies: proxy-addr 2.0.8 (CVE-2026-90711)
+
+- **Security.** `proxy-addr`, which resolves the client address against `http.trustedProxies`, is
+  now 2.0.8. Before it, an IPv4-mapped IPv6 entry with a short prefix (for example
+  `::ffff:10.0.0.0/8` instead of `::ffff:10.0.0.0/104`) matched every IPv4 client, so any client
+  could choose the address recorded for it (GHSA-jqcg-44mw-7w3h). Lists in plain IPv4 notation, the
+  names `loopback` / `linklocal` / `uniquelocal`, and the default `['loopback']` were not affected.
+- **Boot check.** A `http.trustedProxies` list that would trust every client (for example `::/1`)
+  now refuses the boot with a message naming the cause.
+
 ### Data stores: removing a key-value entry on SQLite
 
 - **Fix.** On the SQLite storage engine, a data store's per-account key-value storage refused to

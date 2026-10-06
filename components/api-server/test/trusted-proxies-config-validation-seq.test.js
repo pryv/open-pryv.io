@@ -66,6 +66,30 @@ describe('[CVTP] config-validation http.trustedProxies', () => {
     assert.ok(!noHfs.some((w) => /does not include loopback/.test(w)));
   });
 
+  it('[CVT5] a list that trusts every client is refused', () => {
+    // (0.0.0.0/0 and ::/0 do not compile in proxy-addr: refused as malformed entries, see [CVT2])
+    for (const list of [['::/1'], ['loopback', '::/2']]) {
+      const problems = [];
+      validation.checkTrustedProxies(fakeConfig(list), problems);
+      assert.strictEqual(problems.length, 1, JSON.stringify(list) + ' ' + JSON.stringify(problems));
+      assert.match(problems[0].message, /trusts every address/);
+      assert.deepStrictEqual(problems[0].path, ['http', 'trustedProxies']);
+    }
+    const problems = [];
+    validation.checkTrustedProxies(fakeConfig(['loopback', '::ffff:10.0.0.0/104', '10.0.0.0/8']), problems);
+    assert.deepStrictEqual(problems, [], 'a correctly written mapped subnet is accepted');
+  });
+
+  it('[CVT6] an IPv4-mapped IPv6 subnet with a short prefix does not trust IPv4 clients', () => {
+    // proxy-addr before 2.0.8 compiled `::ffff:10.0.0.0/8` with all-zero leading bits, so it
+    // matched every IPv4 client and X-Forwarded-For was believed from anyone.
+    const proxyaddr = require('proxy-addr');
+    const trust = proxyaddr.compile(['::ffff:10.0.0.0/8']);
+    assert.strictEqual(trust('198.51.100.7', 0), false);
+    assert.strictEqual(trust('203.0.113.9', 0), false);
+    assert.strictEqual(proxyaddr.compile(['::ffff:10.0.0.0/104'])('10.1.2.3', 0), true);
+  });
+
   it('[CVT4] the running test configuration validates', async () => {
     const { getConfig } = require('@pryv/boiler');
     const config = await getConfig();
