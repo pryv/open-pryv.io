@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.37 - 2026-10-06
 
 ### Data stores: removing a key-value entry on SQLite
 
