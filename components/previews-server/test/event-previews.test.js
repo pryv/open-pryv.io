@@ -258,13 +258,17 @@ describe('[EP01] event previews', function () {
     const adminKey = helpers.dependencies.settings.auth.adminAccessKey;
 
     it('[EPCK] is refused (unknown resource) without the admin key, user token or none', async function () {
-      for (const auth of [token, undefined, adminKey + 'x']) {
+      const sameLengthWrongKey = adminKey.slice(0, -1) + (adminKey.endsWith('x') ? 'y' : 'x');
+      for (const auth of [token, undefined, adminKey + 'x', sameLengthWrongKey, 'Bearer ' + adminKey]) {
         const req = superagent.post(server.url + basePath).ok(() => true);
         if (auth != null) req.set('Authorization', auth);
         const res = await req;
         assert.strictEqual(res.status, 404, 'auth ' + auth);
         assert.strictEqual(res.body.error?.id, errors.ErrorIds.UnknownResource);
       }
+      // the key in the query string (accepted by the API's auth reader) is not enough here
+      const viaQuery = await superagent.post(server.url + basePath).query({ auth: adminKey }).ok(() => true);
+      assert.strictEqual(viaQuery.status, 404);
       const res = await superagent.post(server.url + '/clean-up-cache').ok(() => true);
       assert.strictEqual(res.status, 404);
     });

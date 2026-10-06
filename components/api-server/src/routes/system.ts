@@ -14,7 +14,8 @@ const Paths = require('./Paths.ts');
 const methodCallback = require('./methodCallback.ts').default;
 const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
-const { setMinimalMethodContext, setMethodId } = require('middleware');
+const { setMinimalMethodContext, setMethodId, isAdminKey } = require('middleware');
+const { redactUrl } = require('utils/src/redactUrl.ts');
 
 function errMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -476,13 +477,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     if (req.method === 'POST' && req.path === Paths.System + '/admin/cores/ack') {
       return next();
     }
-    const secret = req.headers.authorization;
-    if (secret == null || secret !== adminAccessKey) {
+    if (!isAdminKey(req.headers.authorization, adminAccessKey)) {
+      // No headers nor body in the log: a near-miss admin key or a client's
+      // own token sent here by mistake would land in it.
       logger.warn('Unauthorized attempt to access system route', {
-        url: req.url,
-        ip: req.ip,
-        headers: req.headers,
-        body: req.body
+        url: redactUrl(req.url),
+        ip: req.ip
       });
       // return "not found" to avoid encouraging retries
       return next(errors.unknownResource());
