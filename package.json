@@ -56,7 +56,7 @@
     "proxy-addr": "^2.0.8",
     "pug": "^3.0.4",
     "send": "^0.19.2",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "slug": "^9.1.0",
     "socket.io": "^4.6.1",
     "socketio-wildcard": "^2.0.0",
