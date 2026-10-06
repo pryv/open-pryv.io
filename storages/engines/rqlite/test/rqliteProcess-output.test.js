@@ -76,8 +76,9 @@ function writeFake (dir, name, onTerm) {
           '  server.close();',
           '  setTimeout(() => {',
           "    for (let n = 0; n < 50; n++) { fs.writeSync(1, 'snapshot-on-close line ' + n + '\\n'); fs.writeSync(2, 'store line ' + n + '\\n'); }",
-          `    fs.writeFileSync(${JSON.stringify(closedFile)}, 'clean');`,
+          // the last output line first: a test reads the log once the marker exists
           "    fs.writeSync(1, 'fake-rqlited closed\\n');",
+          `    fs.writeFileSync(${JSON.stringify(closedFile)}, 'clean');`,
           '    process.exit(0);',
           '  }, 300);',
           '});'
