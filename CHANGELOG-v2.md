@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.38 - 2026-10-06
 
 ### CMC: `features.chat` decides whether a relationship gets a chat channel (#149)
 
