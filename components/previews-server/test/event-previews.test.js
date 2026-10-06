@@ -12,6 +12,8 @@ const server = helpers.dependencies.instanceManager;
 const async = require('async');
 const errors = require('errors');
 const fs = require('fs');
+const os = require('os');
+const nodePath = require('path');
 const sharp = require('sharp');
 const assert = require('node:assert');
 const testData = helpers.data;
@@ -249,7 +251,7 @@ describe('[EP01] event previews', function () {
       // SVG gets the same answer as any other format it cannot preview.
       const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">' +
         '<rect width="40" height="20" fill="red"/></svg>';
-      const file = require('path').join(require('os').tmpdir(), 'previews-svgb-' + process.pid + '.svg');
+      const file = nodePath.join(os.tmpdir(), 'previews-svgb-' + process.pid + '.svg');
       fs.writeFileSync(file, svg);
       try {
         const event = await mall.events.createWithAttachments(user.id,
