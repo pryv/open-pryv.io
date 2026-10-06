@@ -136,7 +136,7 @@ export type MallAccessesLike = {
 export type MallEventUpdateOpts = { onlyIfNotTrashed?: boolean; skipVersioning?: boolean };
 
 /** An event as `updateWithMerge` hands it to the merge and takes it back. */
-export type MallStoredEventLike = { id: string; [k: string]: unknown };
+export type MallStoredEventLike = { id: string; type?: string; streamIds?: string[]; content?: unknown; modified?: number };
 
 export type MallEventsLike = {
   create: (userId: string, params: MallParams) => Promise<{ id?: string; [k: string]: unknown }>;
