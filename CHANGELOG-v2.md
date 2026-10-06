@@ -2,6 +2,16 @@
 
 ## 2.0.0-rc.39 - 2026-10-06
 
+### Image previews: sharp 0.35.5
+
+- **Security.** The image library behind event previews is updated to `sharp` 0.35.5, which bundles
+  `librsvg` 2.63.2 and fixes CVE-2026-96889 (GHSA-wq5f-xc86-pv6w): a memory flaw in decoding SVG
+  that can lead to code execution on glibc-based Linux. The previews worker detects an attachment's
+  format from its content, so an SVG file attached to a `picture/attached` event was decoded when its
+  preview was requested; any account able to create such an event could reach it. Other formats were
+  not concerned. Every published Docker image before this release (Debian-based, glibc) is affected.
+  No API or configuration change; update promptly.
+
 ### A server-written event field no longer overwrites a concurrent client update
 
 - **Fix.** The fields the server writes onto an existing event (a CMC trigger's `status` and
