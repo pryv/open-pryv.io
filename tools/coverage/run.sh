@@ -7,7 +7,7 @@
 
 # Full coverage collection across all storage engines.
 #
-# Uses NODE_V8_COVERAGE (V8-native coverage) instead of NYC instrumentation.
+# Uses NODE_V8_COVERAGE (V8-native coverage), reported with c8.
 # collect.js runs mocha via `node` directly (not npx) so V8 can track all
 # loaded files including lazy-required engine implementations.
 #

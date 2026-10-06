@@ -12,11 +12,8 @@
  * coverage collection.
  *
  * Problem: components-run spawns mocha with cwd set to each component
- * directory.  Coverage tools (NYC, c8) resolve include patterns relative
- * to cwd, so `storages/**\/*.js` never matches when cwd is
- * `components/api-server/`.  Additionally, `npx mocha` adds an extra
- * process layer that prevents NODE_V8_COVERAGE from capturing files
- * loaded in the mocha process.
+ * directory.  c8 resolves include patterns relative to cwd, so
+ * `storages/**\/*.js` never matches when cwd is `components/api-server/`.
  *
  * Fix: this script runs mocha from the project root using
  * `node node_modules/.bin/mocha` (no npx), adjusting --require and
@@ -153,9 +150,7 @@ for (const entry of entries) {
   mochaArgs.push(path.join(relDir, 'test', '**', '*.test.js'));
 
   // ── Spawn mocha from project root ─────────────────────────────────
-  // Use `node mocha` directly — NOT `npx mocha`.
-  // npx adds an extra process layer that prevents NODE_V8_COVERAGE
-  // from capturing files loaded in the mocha process.
+  // Run mocha from the project root with `node` (see the header).
 
   const res = spawnSync(process.execPath, [MOCHA_BIN, ...mochaArgs], {
     cwd: ROOT,

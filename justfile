@@ -249,8 +249,7 @@ test-cover component *params:
         scripts/components-run npx mocha -- "$@"
 
 # Run all tests across supported engines (PG + SQLite) and generate coverage report
-test-cover-all:
-    tools/coverage/run.sh
+test-cover-all: test-cover-full
 
 # Full coverage: runs mocha from project root so storages/engines/ files are instrumented
 test-cover-full *engines:

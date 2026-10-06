@@ -1,5 +1,5 @@
 {
-  "src": ["."],
+  "src": ["components", "storages"],
   "include": [
     "components/*/src/**/*.{js,ts}",
     "storages/**/*.{js,ts}"
