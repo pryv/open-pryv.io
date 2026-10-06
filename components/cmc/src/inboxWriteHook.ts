@@ -18,9 +18,11 @@ const require = createRequire(import.meta.url);
  *     `cmc-not-counterparty`. (App tokens and personal tokens cannot
  *     write directly into :_cmc:inbox — only counterparty-tagged shared
  *     accesses can.)
- *   - The event type MUST be one of the lifecycle family
- *     (consent/request-cmc, consent/accept-cmc, consent/refuse-cmc, consent/revoke-cmc).
- *     Other types: reject with `cmc-event-type-not-allowed`.
+ *   - The event type MUST be one a peer delivers on the inbox
+ *     (`EVENT_TYPES_INBOX`: consent/request-cmc, consent/revoke-cmc,
+ *     consent/back-channel-cmc). Other types, an accept or a refuse
+ *     included (those arrive only on the capability's responses stream):
+ *     reject with `cmc-event-type-not-allowed`.
  *   - On success, stamp `content.from` server-side from the access's
  *     stored counterparty identity (`clientData.cmc.counterparty`), so
  *     senders can't forge the from-field.
@@ -70,11 +72,13 @@ function createInboxWriteHook (deps: Deps): Middleware {
       ));
     }
 
-    // The event type must be in the lifecycle family.
-    if (typeof event.type !== 'string' || !C.EVENT_TYPES_LIFECYCLE.includes(event.type)) {
+    // The event type must be one a peer delivers on the inbox.
+    if (typeof event.type !== 'string' || !C.EVENT_TYPES_INBOX.includes(event.type)) {
+      const viaResponses = event.type === C.ET_ACCEPT || event.type === C.ET_REFUSE;
       return next(deps.errors.invalidOperation(
-        'Event type "' + event.type + '" is not allowed in ' + C.NS_INBOX,
-        { id: 'cmc-event-type-not-allowed', eventType: event.type, allowed: C.EVENT_TYPES_LIFECYCLE }
+        'Event type "' + event.type + '" is not ' + (viaResponses ? 'delivered on ' : 'allowed in ') + C.NS_INBOX +
+          (viaResponses ? '; it reaches the requester through the capability responses stream' : ''),
+        { id: 'cmc-event-type-not-allowed', eventType: event.type, allowed: C.EVENT_TYPES_INBOX }
       ));
     }
 

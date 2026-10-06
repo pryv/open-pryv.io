@@ -1,5 +1,21 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### CMC: an accept is only taken through the capability
+
+- **Security.** A `consent/accept-cmc` written to `:_cmc:inbox` with a relationship token (the
+  back-channel a peer holds on the requester's account) is now refused with `400 invalid-operation`,
+  `error.data.id: 'cmc-event-type-not-allowed'`. Before, a peer could post one naming any
+  `:_cmc:apps:*` scope of the requester's account, and the `chats` / `collectors` streams for that peer
+  plus a back-channel with contribute rights on them were provisioned under it: a relationship the
+  account never offered. An accept reaches the requester only through the capability's responses
+  stream, which is how every released version has delivered it, so no client or peer core changes. The
+  server-written copy of each accept on `:_cmc:inbox` is unchanged, as are `consent/request-cmc`,
+  `consent/revoke-cmc` and `consent/back-channel-cmc` deliveries. The same applies to
+  `consent/refuse-cmc`, also delivered only through the responses stream: a peer can no longer mark one
+  of the requester's invites refused.
+
 ## 2.0.0-rc.38 - 2026-10-06
 
 ### CMC: `features.chat` decides whether a relationship gets a chat channel (#149)
