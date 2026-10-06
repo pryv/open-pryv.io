@@ -23,7 +23,7 @@ const {
   findCounterpartyAccess,
   findPairedDataGrant,
 } = require('../src/handleRevoke.ts');
-const { assertOutboundUrl } = require('./_fake-assertions.cjs');
+const { assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
   const calls = { deleted: [], gets: 0 };
@@ -557,6 +557,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
           },
         },
         events: {
+          async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
           async getOne (userId, id) { return state.events.get(id) ?? null; },
           async update (userId, event) {
             state.events.set(event.id, event);
@@ -866,7 +867,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
           },
           async update () { return null; },
         },
-        events: { async get () { return []; }, async update () { return null; } },
+        events: { async get () { return []; }, async update () { return null; }, async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); } },
       };
     }
 

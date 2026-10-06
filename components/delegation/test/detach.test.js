@@ -21,6 +21,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const C = require('../src/constants.ts');
 const store = require('../src/store.ts');
+const { fakeUpdateWithMerge } = require('./_fake-mall.cjs');
 const detach = require('../src/detach.ts');
 
 const USER_B = 'user-b-id';
@@ -68,6 +69,7 @@ function makeFakeMall () {
         if (idx >= 0) list[idx] = { ...list[idx], ...params, content: params.content ?? list[idx].content };
         return list[idx];
       },
+      async updateWithMerge (userId, eventId, merge, transaction, opts) { return fakeUpdateWithMerge(this, userId, eventId, merge, transaction, opts); },
       async delete (userId, params) {
         const list = userEvents(userId);
         const idx = list.findIndex((e) => e.id === params.id);
@@ -566,5 +568,41 @@ describe('delegation A-side detach-notify + stale dismissal', function () {
     await assert.rejects(
       detach.dismissControlledMirror(mall, USER_A, 'ghost'),
       (e) => e.id === 'delegation-not-found' && e.httpStatus === 404);
+  });
+});
+
+describe('[DSM] delegation store: a patch lands on the event as stored at write time', function () {
+  it('[DSM01] patchEventContent keeps a field written after the caller\'s read, next to the patch', async function () {
+    const mall = makeFakeMall();
+    const accept = await mall.events.create(USER_B, { streamIds: ['s'], type: 'consent/accept-cmc', time: 1, content: { status: 'completed' } });
+    // An update lands right after patchEventContent's own read.
+    const getOne = mall.events.getOne;
+    let edited = false;
+    mall.events.getOne = async function (userId, eventId) {
+      const copy = structuredClone(await getOne.call(this, userId, eventId));
+      if (!edited && eventId === accept.id) {
+        edited = true;
+        await mall.events.update(USER_B, { id: accept.id, content: { status: 'completed', note: 'edited' } });
+      }
+      return copy;
+    };
+    const written = await store.patchEventContent(mall, USER_B, accept.id, { withdrawal: { at: 2 } }, 2);
+    assert.equal(written, true);
+    const stored = await mall.events.getOne(USER_B, accept.id);
+    assert.equal(stored.content.note, 'edited', 'the concurrent edit survives');
+    assert.deepEqual(stored.content.withdrawal, { at: 2 });
+    assert.equal(stored.modified, 2);
+    assert.equal(await store.patchEventContent(mall, USER_B, 'missing', { x: 1 }, 2), false, 'a missing event is reported, not thrown');
+  });
+
+  it('[DSM02] updateAnchorContent patches the stored anchor, not the caller\'s stale copy', async function () {
+    const mall = makeFakeMall();
+    const anchor = await store.createAnchor(mall, USER_B, { relId: 'rel-m', status: C.STATUS.INVITE }, nowSeconds);
+    const staleCopy = structuredClone(anchor);
+    await store.updateAnchorContent(mall, USER_B, anchor, { patSessionId: 'sess-1' });
+    await store.updateAnchorContent(mall, USER_B, staleCopy, { status: C.STATUS.ACTIVE });
+    const stored = await store.findAnchorByRelId(mall, USER_B, 'rel-m');
+    assert.equal(stored.content.patSessionId, 'sess-1', 'the first writer\'s field survives the second');
+    assert.equal(stored.content.status, C.STATUS.ACTIVE);
   });
 });

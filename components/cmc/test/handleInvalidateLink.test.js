@@ -16,6 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 const { mintCapability } = require('../src/capability.ts');
 const { handleInvalidateLink } = require('../src/handleInvalidateLink.ts');
 
@@ -33,6 +34,7 @@ function fakeMall () {
       },
     },
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async create (userId, params) {
         calls.eventsCreated.push({ userId, ...params });
         return { event: { id: 'evt-' + calls.eventsCreated.length, ...params } };

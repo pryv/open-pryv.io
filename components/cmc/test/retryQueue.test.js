@@ -26,13 +26,14 @@ const {
   processRetryEvent,
   runRetryLoop,
 } = require('../src/retryQueue.ts');
-const { assertEventUpdateShape } = require('./_fake-assertions.cjs');
+const { assertEventUpdateShape, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 
 function fakeMall () {
   const events = new Map();
   let seq = 0;
   return {
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async create (_userId, params) {
         const id = 'r-' + (++seq);
         const ev = { id, ...params };

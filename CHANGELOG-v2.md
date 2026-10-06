@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### A server-written event field no longer overwrites a concurrent client update
+
+- **Fix.** The fields the server writes onto an existing event (a CMC trigger's `status` and
+  `failure`, the `withdrawal` on a consent record, an invite's state, the outcome recorded on a
+  scope update, the enrichment of a revoke arrival, a delegation record, an email record's status,
+  a series event's `duration`, an attachment added or removed) are now applied onto the event as
+  stored at write time. Before, such a write was built from the copy the server had read earlier,
+  so an `events.update` landing in between was overwritten with that copy. The client's own change
+  survives; the server-owned field is set alongside it.
+
 ### Event types 1.1.3: `consent/accept-cmc` declares `content.features`
 
 - The published catalogue now declares `content.features` (`chat` / `systemMessaging`, booleans or

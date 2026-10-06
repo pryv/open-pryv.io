@@ -445,7 +445,7 @@ class MallUserEvents implements MallEvents {
           if (update.fieldsToDelete.includes('attachments') &&
                         eventData.attachments != null) {
             for (const attachment of eventData.attachments) {
-              await mallEvents.deleteAttachment(userId, eventData, attachment.id, mallTransaction);
+              await mallEvents.deleteAttachment(userId, eventData.id, attachment.id, mallTransaction);
             }
           }
           for (const field of update.fieldsToDelete) {

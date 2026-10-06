@@ -13,6 +13,10 @@ import type { Readable } from 'stream';
 export type AttachableEventsStore = {
   getOne: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
   update: (userId: string, event: Record<string, unknown>, transaction: unknown) => Promise<unknown>;
+  // Read-merge-write of one event: `merge` gets the event as stored at write
+  // time; returns the written event, null when `merge` returned null, false
+  // when the event does not exist.
+  updateWithMerge: (userId: string, eventId: string, merge: (stored: Record<string, unknown>) => Record<string, unknown> | null, transaction: unknown) => Promise<Record<string, unknown> | null | false>;
   [k: string]: unknown;
 };
 

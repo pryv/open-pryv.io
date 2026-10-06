@@ -171,6 +171,129 @@ describe('[ESR] events: a server stamp written during a client update is kept', 
     assert.ok(stored.clientData == null, JSON.stringify(stored.clientData));
   });
 
+  // The reverse direction: a client update lands while a server writer holds
+  // a copy of the event, and the server write must keep it.
+
+  it('[ESR20] the CMC dispatch status stamps keep a client update landed since dispatch read the trigger', async function () {
+    this.timeout(15000);
+    // The dispatch middleware runs on every CMC type whatever the stream; a
+    // chat with no counterparty access ends in a terminal status through the
+    // 'delivered' stamp then the terminal one. The first stamp of the trigger
+    // (whichever mall write it goes through) is preceded, once, by a client
+    // update written through the mall.
+    const events = mall.events;
+    const origCreate = events.create;
+    const origUpdate = events.update;
+    const origMerge = events.updateWithMerge;
+    let triggerId = null;
+    let edited = false;
+    async function editOnce (userId, id) {
+      if (id == null || id !== triggerId || edited) return;
+      edited = true;
+      const stored = await events.getOne(userId, id);
+      await origUpdate.call(events, userId, { ...stored, content: { ...stored.content, note: 'edited' }, modified: timestamp.now() });
+    }
+    events.create = async function (userId, data, ...rest) {
+      const created = await origCreate.call(this, userId, data, ...rest);
+      if (triggerId == null && created?.type === 'message/chat-cmc' && created.streamIds?.includes(streamId)) triggerId = created.id;
+      return created;
+    };
+    events.update = async function (userId, data, ...rest) {
+      await editOnce(userId, data?.id);
+      return origUpdate.call(this, userId, data, ...rest);
+    };
+    events.updateWithMerge = async function (userId, id, ...rest) {
+      await editOnce(userId, id);
+      return origMerge.call(this, userId, id, ...rest);
+    };
+    let final;
+    try {
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ streamIds: [streamId], type: 'message/chat-cmc', content: { content: 'hi' } });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 10000) {
+        final = await readBack(res.body.event.id);
+        if (final.content?.status === 'failed' || final.content?.status === 'completed') break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } finally {
+      events.create = origCreate;
+      events.update = origUpdate;
+      events.updateWithMerge = origMerge;
+    }
+    assert.ok(edited, 'the client update must have been injected before the first stamp');
+    assert.ok(['failed', 'completed'].includes(final.content?.status), 'premise: the trigger reaches a terminal status: ' + JSON.stringify(final.content));
+    assert.strictEqual(final.content.note, 'edited', 'the client update survives the stamps: ' + JSON.stringify(final.content));
+    if (final.content.status === 'failed') assert.ok(typeof final.content.failure?.reason === 'string', JSON.stringify(final.content));
+  });
+
+  /**
+   * Runs `request` with a client update of `description` written through the
+   * mall right after the attachment engine's read of `eventId` (pre-merge
+   * engines read with the store's `getOne`) or right before its atomic write
+   * (`updateWithMerge`): armed only while `mall.events.<method>` runs.
+   */
+  async function withEditDuringAttachmentWrite (method, eventId, request) {
+    const store = mall.events.eventsStores.get('local');
+    const origMallMethod = mall.events[method];
+    const origGetOne = store.getOne;
+    const origMerge = store.updateWithMerge;
+    let armed = false;
+    let edited = false;
+    async function editOnce (userId, id) {
+      if (!armed || edited || id !== eventId) return;
+      edited = true;
+      armed = false;
+      const current = await mall.events.getOne(userId, eventId);
+      await mall.events.update(userId, { ...current, description: 'edited', modified: timestamp.now() });
+    }
+    mall.events[method] = async function (...args) {
+      armed = true;
+      try { return await origMallMethod.apply(this, args); } finally { armed = false; }
+    };
+    store.getOne = async function (userId, id, ...rest) {
+      const read = await origGetOne.call(this, userId, id, ...rest);
+      await editOnce(userId, id);
+      return read;
+    };
+    store.updateWithMerge = async function (userId, id, ...rest) {
+      await editOnce(userId, id);
+      return origMerge.call(this, userId, id, ...rest);
+    };
+    try {
+      const res = await request();
+      assert.ok(edited, 'the client update must have been injected during the attachment write');
+      return res;
+    } finally {
+      mall.events[method] = origMallMethod;
+      store.getOne = origGetOne;
+      store.updateWithMerge = origMerge;
+    }
+  }
+
+  it('[ESR21] adding then deleting an attachment keeps a client update landed during the attachment write', async function () {
+    const event = await createNote();
+    const added = await withEditDuringAttachmentWrite('addAttachment', event.id,
+      () => coreRequest.post(basePath + '/' + event.id).set('Authorization', token)
+        .attach('file', Buffer.from('attachment race'), 'race.txt'));
+    assert.strictEqual(added.status, 200, JSON.stringify(added.body));
+    let stored = await readBack(event.id);
+    assert.strictEqual(stored.description, 'edited', 'the update survives the attachment add');
+    assert.strictEqual(stored.attachments?.length, 1, JSON.stringify(stored.attachments));
+    const fileId = stored.attachments[0].id;
+
+    // reset the description through the API, then race the delete the same way
+    const reset = await coreRequest.put(basePath + '/' + event.id).set('Authorization', token).send({ description: 'reset' });
+    assert.strictEqual(reset.status, 200, JSON.stringify(reset.body));
+    const deleted = await withEditDuringAttachmentWrite('deleteAttachment', event.id,
+      () => coreRequest.delete(basePath + '/' + event.id + '/' + fileId).set('Authorization', token));
+    assert.strictEqual(deleted.status, 200, JSON.stringify(deleted.body));
+    stored = await readBack(event.id);
+    assert.strictEqual(stored.description, 'edited', 'the update survives the attachment delete');
+    assert.ok(stored.attachments == null || stored.attachments.length === 0, JSON.stringify(stored.attachments));
+  });
+
   describe('[ESR6] mall.events.updateWithMerge on the local store', function () {
     it('[ESR6A] the merge sees the stored event and its result is written, with integrity', async function () {
       const event = await createNote();

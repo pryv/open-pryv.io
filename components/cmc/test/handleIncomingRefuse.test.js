@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 const { handleIncomingRefuse } = require('../src/handleIncomingRefuse.ts');
 
 function fakeMall ({ mode, withGetOne = true } = {}) {
@@ -32,6 +33,7 @@ function fakeMall ({ mode, withGetOne = true } = {}) {
       async update () { calls.accessesUpdated++; },
     },
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async getOne (userId, id) { return id === invite.id ? invite : null; },
       async update (userId, event) { calls.eventsUpdated++; Object.assign(invite, event); return event; },
     },

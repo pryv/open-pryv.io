@@ -61,6 +61,10 @@ type MallLike = {
     get: (userId: string, params?: Record<string, unknown>) => Promise<EventLike[]>;
     getOne?: (userId: string, eventId: string) => Promise<EventLike | null>;
     update: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
+    // Read-merge-write of one event: `merge` receives the event as stored at
+    // write time and returns the full event to write, or null to write
+    // nothing. A missing event throws.
+    updateWithMerge: (userId: string, eventId: string, merge: (stored: EventLike) => EventLike | null) => Promise<EventLike | null>;
     delete?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
   };
   accesses: {
@@ -132,8 +136,7 @@ async function createAnchor (mall: MallLike, userId: string, content: AnchorCont
 }
 
 async function updateAnchorContent (mall: MallLike, userId: string, anchor: EventLike, patch: Partial<AnchorContent>): Promise<void> {
-  const content = { ...(anchor.content || {}), ...patch };
-  await mall.events.update(userId, { ...anchor, content });
+  await mergeEventContent(mall, userId, anchor.id, patch);
 }
 
 async function deleteAnchor (mall: MallLike, userId: string, anchor: EventLike): Promise<void> {
@@ -180,8 +183,7 @@ async function createMirror (mall: MallLike, userId: string, content: MirrorCont
 }
 
 async function updateMirrorContent (mall: MallLike, userId: string, mirror: EventLike, patch: Partial<MirrorContent>): Promise<void> {
-  const content = { ...(mirror.content || {}), ...patch };
-  await mall.events.update(userId, { ...mirror, content });
+  await mergeEventContent(mall, userId, mirror.id, patch);
 }
 
 async function deleteMirror (mall: MallLike, userId: string, mirror: EventLike): Promise<void> {
@@ -281,10 +283,26 @@ async function updateAccessFields (mall: MallLike, userId: string, accessId: str
 }
 
 /**
+ * Merge `patch` into the content of the event `eventId` as stored at write
+ * time (other fields, and content keys the patch does not name, are kept as
+ * stored, so an update landed since the caller's read survives). Stamps
+ * `modified` when given.
+ */
+async function mergeEventContent (mall: MallLike, userId: string, eventId: string | undefined, patch: object, modified?: number): Promise<void> {
+  if (eventId == null) throw new Error('delegation-store: cannot update an event without an id');
+  await mall.events.updateWithMerge(userId, eventId, (stored) => {
+    const next: EventLike & { modified?: number } = { ...stored, content: { ...(stored.content || {}), ...patch } };
+    if (modified != null) next.modified = modified;
+    return next;
+  });
+}
+
+/**
  * Merge `patch` into the content of the event `eventId` (any stream, e.g. a
  * consent accept event of the CMC plugin) and stamp `modified`, so a
- * `modifiedSince` reader sees the change. False when the event is gone or the
- * mall cannot read one event by id; nothing is written then.
+ * `modifiedSince` reader sees the change. The patch lands on the event as
+ * stored at write time, not on the copy read here. False when the event is
+ * gone or the mall cannot read one event by id; nothing is written then.
  *
  * Versioned (no `skipVersioning`): the CMC status stamps skip it so a version
  * row never snapshots a credential, but an event patched here is terminal and
@@ -294,7 +312,7 @@ async function patchEventContent (mall: MallLike, userId: string, eventId: strin
   if (mall.events.getOne == null) return false;
   const event = await mall.events.getOne(userId, eventId);
   if (event == null) return false;
-  await mall.events.update(userId, { ...event, content: { ...(event.content || {}), ...patch }, modified });
+  await mergeEventContent(mall, userId, eventId, patch, modified);
   return true;
 }
 

@@ -2472,6 +2472,70 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assertIntegrity(after, 'CN61');
     });
 
+    // The reverse of CN61: a client update lands between the withdrawal
+    // stamp's read of the accept and its write. The stamp's read (the hook's
+    // `getOne` of the accept) is followed, once, by `edit(read copy)` written
+    // through the mall as a client update would be.
+    async function deleteGrantWithEditAfterStampRead (h, edit) {
+      const { grant, acceptEventId } = await grantWithAccept(h);
+      await sleep(500); // let the handshake's own stamps settle
+      const { getMall } = require('mall');
+      const timestamp = require('unix-timestamp');
+      const mall = await getMall();
+      const original = mall.events.getOne;
+      let edited = false;
+      let markEdited;
+      const editDone = new Promise((resolve) => { markEdited = resolve; });
+      mall.events.getOne = async function (userId, id) {
+        const event = await original.call(this, userId, id);
+        if (id === acceptEventId && !edited) {
+          edited = true;
+          await mall.events.update(userId, { ...edit(structuredClone(event)), modified: timestamp.now() });
+          markEdited();
+        }
+        return event;
+      };
+      let stamped;
+      try {
+        const delRes = await coreRequest.delete(bob.accessesPath + '/' + grant.id).set('Authorization', bob.token);
+        assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+        // No read of the accept from this test until the edit is in: the first
+        // read after the delete is then the withdrawal writer's own.
+        await Promise.race([editDone, sleep(POLL_TIMEOUT_MS)]);
+        assert.ok(edited, 'the withdrawal writer must have read the accept');
+        stamped = await pollWithdrawal(bob, acceptEventId, 'withdrawal after an edit');
+      } finally {
+        mall.events.getOne = original;
+      }
+      assert.ok(edited, 'the edit must have been injected after the stamp\'s read');
+      return { grant, acceptEventId, stamped };
+    }
+
+    it('[CN80] a client update landed between the withdrawal stamp\'s read and its write is kept', async function () {
+      const h = await runFreshHandshake('wd-s', 'wd-app-s');
+      const { grant, acceptEventId, stamped } = await deleteGrantWithEditAfterStampRead(h,
+        (e) => ({ ...e, content: { ...e.content, note: 'edited' } }));
+      assert.strictEqual(stamped.content.withdrawal.by, 'accesses.delete');
+      assert.strictEqual(stamped.content.withdrawal.accessId, grant.id);
+      assert.strictEqual(stamped.content.note, 'edited', 'CN80: the client update survives the stamp');
+      assertIntegrity(stamped, 'CN80');
+      const after = await readEvent(bob, acceptEventId);
+      assert.deepStrictEqual(after.content, stamped.content);
+    });
+
+    it('[CN81] a withdrawal another writer recorded between the stamp\'s read and its write is kept as written', async function () {
+      const h = await runFreshHandshake('wd-t', 'wd-app-t');
+      const first = { at: 1700000000, by: 'revoke-cmc', accessId: 'first-writer' };
+      const { acceptEventId } = await deleteGrantWithEditAfterStampRead(h,
+        (e) => ({ ...e, content: { ...e.content, withdrawal: first } }));
+      // The injected withdrawal is what the poll saw first; give the stamp,
+      // which runs after the delete answered, time to write if it were to.
+      await sleep(1000);
+      const after = await readEvent(bob, acceptEventId);
+      assert.deepStrictEqual(after.content.withdrawal, first, 'CN81: the first withdrawal is not overwritten');
+      assertIntegrity(after, 'CN81');
+    });
+
     it('[CN59] the accepter\'s consent/revoke-cmc marks the accept event with the trigger id', async function () {
       const h = await runFreshHandshake('wd-b', 'wd-app-b');
       const { grant, acceptEventId } = await grantWithAccept(h);

@@ -21,6 +21,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 const { handleIncomingRevoke } = require('../src/handleIncomingRevoke.ts');
 
 function fakeMall (opts = {}) {
@@ -53,6 +54,7 @@ function fakeMall (opts = {}) {
       },
     },
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async getOne (userId, id) {
         return eventsById.get(id) ?? null;
       },
@@ -525,6 +527,26 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       assert.equal('backChannelAccessId' in written, false);
       assert.equal('dataGrantAccessId' in written, false);
       assert.deepEqual(written.revokedAccessIds, ['legacy-21']);
+    });
+
+    it('[CIR24] the enrichment lands on the arrival as stored at write time, keeping an update made since dispatch read it', async () => {
+      const event = {
+        id: 'evt-revoke-24',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'legacy-24',
+        content: { from: SUBJECT, backChannelAccessId: 'peer-made-this-up' },
+      };
+      const mall = mallWithEvent(event);
+      // The stored row carries an update the in-memory copy dispatch holds lacks.
+      mall.eventsById.set(event.id, { ...structuredClone(event), content: { ...event.content, note: 'edited' } });
+      seedBackChannel(mall, 'legacy-24', { counterparty: SUBJECT });
+      await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      const written = mall.calls.eventsUpdated.at(-1).content;
+      assert.equal(written.note, 'edited', 'the update survives');
+      assert.equal('backChannelAccessId' in written, false, 'the owned keys are still stripped');
+      assert.deepEqual(written.revokedAccessIds, ['legacy-24']);
+      assert.deepEqual(event.content.revokedAccessIds, ['legacy-24'], 'the in-memory copy is enriched too');
     });
 
     it('[CIR20] a non-open-link back-channel is still the requester side', async () => {

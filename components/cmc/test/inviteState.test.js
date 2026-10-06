@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 const { stampInvite, isTransitionAllowed } = require('../src/inviteState.ts');
 
 function fakeMall (trigger, opts = {}) {
@@ -22,6 +23,7 @@ function fakeMall (trigger, opts = {}) {
     updates,
     get: (id) => events.get(id),
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async getOne (userId, id) { return events.get(id) ?? null; },
       async update (userId, event) {
         if (opts.updateThrows) throw new Error('storage down');
@@ -133,5 +135,33 @@ describe('[CMCIS] cmc/inviteState', () => {
       userId: 'u1', inviteEventId: 'inv-1', transition: 'accepted', deps: { mall: { events: { async update () {} } } },
     });
     assert.deepEqual(res, { ok: true, written: false, skipped: 'mall-events-unavailable' });
+  });
+
+  // The first read returns `earlier` (the copy the caller saw); the store holds
+  // what was written since.
+  function readsEarlierCopyOnce (mall, earlier) {
+    const getOne = mall.events.getOne;
+    let first = true;
+    mall.events.getOne = async function (userId, id) {
+      if (first) { first = false; return structuredClone(earlier); }
+      return getOne.call(this, userId, id);
+    };
+    return mall;
+  }
+
+  it('[IS10] the transition is checked on the invite as stored at write time, not on the earlier read', async () => {
+    const mall = readsEarlierCopyOnce(fakeMall(invite({ status: 'accepted' })), invite({ status: 'pending' }));
+    const res = await stampInvite({ userId: 'u1', inviteEventId: 'inv-1', transition: 'accepted', deps: { mall } });
+    assert.deepEqual(res, { ok: true, written: false, skipped: 'transition-not-allowed' });
+    assert.equal(mall.updates.length, 0);
+  });
+
+  it('[IS11] an update landed after the read is kept next to the stamp', async () => {
+    const mall = readsEarlierCopyOnce(fakeMall(invite({ status: 'pending', note: 'edited' })), invite({ status: 'pending' }));
+    const res = await stampInvite({ userId: 'u1', inviteEventId: 'inv-1', transition: 'refused', deps: { mall } });
+    assert.equal(res.written, true);
+    const c = mall.get('inv-1').content;
+    assert.equal(c.status, 'refused');
+    assert.equal(c.note, 'edited');
   });
 });

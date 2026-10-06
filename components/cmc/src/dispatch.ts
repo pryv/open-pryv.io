@@ -54,8 +54,29 @@ const credentialScrub = require('./credentialScrub.ts');
  * within reach of `events.getOne?includeHistory=true`. The cost is that a
  * trigger's intermediate statuses leave no history rows, which is bookkeeping
  * noise rather than user data.
+ *
+ * Each stamp is merged onto the trigger as stored at write time (see
+ * stampTriggerStatus), never built from the in-memory copy: an update a
+ * client made to the trigger since dispatch read it is kept.
  */
 const STATUS_STAMP_OPTS = { skipVersioning: true };
+
+/**
+ * Write a status stamp onto the trigger row as stored at write time: the
+ * stamp's fields are set on the STORED content, which is then scrubbed. The
+ * stored content never held a credential (the create hook stashes it before
+ * the row is written), and the scrub runs anyway, so no token can come back
+ * in. `failure` is server-owned and describes a failed attempt: any stamp
+ * other than 'failed' drops it, as the in-memory copy (a retry re-dispatches
+ * the snapshot taken before the failure) never carried it.
+ */
+async function stampTriggerStatus (deps: DispatchDeps, userId: string, eventId: string, stamp: Record<string, unknown>): Promise<void> {
+  await deps.mall.events.updateWithMerge(userId, eventId, (stored) => {
+    const content: Record<string, unknown> = { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), ...stamp };
+    if (content.status !== 'failed') delete content.failure;
+    return { ...stored, content: credentialScrub.scrubCredentials(content) ?? content };
+  }, null, STATUS_STAMP_OPTS);
+}
 
 type SelfIdentity = { username: string; host: string };
 
@@ -173,7 +194,7 @@ async function dispatch (params: {
 
   // A request trigger is not dispatched: its status reports the invite's
   // outcome (inviteState.ts). Return before the 'delivered' stamp below, which
-  // writes the in-memory event whole and would overwrite that outcome.
+  // would overwrite that outcome.
   if (event.type === C.ET_REQUEST) {
     return { handled: false, eventType: event.type, status: 'skipped', reason: 'request-handled-elsewhere' };
   }
@@ -181,7 +202,7 @@ async function dispatch (params: {
   // Stamp 'delivered' before running the handler (the handler may overwrite
   // to 'completed' or 'failed'; 'delivered' is the explicit "we've taken the
   // event off the queue" indicator).
-  if (event.id != null && deps.mall.events.update != null) {
+  if (event.id != null && deps.mall.events.updateWithMerge != null) {
     try {
       const deliveredContent = { ...(event.content || {}), status: 'delivered' };
       // Scrubbed HERE too, not only at the terminal stamp. This write is
@@ -190,15 +211,12 @@ async function dispatch (params: {
       // token in it publishes a credential AND invites a read of it. On an
       // incoming back-channel that token is the PEER's, which this account's
       // apps never legitimately held.
-      await deps.mall.events.update(userId, {
-        ...event,
-        content: credentialScrub.scrubCredentials(deliveredContent) ?? deliveredContent,
-      }, null, STATUS_STAMP_OPTS);
+      await stampTriggerStatus(deps, userId, event.id, { status: 'delivered' });
       // The IN-MEMORY event deliberately keeps the usable content: the handler
-      // about to run reads its `capabilityUrl` / `apiEndpoint` from here,
+      // about to run reads its `capabilityUrl` / `apiEndpoint` from here, and
       // `enqueueRetry` snapshots it into the internal retries stream so a
-      // retry can re-dispatch, and the terminal stamps build from it and scrub
-      // on their own way out. On the live path this object is the middleware's
+      // retry can re-dispatch. The stamps themselves merge onto the stored
+      // row, never this copy. On the live path this object is the middleware's
       // re-hydrated COPY (see createDispatchMiddleware): the row in storage
       // never held the token in the first place. Carrying the status forward
       // also keeps a handler that rewrites `content` (the incoming-revoke
@@ -438,7 +456,7 @@ async function dispatch (params: {
 }
 
 async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEvent, extra: Partial<HandlerResult> & Record<string, unknown>): Promise<DispatchResult> {
-  if (event.id == null || deps.mall.events.update == null) {
+  if (event.id == null || deps.mall.events.updateWithMerge == null) {
     return { handled: true, eventType: event.type, status: 'completed' };
   }
   try {
@@ -448,19 +466,14 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEven
         if (v !== undefined) cleaned[k] = v;
       }
     }
-    const content: Record<string, unknown> = {
-      ...(event.content || {}),
-      status: 'completed',
-      ...cleaned,
-    };
     // The app posts the invite URL, token included, as the trigger's
     // `capabilityUrl`, and the handler has just finished using it. Keep the
     // URL for reference but not the credential: the trigger sits in a
     // `:_cmc:apps:*` stream an app can be granted and an export includes,
     // and in open-link mode the capability stays live after the accept, so
-    // the stored copy would remain a usable invite indefinitely.
-    const scrubbed = credentialScrub.scrubCredentials(content) ?? content;
-    await deps.mall.events.update(userId, { ...event, content: scrubbed }, null, STATUS_STAMP_OPTS);
+    // the stored copy would remain a usable invite indefinitely. The stamp
+    // scrubs the merged content on its way out.
+    await stampTriggerStatus(deps, userId, event.id, { status: 'completed', ...cleaned });
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as completed', {
@@ -504,7 +517,7 @@ async function markFailed (
       });
     }
   }
-  if (event.id != null && deps.mall.events.update != null) {
+  if (event.id != null && deps.mall.events.updateWithMerge != null) {
     try {
       // Scrubbed like the success path, and for the same reason: this row
       // lives in a `:_cmc:apps:*` stream an app can be granted and an export
@@ -518,15 +531,7 @@ async function markFailed (
       // in `:_cmc:_internal:retries` (unreachable by any API read path), and
       // `processRetryEvent` rebuilds its synthetic trigger from THAT snapshot,
       // never from storage. Order matters: the enqueue precedes this write.
-      const failedContent = {
-        ...(event.content || {}),
-        status: 'failed',
-        failure: { reason, detail: detail ?? null },
-      };
-      await deps.mall.events.update(userId, {
-        ...event,
-        content: credentialScrub.scrubCredentials(failedContent) ?? failedContent,
-      }, null, STATUS_STAMP_OPTS);
+      await stampTriggerStatus(deps, userId, event.id, { status: 'failed', failure: { reason, detail: detail ?? null } });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as failed', {

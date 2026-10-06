@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const C = require('../src/constants.ts');
 const createAccountMod = require('../src/createAccount.ts');
 const store = require('../src/store.ts');
+const { fakeUpdateWithMerge } = require('./_fake-mall.cjs');
 
 const USER_A = 'user-a-id';
 const USER_B = 'user-b-id';
@@ -71,6 +72,7 @@ function makeFakeMall (opts = {}) {
         if (idx >= 0) list[idx] = { ...list[idx], ...params, content: params.content ?? list[idx].content };
         return list[idx];
       },
+      async updateWithMerge (userId, eventId, merge, transaction, opts) { return fakeUpdateWithMerge(this, userId, eventId, merge, transaction, opts); },
       async delete (userId, params) {
         const list = userEvents(userId);
         const idx = list.findIndex((e) => e.id === params.id);

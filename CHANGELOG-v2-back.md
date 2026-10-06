@@ -1,5 +1,32 @@
 # Changelog - Internal (no API impact)
 
+## Server writers on `updateWithMerge`
+
+- Every server read-modify-write of an event row now goes through `mall.events.updateWithMerge`
+  (the operation added for the client path): cmc `acceptWithdrawal`, `inviteState`, the three
+  dispatch status stamps, `handleSystem` (`stampScopeRequest`, `persistTriggerOutcome`),
+  `handleIncomingRevoke`; delegation `store.patchEventContent`, `updateAnchorContent`,
+  `updateMirrorContent`; `emails/container.setContent`; hfs `metadata_updater.flush`; the file
+  engines' `addAttachment` / `deleteAttachment` (on the store's own `updateWithMerge`, now part of
+  the attachable store type). Pre-checks that decided "skip" after a read (already withdrawn,
+  transition not allowed, duration not extended) run inside the merge on the stored row and return
+  null. The dispatch stamps build `status` onto the STORED content (which never holds a
+  credential) and scrub it again; a stamp other than `failed` drops a `failure` a previous attempt
+  left on the row (a retry used to overwrite the row with its snapshot, which never carried one).
+  `persistTriggerOutcome` writes only `applied`, `accessId`, `newPermissions`, no longer the
+  hydrated copy whole. The in-memory copy keeps the usable values for the handler and the retry
+  snapshot, as before. Left on `update`: the retry queue's internal rows (no client writer),
+  `updateMany` and the stream merge/delete rewrites (bulk, in-transaction), the shared-secret
+  compare-and-set.
+- Mall `updateStreamedMany` passed the event object where `deleteAttachment` takes the event id
+  (reached only with `fieldsToDelete: ['attachments']`, which no caller uses).
+- Unit fakes: `fakeUpdateWithMerge` (cmc `_fake-assertions.cjs`, delegation `_fake-mall.cjs`),
+  one `this`-based method per fake; `dispatch.test.js` keeps a store seeded with the dispatched
+  event through two local shims.
+- Tests: `[CN80]` `[CN81]` (withdrawal vs client edit / vs a second stamper), `[ESR20]` (dispatch
+  stamps vs client edit), `[ESR21]` (attachment add/delete vs client edit), `[CD31]` `[CD32]`,
+  `[IS10]` `[IS11]`, `[CIR24]`, `[DSM01]` `[DSM02]`.
+
 ## Event updates merge onto the stored row (`updateWithMerge`)
 
 - New store operation `updateWithMerge(userId, eventId, merge, transaction, opts)`: a synchronous

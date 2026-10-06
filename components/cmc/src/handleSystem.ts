@@ -504,7 +504,9 @@ async function resolveScopeUpdateTarget (params: {
 
 /**
  * Best-effort: record on the stored request how it was answered, so a second
- * answer is refused and a reader of the request sees its outcome.
+ * answer is refused and a reader of the request sees its outcome. The fields
+ * are set on the request as stored at write time, so an update landed since
+ * it was read is kept.
  */
 async function stampScopeRequest (
   userId: string,
@@ -513,12 +515,12 @@ async function stampScopeRequest (
   responseEventId: string | undefined,
   deps: ScopeUpdateDeps
 ): Promise<void> {
-  if (deps.mall.events?.update == null) return;
+  if (requestEvent.id == null || deps.mall.events?.updateWithMerge == null) return;
   try {
-    await deps.mall.events.update(userId, {
-      ...requestEvent,
-      content: { ...(requestEvent.content ?? {}), status, responseEventId },
-    });
+    await deps.mall.events.updateWithMerge(userId, requestEvent.id, (stored) => ({
+      ...stored,
+      content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), status, responseEventId },
+    }));
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to stamp the scope request', {
       scopeRequestEventId: requestEvent.id,
@@ -531,16 +533,27 @@ async function stampScopeRequest (
  * Best-effort: write the outcome recorded on the trigger (`applied`,
  * `accessId`, `newPermissions`) before the peer delivery, which may take up to
  * the outbound timeout. A reader polling the trigger then sees the truth while
- * delivery is still in flight, not a bare `delivered`.
+ * delivery is still in flight, not a bare `delivered`. Only those keys are set,
+ * on the trigger as stored at write time: the in-memory copy is the hydrated
+ * one (it may carry a credential) and may be older than the row.
  */
+const TRIGGER_OUTCOME_KEYS = ['applied', 'accessId', 'newPermissions'];
+
 async function persistTriggerOutcome (
   userId: string,
   triggerEvent: ScopeUpdateParams['triggerEvent'],
   deps: ScopeUpdateDeps
 ): Promise<void> {
-  if (triggerEvent.id == null || deps.mall.events?.update == null) return;
+  if (triggerEvent.id == null || deps.mall.events?.updateWithMerge == null) return;
+  const outcome: Record<string, unknown> = {};
+  for (const k of TRIGGER_OUTCOME_KEYS) {
+    if (triggerEvent.content?.[k] !== undefined) outcome[k] = triggerEvent.content[k];
+  }
   try {
-    await deps.mall.events.update(userId, { ...triggerEvent, content: triggerEvent.content });
+    await deps.mall.events.updateWithMerge(userId, triggerEvent.id, (stored) => ({
+      ...stored,
+      content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), ...outcome },
+    }));
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to record the outcome before delivery', {
       eventId: triggerEvent.id,

@@ -123,20 +123,27 @@ export type MallAccessesLike = {
   delete: (userId: string, params: MallParams) => Promise<unknown>;
 };
 
-// `update`'s 3rd/4th arguments mirror the real Mall's
-// (transaction, { onlyIfNotTrashed, skipVersioning }). Both optional so unit
-// fakes may take the two-arg form; the dispatch loop passes `skipVersioning`
-// on every trigger-status stamp (see STATUS_STAMP_OPTS in dispatch.ts).
-// The transaction slot is typed `null` rather than the Mall's own transaction
-// type because no CMC caller opens one: it exists only so the 4th argument
-// lands in the right position.
+// `update`'s 3rd/4th arguments and `updateWithMerge`'s 4th/5th mirror the
+// real Mall's (transaction, { onlyIfNotTrashed, skipVersioning }). Optional
+// so unit fakes may take the short form; the dispatch loop passes
+// `skipVersioning` on every trigger-status stamp (see STATUS_STAMP_OPTS in
+// dispatch.ts). The transaction slot is typed `null` rather than the Mall's
+// own transaction type because no CMC caller opens one: it exists only so
+// the options argument lands in the right position.
+// `updateWithMerge` is the read-merge-write of one event: `merge` receives
+// the event as stored at write time and returns the full event to write, or
+// null to write nothing (a missing event throws).
 export type MallEventUpdateOpts = { onlyIfNotTrashed?: boolean; skipVersioning?: boolean };
+
+/** An event as `updateWithMerge` hands it to the merge and takes it back. */
+export type MallStoredEventLike = { id: string; type?: string; streamIds?: string[]; content?: unknown; modified?: number };
 
 export type MallEventsLike = {
   create: (userId: string, params: MallParams) => Promise<{ id?: string; [k: string]: unknown }>;
   get: (userId: string, params: MallParams) => Promise<Array<Record<string, unknown>>>;
   getOne?: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
   update: (userId: string, params: MallParams, transaction?: null, opts?: MallEventUpdateOpts) => Promise<unknown>;
+  updateWithMerge: (userId: string, eventId: string, merge: (stored: MallStoredEventLike) => MallStoredEventLike | null, transaction?: null, opts?: MallEventUpdateOpts) => Promise<MallStoredEventLike | null>;
 };
 
 export type MallStreamsLike = {

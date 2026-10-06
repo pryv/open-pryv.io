@@ -71,7 +71,7 @@ async function stampInvite (params: {
   transition: InviteTransition;
   fields?: Record<string, unknown>;
   deps: {
-    mall: { events?: Pick<MallEventsLike, 'getOne' | 'update'> };
+    mall: { events?: Pick<MallEventsLike, 'getOne' | 'updateWithMerge'> };
     logger?: CmcLogger;
     notifyEventChanged?: (userId: string, event: TriggerLike) => void;
   };
@@ -81,7 +81,7 @@ async function stampInvite (params: {
     return { ok: true, written: false, skipped: 'no-invite-event-id' };
   }
   const events = deps.mall?.events;
-  if (events?.getOne == null || events?.update == null) {
+  if (events?.getOne == null || events?.updateWithMerge == null) {
     return { ok: true, written: false, skipped: 'mall-events-unavailable' };
   }
   try {
@@ -89,21 +89,27 @@ async function stampInvite (params: {
     if (trigger == null || trigger.type !== C.ET_REQUEST) {
       return { ok: true, written: false, skipped: 'not-a-request' };
     }
-    const content = trigger.content ?? {};
-    if (!isTransitionAllowed(content.capability?.mode, content.status, transition)) {
-      return { ok: true, written: false, skipped: 'transition-not-allowed' };
-    }
-    const base: Record<string, unknown> = { ...content };
-    if (transition === 'accepted') {
-      // A refused single-use invite accepted later: the refusal no longer holds.
-      for (const k of ['refusedBy', 'refusedAt', 'reason']) delete base[k];
-    }
-    const updated: TriggerLike = {
-      ...trigger,
-      content: { ...base, status: transition, ...(params.fields ?? {}) },
-    };
-    await events.update(userId, updated);
-    try { deps.notifyEventChanged?.(userId, updated); } catch (_e) { /* notify is best-effort */ }
+    // The transition is checked, and the stamp applied, on the invite as
+    // stored at write time: an update landed since the read above is kept,
+    // and a transition another writer made meanwhile is seen.
+    let skipped = null as string | null;
+    const written = await events.updateWithMerge(userId, inviteEventId, (storedRow) => {
+      const stored = storedRow as TriggerLike;
+      if (stored.type !== C.ET_REQUEST) { skipped = 'not-a-request'; return null; }
+      const content = stored.content ?? {};
+      if (!isTransitionAllowed(content.capability?.mode, content.status, transition)) {
+        skipped = 'transition-not-allowed';
+        return null;
+      }
+      const base: Record<string, unknown> = { ...content };
+      if (transition === 'accepted') {
+        // A refused single-use invite accepted later: the refusal no longer holds.
+        for (const k of ['refusedBy', 'refusedAt', 'reason']) delete base[k];
+      }
+      return { ...storedRow, content: { ...base, status: transition, ...(params.fields ?? {}) } };
+    }) as TriggerLike | null;
+    if (written == null) return { ok: true, written: false, skipped: skipped ?? 'transition-not-allowed' };
+    try { deps.notifyEventChanged?.(userId, written); } catch (_e) { /* notify is best-effort */ }
     return { ok: true, written: true };
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/inviteState: could not stamp the invite', {
