@@ -14,6 +14,7 @@ const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const fs = require('fs');
+const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
 const eventSchema = require('../schema/event.ts').default;
@@ -948,17 +949,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     context.newEvent = Object.assign(event, eventUpdate);
     // clientData key-map handling
     if (eventUpdate.clientData != null) {
-      const mergedClientData: Record<string, unknown> = structuredClone(context.oldEvent!.clientData || {});
-      for (const [key, value] of Object.entries(eventUpdate.clientData)) {
-        if (value == null) {
-          // delete keys with null value
-          delete mergedClientData[key];
-        } else {
-          // update or add keys
-          mergedClientData[key] = value;
-        }
-      }
-      context.newEvent!.clientData = mergedClientData;
+      context.newEvent!.clientData = mergeClientDataMap(context.oldEvent!.clientData, eventUpdate.clientData);
     }
     next();
     function hasStreamIdsModification (event: { streamIds?: string[] }) {
@@ -982,13 +973,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
             integrity: file.integrity,
             attachmentData: fs.createReadStream(file.path) // simulate full pass-thru of attachement until implemented
           };
+          // the engine writes the attachments column; the merge below reads it back
           eventWithUpdatedAttachments = await mall.events.addAttachment(context.user.id, newEvent.id!, attachmentItem);
-          // update attachments property of newEvent
-          newEvent.attachments = eventWithUpdatedAttachments!.attachments as WireEvent['attachments'];
         }
       }
-      // -- update the event (to save tacking properties and recalculate integrity)
-      const updatedEvent = await mall.events.update(context.user.id, newEvent);
+      // -- write the update onto the event as stored now (a server stamp
+      // written since this request read the event is kept), saving tracking
+      // properties and recalculating integrity
+      const read = context.oldEvent!;
+      const clientDataUpdate = params.update?.clientData;
+      const updatedEvent = await mall.events.updateWithMerge(context.user.id, newEvent.id!,
+        (stored: WireEvent) => mergeOntoStored(stored, read, newEvent, clientDataUpdate));
 
       updatedEvent.attachments = setFileReadToken(context.access, updatedEvent.attachments);
       result.event = updatedEvent;
@@ -1170,8 +1165,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // concurrent retrieve must not overwrite a consume with a discard; the
     // loser re-reads and returns whatever the winner left.
     const isSharedSecret = sharedSecrets.touchesNamespace(context.oldEvent);
-    let updatedEvent = await mall.events.update(context.user.id, newEvent,
-      undefined, { skipVersioning: isSharedSecret, onlyIfNotTrashed: isSharedSecret });
+    // Otherwise the trash flag goes onto the event as stored now, so a server
+    // stamp written since the read is kept.
+    let updatedEvent = isSharedSecret
+      ? await mall.events.update(context.user.id, newEvent,
+        undefined, { skipVersioning: true, onlyIfNotTrashed: true })
+      : await mall.events.updateWithMerge(context.user.id, newEvent.id!, (stored: WireEvent) =>
+        ({ ...stored, trashed: true, modified: newEvent.modified, modifiedBy: newEvent.modifiedBy }));
     if (isSharedSecret && updatedEvent == null) {
       // A concurrent retrieve consumed it first; report that terminal state.
       updatedEvent = await mall.events.getOne(context.user.id, context.oldEvent!.id!);
@@ -1218,11 +1218,14 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       return next(errors.unknownResource('attachment', params.fileId));
     }
     const deletedAtt = event.attachments![attIndex];
-    const eventDataWithDeletedAttach = await mall.events.deleteAttachment(context.user.id, event.id!, params.fileId);
+    await mall.events.deleteAttachment(context.user.id, event.id!, params.fileId);
 
-    // update tracking properties on event
-    context.updateTrackingProperties(eventDataWithDeletedAttach);
-    const newEvent = await mall.events.update(context.user.id, eventDataWithDeletedAttach);
+    // update tracking properties on the event as stored now
+    const newEvent = await mall.events.updateWithMerge(context.user.id, event.id!, (stored: WireEvent) => {
+      const next = { ...stored };
+      context.updateTrackingProperties(next);
+      return next;
+    });
 
     result.event = newEvent;
     result.event!.attachments = setFileReadToken(context.access, result.event!.attachments as Array<{ id: string; readToken?: string }> | undefined);
@@ -1300,4 +1303,45 @@ function sanitizeRequestFiles (files: any) {
   });
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
-export { sanitizeRequestFiles };
+
+/** `clientData` key-map update: a null value removes the key, others are set. */
+function mergeClientDataMap (clientData: Record<string, unknown> | null | undefined, update: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = structuredClone(clientData || {});
+  for (const [key, value] of Object.entries(update)) {
+    if (value == null) {
+      delete merged[key];
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+/**
+ * The event an `events.update` writes, built on the event as stored at write
+ * time: every top-level field the request changed relative to the copy it
+ * read (`read` -> `updated`, client values after validation and the update
+ * hooks) is applied, and the tracking properties always; every other field,
+ * a server stamp written since the read included, is kept as stored.
+ * `clientData` keys are merged onto the stored map, and the CMC server-owned
+ * content fields are taken from the stored row.
+ */
+function mergeOntoStored (stored: WireEvent, read: WireEvent, updated: WireEvent, clientDataUpdate?: Record<string, unknown> | null): WireEvent {
+  const merged: WireEvent = structuredClone(stored);
+  const keys = new Set([...Object.keys(read), ...Object.keys(updated)]);
+  for (const key of keys) {
+    if (key === 'clientData') continue;
+    if (key !== 'modified' && key !== 'modifiedBy' && isDeepStrictEqual(read[key], updated[key])) continue;
+    if (updated[key] === undefined) {
+      delete merged[key];
+    } else {
+      merged[key] = structuredClone(updated[key]);
+    }
+  }
+  if (clientDataUpdate != null) merged.clientData = mergeClientDataMap(stored.clientData, clientDataUpdate);
+  const content = cmc.preserveServerOwnedContent(stored, merged);
+  if (content !== merged.content) merged.content = content;
+  return merged;
+}
+
+export { sanitizeRequestFiles, mergeOntoStored };

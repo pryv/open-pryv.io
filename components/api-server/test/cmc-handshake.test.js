@@ -2420,6 +2420,47 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assertIntegrity(after, 'CN58 after the client update');
     });
 
+    it('[CN61] a withdrawal stamped while a client update of the accept is in flight is kept', async function () {
+      const h = await runFreshHandshake('wd-r', 'wd-app-r');
+      const { grant, acceptEventId } = await grantWithAccept(h);
+      await sleep(500); // let the handshake's own stamps settle
+      const { getMall } = require('mall');
+      const timestamp = require('unix-timestamp');
+      const mall = await getMall();
+      const before = await readEvent(bob, acceptEventId);
+      assert.strictEqual(before.content.withdrawal, undefined);
+      const withdrawal = { at: timestamp.now(), by: 'accesses.delete', accessId: grant.id };
+      // The request's read of the accept is followed by the stamp, written
+      // through the mall as the real writer does: the client's PUT is built
+      // from a copy without it.
+      const original = mall.events.getOne;
+      let stamped = false;
+      mall.events.getOne = async function (userId, id) {
+        const event = await original.call(this, userId, id);
+        if (id === acceptEventId && !stamped) {
+          stamped = true;
+          await mall.events.update(userId, { ...event, content: { ...event.content, withdrawal }, modified: withdrawal.at });
+        }
+        return event;
+      };
+      let upd;
+      try {
+        upd = await coreRequest.put(bob.eventsPath + '/' + acceptEventId)
+          .set('Authorization', bob.token)
+          .send({ content: { ...before.content, note: 'edited' } });
+      } finally {
+        mall.events.getOne = original;
+      }
+      assert.ok(stamped, 'CN61: the stamp must have been injected');
+      assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+      assert.strictEqual(upd.body.event.content.note, 'edited');
+      assert.deepStrictEqual(upd.body.event.content.withdrawal, withdrawal);
+      const after = await readEvent(bob, acceptEventId);
+      assert.deepStrictEqual(after.content.withdrawal, withdrawal);
+      assert.strictEqual(after.content.note, 'edited');
+      assertIntegrity(after, 'CN61');
+    });
+
     it('[CN59] the accepter\'s consent/revoke-cmc marks the accept event with the trigger id', async function () {
       const h = await runFreshHandshake('wd-b', 'wd-app-b');
       const { grant, acceptEventId } = await grantWithAccept(h);

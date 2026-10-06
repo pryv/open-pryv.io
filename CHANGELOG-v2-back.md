@@ -1,5 +1,24 @@
 # Changelog - Internal (no API impact)
 
+## Event updates merge onto the stored row (`updateWithMerge`)
+
+- New store operation `updateWithMerge(userId, eventId, merge, transaction, opts)`: a synchronous
+  `merge(stored)` returns the row to write (or null for none). PostgreSQL runs it under
+  `SELECT ... FOR UPDATE` in a transaction (versioning snapshots the locked row); SQLite in
+  `UserDatabase.updateEventAtomic`, one `transaction().immediate()` that never yields, retried by
+  `concurrentSafeWrite`. Mall `updateWithMerge` recomputes integrity on the merged row and falls
+  back to `getOne` + `update` for stores without the operation (best effort, as before).
+  `toStoreEvent` extracted from the mall's `update`; PG `buildSetClauses` shared by both writes.
+- api-server: `events.update` writes `mergeOntoStored(stored, read, updated)`: the top-level fields
+  the request changed against its read, plus the tracking properties, onto the stored row;
+  `clientData` keys merged onto the stored map (`mergeClientDataMap`). Trash (outside shared
+  secrets, which keep their compare-and-set) and attachment deletion stamp the stored row.
+- cmc: `preserveServerOwnedContent(stored, event)` (pure, exported), used by the update hook and
+  again at write time; `CMC_SERVER_OWNED_FIELDS` (`status`, `failure`) on every CMC type.
+- Tests: `[ESR1-6]` (stamp injected between the request's read and write), `[CN61]` (withdrawal
+  stamped during an accept update), `[APB13]` `[APB14]`. The reverse direction (a server write
+  built from a stale copy) is not covered by this change.
+
 ## SQLite busy retries on every per-user write; test spawners without self-dispatch
 
 - `storages/engines/sqlite`: per-user connections run with `busy_timeout = 0` and retry
