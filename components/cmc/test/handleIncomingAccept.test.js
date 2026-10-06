@@ -44,9 +44,13 @@ function fakeMall (opts = {}) {
     events: {
       // Like the real mall: `get` does not filter on `id` (newest first, here
       // an unrelated event under another app), `getOne` looks the id up.
-      async get (_userId, _params) {
+      // A stream query (`{ any: [...] }`) filters on streamIds.
+      async get (_userId, params) {
         calls.eventsGot += 1;
-        return requestEvent ? [NEWEST_UNRELATED_EVENT, requestEvent] : [NEWEST_UNRELATED_EVENT];
+        const all = [NEWEST_UNRELATED_EVENT, ...(requestEvent ? [requestEvent] : []), ...(opts.storedEvents ?? [])];
+        const any = params?.streams?.[0]?.any;
+        if (Array.isArray(any)) return all.filter((e) => e.streamIds.some((s) => any.includes(s)));
+        return all;
       },
       async getOne (_userId, id) {
         calls.eventsGot += 1;
@@ -630,8 +634,8 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
     function offerCopy (features) {
       return { ...ORIGINAL_REQUEST_EVENT, content: { request: { features } } };
     }
-    async function incoming ({ requestEvent, features, originalEventId = 'orig-req-1' }) {
-      const mall = fakeMall({ requestEvent });
+    async function incoming ({ requestEvent, features, originalEventId = 'orig-req-1', storedEvents, logger }) {
+      const mall = fakeMall({ requestEvent, storedEvents });
       const posted = [];
       const fetch = async (url, init) => {
         posted.push(JSON.parse(init.body));
@@ -643,7 +647,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         userId: 'u1',
         acceptEvent: { ...ACCEPT_FROM_INBOX, streamIds: [':_cmc:_internal:responses:cap-xyz'], content },
         selfIdentity: SELF,
-        deps: { mall, fetch, logger: { debug: () => {}, warn: () => {} } },
+        deps: { mall, fetch, logger: logger ?? { debug: () => {}, warn: () => {} } },
       });
       return { r, mall, posted };
     }
@@ -677,13 +681,43 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.deepEqual(chatPermissions(acc), []);
     });
 
-    it('[IA20] an unreadable offer copy falls back to the delivered value, which can still narrow', async () => {
-      const { r, mall } = await incoming({ requestEvent: undefined, originalEventId: null, features: { chat: false } });
+    it('[IA20] an unreadable offer copy falls back to the delivered value, which can still narrow, with a warning', async () => {
+      const warns = [];
+      const { r, mall } = await incoming({
+        requestEvent: undefined,
+        originalEventId: null,
+        features: { chat: false },
+        logger: { debug: () => {}, warn: (m) => warns.push(m) },
+      });
       assert.equal(r.ok, true);
       const acc = mall.calls.accessesCreated[0];
       assert.deepEqual(acc.clientData.cmc.features, { chat: false, systemMessaging: true });
       assert.deepEqual(chatPermissions(acc), []);
       assert.ok(!mall.calls.streamsCreated.some((s) => /:chats:/.test(s.id)));
+      assert.ok(warns.some((m) => String(m).includes('offer copy not found')), JSON.stringify(warns));
+    });
+
+    it('[IA21] the offer copy is found by the responses stream first, whatever id the accept names', async () => {
+      // the copy in the capability's offer stream turns chat off
+      const streamCopy = {
+        id: 'offer-copy-cap-xyz',
+        type: 'consent/request-cmc',
+        streamIds: [':_cmc:_internal:offer:cap-xyz'],
+        content: { originStreamId: SCOPE, request: { features: { chat: false } } },
+      };
+      // a bogus id, then an id naming another request that allows chat
+      for (const [originalEventId, requestEvent] of [['bogus-id', undefined], ['orig-req-1', offerCopy({ chat: true })]]) {
+        const { r, mall, posted } = await incoming({
+          requestEvent, storedEvents: [streamCopy], originalEventId, features: { chat: true, systemMessaging: true },
+        });
+        assert.equal(r.ok, true, originalEventId);
+        const acc = mall.calls.accessesCreated[0];
+        assert.deepEqual(acc.clientData.cmc.features, { chat: false, systemMessaging: true }, originalEventId);
+        assert.deepEqual(chatPermissions(acc), [], originalEventId);
+        assert.ok(!mall.calls.streamsCreated.some((s) => /:chats:/.test(s.id)), originalEventId);
+        const backChannel = posted.find((b) => b.type === 'consent/back-channel-cmc');
+        assert.ok(!('remoteChatStreamId' in backChannel.content), originalEventId);
+      }
     });
   });
 });

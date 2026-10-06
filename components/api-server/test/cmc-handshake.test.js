@@ -2588,6 +2588,15 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const legacy = await runFreshHandshake('study-legacy-nochat', 'legacy-nochat-app');
       const backChannel = await relationshipAccess(alice, legacy.triggerStreamId);
       assert.ok(backChannel.permissions.some((p) => p.streamId === legacy.aliceChatStreamId), 'premise: the chat permission exists');
+      // written while the relationship still allowed chat, updated below
+      const earlier = {};
+      for (const [key, type, content] of [['chat', 'message/chat-cmc', { content: 'earlier' }], ['note', 'note/txt', 'a note']]) {
+        const res = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+          streamIds: [legacy.aliceChatStreamId], type, content,
+        });
+        assert.strictEqual(res.status, 201, key + ': ' + JSON.stringify(res.body));
+        earlier[key] = res.body.event.id;
+      }
       const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
       const { getUsersRepository } = require('business/src/users/index.ts');
       const mall = await buildMallForCmc();
@@ -2605,6 +2614,19 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(chat.status, 403, JSON.stringify(chat.body));
       assert.strictEqual(chat.body.error.id, 'forbidden');
       assert.strictEqual(chat.body.error.data?.id, 'cmc-chat-disabled', JSON.stringify(chat.body));
+
+      // the update path: editing an existing chat, or retyping another event to a chat
+      for (const [id, update] of [
+        [earlier.chat, { content: { content: 'edited' } }],
+        [earlier.note, { type: 'message/chat-cmc', content: { content: 'retyped' } }],
+      ]) {
+        const res = await coreRequest.put(alice.eventsPath + '/' + id).set('Authorization', backChannel.token).send(update);
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.data?.id, 'cmc-chat-disabled', JSON.stringify(res.body));
+      }
+      const note = await coreRequest.put(alice.eventsPath + '/' + earlier.note).set('Authorization', backChannel.token)
+        .send({ content: 'an edited note' });
+      assert.strictEqual(note.status, 200, JSON.stringify(note.body));
 
       const alert = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
         streamIds: [legacy.aliceCollectorStreamId],

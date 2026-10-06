@@ -1131,5 +1131,23 @@ describe('[CMCHOOK] cmc/hooks', () => {
         assert.equal(await runMiddleware(mw, write(type, access), {}, {}), undefined, type);
       }
     });
+
+    it('[CH11] on events.update the merged event decides: editing a chat or retyping to one is refused, other updates pass', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      const access = counterparty({ chat: false, systemMessaging: true });
+      // the update context after the prerequisites: oldEvent as stored, newEvent merged
+      const update = (oldType, newType) => ({
+        access,
+        oldEvent: { type: oldType, streamIds: [':_cmc:apps:my-app:study:chats:bob--x-pryv-me'], content: 'x' },
+        newEvent: { type: newType, streamIds: [':_cmc:apps:my-app:study:chats:bob--x-pryv-me'], content: 'y' },
+      });
+      for (const [oldType, newType] of [['message/chat-cmc', 'message/chat-cmc'], ['note/txt', 'message/chat-cmc']]) {
+        const err = await runMiddleware(mw, update(oldType, newType), {}, {});
+        assert.equal(err?.details?.id, 'cmc-chat-disabled', oldType + ' -> ' + newType);
+      }
+      assert.equal(await runMiddleware(mw, update('note/txt', 'note/txt'), {}, {}), undefined);
+      assert.equal(await runMiddleware(mw, update('message/chat-cmc', 'note/txt'), {}, {}), undefined);
+    });
   });
 });

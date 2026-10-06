@@ -229,11 +229,13 @@ on the requester side, on the inbox mirror.
   `cmc-system-messaging-disabled`.
 - **Receiving side.** A counterparty writing a `message/chat-cmc` (or a
   `notification/alert-cmc` / `notification/ack-cmc`) directly with its
-  relationship token is refused with HTTP 403 `forbidden`, `data.id`
-  `cmc-chat-disabled` (or `cmc-system-messaging-disabled`).
+  relationship token, by creating it or by updating an event, is refused
+  with HTTP 403 `forbidden`, `data.id` `cmc-chat-disabled` (or
+  `cmc-system-messaging-disabled`).
 - Scope-request and scope-update are protocol-level and remain
   permitted regardless of the flags.
-- **Relationships accepted before 2.0.0-rc.38** keep their chat stream
+- **Relationships accepted before the release carrying this change
+  (2.0.0-rc.38)** keep their chat stream
   and chat permission; the server refuses chat writes on them when
   `features.chat` is false. Read `features` (on the accept event, or from
   `listAcceptedRelationships`), never the stream's existence, to decide

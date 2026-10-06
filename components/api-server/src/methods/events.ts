@@ -884,6 +884,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     delegationEventsUpdateGuardHook,
     // an accept keeps its server-stamped `approvedBy` across content updates
     cmcAcceptPreserveHook,
+    // judges the merged event, so an update that keeps or sets a gated type is refused
+    cmcCounterpartyFeatureGateHook,
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,

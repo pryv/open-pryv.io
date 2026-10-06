@@ -138,6 +138,9 @@ async function handleIncomingAccept (params: {
   //   3. Fall back to 'unknown' — back-channel access still gets
   //      created; chat/system handlers won't match it but the
   //      handshake itself is recorded.
+  // This side's copy of the offer, read once: it serves the scope fallback
+  // below and the features resolution.
+  const offerCopy = await findOfferCopy({ userId, acceptEvent, mall });
   const fromAcceptContent = acceptEvent.content?.requesterAppCode;
   const originStreamFromAccept = acceptEvent.content?.requesterOriginStreamId;
   if (typeof originStreamFromAccept === 'string' && originStreamFromAccept.length > 0 &&
@@ -155,7 +158,7 @@ async function handleIncomingAccept (params: {
   }
   if (scopeStreamId == null) {
     try {
-      const lookup = await resolveRequestScope({ userId, acceptEvent, mall });
+      const lookup = await resolveRequestScope({ userId, acceptEvent, mall, requestEvent: offerCopy.event });
       scopeStreamId = lookup.scopeStreamId;
       appCode = lookup.appCode;
     } catch (err: unknown) {
@@ -173,9 +176,12 @@ async function handleIncomingAccept (params: {
   // The relationship's features, resolved against OUR copy of the offer: the
   // offer's, narrowed by what the accepter sent. A peer that sends a wider
   // value (an older core, or a forged delivery) cannot turn on here a feature
-  // this side's offer turned off. Stamped on the back-channel and the inbox
+  // this side's offer turned off, as long as the copy is found: by the
+  // responses stream the accept was written to (server-controlled), else by
+  // the id the accept names. When neither names a readable copy, the
+  // delivered value decides. Stamped on the back-channel and the inbox
   // mirror; with `chat: false` no chat leaf and no chat permission exist.
-  const offeredFeatures = await readOfferCopyFeatures({ userId, acceptEvent, mall, logger: deps.logger });
+  const offeredFeatures = offerFeatures(offerCopy, acceptEvent, deps.logger);
   const negotiatedFeatures: Features = resolveFeatures(
     offeredFeatures,
     (acceptEvent?.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null } | undefined)?.features
@@ -569,30 +575,67 @@ async function handleIncomingAccept (params: {
   };
 }
 
+type OfferCopyEvent = { type?: string; streamIds?: string[]; content?: Record<string, unknown> };
+type OfferCopy = { event: OfferCopyEvent | null; via: 'responses-stream' | 'delivered-id' | null };
+
 /**
- * The features this side's own copy of the offer grants. The accept names the
- * offer copy by `originalEventId` (the event the accepter read through the
- * capability). When it cannot be read (no id, event gone, not an offer), every
- * feature counts as offered, so the accepter's value alone decides: what this
- * side did before it resolved features itself. Logged at debug.
+ * This side's copy of the offer the accept answers. Looked up first by a
+ * server-controlled key: an accept made through a capability sits in
+ * `:_cmc:_internal:responses:<capId>` (the only stream the capability token
+ * can write), and the offer copy is the request in `:_cmc:_internal:offer:<capId>`.
+ * Then by the id the accept names (`originalEventId`, else `requestEventId`),
+ * which the peer wrote. `event: null` when neither reaches a request: the
+ * capability's streams were collected, or the delivery names nothing readable.
  */
-async function readOfferCopyFeatures (params: {
+async function findOfferCopy (params: {
   userId: string;
-  acceptEvent: { content?: Record<string, unknown> };
+  acceptEvent: { content?: Record<string, unknown>; streamIds?: string[] };
   mall: MallLike;
-  logger?: { debug?: (msg: string, ctx?: Record<string, unknown>) => void };
-}): Promise<Features> {
-  const { userId, acceptEvent, mall, logger } = params;
+}): Promise<OfferCopy> {
+  const { userId, acceptEvent, mall } = params;
+  for (const sid of acceptEvent.streamIds ?? []) {
+    const capabilityId = C.capabilityIdFromResponsesStreamId(sid);
+    if (capabilityId == null || mall.events?.get == null) continue;
+    try {
+      const events = await mall.events.get(userId, {
+        streams: [{ any: [C.offerStreamIdFor(capabilityId)] }],
+        limit: 5,
+      }) as OfferCopyEvent[];
+      const ev = events.find((e) => e?.type === C.ET_REQUEST);
+      if (ev != null) return { event: ev, via: 'responses-stream' };
+    } catch (_e) {
+      // Streams collected: fall back to the delivered id.
+    }
+  }
   const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
   if (typeof reqId === 'string' && reqId.length > 0 && mall.events?.getOne != null) {
     try {
-      const ev = await mall.events.getOne(userId, reqId) as { type?: string; content?: Record<string, unknown> } | null;
-      if (ev != null && ev.type === C.ET_REQUEST) return featuresFromOffer(ev.content);
+      // getOne, not get({ id }): the events query does not filter on `id`, so
+      // get() would hand back the newest event of any kind.
+      const ev = await mall.events.getOne(userId, reqId) as OfferCopyEvent | null;
+      if (ev != null && ev.type === C.ET_REQUEST) return { event: ev, via: 'delivered-id' };
     } catch (_e) {
-      // Fall back below.
+      // Fall through.
     }
   }
-  logger?.debug?.('cmc/handleIncomingAccept: offer copy unreadable, features resolved from the accept alone', {
+  return { event: null, via: null };
+}
+
+/**
+ * The features this side's own copy of the offer grants. Without a copy every
+ * feature counts as offered, so the accepter's value alone decides: what this
+ * side did before it resolved features itself. That is a trust decision on
+ * the peer's word, so it is logged at warn.
+ */
+function offerFeatures (
+  offerCopy: OfferCopy,
+  acceptEvent: { id?: string; content?: Record<string, unknown> },
+  logger?: CmcLogger
+): Features {
+  if (offerCopy.event != null) return featuresFromOffer(offerCopy.event.content);
+  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
+  logger?.warn?.('cmc/handleIncomingAccept: offer copy not found, features resolved from the accept alone', {
+    acceptEventId: acceptEvent.id ?? null,
     originalEventId: typeof reqId === 'string' ? reqId : null,
   });
   return featuresFromOffer(null);
@@ -603,23 +646,20 @@ async function readOfferCopyFeatures (params: {
  * event carries either `originalEventId` or `capabilityId`; we use it
  * to find the request event in our streams and return the streamId
  * + appCode it was written under. Returns nulls if we can't resolve
- * (caller falls back to a synthetic scope).
+ * (caller falls back to a synthetic scope). `requestEvent`, when given
+ * (null included), is the request already looked up by the caller.
  */
 async function resolveRequestScope (params: {
   userId: string;
   acceptEvent: { id?: string; type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
   mall: MallLike;
+  requestEvent?: OfferCopyEvent | null;
 }): Promise<{ scopeStreamId: string | null; appCode: string | null }> {
   const { userId, acceptEvent, mall } = params;
-  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
-  if (typeof reqId !== 'string' || reqId.length === 0) {
-    return { scopeStreamId: null, appCode: null };
-  }
-  if (mall.events?.getOne == null) return { scopeStreamId: null, appCode: null };
   try {
-    // getOne, not get({ id }): the events query does not filter on `id`, so
-    // get() would hand back the newest event of any kind.
-    const ev = await mall.events.getOne(userId, reqId) as { type?: string; streamIds?: string[]; content?: Record<string, unknown> } | null;
+    const ev = params.requestEvent !== undefined
+      ? params.requestEvent
+      : (await findOfferCopy({ userId, acceptEvent, mall })).event;
     if (ev == null || ev.type !== C.ET_REQUEST) return { scopeStreamId: null, appCode: null };
     // The requester's trigger sits on its app-scope stream.
     const reqStreamIds: string[] = Array.isArray(ev.streamIds) ? ev.streamIds : [];

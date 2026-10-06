@@ -18,8 +18,8 @@
   `counterparty.remoteChatStreamId` is null and the back-channel delivery leaves it out. The
   collectors stream is unchanged. An app writing a chat on such a relationship gets
   `unknown-referenced-resource`.
-- **Inbound guard.** A counterparty writing `message/chat-cmc` directly with its relationship token is
-  refused with `403 forbidden`, `error.data.id: 'cmc-chat-disabled'`, when the relationship's
+- **Inbound guard.** A counterparty writing `message/chat-cmc` directly with its relationship token
+  (creating one, editing one, or updating another event's type to it) is refused with `403 forbidden`, `error.data.id: 'cmc-chat-disabled'`, when the relationship's
   `features.chat` is false; likewise `notification/alert-cmc` / `notification/ack-cmc` with
   `systemMessaging: false` (`cmc-system-messaging-disabled`). Scope requests and scope updates are
   never gated. Relationships recording no features stay permissive.

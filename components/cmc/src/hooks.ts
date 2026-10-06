@@ -561,8 +561,8 @@ function createCounterpartyFromStampingHook (deps: Deps): Middleware {
 }
 
 /**
- * events.create hook: the relationship's features, enforced on the
- * RECEIVING side.
+ * events.create / events.update hook: the relationship's features, enforced
+ * on the RECEIVING side.
  *
  * The sending plugin refuses a chat (or a user alert / ack) when the
  * relationship's `features` turn it off, but a peer holding the
@@ -571,6 +571,9 @@ function createCounterpartyFromStampingHook (deps: Deps): Middleware {
  * 'counterparty'`) whose `features.chat === false` cannot create a
  * `message/chat-cmc`, and one whose `features.systemMessaging === false`
  * cannot create a `notification/alert-cmc` / `notification/ack-cmc`.
+ * On events.update it runs after the prerequisites, so `context.newEvent` is
+ * the merged event: an update that keeps a gated type (editing an existing
+ * chat message) or sets one (retyping another event) is refused alike.
  * Scope requests and scope updates are protocol messages, never gated.
  *
  * 403 `forbidden` with `data.id` set to the CMC error id: the token and the

@@ -104,6 +104,14 @@ function responsesStreamIdFor (capabilityId: string): string {
   return NS_INTERNAL + ':responses:' + capabilityId;
 }
 
+/** Inverse of `responsesStreamIdFor`: the capability id, or null for any other stream id. */
+function capabilityIdFromResponsesStreamId (streamId: string): string | null {
+  const prefix = NS_INTERNAL + ':responses:';
+  if (typeof streamId !== 'string' || !streamId.startsWith(prefix)) return null;
+  const capabilityId = streamId.slice(prefix.length);
+  return capabilityId.length > 0 && !capabilityId.includes(':') ? capabilityId : null;
+}
+
 // --- Classification predicates ---
 
 /** Does this stream-id live anywhere under the :_cmc: namespace? */
@@ -261,6 +269,7 @@ export {
   collectorStreamUnder,
   offerStreamIdFor,
   responsesStreamIdFor,
+  capabilityIdFromResponsesStreamId,
 
   // classification predicates
   isCmcStreamId,
