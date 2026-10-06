@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Coverage on c8; no more sprintf-js or vulnerable shell-quote in dev tooling
+
+- Coverage moves from nyc to c8 (V8-native). nyc instrumented sources through its own require hook,
+  which bypasses Node's TypeScript type stripping: `just test-cover <component>` failed on the first
+  `.ts` file, and `.nycrc.json` only included `*.js`. `just test-cover`, `test-cover-all` and
+  `test-cover-lcov` now use c8 (a dev dependency, no more on-demand `npx`) with one `.c8rc.json`
+  covering `*.js` and `*.ts`; `test-cover-all` reuses `tools/coverage/run.sh` (PostgreSQL + SQLite).
+  `.nycrc.json` and the MongoDB-era `scripts/coverage` are removed.
+- `sprintf-js` (GHSA-hp3w-g68c-fv3c, no patched release) is gone from the dependency tree: it came
+  through `argparse` 1.x, which `js-yaml` 3 (still used by `charlatan`) requires only for its command
+  line tool; an override gives that `js-yaml` `argparse` 2. `shell-quote` (via `concurrently`) is
+  refreshed to 1.12.0 (GHSA-pqg4-j6r4-53mv). All dev only; nothing in the image changes.
+
 ## Server writers on `updateWithMerge`
 
 - Every server read-modify-write of an event row now goes through `mall.events.updateWithMerge`

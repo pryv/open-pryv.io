@@ -1,20 +1,21 @@
 {
-  "cwd": ".",
+  "src": ["components", "storages"],
   "include": [
-    "components/*/src/**/*.js",
-    "storages/**/*.js"
+    "components/*/src/**/*.{js,ts}",
+    "storages/**/*.{js,ts}"
   ],
   "exclude": [
     "**/test/**",
     "**/node_modules/**",
+    "**/*.d.ts",
     "external-ressources/**",
     "tools/**",
     "storages/test/**",
     "storages/engines/*/test/**",
     "storages/datastores/*/test/**"
   ],
-  "report-dir": "./coverage",
-  "temp-dir": "./.nyc_output",
+  "temp-directory": "./.v8-coverage",
+  "reports-dir": "./coverage",
   "reporter": ["html", "text-summary", "json"],
   "all": true
 }

@@ -7,7 +7,7 @@
 
 # Full coverage collection across all storage engines.
 #
-# Uses NODE_V8_COVERAGE (V8-native coverage) instead of NYC instrumentation.
+# Uses NODE_V8_COVERAGE (V8-native coverage), reported with c8.
 # collect.js runs mocha via `node` directly (not npx) so V8 can track all
 # loaded files including lazy-required engine implementations.
 #
@@ -17,7 +17,8 @@
 #   tools/coverage/run.sh --report     # just regenerate report from existing data
 
 set -e
-cd "$(dirname "$0")/../.."  # service-core root
+cd "$(dirname "$0")/../.."  # repository root
+export PATH="$(pwd)/node_modules/.bin:$PATH"
 
 V8DIR=".v8-coverage"
 REPORT_ONLY=false
@@ -70,23 +71,11 @@ if [ "$REPORT_ONLY" = false ]; then
   done
 fi
 
-# Generate report using c8 (reads V8 coverage data)
+# Generate report using c8 (reads V8 coverage data; include/exclude and
+# reporters come from .c8rc.json)
 echo ""
 echo "=== Generating report ==="
-npx c8 report \
-  --temp-directory "$V8DIR" \
-  --src . \
-  --include 'components/*/src/**/*.js' \
-  --include 'storages/**/*.js' \
-  --exclude '**/test/**' \
-  --exclude '**/node_modules/**' \
-  --exclude 'storages/test/**' \
-  --exclude 'storages/engines/*/test/**' \
-  --exclude 'storages/datastores/*/test/**' \
-  --exclude 'tools/**' \
-  --reporter html --reporter text-summary --reporter json \
-  --reports-dir coverage \
-  --all
+c8 report --temp-directory "$V8DIR"
 
 echo ""
 echo "Report: coverage/index.html"

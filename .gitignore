@@ -15,7 +15,6 @@ service-core.iml
 /out
 # tsc emit target — produced by `just build`, not used at runtime yet
 /dist
-.nyc_output/
 .v8-coverage/
 .c8_output/
 security-assessment

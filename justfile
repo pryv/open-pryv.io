@@ -245,13 +245,11 @@ test-cover component *params:
     #!/usr/bin/env bash
     set -euo pipefail
     shift
-    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} nyc \
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} c8 \
         scripts/components-run npx mocha -- "$@"
 
 # Run all tests across supported engines (PG + SQLite) and generate coverage report
-test-cover-all:
-    scripts/coverage
-    npx nyc report
+test-cover-all: test-cover-full
 
 # Full coverage: runs mocha from project root so storages/engines/ files are instrumented
 test-cover-full *engines:
@@ -259,8 +257,8 @@ test-cover-full *engines:
 
 # Run all tests with LCOV output (for CI)
 test-cover-lcov:
-    scripts/coverage
-    npx nyc report --reporter=lcov
+    tools/coverage/run.sh
+    c8 report --reporter=lcov
 
 # Set up test results report generation
 test-results-init-repo:
