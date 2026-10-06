@@ -267,6 +267,35 @@ UserDatabase.prototype.updateEvent = async function (this: UserDatabaseInstance,
   return eventsSchema.fromDB(dbEvent);
 };
 
+/**
+ * Read-merge-write in one immediate transaction: `fn` receives the event as
+ * stored now and returns the event to write (plus an optional history item),
+ * or null to write nothing. The body never yields, so no other writer of this
+ * file, in this process or another, can land between the read and the write.
+ * @returns the written event, null when `fn` returned null, false when the
+ *   event does not exist
+ */
+UserDatabase.prototype.updateEventAtomic = async function (this: UserDatabaseInstance, eventId: string, fn: (stored: DomainEvent) => { next: DomainEvent, versionItem?: DomainEvent } | null): Promise<DomainEvent | null | false> {
+  let out: DomainEvent | null | false = null;
+  const run = this.db.transaction(() => {
+    const row = this.eventQueries.getById.get(eventId);
+    if (row == null) { out = false; return; }
+    const res = fn(eventsSchema.fromDB(row));
+    if (res == null) { out = null; return; }
+    if (res.versionItem != null) this.eventQueries.create.run(eventsSchema.toDB(res.versionItem));
+    const dbEvent = eventsSchema.toDB(res.next);
+    if (dbEvent.streamIds == null) { dbEvent.streamIds = eventsSchema.ALL_EVENTS_TAG; }
+    delete dbEvent.eventid;
+    const queryString = `UPDATE events SET ${Object.keys(dbEvent).map(field => `${field} = @${field}`).join(', ')} WHERE eventid = @eventid`;
+    dbEvent.eventid = eventId;
+    this.db.prepare(queryString).run(dbEvent);
+    out = eventsSchema.fromDB(dbEvent);
+  });
+  // A retry after SQLITE_BUSY re-runs the whole (rolled back) transaction.
+  await concurrentSafeWrite.execute(() => { run.immediate(); });
+  return out;
+};
+
 UserDatabase.prototype.getEventHistory = function (this: UserDatabaseInstance, eventId: string): DomainEvent[] {
   this.logger.debug(`GET event history for: ${eventId}`);
   return this.eventQueries.getHistory.all(eventId).map(eventsSchema.fromDBHistory);

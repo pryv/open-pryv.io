@@ -43,7 +43,10 @@ type SystemStreams = { accountStreamIds?: string[] };
 type QueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number };
 type QueryFn = (sql: string, params: unknown[]) => Promise<QueryResult>;
 type Transaction = { query: QueryFn } | null | undefined;
-interface DbLike { query: QueryFn }
+interface DbLike {
+  query: QueryFn;
+  withTransaction<T> (fn: (client: { query: QueryFn }) => Promise<T>): Promise<T>;
+}
 interface EventsFileStorageLike {
   removeAllForEvent: (userId: string, eventId: string) => Promise<void>;
   removeAllForUser: (userId: string) => Promise<void>;
@@ -102,6 +105,21 @@ function toPGValue (col: string, val: unknown): unknown {
     return JSON.stringify(val);
   }
   return val;
+}
+
+/** `SET` clauses for every property of `eventData` but `id`; `$1` / `$2` are the user and event ids. */
+function buildSetClauses (userId: string, eventData: EventLike): { setClauses: string[], params: unknown[] } {
+  const setClauses: string[] = [];
+  const params: unknown[] = [userId, eventData.id];
+  let idx = 3;
+  for (const [prop, val] of Object.entries(eventData)) {
+    if (prop === 'id') continue;
+    const col = toCol(prop);
+    setClauses.push(`${col} = $${idx}`);
+    params.push(toPGValue(col, val));
+    idx++;
+  }
+  return { setClauses, params };
 }
 
 function rowToEvent (row: Record<string, unknown> | null | undefined): EventLike | null {
@@ -261,18 +279,7 @@ const userEvents = ds.createUserEvents({
     if (!opts?.skipVersioning) await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
     try {
-      const setClauses: string[] = [];
-      const params: unknown[] = [userId, eventData.id];
-      let idx = 3;
-
-      for (const [prop, val] of Object.entries(eventData)) {
-        if (prop === 'id') continue;
-        const col = toCol(prop);
-        setClauses.push(`${col} = $${idx}`);
-        params.push(toPGValue(col, val));
-        idx++;
-      }
-
+      const { setClauses, params } = buildSetClauses(userId, eventData);
       if (setClauses.length === 0) return false;
 
       const casClause = onlyIfNotTrashed ? ' AND (trashed IS NULL OR trashed = FALSE)' : '';
@@ -288,6 +295,40 @@ const userEvents = ds.createUserEvents({
       }
 
       return res.rowCount === 1;
+    } catch (err: unknown) {
+      throw errors.unexpectedError(err);
+    }
+  },
+
+  /**
+   * Read-merge-write under a row lock: `merge` receives the event as stored
+   * now and returns the full event to write, or null to write nothing. A
+   * concurrent writer of the same event waits for this transaction, so
+   * nothing written between a caller's earlier read and this write is lost.
+   * @returns the written event, null when `merge` returned null, false when
+   *   the event does not exist
+   */
+  async updateWithMerge (this: Store, userId: string, eventId: string, merge: (stored: EventLike) => EventLike | null, transaction: Transaction, opts?: UpdateOpts): Promise<EventLike | null | false> {
+    const run = async (queryFn: QueryFn): Promise<EventLike | null | false> => {
+      const res = await queryFn(
+        'SELECT * FROM events WHERE user_id = $1 AND id = $2 AND head_id IS NULL FOR UPDATE',
+        [userId, eventId]
+      );
+      if (res.rows.length === 0) return false;
+      const stored = rowToEvent(res.rows[0])!;
+      const next = merge(structuredClone(stored));
+      if (next == null) return null;
+      if (!opts?.skipVersioning) await this._generateVersionIfNeeded(userId, eventId, stored, queryFn);
+      const { setClauses, params } = buildSetClauses(userId, { ...next, id: eventId });
+      if (setClauses.length > 0) {
+        await queryFn(`UPDATE events SET ${setClauses.join(', ')} WHERE user_id = $1 AND id = $2`, params);
+      }
+      if (next.streamIds) await this._syncEventStreams(userId, eventId, next.streamIds, queryFn);
+      return { ...next, id: eventId };
+    };
+    try {
+      if (transaction) return await run(transaction.query.bind(transaction));
+      return await this.db.withTransaction((client) => run(client.query.bind(client)));
     } catch (err: unknown) {
       throw errors.unexpectedError(err);
     }

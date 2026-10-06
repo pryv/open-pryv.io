@@ -304,28 +304,9 @@ class MallUserEvents implements MallEvents {
     if (integrity.events.isActive) {
       integrity.events.set(newEventData);
     }
-    // replace all streamIds by store-less streamIds
     // Invariant: update is only called with an existing event's id set.
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(newEventData.id!);
-    const storeEvent = eventsUtils.convertEventToStore(storeId, newEventData);
-
-    if (storeEvent?.streamIds) {
-      const storeStreamIds: string[] = [];
-      for (const fullStreamId of newEventData.streamIds!) {
-        const [streamStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
-        if (streamStoreId !== storeId) {
-          // Account stream IDs (e.g. :_system:language) are valid in local store events
-          if (storeId === storeDataUtils.LocalStoreId &&
-              streamStoreId === storeDataUtils.AccountStoreId) {
-            storeStreamIds.push(storeStreamId);
-            continue;
-          }
-          throw errorFactory.invalidRequestStructure('events cannot be moved to a different store', newEventData);
-        }
-        storeStreamIds.push(storeStreamId);
-      }
-      storeEvent.streamIds = storeStreamIds;
-    }
+    const storeEvent = toStoreEvent(storeId, newEventData);
     const eventsStore = this.eventsStores.get(storeId);
     const storeTransaction = mallTransaction
       ? await mallTransaction.getStoreTransaction(storeId)
@@ -337,6 +318,51 @@ class MallUserEvents implements MallEvents {
         throw errorFactory.invalidItemId('Could not update event with id ' + newEventData.id);
       }
       return eventsUtils.convertEventFromStore(storeId, storeEvent);
+    } catch (e) {
+      storeDataUtils.throwAPIError(e, storeId);
+    }
+  }
+
+  /**
+   * Read-merge-write of one event: `merge` receives the event as stored at
+   * write time and returns the full event to write (integrity is recomputed
+   * on it), or null to write nothing. Nothing written to the event between a
+   * caller's earlier read and this write is lost, as long as `merge` keeps
+   * what it does not mean to change. `merge` must be synchronous.
+   *
+   * Stores that implement `updateWithMerge` run it atomically (local
+   * PostgreSQL and SQLite stores); for the others it is a best-effort
+   * read then update, as before.
+   * @returns the written event, or null when `merge` returned null
+   */
+  async updateWithMerge (userId: string, fullEventId: string, merge: (stored: EventLike) => EventLike | null, mallTransaction?: Transaction, opts?: { skipVersioning?: boolean }): Promise<EventLike | null> {
+    const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(fullEventId);
+    const eventsStore = this.eventsStores.get(storeId);
+    if (!eventsStore) {
+      throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
+    }
+    if (typeof eventsStore.updateWithMerge !== 'function') {
+      const stored = await this.getOne(userId, fullEventId);
+      if (stored == null) throw errorFactory.invalidItemId('Could not update event with id ' + fullEventId);
+      const next = merge(stored);
+      if (next == null) return null;
+      return await this.update(userId, next, mallTransaction, opts);
+    }
+    const storeMerge = (storeStored: EventLike): EventLike | null => {
+      const next = merge(eventsUtils.convertEventFromStore(storeId, storeStored));
+      if (next == null) return null;
+      next.id = fullEventId;
+      if (integrity.events.isActive) integrity.events.set(next);
+      return toStoreEvent(storeId, next);
+    };
+    const storeTransaction = mallTransaction
+      ? await mallTransaction.getStoreTransaction(storeId)
+      : null;
+    try {
+      const res = await eventsStore.updateWithMerge(userId, storeEventId, storeMerge, storeTransaction, opts);
+      if (res === false) throw errorFactory.invalidItemId('Could not update event with id ' + fullEventId);
+      if (res == null) return null;
+      return eventsUtils.convertEventFromStore(storeId, res);
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
     }
@@ -489,5 +515,31 @@ class MallUserEvents implements MallEvents {
  * Account events live in the local MongoDB store (account store only provides
  * stream definitions). Remap any account-store params into local-store params.
  */
+/**
+ * The event as the store sees it: store-less ids and streamIds. Account stream
+ * ids are accepted in local store events; any other stream of another store is
+ * refused (events cannot move between stores).
+ */
+function toStoreEvent (storeId: string, newEventData: Partial<EventLike>): EventLike {
+  const storeEvent = eventsUtils.convertEventToStore(storeId, newEventData);
+  if (storeEvent?.streamIds) {
+    const storeStreamIds: string[] = [];
+    for (const fullStreamId of newEventData.streamIds!) {
+      const [streamStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
+      if (streamStoreId !== storeId) {
+        if (storeId === storeDataUtils.LocalStoreId &&
+            streamStoreId === storeDataUtils.AccountStoreId) {
+          storeStreamIds.push(storeStreamId);
+          continue;
+        }
+        throw errorFactory.invalidRequestStructure('events cannot be moved to a different store', newEventData);
+      }
+      storeStreamIds.push(storeStreamId);
+    }
+    storeEvent.streamIds = storeStreamIds;
+  }
+  return storeEvent;
+}
+
 export default MallUserEvents;
 export { MallUserEvents };
