@@ -73,7 +73,7 @@ export const { createCredentialStashHook } = credentialStashHook;
 // The server-owned fields of a consent accept (`approvedBy`, `ownerConfirmedAt`,
 // `withdrawal`): dropped from a client create (`approvedBy` then stamped from
 // the writing access), kept from the stored event on a client update.
-export const { createAcceptStampingHook, createAcceptPreserveHook } = acceptServerOwnedFieldsHook;
+export const { createAcceptStampingHook, createAcceptPreserveHook, preserveServerOwnedContent } = acceptServerOwnedFieldsHook;
 // The `withdrawal` marker a teardown path writes on the person's accept event.
 export const { stampWithdrawalOnAccept } = acceptWithdrawal;
 export const { mintCapability, gcCapability } = capability;

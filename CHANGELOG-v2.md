@@ -41,6 +41,20 @@
   it with `accesses.delete` now records `content.withdrawal` on the accept event that created it,
   and attempts no delivery to a peer.
 
+### Server-written event fields survive a concurrent update
+
+- **Fix.** A field the server writes on an event (a CMC dispatch status, the consent withdrawal
+  record on a `consent/accept-cmc` event, the owner's confirmation) could be lost when a client
+  updated or trashed the same event at that moment: the client's write was built from the copy it
+  had read just before. `events.update`, `events.delete` (trash) and `events.deleteAttachment` now
+  apply the client's change onto the event as stored at write time: the fields the request changes
+  win, and a field sent back with the value the request read does not overwrite a newer stored
+  value. `clientData` keys merge onto the stored map as before. Nothing changes in requests or
+  responses.
+- **Fix (CMC).** `content.status` and `content.failure` on every CMC event type are written by the
+  server only: an `events.update` keeps the stored values and ignores client-sent ones, as it
+  already did for the accept event's `approvedBy`, `ownerConfirmedAt` and `withdrawal`.
+
 ## 2.0.0-rc.37 - 2026-10-06
 
 ### Trusted proxies: proxy-addr 2.0.8 (CVE-2026-90711)

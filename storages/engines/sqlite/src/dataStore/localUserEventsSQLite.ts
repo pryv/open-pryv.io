@@ -46,6 +46,7 @@ type UserDbLike = {
   getEventHistory: (eventId: string) => EventLike[];
   createEvent: (event: EventLike) => Promise<void>;
   updateEvent: (eventId: string, eventData: EventLike, onlyIfNotTrashed?: boolean) => Promise<EventLike | null>;
+  updateEventAtomic: (eventId: string, fn: (stored: EventLike) => { next: EventLike, versionItem?: EventLike } | null) => Promise<EventLike | null | false>;
   minimizeEventHistory: (eventId: string, fieldsToRemove: string[]) => Promise<void>;
   deleteEventHistory: (eventId: string) => Promise<void>;
   deleteEvents: (params: { query: unknown[]; options?: unknown }) => Promise<{ changes: number } | null>;
@@ -157,6 +158,33 @@ const userEvents = ds.createUserEvents({
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' && e.message?.includes('events.eventid') === true) {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);
       }
+      throw errors.unexpectedError(err);
+    }
+  },
+
+  /**
+   * Read-merge-write in one immediate transaction: `merge` receives the event
+   * as stored now and returns the full event to write, or null to write
+   * nothing. See UserDatabase.updateEventAtomic.
+   * @returns the written event, null when `merge` returned null, false when
+   *   the event does not exist
+   */
+  async updateWithMerge (this: Store, userId: string, eventId: string, merge: (stored: EventLike) => EventLike | null, _transaction: unknown, opts?: UpdateOpts): Promise<EventLike | null | false> {
+    const db = await this.storage.forUser(userId);
+    const keepVersion = this.keepHistory && !opts?.skipVersioning;
+    try {
+      return await db.updateEventAtomic(eventId, (stored) => {
+        const next = merge(structuredClone(stored));
+        if (next == null) return null;
+        let versionItem: EventLike | undefined;
+        if (keepVersion) {
+          versionItem = structuredClone(stored);
+          versionItem.headId = eventId;
+          versionItem.id = cuid();
+        }
+        return { next: { ...next, id: eventId }, versionItem };
+      });
+    } catch (err: unknown) {
       throw errors.unexpectedError(err);
     }
   },

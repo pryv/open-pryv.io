@@ -293,6 +293,20 @@ describe('[MSTE] Stores Streams & Events', function () {
         assert.strictEqual(res.body.error.id, 'invalid-request-structure');
         assert.strictEqual(res.body.error.message, 'Cannot create or update an event with id and streamIds belonging to different stores');
       });
+
+      it('[ZD23] should fail moving a local event to another store with the same error', async () => {
+        const created = await coreRequest
+          .post(eventsPath)
+          .send({ type: 'note/txt', content: 'local', streamIds: ['yo'] })
+          .set('Authorization', appAccessMaster.token);
+        assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+        const res = await coreRequest
+          .put(eventsPath + created.body.event.id)
+          .send({ streamIds: [':dummy:mariana'] })
+          .set('Authorization', appAccessMaster.token);
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-request-structure');
+      });
     });
   });
 });
