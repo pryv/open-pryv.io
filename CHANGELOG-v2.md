@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Previews no longer decode SVG
+
+- **Security (hardening).** Event previews are raster thumbnails, and SVG is decoded by `librsvg`, a
+  large native parser that a user-supplied attachment would reach. The previews worker now blocks the
+  SVG loaders: a `picture/attached` event whose attachment is an SVG file gets the same answer as any
+  other format it cannot preview (`422`, `corrupted-data`) instead of a JPEG rendering; a preview of
+  such a file cached by an earlier release is no longer served and ages out with the cache clean-up.
+  Raster formats (JPEG, PNG, GIF, WebP, ...) are unchanged.
+
 ## 2.0.0-rc.39 - 2026-10-06
 
 ### Image previews: sharp 0.35.5

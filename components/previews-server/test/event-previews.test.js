@@ -12,6 +12,8 @@ const server = helpers.dependencies.instanceManager;
 const async = require('async');
 const errors = require('errors');
 const fs = require('fs');
+const os = require('os');
+const nodePath = require('path');
 const sharp = require('sharp');
 const assert = require('node:assert');
 const testData = helpers.data;
@@ -242,6 +244,26 @@ describe('[EP01] event previews', function () {
           });
         }
       ], done);
+    });
+
+    it('[SVGB] must not decode an SVG attachment (answered as unsupported data, never rasterized)', async function () {
+      // SVG goes through librsvg; the worker blocks those loaders, so a valid
+      // SVG gets the same answer as any other format it cannot preview.
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">' +
+        '<rect width="40" height="20" fill="red"/></svg>';
+      const file = nodePath.join(os.tmpdir(), 'previews-svgb-' + process.pid + '.svg');
+      fs.writeFileSync(file, svg);
+      try {
+        const event = await mall.events.createWithAttachments(user.id,
+          { streamIds: [testData.streams[2].id], type: 'picture/attached' },
+          [{ fileName: 'drawing.svg', type: 'image/svg+xml', size: Buffer.byteLength(svg), attachmentData: fs.createReadStream(file) }]);
+        const res = await request.get(path(event.id), token);
+        assert.strictEqual(res.statusCode, 422);
+        assert.strictEqual(res.body.error.id, errors.ErrorIds.CorruptedData);
+        assert.notStrictEqual(res.header['content-type'], 'image/jpeg');
+      } finally {
+        fs.unlinkSync(file);
+      }
     });
 
     it('[GSDF] must work with animated GIFs too', function (done) {
