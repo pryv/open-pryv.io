@@ -183,17 +183,20 @@ async function createEmailEvent (userId: string, view: EmailView, byAccessId?: s
   return event as EventLike;
 }
 
-/** Patch a container event's content fields. */
+/**
+ * Patch a container event's content fields, on the event as stored at write
+ * time (a write landed since the caller read `event` is kept).
+ */
 async function setContent (userId: string, event: EventLike, patch: Partial<EmailRecordContent>, byAccessId?: string): Promise<void> {
   const mall = await getMall();
   const by = byAccessId || SYSTEM_ACCESS_ID;
-  const newEvent = {
-    ...event,
-    content: { ...event.content, ...patch },
-    modified: timestamp.now(),
+  const modified = timestamp.now();
+  await mall.events.updateWithMerge(userId, event.id, (stored) => ({
+    ...stored,
+    content: { ...(stored.content as EmailRecordContent | null | undefined), ...patch },
+    modified,
     modifiedBy: by
-  };
-  await mall.events.update(userId, newEvent);
+  }));
 }
 
 /** Hard-delete a container event. */

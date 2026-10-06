@@ -119,15 +119,17 @@ async function flush (update: PendingUpdate) {
   const usersRepository = await getUsersRepository();
   const userId = await usersRepository.getUserIdForUsername(req.userId);
   const mall = await getMall();
-  const eventData = await mall.events.getOne(userId, req.eventId);
-  if (eventData.duration == null || req.dataExtent.to > eventData.duration) {
-    Object.assign(eventData, {
+  // Checked and written on the event as stored at write time: an update
+  // landed since (a client edit, a longer duration) is kept.
+  await mall.events.updateWithMerge(userId, req.eventId, (stored: { duration?: number | null }) => {
+    if (stored.duration != null && req.dataExtent.to <= stored.duration) return null;
+    return {
+      ...stored,
       duration: req.dataExtent.to,
       modifiedBy: req.author,
       modified: req.timestamp
-    });
-    await mall.events.update(userId, eventData);
-  }
+    };
+  });
 }
 
 // --- MetadataUpdater: the in-process service ---
