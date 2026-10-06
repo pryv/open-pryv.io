@@ -1,5 +1,5 @@
 {
-  "version": "1.1.2",
+  "version": "1.1.3",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -652,12 +652,34 @@
         },
         "extra": {
           "type": "object",
+          "description": "Deprecated: ignored by the platform. Use `features`.",
           "properties": {
             "chat": {
               "type": "boolean"
             },
             "systemMessaging": {
               "type": "boolean"
+            }
+          }
+        },
+        "features": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The relationship's channels. On the local trigger: the features the accepter asks for, which can only narrow the offer's (`content.request.features`; each one is on unless set to `false`). The platform resolves the relationship's value from the offer and records it on the completed trigger and on the peer-delivered accept.",
+          "properties": {
+            "chat": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "systemMessaging": {
+              "type": [
+                "boolean",
+                "null"
+              ]
             }
           }
         },

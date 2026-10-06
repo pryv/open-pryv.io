@@ -12,6 +12,13 @@
   so an `events.update` landing in between was overwritten with that copy. The client's own change
   survives; the server-owned field is set alongside it.
 
+### Event types 1.1.3: `consent/accept-cmc` declares `content.features`
+
+- The published catalogue now declares `content.features` (`chat` / `systemMessaging`, booleans or
+  null) on `consent/accept-cmc`, the field the platform reads and validates; `content.extra`, which the
+  platform ignores, is marked deprecated. The test fixture and the runtime seed are re-vendored. No
+  behaviour change: the platform already validated the same shape.
+
 ### CMC: an accept is only taken through the capability
 
 - **Security.** A `consent/accept-cmc` written to `:_cmc:inbox` with a relationship token (the
