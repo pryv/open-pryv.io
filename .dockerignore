@@ -2,7 +2,7 @@
 
 .git
 .github
-.nyc_output
+.v8-coverage
 .vscode
 #build
 coverage

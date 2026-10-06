@@ -72,6 +72,7 @@
     "awaiting": "^3.0.0",
     "backloop.dev": "git+https://github.com/perki/backloop.dev-node.git#v5.2.1",
     "bluebird": "^3.5.0",
+    "c8": "^12.0.0",
     "chai": "^4.3.7",
     "chalk": "^4.1.2",
     "charlatan": "^1.1.0",
@@ -86,7 +87,6 @@
     "msgpack5": "^6.0.2",
     "neostandard": "^0.12.2",
     "nock": "^14.0.13",
-    "nyc": "^18.0.0",
     "qs": "^6.15.2",
     "should": "^13.2.3",
     "sinon": "^22.0.0",
@@ -103,6 +103,9 @@
   "overrides": {
     "minimatch@3.1.5": {
       "brace-expansion": "^1.1.18"
+    },
+    "js-yaml@^3": {
+      "argparse": "^2.0.1"
     },
     "@protobufjs/utf8": "^1.1.1",
     "diff": "^8.0.3",
