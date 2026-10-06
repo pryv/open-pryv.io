@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 const { handleIncomingAccept, resolveRequestScope } = require('../src/handleIncomingAccept.ts');
 
 function fakeMall (opts = {}) {
@@ -53,6 +54,7 @@ function fakeMall (opts = {}) {
         : {}),
     },
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       // Like the real mall: `get` does not filter on `id` (newest first, here
       // an unrelated event under another app), `getOne` looks the id up.
       // A stream query (`{ any: [...] }`) filters on streamIds.
@@ -570,6 +572,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
           async update (_userId, params) { calls.accessesUpdated.push(params.id); if (params.id === capability.id) Object.assign(capability, params.update); },
         },
         events: {
+          async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
           async getOne (_userId, id) { return id === invite.id ? invite : null; },
           async create (_userId, params) { return { id: 'mirror-1', ...params }; },
           async update (_userId, event) {

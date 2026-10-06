@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { handleAccept, handleRefuse, inferCounterparty, pickScopeFromTrigger } = require('../src/handleAccept.ts');
-const { assertEventUpdateShape, assertOutboundUrl } = require('./_fake-assertions.cjs');
+const { assertEventUpdateShape, assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 
 function fakeMall (opts = {}) {
   const calls = { accessesCreated: [], accessesDeleted: [], eventsUpdated: [], streamsCreated: [] };
@@ -40,6 +40,7 @@ function fakeMall (opts = {}) {
       },
     },
     events: {
+      async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
       async update (userId, params) {
         assertEventUpdateShape(params);
         calls.eventsUpdated.push({ userId, ...params });

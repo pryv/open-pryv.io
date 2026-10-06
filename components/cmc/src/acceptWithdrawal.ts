@@ -31,10 +31,10 @@
  * whose single access is both: its accept is found by `dataGrantAccessId`;
  * among writers in sequence the first wins, an existing `withdrawal` is never
  * overwritten (detach stamps before the delete hook fires, and a hook that
- * fires twice in sequence writes once); the check is a read then a write, not
- * a compare-and-set, so two concurrent stampers may both write an equivalent
- * record (same `accessId`); callers stamp only once the grant is gone; the
- * write is versioned, so the record's previous state stays
+ * fires twice in sequence writes once); the check runs on the event as
+ * stored at write time, so of two concurrent stampers one writes, and an
+ * update landed since the read is kept; callers stamp only once the grant is
+ * gone; the write is versioned, so the record's previous state stays
  * demonstrable. Best-effort: never throws, and a caller never fails a
  * teardown on it.
  */
@@ -55,8 +55,8 @@ type StampResult =
   | { ok: true; written: boolean; skipped?: string }
   | { ok: false; reason: string };
 
-// The fields read or written here. The stored event is spread whole into the
-// update, so its other fields reach the mall unchanged.
+// The fields read or written here. The event as stored at write time is
+// spread whole into the update, so its other fields reach the mall unchanged.
 type AcceptEventLike = {
   id?: string;
   type?: string;
@@ -65,7 +65,7 @@ type AcceptEventLike = {
 };
 
 type RelationshipCmc = Pick<CmcClientData, 'capabilityId' | 'acceptEventId'> & { counterparty?: { apiEndpoint?: string | null } | null };
-type StampEvents = Pick<MallEventsLike, 'getOne' | 'update'> & Partial<Pick<MallEventsLike, 'get'>>;
+type StampEvents = Pick<MallEventsLike, 'getOne' | 'updateWithMerge'> & Partial<Pick<MallEventsLike, 'get'>>;
 
 /**
  * An account that accepted its own invite (refused since, but such
@@ -121,7 +121,7 @@ async function stampWithdrawalOnAccept (params: {
   if (acceptEventId == null && !selfRelationship) {
     return { ok: true, written: false, skipped: 'not-accepter-side' };
   }
-  if (events?.getOne == null || events?.update == null) {
+  if (events?.getOne == null || events?.updateWithMerge == null) {
     return { ok: true, written: false, skipped: 'mall-events-unavailable' };
   }
   try {
@@ -133,18 +133,27 @@ async function stampWithdrawalOnAccept (params: {
     if (event == null || event.type !== C.ET_ACCEPT) {
       return { ok: true, written: false, skipped: 'not-an-accept' };
     }
-    const content = event.content ?? {};
-    if (content.withdrawal != null) {
+    if (event.content?.withdrawal != null) {
       return { ok: true, written: false, skipped: 'already-withdrawn' };
     }
     const at = Date.now() / 1000;
     const withdrawal: Withdrawal = { at, by, accessId };
     if (typeof revokeEventId === 'string' && revokeEventId.length > 0) withdrawal.revokeEventId = revokeEventId;
-    const updated: AcceptEventLike = { ...event, content: { ...content, withdrawal }, modified: at };
+    // Both checks run again on the event as stored at write time: a
+    // withdrawal another writer recorded since the read above is kept, and so
+    // is any update landed meanwhile.
+    let skipped = null as string | null;
     // Versioned on purpose (no `skipVersioning`): the previous version of the
     // record is what shows the consent was given before it was withdrawn.
-    const stored = await events.update(userId, updated) as AcceptEventLike | null | undefined;
-    try { deps.notifyEventChanged?.(userId, stored ?? updated); } catch (_e) { /* notify is best-effort */ }
+    const written = await events.updateWithMerge(userId, acceptEventId, (storedRow) => {
+      const stored = storedRow as AcceptEventLike;
+      if (stored.type !== C.ET_ACCEPT) { skipped = 'not-an-accept'; return null; }
+      const content = stored.content ?? {};
+      if (content.withdrawal != null) { skipped = 'already-withdrawn'; return null; }
+      return { ...storedRow, content: { ...content, withdrawal }, modified: at };
+    }) as AcceptEventLike | null;
+    if (written == null) return { ok: true, written: false, skipped: skipped ?? 'already-withdrawn' };
+    try { deps.notifyEventChanged?.(userId, written); } catch (_e) { /* notify is best-effort */ }
     return { ok: true, written: true };
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/acceptWithdrawal: could not record the withdrawal on the accept event', {

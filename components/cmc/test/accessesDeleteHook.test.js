@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const { createAccessesDeletePostHook } = require('../src/accessesDeleteHook.ts');
 const { validateRevoke } = require('../src/validators.ts');
-const { assertOutboundUrl } = require('./_fake-assertions.cjs');
+const { assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 
 function fakeFetch (responses) {
   const calls = [];
@@ -229,6 +229,7 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     return {
       calls,
       events: {
+        async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
         async getOne (userId, id) { return events.get(id) ?? null; },
         async get (userId, params) {
           calls.eventsGot = (calls.eventsGot ?? 0) + 1;

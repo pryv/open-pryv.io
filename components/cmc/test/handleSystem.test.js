@@ -25,7 +25,7 @@ const {
   deliverSystemToPeer,
   COLLECTOR_STREAM_ID_RE,
 } = require('../src/handleSystem.ts');
-const { assertOutboundUrl } = require('./_fake-assertions.cjs');
+const { assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
   const calls = { accessesGet: 0, accessesUpdated: [] };
@@ -803,6 +803,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
       const mall = fakeMall(accesses);
       mall.calls.eventsUpdated = [];
       mall.events = {
+        async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
         async getOne (_userId, id) { return events.find((e) => e.id === id) ?? null; },
         async update (_userId, event) { mall.calls.eventsUpdated.push(event); return event; },
       };
@@ -952,14 +953,15 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS44] the applied record is written to the trigger before the peer is contacted', async () => {
-      const mall = mallWith([GRANT_A], [request()]);
+      const trigger = answer({ scopeRequestEventId: 'req-1', accept: true });
+      // The trigger is stored, as on the live path: the outcome is merged onto it.
+      const mall = mallWith([GRANT_A], [request(), structuredClone(trigger)]);
       let updatesAtPost = null;
       const { fetch } = fakeFetch({ status: 201, body: { event: { id: 'r' } } });
       const spyFetch = (url, init) => {
         updatesAtPost = mall.calls.eventsUpdated.slice();
         return fetch(url, init);
       };
-      const trigger = answer({ scopeRequestEventId: 'req-1', accept: true });
       const r = await handleSystemScopeUpdate({ userId: 'u1', triggerEvent: trigger, selfIdentity: SELF, deps: { mall, fetch: spyFetch } });
       assert.equal(r.ok, true);
       const triggerWrite = updatesAtPost.find((e) => e.id === 'ans-1');

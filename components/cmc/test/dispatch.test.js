@@ -15,13 +15,30 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { dispatch, createDispatchMiddleware } = require('../src/dispatch.ts');
-const { assertEventUpdateShape, assertOutboundUrl } = require('./_fake-assertions.cjs');
+const dispatchMod = require('../src/dispatch.ts');
+const { assertEventUpdateShape, assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
+
+// The status stamps merge onto the trigger as stored, so the fake mall keeps a
+// store, seeded with the dispatched event (as the api writes the row before
+// dispatch runs). Every test below dispatches through these two shims.
+function dispatch (params) {
+  params?.deps?.mall?.seed?.(params.event);
+  return dispatchMod.dispatch(params);
+}
+function createDispatchMiddleware (deps, build) {
+  const mw = dispatchMod.createDispatchMiddleware(deps, build);
+  return (ctx, p, result, next) => {
+    deps?.mall?.seed?.(result?.event);
+    return mw(ctx, p, result, next);
+  };
+}
 
 function fakeMall () {
   const calls = { eventsUpdated: [], accessesCreated: [], accessesDeleted: [] };
+  const eventsById = new Map();
   return {
     calls,
+    seed (event) { if (event?.id != null) eventsById.set(event.id, structuredClone(event)); },
     accesses: {
       async create (userId, params) {
         calls.accessesCreated.push({ userId, ...params });
@@ -35,9 +52,20 @@ function fakeMall () {
       async delete (userId, params) { calls.accessesDeleted.push({ userId, ...params }); },
     },
     events: {
+      // Reads the store first, then a `getOne` a test installs (an invite it
+      // holds outside the store).
+      async updateWithMerge (userId, eventId, merge, transaction, opts) {
+        const events = this;
+        const reader = {
+          async getOne (u, id) { return eventsById.get(id) ?? (events.getOne != null ? await events.getOne(u, id) : null); },
+          update: (...a) => events.update(...a),
+        };
+        return fakeUpdateWithMerge(reader, userId, eventId, merge, transaction, opts);
+      },
       async update (userId, params, _transaction, opts) {
         assertEventUpdateShape(params);
         calls.eventsUpdated.push({ userId, ...params, _opts: opts });
+        if (eventsById.has(params.id)) eventsById.set(params.id, structuredClone(params));
       },
       async create () { return { event: { id: 'ne' } }; },
     },
@@ -177,6 +205,36 @@ describe('[CMCDISP] cmc/dispatch', () => {
       const completed = mall.calls.eventsUpdated.at(-1);
       assert.equal(completed.content.status, 'completed');
       assert.deepEqual(completed.content.features, { chat: false, systemMessaging: true });
+    });
+
+    it('[CD31] every stamp lands on the trigger as stored, keeping an update made after dispatch read it', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const event = { id: 'evt-accept', type: 'consent/accept-cmc', content: { capabilityUrl: 'https://Tok@example.com/' } };
+      // A client update landed after the copy dispatch holds was read.
+      mall.seed({ ...event, content: { ...event.content, note: 'edited' } });
+      const r = await dispatchMod.dispatch({ userId: 'u1', event, deps: makeDeps({ mall, fetch }) });
+      assert.equal(r.status, 'completed');
+      assert.equal(mall.calls.eventsUpdated.length, 2);
+      for (const u of mall.calls.eventsUpdated) assert.equal(u.content.note, 'edited', JSON.stringify(u.content));
+      assert.equal(mall.calls.eventsUpdated.at(-1).content.status, 'completed');
+      assert.equal(JSON.stringify(mall.calls.eventsUpdated).includes('Tok@'), false, 'no write carries the token');
+    });
+
+    it('[CD32] a stamp other than failed drops the failure a previous attempt left on the row', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const event = { id: 'evt-accept', type: 'consent/accept-cmc', content: { capabilityUrl: 'https://Tok@example.com/' } };
+      mall.seed({ ...event, content: { capabilityUrl: 'https://example.com/', status: 'failed', failure: { reason: 'cmc-x', detail: null } } });
+      const r = await dispatchMod.dispatch({ userId: 'u1', event, deps: makeDeps({ mall, fetch }) });
+      assert.equal(r.status, 'completed');
+      for (const u of mall.calls.eventsUpdated) assert.equal('failure' in u.content, false, JSON.stringify(u.content));
     });
 
     it('[CD05] failed delivery → stamps failed with reason + detail', async () => {

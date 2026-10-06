@@ -223,7 +223,7 @@ async function enrichArrival (params: {
     userId, event, createdByAccess, scopeStreamId, deletedAccessIds, mall, logger,
     notifyEventChanged,
   } = params;
-  if (event.id == null || mall.events?.update == null) return false;
+  if (event.id == null || mall.events?.updateWithMerge == null) return false;
 
   const cmc = createdByAccess.clientData?.cmc ?? {};
   const added: Record<string, unknown> = {};
@@ -270,13 +270,20 @@ async function enrichArrival (params: {
     // account, so a value the peer put there is meaningless at best. Without
     // this, a relationship we cannot label (neither stamp present) would keep a
     // peer-supplied `backChannelAccessId` and an app would read it as ours.
-    const base: Record<string, unknown> = { ...(event.content || {}) };
-    for (const owned of ['backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds']) {
-      delete base[owned];
-    }
-    const content = { ...base, ...added };
-    await mall.events.update(userId, { ...event, content });
-    event.content = content;
+    // Applied to the arrival as stored at write time (an update landed since
+    // dispatch read it is kept) and, the same way, to the in-memory copy.
+    const enrich = (current: Record<string, unknown> | null | undefined): Record<string, unknown> => {
+      const base: Record<string, unknown> = { ...(current || {}) };
+      for (const owned of ['backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds']) {
+        delete base[owned];
+      }
+      return { ...base, ...added };
+    };
+    await mall.events.updateWithMerge(userId, event.id as string, (stored) => ({
+      ...stored,
+      content: enrich(stored.content as Record<string, unknown> | null | undefined),
+    }));
+    event.content = enrich(event.content);
     try { notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     return true;
   } catch (err: unknown) {
