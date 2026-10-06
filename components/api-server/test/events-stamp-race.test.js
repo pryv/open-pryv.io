@@ -139,6 +139,25 @@ describe('[ESR] events: a server stamp written during a client update is kept', 
     assert.deepStrictEqual(res.body.event.content, { content: 'hi, edited', status: 'completed' });
   });
 
+  // The published CMC type schemas refuse it as well (validation runs right
+  // after the cmc update hook); the hook's own refusal is pinned by [APB15].
+  it('[ESR8] non-object content on a CMC event is refused and the stored fields stay', async function () {
+    const created = await mall.events.create(username, {
+      streamIds: [streamId],
+      type: 'message/chat-cmc',
+      content: { content: 'hi', status: 'completed' },
+      created: timestamp.now(),
+      createdBy: 'test',
+      modified: timestamp.now(),
+      modifiedBy: 'test'
+    });
+    const res = await coreRequest.put(basePath + '/' + created.id).set('Authorization', token)
+      .send({ content: 'x' });
+    assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+    assert.deepStrictEqual((await readBack(created.id)).content, { content: 'hi', status: 'completed' });
+  });
+
   it('[ESR7] clientData: null still clears the map', async function () {
     const event = await createNote();
     const set = await coreRequest.put(basePath + '/' + event.id).set('Authorization', token)

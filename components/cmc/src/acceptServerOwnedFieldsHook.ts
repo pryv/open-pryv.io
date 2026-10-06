@@ -132,10 +132,17 @@ function preserveServerOwnedContent (storedEvent: EventLike | null | undefined, 
  * `context.newEvent`. (The api-server applies `preserveServerOwnedContent`
  * again against the row as stored at write time.)
  */
-function createAcceptPreserveHook (): Middleware {
-  return function cmcAcceptPreserveHook (context, _params, _result, next) {
+function createAcceptPreserveHook (deps?: { errors?: { invalidParametersFormat: (message: string, data?: unknown) => Error } }): Middleware {
+  return function cmcAcceptPreserveHook (context, params, _result, next) {
     const event = context?.newEvent;
     if (event == null) return next();
+    // A CMC event's content is an object carrying server-owned fields: content
+    // of another shape would drop them, so an update sending one is refused.
+    const sentContent = (params as { update?: { content?: unknown } } | null)?.update?.content;
+    const isCmc = C.isCmcEventType(event.type) || C.isCmcEventType(context.oldEvent?.type);
+    if (isCmc && sentContent !== undefined && !isPlainObject(event.content) && deps?.errors != null) {
+      return next(deps.errors.invalidParametersFormat('The content of a CMC event must be an object.', { type: event.type }));
+    }
     event.content = preserveServerOwnedContent(context.oldEvent, event);
     next();
   };

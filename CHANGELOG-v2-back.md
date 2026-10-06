@@ -14,7 +14,9 @@
   `clientData` keys merged onto the stored map (`mergeClientDataMap`). Trash (outside shared
   secrets, which keep their compare-and-set) and attachment deletion stamp the stored row.
 - cmc: `preserveServerOwnedContent(stored, event)` (pure, exported), used by the update hook and
-  again at write time; `CMC_SERVER_OWNED_FIELDS` (`status`, `failure`) on every CMC type.
+  again at write time; `CMC_SERVER_OWNED_FIELDS` (`status`, `failure`) on every CMC type. The
+  update hook also refuses content that is not an object on a CMC event (`[APB15]`): the published
+  type schemas already do, this keeps the server-owned fields safe if a schema ever allows it.
 - Tests: `[ESR1-6]` (stamp injected between the request's read and write), `[CN61]` (withdrawal
   stamped during an accept update), `[APB13]` `[APB14]`. The reverse direction (a server write
   built from a stale copy) is not covered by this change.

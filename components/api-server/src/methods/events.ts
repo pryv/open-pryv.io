@@ -421,7 +421,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // `content.approvedBy` on an accept: server-owned, stamped from the writing
   // access when it is delegation-derived, a client-supplied one dropped.
   const cmcAcceptStampingHook = cmc.createAcceptStampingHook({ lineageOf: delegationLineageOf });
-  const cmcAcceptPreserveHook = cmc.createAcceptPreserveHook();
+  const cmcAcceptPreserveHook = cmc.createAcceptPreserveHook({ errors });
   // Forge-prevention: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
   // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers

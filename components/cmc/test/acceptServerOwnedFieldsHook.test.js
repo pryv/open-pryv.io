@@ -189,6 +189,19 @@ describe('[APB] cmc/acceptServerOwnedFieldsHook', () => {
     assert.deepEqual(context.newEvent.content, { content: 'edited', status: 'failed', failure: { reason: 'peer-down' } });
   });
 
+  it('[APB15] an update sending non-object content on a CMC event is refused; one without content is not', async () => {
+    const errors = { invalidParametersFormat: (message, data) => Object.assign(new Error(message), { id: 'invalid-parameters-format', data }) };
+    const guarded = createAcceptPreserveHook({ errors });
+    const oldEvent = { type: 'consent/accept-cmc', content: { status: 'completed', withdrawal: WITHDRAWAL } };
+    const refused = { oldEvent, newEvent: { type: 'consent/accept-cmc', content: 'x' } };
+    const err = await new Promise((resolve) => guarded(refused, { update: { content: 'x' } }, {}, resolve));
+    assert.equal(err?.id, 'invalid-parameters-format');
+    const untouched = { oldEvent, newEvent: { type: 'consent/accept-cmc', content: { ...oldEvent.content }, description: 'd' } };
+    const ok = await new Promise((resolve) => guarded(untouched, { update: { description: 'd' } }, {}, resolve));
+    assert.equal(ok, undefined);
+    assert.deepEqual(untouched.newEvent.content, oldEvent.content);
+  });
+
   it('[APB14] preserveServerOwnedContent takes the server-owned fields from its first argument', () => {
     const read = { type: 'consent/accept-cmc', content: { status: 'delivered' } };
     const storedNow = { type: 'consent/accept-cmc', content: { status: 'completed', withdrawal: WITHDRAWAL } };
