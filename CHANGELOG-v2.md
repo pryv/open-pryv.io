@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.39 - 2026-10-06
 
 ### A server-written event field no longer overwrites a concurrent client update
 
