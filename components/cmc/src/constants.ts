@@ -104,6 +104,14 @@ function responsesStreamIdFor (capabilityId: string): string {
   return NS_INTERNAL + ':responses:' + capabilityId;
 }
 
+/** Inverse of `responsesStreamIdFor`: the capability id, or null for any other stream id. */
+function capabilityIdFromResponsesStreamId (streamId: string): string | null {
+  const prefix = NS_INTERNAL + ':responses:';
+  if (typeof streamId !== 'string' || !streamId.startsWith(prefix)) return null;
+  const capabilityId = streamId.slice(prefix.length);
+  return capabilityId.length > 0 && !capabilityId.includes(':') ? capabilityId : null;
+}
+
 // --- Classification predicates ---
 
 /** Does this stream-id live anywhere under the :_cmc: namespace? */
@@ -189,6 +197,10 @@ const ET_RETRY = 'cmc-internal/retry-cmc';
 // subject-side record of a consent): a client value is dropped on create and
 // the stored one kept on update (acceptServerOwnedFieldsHook.ts).
 const ACCEPT_SERVER_OWNED_FIELDS: readonly string[] = ['approvedBy', 'ownerConfirmedAt', 'withdrawal'];
+// Content fields of an accept the client sends at create (the features it asks
+// for) and the server then rewrites with the resolved value: kept from
+// storage on update, so the record says what the relationship got.
+const ACCEPT_UPDATE_PRESERVED_FIELDS: readonly string[] = ['features'];
 // Content fields of every CMC event only the server writes: the dispatch
 // status stamps (`delivered` / `completed` / `failed` + its `failure`), the
 // mint's `pending`, a scope request's outcome. Kept from storage on update.
@@ -265,6 +277,7 @@ export {
   collectorStreamUnder,
   offerStreamIdFor,
   responsesStreamIdFor,
+  capabilityIdFromResponsesStreamId,
 
   // classification predicates
   isCmcStreamId,
@@ -286,6 +299,7 @@ export {
   ET_SYSTEM_SCOPE_UPDATE,
   ET_RETRY,
   ACCEPT_SERVER_OWNED_FIELDS,
+  ACCEPT_UPDATE_PRESERVED_FIELDS,
   CMC_SERVER_OWNED_FIELDS,
   ET_BACK_CHANNEL,
   ET_INVALIDATE_LINK,

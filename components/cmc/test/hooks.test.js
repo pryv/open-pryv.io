@@ -26,6 +26,7 @@ const {
   createEnsureReservedParentsHook,
   createEnsureAcceptScopeHook,
   createCounterpartyFromStampingHook,
+  createCounterpartyFeatureGateHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createEventsGetInternalGuardHook,
@@ -45,6 +46,13 @@ function fakeErrors () {
         e.details = details;
         e.cmcKind = 'invalidOperation';
         captured.push({ message, details });
+        return e;
+      },
+      forbidden (message, details) {
+        const e = new Error(message);
+        e.details = details;
+        e.cmcKind = 'forbidden';
+        captured.push({ message, details, kind: 'forbidden' });
         return e;
       },
     },
@@ -1067,6 +1075,79 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createAccessUpdateForgePreventionHook({ errors: factory });
       assert.equal(await runMiddleware(mw, {}, null, {}), undefined);
       assert.equal(await runMiddleware(mw, {}, { id: 'a1' }, {}), undefined);
+    });
+  });
+
+  describe('[CMCH-FEAT] createCounterpartyFeatureGateHook', () => {
+    const counterparty = (features) => ({
+      clientData: { cmc: { role: 'counterparty', counterparty: { username: 'bob', host: 'x.pryv.me' }, features } },
+    });
+    const write = (type, access) => ({
+      access,
+      newEvent: { type, streamIds: [':_cmc:apps:my-app:study:chats:bob--x-pryv-me'], content: {} },
+    });
+
+    it('[CH07] a counterparty whose relationship has no chat cannot write a chat: 403 cmc-chat-disabled', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      const err = await runMiddleware(mw, write('message/chat-cmc', counterparty({ chat: false, systemMessaging: true })), {}, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.cmcKind, 'forbidden');
+      assert.equal(err.details.id, 'cmc-chat-disabled');
+      assert.equal(captured.length, 1);
+      // its system messages still pass
+      assert.equal(await runMiddleware(mw, write('notification/alert-cmc', counterparty({ chat: false, systemMessaging: true })), {}, {}), undefined);
+    });
+
+    it('[CH08] a personal or app access writing a chat passes', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      for (const access of [{}, { clientData: {} }, { clientData: { cmc: { role: 'data-grant', features: { chat: false } } } }, undefined]) {
+        assert.equal(await runMiddleware(mw, write('message/chat-cmc', access), {}, {}), undefined, JSON.stringify(access));
+      }
+      assert.equal(await runMiddleware(mw, {}, {}, {}), undefined, 'no event');
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CH09] a counterparty whose relationship recorded no features passes', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      for (const features of [null, undefined, {}, { chat: true }]) {
+        assert.equal(await runMiddleware(mw, write('message/chat-cmc', counterparty(features)), {}, {}), undefined, JSON.stringify(features));
+      }
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CH10] without system messaging, alerts and acks are refused, scope requests and updates pass', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      const access = counterparty({ chat: true, systemMessaging: false });
+      for (const type of ['notification/alert-cmc', 'notification/ack-cmc']) {
+        const err = await runMiddleware(mw, write(type, access), {}, {});
+        assert.equal(err?.cmcKind, 'forbidden', type);
+        assert.equal(err.details.id, 'cmc-system-messaging-disabled');
+      }
+      for (const type of ['consent/scope-update-cmc', 'consent/scope-request-cmc', 'message/chat-cmc']) {
+        assert.equal(await runMiddleware(mw, write(type, access), {}, {}), undefined, type);
+      }
+    });
+
+    it('[CH11] on events.update the merged event decides: editing a chat or retyping to one is refused, other updates pass', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFeatureGateHook({ errors: factory });
+      const access = counterparty({ chat: false, systemMessaging: true });
+      // the update context after the prerequisites: oldEvent as stored, newEvent merged
+      const update = (oldType, newType) => ({
+        access,
+        oldEvent: { type: oldType, streamIds: [':_cmc:apps:my-app:study:chats:bob--x-pryv-me'], content: 'x' },
+        newEvent: { type: newType, streamIds: [':_cmc:apps:my-app:study:chats:bob--x-pryv-me'], content: 'y' },
+      });
+      for (const [oldType, newType] of [['message/chat-cmc', 'message/chat-cmc'], ['note/txt', 'message/chat-cmc']]) {
+        const err = await runMiddleware(mw, update(oldType, newType), {}, {});
+        assert.equal(err?.details?.id, 'cmc-chat-disabled', oldType + ' -> ' + newType);
+      }
+      assert.equal(await runMiddleware(mw, update('note/txt', 'note/txt'), {}, {}), undefined);
+      assert.equal(await runMiddleware(mw, update('message/chat-cmc', 'note/txt'), {}, {}), undefined);
     });
   });
 });

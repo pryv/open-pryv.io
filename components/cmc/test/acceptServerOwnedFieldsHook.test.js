@@ -202,6 +202,16 @@ describe('[APB] cmc/acceptServerOwnedFieldsHook', () => {
     assert.deepEqual(untouched.newEvent.content, oldEvent.content);
   });
 
+  it('[APB16] an accept keeps its resolved features from storage on update; other types do not', () => {
+    const stored = { type: 'consent/accept-cmc', content: { status: 'completed', features: { chat: false, systemMessaging: true } } };
+    const widened = { type: 'consent/accept-cmc', content: { note: 'x', features: { chat: true, systemMessaging: true } } };
+    assert.deepEqual(preserveServerOwnedContent(stored, widened), { note: 'x', status: 'completed', features: { chat: false, systemMessaging: true } });
+    const none = { type: 'consent/accept-cmc', content: { status: 'completed' } };
+    assert.deepEqual(preserveServerOwnedContent(none, widened), { note: 'x', status: 'completed' });
+    const request = { type: 'consent/request-cmc', content: { request: {}, features: 'app-defined' } };
+    assert.deepEqual(preserveServerOwnedContent({ type: 'consent/request-cmc', content: {} }, request), { request: {}, features: 'app-defined' });
+  });
+
   it('[APB14] preserveServerOwnedContent takes the server-owned fields from its first argument', () => {
     const read = { type: 'consent/accept-cmc', content: { status: 'delivered' } };
     const storedNow = { type: 'consent/accept-cmc', content: { status: 'completed', withdrawal: WITHDRAWAL } };

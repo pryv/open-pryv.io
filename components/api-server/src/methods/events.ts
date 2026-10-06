@@ -428,6 +428,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // everything else. Local self-writes (personal/app token) pass
   // through unchanged — they aren't a cross-actor forge vector.
   const cmcCounterpartyFromStampingHook = cmc.createCounterpartyFromStampingHook({ errors });
+  // A counterparty's direct chat (or user alert / ack) write is refused when
+  // the relationship's features turn it off: 403, `data.id` the CMC id.
+  const cmcCounterpartyFeatureGateHook = cmc.createCounterpartyFeatureGateHook({ errors });
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({
     errors,
     mall: mallForCmc,
@@ -548,6 +551,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
     cmcCounterpartyFromStampingHook,
+    cmcCounterpartyFeatureGateHook,
     cmcCapabilityResponseHook,
     // AFTER the validating hooks above, so they judge the record as sent and
     // a rejected write has nothing to strip; BEFORE createEvent, so the store
@@ -881,6 +885,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     delegationEventsUpdateGuardHook,
     // an accept keeps its server-stamped `approvedBy` across content updates
     cmcAcceptPreserveHook,
+    // judges the merged event, so an update that keeps or sets a gated type is refused
+    cmcCounterpartyFeatureGateHook,
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,

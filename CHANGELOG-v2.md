@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### CMC: `features.chat` decides whether a relationship gets a chat channel (#149)
+
+- **Features resolved by the server.** A relationship's `features` (`chat`, `systemMessaging`) are
+  now resolved from the offer's `content.request.features` (each one true unless set to `false`);
+  the accept's `content.features` may only narrow them, and a `true` there against an offer that
+  turned the feature off is ignored (no error). Each side resolves against its own copy of the
+  offer (an accept that does not arrive through the capability can only narrow a relationship the
+  requester already holds) and stamps the resolved pair on the `consent/accept-cmc` trigger (at completion), on both
+  relationship accesses (`clientData.cmc.features`) and on the requester's inbox mirror; an
+  `events.update` of the accept keeps the stored `features`. Before,
+  the value came from the accept as written: an accept without `features` recorded `null`, and an
+  accepter could turn chat on against the offer.
+- **No chat channel without chat.** A relationship whose resolved `features.chat` is false gets no
+  `<scope>:chats:<peer>` stream and no chat permission, on either side (the `<scope>:chats` parent is
+  still created, so a subscription or a query on it stays valid). The back-channel's
+  `counterparty.remoteChatStreamId` is null and the back-channel delivery leaves it out. The
+  collectors stream is unchanged. An app writing a chat on such a relationship gets
+  `unknown-referenced-resource`.
+- **Inbound guard.** A counterparty writing `message/chat-cmc` directly with its relationship token
+  (creating one, editing one, or updating another event's type to it) is refused with `403 forbidden`, `error.data.id: 'cmc-chat-disabled'`, when the relationship's
+  `features.chat` is false; likewise `notification/alert-cmc` / `notification/ack-cmc` with
+  `systemMessaging: false` (`cmc-system-messaging-disabled`). Scope requests and scope updates are
+  never gated. Relationships recording no features stay permissive.
+- **Relationships accepted earlier** keep their chat stream and chat permission; the inbound guard
+  refuses chat writes on them when `features.chat` is false. To decide whether to offer chat, read
+  `features` (on the accept event, or from `listAcceptedRelationships`), not the stream's
+  existence.
+- `consent/accept-cmc` `content.features` is now validated: an object with boolean `chat` /
+  `systemMessaging` when present (`400`, `error.data.id: 'cmc-invalid-event-content'` otherwise).
+- `@pryv/cmc` needs no update: `acceptInvite` already narrows to the offer.
+
+### CMC: an account cannot accept its own invite (#150)
+
+- A `consent/accept-cmc` whose offer was made by the accepting account itself (an open link opened
+  while signed in as the requester) now fails with `failure.reason: 'cmc-self-accept-forbidden'`,
+  before any stream or access is created. Before, the account got a relationship with itself.
+- Such a self-relationship, created before this change, is a single relationship access. Deleting
+  it with `accesses.delete` now records `content.withdrawal` on the accept event that created it,
+  and attempts no delivery to a peer.
+
 ### Server-written event fields survive a concurrent update
 
 - **Fix.** A field the server writes on an event (a CMC dispatch status, the consent withdrawal

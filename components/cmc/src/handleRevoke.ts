@@ -421,6 +421,7 @@ async function handleRevoke (params: {
       relationshipCmc: counterpartyAccess.clientData?.cmc,
       by: 'revoke-cmc',
       accessId: counterpartyAccess.id,
+      access: counterpartyAccess,
       revokeEventId: triggerEvent.id,
       deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged },
     });

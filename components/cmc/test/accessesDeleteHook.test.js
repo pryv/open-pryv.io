@@ -230,6 +230,10 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       calls,
       events: {
         async getOne (userId, id) { return events.get(id) ?? null; },
+        async get (userId, params) {
+          calls.eventsGot = (calls.eventsGot ?? 0) + 1;
+          return [...events.values()].filter((e) => params?.types == null || params.types.includes(e.type));
+        },
         async update (userId, event) {
           events.set(event.id, event);
           calls.eventsUpdated.push(event);
@@ -431,5 +435,54 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(results[0].peerNotified, true);
     assert.equal(calls.length, 1);
     assert.ok(warned.some((m) => /acceptWithdrawal/.test(m)), JSON.stringify(warned));
+  });
+
+  // An account that accepted its own invite holds one access, the data grant
+  // reused as the back-channel: capabilityId key, no acceptEventId, its own
+  // token as the peer endpoint.
+  const SELF_RELATIONSHIP = {
+    id: 'acc-self',
+    token: 'self-tok',
+    type: 'shared',
+    clientData: {
+      cmc: {
+        role: 'counterparty',
+        appCode: 'my-app',
+        capabilityId: 'cap-self',
+        counterparty: { username: 'alice', host: 'example.org', apiEndpoint: 'https://self-tok@alice.example.org/' },
+        backChannelApiEndpoint: 'https://self-tok@alice.example.org/',
+      },
+    },
+  };
+
+  it('[DH23] deleting a self-relationship records the withdrawal on the accept that minted it, and delivers nothing', async () => {
+    const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+    const other = { ...structuredClone(ACCEPT_EVENT), id: 'evt-accept-other', content: { status: 'completed', dataGrantAccessId: 'acc-other' } };
+    const own = { ...structuredClone(ACCEPT_EVENT), id: 'evt-accept-self', content: { status: 'completed', dataGrantAccessId: 'acc-self' } };
+    const mall = fakeMallWithInvite(other, own);
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const results = await hook('u1', [SELF_RELATIONSHIP]);
+
+    assert.equal(results[0].withdrawalStamped, true);
+    assert.equal(results[0].reason, 'self-relationship');
+    assert.equal(results[0].attempted, false);
+    assert.equal(calls.length, 0, 'no delivery to the deleted access');
+    assert.equal(mall.eventById('evt-accept-self').content.withdrawal.by, 'accesses.delete');
+    assert.equal(mall.eventById('evt-accept-self').content.withdrawal.accessId, 'acc-self');
+    assert.equal(mall.eventById('evt-accept-other').content.withdrawal, undefined);
+  });
+
+  it('[DH24] a requester back-channel whose endpoint is not its own token stays untouched and is delivered', async () => {
+    const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+    const own = { ...structuredClone(ACCEPT_EVENT), id: 'evt-accept-x', content: { status: 'completed', dataGrantAccessId: 'acc-back-channel-cap' } };
+    const mall = fakeMallWithInvite(own);
+    const hook = createAccessesDeletePostHook({ fetch, mall });
+    const results = await hook('u1', [{ ...structuredClone(REQUESTER_SIDE_WITH_CAP), token: 'back-tok' }]);
+
+    assert.equal(results[0].withdrawalStamped, false);
+    assert.equal(results[0].peerNotified, true);
+    assert.equal(calls.length, 1);
+    assert.equal(mall.calls.eventsGot ?? 0, 0, 'no accept lookup');
+    assert.equal(mall.eventById('evt-accept-x').content.withdrawal, undefined);
   });
 });

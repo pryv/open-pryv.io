@@ -75,7 +75,7 @@ type Middleware = (context: MwContext, params: unknown, result: unknown, next: M
  *
  * Why this is a separate hook from the mint hook: the mint hook fires
  * BEFORE createEvent, so `context.newEvent.id` is null at mint time
- * (it's assigned by the mall during persist). HDS reported null
+ * (it's assigned by the mall during persist). An implementer reported null
  * requestEventId on real deploys; unit tests passed only because
  * fixtures set explicit `id`. Without this post-stamp, the
  * inviteEventId-on-inbox-mirror feature degrades silently because the

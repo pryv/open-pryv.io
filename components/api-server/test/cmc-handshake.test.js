@@ -388,6 +388,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
             consent: { en: 'I consent.' },
             permissions: [{ streamId: 'fertility', level: 'read' }],
             ...(opts.expiresAt !== undefined ? { expiresAt: opts.expiresAt } : {}),
+            ...(opts.features !== undefined ? { features: opts.features } : {}),
           },
           requesterMeta: { username: alice.username, appId },
         },
@@ -405,9 +406,17 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       .send({
         streamIds: [appRootStreamId],
         type: 'consent/accept-cmc',
-        content: { capabilityUrl, accessName: 'cmc-grant-' + studyId + '-' + Date.now() },
+        content: {
+          capabilityUrl,
+          accessName: 'cmc-grant-' + studyId + '-' + Date.now(),
+          ...(opts.acceptFeatures !== undefined ? { features: opts.acceptFeatures } : {}),
+        },
       });
     assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+    // A relationship without chat names no chat stream in its back-channel:
+    // wait on the collectors one instead.
+    const withChat = opts.features?.chat !== false && opts.acceptFeatures?.chat !== false;
+    const bobSlugForWait = C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' });
 
     // Wait until the back-channel-cmc landed on bob's inbox — that's
     // the marker that bob's data-grant has been updated with alice's
@@ -426,9 +435,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // appears); it only spends time when the box is genuinely slow.
     await pollInboxFor(
       bob.eventsPath, bob.token, 'consent/back-channel-cmc',
-      (e) => e.content?.from?.username === alice.username &&
-             e.content?.remoteChatStreamId === triggerStreamId + ':chats:' +
-               C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' }),
+      (e) => e.content?.from?.username === alice.username && (withChat
+        ? e.content?.remoteChatStreamId === triggerStreamId + ':chats:' + bobSlugForWait
+        : e.content?.remoteCollectorStreamId === triggerStreamId + ':collectors:' + bobSlugForWait),
       POLL_TIMEOUT_MS * 4
     );
 
@@ -442,6 +451,8 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // The invite trigger itself: what a revoke arrival's `inviteEventId`
       // must match, from the requester's point of view.
       requestEventId: reqRes.body?.event?.id,
+      // The accepter's own accept trigger.
+      acceptEventId: accRes.body?.event?.id,
       capabilityExpiresAt: reqRes.body?.event?.content?.capabilityExpiresAt,
       aliceChatStreamId: C.chatStreamUnder(triggerStreamId, bobSlug),
       bobChatStreamId: C.chatStreamUnder(triggerStreamId, aliceSlug),
@@ -1101,7 +1112,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   });
 
   describe('[CMCHS-AP-PER-APP] accesses.{create,update} auto-provision per-app appScope roots', function () {
-    // Reported in the HDS handoff of 2026-05-26. The 5 reserved
+    // Reported by an implementer on 2026-05-26. The 5 reserved
     // parents under :_cmc:* are pre-provisioned at user creation
     // (provisioning.ts). Per-app sub-trees under :_cmc:apps:<app-code>
     // were historically created on-demand at CMC-acceptance time — but
@@ -2507,6 +2518,288 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(stamped.content.withdrawal.accessId, grant.id);
       assert.strictEqual(stamped.content.withdrawal.revokeEventId, arrival.id);
       assertIntegrity(stamped, 'CN60');
+    });
+  });
+
+  describe('[CMCHS-NOCHAT] a relationship offered without chat gets no chat channel', function () {
+    const APP = 'nochat-app';
+    let h, aliceSlug, bobSlug;
+    const NO_CHAT = { chat: false, systemMessaging: true };
+
+    // The relationship access an actor holds for this relationship.
+    async function relationshipAccess (actor, scope) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.accessesPath).set('Authorization', actor.token);
+        const hit = (res.body?.accesses || []).find((a) =>
+          a?.clientData?.cmc?.role === 'counterparty' && a.clientData.cmc.scopeStreamId === scope);
+        if (hit != null) return hit;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('no relationship access under ' + scope + ' for ' + actor.username);
+    }
+
+    async function streamIdsUnder (actor, parentId) {
+      const res = await coreRequest.get(actor.streamsPath).set('Authorization', actor.token).query({ parentId });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const ids = [];
+      const walk = (list) => { for (const s of list || []) { ids.push(s.id); walk(s.children); } };
+      walk(res.body.streams);
+      return ids;
+    }
+
+    before(async function () {
+      // The offer turns chat off; the accept tries to turn it on.
+      h = await runFreshHandshake('study-nochat', APP, { features: { chat: false }, acceptFeatures: { chat: true, systemMessaging: true } });
+      aliceSlug = C.slug.counterpartySlug({ username: alice.username, host: 'x.pryv.me' });
+      bobSlug = C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' });
+    });
+
+    it('[CN61] both sides record the resolved features: the accept trigger and the requester\'s inbox mirror', async function () {
+      const t0 = Date.now();
+      let trigger;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        trigger = (await coreRequest.get(bob.eventsPath + '/' + h.acceptEventId).set('Authorization', bob.token)).body.event;
+        if (trigger?.content?.status === 'completed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(trigger?.content?.status, 'completed', JSON.stringify(trigger?.content));
+      assert.deepStrictEqual(trigger.content.features, NO_CHAT);
+
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const mirror = await pollInboxFor(alice.eventsPath, alice.token, 'consent/accept-cmc',
+        (e) => e.content?.backChannelAccessId === backChannel.id);
+      assert.deepStrictEqual(mirror.content.features, NO_CHAT);
+    });
+
+    it('[CN62] no per-peer chat stream on either side; the chats parent and the collectors leaf exist', async function () {
+      for (const [actor, peerSlug] of [[bob, aliceSlug], [alice, bobSlug]]) {
+        const ids = await streamIdsUnder(actor, h.triggerStreamId);
+        assert.ok(ids.includes(h.triggerStreamId + ':chats'), actor.username + ': chats parent: ' + JSON.stringify(ids));
+        assert.ok(!ids.includes(h.triggerStreamId + ':chats:' + peerSlug), actor.username + ': no chat leaf: ' + JSON.stringify(ids));
+        assert.ok(ids.includes(h.triggerStreamId + ':collectors:' + peerSlug), actor.username + ': collectors leaf: ' + JSON.stringify(ids));
+        // a query on the chats parent stays valid
+        const q = await coreRequest.get(actor.eventsPath).set('Authorization', actor.token)
+          .query({ streams: [h.triggerStreamId + ':chats'] });
+        assert.strictEqual(q.status, 200, JSON.stringify(q.body));
+      }
+    });
+
+    it('[CN63] neither relationship access holds a chat permission; both record chat false', async function () {
+      for (const [actor, peerSlug] of [[bob, aliceSlug], [alice, bobSlug]]) {
+        const acc = await relationshipAccess(actor, h.triggerStreamId);
+        assert.deepStrictEqual((acc.permissions || []).filter((p) => /:chats/.test(p.streamId)), [], actor.username);
+        assert.ok(acc.permissions.some((p) => p.streamId === h.triggerStreamId + ':collectors:' + peerSlug), actor.username);
+        assert.deepStrictEqual(acc.clientData.cmc.features, NO_CHAT, actor.username);
+      }
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      assert.strictEqual(backChannel.clientData.cmc.counterparty.remoteChatStreamId, null);
+    });
+
+    it('[CN64] system alerts still travel both ways', async function () {
+      for (const [from, to, fromStream, toStream] of [
+        [alice, bob, h.aliceCollectorStreamId, h.bobCollectorStreamId],
+        [bob, alice, h.bobCollectorStreamId, h.aliceCollectorStreamId],
+      ]) {
+        const code = 'nochat-alert-' + from.username + '-' + Date.now();
+        const res = await coreRequest.post(from.eventsPath).set('Authorization', from.token).send({
+          streamIds: [fromStream],
+          type: 'notification/alert-cmc',
+          content: { code, level: 'info', title: { en: 'CN64' }, body: { en: 'no-chat relationship' } },
+        });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        await pollStreamFor(to.eventsPath, to.token, toStream, 'notification/alert-cmc', (e) => e.content?.code === code);
+      }
+    });
+
+    it('[CN66] an app writing a chat on the no-chat relationship is refused: the chat stream does not exist', async function () {
+      const res = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token).send({
+        streamIds: [h.bobChatStreamId],
+        type: 'message/chat-cmc',
+        content: { content: 'should not exist' },
+      });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'unknown-referenced-resource', JSON.stringify(res.body));
+    });
+
+    it('[CN65] a relationship provisioned with chat whose features say no chat: a counterparty\'s direct chat write gets 403 cmc-chat-disabled', async function () {
+      // The shape of a relationship accepted before chat-less relationships
+      // were provisioned without a chat channel: the chat stream and the chat
+      // permission exist, the recorded features say no chat.
+      const legacy = await runFreshHandshake('study-legacy-nochat', 'legacy-nochat-app');
+      const backChannel = await relationshipAccess(alice, legacy.triggerStreamId);
+      assert.ok(backChannel.permissions.some((p) => p.streamId === legacy.aliceChatStreamId), 'premise: the chat permission exists');
+      // written while the relationship still allowed chat, updated below
+      const earlier = {};
+      for (const [key, type, content] of [['chat', 'message/chat-cmc', { content: 'earlier' }], ['note', 'note/txt', 'a note']]) {
+        const res = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+          streamIds: [legacy.aliceChatStreamId], type, content,
+        });
+        assert.strictEqual(res.status, 201, key + ': ' + JSON.stringify(res.body));
+        earlier[key] = res.body.event.id;
+      }
+      const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const mall = await buildMallForCmc();
+      const aliceUserId = await (await getUsersRepository()).getUserIdForUsername(alice.username);
+      await mall.accesses.update(aliceUserId, {
+        id: backChannel.id,
+        update: { clientData: { cmc: { ...backChannel.clientData.cmc, features: NO_CHAT } } },
+      });
+
+      const chat = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [legacy.aliceChatStreamId],
+        type: 'message/chat-cmc',
+        content: { content: 'direct write' },
+      });
+      assert.strictEqual(chat.status, 403, JSON.stringify(chat.body));
+      assert.strictEqual(chat.body.error.id, 'forbidden');
+      assert.strictEqual(chat.body.error.data?.id, 'cmc-chat-disabled', JSON.stringify(chat.body));
+
+      // the update path: editing an existing chat, or retyping another event to a chat
+      for (const [id, update] of [
+        [earlier.chat, { content: { content: 'edited' } }],
+        [earlier.note, { type: 'message/chat-cmc', content: { content: 'retyped' } }],
+      ]) {
+        const res = await coreRequest.put(alice.eventsPath + '/' + id).set('Authorization', backChannel.token).send(update);
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.data?.id, 'cmc-chat-disabled', JSON.stringify(res.body));
+      }
+      const note = await coreRequest.put(alice.eventsPath + '/' + earlier.note).set('Authorization', backChannel.token)
+        .send({ content: 'an edited note' });
+      assert.strictEqual(note.status, 200, JSON.stringify(note.body));
+
+      const alert = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [legacy.aliceCollectorStreamId],
+        type: 'notification/alert-cmc',
+        content: { code: 'legacy-alert', level: 'info', title: { en: 'CN65' }, body: { en: 'still allowed' } },
+      });
+      assert.strictEqual(alert.status, 201, JSON.stringify(alert.body));
+    });
+
+    it('[CN68] an accept the peer posts on the inbox with its back-channel token cannot turn chat on', async function () {
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const forged = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/accept-cmc',
+        content: {
+          grantedAccess: { apiEndpoint: backChannel.clientData.cmc.counterparty.apiEndpoint },
+          requesterOriginStreamId: h.triggerStreamId,
+          features: { chat: true, systemMessaging: true },
+        },
+      });
+      assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
+      // the handler runs after the write: once it has healed the access it
+      // re-delivers the back-channel to bob
+      const forgedAt = forged.body.event.created;
+      await pollInboxFor(bob.eventsPath, bob.token, 'consent/back-channel-cmc',
+        (e) => e.content?.from?.username === alice.username && e.created >= forgedAt);
+      const after = await relationshipAccess(alice, h.triggerStreamId);
+      assert.strictEqual(after.id, backChannel.id);
+      assert.deepStrictEqual((after.permissions || []).filter((p) => /:chats/.test(p.streamId)), []);
+      assert.deepStrictEqual(after.clientData.cmc.features, NO_CHAT);
+      const ids = await streamIdsUnder(alice, h.triggerStreamId);
+      assert.ok(!ids.includes(h.triggerStreamId + ':chats:' + bobSlug), JSON.stringify(ids));
+    });
+  });
+
+  describe('[CMCHS-SELF] an account opening its own invite', function () {
+    it('[CN67] the requester approving its own open link is refused: the accept fails, no relationship is provisioned', async function () {
+      const appId = 'self-accept-app';
+      const appRoot = ':_cmc:apps:' + appId;
+      const scope = appRoot + ':study-self';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+      await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: appRoot, name: 'study-self' });
+      const offer = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
+        streamIds: [scope],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          capability: { mode: 'open-link' },
+          request: {
+            title: { en: 'study-self' },
+            description: { en: 'self accept' },
+            consent: { en: 'I consent.' },
+            permissions: [{ streamId: 'fertility', level: 'read' }],
+          },
+          requesterMeta: { username: alice.username, appId },
+        },
+      });
+      assert.strictEqual(offer.status, 201, JSON.stringify(offer.body));
+      const accept = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
+        streamIds: [appRoot],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl: offer.body.event.content.capabilityUrl, accessName: 'self-accept-' + Date.now() },
+      });
+      assert.strictEqual(accept.status, 201, JSON.stringify(accept.body));
+
+      let trigger;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        trigger = (await coreRequest.get(alice.eventsPath + '/' + accept.body.event.id).set('Authorization', alice.token)).body.event;
+        if (trigger?.content?.status === 'failed' || trigger?.content?.status === 'completed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(trigger?.content?.status, 'failed', JSON.stringify(trigger?.content));
+      assert.strictEqual(trigger.content.failure?.reason, 'cmc-self-accept-forbidden', JSON.stringify(trigger.content));
+
+      const accesses = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses;
+      assert.deepStrictEqual(
+        accesses.filter((a) => a.clientData?.cmc?.role === 'counterparty' && a.clientData.cmc.scopeStreamId === scope).map((a) => a.id),
+        []
+      );
+    });
+
+    it('[CN69] a self-relationship made before the refusal: deleting its access records the withdrawal on its accept', async function () {
+      // The shape a self-accept left: ONE relationship access (the data grant
+      // reused as the back-channel), capabilityId key, no acceptEventId, its
+      // own token as the peer endpoint; the accept names it as its data grant.
+      const appId = 'self-legacy-app';
+      const appRoot = ':_cmc:apps:' + appId;
+      const scope = appRoot + ':study-legacy';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+      await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: appRoot, name: 'study-legacy' });
+      const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const mall = await buildMallForCmc();
+      const aliceUserId = await (await getUsersRepository()).getUserIdForUsername(alice.username);
+      const cmc = {
+        role: 'counterparty',
+        appCode: appId,
+        scopeStreamId: scope,
+        capabilityId: 'cap-legacy-self',
+        counterparty: { username: alice.username, host: 'x.pryv.me' },
+      };
+      const access = await mall.accesses.create(aliceUserId, {
+        name: 'legacy-self-' + Date.now(),
+        type: 'shared',
+        permissions: [{ streamId: scope, level: 'read' }],
+        clientData: { cmc },
+      });
+      const selfEndpoint = 'https://' + access.token + '@' + alice.username + '.x.pryv.me/';
+      await mall.accesses.update(aliceUserId, {
+        id: access.id,
+        update: { clientData: { cmc: { ...cmc, counterparty: { ...cmc.counterparty, apiEndpoint: selfEndpoint }, backChannelApiEndpoint: selfEndpoint } } },
+      });
+      const accept = await mall.events.create(aliceUserId, {
+        streamIds: [appRoot],
+        type: 'consent/accept-cmc',
+        content: { status: 'completed', dataGrantAccessId: access.id },
+      });
+
+      const del = await coreRequest.delete(alice.accessesPath + '/' + access.id).set('Authorization', alice.token);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      let withdrawal;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const ev = (await coreRequest.get(alice.eventsPath + '/' + accept.id).set('Authorization', alice.token)).body.event;
+        withdrawal = ev?.content?.withdrawal;
+        if (withdrawal != null) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(withdrawal?.by, 'accesses.delete', JSON.stringify(withdrawal));
+      assert.strictEqual(withdrawal.accessId, access.id);
     });
   });
 });

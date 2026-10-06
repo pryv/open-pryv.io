@@ -103,7 +103,8 @@ function createAcceptStampingHook (deps: { lineageOf: LineageOf }): Middleware {
  * The content to write when `event` (an updated copy) replaces `storedEvent`:
  * the event's content with every server-owned field taken from the stored
  * one (absent there, absent here). Server-owned: `CMC_SERVER_OWNED_FIELDS` on
- * every CMC event type, plus `ACCEPT_SERVER_OWNED_FIELDS` on an accept. The
+ * every CMC event type, plus `ACCEPT_SERVER_OWNED_FIELDS` and
+ * `ACCEPT_UPDATE_PRESERVED_FIELDS` (the resolved `features`) on an accept. The
  * event's content as is for any other type or a non-object content.
  * Pure: the api-server calls it again on the row as stored at write time.
  */
@@ -112,7 +113,7 @@ function preserveServerOwnedContent (storedEvent: EventLike | null | undefined, 
   const storedContent = storedEvent?.type === event.type ? storedEvent?.content : undefined;
   const stored = isPlainObject(storedContent) ? storedContent : {};
   const fields = event.type === C.ET_ACCEPT
-    ? [...C.CMC_SERVER_OWNED_FIELDS, ...C.ACCEPT_SERVER_OWNED_FIELDS]
+    ? [...C.CMC_SERVER_OWNED_FIELDS, ...C.ACCEPT_SERVER_OWNED_FIELDS, ...C.ACCEPT_UPDATE_PRESERVED_FIELDS]
     : C.CMC_SERVER_OWNED_FIELDS;
   // Copy: the merged event may share the content object with the update.
   const content: Record<string, unknown> = { ...event.content };

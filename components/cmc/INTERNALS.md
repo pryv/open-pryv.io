@@ -124,8 +124,10 @@ The most intricate flow. The accepting user writes `consent/accept-cmc`; their p
 1. Data-grant access on the accepter's account (carrying the requester's identity in `clientData.cmc.counterparty`).
 2. Back-channel access on the requester's account (carrying the accepter's data-grant apiEndpoint in `clientData.cmc.counterparty.apiEndpoint`).
 3. Auto-created anchor streams under the app scope on **both** sides (so chat + system flows can start immediately):
-   - `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`
+   - `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`, only when the resolved `features.chat` is true
    - `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`
+
+The relationship's features are resolved by each side from its own copy of the offer (`content.request.features`, each one true unless set to `false`), narrowed by the accept's `content.features` (a `true` there never turns on what the offer turned off): `features.ts`. Chat anchors and the chat permission (on the data grant and on the back-channel) exist only when the resolved `features.chat` is true; the `chats` parent is always created. The resolved pair is stamped on both accesses, the delivered accept, the accept trigger at completion and the inbox mirror. The requester finds its offer copy by a key the peer does not control first: an accept made through a capability sits in `:_cmc:_internal:responses:<capId>`, and the copy is the request in `:_cmc:_internal:offer:<capId>`. Only then, for an accept that did not come through a capability, by the `originalEventId` (else `requestEventId`) the accept names. An accept that did not arrive through a capability's responses stream (a peer can post one on `:_cmc:inbox` with the back-channel token it holds) has no server-controlled key, so it can only narrow a relationship this side already holds for the scope: its features are ANDed with that access's recorded `features`. Only for a new relationship with no readable copy does the delivered value decide, logged at warn. Without chat the back-channel delivery leaves `remoteChatStreamId` out and the back-channel's `counterparty.remoteChatStreamId` is null.
 
 ```mermaid
 sequenceDiagram
@@ -139,10 +141,10 @@ sequenceDiagram
     CoreB->>CoreA: events.get :_cmc:_internal:offer:<capId><br/>(via capabilityUrl)
     CoreA-->>CoreB: request event (permissions, features, requesterMeta)
     CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'provider-a',host:'example.com'}}<br/>(persisted in Storage-B accesses table)
-    CoreB->>CoreB: streams.create :_cmc:apps:my-app:chats:provider-a--example-com<br/>streams.create :_cmc:apps:my-app:collectors:provider-a--example-com<br/>(persisted in Storage-B streams table)
+    CoreB->>CoreB: streams.create :_cmc:apps:my-app:chats:provider-a--example-com (only with chat)<br/>streams.create :_cmc:apps:my-app:collectors:provider-a--example-com<br/>(persisted in Storage-B streams table)
     CoreB->>CoreA: events.create consent/accept-cmc in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
-    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:apps:my-app:chats:alice--pryv-me<br/>+ rights on :_cmc:apps:my-app:collectors:alice--pryv-me<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
-    CoreA->>CoreA: streams.create :_cmc:apps:my-app:chats:alice--pryv-me<br/>streams.create :_cmc:apps:my-app:collectors:alice--pryv-me
+    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:apps:my-app:chats:alice--pryv-me (only with chat)<br/>+ rights on :_cmc:apps:my-app:collectors:alice--pryv-me<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
+    CoreA->>CoreA: streams.create :_cmc:apps:my-app:chats:alice--pryv-me (only with chat)<br/>streams.create :_cmc:apps:my-app:collectors:alice--pryv-me
     CoreA->>CoreA: capability state flips to consumed (single-use), access kept
     CoreA-->>CoreB: response carries back-channel.apiEndpoint
     CoreB->>CoreB: events.update data-grant access<br/>clientData.cmc.counterparty.backChannelApiEndpoint=<...>
@@ -313,6 +315,8 @@ sequenceDiagram
 **Per-app scoping:** matching on `clientData.cmc.appCode` means the user can have multiple counterparty-accesses to the same person across different apps (one per app) without cross-talk. The trigger's app-scope is canonical; the matched access carries the corresponding remote stream-id.
 
 **Pre-acceptance edge case:** if the user writes into `:_cmc:apps:<app>:chats:<slug>` before the access pair exists (impossible if the plugin auto-creates the streams at acceptance, but possible if the user manually `streams.create`s a chat stream), the trigger fails with `cmc-chat-counterparty-access-not-found`.
+
+**Inbound features gate:** a peer holding the relationship token can write `message/chat-cmc` into this side's chat stream directly, without going through its plugin. The hook `createCounterpartyFeatureGateHook` (`hooks.ts`; on events.create wired after the counterparty `from` stamping, on events.update after the prerequisites, so it judges the merged event: editing an existing chat or retyping another event to a chat is refused alike) refuses it when the writing access is a counterparty access whose `clientData.cmc.features.chat === false`: HTTP 403 `forbidden`, `data.id: 'cmc-chat-disabled'`; same for `notification/alert-cmc` / `notification/ack-cmc` with `systemMessaging === false` (`cmc-system-messaging-disabled`). Absent / null features permit. A relationship provisioned without chat fails earlier (no stream, no permission); the gate is what protects relationships provisioned with a chat stream before features decided provisioning. A sending plugin treats the 403 as a non-retryable 4xx. Not gated: on such a relationship the same `contribute` still lets the peer `events.delete` events in the chat leaf.
 
 ---
 

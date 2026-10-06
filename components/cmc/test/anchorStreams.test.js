@@ -109,4 +109,22 @@ describe('[CMCAN] cmc/anchorStreams', () => {
     assert.equal(r.failedStreamId, ':_cmc:apps:my-app:collectors');
     assert.ok(/boom/.test(r.failureMessage));
   });
+
+  it('[AN05] chat false creates both parents and the collectors leaf, no chat leaf', async () => {
+    const mall = fakeMall();
+    const r = await provisionAnchorStreams({
+      userId: 'u1',
+      scopeStreamId: ':_cmc:apps:my-app:campaign-2026',
+      peerSlug: 'alice--pryv-me',
+      mall,
+      chat: false,
+    });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.created, [
+      ':_cmc:apps:my-app:campaign-2026:chats',
+      ':_cmc:apps:my-app:campaign-2026:collectors',
+      ':_cmc:apps:my-app:campaign-2026:collectors:alice--pryv-me',
+    ]);
+    assert.ok(!mall.calls.streamsCreated.some((s) => s.id === ':_cmc:apps:my-app:campaign-2026:chats:alice--pryv-me'));
+  });
 });

@@ -156,6 +156,29 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.deepEqual(mall.calls.eventsUpdated[1].content.from, { username: 'provider-a', host: 'example.com' });
     });
 
+    it('[CD28] the completed accept carries the resolved features, not the ones the client wrote', async () => {
+      const mall = fakeMall();
+      const offer = structuredClone(VALID_OFFER);
+      offer.content.request.features = { chat: false };
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [offer] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-accept',
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/', features: { chat: true, systemMessaging: true, video: true } },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'completed');
+      const completed = mall.calls.eventsUpdated.at(-1);
+      assert.equal(completed.content.status, 'completed');
+      assert.deepEqual(completed.content.features, { chat: false, systemMessaging: true });
+    });
+
     it('[CD05] failed delivery → stamps failed with reason + detail', async () => {
       const mall = fakeMall();
       const { fetch } = fakeFetch([

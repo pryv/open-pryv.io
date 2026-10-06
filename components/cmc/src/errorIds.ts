@@ -173,7 +173,9 @@ const CmcErrorIds = {
   // false`. handleChat rejects the send so the relationship's
   // feature contract is binding (not just documentary). Apps issuing
   // `cmc.sendChat(...)` against a feature-disabled relationship will
-  // see this id.
+  // see this id. Also answered on the RECEIVING side, as an HTTP 403
+  // `forbidden` with `data.id` set to this id, when a counterparty access
+  // writes a `message/chat-cmc` directly (createCounterpartyFeatureGateHook).
   CHAT_DISABLED: 'cmc-chat-disabled',
   // Same as CHAT_DISABLED for system messaging
   // (`notification/alert-cmc` + `notification/ack-cmc`). The offer's
@@ -182,8 +184,15 @@ const CmcErrorIds = {
   // `clientData.cmc.features.systemMessaging === false`.
   // handleSystem rejects the send. Note: scope-request / scope-update
   // system events are protocol-level (not user messaging) and remain
-  // permitted regardless of the flag.
+  // permitted regardless of the flag. Also answered on the receiving side as
+  // a 403 `forbidden` with this `data.id` for a direct counterparty write of
+  // an alert / ack.
   SYSTEM_MESSAGING_DISABLED: 'cmc-system-messaging-disabled',
+  // The accepter is the offer's requester: an account cannot consent to
+  // itself (an open link opened while signed in as the requester).
+  // handleAccept refuses before anything is provisioned or minted; the accept
+  // trigger is marked failed with this reason.
+  SELF_ACCEPT_FORBIDDEN: 'cmc-self-accept-forbidden',
 
   // --- Forge-prevention on accesses.* HTTP routes ---
   // User code attempted to write under the `clientData.cmc` namespace

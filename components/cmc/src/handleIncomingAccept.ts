@@ -28,17 +28,20 @@ const require = createRequire(import.meta.url);
  *      {username, host} of the accepter).
  *   3. Read the original request event from one of the requester's
  *      `:_cmc:apps:<app>:[<path>:]` streams to find the appCode + scope.
+ *   3b. Resolve the relationship's features against our own copy of the
+ *      offer (the offer's, narrowed by the accept; see features.ts).
  *   4. Create the back-channel access:
- *      - permissions: create on `:_cmc:inbox` + rights on the chats
- *        and collectors streams under the app scope.
- *      - clientData.cmc = {role:'counterparty', appCode, counterparty:
- *        {username, host, apiEndpoint, remoteChatStreamId,
- *        remoteCollectorStreamId}}
+ *      - permissions: create on `:_cmc:inbox` + rights on the collectors
+ *        stream under the app scope, and on the chats stream only when
+ *        the resolved `features.chat` is true.
+ *      - clientData.cmc = {role:'counterparty', appCode, features,
+ *        counterparty: {username, host, apiEndpoint, remoteChatStreamId
+ *        (null without chat), remoteCollectorStreamId}}
  *      - The remote stream-ids are computed deterministically from our
  *        identity (the accepter mirrors the structure on their side).
  *   5. Auto-create the anchor streams on this side:
  *      - :_cmc:apps:<app>:[<path>:]chats
- *      - :_cmc:apps:<app>:[<path>:]chats:<accepter-slug>
+ *      - :_cmc:apps:<app>:[<path>:]chats:<accepter-slug>  (only with chat)
  *      - :_cmc:apps:<app>:[<path>:]collectors
  *      - :_cmc:apps:<app>:[<path>:]collectors:<accepter-slug>
  *
@@ -54,6 +57,8 @@ const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+import type { Features } from './features.ts';
 const crypto = require('node:crypto');
 
 type Counterparty = { username: string; host: string };
@@ -133,6 +138,9 @@ async function handleIncomingAccept (params: {
   //   3. Fall back to 'unknown' — back-channel access still gets
   //      created; chat/system handlers won't match it but the
   //      handshake itself is recorded.
+  // This side's copy of the offer, read once: it serves the scope fallback
+  // below and the features resolution.
+  const offerCopy = await findOfferCopy({ userId, acceptEvent, mall });
   const fromAcceptContent = acceptEvent.content?.requesterAppCode;
   const originStreamFromAccept = acceptEvent.content?.requesterOriginStreamId;
   if (typeof originStreamFromAccept === 'string' && originStreamFromAccept.length > 0 &&
@@ -150,7 +158,7 @@ async function handleIncomingAccept (params: {
   }
   if (scopeStreamId == null) {
     try {
-      const lookup = await resolveRequestScope({ userId, acceptEvent, mall });
+      const lookup = await resolveRequestScope({ userId, acceptEvent, mall, requestEvent: offerCopy.event });
       scopeStreamId = lookup.scopeStreamId;
       appCode = lookup.appCode;
     } catch (err: unknown) {
@@ -165,19 +173,82 @@ async function handleIncomingAccept (params: {
   // Compute the relevant slugs + stream-ids. The peer's stream-ids
   // mirror the structure on their account (both sides derive from
   // app-scope + counterparty slug — deterministic).
+  // Re-delivery of an accept for a relationship we already hold must update
+  // THAT relationship's access, not mint a second one. Match on the scope
+  // rather than the name: an access minted before names carried the scope
+  // still resolves (the selector derives its scope from its own channel
+  // permissions), so it is healed in place (below) instead of being
+  // duplicated under the new name. Looked up here: its features cap the
+  // resolution that follows.
+  let existingForScope: AccessLike | null = null;
+  if (typeof mall.accesses.get === 'function' && typeof mall.accesses.update === 'function') {
+    try {
+      const existingList = await mall.accesses.get(userId, {});
+      existingForScope = relationshipKey.selectRelationshipAccess({
+        accesses: existingList,
+        counterparty: {
+          username: counterparty.username,
+          hostSlug: slugMod.slugifyHost(counterparty.host),
+        },
+        scopeStreamId,
+        appCode,
+        logger: deps.logger,
+      });
+    } catch (err: unknown) {
+      // Non-fatal: fall through to create, which has its own duplicate path.
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse lookup failed', {
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
+
+  // The relationship's features, resolved against OUR copy of the offer: the
+  // offer's, narrowed by what the accepter sent. A peer that sends a wider
+  // value (an older core, or a forged delivery) cannot turn on here a feature
+  // this side's offer turned off, as long as the copy is found: by the
+  // responses stream the accept was written to (server-controlled), else by
+  // the id the accept names. An accept that did not arrive through a
+  // capability's responses stream (one a peer posts on the inbox with the
+  // back-channel token it holds) has no server-controlled key: it can only
+  // narrow a relationship this side already holds, never widen it. For a new
+  // relationship without a readable copy the delivered value decides.
+  // Stamped on the back-channel and the inbox mirror; with `chat: false` no
+  // chat leaf and no chat permission exist.
+  const offeredFeatures = offerFeatures(offerCopy, acceptEvent, deps.logger);
+  let negotiatedFeatures: Features = resolveFeatures(
+    offeredFeatures,
+    (acceptEvent?.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null } | undefined)?.features
+  );
+  if (offerCopy.via !== 'responses-stream' && existingForScope != null) {
+    const existingCmc = existingForScope.clientData?.cmc as { features?: unknown; inviteEventId?: unknown } | undefined;
+    let ceiling = existingCmc?.features as { chat?: unknown; systemMessaging?: unknown } | null | undefined;
+    // A relationship recorded before features were stamped: its invite, our
+    // own request, says what was offered.
+    if (ceiling == null && typeof existingCmc?.inviteEventId === 'string' && mall.events?.getOne != null) {
+      try {
+        const invite = await mall.events.getOne(userId, existingCmc.inviteEventId) as OfferCopyEvent | null;
+        if (invite != null && invite.type === C.ET_REQUEST) ceiling = featuresFromOffer(invite.content);
+      } catch (_e) {
+        // No invite to read: the legacy contract (permissive) stands.
+      }
+    }
+    negotiatedFeatures = resolveFeatures(negotiatedFeatures, ceiling);
+  }
+
   const peerSlug = slugMod.counterpartySlug({ username: counterparty.username, host: counterparty.host });
   const selfSlug = slugMod.counterpartySlug({ username: selfIdentity.username, host: selfIdentity.host });
-  const chatStream = C.chatStreamUnder(scopeStreamId, peerSlug);
+  const chatStream: string | null = negotiatedFeatures.chat ? C.chatStreamUnder(scopeStreamId, peerSlug) : null;
   const collectorStream = C.collectorStreamUnder(scopeStreamId, peerSlug);
-  const remoteChatStreamId = C.chatStreamUnder(scopeStreamId, selfSlug);
+  const remoteChatStreamId: string | null = negotiatedFeatures.chat ? C.chatStreamUnder(scopeStreamId, selfSlug) : null;
   const remoteCollectorStreamId = C.collectorStreamUnder(scopeStreamId, selfSlug);
 
-  // Provision the four anchor streams. Idempotent.
+  // Provision the anchor streams (no chat leaf without chat). Idempotent.
   const provisioned = await anchors.provisionAnchorStreams({
     userId,
     scopeStreamId,
     peerSlug,
     mall,
+    chat: negotiatedFeatures.chat,
   });
   if (!provisioned.ok) {
     return {
@@ -190,8 +261,9 @@ async function handleIncomingAccept (params: {
 
   // Mint the back-channel access. Permissions:
   //   - create-only on :_cmc:inbox (so the peer can deliver to us)
-  //   - read/contribute on chats + collectors anchor streams (so the
-  //     peer can deliver chat + system messages targeted to our slug)
+  //   - contribute on the collectors anchor stream, and on the chats one when
+  //     the relationship has chat (so the peer can deliver system messages,
+  //     and chats, targeted to our slug)
   //
   // Name disambiguator: appCode + peerSlug (separated by `--`) so two
   // distinct apps with the same counterparty don't collide. If a stale
@@ -221,14 +293,6 @@ async function handleIncomingAccept (params: {
     ? '--' + crypto.createHash('sha1').update(scopeStreamId).digest('hex').slice(0, 12)
     : '';
   const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug + scopeSuffix;
-  // Features gating — features negotiated by the offer
-  // (and accepted by the counterparty) are delivered on
-  // `acceptEvent.content.features`. Mirror them onto the
-  // back-channel access's clientData so handleChat / handleSystem on
-  // the REQUESTER side can enforce the contract symmetrically with
-  // the accepter side (whose data-grant access carries the same
-  // field via buildDataGrantPayload). Absent / null → permissive.
-  const negotiatedFeatures: Record<string, unknown> | null = ((acceptEvent?.content as { features?: Record<string, unknown> | null } | undefined)?.features ?? null) as Record<string, unknown> | null;
   // The capability this accept came through. Stamped on the back-channel
   // access: for an open-link invite, the relationship accesses carrying it ARE
   // the list of who joined. Also used below to consume the link and enrich the
@@ -271,14 +335,16 @@ async function handleIncomingAccept (params: {
       ? acceptEvent.content.originalEventId
       : null;
 
+  // The chat permission only for a relationship with chat.
+  const backChannelPermissions: Array<{ streamId: string; level: string }> = [
+    { streamId: C.NS_INBOX, level: 'create-only' },
+  ];
+  if (chatStream != null) backChannelPermissions.push({ streamId: chatStream, level: 'contribute' });
+  backChannelPermissions.push({ streamId: collectorStream, level: 'contribute' });
   const accessParams = {
     type: 'shared',
     name: accessName,
-    permissions: [
-      { streamId: C.NS_INBOX, level: 'create-only' },
-      { streamId: chatStream, level: 'contribute' },
-      { streamId: collectorStream, level: 'contribute' },
-    ],
+    permissions: backChannelPermissions,
     clientData: {
       cmc: {
         role: 'counterparty',
@@ -296,6 +362,8 @@ async function handleIncomingAccept (params: {
         // path rewrites clientData, so they self-refresh on the next accept.
         offerEventId,
         inviteEventId,
+        // The resolved features: handleChat / handleSystem on this side, and
+        // the inbound features gate, enforce them.
         features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
@@ -307,39 +375,22 @@ async function handleIncomingAccept (params: {
       },
     },
   };
-  // Re-delivery of an accept for a relationship we already hold must update
-  // THAT relationship's access, not mint a second one. Match on the scope
-  // rather than the name: an access minted before names carried the scope
-  // still resolves (the selector derives its scope from its own channel
-  // permissions), so it is healed in place instead of being duplicated
-  // under the new name.
+  // A relationship we already hold for this scope is healed in place.
   let access: AccessLike | null = null;
-  if (typeof mall.accesses.get === 'function' && typeof mall.accesses.update === 'function') {
+  if (existingForScope != null) {
     try {
-      const existingList = await mall.accesses.get(userId, {});
-      const existingForScope = relationshipKey.selectRelationshipAccess({
-        accesses: existingList,
-        counterparty: {
-          username: counterparty.username,
-          hostSlug: slugMod.slugifyHost(counterparty.host),
+      // `update` exists: the lookup that set existingForScope required it.
+      const updated = await mall.accesses.update!(userId, {
+        id: existingForScope.id,
+        update: {
+          permissions: accessParams.permissions,
+          clientData: accessParams.clientData,
         },
-        scopeStreamId,
-        appCode,
-        logger: deps.logger,
       });
-      if (existingForScope != null) {
-        const updated = await mall.accesses.update(userId, {
-          id: existingForScope.id,
-          update: {
-            permissions: accessParams.permissions,
-            clientData: accessParams.clientData,
-          },
-        });
-        access = updated ?? existingForScope;
-      }
+      access = updated ?? existingForScope;
     } catch (err: unknown) {
       // Non-fatal: fall through to create, which has its own duplicate path.
-      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse lookup failed', {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse update failed', {
         error: String((err as Error)?.message || err),
       });
     }
@@ -441,6 +492,8 @@ async function handleIncomingAccept (params: {
       //     this on the inbox event.
       const mirrorContent: Record<string, unknown> = {
         ...(acceptEvent.content || {}),
+        // The resolved value, not the one the peer sent.
+        features: negotiatedFeatures,
         backChannelAccessId: access.id,
       };
       if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
@@ -479,7 +532,10 @@ async function handleIncomingAccept (params: {
           content: {
             from: { username: selfIdentity.username, host: selfIdentity.host },
             apiEndpoint: access.apiEndpoint,
-            remoteChatStreamId: chatStream,
+            // Left out for a relationship without chat: optional on receipt,
+            // and the published event-type schema types it as a string, so
+            // a null would be refused.
+            ...(chatStream != null ? { remoteChatStreamId: chatStream } : {}),
             remoteCollectorStreamId: collectorStream,
             appCode,
             // Lets the accepter stamp the back-channel onto the grant for
@@ -550,28 +606,94 @@ async function handleIncomingAccept (params: {
   };
 }
 
+type OfferCopyEvent = { type?: string; streamIds?: string[]; content?: Record<string, unknown> };
+type OfferCopy = { event: OfferCopyEvent | null; via: 'responses-stream' | 'delivered-id' | null };
+
+/**
+ * This side's copy of the offer the accept answers. Looked up first by a
+ * server-controlled key: an accept made through a capability sits in
+ * `:_cmc:_internal:responses:<capId>` (the only stream the capability token
+ * can write), and the offer copy is the request in `:_cmc:_internal:offer:<capId>`.
+ * Then by the id the accept names (`originalEventId`, else `requestEventId`),
+ * which the peer wrote. `event: null` when neither reaches a request: the
+ * capability's streams were collected, or the delivery names nothing readable.
+ */
+async function findOfferCopy (params: {
+  userId: string;
+  acceptEvent: { content?: Record<string, unknown>; streamIds?: string[] };
+  mall: MallLike;
+}): Promise<OfferCopy> {
+  const { userId, acceptEvent, mall } = params;
+  for (const sid of acceptEvent.streamIds ?? []) {
+    const capabilityId = C.capabilityIdFromResponsesStreamId(sid);
+    if (capabilityId == null || mall.events?.get == null) continue;
+    try {
+      const events = await mall.events.get(userId, {
+        streams: [{ any: [C.offerStreamIdFor(capabilityId)] }],
+        limit: 5,
+      }) as OfferCopyEvent[];
+      const ev = events.find((e) => e?.type === C.ET_REQUEST);
+      if (ev != null) return { event: ev, via: 'responses-stream' };
+    } catch (_e) {
+      // Streams collected: no copy (below).
+    }
+    // The capability names its offer: when that copy is gone, the id the
+    // peer names (possibly another request of ours) is not consulted.
+    return { event: null, via: null };
+  }
+  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
+  if (typeof reqId === 'string' && reqId.length > 0 && mall.events?.getOne != null) {
+    try {
+      // getOne, not get({ id }): the events query does not filter on `id`, so
+      // get() would hand back the newest event of any kind.
+      const ev = await mall.events.getOne(userId, reqId) as OfferCopyEvent | null;
+      if (ev != null && ev.type === C.ET_REQUEST) return { event: ev, via: 'delivered-id' };
+    } catch (_e) {
+      // Fall through.
+    }
+  }
+  return { event: null, via: null };
+}
+
+/**
+ * The features this side's own copy of the offer grants. Without a copy every
+ * feature counts as offered, so the accepter's value alone decides: what this
+ * side did before it resolved features itself. That is a trust decision on
+ * the peer's word, so it is logged at warn.
+ */
+function offerFeatures (
+  offerCopy: OfferCopy,
+  acceptEvent: { id?: string; content?: Record<string, unknown> },
+  logger?: CmcLogger
+): Features {
+  if (offerCopy.event != null) return featuresFromOffer(offerCopy.event.content);
+  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
+  logger?.warn?.('cmc/handleIncomingAccept: offer copy not found, features resolved from the accept alone', {
+    acceptEventId: acceptEvent.id ?? null,
+    originalEventId: typeof reqId === 'string' ? reqId : null,
+  });
+  return featuresFromOffer(null);
+}
+
 /**
  * Best-effort lookup of the original request event's scope. The accept
  * event carries either `originalEventId` or `capabilityId`; we use it
  * to find the request event in our streams and return the streamId
  * + appCode it was written under. Returns nulls if we can't resolve
- * (caller falls back to a synthetic scope).
+ * (caller falls back to a synthetic scope). `requestEvent`, when given
+ * (null included), is the request already looked up by the caller.
  */
 async function resolveRequestScope (params: {
   userId: string;
   acceptEvent: { id?: string; type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
   mall: MallLike;
+  requestEvent?: OfferCopyEvent | null;
 }): Promise<{ scopeStreamId: string | null; appCode: string | null }> {
   const { userId, acceptEvent, mall } = params;
-  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
-  if (typeof reqId !== 'string' || reqId.length === 0) {
-    return { scopeStreamId: null, appCode: null };
-  }
-  if (mall.events?.getOne == null) return { scopeStreamId: null, appCode: null };
   try {
-    // getOne, not get({ id }): the events query does not filter on `id`, so
-    // get() would hand back the newest event of any kind.
-    const ev = await mall.events.getOne(userId, reqId) as { type?: string; streamIds?: string[]; content?: Record<string, unknown> } | null;
+    const ev = params.requestEvent !== undefined
+      ? params.requestEvent
+      : (await findOfferCopy({ userId, acceptEvent, mall })).event;
     if (ev == null || ev.type !== C.ET_REQUEST) return { scopeStreamId: null, appCode: null };
     // The requester's trigger sits on its app-scope stream.
     const reqStreamIds: string[] = Array.isArray(ev.streamIds) ? ev.streamIds : [];

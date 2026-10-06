@@ -30,6 +30,8 @@ const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // Tree-aware consent guard (hierarchical-masking class) — see
 // business/src/accesses/consentEffectiveGuard.ts.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
+const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+import type { Features } from './features.ts';
 
 type OfferShape = {
   id?: string;
@@ -82,6 +84,7 @@ type AcceptHandlerResult =
       backChannelApiEndpoint: string | null; // filled later when requester returns it
       anchorStreamIds: string[];             // chats/collectors anchors created on this side
       requesterIdentity: { username: string; host: string }; // stamped onto trigger.content.from by dispatch
+      features: Features;                    // resolved; stamped onto trigger.content.features by dispatch
     }
   | {
       ok: false;
@@ -121,7 +124,13 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
   const accessName = (triggerEvent.content as { accessName?: string })?.accessName;
-  const features: Record<string, unknown> | null = ((triggerEvent.content as { features?: Record<string, unknown> | null })?.features ?? null) as Record<string, unknown> | null;
+
+  // An account cannot consent to itself. The capability access lives on the
+  // requester's account, so a capability token that is one of our own
+  // accesses means we made this offer, whatever identity it was stamped with.
+  if (await isOwnCapability(mall, userId, capabilityUrl)) {
+    return { ok: false, reason: CmcErrorIds.SELF_ACCEPT_FORBIDDEN };
+  }
 
   // 1. Read the offer.
   let offer: OfferShape | undefined;
@@ -140,6 +149,15 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-offer-read-failed' };
   }
 
+  // The relationship's features: the offer's, narrowed by what the accept
+  // asks (a `true` there never turns on a feature the offer turned off).
+  // This resolved pair is what the grant, the delivered accept and the
+  // trigger record, and what decides whether a chat channel is provisioned.
+  const features: Features = resolveFeatures(
+    featuresFromOffer(offer.content),
+    (triggerEvent.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null })?.features
+  );
+
   // The counterparty (requester) identity needs to be derivable. We use
   // the offer's `requesterMeta` if present, falling back to the capability
   // URL's host. The actual `username` lives on the offer event's
@@ -148,6 +166,11 @@ async function handleAccept (params: {
   const counterparty = inferCounterparty(offer, capabilityUrl);
   if (counterparty == null) {
     return { ok: false, reason: 'cmc-handler-counterparty-unknown' };
+  }
+  // Same account by identity (covers a capability served by another core
+  // for this account): refused before any stream or access exists.
+  if (sameIdentity(counterparty, selfIdentity)) {
+    return { ok: false, reason: CmcErrorIds.SELF_ACCEPT_FORBIDDEN };
   }
 
   // 2a. Provision our anchor streams BEFORE creating the data-grant
@@ -169,10 +192,12 @@ async function handleAccept (params: {
       scopeStreamId: anchorScope,
       peerSlug,
       mall,
+      chat: features.chat,
     });
     if (provisioned.ok) {
       preCreatedAnchorIds = provisioned.created;
-      chatStream = C.chatStreamUnder(anchorScope, peerSlug);
+      // No chat leaf, so no chat permission, for a relationship without chat.
+      chatStream = features.chat ? C.chatStreamUnder(anchorScope, peerSlug) : null;
       collectorStream = C.collectorStreamUnder(anchorScope, peerSlug);
     } else {
       deps.logger?.warn?.('cmc/handleAccept: anchor-stream creation failed (non-fatal)', {
@@ -487,6 +512,9 @@ async function handleAccept (params: {
     // requester identity), and the patient app can't discover WHICH doctor
     // each relationship belongs to.
     requesterIdentity: counterparty,
+    // The resolved features, stamped on the trigger by the dispatcher over
+    // whatever the client wrote, so the app reads the relationship's value.
+    features,
   };
 }
 
@@ -836,6 +864,32 @@ function inferCounterparty (offer: OfferShape, capabilityUrl: string): { usernam
   }
   if (host == null) return null;
   return { username, host };
+}
+
+/** Whether the capability URL's token is one of this account's own accesses. */
+async function isOwnCapability (mall: MallLike, userId: string, capabilityUrl: string): Promise<boolean> {
+  let token: string;
+  try {
+    token = new URL(capabilityUrl).username;
+  } catch (_e) {
+    return false;
+  }
+  if (token.length === 0 || typeof mall.accesses?.get !== 'function') return false;
+  try {
+    const accesses = await mall.accesses.get(userId, {});
+    return Array.isArray(accesses) && accesses.some((a) => (a as { token?: string })?.token === token);
+  } catch (_e) {
+    return false;
+  }
+}
+
+/** Same account: both identities give the same counterparty slug (the key both sides use). */
+function sameIdentity (a: { username: string; host: string }, b: { username: string; host: string }): boolean {
+  try {
+    return slugMod.counterpartySlug(a) === slugMod.counterpartySlug(b);
+  } catch (_e) {
+    return false;
+  }
 }
 
 export {

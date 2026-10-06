@@ -141,6 +141,21 @@ describe('[CMCVAL] cmc/validators', () => {
     it('[VA03] rejects missing capabilityUrl', () => {
       expectInvalid('consent/accept-cmc', {}, 'capabilityUrl');
     });
+
+    it('[VA04] rejects malformed features', () => {
+      const base = { capabilityUrl: 'https://AbC@example.com/' };
+      expectInvalid('consent/accept-cmc', { ...base, features: { chat: 'yes' } }, 'features.chat');
+      expectInvalid('consent/accept-cmc', { ...base, features: { systemMessaging: 1 } }, 'features.systemMessaging');
+      expectInvalid('consent/accept-cmc', { ...base, features: 'none' }, 'features');
+      expectInvalid('consent/accept-cmc', { ...base, features: [true] }, 'features');
+    });
+
+    it('[VA05] accepts well-formed features, partial or null', () => {
+      const base = { capabilityUrl: 'https://AbC@example.com/' };
+      expectValid('consent/accept-cmc', { ...base, features: { chat: false } });
+      expectValid('consent/accept-cmc', { ...base, features: { chat: true, systemMessaging: false } });
+      expectValid('consent/accept-cmc', { ...base, features: null });
+    });
   });
 
   describe('[CMCVAL-REF] consent/refuse-cmc', () => {

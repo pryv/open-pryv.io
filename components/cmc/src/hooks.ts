@@ -22,10 +22,12 @@ const C = require('./constants.ts');
 const validators = require('./validators.ts');
 const provisioning = require('./provisioning.ts');
 const anchorStreams = require('./anchorStreams.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type ApiError = Error & { id?: string; data?: unknown };
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => ApiError;
+  forbidden: (message?: string, details?: Record<string, unknown>) => ApiError;
   unknownResource?: (resource: string, id?: unknown) => ApiError;
 };
 
@@ -36,7 +38,15 @@ type Deps = {
 type MethodContext = {
   newEvent?: { type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
   user?: { id?: string };
-  access?: { clientData?: { cmc?: { role?: string; counterparty?: { username?: string; host?: string } } } };
+  access?: {
+    clientData?: {
+      cmc?: {
+        role?: string;
+        counterparty?: { username?: string; host?: string };
+        features?: { chat?: unknown; systemMessaging?: unknown } | null;
+      };
+    };
+  };
   event?: { streamIds?: string[]; [k: string]: unknown };
   cmc?: { isCmcEvent?: boolean; eventType?: string; streamIds?: string[]; [k: string]: unknown };
   [k: string]: unknown;
@@ -551,6 +561,55 @@ function createCounterpartyFromStampingHook (deps: Deps): Middleware {
 }
 
 /**
+ * events.create / events.update hook: the relationship's features, enforced
+ * on the RECEIVING side.
+ *
+ * The sending plugin refuses a chat (or a user alert / ack) when the
+ * relationship's `features` turn it off, but a peer holding the
+ * relationship's token can also write the event directly. This hook refuses
+ * such a write: a counterparty access (`clientData.cmc.role ===
+ * 'counterparty'`) whose `features.chat === false` cannot create a
+ * `message/chat-cmc`, and one whose `features.systemMessaging === false`
+ * cannot create a `notification/alert-cmc` / `notification/ack-cmc`.
+ * On events.update it runs after the prerequisites, so `context.newEvent` is
+ * the merged event: an update that keeps a gated type (editing an existing
+ * chat message) or sets one (retyping another event) is refused alike.
+ * Scope requests and scope updates are protocol messages, never gated.
+ *
+ * 403 `forbidden` with `data.id` set to the CMC error id: the token and the
+ * stream are valid, the relationship's contract denies the write. A 4xx, so
+ * a sending plugin does not retry it.
+ *
+ * Absent or null `features` (relationships accepted before features were
+ * recorded) permit everything, as documented. A relationship provisioned
+ * without chat has no chat stream or permission, so its write fails earlier;
+ * this hook is what protects relationships provisioned before that.
+ */
+function createCounterpartyFeatureGateHook (deps: Deps): Middleware {
+  return function cmcCounterpartyFeatureGateHook (context, _params, _result, next) {
+    const event = context?.newEvent;
+    if (event == null) return next();
+    const accessCmc = context?.access?.clientData?.cmc;
+    if (accessCmc?.role !== 'counterparty') return next();
+    const features = accessCmc.features;
+    if (event.type === C.ET_CHAT && features?.chat === false) {
+      return next(deps.errors.forbidden('This relationship was negotiated without chat', {
+        id: CmcErrorIds.CHAT_DISABLED,
+        eventType: event.type,
+      }));
+    }
+    if ((event.type === C.ET_SYSTEM_ALERT || event.type === C.ET_SYSTEM_ACK) &&
+        features?.systemMessaging === false) {
+      return next(deps.errors.forbidden('This relationship was negotiated without system messaging', {
+        id: CmcErrorIds.SYSTEM_MESSAGING_DISABLED,
+        eventType: event.type,
+      }));
+    }
+    next();
+  };
+}
+
+/**
  * accesses.create / accesses.update hook — forge-prevention.
  *
  * The `clientData.cmc` namespace is owned end-to-end by the CMC plugin:
@@ -836,6 +895,7 @@ export {
   streamsParamReferencesCmc,
   _resetEnsuredUsersMemo,
   createCounterpartyFromStampingHook,
+  createCounterpartyFeatureGateHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createAccessProvisionAppScopeHook,

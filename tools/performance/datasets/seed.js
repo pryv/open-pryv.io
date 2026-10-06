@@ -119,7 +119,7 @@ function iotStreams () {
   // Based on demo.datasafe.dev/miratest: ~50 streams, structured hierarchy
   return [
     { id: 'applications', name: 'Applications' },
-    { id: 'app-client-dr-form', name: 'HDS Patient app PoC', parentId: 'applications' },
+    { id: 'app-client-dr-form', name: 'Patient app PoC', parentId: 'applications' },
 
     { id: 'body', name: 'Body' },
     { id: 'body-weight', name: 'Body Weight', parentId: 'body' },
