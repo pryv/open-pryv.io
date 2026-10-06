@@ -545,15 +545,16 @@ async function markFailed (
  *
  * Both are peer-delivered events from the requester's perspective:
  *   - `:_cmc:inbox` is the standard one-shot lifecycle delivery
- *     (used for peer-pushed events post-acceptance, e.g. revoke).
+ *     (request, revoke, back-channel; an accept or a refuse posted there
+ *     is refused by the inbox hook).
  *   - `:_cmc:_internal:responses:<capId>` is where the accepter's
- *     plugin posts consent/accept-cmc via the capability connection
- *     during the initial handshake (per INTERNALS.md flow 3).
+ *     plugin posts consent/accept-cmc (or refuse) via the capability
+ *     connection during the initial handshake (per INTERNALS.md flow 3).
  *
- * Both route to handleIncomingAccept on the requester side, which
- * mints the back-channel access + provisions anchor streams + mirrors
- * a copy to :_cmc:inbox so the requester's app sees the accept via
- * standard inbox subscription.
+ * An accept therefore only reaches handleIncomingAccept from a responses
+ * stream; the handler mints the back-channel access + provisions anchor
+ * streams + mirrors a copy to :_cmc:inbox so the requester's app sees the
+ * accept via standard inbox subscription.
  */
 function isOnInbox (event: CmcEvent): boolean {
   const ids = Array.isArray(event?.streamIds) ? event.streamIds : [];

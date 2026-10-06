@@ -24,8 +24,8 @@ const require = createRequire(import.meta.url);
  *   1. Extract content.grantedAccess.apiEndpoint (the accepter's
  *      data-grant URL — that's where the requester's app can READ the
  *      accepted permissions).
- *   2. Extract content.from (server-stamped by inboxWriteHook —
- *      {username, host} of the accepter).
+ *   2. Extract content.from ({username, host} of the accepter, as
+ *      delivered with the accept on the capability's responses stream).
  *   3. Read the original request event from one of the requester's
  *      `:_cmc:apps:<app>:[<path>:]` streams to find the appCode + scope.
  *   3b. Resolve the relationship's features against our own copy of the
@@ -85,8 +85,8 @@ type SelfIdentity = { username: string; host: string };
 
 /**
  * Process an incoming `consent/accept-cmc` event after it has been persisted
- * in the requester's :_cmc:inbox. Provisions the back-channel access +
- * anchor streams.
+ * on the capability's responses stream. Provisions the back-channel access +
+ * anchor streams, and mirrors a copy to the requester's :_cmc:inbox.
  *
  * On stream-create failures: we ignore "stream-already-exists" (idempotent —
  * a re-delivery of the same accept just rebuilds the same anchors). Other

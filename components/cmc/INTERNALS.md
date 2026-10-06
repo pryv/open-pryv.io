@@ -265,7 +265,7 @@ sequenceDiagram
     Plugin->>Plugin: check clientData.cmc.role === 'counterparty'
     alt role missing or wrong
         Plugin-->>APIServer: reject (cmc-not-counterparty)
-        APIServer-->>PeerPlugin: 403
+        APIServer-->>PeerPlugin: 400
     end
     Plugin->>Plugin: check event-type in allowed-set for inbox<br/>(request/revoke/back-channel)
     alt event-type not allowed on the inbox (an accept or a refuse included)
