@@ -10,7 +10,8 @@
   turned the feature off is ignored (no error). Each side resolves against its own copy of the
   offer (an accept that does not arrive through the capability can only narrow a relationship the
   requester already holds) and stamps the resolved pair on the `consent/accept-cmc` trigger (at completion), on both
-  relationship accesses (`clientData.cmc.features`) and on the requester's inbox mirror. Before,
+  relationship accesses (`clientData.cmc.features`) and on the requester's inbox mirror; an
+  `events.update` of the accept keeps the stored `features`. Before,
   the value came from the accept as written: an accept without `features` recorded `null`, and an
   accepter could turn chat on against the offer.
 - **No chat channel without chat.** A relationship whose resolved `features.chat` is false gets no
