@@ -2555,7 +2555,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       bobSlug = C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' });
     });
 
-    it('[CN61] both sides record the resolved features: the accept trigger and the requester\'s inbox mirror', async function () {
+    it('[CN70] both sides record the resolved features: the accept trigger and the requester\'s inbox mirror', async function () {
       const t0 = Date.now();
       let trigger;
       while (Date.now() - t0 < POLL_TIMEOUT_MS) {
