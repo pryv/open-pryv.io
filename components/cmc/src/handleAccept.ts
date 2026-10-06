@@ -160,6 +160,11 @@ async function handleAccept (params: {
   if (counterparty == null) {
     return { ok: false, reason: 'cmc-handler-counterparty-unknown' };
   }
+  // An account cannot consent to itself: refused before any stream or access
+  // exists, so no self-relationship is ever provisioned.
+  if (sameIdentity(counterparty, selfIdentity)) {
+    return { ok: false, reason: CmcErrorIds.SELF_ACCEPT_FORBIDDEN };
+  }
 
   // 2a. Provision our anchor streams BEFORE creating the data-grant
   // access — the access carries contribute permissions on those streams
@@ -852,6 +857,15 @@ function inferCounterparty (offer: OfferShape, capabilityUrl: string): { usernam
   }
   if (host == null) return null;
   return { username, host };
+}
+
+/** Same account: both identities give the same counterparty slug (the key both sides use). */
+function sameIdentity (a: { username: string; host: string }, b: { username: string; host: string }): boolean {
+  try {
+    return slugMod.counterpartySlug(a) === slugMod.counterpartySlug(b);
+  } catch (_e) {
+    return false;
+  }
 }
 
 export {

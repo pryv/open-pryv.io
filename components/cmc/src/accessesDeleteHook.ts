@@ -138,11 +138,19 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           relationshipCmc: cmc,
           by: 'accesses.delete',
           accessId: access.id,
+          access,
           deps: { mall: deps.mall, logger: deps.logger, notifyEventChanged },
         });
         withdrawalStamped = withdrawal.ok && withdrawal.written;
       }
       const stampedField = withdrawalStamped !== undefined ? { withdrawalStamped } : {};
+
+      // A self-relationship (an account that accepted its own invite) has no
+      // peer: its endpoint is the access just deleted.
+      if (acceptWithdrawal.isSelfRelationship(cmc, access)) {
+        results.push({ accessId: access.id, attempted: false, reason: 'self-relationship', ...stampedField });
+        continue;
+      }
 
       // Peer delivery path. Requester side stores it on
       // `counterparty.apiEndpoint` (stamped by handleIncomingAccept);

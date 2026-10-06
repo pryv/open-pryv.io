@@ -31,6 +31,15 @@
   `systemMessaging` when present (`400`, `error.data.id: 'cmc-invalid-event-content'` otherwise).
 - `@pryv/cmc` needs no update: `acceptInvite` already narrows to the offer.
 
+### CMC: an account cannot accept its own invite (#150)
+
+- A `consent/accept-cmc` whose offer was made by the accepting account itself (an open link opened
+  while signed in as the requester) now fails with `failure.reason: 'cmc-self-accept-forbidden'`,
+  before any stream or access is created. Before, the account got a relationship with itself.
+- Such a self-relationship, created before this change, is a single relationship access. Deleting
+  it with `accesses.delete` now records `content.withdrawal` on the accept event that created it,
+  and attempts no delivery to a peer.
+
 ## 2.0.0-rc.37 - 2026-10-06
 
 ### Trusted proxies: proxy-addr 2.0.8 (CVE-2026-90711)

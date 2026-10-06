@@ -26,7 +26,9 @@
  * a client cannot write, change or erase it.
  *
  * Rules: accepter side only (the data grant carries the LOCAL accept event id;
- * the requester's back-channel carries the peer's, and a `capabilityId` key);
+ * the requester's back-channel carries the peer's, and a `capabilityId` key),
+ * except for a self-relationship (an account that accepted its own invite),
+ * whose single access is both: its accept is found by `dataGrantAccessId`;
  * among writers in sequence the first wins, an existing `withdrawal` is never
  * overwritten (detach stamps before the delete hook fires, and a hook that
  * fires twice in sequence writes once); the check is a read then a write, not
@@ -62,33 +64,71 @@ type AcceptEventLike = {
   modified?: number;
 };
 
+type RelationshipCmc = Pick<CmcClientData, 'capabilityId' | 'acceptEventId'> & { counterparty?: { apiEndpoint?: string | null } | null };
+type StampEvents = Pick<MallEventsLike, 'getOne' | 'update'> & Partial<Pick<MallEventsLike, 'get'>>;
+
+/**
+ * An account that accepted its own invite (refused since, but such
+ * relationships may exist) holds ONE relationship access: the data grant,
+ * which the incoming-accept handler then reused as the back-channel. It
+ * carries the `capabilityId` key and no `acceptEventId`, and its peer
+ * endpoint is its own token.
+ */
+function isSelfRelationship (relationshipCmc: RelationshipCmc, access: { token?: string } | null | undefined): boolean {
+  const endpoint = relationshipCmc.counterparty?.apiEndpoint;
+  if (typeof access?.token !== 'string' || access.token.length === 0 || typeof endpoint !== 'string') return false;
+  try {
+    return new URL(endpoint).username === access.token;
+  } catch (_e) {
+    return false;
+  }
+}
+
+/** The accept trigger that recorded this access as its data grant (`content.dataGrantAccessId`). */
+async function findAcceptOfDataGrant (userId: string, accessId: string, events: StampEvents): Promise<string | null> {
+  if (events.get == null) return null;
+  const accepts = await events.get(userId, { types: [C.ET_ACCEPT] }) as AcceptEventLike[];
+  const hit = accepts.find((e) => e?.content?.dataGrantAccessId === accessId);
+  return typeof hit?.id === 'string' ? hit.id : null;
+}
+
 async function stampWithdrawalOnAccept (params: {
   userId: string;
-  relationshipCmc: Pick<CmcClientData, 'capabilityId' | 'acceptEventId'> | null | undefined;
+  relationshipCmc: RelationshipCmc | null | undefined;
   by: WithdrawalBy;
   accessId: string;
   revokeEventId?: string | null;
+  /** The relationship access itself, to recognise a self-relationship by its token. */
+  access?: { token?: string } | null;
   deps: {
-    mall: { events?: Pick<MallEventsLike, 'getOne' | 'update'> };
+    mall: { events?: StampEvents };
     logger?: CmcLogger;
     notifyEventChanged?: (userId: string, event: AcceptEventLike) => void;
   };
 }): Promise<StampResult> {
   const { userId, relationshipCmc, by, accessId, revokeEventId, deps } = params;
+  if (relationshipCmc == null) return { ok: true, written: false, skipped: 'not-accepter-side' };
+  const events = deps.mall.events;
   // The requester's back-channel carries a `capabilityId` KEY (null for a
   // non-open-link relationship, so presence is the signal) and the PEER's
-  // accept event id: nothing of ours to mark.
-  if (relationshipCmc == null ||
-      Object.prototype.hasOwnProperty.call(relationshipCmc, 'capabilityId') ||
-      typeof relationshipCmc.acceptEventId !== 'string' || relationshipCmc.acceptEventId.length === 0) {
+  // accept event id: nothing of ours to mark, unless the peer is this account.
+  const requesterSide = Object.prototype.hasOwnProperty.call(relationshipCmc, 'capabilityId');
+  let acceptEventId: string | null = !requesterSide && typeof relationshipCmc.acceptEventId === 'string' &&
+    relationshipCmc.acceptEventId.length > 0
+    ? relationshipCmc.acceptEventId
+    : null;
+  const selfRelationship = acceptEventId == null && isSelfRelationship(relationshipCmc, params.access);
+  if (acceptEventId == null && !selfRelationship) {
     return { ok: true, written: false, skipped: 'not-accepter-side' };
   }
-  const acceptEventId = relationshipCmc.acceptEventId;
-  const events = deps.mall.events;
   if (events?.getOne == null || events?.update == null) {
     return { ok: true, written: false, skipped: 'mall-events-unavailable' };
   }
   try {
+    if (acceptEventId == null) {
+      acceptEventId = await findAcceptOfDataGrant(userId, accessId, events);
+      if (acceptEventId == null) return { ok: true, written: false, skipped: 'not-an-accept' };
+    }
     const event = await events.getOne(userId, acceptEventId) as AcceptEventLike | null;
     if (event == null || event.type !== C.ET_ACCEPT) {
       return { ok: true, written: false, skipped: 'not-an-accept' };
@@ -117,5 +157,5 @@ async function stampWithdrawalOnAccept (params: {
   }
 }
 
-export { stampWithdrawalOnAccept };
+export { stampWithdrawalOnAccept, isSelfRelationship };
 export type { Withdrawal, WithdrawalBy };

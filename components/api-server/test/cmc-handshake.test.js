@@ -2636,4 +2636,53 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(alert.status, 201, JSON.stringify(alert.body));
     });
   });
+
+  describe('[CMCHS-SELF] an account opening its own invite', function () {
+    it('[CN67] the requester approving its own open link is refused: the accept fails, no relationship is provisioned', async function () {
+      const appId = 'self-accept-app';
+      const appRoot = ':_cmc:apps:' + appId;
+      const scope = appRoot + ':study-self';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: appId });
+      await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: appRoot, name: 'study-self' });
+      const offer = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
+        streamIds: [scope],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          capability: { mode: 'open-link' },
+          request: {
+            title: { en: 'study-self' },
+            description: { en: 'self accept' },
+            consent: { en: 'I consent.' },
+            permissions: [{ streamId: 'fertility', level: 'read' }],
+          },
+          requesterMeta: { username: alice.username, appId },
+        },
+      });
+      assert.strictEqual(offer.status, 201, JSON.stringify(offer.body));
+      const accept = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
+        streamIds: [appRoot],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl: offer.body.event.content.capabilityUrl, accessName: 'self-accept-' + Date.now() },
+      });
+      assert.strictEqual(accept.status, 201, JSON.stringify(accept.body));
+
+      let trigger;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        trigger = (await coreRequest.get(alice.eventsPath + '/' + accept.body.event.id).set('Authorization', alice.token)).body.event;
+        if (trigger?.content?.status === 'failed' || trigger?.content?.status === 'completed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(trigger?.content?.status, 'failed', JSON.stringify(trigger?.content));
+      assert.strictEqual(trigger.content.failure?.reason, 'cmc-self-accept-forbidden', JSON.stringify(trigger.content));
+
+      const accesses = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses;
+      assert.deepStrictEqual(
+        accesses.filter((a) => a.clientData?.cmc?.role === 'counterparty' && a.clientData.cmc.scopeStreamId === scope).map((a) => a.id),
+        []
+      );
+    });
+  });
 });

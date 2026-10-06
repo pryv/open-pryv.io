@@ -1394,6 +1394,7 @@ npm package.
 | `HANDLER_DATA_GRANT_NAME_CONFLICT` | `cmc-handler-data-grant-name-conflict` | The data-grant access name collided with an existing access AND the deterministic uniquified retry collided too. Permanent (non-retryable), accept again with a different `accessName`. |
 | `HANDLER_DATA_GRANT_NO_APIENDPOINT` | `cmc-handler-data-grant-no-apiendpoint` | The created access lacks `apiEndpoint`. Wiring bug, surface for ops. |
 | `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
+| `SELF_ACCEPT_FORBIDDEN` | `cmc-self-accept-forbidden` | The accepting account is the offer's requester (an open link opened while signed in as the requester). Refused before anything is provisioned; no relationship exists. Permanent: answer the offer with the intended account. |
 | `HANDLER_DELEGATION_ENDED` | `cmc-handler-delegation-ended` | The accept was written with a delegate token (account delegation) and the delegation was detached before the accept completed. No data grant is left. Permanent (non-retryable); the account owner may accept again. |
 | `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
 | `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |

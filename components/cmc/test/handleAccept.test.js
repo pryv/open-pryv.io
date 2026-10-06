@@ -559,6 +559,43 @@ describe('[CMCHA] cmc/handleAccept', () => {
     });
   });
 
+  describe('[CMCHA-SELF] an account cannot accept its own offer', () => {
+    async function acceptOfferFrom (requesterUsername, requesterHost) {
+      const offer = structuredClone(VALID_OFFER);
+      offer.content.requesterUsername = requesterUsername;
+      offer.content.requesterHost = requesterHost;
+      const mall = fakeMall();
+      const { fetch, calls } = fakeFetch([
+        { status: 200, body: { events: [offer] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: { id: 'evt-accept-self', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:my-app'], content: { capabilityUrl: 'https://Tok@example.com/' } },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      return { r, mall, calls };
+    }
+
+    it('[HA46] the requester accepting its own offer is refused before any stream or access exists', async () => {
+      for (const username of ['alice', 'Alice']) {
+        const { r, mall, calls } = await acceptOfferFrom(username, 'recipient.example.com');
+        assert.equal(r.ok, false, username);
+        assert.equal(r.reason, 'cmc-self-accept-forbidden', username);
+        assert.equal(mall.calls.streamsCreated.length, 0, username);
+        assert.equal(mall.calls.accessesCreated.length, 0, username);
+        assert.equal(calls.length, 1, username + ': only the offer read, nothing delivered');
+      }
+    });
+
+    it('[HA47] the same username on another platform is another account', async () => {
+      const { r, mall } = await acceptOfferFrom('alice', 'other.example.org');
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesCreated.length, 1);
+    });
+  });
+
   describe('[CMCHA-PS] pickScopeFromTrigger', () => {
     it('[HA18] picks the first :_cmc:apps:* stream-id', () => {
       assert.equal(

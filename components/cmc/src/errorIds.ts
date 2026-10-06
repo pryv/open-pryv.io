@@ -188,6 +188,11 @@ const CmcErrorIds = {
   // a 403 `forbidden` with this `data.id` for a direct counterparty write of
   // an alert / ack.
   SYSTEM_MESSAGING_DISABLED: 'cmc-system-messaging-disabled',
+  // The accepter is the offer's requester: an account cannot consent to
+  // itself (an open link opened while signed in as the requester).
+  // handleAccept refuses before anything is provisioned or minted; the accept
+  // trigger is marked failed with this reason.
+  SELF_ACCEPT_FORBIDDEN: 'cmc-self-accept-forbidden',
 
   // --- Forge-prevention on accesses.* HTTP routes ---
   // User code attempted to write under the `clientData.cmc` namespace
