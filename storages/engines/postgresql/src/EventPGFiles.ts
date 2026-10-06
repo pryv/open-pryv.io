@@ -34,7 +34,16 @@ interface EventStoreLike {
   deleteAttachment?: (userId: string, eventId: string, fileId: string, transaction: unknown) => Promise<EventWithAttachments>;
   getOne: (userId: string, eventId: string) => Promise<EventWithAttachments>;
   update: (userId: string, event: EventWithAttachments, transaction: unknown) => Promise<unknown>;
+  // Read-merge-write of one event (the local stores): the merged event, or false when it does not exist.
+  updateWithMerge: (userId: string, eventId: string, merge: (stored: EventWithAttachments) => EventWithAttachments | null, transaction: unknown) => Promise<EventWithAttachments | null | false>;
   [k: string]: unknown;
+}
+
+/** Apply `merge` to the event as stored at write time, through the store's own `updateWithMerge`. */
+async function updateStoredEvent (es: EventStoreLike, userId: string, eventId: string, merge: (stored: EventWithAttachments) => EventWithAttachments, transaction: unknown): Promise<EventWithAttachments> {
+  const written = await es.updateWithMerge(userId, eventId, merge, transaction);
+  if (written === false || written == null) throw new Error('Could not update event with id ' + eventId);
+  return written;
 }
 
 type PgClientLike = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
@@ -165,23 +174,24 @@ class EventPGFiles {
       const fileId = await eventFiles.saveAttachmentFromStream(attachmentItem.attachmentData, userId, eventId);
       const attachment = Object.assign({ id: fileId }, attachmentItem);
       delete (attachment as { attachmentData?: unknown }).attachmentData;
-      const event = await es.getOne(userId, eventId);
-      event.attachments ??= [];
-      event.attachments.push(attachment);
-      setIntegrityOnEvent(event);
-      await es.update(userId, event, transaction);
-      return event;
+      // Added to the event as stored at write time, so an update landed since
+      // the file was saved is kept.
+      return await updateStoredEvent(es, userId, eventId, (event) => {
+        event.attachments = [...(event.attachments ?? []), attachment];
+        setIntegrityOnEvent(event);
+        return event;
+      }, transaction);
     };
 
     es.deleteAttachment = async function deleteAttachment (userId: string, eventId: string, fileId: string, transaction: unknown) {
-      const event = await es.getOne(userId, eventId);
-      event.attachments = event.attachments?.filter((attachment) => {
-        return attachment.id !== fileId;
-      });
       await eventFiles.removeAttachment(userId, eventId, fileId);
-      setIntegrityOnEvent(event);
-      await es.update(userId, event, transaction);
-      return event;
+      return await updateStoredEvent(es, userId, eventId, (event) => {
+        event.attachments = event.attachments?.filter((attachment) => {
+          return attachment.id !== fileId;
+        });
+        setIntegrityOnEvent(event);
+        return event;
+      }, transaction);
     };
   }
 }
