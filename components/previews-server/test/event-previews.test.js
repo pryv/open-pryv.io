@@ -255,6 +255,19 @@ describe('[EP01] event previews', function () {
 
   describe('[EP03] POST /clean-up-cache', function () {
     const basePath = '/' + user.username + '/clean-up-cache';
+    const adminKey = helpers.dependencies.settings.auth.adminAccessKey;
+
+    it('[EPCK] is refused (unknown resource) without the admin key, user token or none', async function () {
+      for (const auth of [token, undefined, adminKey + 'x']) {
+        const req = superagent.post(server.url + basePath).ok(() => true);
+        if (auth != null) req.set('Authorization', auth);
+        const res = await req;
+        assert.strictEqual(res.status, 404, 'auth ' + auth);
+        assert.strictEqual(res.body.error?.id, errors.ErrorIds.UnknownResource);
+      }
+      const res = await superagent.post(server.url + '/clean-up-cache').ok(() => true);
+      assert.strictEqual(res.status, 404);
+    });
 
     it('[FUYE] must clean up cached previews not accessed for one week by default', function (done) {
       const event = testData.events[2];
@@ -282,7 +295,7 @@ describe('[EP01] event previews', function () {
           await xattr.set(aCachedPath, 'user.pryv.lastAccessed', twoWeeksAgo.toString());
         },
         async function cleanupCache () {
-          const res = await new Promise((resolve) => request.post(basePath, token).end((res) => resolve(res)));
+          const res = await new Promise((resolve) => request.post(basePath, adminKey).end((res) => resolve(res)));
           assert.strictEqual(res.statusCode, 200);
           // Old preview (2 weeks ago) should have been deleted
           assert.ok(!fs.existsSync(aCachedPath), 'Old preview should be deleted');
@@ -304,7 +317,7 @@ describe('[EP01] event previews', function () {
       assert.ok(lastAccessed);
       await xattr.remove(cachedPath, 'user.pryv.lastAccessed');
 
-      const resPost = await new Promise((resolve) => request.post(basePath, token).end((res) => resolve(res)));
+      const resPost = await new Promise((resolve) => request.post(basePath, adminKey).end((res) => resolve(res)));
 
       assert.strictEqual(resPost.statusCode, 200);
       const stat = fs.statSync(cachedPath);

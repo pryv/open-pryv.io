@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = require('path').dirname(__filename);
 
+const crypto = require('node:crypto');
 const fs = require('fs');
 const path = require('path');
 const Cache = require('../cache.ts').default;
@@ -36,7 +37,7 @@ const StandardDimensionsLength = StandardDimensions.length;
  *
  */
 type RouteHandler = (req: PryvRequest, res: ResponseLike, next: NextFn) => unknown;
-type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, handler: RouteHandler) => unknown };
+type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, ...handlers: RouteHandler[]) => unknown };
 type PryvRequest = {
   context: {
     user: { id: string; [k: string]: unknown };
@@ -197,9 +198,21 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
     return StandardDimensions[StandardDimensionsLength - 1];
   }
   // CACHE CLEAN-UP
+  // A maintenance call: the admin key only (`Authorization: <auth.adminAccessKey>`),
+  // answered "unknown resource" otherwise, like the /system routes. The
+  // nightly cron below does not need it.
   const logger = getLogger('previews-cache'); let workerRunning = false;
-  expressApp.post('/clean-up-cache', cleanUpCache);
-  expressApp.post('/:username/clean-up-cache', cleanUpCache);
+  const adminAccessKey = (await getConfig()).get('auth:adminAccessKey');
+  expressApp.post('/clean-up-cache', checkAdminKey, cleanUpCache);
+  expressApp.post('/:username/clean-up-cache', checkAdminKey, cleanUpCache);
+  function checkAdminKey (req: PryvRequest, _res: ResponseLike, next: NextFn) {
+    const sent = (req.headers as { authorization?: unknown }).authorization;
+    if (!isAdminKey(sent, adminAccessKey)) {
+      logger.warn('Refused previews cache clean-up without the admin key', { ip: req.ip });
+      return next(errors.unknownResource());
+    }
+    next();
+  }
   function cleanUpCache (req: PryvRequest, res: ResponseLike, next: NextFn) {
     if (workerRunning) {
       return res.status(200).json({ message: 'Clean-up already in progress.' });
@@ -243,3 +256,11 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
     });
   }
 };
+
+/** Constant-time comparison with the configured admin key; no key configured refuses everything. */
+function isAdminKey (sent: unknown, adminAccessKey: unknown): boolean {
+  if (typeof sent !== 'string' || typeof adminAccessKey !== 'string' || adminAccessKey === '') return false;
+  const a = Buffer.from(sent);
+  const b = Buffer.from(adminAccessKey);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
