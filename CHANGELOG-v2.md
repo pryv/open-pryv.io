@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Previews cache clean-up requires the admin key
+
+- **Security.** `POST /clean-up-cache` and `POST /{username}/clean-up-cache` on the previews worker
+  ran the cache clean-up for any caller. They now require `Authorization: <auth.adminAccessKey>` and
+  answer "unknown resource" otherwise. The worker's port is internal and the public port never
+  routed them, so only a caller already inside the host or its network was concerned. The nightly
+  clean-up is unchanged.
+
 ## 2.0.0-rc.38 - 2026-10-06
 
 ### CMC: `features.chat` decides whether a relationship gets a chat channel (#149)
