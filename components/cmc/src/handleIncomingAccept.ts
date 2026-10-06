@@ -173,19 +173,55 @@ async function handleIncomingAccept (params: {
   // Compute the relevant slugs + stream-ids. The peer's stream-ids
   // mirror the structure on their account (both sides derive from
   // app-scope + counterparty slug — deterministic).
+  // Re-delivery of an accept for a relationship we already hold must update
+  // THAT relationship's access, not mint a second one. Match on the scope
+  // rather than the name: an access minted before names carried the scope
+  // still resolves (the selector derives its scope from its own channel
+  // permissions), so it is healed in place (below) instead of being
+  // duplicated under the new name. Looked up here: its features cap the
+  // resolution that follows.
+  let existingForScope: AccessLike | null = null;
+  if (typeof mall.accesses.get === 'function' && typeof mall.accesses.update === 'function') {
+    try {
+      const existingList = await mall.accesses.get(userId, {});
+      existingForScope = relationshipKey.selectRelationshipAccess({
+        accesses: existingList,
+        counterparty: {
+          username: counterparty.username,
+          hostSlug: slugMod.slugifyHost(counterparty.host),
+        },
+        scopeStreamId,
+        appCode,
+        logger: deps.logger,
+      });
+    } catch (err: unknown) {
+      // Non-fatal: fall through to create, which has its own duplicate path.
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse lookup failed', {
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
+
   // The relationship's features, resolved against OUR copy of the offer: the
   // offer's, narrowed by what the accepter sent. A peer that sends a wider
   // value (an older core, or a forged delivery) cannot turn on here a feature
   // this side's offer turned off, as long as the copy is found: by the
   // responses stream the accept was written to (server-controlled), else by
-  // the id the accept names. When neither names a readable copy, the
-  // delivered value decides. Stamped on the back-channel and the inbox
-  // mirror; with `chat: false` no chat leaf and no chat permission exist.
+  // the id the accept names. An accept that did not arrive through a
+  // capability's responses stream (one a peer posts on the inbox with the
+  // back-channel token it holds) has no server-controlled key: it can only
+  // narrow a relationship this side already holds, never widen it. For a new
+  // relationship without a readable copy the delivered value decides.
+  // Stamped on the back-channel and the inbox mirror; with `chat: false` no
+  // chat leaf and no chat permission exist.
   const offeredFeatures = offerFeatures(offerCopy, acceptEvent, deps.logger);
-  const negotiatedFeatures: Features = resolveFeatures(
+  let negotiatedFeatures: Features = resolveFeatures(
     offeredFeatures,
     (acceptEvent?.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null } | undefined)?.features
   );
+  if (offerCopy.via !== 'responses-stream' && existingForScope != null) {
+    negotiatedFeatures = resolveFeatures(negotiatedFeatures, existingForScope.clientData?.cmc?.features);
+  }
 
   const peerSlug = slugMod.counterpartySlug({ username: counterparty.username, host: counterparty.host });
   const selfSlug = slugMod.counterpartySlug({ username: selfIdentity.username, host: selfIdentity.host });
@@ -327,39 +363,21 @@ async function handleIncomingAccept (params: {
       },
     },
   };
-  // Re-delivery of an accept for a relationship we already hold must update
-  // THAT relationship's access, not mint a second one. Match on the scope
-  // rather than the name: an access minted before names carried the scope
-  // still resolves (the selector derives its scope from its own channel
-  // permissions), so it is healed in place instead of being duplicated
-  // under the new name.
+  // A relationship we already hold for this scope is healed in place.
   let access: AccessLike | null = null;
-  if (typeof mall.accesses.get === 'function' && typeof mall.accesses.update === 'function') {
+  if (existingForScope != null) {
     try {
-      const existingList = await mall.accesses.get(userId, {});
-      const existingForScope = relationshipKey.selectRelationshipAccess({
-        accesses: existingList,
-        counterparty: {
-          username: counterparty.username,
-          hostSlug: slugMod.slugifyHost(counterparty.host),
+      const updated = await mall.accesses.update!(userId, {
+        id: existingForScope.id,
+        update: {
+          permissions: accessParams.permissions,
+          clientData: accessParams.clientData,
         },
-        scopeStreamId,
-        appCode,
-        logger: deps.logger,
       });
-      if (existingForScope != null) {
-        const updated = await mall.accesses.update(userId, {
-          id: existingForScope.id,
-          update: {
-            permissions: accessParams.permissions,
-            clientData: accessParams.clientData,
-          },
-        });
-        access = updated ?? existingForScope;
-      }
+      access = updated ?? existingForScope;
     } catch (err: unknown) {
       // Non-fatal: fall through to create, which has its own duplicate path.
-      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse lookup failed', {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse update failed', {
         error: String((err as Error)?.message || err),
       });
     }
@@ -604,8 +622,11 @@ async function findOfferCopy (params: {
       const ev = events.find((e) => e?.type === C.ET_REQUEST);
       if (ev != null) return { event: ev, via: 'responses-stream' };
     } catch (_e) {
-      // Streams collected: fall back to the delivered id.
+      // Streams collected: no copy (below).
     }
+    // The capability names its offer: when that copy is gone, the id the
+    // peer names (possibly another request of ours) is not consulted.
+    return { event: null, via: null };
   }
   const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
   if (typeof reqId === 'string' && reqId.length > 0 && mall.events?.getOne != null) {

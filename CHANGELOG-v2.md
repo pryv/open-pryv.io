@@ -8,7 +8,8 @@
   now resolved from the offer's `content.request.features` (each one true unless set to `false`);
   the accept's `content.features` may only narrow them, and a `true` there against an offer that
   turned the feature off is ignored (no error). Each side resolves against its own copy of the
-  offer and stamps the resolved pair on the `consent/accept-cmc` trigger (at completion), on both
+  offer (an accept that does not arrive through the capability can only narrow a relationship the
+  requester already holds) and stamps the resolved pair on the `consent/accept-cmc` trigger (at completion), on both
   relationship accesses (`clientData.cmc.features`) and on the requester's inbox mirror. Before,
   the value came from the accept as written: an accept without `features` recorded `null`, and an
   accepter could turn chat on against the offer.

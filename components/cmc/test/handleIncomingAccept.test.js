@@ -38,8 +38,19 @@ function fakeMall (opts = {}) {
         };
       },
       async get (_userId, _params) {
-        return capabilityAccess != null ? [capabilityAccess] : [];
+        return [...(capabilityAccess != null ? [capabilityAccess] : []), ...(opts.existingAccesses ?? [])];
       },
+      // Present only with existing relationship accesses, so the reuse path
+      // stays off for the other tests.
+      ...(opts.existingAccesses != null
+        ? {
+            async update (_userId, params) {
+              (calls.accessesUpdated ??= []).push(params);
+              const acc = opts.existingAccesses.find((a) => a.id === params.id);
+              return acc != null ? { ...acc, ...params.update } : null;
+            },
+          }
+        : {}),
     },
     events: {
       // Like the real mall: `get` does not filter on `id` (newest first, here
@@ -631,21 +642,30 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
 
   describe('[CMCIA-FEAT] features resolved against this side\'s own offer copy', () => {
     const SCOPE = ':_cmc:apps:my-app:campaign-2026';
+    // where the copy lives: the capability's offer stream, scope stamped at mint
     function offerCopy (features) {
-      return { ...ORIGINAL_REQUEST_EVENT, content: { request: { features } } };
+      return {
+        id: 'orig-req-1',
+        type: 'consent/request-cmc',
+        streamIds: [':_cmc:_internal:offer:cap-xyz'],
+        content: { originStreamId: SCOPE, request: { features } },
+      };
     }
-    async function incoming ({ requestEvent, features, originalEventId = 'orig-req-1', storedEvents, logger }) {
-      const mall = fakeMall({ requestEvent, storedEvents });
+    async function incoming ({
+      requestEvent, features, originalEventId = 'orig-req-1', storedEvents, logger, existingAccesses,
+      streamIds = [':_cmc:_internal:responses:cap-xyz'], extraContent = {},
+    }) {
+      const mall = fakeMall({ requestEvent, storedEvents, existingAccesses });
       const posted = [];
       const fetch = async (url, init) => {
         posted.push(JSON.parse(init.body));
         return { status: 201, ok: true, async json () { return {}; }, async text () { return '{}'; } };
       };
-      const content = { ...ACCEPT_FROM_INBOX.content, originalEventId, features };
+      const content = { ...ACCEPT_FROM_INBOX.content, originalEventId, features, ...extraContent };
       if (originalEventId == null) delete content.originalEventId;
       const r = await handleIncomingAccept({
         userId: 'u1',
-        acceptEvent: { ...ACCEPT_FROM_INBOX, streamIds: [':_cmc:_internal:responses:cap-xyz'], content },
+        acceptEvent: { ...ACCEPT_FROM_INBOX, streamIds, content },
         selfIdentity: SELF,
         deps: { mall, fetch, logger: logger ?? { debug: () => {}, warn: () => {} } },
       });
@@ -705,8 +725,9 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         streamIds: [':_cmc:_internal:offer:cap-xyz'],
         content: { originStreamId: SCOPE, request: { features: { chat: false } } },
       };
-      // a bogus id, then an id naming another request that allows chat
-      for (const [originalEventId, requestEvent] of [['bogus-id', undefined], ['orig-req-1', offerCopy({ chat: true })]]) {
+      // a bogus id, then an id naming another request (on its app stream) that allows chat
+      const otherRequest = { ...ORIGINAL_REQUEST_EVENT, content: { request: { features: { chat: true } } } };
+      for (const [originalEventId, requestEvent] of [['bogus-id', undefined], ['orig-req-1', otherRequest]]) {
         const { r, mall, posted } = await incoming({
           requestEvent, storedEvents: [streamCopy], originalEventId, features: { chat: true, systemMessaging: true },
         });
@@ -717,6 +738,48 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         assert.ok(!mall.calls.streamsCreated.some((s) => /:chats:/.test(s.id)), originalEventId);
         const backChannel = posted.find((b) => b.type === 'consent/back-channel-cmc');
         assert.ok(!('remoteChatStreamId' in backChannel.content), originalEventId);
+      }
+    });
+
+    it('[IA22] an accept posted on the inbox can only narrow the relationship this side holds, never widen it', async () => {
+      const existing = (features) => [{
+        id: 'acc-existing',
+        apiEndpoint: 'https://existing-tok@requester.example.com/',
+        permissions: [{ streamId: SCOPE + ':collectors:alice--pryv-me', level: 'contribute' }],
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            scopeStreamId: SCOPE,
+            features,
+            counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@alice.pryv.me/' },
+          },
+        },
+      }];
+      const inbox = (existingFeatures, delivered) => incoming({
+        requestEvent: undefined,
+        originalEventId: null,
+        streamIds: [':_cmc:inbox'],
+        extraContent: { requesterOriginStreamId: SCOPE },
+        existingAccesses: existing(existingFeatures),
+        features: delivered,
+      });
+      for (const [existingFeatures, delivered, expected] of [
+        [{ chat: false, systemMessaging: true }, { chat: true, systemMessaging: true }, { chat: false, systemMessaging: true }],
+        [{ chat: true, systemMessaging: true }, { chat: false }, { chat: false, systemMessaging: true }],
+        [null, { chat: true, systemMessaging: true }, { chat: true, systemMessaging: true }],
+      ]) {
+        const label = JSON.stringify([existingFeatures, delivered]);
+        const { r, mall, posted } = await inbox(existingFeatures, delivered);
+        assert.equal(r.ok, true, label);
+        assert.equal(mall.calls.accessesCreated.length, 0, label + ': healed in place');
+        const update = mall.calls.accessesUpdated[0];
+        assert.equal(update.id, 'acc-existing', label);
+        assert.deepEqual(update.update.clientData.cmc.features, expected, label);
+        assert.equal(chatPermissions(update.update).length, expected.chat ? 1 : 0, label);
+        assert.equal(mall.calls.streamsCreated.some((s) => /:chats:/.test(s.id)), expected.chat, label);
+        const backChannel = posted.find((b) => b.type === 'consent/back-channel-cmc');
+        assert.equal('remoteChatStreamId' in backChannel.content, expected.chat, label);
       }
     });
   });

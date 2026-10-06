@@ -2635,6 +2635,28 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       });
       assert.strictEqual(alert.status, 201, JSON.stringify(alert.body));
     });
+
+    it('[CN68] an accept the peer posts on the inbox with its back-channel token cannot turn chat on', async function () {
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const forged = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/accept-cmc',
+        content: {
+          grantedAccess: { apiEndpoint: backChannel.clientData.cmc.counterparty.apiEndpoint },
+          requesterOriginStreamId: h.triggerStreamId,
+          features: { chat: true, systemMessaging: true },
+        },
+      });
+      assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
+      // the handler runs after the write: give it time to heal the access
+      await sleep(1500);
+      const after = await relationshipAccess(alice, h.triggerStreamId);
+      assert.strictEqual(after.id, backChannel.id);
+      assert.deepStrictEqual((after.permissions || []).filter((p) => /:chats/.test(p.streamId)), []);
+      assert.deepStrictEqual(after.clientData.cmc.features, NO_CHAT);
+      const ids = await streamIdsUnder(alice, h.triggerStreamId);
+      assert.ok(!ids.includes(h.triggerStreamId + ':chats:' + bobSlug), JSON.stringify(ids));
+    });
   });
 
   describe('[CMCHS-SELF] an account opening its own invite', function () {
