@@ -271,13 +271,13 @@ class MallUserEvents implements MallEvents {
   }
 
   async deleteAttachment (userId: string, eventId: string, fileId: string, mallTransaction?: Transaction): Promise<EventLike> {
-    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
+    const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
     const eventsStore = this.eventsStores.get(storeId);
     const storeTransaction = mallTransaction ? await mallTransaction.getStoreTransaction(storeId) : null;
     if (!eventsStore) {
       throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
     }
-    const eventFromStore = await eventsStore.deleteAttachment(userId, eventId, fileId, storeTransaction);
+    const eventFromStore = await eventsStore.deleteAttachment(userId, storeEventId, fileId, storeTransaction);
     const event = eventsUtils.convertEventFromStore(storeId, eventFromStore);
     return event;
   }
@@ -348,24 +348,35 @@ class MallUserEvents implements MallEvents {
       if (next == null) return null;
       return await this.update(userId, next, mallTransaction, opts);
     }
+    // An error of the merge itself (e.g. a request moving the event to another
+    // store's stream) is the caller's to see as thrown, not a store failure:
+    // it is kept aside, the store writes nothing, and it is rethrown below.
+    let mergeError: unknown = null;
     const storeMerge = (storeStored: EventLike): EventLike | null => {
-      const next = merge(eventsUtils.convertEventFromStore(storeId, storeStored));
-      if (next == null) return null;
-      next.id = fullEventId;
-      if (integrity.events.isActive) integrity.events.set(next);
-      return toStoreEvent(storeId, next);
+      try {
+        const next = merge(eventsUtils.convertEventFromStore(storeId, storeStored));
+        if (next == null) return null;
+        next.id = fullEventId;
+        if (integrity.events.isActive) integrity.events.set(next);
+        return toStoreEvent(storeId, next);
+      } catch (err) {
+        mergeError = err;
+        return null;
+      }
     };
     const storeTransaction = mallTransaction
       ? await mallTransaction.getStoreTransaction(storeId)
       : null;
+    let res;
     try {
-      const res = await eventsStore.updateWithMerge(userId, storeEventId, storeMerge, storeTransaction, opts);
-      if (res === false) throw errorFactory.invalidItemId('Could not update event with id ' + fullEventId);
-      if (res == null) return null;
-      return eventsUtils.convertEventFromStore(storeId, res);
+      res = await eventsStore.updateWithMerge(userId, storeEventId, storeMerge, storeTransaction, opts);
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
     }
+    if (mergeError != null) throw mergeError;
+    if (res === false) throw errorFactory.invalidItemId('Could not update event with id ' + fullEventId);
+    if (res == null) return null;
+    return eventsUtils.convertEventFromStore(storeId, res);
   }
 
   /**

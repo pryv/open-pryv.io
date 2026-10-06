@@ -139,6 +139,19 @@ describe('[ESR] events: a server stamp written during a client update is kept', 
     assert.deepStrictEqual(res.body.event.content, { content: 'hi, edited', status: 'completed' });
   });
 
+  it('[ESR7] clientData: null still clears the map', async function () {
+    const event = await createNote();
+    const set = await coreRequest.put(basePath + '/' + event.id).set('Authorization', token)
+      .send({ clientData: { k: 'v' } });
+    assert.deepStrictEqual(set.body.event.clientData, { k: 'v' });
+    const res = await coreRequest.put(basePath + '/' + event.id).set('Authorization', token)
+      .send({ clientData: null });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(res.body.event.clientData == null, JSON.stringify(res.body.event.clientData));
+    const stored = await readBack(event.id);
+    assert.ok(stored.clientData == null, JSON.stringify(stored.clientData));
+  });
+
   describe('[ESR6] mall.events.updateWithMerge on the local store', function () {
     it('[ESR6A] the merge sees the stored event and its result is written, with integrity', async function () {
       const event = await createNote();

@@ -1330,7 +1330,8 @@ function mergeOntoStored (stored: WireEvent, read: WireEvent, updated: WireEvent
   const merged: WireEvent = structuredClone(stored);
   const keys = new Set([...Object.keys(read), ...Object.keys(updated)]);
   for (const key of keys) {
-    if (key === 'clientData') continue;
+    // a clientData map update merges below; `clientData: null` clears it like any field
+    if (key === 'clientData' && clientDataUpdate != null) continue;
     if (key !== 'modified' && key !== 'modifiedBy' && isDeepStrictEqual(read[key], updated[key])) continue;
     if (updated[key] === undefined) {
       delete merged[key];
