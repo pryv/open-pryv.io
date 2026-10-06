@@ -2612,7 +2612,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       bobSlug = C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' });
     });
 
-    it('[CN61] both sides record the resolved features: the accept trigger and the requester\'s inbox mirror', async function () {
+    it('[CN70] both sides record the resolved features: the accept trigger and the requester\'s inbox mirror', async function () {
       const t0 = Date.now();
       let trigger;
       while (Date.now() - t0 < POLL_TIMEOUT_MS) {
@@ -2734,8 +2734,16 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(alert.status, 201, JSON.stringify(alert.body));
     });
 
-    it('[CN68] an accept the peer posts on the inbox with its back-channel token cannot turn chat on', async function () {
+    async function inboxAcceptsFrom (actor, username, since) {
+      const res = await coreRequest.get(actor.eventsPath).set('Authorization', actor.token)
+        .query({ streams: [':_cmc:inbox'], types: ['consent/accept-cmc', 'consent/refuse-cmc'], fromTime: since - 1, sortAscending: true });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return (res.body.events || []).filter((e) => e.content?.from?.username === username && e.created >= since);
+    }
+
+    it('[CN68] an accept the peer posts on the inbox with its back-channel token is refused and changes nothing', async function () {
       const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const since = Date.now() / 1000;
       const forged = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
         streamIds: [':_cmc:inbox'],
         type: 'consent/accept-cmc',
@@ -2745,18 +2753,52 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
           features: { chat: true, systemMessaging: true },
         },
       });
-      assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
-      // the handler runs after the write: once it has healed the access it
-      // re-delivers the back-channel to bob
-      const forgedAt = forged.body.event.created;
-      await pollInboxFor(bob.eventsPath, bob.token, 'consent/back-channel-cmc',
-        (e) => e.content?.from?.username === alice.username && e.created >= forgedAt);
+      assert.strictEqual(forged.status, 400, JSON.stringify(forged.body));
+      assert.strictEqual(forged.body.error.id, 'invalid-operation');
+      assert.strictEqual(forged.body.error.data.id, 'cmc-event-type-not-allowed');
+      assert.deepStrictEqual(await inboxAcceptsFrom(alice, bob.username, since), []);
       const after = await relationshipAccess(alice, h.triggerStreamId);
       assert.strictEqual(after.id, backChannel.id);
       assert.deepStrictEqual((after.permissions || []).filter((p) => /:chats/.test(p.streamId)), []);
       assert.deepStrictEqual(after.clientData.cmc.features, NO_CHAT);
       const ids = await streamIdsUnder(alice, h.triggerStreamId);
       assert.ok(!ids.includes(h.triggerStreamId + ':chats:' + bobSlug), JSON.stringify(ids));
+    });
+
+    it('[CN73] an accept the peer posts on the inbox naming another scope provisions nothing there', async function () {
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const appRoot = ':_cmc:apps:forged-' + cuid().slice(-6);
+      const forgedScope = appRoot + ':forged';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: appRoot.slice(11) });
+      await ensureStream(alice.streamsPath, alice.token, { id: forgedScope, parentId: appRoot, name: 'forged' });
+      const forged = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/accept-cmc',
+        content: {
+          grantedAccess: { apiEndpoint: backChannel.clientData.cmc.counterparty.apiEndpoint },
+          requesterOriginStreamId: forgedScope,
+        },
+      });
+      assert.strictEqual(forged.status, 400, JSON.stringify(forged.body));
+      assert.strictEqual(forged.body.error.data.id, 'cmc-event-type-not-allowed');
+      await sleep(300); // nothing is dispatched; give a wrong path the time to show
+      assert.deepStrictEqual(await streamIdsUnder(alice, forgedScope), []);
+      const accesses = await coreRequest.get(alice.accessesPath).set('Authorization', alice.token);
+      assert.strictEqual(accesses.status, 200, JSON.stringify(accesses.body));
+      assert.deepStrictEqual(accesses.body.accesses.filter((a) => a.clientData?.cmc?.scopeStreamId === forgedScope), []);
+    });
+
+    it('[CN74] a refuse the peer posts on the inbox is refused too', async function () {
+      const backChannel = await relationshipAccess(alice, h.triggerStreamId);
+      const since = Date.now() / 1000;
+      const forged = await coreRequest.post(alice.eventsPath).set('Authorization', backChannel.token).send({
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/refuse-cmc',
+        content: { capabilityUrl: 'https://placeholder@example.com/', requesterOriginStreamId: h.triggerStreamId },
+      });
+      assert.strictEqual(forged.status, 400, JSON.stringify(forged.body));
+      assert.strictEqual(forged.body.error.data.id, 'cmc-event-type-not-allowed');
+      assert.deepStrictEqual(await inboxAcceptsFrom(alice, bob.username, since), []);
     });
   });
 

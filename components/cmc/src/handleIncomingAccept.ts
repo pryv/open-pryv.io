@@ -12,9 +12,9 @@ const require = createRequire(import.meta.url);
  * CMC plugin — requester-side incoming `consent/accept-cmc` handler.
  *
  * When the accepter posts a `consent/accept-cmc` event back to the requester's
- * platform via the capability URL, the event lands on the requester's
- * `:_cmc:inbox` (after going through inboxWriteHook's counterparty
- * validation + content.from stamping). The requester needs to provision
+ * platform via the capability URL, the event lands on the capability's
+ * responses stream (`:_cmc:_internal:responses:<capId>`); one posted on
+ * `:_cmc:inbox` is refused by inboxWriteHook. The requester needs to provision
  * the BACK-CHANNEL access — i.e. mint an access on their own account
  * scoped to the accepter's CMC namespace so future chat / system
  * deliveries from the requester to the accepter have an authoritated
@@ -24,8 +24,8 @@ const require = createRequire(import.meta.url);
  *   1. Extract content.grantedAccess.apiEndpoint (the accepter's
  *      data-grant URL — that's where the requester's app can READ the
  *      accepted permissions).
- *   2. Extract content.from (server-stamped by inboxWriteHook —
- *      {username, host} of the accepter).
+ *   2. Extract content.from ({username, host} of the accepter, as
+ *      delivered with the accept on the capability's responses stream).
  *   3. Read the original request event from one of the requester's
  *      `:_cmc:apps:<app>:[<path>:]` streams to find the appCode + scope.
  *   3b. Resolve the relationship's features against our own copy of the
@@ -85,8 +85,8 @@ type SelfIdentity = { username: string; host: string };
 
 /**
  * Process an incoming `consent/accept-cmc` event after it has been persisted
- * in the requester's :_cmc:inbox. Provisions the back-channel access +
- * anchor streams.
+ * on the capability's responses stream. Provisions the back-channel access +
+ * anchor streams, and mirrors a copy to the requester's :_cmc:inbox.
  *
  * On stream-create failures: we ignore "stream-already-exists" (idempotent —
  * a re-delivery of the same accept just rebuilds the same anchors). Other
@@ -207,10 +207,10 @@ async function handleIncomingAccept (params: {
   // value (an older core, or a forged delivery) cannot turn on here a feature
   // this side's offer turned off, as long as the copy is found: by the
   // responses stream the accept was written to (server-controlled), else by
-  // the id the accept names. An accept that did not arrive through a
-  // capability's responses stream (one a peer posts on the inbox with the
-  // back-channel token it holds) has no server-controlled key: it can only
-  // narrow a relationship this side already holds, never widen it. For a new
+  // the id the accept names. An accept whose offer copy is gone has no
+  // server-controlled key (one a peer would post on the inbox is refused by
+  // the inbox hook): it can only narrow a relationship this side already
+  // holds, never widen it. For a new
   // relationship without a readable copy the delivered value decides.
   // Stamped on the back-channel and the inbox mirror; with `chat: false` no
   // chat leaf and no chat permission exist.

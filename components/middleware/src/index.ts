@@ -12,6 +12,7 @@ const commonHeaders = require('./commonHeaders.ts').default;
 const contentType = require('./contentType.ts');
 const filesUploadSupport = require('./filesUploadSupport.ts').default;
 const initContext = require('./initContext.ts').default;
+const isAdminKey = require('./isAdminKey.ts').default;
 const getAuth = require('./getAuth.ts').default;
 const loadAccess = require('./loadAccess.ts').default;
 const noSniff = require('./noSniff.ts').default;
@@ -28,6 +29,7 @@ export {
   contentType,
   filesUploadSupport,
   initContext,
+  isAdminKey,
   getAuth,
   loadAccess,
   noSniff,

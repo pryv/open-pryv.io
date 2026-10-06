@@ -1109,7 +1109,7 @@ The `Host` header sent to HFS must be a plain IP:port — see "HFS Host header" 
 
 ### Previews: 404 on `/previews/events/...`
 
-Previews are served by the previews worker on port 3001 (`cluster.previewsWorker`, on by default). With built-in HTTPS the public port routes `/{user}/previews/events/{id}` to it; behind your own proxy, add the previews location shown above. `/previews/clean-up-cache` is an internal maintenance call and is deliberately not routed. A client URL without the `previews/` segment (`/{user}/events/{id}.jpg`) is an event lookup, not a preview, and answers 404.
+Previews are served by the previews worker on port 3001 (`cluster.previewsWorker`, on by default). With built-in HTTPS the public port routes `/{user}/previews/events/{id}` to it; behind your own proxy, add the previews location shown above. The previews cache clean-up is an internal maintenance call on the worker port only (`POST /clean-up-cache` or `POST /{username}/clean-up-cache` on port 3001, with `Authorization: <auth.adminAccessKey>`; the nightly clean-up does not need it): `/previews/clean-up-cache` on the public port is deliberately not routed. A client URL without the `previews/` segment (`/{user}/events/{id}.jpg`) is an event lookup, not a preview, and answers 404.
 
 ### Previews: "Could not load the sharp module"
 

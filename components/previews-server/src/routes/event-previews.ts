@@ -21,6 +21,7 @@ const sharp = require('sharp');
 const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const getAuth = require('middleware/src/getAuth.ts').default;
+const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
 const attachmentManagement = require('../attachmentManagement.ts');
@@ -36,7 +37,7 @@ const StandardDimensionsLength = StandardDimensions.length;
  *
  */
 type RouteHandler = (req: PryvRequest, res: ResponseLike, next: NextFn) => unknown;
-type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, handler: RouteHandler) => unknown };
+type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, ...handlers: RouteHandler[]) => unknown };
 type PryvRequest = {
   context: {
     user: { id: string; [k: string]: unknown };
@@ -45,7 +46,7 @@ type PryvRequest = {
   };
   params: { id: string };
   query: { width?: string; w?: string; height?: string; h?: string };
-  headers: { origin?: string };
+  headers: { origin?: string; authorization?: string };
   ip: string;
   [k: string]: unknown;
 };
@@ -64,6 +65,14 @@ type Logging = unknown;
 export default async function (expressApp: ExpressApp, initContextMiddleware: unknown, loadAccessMiddleware: unknown, _logging: Logging) {
   const mall = await getMall();
   const previewsCacheCleanUpCronTime = (await getConfig()).get('eventFiles:previewsCacheCleanUpCronTime') || '00 00 2 * * *';
+  // CACHE CLEAN-UP: a maintenance call taking the raw admin key only
+  // (`Authorization: <auth.adminAccessKey>`), answered "unknown resource"
+  // otherwise, like the /system routes. Registered before getAuth, which would
+  // also accept the key as `?auth=`, Bearer or Basic. The nightly cron below
+  // does not need it.
+  const adminAccessKey = (await getConfig()).get('auth:adminAccessKey');
+  expressApp.post('/clean-up-cache', checkAdminKey, cleanUpCache);
+  expressApp.post('/:username/clean-up-cache', checkAdminKey, cleanUpCache);
   // SERVING PREVIEWS
   expressApp.all('/*', getAuth);
   expressApp.all('/:username/events/*', initContextMiddleware, loadAccessMiddleware);
@@ -196,10 +205,15 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
     }
     return StandardDimensions[StandardDimensionsLength - 1];
   }
-  // CACHE CLEAN-UP
+  // CACHE CLEAN-UP (routes registered at the top, before getAuth)
   const logger = getLogger('previews-cache'); let workerRunning = false;
-  expressApp.post('/clean-up-cache', cleanUpCache);
-  expressApp.post('/:username/clean-up-cache', cleanUpCache);
+  function checkAdminKey (req: PryvRequest, _res: ResponseLike, next: NextFn) {
+    if (!isAdminKey(req.headers.authorization, adminAccessKey)) {
+      logger.warn('Refused previews cache clean-up without the admin key', { ip: req.ip });
+      return next(errors.unknownResource());
+    }
+    next();
+  }
   function cleanUpCache (req: PryvRequest, res: ResponseLike, next: NextFn) {
     if (workerRunning) {
       return res.status(200).json({ message: 'Clean-up already in progress.' });
