@@ -26,10 +26,13 @@ import * as C from './constants.ts';
  *     (read by the injected `lineageOf`, the delegation plugin's reader, so
  *     this plugin does not import it). The content validator lets extra keys
  *     through, so without the removal a client could write them itself.
- *   - events.update (`createAcceptPreserveHook`): the stored values are kept,
- *     client-supplied ones are dropped, the rest of the content is as sent. A
- *     content update replaces the content whole, so the stored values are put
- *     back explicitly.
+ *   - events.update (`createAcceptPreserveHook`, `preserveServerOwnedContent`):
+ *     the stored values are kept, client-supplied ones are dropped, the rest
+ *     of the content is as sent. A content update replaces the content whole,
+ *     so the stored values are put back explicitly, and again at write time
+ *     on the row as stored then, so a stamp written meanwhile is kept. The
+ *     dispatch status fields (`CMC_SERVER_OWNED_FIELDS`: `status`, `failure`)
+ *     get the same treatment on every CMC event type.
  * Server writers (the dispatch status stamps, the incoming accept, the
  * delegation detach) go through the mall and never reach these hooks.
  *
@@ -97,26 +100,43 @@ function createAcceptStampingHook (deps: { lineageOf: LineageOf }): Middleware {
 }
 
 /**
+ * The content to write when `event` (an updated copy) replaces `storedEvent`:
+ * the event's content with every server-owned field taken from the stored
+ * one (absent there, absent here). Server-owned: `CMC_SERVER_OWNED_FIELDS` on
+ * every CMC event type, plus `ACCEPT_SERVER_OWNED_FIELDS` on an accept. The
+ * event's content as is for any other type or a non-object content.
+ * Pure: the api-server calls it again on the row as stored at write time.
+ */
+function preserveServerOwnedContent (storedEvent: EventLike | null | undefined, event: EventLike): unknown {
+  if (!C.isCmcEventType(event?.type) || !isPlainObject(event.content)) return event?.content;
+  const storedContent = storedEvent?.type === event.type ? storedEvent?.content : undefined;
+  const stored = isPlainObject(storedContent) ? storedContent : {};
+  const fields = event.type === C.ET_ACCEPT
+    ? [...C.CMC_SERVER_OWNED_FIELDS, ...C.ACCEPT_SERVER_OWNED_FIELDS]
+    : C.CMC_SERVER_OWNED_FIELDS;
+  // Copy: the merged event may share the content object with the update.
+  const content: Record<string, unknown> = { ...event.content };
+  for (const field of fields) {
+    if (stored[field] === undefined) {
+      delete content[field];
+    } else {
+      content[field] = stored[field];
+    }
+  }
+  return content;
+}
+
+/**
  * events.update hook. Wired after the update prerequisites, which load the
  * stored event onto `context.oldEvent` and the merged one onto
- * `context.newEvent`.
+ * `context.newEvent`. (The api-server applies `preserveServerOwnedContent`
+ * again against the row as stored at write time.)
  */
 function createAcceptPreserveHook (): Middleware {
   return function cmcAcceptPreserveHook (context, _params, _result, next) {
     const event = context?.newEvent;
-    if (event?.type !== C.ET_ACCEPT || !isPlainObject(event.content)) return next();
-    const old = context.oldEvent;
-    const stored = (old?.type === C.ET_ACCEPT && isPlainObject(old.content)) ? old.content : {};
-    // Copy: the merged event may share the content object with the update.
-    const content: Record<string, unknown> = { ...event.content };
-    for (const field of C.ACCEPT_SERVER_OWNED_FIELDS) {
-      if (stored[field] === undefined) {
-        delete content[field];
-      } else {
-        content[field] = stored[field];
-      }
-    }
-    event.content = content;
+    if (event == null) return next();
+    event.content = preserveServerOwnedContent(context.oldEvent, event);
     next();
   };
 }
@@ -124,5 +144,6 @@ function createAcceptPreserveHook (): Middleware {
 export {
   createAcceptStampingHook,
   createAcceptPreserveHook,
+  preserveServerOwnedContent,
   approvedByFor,
 };

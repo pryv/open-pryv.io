@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { createAcceptStampingHook, createAcceptPreserveHook } = require('../src/acceptServerOwnedFieldsHook.ts');
+const { createAcceptStampingHook, createAcceptPreserveHook, preserveServerOwnedContent } = require('../src/acceptServerOwnedFieldsHook.ts');
 
 // Same contract as the delegation plugin's lineageOf: a marker for the
 // delegate token and its children, null otherwise.
@@ -178,5 +178,25 @@ describe('[APB] cmc/acceptServerOwnedFieldsHook', () => {
     };
     await run(preserve, context);
     assert.deepEqual(context.newEvent.content, { status: 'completed' });
+  });
+
+  it('[APB13] on every CMC type, the dispatch status and failure are kept from storage', async () => {
+    const context = {
+      oldEvent: { type: 'message/chat-cmc', content: { content: 'hi', status: 'failed', failure: { reason: 'peer-down' } } },
+      newEvent: { type: 'message/chat-cmc', content: { content: 'edited', status: 'completed' } },
+    };
+    await run(preserve, context);
+    assert.deepEqual(context.newEvent.content, { content: 'edited', status: 'failed', failure: { reason: 'peer-down' } });
+  });
+
+  it('[APB14] preserveServerOwnedContent takes the server-owned fields from its first argument', () => {
+    const read = { type: 'consent/accept-cmc', content: { status: 'delivered' } };
+    const storedNow = { type: 'consent/accept-cmc', content: { status: 'completed', withdrawal: WITHDRAWAL } };
+    const event = { type: 'consent/accept-cmc', content: { note: 'x', status: 'forged' } };
+    assert.deepEqual(preserveServerOwnedContent(storedNow, event), { note: 'x', status: 'completed', withdrawal: WITHDRAWAL });
+    assert.deepEqual(preserveServerOwnedContent(read, event), { note: 'x', status: 'delivered' });
+    // not a CMC type: the content as is (same object)
+    const note = { type: 'note/txt', content: 'plain' };
+    assert.strictEqual(preserveServerOwnedContent(read, note), 'plain');
   });
 });
