@@ -189,6 +189,10 @@ const ET_RETRY = 'cmc-internal/retry-cmc';
 // subject-side record of a consent): a client value is dropped on create and
 // the stored one kept on update (acceptServerOwnedFieldsHook.ts).
 const ACCEPT_SERVER_OWNED_FIELDS: readonly string[] = ['approvedBy', 'ownerConfirmedAt', 'withdrawal'];
+// Content fields of every CMC event only the server writes: the dispatch
+// status stamps (`delivered` / `completed` / `failed` + its `failure`), the
+// mint's `pending`, a scope request's outcome. Kept from storage on update.
+const CMC_SERVER_OWNED_FIELDS: readonly string[] = ['status', 'failure'];
 // Back-channel info delivery (requester → accepter, post-acceptance).
 // After the requester mints the back-channel access (handleIncomingAccept),
 // they POST one of these to the accepter's :_cmc:inbox via the data-grant
@@ -282,6 +286,7 @@ export {
   ET_SYSTEM_SCOPE_UPDATE,
   ET_RETRY,
   ACCEPT_SERVER_OWNED_FIELDS,
+  CMC_SERVER_OWNED_FIELDS,
   ET_BACK_CHANNEL,
   ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,
