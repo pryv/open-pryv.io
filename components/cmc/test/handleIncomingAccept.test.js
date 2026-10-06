@@ -782,5 +782,34 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         assert.equal('remoteChatStreamId' in backChannel.content, expected.chat, label);
       }
     });
+
+    it('[IA23] a relationship recorded without features takes its ceiling from its invite, this side\'s own request', async () => {
+      const invite = { id: 'invite-legacy', type: 'consent/request-cmc', streamIds: [SCOPE], content: { request: { features: { chat: false } } } };
+      const { r, mall } = await incoming({
+        requestEvent: invite,
+        originalEventId: null,
+        streamIds: [':_cmc:inbox'],
+        extraContent: { requesterOriginStreamId: SCOPE },
+        existingAccesses: [{
+          id: 'acc-legacy',
+          apiEndpoint: 'https://legacy-tok@requester.example.com/',
+          permissions: [{ streamId: SCOPE + ':collectors:alice--pryv-me', level: 'contribute' }],
+          clientData: {
+            cmc: {
+              role: 'counterparty',
+              appCode: 'my-app',
+              scopeStreamId: SCOPE,
+              inviteEventId: 'invite-legacy',
+              counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@alice.pryv.me/' },
+            },
+          },
+        }],
+        features: { chat: true, systemMessaging: true },
+      });
+      assert.equal(r.ok, true);
+      const update = mall.calls.accessesUpdated[0];
+      assert.deepEqual(update.update.clientData.cmc.features, { chat: false, systemMessaging: true });
+      assert.equal(chatPermissions(update.update).length, 0);
+    });
   });
 });

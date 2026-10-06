@@ -2689,8 +2689,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         },
       });
       assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
-      // the handler runs after the write: give it time to heal the access
-      await sleep(1500);
+      // the handler runs after the write: once it has healed the access it
+      // re-delivers the back-channel to bob
+      const forgedAt = forged.body.event.created;
+      await pollInboxFor(bob.eventsPath, bob.token, 'consent/back-channel-cmc',
+        (e) => e.content?.from?.username === alice.username && e.created >= forgedAt);
       const after = await relationshipAccess(alice, h.triggerStreamId);
       assert.strictEqual(after.id, backChannel.id);
       assert.deepStrictEqual((after.permissions || []).filter((p) => /:chats/.test(p.streamId)), []);

@@ -220,7 +220,19 @@ async function handleIncomingAccept (params: {
     (acceptEvent?.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null } | undefined)?.features
   );
   if (offerCopy.via !== 'responses-stream' && existingForScope != null) {
-    negotiatedFeatures = resolveFeatures(negotiatedFeatures, existingForScope.clientData?.cmc?.features);
+    const existingCmc = existingForScope.clientData?.cmc as { features?: unknown; inviteEventId?: unknown } | undefined;
+    let ceiling = existingCmc?.features as { chat?: unknown; systemMessaging?: unknown } | null | undefined;
+    // A relationship recorded before features were stamped: its invite, our
+    // own request, says what was offered.
+    if (ceiling == null && typeof existingCmc?.inviteEventId === 'string' && mall.events?.getOne != null) {
+      try {
+        const invite = await mall.events.getOne(userId, existingCmc.inviteEventId) as OfferCopyEvent | null;
+        if (invite != null && invite.type === C.ET_REQUEST) ceiling = featuresFromOffer(invite.content);
+      } catch (_e) {
+        // No invite to read: the legacy contract (permissive) stands.
+      }
+    }
+    negotiatedFeatures = resolveFeatures(negotiatedFeatures, ceiling);
   }
 
   const peerSlug = slugMod.counterpartySlug({ username: counterparty.username, host: counterparty.host });
@@ -367,6 +379,7 @@ async function handleIncomingAccept (params: {
   let access: AccessLike | null = null;
   if (existingForScope != null) {
     try {
+      // `update` exists: the lookup that set existingForScope required it.
       const updated = await mall.accesses.update!(userId, {
         id: existingForScope.id,
         update: {
