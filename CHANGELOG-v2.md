@@ -9,7 +9,8 @@
   that can lead to code execution on glibc-based Linux. The previews worker detects an attachment's
   format from its content, so an SVG file attached to a `picture/attached` event was decoded when its
   preview was requested; any account able to create such an event could reach it. Other formats were
-  not concerned. No API or configuration change; update promptly.
+  not concerned. Every published Docker image before this release (Debian-based, glibc) is affected.
+  No API or configuration change; update promptly.
 
 ### A server-written event field no longer overwrites a concurrent client update
 
