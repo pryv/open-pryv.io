@@ -115,7 +115,7 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 | Stream | Created by | Writable by user | Holds |
 |---|---|---|---|
 | `:_cmc:` | server (always present) | no (reserved root) | namespace parent |
-| `:_cmc:inbox` | server (always present) | no (plugin-internal writes) | one-shot lifecycle events: `consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc` |
+| `:_cmc:inbox` | server (always present) | no (plugin-internal writes) | one-shot lifecycle events a peer delivers: `consent/request-cmc`, `consent/revoke-cmc`, `consent/back-channel-cmc`; plus the server's copy of each `consent/accept-cmc` |
 | `:_cmc:apps` | server (always present) | no (parent) | parent of user-creatable app scopes |
 | `:_cmc:apps:<anything-you-create>` | user via `streams.create({parentId: ':_cmc:apps'})` (or deeper) | yes | user's organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Apps namespace their sub-trees here. App access can be scoped to `:_cmc:apps:<app-code>:*` (whole app) or `:_cmc:apps:<app-code>:<request-slug>:*` (per-request). |
 | `:_cmc:apps:<app-code>:[<path>:]chats` | plugin (auto-created) | no (parent) | parent of per-counterparty chat sub-streams, nested under whichever app-scope stream the trigger was written to |
@@ -165,7 +165,7 @@ All event types live under the `cmc/*` namespace and are validated by the plugin
 | `consent/revoke-cmc` | either party's own user-managed `:_cmc:apps:*` scope stream, content carries `accessId` | Plugin: `accesses.delete` locally on the access; uses stored counterparty apiEndpoint to deliver `consent/revoke-cmc` to the other party's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half of the pair. |
 | `consent/invalidate-link-cmc` | requester's own user-managed `:_cmc:apps:*` scope stream, content carries `capabilityId` | Plugin: flips the capability access's `clientData.cmc.capability.state` from `'open'` to `'invalidated'` so further accepts via the capability URL fail with `cmc-capability-invalidated`. Open-link mode only (single-use capabilities auto-consume on first accept; calling this on one is a no-op success). Already-established data-grant + back-channel relationships are NOT touched, use `consent/revoke-cmc` for per-relationship teardown. No outbound delivery; the rejection happens server-side on the next attempted accept. |
 
-Delivered counterparties of `consent/request-cmc` (when same-platform directed) / `consent/accept-cmc` / `consent/refuse-cmc` / `consent/revoke-cmc` land in the recipient's `:_cmc:inbox`, the one-shot lifecycle channel.
+Delivered counterparties of `consent/request-cmc` (when same-platform directed) / `consent/revoke-cmc` land in the recipient's `:_cmc:inbox`, the one-shot lifecycle channel. A `consent/accept-cmc` / `consent/refuse-cmc` is delivered on the capability's responses stream; the server writes a copy of each accept to the requester's inbox. An accept or a refuse posted on the inbox itself is refused.
 
 **Family 2, Chat (anchored per user-pair under the app/path scope at `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`):**
 

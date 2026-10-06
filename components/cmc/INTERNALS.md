@@ -25,7 +25,7 @@ The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc
 
 | Region | Event-type prefix the plugin handles |
 |---|---|
-| `:_cmc:inbox` | `consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc` (one-shot lifecycle) |
+| `:_cmc:inbox` | `consent/request-cmc`, `consent/revoke-cmc`, `consent/back-channel-cmc` delivered by a peer (one-shot lifecycle), and the server's copy of each `consent/accept-cmc` (an accept and a refuse themselves arrive on the capability's responses stream) |
 | `:_cmc:apps:<app>:[<path>:]chats:<slug>` | `message/chat-cmc` |
 | `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc` |
 | `:_cmc:_internal:retries` | `cmc-internal/retry-cmc` (plugin-managed; loop consumer) |
@@ -127,7 +127,7 @@ The most intricate flow. The accepting user writes `consent/accept-cmc`; their p
    - `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`, only when the resolved `features.chat` is true
    - `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`
 
-The relationship's features are resolved by each side from its own copy of the offer (`content.request.features`, each one true unless set to `false`), narrowed by the accept's `content.features` (a `true` there never turns on what the offer turned off): `features.ts`. Chat anchors and the chat permission (on the data grant and on the back-channel) exist only when the resolved `features.chat` is true; the `chats` parent is always created. The resolved pair is stamped on both accesses, the delivered accept, the accept trigger at completion and the inbox mirror. The requester finds its offer copy by a key the peer does not control first: an accept made through a capability sits in `:_cmc:_internal:responses:<capId>`, and the copy is the request in `:_cmc:_internal:offer:<capId>`. Only then, for an accept that did not come through a capability, by the `originalEventId` (else `requestEventId`) the accept names. An accept that did not arrive through a capability's responses stream (a peer can post one on `:_cmc:inbox` with the back-channel token it holds) has no server-controlled key, so it can only narrow a relationship this side already holds for the scope: its features are ANDed with that access's recorded `features`. Only for a new relationship with no readable copy does the delivered value decide, logged at warn. Without chat the back-channel delivery leaves `remoteChatStreamId` out and the back-channel's `counterparty.remoteChatStreamId` is null.
+The relationship's features are resolved by each side from its own copy of the offer (`content.request.features`, each one true unless set to `false`), narrowed by the accept's `content.features` (a `true` there never turns on what the offer turned off): `features.ts`. Chat anchors and the chat permission (on the data grant and on the back-channel) exist only when the resolved `features.chat` is true; the `chats` parent is always created. The resolved pair is stamped on both accesses, the delivered accept, the accept trigger at completion and the inbox mirror. The requester finds its offer copy by a key the peer does not control first: an accept made through a capability sits in `:_cmc:_internal:responses:<capId>`, and the copy is the request in `:_cmc:_internal:offer:<capId>`. Only then, for an accept that did not come through a capability, by the `originalEventId` (else `requestEventId`) the accept names. An accept posted on `:_cmc:inbox` (even with the back-channel token a peer holds) is refused by the inbox hook; an accept on a responses stream whose offer copy is gone has no server-controlled key, so it can only narrow a relationship this side already holds for the scope: its features are ANDed with that access's recorded `features`. Only for a new relationship with no readable copy does the delivered value decide, logged at warn. Without chat the back-channel delivery leaves `remoteChatStreamId` out and the back-channel's `counterparty.remoteChatStreamId` is null.
 
 ```mermaid
 sequenceDiagram
@@ -258,7 +258,7 @@ sequenceDiagram
     participant Storage as Storage-B<br/>(per-user PG/SQLite)
     participant App as RecipientApp
 
-    PeerPlugin->>APIServer: POST /events<br/>streamIds:[:_cmc:inbox]<br/>type: consent/accept-cmc<br/>Authorization: <back-channel access token>
+    PeerPlugin->>APIServer: POST /events<br/>streamIds:[:_cmc:inbox]<br/>type: consent/revoke-cmc<br/>Authorization: <back-channel access token>
     APIServer->>Storage: resolve access from token<br/>(standard auth path)
     Storage-->>APIServer: access record
     APIServer->>Plugin: pre-create hook fires<br/>(carries access record)
@@ -267,10 +267,10 @@ sequenceDiagram
         Plugin-->>APIServer: reject (cmc-not-counterparty)
         APIServer-->>PeerPlugin: 403
     end
-    Plugin->>Plugin: check event-type in allowed-set for inbox<br/>(request/accept/refuse/revoke)
-    alt event-type not in lifecycle family
+    Plugin->>Plugin: check event-type in allowed-set for inbox<br/>(request/revoke/back-channel)
+    alt event-type not allowed on the inbox (an accept or a refuse included)
         Plugin-->>APIServer: reject (cmc-event-type-not-allowed)
-        APIServer-->>PeerPlugin: 403
+        APIServer-->>PeerPlugin: 400
     end
     Plugin->>Plugin: stamp content.from = access.clientData.cmc.counterparty<br/>{username, host}
     Plugin-->>APIServer: ok

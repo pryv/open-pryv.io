@@ -101,10 +101,10 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     }
   });
 
-  it('[CI05] accepts each lifecycle event type (request/accept/refuse/revoke)', async () => {
+  it('[CI05] accepts each type a peer delivers on the inbox (request/revoke/back-channel)', async () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
-    for (const type of ['consent/request-cmc', 'consent/accept-cmc', 'consent/refuse-cmc', 'consent/revoke-cmc']) {
+    for (const type of ['consent/request-cmc', 'consent/revoke-cmc', 'consent/back-channel-cmc']) {
       const ctx = {
         newEvent: { streamIds: [':_cmc:inbox'], type, content: {} },
         access: COUNTERPARTY_ACCESS,
@@ -118,14 +118,14 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: { grantedAccess: { apiEndpoint: 'X' } } },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: { accessId: 'X' } },
       access: COUNTERPARTY_ACCESS,
     };
     const err = await runMiddleware(mw, ctx, {}, {});
     assert.equal(err, undefined);
     assert.deepEqual(ctx.newEvent.content.from, { username: 'alice', host: 'example.com' });
     // Other content preserved
-    assert.deepEqual(ctx.newEvent.content.grantedAccess, { apiEndpoint: 'X' });
+    assert.strictEqual(ctx.newEvent.content.accessId, 'X');
     // Marker recorded on context
     assert.deepEqual(ctx.cmc.inboxWrite, {
       counterparty: { username: 'alice', host: 'example.com' },
@@ -138,7 +138,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const ctx = {
       newEvent: {
         streamIds: [':_cmc:inbox'],
-        type: 'consent/accept-cmc',
+        type: 'consent/revoke-cmc',
         content: { from: { username: 'evil', host: 'attacker.example' } },
       },
       access: COUNTERPARTY_ACCESS,
@@ -152,7 +152,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: {} },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: {} },
       access: { clientData: { cmc: { role: 'counterparty', counterparty: { username: 'alice' } } } }, // no host
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -166,7 +166,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const ctx = {
       newEvent: {
         streamIds: ['some-other-stream', ':_cmc:inbox'],
-        type: 'consent/refuse-cmc',
+        type: 'consent/request-cmc',
         content: {},
       },
       access: COUNTERPARTY_ACCESS,
@@ -174,5 +174,23 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const err = await runMiddleware(mw, ctx, {}, {});
     assert.equal(err, undefined);
     assert.deepEqual(ctx.newEvent.content.from, { username: 'alice', host: 'example.com' });
+  });
+
+  it('[CI10] refuses an accept or a refuse posted on the inbox, even from a counterparty, and stamps nothing', async () => {
+    const errors = fakeErrors();
+    const mw = createInboxWriteHook({ errors: errors.factory });
+    for (const type of ['consent/accept-cmc', 'consent/refuse-cmc']) {
+      const ctx = {
+        newEvent: { streamIds: [':_cmc:inbox'], type, content: { requesterOriginStreamId: ':_cmc:apps:x:forged' } },
+        access: COUNTERPARTY_ACCESS,
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.ok(err instanceof Error, 'expected reject for ' + type);
+      assert.equal(err.details.id, 'cmc-event-type-not-allowed');
+      assert.equal(err.details.eventType, type);
+      assert.ok(!err.details.allowed.includes(type));
+      assert.match(err.message, /capability responses stream/);
+      assert.equal(ctx.newEvent.content.from, undefined, 'nothing stamped on a refused write');
+    }
   });
 });

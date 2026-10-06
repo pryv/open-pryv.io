@@ -222,6 +222,12 @@ const ET_BACK_CHANNEL = 'consent/back-channel-cmc';
 const ET_INVALIDATE_LINK = 'consent/invalidate-link-cmc';
 
 const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE, ET_BACK_CHANNEL];
+// The types a counterparty token may deliver on `:_cmc:inbox`. An accept and a
+// refuse are not among them: they reach the requester only through the
+// capability's responses stream (the inbox holds the server's copy of an accept).
+// Taken from a peer's own inbox write, either would let it open a relationship
+// under a scope of its choosing, or mark one of the requester's invites refused.
+const EVENT_TYPES_INBOX = [ET_REQUEST, ET_REVOKE, ET_BACK_CHANNEL];
 const EVENT_TYPES_CHAT = [ET_CHAT];
 const EVENT_TYPES_SYSTEM = [
   ET_SYSTEM_ALERT,
@@ -304,6 +310,7 @@ export {
   ET_BACK_CHANNEL,
   ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,
+  EVENT_TYPES_INBOX,
   EVENT_TYPES_CHAT,
   EVENT_TYPES_SYSTEM,
   EVENT_TYPES_CAPABILITY,

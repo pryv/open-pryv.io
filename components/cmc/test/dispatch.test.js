@@ -223,7 +223,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
   });
 
   describe('[CMCDISP-INB] dispatch routes consent/accept-cmc on :_cmc:inbox → handleIncomingAccept', () => {
-    it('[CD11] inbox-direction routes to handleIncomingAccept (mints back-channel + provisions anchors)', async () => {
+    it('[CD11] a delivered accept (responses stream) routes to handleIncomingAccept (mints back-channel + provisions anchors)', async () => {
       const mall = fakeMall();
       // Stub events.getOne so handleIncomingAccept's resolveRequestScope
       // can find the request event by id.
@@ -236,7 +236,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         event: {
           id: 'evt-incoming-accept',
           type: 'consent/accept-cmc',
-          streamIds: [':_cmc:inbox'],
+          streamIds: [':_cmc:_internal:responses:cap-1'],
           content: {
             grantedAccess: { apiEndpoint: 'https://granted-tok@accepter.pryv.me/' },
             from: { username: 'alice', host: 'pryv.me' },

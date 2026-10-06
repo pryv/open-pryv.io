@@ -296,9 +296,10 @@ async function dispatch (params: {
     switch (event.type) {
       case C.ET_ACCEPT:
         // Direction-aware routing:
-        //   - consent/accept-cmc written on :_cmc:inbox = peer-delivered (the
-        //     accepter has just POSTed their accept to us via the
-        //     capability URL). Mint the back-channel access + provision
+        //   - consent/accept-cmc written on the capability's responses stream
+        //     = peer-delivered (the accepter has just POSTed their accept to
+        //     us via the capability URL; one on :_cmc:inbox is refused by the
+        //     inbox hook). Mint the back-channel access + provision
         //     anchor streams via handleIncomingAccept.
         //   - consent/accept-cmc written on a :_cmc:apps:* stream = the LOCAL
         //     user is accepting an incoming request. handleAccept reads
