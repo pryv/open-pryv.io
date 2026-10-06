@@ -196,6 +196,22 @@ function validateAccept (content: unknown): ValidationResult {
     errors.push('content.accessName: must be a string if present');
   }
 
+  // The features the accepter asks for. Shape only: they can only narrow the
+  // offer, and the server resolves and stamps the relationship's value where
+  // the offer is available (handleAccept / handleIncomingAccept).
+  if (content.features != null) {
+    if (!isPlainObject(content.features)) {
+      errors.push('content.features: must be an object if present');
+    } else {
+      if (content.features.chat != null && typeof content.features.chat !== 'boolean') {
+        errors.push('content.features.chat: must be a boolean if present');
+      }
+      if (content.features.systemMessaging != null && typeof content.features.systemMessaging !== 'boolean') {
+        errors.push('content.features.systemMessaging: must be a boolean if present');
+      }
+    }
+  }
+
   // Optional consent downgrade: the accepter grants only a subset of
   // the offer's permissions. Shape-checked here; the ⊆-offer check
   // happens in handleAccept where the offer is available.

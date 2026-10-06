@@ -98,6 +98,7 @@ export const {
   createEnsureReservedParentsHook,
   createEnsureAcceptScopeHook,
   createCounterpartyFromStampingHook,
+  createCounterpartyFeatureGateHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createAccessProvisionAppScopeHook,

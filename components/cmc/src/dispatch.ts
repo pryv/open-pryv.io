@@ -133,6 +133,7 @@ type HandlerResult = {
   capabilityId?: string;
   remoteEventId?: string;
   requesterIdentity?: { username: string; host: string };
+  features?: { chat: boolean; systemMessaging: boolean };
   backChannelAccessId?: string;
   anchorStreamIds?: string[];
   // Peer-delivery outcome, reported alongside a successful local action
@@ -407,6 +408,9 @@ async function dispatch (params: {
       // data-grant endpoint, token stripped). Without this the patient app
       // can't identify the doctor on each relationship row.
       from: result?.requesterIdentity,
+      // handleAccept: the relationship's resolved features (the offer's,
+      // narrowed by the accept), over the value the client wrote.
+      features: result?.features,
       // handleIncomingAccept fields:
       backChannelAccessId: result?.backChannelAccessId,
       anchorStreamIds: result?.anchorStreamIds,

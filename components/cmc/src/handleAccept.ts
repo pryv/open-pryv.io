@@ -30,6 +30,8 @@ const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // Tree-aware consent guard (hierarchical-masking class) — see
 // business/src/accesses/consentEffectiveGuard.ts.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
+const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+import type { Features } from './features.ts';
 
 type OfferShape = {
   id?: string;
@@ -82,6 +84,7 @@ type AcceptHandlerResult =
       backChannelApiEndpoint: string | null; // filled later when requester returns it
       anchorStreamIds: string[];             // chats/collectors anchors created on this side
       requesterIdentity: { username: string; host: string }; // stamped onto trigger.content.from by dispatch
+      features: Features;                    // resolved; stamped onto trigger.content.features by dispatch
     }
   | {
       ok: false;
@@ -121,7 +124,6 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
   const accessName = (triggerEvent.content as { accessName?: string })?.accessName;
-  const features: Record<string, unknown> | null = ((triggerEvent.content as { features?: Record<string, unknown> | null })?.features ?? null) as Record<string, unknown> | null;
 
   // 1. Read the offer.
   let offer: OfferShape | undefined;
@@ -139,6 +141,15 @@ async function handleAccept (params: {
   if (offer == null) {
     return { ok: false, reason: 'cmc-handler-offer-read-failed' };
   }
+
+  // The relationship's features: the offer's, narrowed by what the accept
+  // asks (a `true` there never turns on a feature the offer turned off).
+  // This resolved pair is what the grant, the delivered accept and the
+  // trigger record, and what decides whether a chat channel is provisioned.
+  const features: Features = resolveFeatures(
+    featuresFromOffer(offer.content),
+    (triggerEvent.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null })?.features
+  );
 
   // The counterparty (requester) identity needs to be derivable. We use
   // the offer's `requesterMeta` if present, falling back to the capability
@@ -169,10 +180,12 @@ async function handleAccept (params: {
       scopeStreamId: anchorScope,
       peerSlug,
       mall,
+      chat: features.chat,
     });
     if (provisioned.ok) {
       preCreatedAnchorIds = provisioned.created;
-      chatStream = C.chatStreamUnder(anchorScope, peerSlug);
+      // No chat leaf, so no chat permission, for a relationship without chat.
+      chatStream = features.chat ? C.chatStreamUnder(anchorScope, peerSlug) : null;
       collectorStream = C.collectorStreamUnder(anchorScope, peerSlug);
     } else {
       deps.logger?.warn?.('cmc/handleAccept: anchor-stream creation failed (non-fatal)', {
@@ -487,6 +500,9 @@ async function handleAccept (params: {
     // requester identity), and the patient app can't discover WHICH doctor
     // each relationship belongs to.
     requesterIdentity: counterparty,
+    // The resolved features, stamped on the trigger by the dispatcher over
+    // whatever the client wrote, so the app reads the relationship's value.
+    features,
   };
 }
 

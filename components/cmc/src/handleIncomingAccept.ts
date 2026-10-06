@@ -28,17 +28,20 @@ const require = createRequire(import.meta.url);
  *      {username, host} of the accepter).
  *   3. Read the original request event from one of the requester's
  *      `:_cmc:apps:<app>:[<path>:]` streams to find the appCode + scope.
+ *   3b. Resolve the relationship's features against our own copy of the
+ *      offer (the offer's, narrowed by the accept; see features.ts).
  *   4. Create the back-channel access:
- *      - permissions: create on `:_cmc:inbox` + rights on the chats
- *        and collectors streams under the app scope.
- *      - clientData.cmc = {role:'counterparty', appCode, counterparty:
- *        {username, host, apiEndpoint, remoteChatStreamId,
- *        remoteCollectorStreamId}}
+ *      - permissions: create on `:_cmc:inbox` + rights on the collectors
+ *        stream under the app scope, and on the chats stream only when
+ *        the resolved `features.chat` is true.
+ *      - clientData.cmc = {role:'counterparty', appCode, features,
+ *        counterparty: {username, host, apiEndpoint, remoteChatStreamId
+ *        (null without chat), remoteCollectorStreamId}}
  *      - The remote stream-ids are computed deterministically from our
  *        identity (the accepter mirrors the structure on their side).
  *   5. Auto-create the anchor streams on this side:
  *      - :_cmc:apps:<app>:[<path>:]chats
- *      - :_cmc:apps:<app>:[<path>:]chats:<accepter-slug>
+ *      - :_cmc:apps:<app>:[<path>:]chats:<accepter-slug>  (only with chat)
  *      - :_cmc:apps:<app>:[<path>:]collectors
  *      - :_cmc:apps:<app>:[<path>:]collectors:<accepter-slug>
  *
@@ -54,6 +57,8 @@ const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+import type { Features } from './features.ts';
 const crypto = require('node:crypto');
 
 type Counterparty = { username: string; host: string };
@@ -165,19 +170,31 @@ async function handleIncomingAccept (params: {
   // Compute the relevant slugs + stream-ids. The peer's stream-ids
   // mirror the structure on their account (both sides derive from
   // app-scope + counterparty slug — deterministic).
+  // The relationship's features, resolved against OUR copy of the offer: the
+  // offer's, narrowed by what the accepter sent. A peer that sends a wider
+  // value (an older core, or a forged delivery) cannot turn on here a feature
+  // this side's offer turned off. Stamped on the back-channel and the inbox
+  // mirror; with `chat: false` no chat leaf and no chat permission exist.
+  const offeredFeatures = await readOfferCopyFeatures({ userId, acceptEvent, mall, logger: deps.logger });
+  const negotiatedFeatures: Features = resolveFeatures(
+    offeredFeatures,
+    (acceptEvent?.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null } | undefined)?.features
+  );
+
   const peerSlug = slugMod.counterpartySlug({ username: counterparty.username, host: counterparty.host });
   const selfSlug = slugMod.counterpartySlug({ username: selfIdentity.username, host: selfIdentity.host });
-  const chatStream = C.chatStreamUnder(scopeStreamId, peerSlug);
+  const chatStream: string | null = negotiatedFeatures.chat ? C.chatStreamUnder(scopeStreamId, peerSlug) : null;
   const collectorStream = C.collectorStreamUnder(scopeStreamId, peerSlug);
-  const remoteChatStreamId = C.chatStreamUnder(scopeStreamId, selfSlug);
+  const remoteChatStreamId: string | null = negotiatedFeatures.chat ? C.chatStreamUnder(scopeStreamId, selfSlug) : null;
   const remoteCollectorStreamId = C.collectorStreamUnder(scopeStreamId, selfSlug);
 
-  // Provision the four anchor streams. Idempotent.
+  // Provision the anchor streams (no chat leaf without chat). Idempotent.
   const provisioned = await anchors.provisionAnchorStreams({
     userId,
     scopeStreamId,
     peerSlug,
     mall,
+    chat: negotiatedFeatures.chat,
   });
   if (!provisioned.ok) {
     return {
@@ -190,8 +207,9 @@ async function handleIncomingAccept (params: {
 
   // Mint the back-channel access. Permissions:
   //   - create-only on :_cmc:inbox (so the peer can deliver to us)
-  //   - read/contribute on chats + collectors anchor streams (so the
-  //     peer can deliver chat + system messages targeted to our slug)
+  //   - contribute on the collectors anchor stream, and on the chats one when
+  //     the relationship has chat (so the peer can deliver system messages,
+  //     and chats, targeted to our slug)
   //
   // Name disambiguator: appCode + peerSlug (separated by `--`) so two
   // distinct apps with the same counterparty don't collide. If a stale
@@ -221,14 +239,6 @@ async function handleIncomingAccept (params: {
     ? '--' + crypto.createHash('sha1').update(scopeStreamId).digest('hex').slice(0, 12)
     : '';
   const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug + scopeSuffix;
-  // Features gating — features negotiated by the offer
-  // (and accepted by the counterparty) are delivered on
-  // `acceptEvent.content.features`. Mirror them onto the
-  // back-channel access's clientData so handleChat / handleSystem on
-  // the REQUESTER side can enforce the contract symmetrically with
-  // the accepter side (whose data-grant access carries the same
-  // field via buildDataGrantPayload). Absent / null → permissive.
-  const negotiatedFeatures: Record<string, unknown> | null = ((acceptEvent?.content as { features?: Record<string, unknown> | null } | undefined)?.features ?? null) as Record<string, unknown> | null;
   // The capability this accept came through. Stamped on the back-channel
   // access: for an open-link invite, the relationship accesses carrying it ARE
   // the list of who joined. Also used below to consume the link and enrich the
@@ -271,14 +281,16 @@ async function handleIncomingAccept (params: {
       ? acceptEvent.content.originalEventId
       : null;
 
+  // The chat permission only for a relationship with chat.
+  const backChannelPermissions: Array<{ streamId: string; level: string }> = [
+    { streamId: C.NS_INBOX, level: 'create-only' },
+  ];
+  if (chatStream != null) backChannelPermissions.push({ streamId: chatStream, level: 'contribute' });
+  backChannelPermissions.push({ streamId: collectorStream, level: 'contribute' });
   const accessParams = {
     type: 'shared',
     name: accessName,
-    permissions: [
-      { streamId: C.NS_INBOX, level: 'create-only' },
-      { streamId: chatStream, level: 'contribute' },
-      { streamId: collectorStream, level: 'contribute' },
-    ],
+    permissions: backChannelPermissions,
     clientData: {
       cmc: {
         role: 'counterparty',
@@ -296,6 +308,8 @@ async function handleIncomingAccept (params: {
         // path rewrites clientData, so they self-refresh on the next accept.
         offerEventId,
         inviteEventId,
+        // The resolved features: handleChat / handleSystem on this side, and
+        // the inbound features gate, enforce them.
         features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
@@ -441,6 +455,8 @@ async function handleIncomingAccept (params: {
       //     this on the inbox event.
       const mirrorContent: Record<string, unknown> = {
         ...(acceptEvent.content || {}),
+        // The resolved value, not the one the peer sent.
+        features: negotiatedFeatures,
         backChannelAccessId: access.id,
       };
       if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
@@ -479,7 +495,10 @@ async function handleIncomingAccept (params: {
           content: {
             from: { username: selfIdentity.username, host: selfIdentity.host },
             apiEndpoint: access.apiEndpoint,
-            remoteChatStreamId: chatStream,
+            // Left out for a relationship without chat: optional on receipt,
+            // and the published event-type schema types it as a string, so
+            // a null would be refused.
+            ...(chatStream != null ? { remoteChatStreamId: chatStream } : {}),
             remoteCollectorStreamId: collectorStream,
             appCode,
             // Lets the accepter stamp the back-channel onto the grant for
@@ -548,6 +567,35 @@ async function handleIncomingAccept (params: {
     appCode: appCode as string,
     counterparty,
   };
+}
+
+/**
+ * The features this side's own copy of the offer grants. The accept names the
+ * offer copy by `originalEventId` (the event the accepter read through the
+ * capability). When it cannot be read (no id, event gone, not an offer), every
+ * feature counts as offered, so the accepter's value alone decides: what this
+ * side did before it resolved features itself. Logged at debug.
+ */
+async function readOfferCopyFeatures (params: {
+  userId: string;
+  acceptEvent: { content?: Record<string, unknown> };
+  mall: MallLike;
+  logger?: { debug?: (msg: string, ctx?: Record<string, unknown>) => void };
+}): Promise<Features> {
+  const { userId, acceptEvent, mall, logger } = params;
+  const reqId = acceptEvent.content?.originalEventId ?? acceptEvent.content?.requestEventId;
+  if (typeof reqId === 'string' && reqId.length > 0 && mall.events?.getOne != null) {
+    try {
+      const ev = await mall.events.getOne(userId, reqId) as { type?: string; content?: Record<string, unknown> } | null;
+      if (ev != null && ev.type === C.ET_REQUEST) return featuresFromOffer(ev.content);
+    } catch (_e) {
+      // Fall back below.
+    }
+  }
+  logger?.debug?.('cmc/handleIncomingAccept: offer copy unreadable, features resolved from the accept alone', {
+    originalEventId: typeof reqId === 'string' ? reqId : null,
+  });
+  return featuresFromOffer(null);
 }
 
 /**

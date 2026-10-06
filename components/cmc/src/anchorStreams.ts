@@ -21,6 +21,13 @@ const require = createRequire(import.meta.url);
  * Plugin auto-creates these so chat + system flows can start
  * immediately. Idempotent — stream-already-exists is treated as
  * success (this re-runs cleanly on a re-delivery or retry).
+ *
+ * A relationship whose resolved `features.chat` is false gets no
+ * `chats:<peer-slug>` leaf (`chat: false`): the per-peer leaf exists iff the
+ * relationship has chat. The `chats` parent is still created: it carries no
+ * permission, and keeps a subscription or a query on it valid for an app
+ * whose relationships are all chat-less. The collectors pair is always
+ * created (scope requests ride it, whatever `systemMessaging` says).
  */
 
 const C = require('./constants.ts');
@@ -36,7 +43,8 @@ type ProvisionResult = {
 };
 
 /**
- * Create the four anchor streams for a (user, scope, counterparty) tuple.
+ * Create the anchor streams for a (user, scope, counterparty) tuple: four,
+ * or three when `chat` is false (no per-peer chat leaf).
  *
  * scopeStreamId: e.g. `:_cmc:apps:my-app:campaign-2026`
  * peerSlug: e.g. `alice--pryv-me`
@@ -50,8 +58,11 @@ async function provisionAnchorStreams (params: {
   scopeStreamId: string;
   peerSlug: string;
   mall: MallLike;
+  /** The relationship has chat (resolved `features.chat`); default true. */
+  chat?: boolean;
 }): Promise<ProvisionResult> {
   const { userId, scopeStreamId, peerSlug, mall } = params;
+  const withChat = params.chat !== false;
   const chatsParent = C.chatsParentUnder(scopeStreamId);
   const collectorsParent = C.collectorsParentUnder(scopeStreamId);
   const chatStream = C.chatStreamUnder(scopeStreamId, peerSlug);
@@ -73,7 +84,10 @@ async function provisionAnchorStreams (params: {
     }
   }
 
-  for (const sid of [chatsParent, collectorsParent, chatStream, collectorStream]) {
+  const anchors = withChat
+    ? [chatsParent, collectorsParent, chatStream, collectorStream]
+    : [chatsParent, collectorsParent, collectorStream];
+  for (const sid of anchors) {
     const failure = await ensureStream(mall, userId, sid, parentOf(sid));
     if (failure != null) {
       return { ok: false, created, failedStreamId: sid, failureMessage: failure };

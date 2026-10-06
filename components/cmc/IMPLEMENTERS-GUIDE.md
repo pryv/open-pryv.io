@@ -34,7 +34,7 @@ The `:_cmc:` namespace has **two plugin-managed top-level regions** plus user-cr
 |---|---|---|
 | **`:_cmc:inbox`** | server (always present) | One-shot lifecycle events delivered to you: `consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc`. **Plugin-internal-write-only**, apps never write here. |
 | **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper); also created on demand when a personal token writes `consent/accept-cmc` / `consent/refuse-cmc` on one that does not exist yet | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like, `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps` (except for the auto-created `chats` / `collectors` sub-segments below). |
-| **`:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`** | plugin (auto-created on first chat) | All `message/chat-cmc` events, both sent and received, for one specific counterparty under this app/path. One thread per user-pair per app-scope. |
+| **`:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`** | plugin (auto-created at acceptance when the relationship's `features.chat` is true) | All `message/chat-cmc` events, both sent and received, for one specific counterparty under this app/path. One thread per user-pair per app-scope. |
 | **`:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`** | plugin (auto-created at acceptance) | The system channel for one specific collector-relationship: `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc`. A study's reminders don't bleed into clinical-care alerts from the same doctor. |
 
 The parent streams `:_cmc:`, `:_cmc:inbox`, and `:_cmc:apps` always exist (plugin-managed); you can't `streams.create` / `update` / `delete` them directly. They are materialised on an account's first contact with the namespace, whether that contact is a **read** (`events.get` naming a `:_cmc:*` stream, e.g. an inbox watcher), a **write**, or **minting an access** that carries an `:_cmc:apps:<app>` permission. So a client may start with whichever call suits it; there is no bootstrap ordering to respect, and nothing for an operator to register per deployment. The `chats` / `collectors` sub-segments anywhere under `:_cmc:apps:<app-code>:...` are also plugin-managed (auto-created on demand). The only place you can `streams.create` under `:_cmc:` is inside `:_cmc:apps` (and not inside the plugin-reserved `chats` / `collectors` sub-segments).
@@ -207,13 +207,37 @@ single-use only).
 **Features negotiation.** `content.request.features.{chat,
 systemMessaging}` opts the request IN or OUT of each cross-account
 channel. Both default to `true` when omitted (permitted); set to
-`false` to disable that channel for the relationship. The flag is
-binding on BOTH sides at send time, `cmc.sendChat` /
-`cmc.sendSystemAlert` against a `features.chat: false` /
-`features.systemMessaging: false` access reject with `cmc-chat-disabled`
-/ `cmc-system-messaging-disabled` respectively. Scope-request and
-scope-update are protocol-level and remain permitted regardless of
-the flag.
+`false` to disable that channel for the relationship. The server
+resolves the relationship's features from the offer: the accept may
+only narrow them (`content.features.chat: false` on the accept turns
+chat off), a `true` on the accept never turns on a feature the offer
+turned off and is ignored without error. Each side resolves against
+its own copy of the offer and stamps the resolved pair on the accept
+trigger, on its relationship access (`clientData.cmc.features`) and,
+on the requester side, on the inbox mirror.
+
+- **Provisioning.** A relationship without chat gets no
+  `chats:<counterparty-slug>` stream and no chat permission on either
+  side (the `chats` parent is still created); the per-counterparty leaf
+  exists if and only if the relationship has chat. The collectors stream
+  is always provisioned: scope requests ride it.
+- **Send side.** `cmc.sendChat` / `cmc.sendSystemAlert` against a
+  `features.chat: false` / `features.systemMessaging: false` relationship
+  are refused: a chat write on the missing chat stream answers
+  `unknown-referenced-resource`, a relationship that still has the stream
+  fails the trigger with `cmc-chat-disabled` /
+  `cmc-system-messaging-disabled`.
+- **Receiving side.** A counterparty writing a `message/chat-cmc` (or a
+  `notification/alert-cmc` / `notification/ack-cmc`) directly with its
+  relationship token is refused with HTTP 403 `forbidden`, `data.id`
+  `cmc-chat-disabled` (or `cmc-system-messaging-disabled`).
+- Scope-request and scope-update are protocol-level and remain
+  permitted regardless of the flags.
+- **Relationships accepted before 2.0.0-rc.38** keep their chat stream
+  and chat permission; the server refuses chat writes on them when
+  `features.chat` is false. Read `features` (on the accept event, or from
+  `listAcceptedRelationships`), never the stream's existence, to decide
+  whether to offer chat.
 
 ## Step 3: Patient's app receives the URL and reads the offer
 
@@ -423,7 +447,7 @@ Subscribe to your trigger streams via the standard socket.io monitor to see stat
 
 # Walkthrough 2: Provider and user.chat
 
-Chat is anchored **per user-pair per app-scope**: there's one stream on each side, `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`, nested under whichever app-scope stream the original request/accept was written to, holding both sent and received `message/chat-cmc` events for that one counterparty. The plugin creates these streams automatically the first time chat happens between the two parties (typically at acceptance time, since both sides have a slug as soon as the access pair exists).
+Chat is anchored **per user-pair per app-scope**: there's one stream on each side, `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`, nested under whichever app-scope stream the original request/accept was written to, holding both sent and received `message/chat-cmc` events for that one counterparty. The plugin creates these streams at acceptance when the relationship has chat enabled (resolved `features.chat`); a relationship without chat has no such stream, so test `features`, not the stream, before offering chat.
 
 ```mermaid
 sequenceDiagram
@@ -783,7 +807,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 | Event family | Trigger location | Delivery location on counterparty |
 |---|---|---|
 | **Lifecycle** (`consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc`) | Any user-managed `:_cmc:apps:*` stream you've created (e.g. `:_cmc:apps:my-app:study-A`). | Counterparty's `:_cmc:inbox`. |
-| **Chat** (`message/chat-cmc`) | Your own `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (plugin auto-creates at acceptance, nested under whichever app-scope stream the original request/accept was written to). | Counterparty's matching `:_cmc:apps:<their-app>:[<their-path>:]chats:<your-slug>`. |
+| **Chat** (`message/chat-cmc`) | Your own `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (plugin auto-creates at acceptance when `features.chat` is true, nested under whichever app-scope stream the original request/accept was written to). | Counterparty's matching `:_cmc:apps:<their-app>:[<their-path>:]chats:<your-slug>`. |
 | **System** (`notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc`) | Your own `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (same nesting as chat). | Counterparty's matching `:_cmc:apps:<their-app>:[<their-path>:]collectors:<your-slug>`. |
 
 **Triggers** (events you write to your own streams):
@@ -824,7 +848,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
     // subset via `consent/accept-cmc.grantedPermissions` (mandatory
     // entries still required).
     allowUserChoice?: boolean,
-    features?:   { chat?: boolean, systemMessaging?: boolean },
+    features?:   { chat?: boolean, systemMessaging?: boolean },  // each defaults to true
     expiresAt?:  number | null,  // null: no expiry (open-link only)
     customData?: object
   },
@@ -848,6 +872,9 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 // App writes (minimal)
 {
   capabilityUrl: string,                      // received out-of-band
+  features?:     { chat?: boolean, systemMessaging?: boolean },
+                                              // may only narrow the offer's; the stored value
+                                              // is the server-resolved one (offer AND accept)
   extra?:        { chat?: boolean, systemMessaging?: boolean },
   accessName?:   string                       // optional override; plugin derives a default.
                                               // If the name is already taken by another access,
@@ -1376,8 +1403,8 @@ npm package.
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
 | `CAPABILITY_TTL_OUT_OF_RANGE` | `cmc-capability-ttl-out-of-range` | Caller's numeric `content.request.expiresAt` resolves outside the bounds for the mode: [60 s, 30 d] for single-use, at least 60 s (no upper bound) for open-link. Details carry `mode`, `minTtlSeconds`, `maxTtlSeconds` (`null` for open-link). Omit `expiresAt` (default 7 d) or pick a value in range and re-issue. |
 | `CAPABILITY_NO_EXPIRY_NOT_ALLOWED` | `cmc-capability-no-expiry-not-allowed` | `request.expiresAt: null` (no expiry) on a single-use invite. Use `capability.mode: 'open-link'`, or give a bounded `expiresAt`. |
-| `CHAT_DISABLED` | `cmc-chat-disabled` | The offer negotiated `features.chat: false`; chat write rejected at send time. Re-issue the request with chat enabled, or use the system channel. |
-| `SYSTEM_MESSAGING_DISABLED` | `cmc-system-messaging-disabled` | The offer negotiated `features.systemMessaging: false`; alert/ack write rejected. Scope-request / scope-update are protocol-level and remain permitted regardless. |
+| `CHAT_DISABLED` | `cmc-chat-disabled` | The offer negotiated `features.chat: false`; chat write rejected at send time. Also answered as HTTP 403 `forbidden` with `data.id` set to this id when a counterparty writes the event directly. Re-issue the request with chat enabled, or use the system channel. |
+| `SYSTEM_MESSAGING_DISABLED` | `cmc-system-messaging-disabled` | The offer negotiated `features.systemMessaging: false`; alert/ack write rejected. Also answered as HTTP 403 `forbidden` with `data.id` set to this id when a counterparty writes the event directly. Scope-request / scope-update are protocol-level and remain permitted regardless. |
 | `CLIENTDATA_CMC_FORBIDDEN` | `cmc-clientdata-cmc-forbidden` | User code tried to write under `clientData.cmc.*` via `accesses.create` / `accesses.update`. That namespace is plugin-owned end-to-end; remove the field. |
 | `COUNTERPARTY_IDENTITY_MISSING` | `cmc-counterparty-identity-missing` | A counterparty-marked access reached the events-create stamping hook with no stored `{username,host}` identity. Wiring bug, surface for ops; usually a back-channel access that failed to receive its identity stamp at handshake. |
 

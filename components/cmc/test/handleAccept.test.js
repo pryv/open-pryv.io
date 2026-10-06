@@ -151,7 +151,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
       // features into content.features at acceptInvite time; plugin
       // forwards them onto the data-grant access's clientData.cmc.features.
       //
-      // Bug history (2026-05-21, HDS implementer report):
+      // Bug history (2026-05-21, implementer report):
       // plugin used to read content.extra (the user-supplied pass-through),
       // so the negotiation never reached the data-grant — accepter-side
       // ended up with clientData.cmc.features = null even when the offer
@@ -183,12 +183,12 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.deepEqual(acc.clientData.cmc.features, { chat: false, systemMessaging: true });
     });
 
-    it('[HA01G] data-grant features stays null when triggerEvent omits content.features (decoy content.extra MUST NOT leak through)', async () => {
+    it('[HA01G] data-grant features are the offer\'s when triggerEvent omits content.features (decoy content.extra MUST NOT leak through)', async () => {
       // Companion of [HA01F]: when the SDK doesn't write content.features
       // (legacy SDK pre-fix, or third-party callers), the plugin must NOT
-      // fall back to content.extra. Result: clientData.cmc.features = null
-      // (i.e. accepter signals "no negotiation recorded"; downstream
-      // consumers fall back to their own defaults).
+      // fall back to content.extra. The server resolves the features from
+      // the offer alone (each one true when the offer does not set it), so
+      // the extra's `false` values have no effect.
       const mall = fakeMall();
       const { fetch } = fakeFetch([
         { status: 200, body: { events: [VALID_OFFER] } },
@@ -210,7 +210,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
       });
       assert.equal(r.ok, true);
       const acc = mall.calls.accessesCreated[0];
-      assert.equal(acc.clientData.cmc.features, null);
+      assert.deepEqual(acc.clientData.cmc.features, { chat: true, systemMessaging: true });
     });
   });
 
@@ -495,6 +495,67 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.ok, true);
       assert.deepEqual(r.anchorStreamIds, []);
       assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+  });
+
+  describe('[CMCHA-FEAT] the relationship\'s features: resolved from the offer, decide the chat channel', () => {
+    const SCOPE = ':_cmc:apps:my-app:campaign-2026';
+    const CHAT_LEAF = SCOPE + ':chats:provider-a--example-com';
+    function offerWith (features) {
+      const offer = structuredClone(VALID_OFFER);
+      if (features !== undefined) offer.content.request.features = features;
+      return offer;
+    }
+    async function accept (offer, triggerFeatures) {
+      const mall = fakeMall();
+      const { fetch, calls } = fakeFetch([
+        { status: 200, body: { events: [offer] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const content = { capabilityUrl: 'https://Tok@example.com/' };
+      if (triggerFeatures !== undefined) content.features = triggerFeatures;
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: { id: 'evt-accept-feat', type: 'consent/accept-cmc', streamIds: [SCOPE], content },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      return { r, mall, delivered: JSON.parse(calls[1].init.body).content };
+    }
+    const chatPermissions = (acc) => acc.permissions.filter((p) => /:chats/.test(p.streamId));
+
+    it('[HA43] an offer without chat gives no chat leaf and no chat permission, whatever the accept asks', async () => {
+      const { r, mall, delivered } = await accept(offerWith({ chat: false }), { chat: true, systemMessaging: true });
+      assert.equal(r.ok, true);
+      const created = mall.calls.streamsCreated.map((s) => s.id);
+      assert.ok(created.includes(SCOPE + ':chats'), 'the chats parent is kept');
+      assert.ok(!created.includes(CHAT_LEAF), 'no chat leaf');
+      assert.ok(created.includes(SCOPE + ':collectors:provider-a--example-com'));
+      assert.ok(!r.anchorStreamIds.includes(CHAT_LEAF));
+      const acc = mall.calls.accessesCreated[0];
+      assert.deepEqual(chatPermissions(acc), []);
+      assert.ok(acc.permissions.some((p) => p.streamId === SCOPE + ':collectors:provider-a--example-com'));
+      const expected = { chat: false, systemMessaging: true };
+      assert.deepEqual(acc.clientData.cmc.features, expected);
+      assert.deepEqual(delivered.features, expected);
+      assert.deepEqual(r.features, expected);
+    });
+
+    it('[HA44] the accept may narrow: an offer without features and an accept with chat false give no chat', async () => {
+      const { r, mall, delivered } = await accept(offerWith(undefined), { chat: false });
+      assert.equal(r.ok, true);
+      assert.ok(!mall.calls.streamsCreated.map((s) => s.id).includes(CHAT_LEAF));
+      assert.deepEqual(chatPermissions(mall.calls.accessesCreated[0]), []);
+      assert.deepEqual(r.features, { chat: false, systemMessaging: true });
+      assert.deepEqual(delivered.features, { chat: false, systemMessaging: true });
+    });
+
+    it('[HA45] an offer with chat and an accept without features keep the chat leaf and permission', async () => {
+      const { r, mall } = await accept(offerWith({ chat: true }), undefined);
+      assert.equal(r.ok, true);
+      assert.ok(mall.calls.streamsCreated.map((s) => s.id).includes(CHAT_LEAF));
+      assert.deepEqual(chatPermissions(mall.calls.accessesCreated[0]), [{ streamId: CHAT_LEAF, level: 'contribute' }]);
+      assert.deepEqual(r.features, { chat: true, systemMessaging: true });
     });
   });
 
