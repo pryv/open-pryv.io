@@ -2484,11 +2484,14 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const mall = await getMall();
       const original = mall.events.getOne;
       let edited = false;
+      let markEdited;
+      const editDone = new Promise((resolve) => { markEdited = resolve; });
       mall.events.getOne = async function (userId, id) {
         const event = await original.call(this, userId, id);
         if (id === acceptEventId && !edited) {
           edited = true;
           await mall.events.update(userId, { ...edit(structuredClone(event)), modified: timestamp.now() });
+          markEdited();
         }
         return event;
       };
@@ -2496,6 +2499,10 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       try {
         const delRes = await coreRequest.delete(bob.accessesPath + '/' + grant.id).set('Authorization', bob.token);
         assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+        // No read of the accept from this test until the edit is in: the first
+        // read after the delete is then the withdrawal writer's own.
+        await Promise.race([editDone, sleep(POLL_TIMEOUT_MS)]);
+        assert.ok(edited, 'the withdrawal writer must have read the accept');
         stamped = await pollWithdrawal(bob, acceptEventId, 'withdrawal after an edit');
       } finally {
         mall.events.getOne = original;

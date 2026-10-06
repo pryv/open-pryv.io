@@ -1,8 +1,6 @@
 # Changelog - Internal (no API impact)
 
-## Unreleased
-
-### Server writers on `updateWithMerge`
+## Server writers on `updateWithMerge`
 
 - Every server read-modify-write of an event row now goes through `mall.events.updateWithMerge`
   (the operation added for the client path): cmc `acceptWithdrawal`, `inviteState`, the three

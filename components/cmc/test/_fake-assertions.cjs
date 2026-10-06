@@ -98,7 +98,7 @@ async function fakeUpdateWithMerge (events, userId, eventId, merge, transaction,
   if (stored == null) throw Object.assign(new Error('Could not update event with id ' + eventId), { id: 'invalid-item-id' });
   const next = merge(structuredClone(stored));
   if (next == null) return null;
-  return await events.update(userId, { ...next, id: eventId }, transaction, opts);
+  return (await events.update(userId, { ...next, id: eventId }, transaction, opts)) ?? { ...next, id: eventId };
 }
 
 module.exports = { assertEventUpdateShape, assertOutboundUrl, fakeUpdateWithMerge };
