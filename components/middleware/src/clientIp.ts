@@ -34,14 +34,53 @@ let trustedList: string[] = DEFAULT_TRUSTED_PROXIES;
 let trustFn: TrustFn = proxyaddr.compile(DEFAULT_TRUSTED_PROXIES);
 
 /**
+ * Why one `http.trustedProxies` entry cannot be used, or null. Besides entries proxy-addr cannot
+ * compile, a subnet must match its own base address: an IPv4-mapped IPv6 subnet with a short prefix
+ * (`::ffff:10.0.0.0/8` instead of `::ffff:10.0.0.0/104`) matches no client at all, so the proxy it
+ * was meant to name would be recorded instead of the client.
+ */
+function trustedProxyEntryProblem (entry: string): string | null {
+  let trust: TrustFn;
+  try {
+    trust = proxyaddr.compile([entry]);
+  } catch (e) {
+    return (e as Error).message;
+  }
+  const slash = entry.indexOf('/');
+  if (slash > 0 && !trust(entry.slice(0, slash), 0)) {
+    return 'matches no client address (an IPv4-mapped IPv6 subnet needs a prefix of 96 or more, ' +
+      'e.g. ::ffff:10.0.0.0/104; or write it in IPv4 notation, e.g. 10.0.0.0/8)';
+  }
+  return null;
+}
+
+/**
+ * True when a list trusts a documentation-only address (TEST-NET-2, the IPv6 discard prefix): it
+ * then trusts every client, so any client could choose the address recorded for it.
+ */
+function trustsEveryClient (trust: TrustFn): boolean {
+  return trust('198.51.100.7', 0) || trust('100::7', 0);
+}
+
+const TRUSTS_EVERY_CLIENT = 'trusts every client address (an entry such as ::/1 or ::ffff:0.0.0.0/96), ' +
+  'so any client could choose the address recorded for it';
+
+/**
  * Sets the trusted proxies for this process. Called once per process at app
  * setup with `http.trustedProxies`; `null`/`undefined` keeps the default.
- * Throws on an entry proxy-addr cannot compile (the config validator reports
- * those before boot).
+ * Throws, keeping the previous list, on an entry that cannot be used or on a
+ * list that trusts every client (the config validator reports those before
+ * boot; this also covers processes that start without it).
  */
 function configureTrustedProxies (list: string[] | null | undefined): void {
   const next = list == null ? DEFAULT_TRUSTED_PROXIES : list;
-  trustFn = proxyaddr.compile(next);
+  for (const entry of next) {
+    const problem = trustedProxyEntryProblem(entry);
+    if (problem != null) throw new Error(`http.trustedProxies '${entry}': ${problem}`);
+  }
+  const compiled = proxyaddr.compile(next);
+  if (trustsEveryClient(compiled)) throw new Error('http.trustedProxies ' + TRUSTS_EVERY_CLIENT);
+  trustFn = compiled;
   trustedList = next;
 }
 
@@ -88,12 +127,14 @@ function checkTrustedProxiesConfig (list: unknown, hfsWorkers: unknown): { probl
       problems.push({ message: `http.trustedProxies[${i}] must be a non-empty string`, path: [...path, i] });
       return;
     }
-    try {
-      proxyaddr.compile([entry]);
-    } catch (e) {
-      problems.push({ message: `http.trustedProxies[${i}] '${entry}': ${(e as Error).message}`, path: [...path, i] });
+    const problem = trustedProxyEntryProblem(entry);
+    if (problem != null) {
+      problems.push({ message: `http.trustedProxies[${i}] '${entry}': ${problem}`, path: [...path, i] });
     }
   });
+  if (problems.length === 0 && trustsEveryClient(proxyaddr.compile(list as string[]))) {
+    problems.push({ message: 'http.trustedProxies ' + TRUSTS_EVERY_CLIENT, path });
+  }
   if (problems.length === 0 && Number(hfsWorkers) > 0 && !proxyaddr.compile(list as string[])('127.0.0.1', 0)) {
     warnings.push('http.trustedProxies does not include loopback while HFS workers run: high-frequency ' +
       'series requests forwarded by the core itself will be recorded as coming from 127.0.0.1. ' +
