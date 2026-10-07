@@ -81,11 +81,12 @@ const USER_STORAGE_METHODS = [
 
 const SESSIONS_METHODS = [
   'get', 'getMatching', 'generate', 'touch', 'expireNow', 'destroy',
-  'clearAll', 'remove', 'exportAll', 'importAll'
+  'clearAll', 'remove', 'removeAllExcept', 'exportAll', 'importAll'
 ];
 
 const PRR_METHODS = [
-  'get', 'generate', 'destroy', 'clearAll', 'exportAll', 'importAll'
+  'get', 'generate', 'consume', 'destroy', 'destroyAllForUser', 'removeExpired',
+  'clearAll', 'exportAll', 'importAll'
 ];
 
 async function initStorageLayer (storageLayer: StorageLayerLike, _connection: unknown, options: InitOptions): Promise<void> {

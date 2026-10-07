@@ -33,6 +33,8 @@ export interface Sessions {
   clearAll (callback: Callback<unknown>): void;
   expireNow (id: string, callback: Callback<unknown>): void;
   remove (query: Record<string, unknown>, callback: Callback<unknown>): void;
+  /** Delete the sessions whose data matches `query` (non-empty), except `exceptId`. */
+  removeAllExcept (query: Record<string, unknown>, exceptId: string, callback: Callback<unknown>): void;
 
   // Migration methods
   exportAll (callback: Callback<SessionExportDoc[]>): void;
@@ -48,6 +50,7 @@ const REQUIRED_METHODS: string[] = [
   'clearAll',
   'expireNow',
   'remove',
+  'removeAllExcept',
   // Migration methods
   'exportAll',
   'importAll'

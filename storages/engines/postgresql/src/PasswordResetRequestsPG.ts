@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
+const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordResetRequests.ts');
 
 const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 
@@ -21,6 +22,7 @@ type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 
 /**
  * PostgreSQL implementation of PasswordResetRequests storage.
+ * Rows are keyed by the sha256 of the token; the token itself is not stored.
  */
 class PasswordResetRequestsPG {
   db: PgDb;
@@ -32,48 +34,79 @@ class PasswordResetRequestsPG {
   }
 
   /**
-   * Get a password reset request by id and username.
+   * Get the live password reset request matching a token and username.
    */
-  get (id: string, username: string, callback: Cb<ResetDoc | null>): void {
+  get (token: string, username: string, callback: Cb<ResetDoc | null>): void {
     this.db.query(
-      'SELECT id, username, expires FROM password_resets WHERE id = $1 AND username = $2',
-      [id, username]
+      'SELECT id, username, expires FROM password_resets WHERE id = $1 AND username = $2 AND expires > $3',
+      [hashResetToken(token), username, new Date()]
     )
       .then((res) => {
         const rows = res.rows as ResetRow[];
         if (rows.length === 0) return callback(null, null);
-        const row = rows[0];
-        if (new Date() >= new Date(row.expires)) {
-          this.destroy(id, username, () => callback(null, null));
-          return;
-        }
-        callback(null, { _id: row.id, username: row.username, expires: row.expires });
+        callback(null, toDoc(rows[0]));
       })
       .catch(callback);
   }
 
   /**
-   * Create a new password reset request.
+   * Create a new password reset request, replacing any previous one of the
+   * same username and removing expired ones. Returns the token.
    */
   generate (username: string, callback: Cb<string>): void {
-    const id = cuid();
+    const token = cuid();
+    const now = new Date();
     const expires = this.getNewExpirationDate();
     this.db.query(
+      'WITH removed AS (DELETE FROM password_resets WHERE username = $2 OR expires <= $4) ' +
       'INSERT INTO password_resets (id, username, expires) VALUES ($1, $2, $3)',
-      [id, username, expires]
+      [hashResetToken(token), username, expires, now]
     )
-      .then(() => callback(null, id))
+      .then(() => callback(null, token))
+      .catch(callback);
+  }
+
+  /**
+   * Delete and return the live request matching a token and username.
+   */
+  consume (token: string, username: string, callback: Cb<ResetDoc | null>): void {
+    this.db.query(
+      'DELETE FROM password_resets WHERE id = $1 AND username = $2 AND expires > $3 RETURNING id, username, expires',
+      [hashResetToken(token), username, new Date()]
+    )
+      .then((res) => {
+        const rows = res.rows as ResetRow[];
+        callback(null, rows.length === 0 ? null : toDoc(rows[0]));
+      })
       .catch(callback);
   }
 
   /**
    * Delete a password reset request.
    */
-  destroy (id: string, username: string, callback: Cb<unknown>): void {
+  destroy (token: string, username: string, callback: Cb<unknown>): void {
     this.db.query(
       'DELETE FROM password_resets WHERE id = $1 AND username = $2',
-      [id, username]
+      [hashResetToken(token), username]
     )
+      .then((res: unknown) => callback(null, res))
+      .catch(callback);
+  }
+
+  /**
+   * Delete every password reset request of a username.
+   */
+  destroyAllForUser (username: string, callback: Cb<unknown>): void {
+    this.db.query('DELETE FROM password_resets WHERE username = $1', [username])
+      .then((res: unknown) => callback(null, res))
+      .catch(callback);
+  }
+
+  /**
+   * Delete expired password reset requests.
+   */
+  removeExpired (callback: Cb<unknown>): void {
+    this.db.query('DELETE FROM password_resets WHERE expires <= $1', [new Date()])
       .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
@@ -97,12 +130,7 @@ class PasswordResetRequestsPG {
     this.db.query('SELECT id, username, expires FROM password_resets')
       .then((res) => {
         const rows = res.rows as ResetRow[];
-        const docs = rows.map((r: ResetRow) => ({
-          _id: r.id,
-          username: r.username,
-          expires: r.expires
-        }));
-        callback(null, docs);
+        callback(null, rows.map(toDoc));
       })
       .catch(callback);
   }
@@ -119,6 +147,10 @@ class PasswordResetRequestsPG {
       .then(() => callback(null))
       .catch(callback);
   }
+}
+
+function toDoc (row: ResetRow): ResetDoc {
+  return { _id: row.id, username: row.username, expires: row.expires };
 }
 
 export { PasswordResetRequestsPG };

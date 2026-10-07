@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
+const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordResetRequests.ts');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
@@ -19,9 +20,11 @@ const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 /**
  * SQLite implementation of PasswordResetRequests storage.
  * Backed by the shared `password_resets` table; `expires` is INTEGER (ms).
+ * Rows are keyed by the sha256 of the token; the token itself is not stored.
  */
 import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 type Cb<T = unknown> = (err: Error | null, res?: T) => void;
+type ResetRow = { id: string; username: string; expires: number };
 
 class PasswordResetRequestsSQLite {
   db: SqliteDb;
@@ -32,38 +35,71 @@ class PasswordResetRequestsSQLite {
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
 
-  get (id: string, username: string, callback: Cb<ResetDoc | null>): void {
+  get (token: string, username: string, callback: Cb<ResetDoc | null>): void {
     try {
       const row = this.db.prepare(
-        'SELECT id, username, expires FROM password_resets WHERE id = ? AND username = ?'
-      ).get(id, username) as { id: string; username: string; expires: number } | undefined;
-      if (!row) return callback(null, null);
-      if (Date.now() >= row.expires) {
-        this.destroy(id, username, () => callback(null, null));
-        return;
-      }
-      callback(null, { _id: row.id, username: row.username, expires: new Date(row.expires) });
+        'SELECT id, username, expires FROM password_resets WHERE id = ? AND username = ? AND expires > ?'
+      ).get(hashResetToken(token), username, Date.now()) as ResetRow | undefined;
+      callback(null, row ? toDoc(row) : null);
     } catch (err) {
       callback(err as Error);
     }
   }
 
+  /**
+   * Replaces any previous request of the same username and removes expired
+   * ones, in one transaction. Returns the token.
+   */
   generate (username: string, callback: Cb<string>): void {
-    const id = cuid();
-    const expires = Date.now() + this.options.maxAge;
+    const token = cuid();
+    const now = Date.now();
+    const expires = now + this.options.maxAge;
     concurrentSafeWrite.execute(() => {
-      this.db.prepare('INSERT INTO password_resets (id, username, expires) VALUES (?, ?, ?)')
-        .run(id, username, expires);
+      this.db.transaction(() => {
+        this.db.prepare('DELETE FROM password_resets WHERE username = ? OR expires <= ?').run(username, now);
+        this.db.prepare('INSERT INTO password_resets (id, username, expires) VALUES (?, ?, ?)')
+          .run(hashResetToken(token), username, expires);
+      })();
     })
-      .then(() => callback(null, id))
+      .then(() => callback(null, token))
       .catch(callback);
   }
 
-  destroy (id: string, username: string, callback: Cb<unknown>): void {
+  consume (token: string, username: string, callback: Cb<ResetDoc | null>): void {
+    let row: ResetRow | undefined;
     concurrentSafeWrite.execute(() => {
-      return this.db.prepare('DELETE FROM password_resets WHERE id = ? AND username = ?').run(id, username);
+      row = this.db.prepare(
+        'DELETE FROM password_resets WHERE id = ? AND username = ? AND expires > ? RETURNING id, username, expires'
+      ).get(hashResetToken(token), username, Date.now()) as ResetRow | undefined;
     })
-      .then((res: unknown) => callback(null, res))
+      .then(() => callback(null, row ? toDoc(row) : null))
+      .catch(callback);
+  }
+
+  destroy (token: string, username: string, callback: Cb<unknown>): void {
+    let res: unknown;
+    concurrentSafeWrite.execute(() => {
+      res = this.db.prepare('DELETE FROM password_resets WHERE id = ? AND username = ?').run(hashResetToken(token), username);
+    })
+      .then(() => callback(null, res))
+      .catch(callback);
+  }
+
+  destroyAllForUser (username: string, callback: Cb<unknown>): void {
+    let res: unknown;
+    concurrentSafeWrite.execute(() => {
+      res = this.db.prepare('DELETE FROM password_resets WHERE username = ?').run(username);
+    })
+      .then(() => callback(null, res))
+      .catch(callback);
+  }
+
+  removeExpired (callback: Cb<unknown>): void {
+    let res: unknown;
+    concurrentSafeWrite.execute(() => {
+      res = this.db.prepare('DELETE FROM password_resets WHERE expires <= ?').run(Date.now());
+    })
+      .then(() => callback(null, res))
       .catch(callback);
   }
 
@@ -79,13 +115,8 @@ class PasswordResetRequestsSQLite {
 
   exportAll (callback: Cb<ResetDoc[]>): void {
     try {
-      const rows = this.db.prepare('SELECT id, username, expires FROM password_resets').all() as Array<{ id: string; username: string; expires: number }>;
-      const docs = rows.map(r => ({
-        _id: r.id,
-        username: r.username,
-        expires: new Date(r.expires)
-      }));
-      callback(null, docs);
+      const rows = this.db.prepare('SELECT id, username, expires FROM password_resets').all() as ResetRow[];
+      callback(null, rows.map(toDoc));
     } catch (err) {
       callback(err as Error);
     }
@@ -109,6 +140,10 @@ class PasswordResetRequestsSQLite {
       .then(() => callback(null))
       .catch(callback);
   }
+}
+
+function toDoc (row: ResetRow): ResetDoc {
+  return { _id: row.id, username: row.username, expires: new Date(row.expires) };
 }
 
 export { PasswordResetRequestsSQLite };

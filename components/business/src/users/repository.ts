@@ -20,6 +20,7 @@ const { getMall } = require('mall');
 import type { Mall } from 'mall/src/types.ts';
 import type { Platform } from 'platform/src/Platform.ts';
 import type { Sessions } from 'storages/interfaces/baseStorage/Sessions.ts';
+import type { PasswordResetRequests } from 'storages/interfaces/baseStorage/PasswordResetRequests.ts';
 import type { UserStorage } from 'storages/interfaces/baseStorage/UserStorage.ts';
 import type { UserAccountStorage } from 'storages/interfaces/baseStorage/UserAccountStorage.ts';
 import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
@@ -62,7 +63,7 @@ type Operation = import('platform/src/Platform.ts').PlatformOperation;
 class UsersRepository {
   // Storage-layer plumbing, typed with the storage contracts. All set by
   // init() before any use (definite assignment).
-  storageLayer!: { sessions: Sessions; accesses: UserStorage<StoredAccess>; [k: string]: unknown };
+  storageLayer!: { sessions: Sessions; accesses: UserStorage<StoredAccess>; passwordResetRequests?: PasswordResetRequests; [k: string]: unknown };
   sessionsStorage!: Sessions;
   accessStorage!: UserStorage<StoredAccess>;
   mall!: Mall;
@@ -591,6 +592,13 @@ class UsersRepository {
       // accessId belonged to a since-erased account. Non-fatal.
       const keepMode = ((await getConfig()).get('audit:onUserDelete') as string) === 'keep';
       await cleanupUserAccessIndexNonFatal(this.platform, username, keepMode);
+      // Reset requests are keyed by username: a token issued before the
+      // deletion must not apply to a later account of the same name.
+      const resets = this.storageLayer.passwordResetRequests;
+      if (resets != null) {
+        const name = username;
+        await fromCallback((cb: (err: Error | null) => void) => resets.destroyAllForUser(name, cb));
+      }
     }
     await this.mall.deleteUser(userId);
   }

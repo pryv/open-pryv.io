@@ -61,6 +61,10 @@ const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require(
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
+const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
+const cache = require('cache').default;
+const timestamp = require('unix-timestamp');
+const { tombstoneAccessesNonFatal } = require('platform/src/accessIndex.ts');
 
 export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
@@ -75,6 +79,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   const getEmail = () => config.get('services:email');
   const storageLayer = await getStorageLayer();
   const passwordResetRequestsStorage = storageLayer.passwordResetRequests;
+  const sessionsStorage = storageLayer.sessions;
+  const accessesStorage = storageLayer.accesses;
   const platform = await getPlatform();
   const passwordRules = await getPasswordRules();
   const requireTrustedAppFn = commonFns.getTrustedAppCheck(getAuth);
@@ -156,8 +162,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     verifyOldPassword,
     enforcePasswordRules,
     addUserBusinessToContext,
-    setPassword
+    setPassword,
+    revokeAfterPasswordChange
   );
+
+  // Pending reset tokens and the account's other personal sessions end with
+  // the old password; the caller's own session is kept.
+  async function revokeAfterPasswordChange (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      const keepId = context.access?.isPersonal() ? context.access.token : null;
+      await destroyAllResetRequests(context.user.username);
+      await removePersonalSessions(context, keepId);
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    next();
+  }
 
   async function verifyOldPassword (context: MethodContext, params: { oldPassword: string }, _result: ResultBag, next: Next) {
     try {
@@ -289,11 +309,27 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     'account.requestPasswordReset',
     commonFns.getParamsValidation(methodsSchema.requestPasswordReset.params),
     requireTrustedAppFn,
+    throttlePasswordResetRequest,
     generatePasswordResetRequest,
     addUserBusinessToContext,
     sendPasswordResetMail,
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_REQUEST)
   );
+
+  async function throttlePasswordResetRequest (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    let outcome;
+    try {
+      outcome = await reservePasswordReset(context.user.id as string, context.source?.ip);
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    if (!outcome.ok) {
+      return next(errors.tooManyAttempts(outcome.retryAfterSeconds, {
+        message: 'Too many password reset requests. Please try again later.'
+      }));
+    }
+    next();
+  }
 
   function generatePasswordResetRequest (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const username = context.user.username;
@@ -436,21 +472,23 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   api.register(
     'account.resetPassword',
     commonFns.getParamsValidation(methodsSchema.resetPassword.params),
+    consumeResetToken,
     requireTrustedAppFn,
-    checkResetToken,
     enforcePasswordRules,
     addUserBusinessToContext,
     setPassword,
-    destroyPasswordResetToken,
+    revokeAfterPasswordReset,
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_TOKEN)
   );
 
-  function checkResetToken (context: MethodContext, params: { resetToken: string }, _result: ResultBag, next: Next) {
+  // Single use: the token is consumed before any later check, so a refused
+  // attempt (password rules) requires a new token.
+  function consumeResetToken (context: MethodContext, params: { resetToken: string }, _result: ResultBag, next: Next) {
     const username = context.user.username;
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.get(params.resetToken, username, function (err: Error | null, reqData: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc | null) {
+    passwordResetRequestsStorage.consume(params.resetToken, username, function (err: Error | null, reqData: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc | null) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -502,11 +540,42 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
-  async function destroyPasswordResetToken (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
-    // Invariant: checkPasswordResetToken ran earlier in this chain.
-    const id = context.passwordResetRequest!._id;
-    await fromCallback((cb: (err?: unknown, result?: unknown) => void) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
+  // A completed reset leaves no previously issued personal credential valid:
+  // other reset tokens, every personal session and every personal access.
+  async function revokeAfterPasswordReset (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      await destroyAllResetRequests(context.user.username);
+      await removePersonalSessions(context, null);
+      await deletePersonalAccesses(context);
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
     next();
+  }
+
+  async function destroyAllResetRequests (username: string): Promise<void> {
+    await fromCallback((cb: (err?: unknown) => void) => passwordResetRequestsStorage.destroyAllForUser(username, cb));
+  }
+
+  // Sessions carry the user id; older ones only the username.
+  async function removePersonalSessions (context: MethodContext, keepId: string | null): Promise<void> {
+    for (const query of [{ userId: context.user.id }, { username: context.user.username }]) {
+      await fromCallback((cb: (err?: unknown) => void) => (keepId != null
+        ? sessionsStorage.removeAllExcept(query, keepId, cb)
+        : sessionsStorage.remove(query, cb)));
+    }
+  }
+
+  async function deletePersonalAccesses (context: MethodContext): Promise<void> {
+    const rows = await fromCallback((cb: (err?: unknown, res?: unknown) => void) =>
+      accessesStorage.find(context.user, { type: 'personal' }, {}, cb)) as Array<{ id: string; token: string } | null>;
+    const accesses = rows.filter((a): a is { id: string; token: string } => a != null);
+    if (accesses.length === 0) return;
+    await fromCallback((cb: (err?: unknown) => void) =>
+      accessesStorage.delete(context.user, { $or: accesses.map((a) => ({ id: a.id })) }, cb));
+    for (const access of accesses) cache.unsetAccessLogic(context.user.id, access);
+    await tombstoneAccessesNonFatal(context.user.username, accesses, timestamp.now());
+    pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
 
   // Build the user context the emails operations share. Reads the current

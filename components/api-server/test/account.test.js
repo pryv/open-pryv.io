@@ -27,6 +27,8 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getUserAccountStorage } = require('storage');
 const { getMall } = require('mall');
 const encryption = require('utils').encryption;
+const crypto = require('node:crypto');
+const resetThrottle = require('business/src/auth/passwordResetThrottle.ts');
 
 describe('[ACCO] account', function () {
   useNock();
@@ -474,7 +476,9 @@ describe('[ACCO] account', function () {
 
   describe('[AC08] /request-password-reset and /reset-password', function () {
     beforeEach(async () => {
-      await resetUsers;
+      await resetUsers();
+      // Each test requests a reset for the same account from the same address.
+      await resetThrottle.clearPasswordResetThrottle(user.id, ['127.0.0.1', '::1']);
       server.removeAllListeners('password-reset-token');
     });
 
@@ -529,7 +533,7 @@ describe('[ACCO] account', function () {
             function (err, resetReq) {
               assert.ok(err == null);
               assert.ok(resetReq != null);
-              assert.strictEqual(resetReq._id, resetToken);
+              assert.strictEqual(resetReq._id, sha256(resetToken), 'the stored id is the token hash');
               assert.strictEqual(resetReq.username, user.username);
               stepDone();
             }
@@ -742,7 +746,7 @@ describe('[ACCO] account', function () {
               function (err, resetReq) {
                 assert.ok(err == null);
                 assert.ok(resetReq != null);
-                assert.strictEqual(resetReq._id, resetToken);
+                assert.strictEqual(resetReq._id, sha256(resetToken), 'the stored id is the token hash');
                 assert.strictEqual(resetReq.username, user.username);
                 stepDone();
               }
@@ -769,6 +773,10 @@ describe('[ACCO] account', function () {
       });
     });
   });
+
+  function sha256 (value) {
+    return crypto.createHash('sha256').update(value).digest('hex');
+  }
 
   async function resetUsers () {
     accountNotifCount = 0;

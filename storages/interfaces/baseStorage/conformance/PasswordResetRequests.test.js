@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 export default function conformanceTests (getStore, cleanupFn) {
   const assert = require('node:assert');
-  const { validatePasswordResetRequests } = require('../PasswordResetRequests.ts');
+  const { validatePasswordResetRequests, hashResetToken } = require('../PasswordResetRequests.ts');
 
   describe('PasswordResetRequests conformance', () => {
     let store;
@@ -110,7 +110,7 @@ export default function conformanceTests (getStore, cleanupFn) {
 
       it('[PR09] importAll() must insert raw documents', (done) => {
         const items = [
-          { _id: 'import-reset-1', username: 'imported-user', expires: new Date(Date.now() + 3600000) }
+          { _id: hashResetToken('import-reset-1'), username: 'imported-user', expires: new Date(Date.now() + 3600000) }
         ];
         store.importAll(items, (err) => {
           if (err) return done(err);

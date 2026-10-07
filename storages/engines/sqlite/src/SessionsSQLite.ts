@@ -118,6 +118,19 @@ class SessionsSQLite {
       .catch(callback);
   }
 
+  removeAllExcept (query: Record<string, string>, exceptId: string, callback: (err: Error | null, res?: unknown) => void): void {
+    const keys = Object.keys(query);
+    if (keys.length === 0) return callback(new Error('removeAllExcept requires a non-empty query'));
+    const where = keys.map((k) => `json_extract(data, '$.${k}') = ?`).join(' AND ');
+    const values = keys.map((k) => query[k]);
+    let res: unknown;
+    concurrentSafeWrite.execute(() => {
+      res = this.db.prepare(`DELETE FROM sessions WHERE ${where} AND id <> ?`).run(...values, exceptId);
+    })
+      .then(() => callback(null, res))
+      .catch(callback);
+  }
+
   remove (query: Record<string, string>, callback: (err: Error | null, res?: unknown) => void): void {
     const keys = Object.keys(query);
     if (keys.length === 0) return this.clearAll(callback);

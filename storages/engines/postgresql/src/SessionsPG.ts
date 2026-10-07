@@ -108,6 +108,17 @@ class SessionsPG {
       .catch(callback);
   }
 
+  removeAllExcept (query: Record<string, string>, exceptId: string, callback: (err: Error | null, res?: unknown) => void): void {
+    const keys = Object.keys(query);
+    if (keys.length === 0) return callback(new Error('removeAllExcept requires a non-empty query'));
+    const conditions = keys.map((k, i) => `data->>'${k}' = $${i + 1}`);
+    const values = keys.map((k) => String(query[k]));
+    values.push(exceptId);
+    this.db.query(`DELETE FROM sessions WHERE ${conditions.join(' AND ')} AND id <> $${values.length}`, values)
+      .then((res: unknown) => callback(null, res))
+      .catch(callback);
+  }
+
   getNewExpirationDate (): Date {
     return new Date(Date.now() + this.options.maxAge);
   }
