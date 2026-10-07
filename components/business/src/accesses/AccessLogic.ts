@@ -558,6 +558,37 @@ class AccessLogic {
   }
 
   /**
+   * True when the nearest grant governing this stream (own, an ancestor's, or
+   * `*`) withholds reading: `none`, `create-only` or no level. A stream with no
+   * grant at all is not forbidden, only not readable. Same set events.get
+   * excludes from its results.
+   */
+  async isStreamForbiddenForReading (fullStreamId: string) {
+    if (this.isPersonal()) return false;
+    await this._getStreamPermissionLevel(fullStreamId);
+    const permission = this._streamPermissionLevelCache[fullStreamId];
+    if (permission == null) return false;
+    return permission.level == null || permission.level === 'none' || permission.level === 'create-only';
+  }
+
+  /**
+   * True when `streamId` is `ancestorId` or one of its descendants, in the
+   * given store (in-store ids).
+   */
+  async isStreamWithin (storeId: string, streamId: string, ancestorId: string) {
+    const mall = await getMall();
+    let current: string | null = streamId;
+    const seen = new Set<string>();
+    while (current != null && !seen.has(current)) {
+      if (current === ancestorId) return true;
+      seen.add(current);
+      const stream: { parentId?: string | null } | null = await mall.streams.getOneWithNoChildren(this._userId, current, storeId);
+      current = stream?.parentId ?? null;
+    }
+    return false;
+  }
+
+  /**
    * new fashion to retrieve stream permissions
    * @param fullStreamId :{storeId}:{streamId}
    */

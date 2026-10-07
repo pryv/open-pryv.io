@@ -27,6 +27,8 @@ const {
   createEnsureAcceptScopeHook,
   createCounterpartyFromStampingHook,
   createCounterpartyFeatureGateHook,
+  createEventUpdateGuardHook,
+  createInternalWriteGuardHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createEventsGetInternalGuardHook,
@@ -1148,6 +1150,73 @@ describe('[CMCHOOK] cmc/hooks', () => {
       }
       assert.equal(await runMiddleware(mw, update('note/txt', 'note/txt'), {}, {}), undefined);
       assert.equal(await runMiddleware(mw, update('message/chat-cmc', 'note/txt'), {}, {}), undefined);
+    });
+  });
+
+  describe('[CMCH-UPD] createEventUpdateGuardHook', () => {
+    const app = { isPersonal: () => false, clientData: {} };
+    const personal = { isPersonal: () => true };
+    const ctx = (access, oldEvent, newEvent) => ({ access, oldEvent, newEvent });
+
+    it('[CHU1] refuses an app update touching the inbox or the internal subtree, in or out', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventUpdateGuardHook({ errors: factory });
+      for (const [from, to] of [
+        [['data'], [':_cmc:inbox']],
+        [[':_cmc:inbox'], [':_cmc:inbox']],
+        [[':_cmc:_internal:responses:x'], ['data']]
+      ]) {
+        const err = await runMiddleware(mw, ctx(app, { streamIds: from, type: 'note/txt' }, { streamIds: to, type: 'note/txt' }), {}, {});
+        assert.ok(err instanceof Error, JSON.stringify([from, to]));
+        assert.equal(err.cmcKind, 'forbidden');
+        assert.equal(err.details.id, 'cmc-protected-event-write');
+      }
+    });
+
+    it('[CHU2] refuses an app retyping to or from a CMC type; personal accesses pass through', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventUpdateGuardHook({ errors: factory });
+      const err = await runMiddleware(mw, ctx(app, { streamIds: ['data'], type: 'note/txt' }, { streamIds: ['data'], type: 'consent/request-cmc' }), {}, {});
+      assert.equal(err?.details?.id, 'cmc-protected-event-write');
+      const back = await runMiddleware(mw, ctx(app, { streamIds: ['data'], type: 'message/chat-cmc' }, { streamIds: ['data'], type: 'note/txt' }), {}, {});
+      assert.equal(back?.details?.id, 'cmc-protected-event-write');
+      const own = await runMiddleware(mw, ctx(personal, { streamIds: ['data'], type: 'note/txt' }, { streamIds: [':_cmc:inbox'], type: 'consent/request-cmc' }), {}, {});
+      assert.equal(own, undefined);
+    });
+
+    it('[CHU3] re-stamps content.from for a counterparty and validates CMC content', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventUpdateGuardHook({ errors: factory });
+      const counterparty = { isPersonal: () => false, clientData: { cmc: { role: 'counterparty', counterparty: { username: 'bob', host: 'x.pryv.me' } } } };
+      const chat = ':_cmc:apps:my-app:chats:bob--x-pryv-me';
+      const context = ctx(counterparty, { streamIds: [chat], type: 'message/chat-cmc' },
+        { streamIds: [chat], type: 'message/chat-cmc', content: { content: 'edited', from: { username: 'eve', host: 'evil.example' } } });
+      assert.equal(await runMiddleware(mw, context, {}, {}), undefined);
+      assert.deepEqual(context.newEvent.content.from, { username: 'bob', host: 'x.pryv.me' });
+      const invalid = await runMiddleware(mw, ctx(app, { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc' },
+        { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc', content: { to: 42 } }), {}, {});
+      assert.equal(invalid?.details?.id, 'cmc-invalid-event-content');
+    });
+  });
+
+  describe('[CMCH-INT] createInternalWriteGuardHook', () => {
+    it('[CHI1] only the capability access writes into its own responses stream', async () => {
+      const { factory } = fakeErrors();
+      const mw = createInternalWriteGuardHook({ errors: factory });
+      const write = (access, streamIds) => ({ access, newEvent: { streamIds, type: 'note/txt' } });
+      const capability = { isPersonal: () => false, clientData: { cmc: { capabilityId: 'cap1' } } };
+      const app = { isPersonal: () => false, clientData: {} };
+      assert.equal(await runMiddleware(mw, write(capability, [':_cmc:_internal:responses:cap1']), {}, {}), undefined);
+      for (const [access, streamIds] of [
+        [capability, [':_cmc:_internal:responses:cap2']],
+        [capability, [':_cmc:_internal:retries']],
+        [app, [':_cmc:_internal:responses:cap1']]
+      ]) {
+        const err = await runMiddleware(mw, write(access, streamIds), {}, {});
+        assert.equal(err?.details?.id, 'cmc-protected-event-write', JSON.stringify(streamIds));
+      }
+      assert.equal(await runMiddleware(mw, write({ isPersonal: () => true }, [':_cmc:_internal:retries']), {}, {}), undefined);
+      assert.equal(await runMiddleware(mw, write(app, [':_cmc:inbox']), {}, {}), undefined);
     });
   });
 });

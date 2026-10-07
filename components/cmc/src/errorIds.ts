@@ -204,6 +204,13 @@ const CmcErrorIds = {
   // counterparty role on its own access, bypassing the handshake
   // entirely. Reject up-front.
   CLIENTDATA_CMC_FORBIDDEN: 'cmc-clientdata-cmc-forbidden',
+  // An app or shared access tried to write a protocol record outside the
+  // plugin's own paths: an events.update that touches an event on
+  // `:_cmc:inbox` or `:_cmc:_internal:*` (moving it in or out, or rewriting
+  // one already there), that changes the type to or from a CMC type, or an
+  // events.create into `:_cmc:_internal:*` other than the capability's own
+  // responses stream. Answered 403 `forbidden` with this `data.id`.
+  PROTECTED_EVENT_WRITE: 'cmc-protected-event-write',
 
   // --- Token-class gate on accept/scope-update/revoke triggers ---
   // The events.create trigger for consent/accept-cmc,

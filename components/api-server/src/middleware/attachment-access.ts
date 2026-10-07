@@ -8,14 +8,16 @@ import { createRequire } from 'node:module';
 import type { ConfigLike } from '@pryv/boiler';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { Readable } from 'node:stream';
+import type { CanReadEventAccess } from 'business/src/accesses/canReadEvent.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('attachment-access');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
+const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 
-type AccessLike = { canGetEventsOnStream: (streamId: string, scope: string) => Promise<boolean> };
+type AccessLike = CanReadEventAccess;
 type ContextLike = { user: { id: string }; access: AccessLike; originalQuery?: unknown };
 type AttachmentLike = {
   id: string;
@@ -123,14 +125,8 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     if (!event) {
       return next(errors.unknownResource('event', req.params.id));
     }
-    let canReadEvent = false;
-    for (let i = 0; i < event.streamIds.length; i++) {
-      if (await req.context.access.canGetEventsOnStream(event.streamIds[i], 'local')) {
-        canReadEvent = true;
-        break;
-      }
-    }
-    if (!canReadEvent) {
+    // same exclusions as events.get
+    if (!(await canReadEvent(req.context.access, event))) {
       return next(errors.forbidden());
     }
     const attachment = event.attachments

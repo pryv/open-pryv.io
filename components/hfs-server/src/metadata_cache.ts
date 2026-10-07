@@ -7,7 +7,9 @@
 import { createRequire } from 'node:module';
 import type { IncomingHttpHeaders } from 'node:http';
 import { clientIp } from 'middleware/src/clientIp.ts';
+import type { CanReadEventAccess } from 'business/src/accesses/canReadEvent.ts';
 const require = createRequire(import.meta.url);
+const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 
 const { fromCallback } = require('utils');
 const { LRUCache: LRU } = require('lru-cache');
@@ -268,14 +270,12 @@ async function definePermissions (access: AccessModel, event: EventModel) {
     read: false
   };
   const streamIdsLength = streamIds.length;
-  for (let i = 0; i < streamIdsLength && !readAndWriteTrue(permissions); i++) {
+  for (let i = 0; i < streamIdsLength && !permissions.write; i++) {
     if (await access.canCreateEventsOnStream(streamIds[i])) { permissions.write = true; }
-    if (await access.canGetEventsOnStream(streamIds[i], 'local')) { permissions.read = true; }
   }
+  // same exclusions as events.get
+  permissions.read = await canReadEvent(access, event);
   return permissions;
-  function readAndWriteTrue (permissions: { write: boolean; read: boolean }) {
-    return permissions.write === true && permissions.read === true;
-  }
 }
 /**
  * Client ip of an HF request, resolved the same way the API server's method
@@ -294,9 +294,8 @@ type UsernameEvent = {
   id: string;
   };
 };
-type AccessModel = {
+type AccessModel = CanReadEventAccess & {
   canCreateEventsOnStream(streamId: string): Promise<boolean>;
-  canGetEventsOnStream(streamId: string, storeId: string): Promise<boolean>;
 };
 type EventModel = {
   id: string;

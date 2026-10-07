@@ -37,11 +37,14 @@ type Deps = {
 
 type MethodContext = {
   newEvent?: { type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
+  oldEvent?: { type?: string; streamIds?: string[] };
   user?: { id?: string };
   access?: {
+    isPersonal?: () => boolean;
     clientData?: {
       cmc?: {
         role?: string;
+        capabilityId?: string | null;
         counterparty?: { username?: string; host?: string };
         features?: { chat?: unknown; systemMessaging?: unknown } | null;
       };
@@ -609,6 +612,87 @@ function createCounterpartyFeatureGateHook (deps: Deps): Middleware {
   };
 }
 
+/** True for the inbox and the plugin-internal subtree. */
+function isProtectedStreamId (id: unknown): boolean {
+  return typeof id === 'string' && (id === C.NS_INBOX || C.isCmcInternalStreamId(id));
+}
+
+function isPersonalAccess (access: MethodContext['access']): boolean {
+  return typeof access?.isPersonal === 'function' && access.isPersonal() === true;
+}
+
+/**
+ * events.update hook: the create-time CMC protections, applied to updates by
+ * app and shared accesses. Runs after the prerequisites, so `context.oldEvent`
+ * is the stored event and `context.newEvent` the merged one.
+ *
+ * Refused (403, `cmc-protected-event-write`):
+ *   - any update of an event that is, or would be, on `:_cmc:inbox` or under
+ *     `:_cmc:_internal` (those records are written by peers and the plugin);
+ *   - a type change to or from a CMC type.
+ * Then, as on create: the CMC content is validated on the merged event, and a
+ * counterparty's `content.from` is stamped from its access.
+ * Personal accesses pass through unchanged.
+ */
+function createEventUpdateGuardHook (deps: Deps): Middleware {
+  const validateContent = createCmcContentValidationHook(deps);
+  const stampFrom = createCounterpartyFromStampingHook(deps);
+  return function cmcEventUpdateGuard (context, params, result, next) {
+    if (isPersonalAccess(context?.access)) return next();
+    const oldEvent = context?.oldEvent;
+    const newEvent = context?.newEvent;
+    if (oldEvent == null || newEvent == null) return next();
+    const oldStreamIds: string[] = Array.isArray(oldEvent.streamIds) ? oldEvent.streamIds : [];
+    const newStreamIds: string[] = Array.isArray(newEvent.streamIds) ? newEvent.streamIds : [];
+    if (oldStreamIds.some(isProtectedStreamId) || newStreamIds.some(isProtectedStreamId)) {
+      return next(deps.errors.forbidden(
+        'Events on ' + C.NS_INBOX + ' or ' + C.NS_INTERNAL + ' cannot be updated with this access',
+        { id: CmcErrorIds.PROTECTED_EVENT_WRITE }
+      ));
+    }
+    if (oldEvent.type !== newEvent.type &&
+        (C.isCmcEventType(oldEvent.type) || C.isCmcEventType(newEvent.type))) {
+      return next(deps.errors.forbidden(
+        'The type of an event cannot be changed to or from a CMC type with this access',
+        { id: CmcErrorIds.PROTECTED_EVENT_WRITE, eventType: newEvent.type }
+      ));
+    }
+    validateContent(context, params, result, (err?: unknown) => {
+      if (err != null) return next(err);
+      stampFrom(context, params, result, next);
+    });
+  };
+}
+
+/**
+ * events.create hook: the plugin-internal subtree is written by the plugin
+ * itself. An app or shared access may only write into the responses stream of
+ * the capability it is (`clientData.cmc.capabilityId`, server-set); anything
+ * else under `:_cmc:_internal` is refused (403, `cmc-protected-event-write`),
+ * whatever a `*` grant would resolve to. Personal accesses pass through.
+ */
+function createInternalWriteGuardHook (deps: Deps): Middleware {
+  return function cmcInternalWriteGuard (context, _params, _result, next) {
+    if (isPersonalAccess(context?.access)) return next();
+    const event = context?.newEvent;
+    if (event == null) return next();
+    const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
+    const capabilityId = context?.access?.clientData?.cmc?.capabilityId;
+    const ownResponses = typeof capabilityId === 'string' && capabilityId.length > 0
+      ? C.responsesStreamIdFor(capabilityId)
+      : null;
+    for (const id of streamIds) {
+      if (C.isCmcInternalStreamId(id) && id !== ownResponses) {
+        return next(deps.errors.forbidden(
+          'Events cannot be created in ' + C.NS_INTERNAL + ' with this access',
+          { id: CmcErrorIds.PROTECTED_EVENT_WRITE, streamId: id }
+        ));
+      }
+    }
+    next();
+  };
+}
+
 /**
  * accesses.create / accesses.update hook — forge-prevention.
  *
@@ -896,6 +980,8 @@ export {
   _resetEnsuredUsersMemo,
   createCounterpartyFromStampingHook,
   createCounterpartyFeatureGateHook,
+  createEventUpdateGuardHook,
+  createInternalWriteGuardHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
   createAccessProvisionAppScopeHook,

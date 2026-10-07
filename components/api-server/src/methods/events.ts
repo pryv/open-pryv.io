@@ -13,6 +13,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
+const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const fs = require('fs');
 const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
@@ -323,8 +324,6 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!context.event) { return next(); }
     const event = context.event;
     delete context.event;
-    const systemStreamIdsForbiddenForReading = accountStreams.hiddenStreamIds;
-    let canReadEvent = false;
     // special case no streamIds on event && deleted
     if (event.streamIds == null) { // event might be deleted - limit result to deleted property
       context.auditRecordCount = 1; // disclosed one record's existence (breach-scope)
@@ -332,18 +331,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       return next();
     }
 
-    for (const streamId of event.streamIds) {
-      // ok if at least one
-      if (systemStreamIdsForbiddenForReading.includes(streamId)) {
-        canReadEvent = false;
-        break;
-      }
-      if (await context.access.canGetEventsOnStream(streamId, 'local')) {
-        canReadEvent = true;
-      }
-    }
-    // might return 404 to avoid discovery of existing forbidden events
-    if (!canReadEvent) { return next(errors.forbidden()); }
+    // same exclusions as events.get; might return 404 to avoid discovery of existing forbidden events
+    if (!(await canReadEvent(context.access, event))) { return next(errors.forbidden()); }
     // Stored attachments always carry ids; the wire type keeps them optional.
     event.attachments = setFileReadToken(context.access, event.attachments as Array<{ id: string; readToken?: string }> | undefined);
     context.auditRecordCount = 1; // returned one record (breach-scope)
@@ -431,6 +420,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // A counterparty's direct chat (or user alert / ack) write is refused when
   // the relationship's features turn it off: 403, `data.id` the CMC id.
   const cmcCounterpartyFeatureGateHook = cmc.createCounterpartyFeatureGateHook({ errors });
+  // App and shared accesses: the plugin-internal subtree only through the
+  // capability's own responses stream (create), and the create-time CMC
+  // protections on update (no inbox / internal records, no protocol retyping,
+  // content validated, counterparty `content.from` stamped).
+  const cmcInternalWriteGuard = cmc.createInternalWriteGuardHook({ errors });
+  const cmcEventUpdateGuard = cmc.createEventUpdateGuardHook({ errors });
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({
     errors,
     mall: mallForCmc,
@@ -544,6 +539,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // the just-created reserved tree.
     cmcEnsureReservedParentsHook,
     verifyCanCreateEventsOnStream,
+    cmcInternalWriteGuard,
     cmcContentValidationHook,
     cmcAcceptAccessGateHook,
     // After the gate, so a refused write is never stamped; before the store.
@@ -890,6 +886,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     sharedSecretsUpdateGuard,
     emailsUpdateGuard,
     validateEventContentAndCoerce,
+    cmcEventUpdateGuard,
     detectAccountStream,
     validateAccountStreamForUpdate,
     validateAccountStreamContent,

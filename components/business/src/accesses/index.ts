@@ -10,6 +10,8 @@ const __ex_AccessLogic = require('./AccessLogic.ts').default;
 export { __ex_AccessLogic as AccessLogic };
 const __ex_permissionSet = require('./permissionSet.ts');
 export { __ex_permissionSet as permissionSet };
+const __ex_canReadEvent = require('./canReadEvent.ts').canReadEvent;
+export { __ex_canReadEvent as canReadEvent };
 
 type AccessLike = {
   id: string;

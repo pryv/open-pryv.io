@@ -283,6 +283,68 @@ describe('[EP01] event previews', function () {
     });
   });
 
+  describe('[PVX0] previews apply the events.get exclusions', function () {
+    const starReadToken = testData.accesses[2].token; // shared, `*` read
+    const starNoneToken = 'pvx-' + Date.now() + '-token';
+    const starNoneAccessId = 'pvx-' + Date.now();
+    const created = [];
+    let storageLayer = null;
+
+    async function createPicture (event) {
+      const image = testData.attachments.image;
+      const now = timestamp.now();
+      const tracking = { time: now, created: now, createdBy: 'test', modified: now, modifiedBy: 'test' };
+      const ev = await mall.events.createWithAttachments(user.id, { ...tracking, ...event },
+        [{ fileName: 'picture.png', type: image.type, size: image.size, attachmentData: fs.createReadStream(image.path) }]);
+      created.push(ev);
+      return ev;
+    }
+    function getPreview (id, authToken) {
+      return superagent.get(server.url + path(id)).set('Authorization', authToken).ok(() => true);
+    }
+
+    before(async function () {
+      storageLayer = await require('storage').getStorageLayer();
+      await new Promise((resolve, reject) => storageLayer.accesses.insertOne(user, {
+        id: starNoneAccessId,
+        token: starNoneToken,
+        name: 'pvx star read, child none',
+        type: 'app',
+        permissions: [{ streamId: '*', level: 'read' }, { streamId: testData.streams[0].children[0].id, level: 'none' }],
+        created: timestamp.now(),
+        createdBy: 'test',
+        modified: timestamp.now(),
+        modifiedBy: 'test'
+      }, (err) => err ? reject(err) : resolve()));
+    });
+
+    after(async function () {
+      for (const ev of created) {
+        try { await mall.events.delete(user.id, ev); } catch (_e) { /* best-effort */ }
+      }
+      await new Promise((resolve) => storageLayer.accesses.removeOne(user, { id: starNoneAccessId }, () => resolve()));
+    });
+
+    it('[PVX1] refuses the preview of an emails container item to a star read token', async function () {
+      // carries the account's own address, so the platform cross-check stays consistent
+      const ev = await createPicture({ streamIds: [':_emails:'], type: 'picture/attached', content: { value: user.email } });
+      const denied = await getPreview(ev.id, starReadToken);
+      assert.strictEqual(denied.status, 403, JSON.stringify(denied.body));
+      const plain = await createPicture({ streamIds: [testData.streams[0].id], type: 'picture/attached' });
+      const allowed = await getPreview(plain.id, starReadToken);
+      assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
+    });
+
+    it('[PVX2] refuses the preview of an event that has a stream the token is denied', async function () {
+      const ev = await createPicture({ streamIds: [testData.streams[0].id, testData.streams[0].children[0].id], type: 'picture/attached' });
+      const denied = await getPreview(ev.id, starNoneToken);
+      assert.strictEqual(denied.status, 403, JSON.stringify(denied.body));
+      const plain = await createPicture({ streamIds: [testData.streams[0].id], type: 'picture/attached' });
+      const allowed = await getPreview(plain.id, starNoneToken);
+      assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
+    });
+  });
+
   describe('[EP03] POST /clean-up-cache', function () {
     const basePath = '/' + user.username + '/clean-up-cache';
     const adminKey = helpers.dependencies.settings.auth.adminAccessKey;

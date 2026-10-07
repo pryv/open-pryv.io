@@ -29,7 +29,13 @@ describe('[HFSQ] Querying data from a HF series', function () {
   // Set up a few ids that we'll use for testing. NOTE that these ids will
   // change on every test run.
   let userId, streamId, streamId2, eventId, accessToken, createOnlyToken, secondStreamToken;
+  let deniedChildId, emailsEventId, mixedEventId, starReadToken, starNoneToken;
   before(() => {
+    deniedChildId = cuid();
+    emailsEventId = cuid();
+    mixedEventId = cuid();
+    starReadToken = cuid();
+    starNoneToken = cuid();
     userId = cuid();
     streamId = cuid();
     streamId2 = cuid();
@@ -43,10 +49,19 @@ describe('[HFSQ] Querying data from a HF series', function () {
     const user = await pryv.user(userId, {});
     await user.stream({ id: streamId });
     await user.stream({ id: streamId2 });
+    await user.stream({ id: deniedChildId, parentId: streamId });
     await user.event({
       id: eventId,
       type: 'series:mass/kg',
       streamIds: [streamId, streamId2]
+    });
+    await user.event({ id: emailsEventId, type: 'series:mass/kg', streamIds: [':_emails:'] });
+    await user.event({ id: mixedEventId, type: 'series:mass/kg', streamIds: [streamId, deniedChildId] });
+    await user.access({ token: starReadToken, type: 'app', permissions: [{ streamId: '*', level: 'read' }] });
+    await user.access({
+      token: starNoneToken,
+      type: 'app',
+      permissions: [{ streamId: '*', level: 'read' }, { streamId: deniedChildId, level: 'none' }]
     });
     await user.access({ token: accessToken, type: 'personal' });
     await user.session(accessToken);
@@ -192,6 +207,18 @@ describe('[HFSQ] Querying data from a HF series', function () {
         const err = res.body.error;
         assert.strictEqual(err.id, ErrorIds.InvalidParametersFormat);
       });
+  });
+  it('[HFX1] should refuse a star read app token the series of an emails container item', async function () {
+    const denied = await server.request().get(`/${userId}/events/${emailsEventId}/series`).set('authorization', starReadToken);
+    assert.strictEqual(denied.status, 403);
+    const own = await server.request().get(`/${userId}/events/${emailsEventId}/series`).set('authorization', accessToken);
+    assert.strictEqual(own.status, 200);
+  });
+  it('[HFX2] should refuse the series of an event that has a stream the token is denied', async function () {
+    const denied = await server.request().get(`/${userId}/events/${mixedEventId}/series`).set('authorization', starNoneToken);
+    assert.strictEqual(denied.status, 403);
+    const allowed = await server.request().get(`/${userId}/events/${eventId}/series`).set('authorization', starNoneToken);
+    assert.strictEqual(allowed.status, 200);
   });
   it('[XI4M] should refuse a query with a "create-only" token', async function () {
     const res = await server

@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import type { CanReadEventAccess } from 'business/src/accesses/canReadEvent.ts';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = require('path').dirname(__filename);
@@ -29,6 +30,7 @@ const getAuth = require('middleware/src/getAuth.ts').default;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
+const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const attachmentManagement = require('../attachmentManagement.ts');
 const { getConfig } = require('@pryv/boiler');
 
@@ -46,7 +48,7 @@ type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get:
 type PryvRequest = {
   context: {
     user: { id: string; [k: string]: unknown };
-    access: { canGetEventsOnStream: (streamId: string, storeId: string) => Promise<boolean> };
+    access: CanReadEventAccess;
     [k: string]: unknown;
   };
   params: { id: string };
@@ -93,15 +95,8 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
       if (event == null) {
         return next(errors.unknownResource('event', id));
       }
-      let canReadEvent = false;
-      for (let i = 0; i < event.streamIds.length; i++) {
-        // ok if at least one
-        if (await context.access.canGetEventsOnStream(event.streamIds[i], 'local')) {
-          canReadEvent = true;
-          break;
-        }
-      }
-      if (!canReadEvent) { return next(errors.forbidden()); }
+      // same exclusions as events.get
+      if (!(await canReadEvent(context.access, event))) { return next(errors.forbidden()); }
       if (!canHavePreview(event)) {
         return res.sendStatus(204);
       }
