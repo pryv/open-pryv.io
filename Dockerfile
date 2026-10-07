@@ -63,9 +63,13 @@ COPY . .
 
 # Install with workspaces (links components/* and storages into node_modules)
 # --ignore-scripts avoids backloop.dev postinstall cert fetch failing in Docker;
-# npm rebuild re-compiles all native addons (better-sqlite3, unix-dgram, etc.)
+# npm rebuild re-compiles all native addons (better-sqlite3, unix-dgram, etc.).
+# --foreground-scripts runs those builds one at a time (and shows their output):
+# in parallel, two node-gyp builds copy the Node headers into the same cache
+# directory file by file, and a compile can read a half-written header (seen
+# once on a tag build: unix-dgram failed with a libuv callback type mismatch).
 RUN npm install --omit=dev --ignore-scripts && \
-    npm rebuild
+    npm rebuild --foreground-scripts
 
 # Clean up build deps
 RUN apt-get -y --purge autoremove python3 build-essential curl && \

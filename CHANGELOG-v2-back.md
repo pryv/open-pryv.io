@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Image build: native addons rebuilt one at a time
+
+- The Dockerfile runs `npm rebuild --foreground-scripts`. Without it npm runs the implicit
+  `node-gyp rebuild` of `unix-dgram` and `fs-xattr` in parallel; both copy the Node headers into the
+  same `~/.cache/node-gyp/<version>/` file by file, and a compile read a half-written
+  `uv/version.h` once (nan then picked the pre-libuv-1.0 callback: `invalid conversion … to
+  'uv_async_cb'`), failing a tag build that passed on re-run. The build logs now show each native
+  build.
+
 ## User data root persistence check
 
 - `config-validation.js` `checkUserDataRootPersistence` (exported, tests [DRPC]): only when
