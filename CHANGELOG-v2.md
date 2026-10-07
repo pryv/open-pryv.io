@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.43 - 2026-10-07
 
 **Upgrade promptly: this release carries security fixes, and some need operator attention before
 the restart.** Read "Configuration" and "Multi-core" below. Before restarting each core on the new
