@@ -230,6 +230,9 @@ class MethodContext {
       // Load the streams we can access.
       if (!access.isPersonal()) { await access.loadPermissions(); }
     } catch (err) {
+      // An access that failed any check above is not usable by a later step
+      // that ignores this error (e.g. the account deletion route).
+      this.access = null;
       if (err != null && !(err instanceof APIError)) {
         throw errors.unexpectedError(err);
       }
