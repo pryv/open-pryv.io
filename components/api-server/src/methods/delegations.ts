@@ -131,7 +131,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
    * delegate returns the SAME token while the session is alive.
    */
   async function mintSession (username: string, appId: string): Promise<string> {
-    const sessionData = { username, appId };
+    // Same session shape as a login: matched by user id too, so a session of a
+    // former owner of this username is never reused.
+    const userId = await (await getUsersRepository()).getUserIdForUsername(username);
+    const sessionData = { username, appId, userId };
     const existing = await fromCallback((cb: (e: unknown, id: string | null) => void) => sessionsStorage.getMatching(sessionData, cb)) as string | null;
     if (existing != null) return existing;
     return await fromCallback((cb: (e: unknown, id: string) => void) => sessionsStorage.generate(sessionData, null, cb)) as string;

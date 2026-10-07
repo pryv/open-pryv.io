@@ -197,6 +197,7 @@ class Deletion {
       await usersRepository.deleteOne(context.user.id, context.user.username);
       await Promise.all(removals);
       await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
+      await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));
