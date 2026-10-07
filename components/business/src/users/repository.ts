@@ -393,6 +393,11 @@ class UsersRepository {
       uniquenessError.data.username = user.username;
       throw uniquenessError;
     }
+    // A user id is never shared between accounts (not every engine enforces it
+    // on the index): refuse before anything is written.
+    if (user.id != null && (await this.usersIndex.getUsername(user.id)) != null) {
+      throw errors.itemAlreadyExists('user', { id: user.id });
+    }
     // could throw uniqueness errors
     await this.platform.updateUser(user.username, operations);
     try {
@@ -479,8 +484,17 @@ class UsersRepository {
    * are logged, not thrown: the original failure must surface.
    */
   async compensateFailedInsert (user: UserData) {
+    // Only undo what this attempt created: if the id already belongs to
+    // another account (the insert failed on it), its index row and data are
+    // that account's and must not be touched.
+    await this.usersIndex.init();
+    const indexedName = await this.usersIndex.getUsername(user.id);
+    const ownsId = indexedName == null || indexedName === user.username;
+    if (!ownsId) {
+      logger.warn(`user creation rollback: id already belongs to another account, its data is left untouched (attempted "${user.username}")`);
+    }
     const cleanups: Array<[string, () => Promise<unknown>]> = [
-      ['usersIndex', async () => { await this.usersIndex.init(); await this.usersIndex.deleteById(user.id); }],
+      ['usersIndex', async () => { if (ownsId) await this.usersIndex.deleteById(user.id); }],
       ['cache', async () => cache.unsetUser(user.username)],
       ['platform', async () => await this.platform.deleteUser(user.username, user)],
       // Free the name→core claim validateRegistration made for this name, but
@@ -493,7 +507,7 @@ class UsersRepository {
           await this.platform.deleteUserCore(user.username);
         }
       }],
-      ['mall', async () => await this.mall.deleteUser(user.id)]
+      ['mall', async () => { if (ownsId) await this.mall.deleteUser(user.id); }]
     ];
     for (const [what, cleanup] of cleanups) {
       try {
