@@ -20,6 +20,7 @@ const { ApiEndpoint } = require('utils');
 
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/accessesMethods.ts');
+const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
@@ -584,6 +585,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     'accesses.update',
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
+    // Only the declared updatable fields may change; anything else (type,
+    // token, id, createdBy, alias...) is refused, never silently ignored.
+    commonFns.catchForbiddenUpdate(accessSchema('update'), false, getLogger('accesses')),
     cmcAccessUpdateForgePreventionHook,
     delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
@@ -828,7 +832,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const updates = params.update;
     const accessesRepository = storageLayer.accesses;
     const newSerial = ((target.serial == null) ? 0 : target.serial) + 1;
-    const update: { serial?: number; modifiedBySerial?: number | null; [k: string]: unknown } = Object.assign({}, updates);
+    // Defence in depth: write only the updatable fields, whatever reached here.
+    const alterable: string[] = accessSchema('update').alterableProperties ?? [];
+    const update: { serial?: number; modifiedBySerial?: number | null; [k: string]: unknown } = {};
+    for (const key of Object.keys(updates)) {
+      if (alterable.includes(key)) update[key] = (updates as Record<string, unknown>)[key];
+    }
     update.serial = newSerial;
     context.updateTrackingProperties(update);
     update.modifiedBySerial = (context.access?.serial == null) ? null : context.access.serial;
