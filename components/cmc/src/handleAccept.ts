@@ -257,6 +257,8 @@ async function handleAccept (params: {
   if (triggerAccess?.canCreateAccess != null) {
     let canCreate = true;
     try {
+      // May append the granting access's narrower entries to the payload's
+      // permissions, which is what gets created below.
       canCreate = await triggerAccess.canCreateAccess(dataGrantPayload!);
     } catch (err: unknown) {
       return {

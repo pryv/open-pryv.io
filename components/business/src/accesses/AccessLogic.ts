@@ -411,8 +411,81 @@ class AccessLogic {
     // can only manage shared accesses with permissions
     if (!hasStreamPermissions) return false;
 
-    // all OK
+    // Accepted: carry this access's narrower entries into the child.
+    await this.inheritCarveOuts(candidate);
     return true;
+  }
+
+  /**
+   * Append to the candidate this access's own entries that are narrower than
+   * what the candidate gets at the same stream through a broader grant, so a
+   * child never reaches a subtree its creator is kept out of. Example: an
+   * access holding `{A: read}, {A/B: none}` that creates `{A: read}` gives the
+   * child `{A/B: none}` too.
+   *
+   * Mutates `candidate.permissions` in place: callers persist that array.
+   * Known gap: a stream moved under a granted stream after the child was
+   * created is not covered.
+   */
+  async inheritCarveOuts (candidate: { permissions?: Permission[] }) {
+    if (this.isPersonal()) return candidate;
+    if (!Array.isArray(candidate.permissions)) return candidate;
+    // The stored entries, not the ones the constructor injects.
+    const own = Array.isArray(this._access.permissions) ? this._access.permissions as Permission[] : [];
+
+    const key = (storeId: string, streamId: string) => storeId + '\u0000' + streamId;
+    const granted = new Map<string, string>(); // candidate entries by store + in-store id
+    for (const perm of candidate.permissions) {
+      if (!('streamId' in perm) || typeof perm.streamId !== 'string') continue;
+      const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
+      granted.set(key(storeId, storeStreamId), perm.level);
+    }
+
+    const mall = await getMall();
+    const starStores = new Set<string>(mall.includedInStarPermissions);
+
+    type Entry = { streamId: string; at: string; level: string; inherited: string; between: string[] };
+    const entries: Entry[] = [];
+    for (const perm of own) {
+      if (!('streamId' in perm) || typeof perm.streamId !== 'string') continue;
+      const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
+      if (storeId === storeDataUtils.LocalStoreId && storeStreamId === '*') continue;
+      if (granted.has(key(storeId, storeStreamId))) continue; // checked as an explicit request
+
+      // Walk up to the candidate's nearest explicit ancestor.
+      const between: string[] = [];
+      let inherited: string | undefined;
+      const seen = new Set<string>();
+      let current: string | null = null;
+      if (storeStreamId !== '*') {
+        const stream = await mall.streams.getOneWithNoChildren(this._userId, storeStreamId, storeId);
+        current = stream ? stream.parentId : null;
+      }
+      while (current != null && !seen.has(current)) {
+        seen.add(current);
+        const level = granted.get(key(storeId, current));
+        if (level !== undefined) { inherited = level; break; }
+        between.push(key(storeId, current));
+        const stream = await mall.streams.getOneWithNoChildren(this._userId, current, storeId);
+        current = stream ? stream.parentId : null;
+      }
+      if (inherited === undefined && storeStreamId !== '*') inherited = granted.get(key(storeId, '*'));
+      if (inherited === undefined && storeId !== storeDataUtils.LocalStoreId && starStores.has(storeId)) {
+        inherited = granted.get(key(storeDataUtils.LocalStoreId, '*'));
+      }
+      if (inherited === undefined) continue; // not covered by the candidate
+
+      entries.push({ streamId: perm.streamId, at: key(storeId, storeStreamId), level: narrowerLevel(perm.level, inherited), inherited, between });
+    }
+
+    // A carve-out also shadows the entries below it that merely match the
+    // candidate's level, so those are re-stated to keep their exact reach.
+    const carved = new Set(entries.filter((e) => e.level !== e.inherited).map((e) => e.at));
+    for (const e of entries) {
+      if (e.level === e.inherited && !e.between.some((k) => carved.has(k))) continue;
+      candidate.permissions.push({ streamId: e.streamId, level: e.level } as Permission);
+    }
+    return candidate;
   }
 
   /** ------------ STREAMS ------------- */
@@ -588,4 +661,19 @@ function isHigherOrEqualLevel (permissionLevelA: string, permissionLevelB: strin
 }
 function isLowerLevel (permissionLevelA: string, permissionLevelB: string) {
   return !isHigherOrEqualLevel(permissionLevelA, permissionLevelB);
+}
+
+/**
+ * The most a child granted `childLevel` may hold where its creator holds
+ * `ownLevel`. `create-only` writes without reading and `read` reads without
+ * writing, so together they leave nothing.
+ */
+function narrowerLevel (ownLevel: string | null, childLevel: string): string {
+  if (ownLevel == null || ownLevel === 'none' || childLevel === 'none') return 'none';
+  if (ownLevel === childLevel) return ownLevel;
+  if (ownLevel === 'create-only' || childLevel === 'create-only') {
+    const other = ownLevel === 'create-only' ? childLevel : ownLevel;
+    return other === 'read' ? 'none' : 'create-only';
+  }
+  return isLowerLevel(ownLevel, childLevel) ? ownLevel : childLevel;
 }

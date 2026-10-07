@@ -649,6 +649,30 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(updated, true);
     });
 
+    it('[HS-AUTH-CVO] entries the chain check appends are the ones written', async () => {
+      const mall = fakeMall([CHANNEL_ACCESS]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const carveOut = { streamId: 'fertility-excluded', level: 'none' };
+      const triggerAccess = {
+        canUpdateAccess: () => true,
+        canCreateAccess: async (payload) => { payload.permissions.push(carveOut); return true; },
+      };
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1', triggerEvent: trigger, selfIdentity: SELF, deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      const applied = mall.calls.accessesUpdated[0].update.permissions;
+      assert.deepEqual(applied.find((p) => p.streamId === carveOut.streamId), carveOut);
+    });
+
     it('[HS-AUTH-NUP] rejects with cmc-insufficient-permissions when canUpdateAccess is false', async () => {
       const mall = fakeMall([CHANNEL_ACCESS]);
       let updated = false;

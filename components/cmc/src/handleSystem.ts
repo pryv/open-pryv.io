@@ -638,6 +638,8 @@ async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<Syst
       canUpdate = await triggerAccess.canUpdateAccess({ id: accessId, type: 'shared' });
     } catch (_e) { canUpdate = false; }
     try {
+      // May append the granting access's narrower entries to mergedPerms,
+      // which is the array written below.
       canGrant = await triggerAccess.canCreateAccess({ type: 'shared', permissions: mergedPerms });
     } catch (_e) { canGrant = false; }
     if (!canUpdate || !canGrant) {

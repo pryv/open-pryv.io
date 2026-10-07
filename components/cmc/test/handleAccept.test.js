@@ -104,6 +104,26 @@ const REFUSE_TRIGGER = {
 
 describe('[CMCHA] cmc/handleAccept', () => {
   describe('[CMCHA-OK] handleAccept happy path', () => {
+    it('[HACVO] entries the chain check appends to the payload are the ones created', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const carveOut = { streamId: 'excluded-under-granted', level: 'none' };
+      const triggerAccess = {
+        canCreateAccess: async (payload) => { payload.permissions.push(carveOut); return true; },
+      };
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(mall.calls.accessesCreated[0].permissions.find((p) => p.streamId === carveOut.streamId), carveOut);
+    });
+
     it('[HA01] reads offer, creates data-grant, delivers accept; returns ok with handles', async () => {
       const mall = fakeMall();
       const { fetch, calls } = fakeFetch([

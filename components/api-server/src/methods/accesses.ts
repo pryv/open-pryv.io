@@ -352,8 +352,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.forbidden('Your access token has insufficient permissions ' +
                 'to create this new access.'));
     }
-    // (Restrictions such as `secretSharing: forbidden` are inherited inside
-    // canCreateAccess, so they apply to accesses.update as well as create.)
+    // (Restrictions such as `secretSharing: forbidden`, and the creator's
+    // narrower entries below a granted stream, are appended to
+    // params.permissions inside canCreateAccess, so they apply to
+    // accesses.update as well as create.)
     if (params.token != null) {
       params.token = slugify(params.token);
       if (string.isReservedId(params.token)) {
@@ -768,6 +770,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         }
         if (managingApp != null) {
           if (wantsPermChange) {
+            // canCreateAccess appends to this array, which is updates.permissions.
             const fits = await managingApp.canCreateAccess({
               type: 'shared',
               permissions: after.permissions
