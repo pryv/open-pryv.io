@@ -111,6 +111,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   let username;
   let password;
   let personalToken;
+  let fixtureUser;
 
   before(async function () {
     await initTests();
@@ -133,9 +134,9 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     username = ('mfa' + cuid.slug()).toLowerCase();
     password = 'mfa-test-pwd-123';
     personalToken = cuid();
-    const user = await fixtures.user(username, { password });
-    await user.access({ type: 'personal', token: personalToken, name: 'pryv-test' });
-    await user.session(personalToken);
+    fixtureUser = await fixtures.user(username, { password });
+    await fixtureUser.access({ type: 'personal', token: personalToken, name: 'pryv-test' });
+    await fixtureUser.session(personalToken);
   });
 
   afterEach(async function () {
@@ -227,6 +228,49 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         .send({ code: totpCodeFor(secret, 0) });
       assert.strictEqual(verify.status, 200, `verify failed: ${JSON.stringify(verify.body)}`);
       assert.ok(verify.body.token != null);
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('[MA16] a delegate personal token cannot change the owner MFA', function () {
+    let delegateToken;
+    beforeEach(async function () {
+      // Minted storage-side the way the delegation plugin does: personal, marked.
+      delegateToken = 'deleg-' + cuid();
+      await fixtureUser.access({
+        type: 'personal',
+        token: delegateToken,
+        name: 'delegation:ma16-parent@core',
+        clientData: { delegation: { kind: 'delegate-pat', relId: 'ma16-rel', delegate: { username: 'ma16-parent', hostSlug: 'core' } } }
+      });
+      await fixtureUser.session(delegateToken);
+    });
+
+    it('[MA16A] mfa.activate with a delegate token is refused', async function () {
+      const res = await coreRequest
+        .post(`/${username}/mfa/activate`).set('Authorization', delegateToken).send({});
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'delegation-genuine-login-required');
+    });
+
+    it('[MA16B] mfa.deactivate with a delegate token is refused and the owner MFA stays active', async function () {
+      const act = await coreRequest
+        .post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({});
+      assert.strictEqual(act.status, 302);
+      const confirm = await coreRequest
+        .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+        .send({ code: await previousStepCodeFor(act.body.secret) });
+      assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+
+      const res = await coreRequest
+        .post(`/${username}/mfa/deactivate`).set('Authorization', delegateToken).send({});
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'delegation-genuine-login-required');
+
+      const loginRes = await coreRequest
+        .post(`/${username}/auth/login`).set('Origin', 'http://test.pryv.local')
+        .send({ username, password, appId: 'pryv-test' });
+      assert.strictEqual(loginRes.body.mfaMethod, 'totp', 'the owner MFA is still active');
     });
   });
 
