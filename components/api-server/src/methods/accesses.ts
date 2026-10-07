@@ -148,7 +148,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       result.accesses = accesses.map((a: AccessLike) => {
         const wire = composeWireAccess(a);
         wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-        return wire;
+        return mayShowCredentials(context, a) ? wire : withoutCredentials(wire);
       });
       next();
     } catch (err) {
@@ -215,6 +215,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         return next(errors.unknownResource('access', params.id));
       }
     }
+    const showCredentials = mayShowCredentials(context, head);
     const currentSerial = head.serial == null ? null : head.serial;
     const wantsSpecific = ref.serial != null;
     const specificMatchesHead = wantsSpecific && currentSerial != null && ref.serial === currentSerial;
@@ -222,7 +223,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // Current head — return as-is.
       const wire = composeWireAccess(head);
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-      result.access = wire;
+      result.access = showCredentials ? wire : withoutCredentials(wire);
     } else if (currentSerial != null && ref.serial < currentSerial) {
       // Obsolete composite — historical row, with a `current` hint pointing
       // at the live head's composite id (Q-pivot=a, GitHub-commit-by-sha-style).
@@ -236,7 +237,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       if (snapshot == null) return next(errors.unknownResource('access', params.id));
       const wire = composeWireAccess(snapshot, ref.base);
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-      result.access = wire;
+      result.access = showCredentials ? wire : withoutCredentials(wire);
       result.current = serializeAccessRef({ base: ref.base, serial: currentSerial });
     } else {
       // Requested a serial > head's current (never existed) or the head
@@ -249,7 +250,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         result.history = (history || []).map((h: AccessLike) => {
           const wire = composeWireAccess(h, ref.base);
           wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-          return wire;
+          return showCredentials ? wire : withoutCredentials(wire);
         });
       } catch (err) {
         return next(errors.unexpectedError(err));
@@ -1112,13 +1113,18 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     };
     accessesRepository.findOne(context.user, query, dbFindOptions, function (err: Error | null, access: AccessLike | null) {
       if (err != null) { return next(errors.unexpectedError(err)); }
-      // Do we have a match?
-      if (access != null && accessMatches(access, params.requestedPermissions, params.clientData)) {
+      // Do we have a match? (A delegate only matches app accesses it created:
+      // otherwise the flow creates its own, removed with the delegation.)
+      const usable = access != null && mayShowCredentials(context, access);
+      if (usable && accessMatches(access, params.requestedPermissions, params.clientData)) {
         result.matchingAccess = composeWireAccess(access);
         return next();
       }
       // No, we don't have a match. Return other information:
-      if (access != null) { result.mismatchingAccess = composeWireAccess(access); }
+      if (access != null) {
+        const wire = composeWireAccess(access);
+        result.mismatchingAccess = usable ? wire : withoutCredentials(wire);
+      }
       checkPermissions(context, params.requestedPermissions, function (err: Error | null, checkedPermissions?: StreamPermission[] | null, checkError?: unknown) {
         if (err != null) { return next(err); }
         result.checkedPermissions = checkedPermissions ?? undefined;
@@ -1128,6 +1134,22 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         next();
       });
     });
+  }
+
+  // A delegated personal access (account delegation) sees the credentials of
+  // itself and of the accesses it created only: the owner's own tokens (login
+  // sessions, apps, shares) are not handed to a delegate, and would outlive it.
+  function mayShowCredentials (context: MethodContext, access: { id?: unknown; createdBy?: unknown }): boolean {
+    const caller = context.access;
+    if (caller == null || caller.type !== 'personal' || delegation.isGenuineLoginAccess(caller)) return true;
+    if (access.id === caller.id) return true;
+    return typeof access.createdBy === 'string' && managingAccessBase(access.createdBy) === caller.id;
+  }
+
+  function withoutCredentials<T extends { token?: unknown; apiEndpoint?: unknown }> (wire: T): T {
+    delete wire.token;
+    delete wire.apiEndpoint;
+    return wire;
   }
 
   // Returns true if the given access' permissions match the `requestedPermissions`.
