@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Docker image: refuses a user data root on the container's own filesystem
+
+- **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that
+  nothing ever expanded, so the documented plain-Docker and Dokku forms failed at boot unless the
+  override restated both keys. They are gone (previews and the error log default under
+  `var-pryv/`), and INSTALL.md now shows the override the `/app/data` mount needs:
+  `storages.engines.sqlite.path: /app/data/users`, `storages.engines.filesystem.previewsDirPath:
+  /app/data/previews`, and `logs.file` (off, or a path under `/app/data`). Nothing reads
+  `PRYV_DATADIR` / `PRYV_LOGSDIR`; drop them.
+- **Safety, BREAKING for installs already losing data.** Inside the image, the server refuses to
+  start when `storages.engines.sqlite.path` (per-user databases, attachments, SQLite audit and
+  series) is on the container's own filesystem or on a tmpfs while an engine writes there: that data
+  is lost whenever the container is recreated. `PRYV_EPHEMERAL_DATA_OK=true` lifts it for a
+  throwaway container. Raw (non-Docker) installs are not checked.
+- **Operators:** if an upgrade stops on this message, copy what the old container still holds before
+  removing it (`docker cp <old-container>:/app/var-pryv/users /host/pryv/data/users`), then set
+  `storages.engines.sqlite.path: /app/data/users` with `/host/pryv/data` mounted on `/app/data`.
+
+### Docker image: Node 24.18.1 and current Debian security updates
+
+- **Security.** The image moves to Node 24.18.1 (the security release of the 24.18 line; the image
+  stays below 24.19, see nodejs/node#65446), installs the Debian security updates available at build
+  time on top of the pinned base, and no longer ships `curl` (it was only needed to download rqlite
+  during the build). A scan of the image drops from 15 critical / 92 high findings to 3 / 69; the
+  remaining critical ones are in glibc (no Debian fix published yet) and in the `tar` package of the
+  npm copy bundled with Node (not used by the server).
+- **Operators:** native installs should use Node 24.18.1 too. Nothing in the server called `curl`;
+  a script of yours that runs `curl` inside the container needs another tool (e.g. `node -e "fetch(…)"`).
+
+## 2.0.0-rc.41 - 2026-10-07
+
 **Upgrade promptly: this release carries security fixes.** No configuration change is needed.
 
 ### MFA
@@ -36,35 +67,6 @@
 - **Security** (deployments that list `personalToken` in `user-account.delete`). A personal token only
   deletes its own account, whatever the transport (batch calls and socket.io included), and an access
   that failed its checks (logged out, expired) can no longer delete the account.
-
-### Docker image: refuses a user data root on the container's own filesystem
-
-- **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that
-  nothing ever expanded, so the documented plain-Docker and Dokku forms failed at boot unless the
-  override restated both keys. They are gone (previews and the error log default under
-  `var-pryv/`), and INSTALL.md now shows the override the `/app/data` mount needs:
-  `storages.engines.sqlite.path: /app/data/users`, `storages.engines.filesystem.previewsDirPath:
-  /app/data/previews`, and `logs.file` (off, or a path under `/app/data`). Nothing reads
-  `PRYV_DATADIR` / `PRYV_LOGSDIR`; drop them.
-- **Safety, BREAKING for installs already losing data.** Inside the image, the server refuses to
-  start when `storages.engines.sqlite.path` (per-user databases, attachments, SQLite audit and
-  series) is on the container's own filesystem or on a tmpfs while an engine writes there: that data
-  is lost whenever the container is recreated. `PRYV_EPHEMERAL_DATA_OK=true` lifts it for a
-  throwaway container. Raw (non-Docker) installs are not checked.
-- **Operators:** if an upgrade stops on this message, copy what the old container still holds before
-  removing it (`docker cp <old-container>:/app/var-pryv/users /host/pryv/data/users`), then set
-  `storages.engines.sqlite.path: /app/data/users` with `/host/pryv/data` mounted on `/app/data`.
-
-### Docker image: Node 24.18.1 and current Debian security updates
-
-- **Security.** The image moves to Node 24.18.1 (the security release of the 24.18 line; the image
-  stays below 24.19, see nodejs/node#65446), installs the Debian security updates available at build
-  time on top of the pinned base, and no longer ships `curl` (it was only needed to download rqlite
-  during the build). A scan of the image drops from 15 critical / 92 high findings to 3 / 69; the
-  remaining critical ones are in glibc (no Debian fix published yet) and in the `tar` package of the
-  npm copy bundled with Node (not used by the server).
-- **Operators:** native installs should use Node 24.18.1 too. Nothing in the server called `curl`;
-  a script of yours that runs `curl` inside the container needs another tool (e.g. `node -e "fetch(…)"`).
 
 ### Docker image: the server runs as a non-root user
 
