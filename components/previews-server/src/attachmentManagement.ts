@@ -34,7 +34,7 @@ function getPreviewsDirPath (): string {
 type UserLike = { id: string };
 
 async function ensurePreviewPath (user: UserLike, eventId: string, dimension: string | number): Promise<string> {
-  const dirPath = path.join(getPreviewsDirPath(), user.id, eventId);
+  const dirPath = getEventPreviewsDir(user, eventId);
   await fsp.mkdir(dirPath, { recursive: true });
   return path.join(dirPath, getPreviewFileName(dimension));
 }
@@ -42,7 +42,21 @@ async function ensurePreviewPath (user: UserLike, eventId: string, dimension: st
 export { ensurePreviewPath };
 
 function getPreviewPath (user: UserLike, eventId: string, dimension: string | number): string {
-  return path.join(getPreviewsDirPath(), user.id, eventId, getPreviewFileName(dimension));
+  return path.join(getEventPreviewsDir(user, eventId), getPreviewFileName(dimension));
+}
+
+/**
+ * The event's previews directory, refused unless the user id and the event id
+ * are each a single path segment (no way to reach a sibling or parent folder).
+ */
+function getEventPreviewsDir (user: UserLike, eventId: string): string {
+  const root = path.resolve(getPreviewsDirPath());
+  const userDir = path.resolve(root, user.id);
+  const eventDir = path.resolve(userDir, eventId);
+  if (path.dirname(userDir) !== root || path.dirname(eventDir) !== userDir) {
+    throw new Error('Invalid previews path segment: ' + JSON.stringify({ userId: user.id, eventId }));
+  }
+  return eventDir;
 }
 export { getPreviewPath };
 

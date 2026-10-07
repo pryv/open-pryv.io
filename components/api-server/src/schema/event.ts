@@ -53,7 +53,8 @@ export default function (action: string) {
     // The colon is not a regex special character, so it doesn't need escaping.
     // ajv compiles patterns with the `u` (unicode) flag, which rejects the
     // `\:` escape z-schema used to tolerate. Plain `:` works in both worlds.
-    schema.properties.id.pattern = '(?=^:[a-z0-9-]+:)(^:[a-z0-9-]+:[a-z0-9A-Z-]{1,256})|(^c[a-z0-9-]{24}$)|(^[a-z][a-z0-9]{23}$)';
+    // Every alternative is anchored at both ends: the id must be ONLY that.
+    schema.properties.id.pattern = '(^:[a-z0-9-]+:[a-z0-9A-Z-]{1,256}$)|(^c[a-z0-9-]{24}$)|(^[a-z][a-z0-9]{23}$)';
     // only allow "files" (raw file data) on create; no further checks as it's
     // created internally
     schema.properties.files = array(object({}));

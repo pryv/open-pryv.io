@@ -266,6 +266,14 @@ describe('[EP01] event previews', function () {
       }
     });
 
+    it('[PVPT] preview paths never leave the user\'s previews directory', async function () {
+      for (const eventId of ['../escape', 'a/b', '..']) {
+        assert.throws(() => attachmentManagement.getPreviewPath(user, eventId, 256), /Invalid previews path segment/, eventId);
+        await assert.rejects(() => attachmentManagement.ensurePreviewPath(user, eventId, 256), /Invalid previews path segment/, eventId);
+      }
+      assert.ok(attachmentManagement.getPreviewPath(user, 'an-event-id', 256).endsWith('256.jpg'));
+    });
+
     it('[GSDF] must work with animated GIFs too', function (done) {
       const event = testData.events[12];
       request.get(path(event.id), token).end(function (res) {
