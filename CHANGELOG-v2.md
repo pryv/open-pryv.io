@@ -1,6 +1,10 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.42 - 2026-10-07
+
+**Docker operators: before upgrading, check that `storages.engines.sqlite.path` points at a mounted
+volume** (see "Docker image: refuses a user data root" below); the image now refuses to start
+otherwise. Native installs: move to Node 24.18.1.
 
 ### Install wizard: the launcher survives a reboot, the config is private
 
