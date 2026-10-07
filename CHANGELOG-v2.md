@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.41 - 2026-10-07
 
 **Upgrade promptly: this release carries security fixes.** No configuration change is needed.
 
