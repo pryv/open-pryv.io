@@ -131,9 +131,13 @@ describe('[ACMECLIENT] AcmeClient', function () {
       assert.equal(events[1][1].directoryUrl, AcmeClient.DIRECTORY_PRODUCTION);
     });
 
-    it('rejects missing email', async () => {
-      const { lib } = makeFakeLib();
-      await assert.rejects(AcmeClient.createAccount({ acmeLib: lib }), /email is required/);
+    it('[ACNE] registers without a contact when no email is given', async () => {
+      const { lib, events } = makeFakeLib();
+      const result = await AcmeClient.createAccount({ acmeLib: lib });
+      assert.equal(result.email, null);
+      assert.equal(events[2][0], 'createAccount');
+      assert.equal(events[2][1].termsOfServiceAgreed, true);
+      assert.ok(!('contact' in events[2][1]), 'no contact sent');
     });
   });
 

@@ -173,16 +173,16 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
     assert.ok(p, 'expected a problem for missing letsEncrypt:atRestKey when enabled');
   });
 
-  it('[CV-REQ-10] letsEncrypt.email REPLACE sentinel while enabled → problem', () => {
+  it('[CV-REQ-10] letsEncrypt.email is optional while enabled (ACME account without a contact)', () => {
     const problems = [];
     checkRequiredWhen(fakeConfig({
       ...allHappy,
       'letsEncrypt:enabled': true,
       'letsEncrypt:atRestKey': 'base64key',
-      'letsEncrypt:email': 'REPLACE ME'
+      'letsEncrypt:email': null
     }), problems);
-    const p = problems.find((p) => p.payload && p.payload.path === 'letsEncrypt:email');
-    assert.ok(p, 'expected a problem for REPLACE-sentinel letsEncrypt:email when enabled');
+    const le = problems.filter((p) => p.payload && p.payload.path && p.payload.path.startsWith('letsEncrypt:'));
+    assert.strictEqual(le.length, 0, JSON.stringify(le, null, 2));
   });
 
   it('[CV-REQ-11] every key in REQUIRED_WHEN exposed with `path` + `when`', () => {

@@ -379,10 +379,11 @@ function build (opts: BuildOpts = {} as BuildOpts) {
   if (config == null) throw new Error('AcmeOrchestrator.build: config is required');
 
   const hostSpec = deriveHostnames(config);
-  const email = config.get('letsEncrypt:email');
-  if (!email || email === 'REPLACE ME') {
-    throw new Error('AcmeOrchestrator.build: letsEncrypt.email is required');
-  }
+  // Optional ACME contact: unset (or the REPLACE ME placeholder) registers the account without one
+  const configuredEmail = config.get('letsEncrypt:email');
+  const email = typeof configuredEmail === 'string' && configuredEmail !== '' && configuredEmail !== 'REPLACE ME'
+    ? configuredEmail
+    : null;
   const staging = !!config.get('letsEncrypt:staging');
   const renewBeforeDays = (config.get('letsEncrypt:renewBeforeDays') ?? 30) as number;
   const tlsDir = (config.get('letsEncrypt:tlsDir') || 'var-pryv/tls') as string;

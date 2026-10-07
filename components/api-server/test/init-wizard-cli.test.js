@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CLI = path.resolve(__dirname, '../../../bin/init.js');
+const CHECK_CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
 const ANSWERS = `
@@ -32,9 +33,9 @@ email.enabled: false
 `;
 
 /** Runs the wizard unattended into a fresh directory (local mode, no docker). */
-function runWizard (configDir, extraArgs = []) {
+function runWizard (configDir, extraArgs = [], answers = ANSWERS) {
   const answersFile = path.join(configDir, 'answers.yml');
-  fs.writeFileSync(answersFile, ANSWERS);
+  fs.writeFileSync(answersFile, answers);
   const env = { ...process.env, PRYV_CONFIG_DIR: configDir };
   delete env.PRYV_IMAGE_TAG;
   const res = spawnSync('node', [CLI, '--non-interactive', '--config-from=' + answersFile, ...extraArgs], {
@@ -75,6 +76,26 @@ describe('[INWZ] bin/init.js generated files', function () {
     assert.strictEqual(res.status, 0, res.output);
     const mode = fs.statSync(path.join(configDir, 'pryv-config.yml')).mode & 0o777;
     assert.strictEqual(mode.toString(8), '600');
+  });
+
+  it('[INWZ4] the Let\'s Encrypt contact email is optional', () => {
+    const res = runWizard(configDir, [], ANSWERS.replace(/^le\.email:.*\n/m, ''));
+    assert.strictEqual(res.status, 0, res.output);
+    const config = fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8');
+    assert.match(config, /^letsEncrypt:\n {2}enabled: true$/m);
+    assert.doesNotMatch(config, /^ {2}email:/m);
+    const check = spawnSync('node', [CHECK_CLI, path.join(configDir, 'pryv-config.yml')], {
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
+    });
+    assert.doesNotMatch(check.stdout + check.stderr, /letsEncrypt\.email/);
+    assert.strictEqual(check.status, 0, check.stdout + check.stderr);
+  });
+
+  it('[INWZ5] a Let\'s Encrypt contact that is not an email address is refused', () => {
+    const res = runWizard(configDir, [], ANSWERS.replace(/^le\.email:.*$/m, 'le.email: ops'));
+    assert.notStrictEqual(res.status, 0);
+    assert.match(res.output, /le\.email/);
+    assert.ok(!fs.existsSync(path.join(configDir, 'pryv-config.yml')), 'no config written');
   });
 
   it('[INWZ3] an existing world-readable config overwritten with --force ends up 0600', () => {

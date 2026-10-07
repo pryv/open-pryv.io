@@ -1,5 +1,21 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Let's Encrypt: the contact email is optional
+
+- **Change.** `letsEncrypt.email` is no longer required when `letsEncrypt.enabled` is true: without
+  it the ACME account is registered with no contact, which ACME allows. Let's Encrypt stopped sending
+  expiry emails in June 2025 and no longer stores the address. The default is now `null` (was the
+  `REPLACE ME` placeholder); boot validation and `check-config` stop asking for it, and the `init`
+  wizard's email question (answer key `le.email`) can be left empty.
+- An existing account keeps the contact it was registered with; nothing changes for configured
+  installs. Setting or changing `letsEncrypt.email` later does not update an account already
+  registered.
+- Embedded DNS (`dns.active`): the SOA admin falls back to `admin@<domain>` unless
+  `letsEncrypt.email` holds an address; before, an unset email published the `REPLACE ME`
+  placeholder as the SOA admin.
+
 ## 2.0.0-rc.42 - 2026-10-07
 
 **Docker operators: before upgrading, check that `storages.engines.sqlite.path` points at a mounted

@@ -157,13 +157,15 @@ if (get('account.emailVerification.requireAtRegistration') === true) {
   }
 }
 
-// letsEncrypt.* — required when letsEncrypt.enabled is true
-if (get('letsEncrypt.enabled') === true) {
-  for (const key of ['atRestKey', 'email']) {
-    if (isMissingOrSentinel(get(`letsEncrypt.${key}`))) {
-      problems.push(`letsEncrypt.${key} missing or unset (required when letsEncrypt.enabled is true)`);
-    }
-  }
+// letsEncrypt.atRestKey — required when letsEncrypt.enabled is true
+// (letsEncrypt.email is optional: the ACME account then has no contact)
+if (get('letsEncrypt.enabled') === true && isMissingOrSentinel(get('letsEncrypt.atRestKey'))) {
+  problems.push('letsEncrypt.atRestKey missing or unset (required when letsEncrypt.enabled is true)');
+}
+// ...but a placeholder left in it still stops the boot (REPLACE scan of enabled blocks)
+const leEmail = get('letsEncrypt.email');
+if (get('letsEncrypt.enabled') === true && typeof leEmail === 'string' && leEmail !== '' && isMissingOrSentinel(leEmail)) {
+  problems.push('letsEncrypt.email holds a placeholder: set a real address or remove the key');
 }
 
 // sso.* — third-party sign-in (OIDC relying party). Mirrors checkSsoConfig +

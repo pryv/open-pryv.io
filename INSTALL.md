@@ -284,7 +284,7 @@ dnsLess:
   publicUrl: https://your-domain.com
 letsEncrypt:
   enabled: true
-  email: ops@your-domain.com
+  email: ops@your-domain.com                # optional ACME account contact; omit for none
   atRestKey: '<base64 of 32 random bytes>'   # see below
   certRenewer: true                          # single-core → this IS the renewer
 ```
