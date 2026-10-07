@@ -106,8 +106,41 @@ function checkRequiredWhen (config, problems) {
         path: path.split(':'),
         payload: { path, presentButEmpty: value === '' || (typeof value === 'string' && (value.includes('REPLACE') || /\$\{[A-Z_][A-Z0-9_]*\}/.test(value))) }
       });
+      continue;
+    }
+    if (SECRET_PATHS.includes(path)) {
+      const reason = weakSecretReason(value, { production: process.env.NODE_ENV === 'production' });
+      if (reason != null) {
+        problems.push({
+          message: `secret '${path}' ${reason}: set a long random value of your own (e.g. \`openssl rand -hex 32\`).`,
+          path: path.split(':'),
+          payload: { path, weakSecret: true }
+        });
+      }
     }
   }
+}
+
+// Secrets that grant platform-wide powers. A value shipped as a placeholder in
+// a config file (or a common stand-in) is as good as public, so it never boots;
+// in production a short value is refused too.
+const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret'];
+const MIN_SECRET_LENGTH = 16;
+const PLACEHOLDER_SECRETS = ['override me', 'overrideme', 'override-me', 'override_me', 'changeme', 'change me',
+  'change-me', 'change_me', 'secret', 'password', 'admin', 'adminkey', 'todo', 'xxx'];
+
+/**
+ * Why a secret value is not acceptable, or null when it is.
+ * @param {unknown} value
+ * @param {{ production?: boolean }} [options] production also enforces MIN_SECRET_LENGTH
+ */
+function weakSecretReason (value, options = {}) {
+  if (typeof value !== 'string') return null;
+  if (PLACEHOLDER_SECRETS.includes(value.trim().toLowerCase())) return 'is a placeholder value';
+  if (options.production === true && value.length < MIN_SECRET_LENGTH) {
+    return `is shorter than ${MIN_SECRET_LENGTH} characters`;
+  }
+  return null;
 }
 
 // Enum-style validation for `audit:onUserDelete` mode + gate for
@@ -508,6 +541,8 @@ module.exports = {
   checkHostedSites,
   checkTrustedProxies,
   isMissingOrSentinel,
+  weakSecretReason,
+  MIN_SECRET_LENGTH,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES
 };
