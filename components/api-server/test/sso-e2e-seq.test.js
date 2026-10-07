@@ -50,6 +50,16 @@ function totpCodeFor (secretB32, offsetSteps = 0) {
   return totpCode(base32Decode(secretB32), { time: now + offsetSteps * 30, periodSeconds: 30, digits: 6 });
 }
 
+// The enrolment confirm uses the previous step's code, so the following verify
+// has a step of its own (replay protection). Generated in the last seconds of a
+// step, that code is two steps old once the server checks it, outside the
+// one-step drift: wait for the next step first.
+async function previousStepCodeFor (secretB32) {
+  const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+  if (left < 5) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 100));
+  return totpCodeFor(secretB32, -1);
+}
+
 // Parse a URL fragment (`#a=1&b=2`) into a flat map.
 function hashParams (location) {
   const hash = location.includes('#') ? location.slice(location.indexOf('#') + 1) : '';
@@ -225,7 +235,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
     const secret = act.body.secret;
     const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
-      .send({ code: totpCodeFor(secret, -1) });
+      .send({ code: await previousStepCodeFor(secret) });
     assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
 
     // SSO sign-in now hands off the mfaToken only.
@@ -320,7 +330,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', login.body.token).send({});
     assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
     const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
-      .send({ code: totpCodeFor(act.body.secret, -1) });
+      .send({ code: await previousStepCodeFor(act.body.secret) });
     assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
 
     const location = await runCallback(RETURN_QUERY);
