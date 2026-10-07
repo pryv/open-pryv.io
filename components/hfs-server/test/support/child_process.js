@@ -39,6 +39,7 @@ class ApplicationLauncher {
    */
   produceMetadataLoader (authTokenValid = true) {
     const seriesMeta = {
+      authorId: 'mocked-access-id',
       canWrite: () => authTokenValid,
       canRead: () => authTokenValid,
       isTrashedOrDeleted: () => false,

@@ -25,6 +25,7 @@ type HfsContext = {
   childSpan: (name: string) => { finish (): void };
 };
 type SeriesMeta = {
+  authorId: string;
   isTrashedOrDeleted (): boolean;
   canWrite (): boolean;
   produceRowType (repo: unknown): unknown;
@@ -69,7 +70,8 @@ async function storeSeriesBatch (ctx: HfsContext, req: ReqLike, res: ResLike) {
     entries.push({
       userId: userName,
       eventId: bre.eventId,
-      author: accessToken!,
+      // The access id (plus caller id), never the credential itself.
+      author: (await resolver.getSeriesMeta(bre.eventId)).authorId,
       timestamp: now,
       dataExtent: bre.data.minmax()
     });

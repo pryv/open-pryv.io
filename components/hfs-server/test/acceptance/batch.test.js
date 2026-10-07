@@ -137,13 +137,14 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
     //  |- Access(accessToken)
     //  `- Session(accessToken)
     //
-    let userId, parentStreamId, eventId1, eventId2, accessToken, data1, data2;
+    let userId, parentStreamId, eventId1, eventId2, accessToken, accessId, data1, data2;
     before(() => {
       userId = cuid();
       parentStreamId = cuid();
       eventId1 = cuid();
       eventId2 = cuid();
       accessToken = cuid();
+      accessId = cuid();
       const points = [
         [0, 10.2],
         [1, 12.2],
@@ -176,7 +177,7 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
             type: 'series:mass/kg'
           });
         });
-        user.access({ token: accessToken, type: 'personal' });
+        user.access({ id: accessId, token: accessToken, type: 'personal' });
         user.session(accessToken);
       });
     });
@@ -303,6 +304,28 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
         const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
         assert.strictEqual(calls.length >= 1, true);
         assert.strictEqual(calls[0].entries.length, 2);
+      });
+      it('[OO02] records the writing access id as author, never the token', async () => {
+        await storeData(server.request(), { format: 'seriesBatch', data: [data1, data2] })
+          .expect(200);
+        const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
+        const entries = calls.flatMap((c) => c.entries);
+        assert.ok(entries.length >= 2);
+        for (const e of entries) {
+          assert.strictEqual(e.author, accessId);
+          assert.ok(!JSON.stringify(e).includes(accessToken), 'the token is not in the update');
+        }
+      });
+      it('[OO03] with a caller id, records "<access id> <caller id>"', async () => {
+        await server.request()
+          .post(`/${userId}/series/batch`)
+          .set('authorization', accessToken + ' oo03-caller')
+          .send({ format: 'seriesBatch', data: [data1] })
+          .expect(200);
+        const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
+        const entries = calls.flatMap((c) => c.entries);
+        assert.ok(entries.length >= 1);
+        assert.strictEqual(entries[0].author, accessId + ' oo03-caller');
       });
     });
     function storeData (request, data) {

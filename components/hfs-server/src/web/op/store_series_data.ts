@@ -9,6 +9,7 @@ import type { Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
 type SeriesMetaLike = {
+  authorId: string;
   isTrashedOrDeleted: () => boolean;
   canWrite: () => boolean;
   namespaceAndName: () => [string, string];
@@ -71,7 +72,8 @@ async function storeSeriesData (ctx: CtxLike, req: Request, res: Response) {
       {
         userId: userName,
         eventId,
-        author: accessToken,
+        // The access id (plus caller id), never the credential itself.
+        author: seriesMeta.authorId,
         timestamp: now,
         dataExtent: data.minmax()
       }
