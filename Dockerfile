@@ -8,12 +8,17 @@
 # while still apt-installing the build deps the native modules need below.
 # Do NOT re-pin past Node 24.18.x until nodejs/node#65446 is fixed: better-sqlite3
 # rebuilt against 24.19+ headers aborts the process on statement garbage collection.
-FROM node:24-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
+# Pinned: node:24.18.1-slim (security release of the 24.18 line).
+FROM node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
 
 WORKDIR /app
 
-# System deps for native modules (better-sqlite3, sharp)
+# Debian security updates on top of the pinned base (the Node pin above keeps
+# the base image itself from moving), then the build deps for the native
+# modules (better-sqlite3, sharp) and curl for the rqlite download; all three
+# are purged again below.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y python3 build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
@@ -60,7 +65,7 @@ RUN npm install --omit=dev --ignore-scripts && \
     npm rebuild
 
 # Clean up build deps
-RUN apt-get -y --purge autoremove python3 build-essential && \
+RUN apt-get -y --purge autoremove python3 build-essential curl && \
     apt-get autoremove -y && apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 

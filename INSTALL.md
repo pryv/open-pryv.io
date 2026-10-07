@@ -7,7 +7,7 @@
   process aborts when a SQLite statement is garbage-collected
   ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)); SQLite is the default audit
   engine, so this hits every native install. The Docker image is not affected (it pins Node
-  24.18.0). See "Node major bumps" below for pinning the version.
+  24.18.1). Native installs should use 24.18.1, the security release of that line. See "Node major bumps" below for pinning the version.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **InfluxDB** 1.x (optional, for high-throughput HF series; PostgreSQL, the default, and SQLite also serve as series engine)
