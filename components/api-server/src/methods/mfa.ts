@@ -201,7 +201,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       return { error: busyError() };
     }
     const accountErr = await reserveAccountAttempt(user, attemptsCfg);
-    if (accountErr) return { error: accountErr };
+    if (accountErr) {
+      // The code is not checked: give the session slot back.
+      await sessionStore().releaseAttempt(mfaToken);
+      return { error: accountErr };
+    }
     return { attempts: slot.attempts };
   }
 

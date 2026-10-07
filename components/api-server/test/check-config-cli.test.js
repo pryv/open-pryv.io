@@ -164,3 +164,31 @@ describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
     assert.match(res.stderr, /auth\.trustedApps: .*only allowed as the whole first label/);
   });
 });
+
+describe('[CKRQ] bin/check-config.js rqlite url', function () {
+  this.timeout(60000);
+
+  function withRqlite (block) {
+    return BASE.replace('    engine: sqlite\n', '    engine: sqlite\n  engines:\n    rqlite:\n' + block);
+  }
+  const WARNING = /storages\.engines\.rqlite\.url="http:\/\/10\.0\.0\.5:4101" is not a loopback address.*Use http:\/\/127\.0\.0\.1:4101/;
+
+  it('[CKRQ1] a non-loopback url warns and recommends 127.0.0.1 with the same port', () => {
+    const res = runCheck(withRqlite('      url: http://10.0.0.5:4101\n'));
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, WARNING);
+  });
+
+  it('[CKRQ2] a loopback url, an explicit httpBindAddr or an external rqlite does not warn', () => {
+    for (const block of [
+      '      url: http://127.0.0.1:4101\n',
+      '      url: http://localhost:4101\n',
+      '      url: http://10.0.0.5:4101\n      httpBindAddr: 10.0.0.5\n',
+      '      url: http://10.0.0.5:4101\n      external: true\n'
+    ]) {
+      const res = runCheck(withRqlite(block));
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.doesNotMatch(res.stdout, /rqlite\.url=/, block);
+    }
+  });
+});

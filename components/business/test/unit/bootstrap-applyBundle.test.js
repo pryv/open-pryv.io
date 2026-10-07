@@ -138,6 +138,42 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     assert.equal(parsed.core.nonVoter, true);
   });
 
+  it('[APBX1] across filesystems, the private key is created 0600 in the target directory', async () => {
+    const armored = makeArmoredBundle(path.join(tmp, 'issuer-ca-xdev'));
+    const tlsDir = path.join(tmp, 'tls-xdev');
+    const keyFile = path.join(tlsDir, 'node.key');
+    const { renameSync, openSync } = fs;
+    const keyTmpOpens = [];
+    let keyTmpModeAtRename = null;
+    fs.renameSync = function (from, to) {
+      if (from.includes(applyBundleMod.STAGING_PREFIX)) {
+        const err = new Error('cross-device link not permitted');
+        err.code = 'EXDEV';
+        throw err;
+      }
+      if (to === keyFile) keyTmpModeAtRename = fs.statSync(from).mode & 0o777;
+      return renameSync.apply(this, arguments);
+    };
+    fs.openSync = function (p, flags, mode) {
+      if (typeof p === 'string' && p.startsWith(keyFile + '.tmp-')) keyTmpOpens.push({ flags, mode });
+      return openSync.apply(this, arguments);
+    };
+    let result;
+    try {
+      result = await applyBundleMod.applyBundle({
+        armoredBundle: armored, passphrase: PASSPHRASE, configDir: path.join(tmp, 'config-xdev'), tlsDir
+      });
+    } finally {
+      fs.renameSync = renameSync;
+      fs.openSync = openSync;
+    }
+    assert.deepEqual(keyTmpOpens, [{ flags: 'wx', mode: 0o600 }]);
+    assert.equal(keyTmpModeAtRename, 0o600);
+    assert.equal(fs.statSync(result.tlsPaths.keyFile).mode & 0o777, 0o600);
+    assert.ok(fs.readFileSync(result.tlsPaths.keyFile, 'utf8').includes('PRIVATE KEY'));
+    assert.deepEqual(fs.readdirSync(tlsDir).sort(), ['ca.crt', 'node.crt', 'node.key']);
+  });
+
   it('writes core.nonVoter: true by default (safe-by-default join)', async () => {
     const armored = makeArmoredBundle(path.join(tmp, 'issuer-ca-nv'));
     const result = await applyBundleMod.applyBundle({

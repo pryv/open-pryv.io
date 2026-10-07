@@ -399,6 +399,28 @@ if (get('http.trustedProxies') != null) {
   }
 }
 
+// storages.engines.rqlite.url: the spawned rqlited's HTTP API listens on
+// 127.0.0.1 unless httpBindAddr is set, so the core's own client must use loopback.
+{
+  const url = get('storages.engines.rqlite.url');
+  const platformEngine = get('storages.platform.engine') || 'rqlite';
+  if (platformEngine === 'rqlite' && url != null &&
+      get('storages.engines.rqlite.external') !== true &&
+      get('storages.engines.rqlite.httpBindAddr') == null) {
+    let host = null;
+    let port = '4001';
+    try {
+      const u = new URL(url);
+      host = u.hostname;
+      if (u.port) port = u.port;
+    } catch (e) { /* reported below */ }
+    if (host !== '127.0.0.1' && host !== 'localhost') {
+      warnings.push(`storages.engines.rqlite.url="${url}" is not a loopback address, but rqlite's HTTP API listens on 127.0.0.1 ` +
+        `unless storages.engines.rqlite.httpBindAddr is set: the core would not reach its platform database. Use http://127.0.0.1:${port}.`);
+    }
+  }
+}
+
 // summary
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);

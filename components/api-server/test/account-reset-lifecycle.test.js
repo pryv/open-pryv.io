@@ -244,4 +244,19 @@ describe('[RPLC] password reset lifecycle', function () {
       .filter((r) => r.username === user.username);
     assert.strictEqual(rows.length, 0);
   });
+
+  it('[RPLC11] any new request removes the expired requests of every account', async function () {
+    const ghost = 'rplc-expired-' + cuid().toLowerCase().slice(1, 12);
+    const live = 'rplc-live-' + cuid().toLowerCase().slice(1, 12);
+    await fromCallback((cb) => storageLayer.passwordResetRequests.importAll([
+      { _id: crypto.createHash('sha256').update('expired-' + ghost).digest('hex'), username: ghost, expires: new Date(Date.now() - 1000) },
+      { _id: crypto.createHash('sha256').update('live-' + live).digest('hex'), username: live, expires: new Date(Date.now() + 60_000) }
+    ], cb));
+    const user = await newUser();
+    await generateToken(user.username);
+    const usernames = (await fromCallback((cb) => storageLayer.passwordResetRequests.exportAll(cb))).map((r) => r.username);
+    assert.ok(!usernames.includes(ghost), 'the expired request of another account is removed');
+    assert.ok(usernames.includes(live), 'a live request of another account is kept');
+    assert.ok(usernames.includes(user.username));
+  });
 });

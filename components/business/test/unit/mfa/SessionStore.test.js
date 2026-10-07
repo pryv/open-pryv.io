@@ -134,4 +134,17 @@ describe('[MFAT] mfa/SessionStore', () => {
     const store = new SessionStore(1800, { kvClient: harness.kvClient });
     assert.deepEqual(await store.reserveAttempt('not-a-real-token', 5), { refused: 'gone' });
   });
+
+  it('[MT6D] releaseAttempt() gives one slot back, never below zero', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), { user: 'alice' });
+    await store.reserveAttempt(token, 5);
+    await store.reserveAttempt(token, 5);
+    assert.isTrue(await store.releaseAttempt(token));
+    assert.equal((await store.get(token)).attempts, 1);
+    assert.isTrue(await store.releaseAttempt(token));
+    assert.isFalse(await store.releaseAttempt(token));
+    assert.equal((await store.get(token)).attempts, 0);
+    assert.isFalse(await store.releaseAttempt('not-a-real-token'));
+  });
 });

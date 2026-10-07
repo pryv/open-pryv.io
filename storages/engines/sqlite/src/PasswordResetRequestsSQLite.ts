@@ -94,15 +94,6 @@ class PasswordResetRequestsSQLite {
       .catch(callback);
   }
 
-  removeExpired (callback: Cb<unknown>): void {
-    let res: unknown;
-    concurrentSafeWrite.execute(() => {
-      res = this.db.prepare('DELETE FROM password_resets WHERE expires <= ?').run(Date.now());
-    })
-      .then(() => callback(null, res))
-      .catch(callback);
-  }
-
   clearAll (callback: Cb<unknown>): void {
     concurrentSafeWrite.execute(() => {
       return this.db.prepare('DELETE FROM password_resets').run();

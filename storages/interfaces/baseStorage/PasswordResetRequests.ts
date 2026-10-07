@@ -25,7 +25,8 @@ export interface PasswordResetRequests {
   /** Live request matching the token for this username, or null. */
   get (token: string, username: string, callback: Callback<PasswordResetDoc | null>): void;
   /** Replace any request of this username with a new one; returns the token.
-   *  Also removes expired requests of every account. */
+   *  Also removes expired requests of every account: requests are 1 h-lived
+   *  and only created here, so no separate sweep is needed. */
   generate (username: string, callback: Callback<string>): void;
   /** Atomically delete and return the live request matching the token for
    *  this username, or null. A token can be consumed once. */
@@ -35,8 +36,6 @@ export interface PasswordResetRequests {
   destroy (token: string, username: string, callback: Callback<unknown>): void;
   /** Delete every request of this username. */
   destroyAllForUser (username: string, callback: Callback<unknown>): void;
-  /** Delete expired requests of every account. */
-  removeExpired (callback: Callback<unknown>): void;
   clearAll (callback: Callback<unknown>): void;
 
   // Migration methods
@@ -55,7 +54,6 @@ const REQUIRED_METHODS: string[] = [
   'consume',
   'destroy',
   'destroyAllForUser',
-  'removeExpired',
   'clearAll',
   // Migration methods
   'exportAll',

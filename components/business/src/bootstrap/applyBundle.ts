@@ -190,8 +190,18 @@ function moveFile (from: string, to: string): void {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
     const tmp = to + '.tmp-' + process.pid;
-    fs.copyFileSync(from, tmp, fs.constants.COPYFILE_EXCL);
-    fs.chmodSync(tmp, fs.statSync(from).mode & 0o777);
+    // Created with the source's mode (0600 for the key), never wider.
+    const mode = fs.statSync(from).mode & 0o777;
+    const fd = fs.openSync(tmp, 'wx', mode);
+    try {
+      fs.fchmodSync(fd, mode);
+      fs.writeFileSync(fd, fs.readFileSync(from));
+    } catch (copyErr) {
+      fs.closeSync(fd);
+      fs.rmSync(tmp, { force: true });
+      throw copyErr;
+    }
+    fs.closeSync(fd);
     fs.renameSync(tmp, to);
     fs.unlinkSync(from);
   }

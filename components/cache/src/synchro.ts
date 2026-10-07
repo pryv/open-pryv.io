@@ -5,11 +5,9 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
 import { getLogger } from '@pryv/boiler';
 import { pubsub } from 'messages';
-const require = createRequire(import.meta.url);
-const { LRUCache: LRU } = require('lru-cache');
+import { LRUCache } from 'lru-cache';
 const logger = getLogger('cache:synchro');
 
 interface CacheModule {
@@ -36,9 +34,9 @@ const MAX_LISTENERS = 8000;
 /**
  * userId -> listener remover
  */
-const listenerMap = new LRU({
+const listenerMap = new LRUCache<string, () => void>({
   max: MAX_LISTENERS,
-  dispose: (remove: () => void) => { remove(); }
+  dispose: (remove) => { remove(); }
 });
 const MESSAGES = {
   UNSET_ACCESS_LOGIC: 'unset-access-logic',

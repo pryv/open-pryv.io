@@ -32,7 +32,7 @@ const nock = require('nock');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 const { getConfig } = require('@pryv/boiler');
 const { injectTestConfigSnapshot } = require('test-helpers');
-const { _resetMFASingletons } = require('business/src/mfa/index.ts');
+const { _resetMFASingletons, getMFASessionStore } = require('business/src/mfa/index.ts');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const storage = require('storage');
@@ -1152,6 +1152,20 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const correct = await countingVerifies(() => guessOnFreshLogin(totpCodeFor(secret, 0)));
         assertDelayed(correct.result);
         assert.strictEqual(correct.calls, 0, 'a correct code past the ceiling is refused before it is checked');
+      });
+
+      it('[MA12O] an attempt refused by the account tally gives its session slot back', async function () {
+        // The first failure sets a delay, so concurrent attempts on the same
+        // session are refused by the account reservation after taking a slot.
+        await setUp({ perSession: 10 }, { freeFailures: 0, baseSeconds: 60, maxSeconds: 60 });
+        const token = (await login()).body.mfaToken;
+        const K = 5;
+        const { calls, result } = await countingVerifies(() => burst([token], K));
+        assertRefusedOrFailed(result);
+        assert.strictEqual(calls, 1, 'only the first attempt reaches the method');
+        const session = await getMFASessionStore(null).get(token);
+        assert.ok(session != null, 'the session survives the burst');
+        assert.strictEqual(session.attempts, calls, 'only evaluated attempts keep their session slot');
       });
     });
   });

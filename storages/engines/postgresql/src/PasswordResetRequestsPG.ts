@@ -103,15 +103,6 @@ class PasswordResetRequestsPG {
   }
 
   /**
-   * Delete expired password reset requests.
-   */
-  removeExpired (callback: Cb<unknown>): void {
-    this.db.query('DELETE FROM password_resets WHERE expires <= $1', [new Date()])
-      .then((res: unknown) => callback(null, res))
-      .catch(callback);
-  }
-
-  /**
    * Delete all password reset requests.
    */
   clearAll (callback: Cb<unknown>): void {

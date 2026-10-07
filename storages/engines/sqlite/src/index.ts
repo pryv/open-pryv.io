@@ -85,7 +85,7 @@ const SESSIONS_METHODS = [
 ];
 
 const PRR_METHODS = [
-  'get', 'generate', 'consume', 'destroy', 'destroyAllForUser', 'removeExpired',
+  'get', 'generate', 'consume', 'destroy', 'destroyAllForUser',
   'clearAll', 'exportAll', 'importAll'
 ];
 

@@ -138,6 +138,25 @@ class SessionStore {
   }
 
   /**
+   * Give back one slot taken by reserveAttempt, for an attempt refused before
+   * its code was checked. Best effort: a session that is gone, or a
+   * compare-and-set that keeps losing, leaves the count as is.
+   */
+  async releaseAttempt (id: string): Promise<boolean> {
+    for (let tries = 0; tries < 20; tries++) {
+      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      if (!session) return false;
+      const previous = session.attempts ?? 0;
+      if (previous <= 0) return false;
+      const next = { ...session, attempts: previous - 1 };
+      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
    */
   async clear (id: string): Promise<boolean> {

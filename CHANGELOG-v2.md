@@ -4,8 +4,8 @@
 
 **Upgrade promptly: this release carries security fixes, and some need operator attention before
 the restart.** Read "Configuration" and "Multi-core" below. Before restarting each core on the new
-code: run `node bin/check-config.js` (with your `--config`), and on multi-core platforms
-`node bin/mail.js templates validate`; after upgrading, see "Operator tools".
+code: run `node bin/check-config.js` (with your `--config`) and, on every core (single- and
+multi-core), `node bin/mail.js templates validate`; after upgrading, see "Operator tools".
 
 ### Configuration: the production layer carries deployment-neutral settings only (BREAKING)
 
@@ -30,7 +30,8 @@ code: run `node bin/check-config.js` (with your `--config`), and on multi-core p
   refused by the password rules needs a new link); links mailed before the upgrade must be requested
   again. A completed reset revokes every personal session and personal access of the account
   (including delegated ones; apps sign in again); a password change revokes the account's other
-  personal sessions and pending reset links.
+  personal sessions (delegated ones included: the delegate's next token request issues a new one)
+  and pending reset links.
 - **Security.** Logs: error logs keep the request body's keys and a few harmless values, never
   credential values; credential keys are masked wherever they are logged, and URL redaction covers
   current access tokens and one-time link tokens. Check the retention of logs written by earlier
@@ -71,14 +72,18 @@ code: run `node bin/check-config.js` (with your `--config`), and on multi-core p
   attempts are logged with the client address. `/reg/records` answers `404` to a missing or wrong key,
   like the other admin routes.
 - **Security.** rqlite's HTTP API binds to loopback (`127.0.0.1:<port>`) on every core; set
-  `storages.engines.rqlite.httpBindAddr` to expose it (boot warning). Anything reaching a peer's
-  rqlite HTTP port stops working; cores never need it (writes and reads reach the leader over Raft).
+  `storages.engines.rqlite.httpBindAddr` to expose it (boot warning). `storages.engines.rqlite.url`
+  must point at the local loopback (`http://127.0.0.1:<port>`; `localhost` may resolve to `::1` on
+  some hosts) unless `httpBindAddr` is set to the same address; `bin/check-config.js` warns
+  otherwise. Anything reaching a peer's rqlite HTTP port stops working; cores never need it (writes
+  and reads reach the leader over Raft).
   `bootstrap.js promote-core` now needs `--target-applied-index <n>` (read on the target with
   `bootstrap.js applied-index`) or `--force`. A multi-core core without
   `storages.engines.rqlite.tls` logs a boot warning (a later release will refuse it).
 - **Security.** Mail templates stored in the platform database are validated against a safe subset
   before use (invalid ones are skipped and listed at boot; `bin/mail.js templates validate` lists
-  them); resource inlining is off.
+  them); resource inlining is off, and CSS from `<style>` blocks is no longer inlined into elements
+  (inline `style` attributes are unaffected).
 - **Security.** Core ids must match `[a-z0-9][a-z0-9-]*` and core URLs must be https origins
   (`cluster.allowInsecurePeerUrl` for development only); core-to-core calls time out and refuse
   redirects; `/system/users/validate` refuses an unknown or malformed core.
