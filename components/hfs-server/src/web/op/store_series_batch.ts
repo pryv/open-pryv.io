@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { HttpHeaders } from 'business/src/types/public.ts';
+import type { UpdateRequest } from '../../metadata_updater.ts';
 const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
@@ -20,7 +21,7 @@ const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts')
 type HfsContext = {
   series: { makeBatch: (ns: string) => Promise<{ store: (data: unknown, nameResolver: (eventId: string) => Promise<string>) => Promise<unknown> }> };
   metadata: { forSeries: (userName: string, eventId: string, accessToken: string, clientIp: string | null) => Promise<SeriesMeta> };
-  metadataUpdater: { scheduleUpdate: (req: { entries: unknown[] }) => Promise<unknown> };
+  metadataUpdater: { scheduleUpdate: (req: { entries: UpdateRequest[] }) => Promise<unknown> };
   typeRepository: unknown;
   childSpan: (name: string) => { finish (): void };
 };
@@ -34,7 +35,7 @@ type SeriesMeta = {
 type ReqLike = { params: Record<string, string>; headers: HttpHeaders; body: unknown; socket?: { remoteAddress?: string } };
 type ResLike = { status: (code: number) => { json: (b: unknown) => unknown } };
 type BatchRequestLike = {
-  elements (): Iterable<{ eventId: string; data: { minmax (): unknown } }>;
+  elements (): Iterable<{ eventId: string; data: { minmax (): { from: number; to: number } } }>;
 };
 
 // POST /:user_name/series/batch
@@ -64,14 +65,14 @@ async function storeSeriesBatch (ctx: HfsContext, req: ReqLike, res: ResLike) {
   await Promise.all(results);
   trace.finish('append');
   trace.start('metadataUpdate');
-  const entries: Array<{ userId: string; eventId: string; author: string; timestamp: number; dataExtent: unknown }> = [];
+  const entries: UpdateRequest[] = [];
   const now = Number(new Date()) / 1e3;
   for (const bre of data.elements()) {
     entries.push({
       userId: userName,
       eventId: bre.eventId,
       // The access id (plus caller id), never the credential itself.
-      author: (await resolver.getSeriesMeta(bre.eventId)).authorId,
+      authorId: (await resolver.getSeriesMeta(bre.eventId)).authorId,
       timestamp: now,
       dataExtent: bre.data.minmax()
     });

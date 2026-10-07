@@ -86,6 +86,69 @@ describe('[MCTX] MethodContext', () => {
     });
   });
 
+  describe('[MCTX5] #checkSessionValid', () => {
+    const username = 'mcsv-user';
+    const userId = 'mcsv-user-id';
+    let mc;
+    function storageWith (session) {
+      return { sessions: { get: sinon.fake.yields(null, session), touch: sinon.fake() } };
+    }
+    beforeEach(() => {
+      mc = new MethodContext(contextSource, username, 'TOKEN', null);
+      mc.user = { id: userId, username };
+      mc.access = { id: 'mcsv-access', token: 'TOKEN', type: 'personal' };
+    });
+    it('[MCSV1] refuses a session that names no account (no user id, no username)', async () => {
+      await assert.rejects(mc.checkSessionValid(storageWith({ appId: 'mcsv-app' })), (err) => {
+        assert.strictEqual(err.id, 'invalid-access-token');
+        assert.strictEqual(err.httpStatus, 403);
+        return true;
+      });
+    });
+    it('[MCSV2] refuses non-string user id and username', async () => {
+      await assert.rejects(mc.checkSessionValid(storageWith({ userId: 42, username: { name: username } })),
+        (err) => err.id === 'invalid-access-token');
+    });
+    it('[MCSV3] accepts a session bound by user id only', async () => {
+      const storage = storageWith({ userId });
+      await mc.checkSessionValid(storage);
+      assert.strictEqual(storage.sessions.touch.callCount, 1);
+    });
+    it('[MCSV4] accepts a session bound by this username only', async () => {
+      const storage = storageWith({ username });
+      await mc.checkSessionValid(storage);
+      assert.strictEqual(storage.sessions.touch.callCount, 1);
+    });
+  });
+
+  describe('[MCTX6] #retrieveExpandedAccess failure', () => {
+    const username = 'mcfa-user';
+    const userId = 'mcfa-user-id';
+    let mc;
+    beforeEach(() => {
+      mc = new MethodContext(contextSource, username, 'TOKEN', null);
+      mc.user = { id: userId, username };
+    });
+    it('[MCFA1] clears the access and keeps the id of the access that failed', async () => {
+      // a personal access whose session is gone
+      mc.access = { id: 'mcfa-access', token: 'TOKEN', type: 'personal', isPersonal: () => true };
+      const storage = { sessions: { get: sinon.fake.yields(null, null), touch: sinon.fake() } };
+      await assert.rejects(mc.retrieveExpandedAccess(storage), (err) => err.id === 'invalid-access-token');
+      assert.strictEqual(mc.access, null);
+      assert.strictEqual(mc.failedAccessId, 'mcfa-access');
+    });
+    it('[MCFA2] no failed id when no access was found, nor after a later success', async () => {
+      const findOne = sinon.fake.yields(null, null);
+      await assert.rejects(mc.retrieveExpandedAccess({ accesses: { findOne } }), (err) => err.id === 'invalid-access-token');
+      assert.strictEqual(mc.failedAccessId, null);
+      mc.failedAccessId = 'earlier-access';
+      mc.access = { id: 'mcfa-ok', token: 'TOKEN', type: 'personal', isPersonal: () => true };
+      await mc.retrieveExpandedAccess({ sessions: { get: sinon.fake.yields(null, { userId }), touch: sinon.fake() } });
+      assert.strictEqual(mc.access.id, 'mcfa-ok');
+      assert.strictEqual(mc.failedAccessId, null);
+    });
+  });
+
   describe('[MCTX3] #_retrieveAccess set-after-unset cache fence', () => {
     const username = 'USERNAME';
     const customAuthStep = null;

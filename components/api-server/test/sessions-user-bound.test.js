@@ -68,6 +68,16 @@ describe('[SUBD] login sessions are bound to the account', function () {
     assert.strictEqual(info.status, 403, JSON.stringify(info.body));
   });
 
+  it('[SUBD4] a session naming no account (no user id, no username) does not validate a personal access', async function () {
+    const anonymous = await generateSession({ appId: 'subd-anonymous' });
+    const userId = await (await storage.getUsersLocalIndex()).getUserId(username);
+    await fromCallback((cb) => storageLayer.accesses.insertOne({ id: userId, username },
+      { id: cuid(), token: anonymous, type: 'personal', name: 'subd-anonymous', permissions: [], created: 1, createdBy: 'test', modified: 1, modifiedBy: 'test' }, cb));
+    const info = await coreRequest.get(`/${username}/access-info`).set('Authorization', anonymous);
+    assert.strictEqual(info.status, 403, JSON.stringify(info.body));
+    assert.strictEqual(info.body.error.id, 'invalid-access-token');
+  });
+
   it('[SUBD3] a login session records the account id and is reused by that account', async function () {
     const first = await login('subd-own');
     const second = await login('subd-own');

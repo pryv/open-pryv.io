@@ -13,7 +13,7 @@ const timestamp = require('unix-timestamp');
 const { pollUntil } = require('test-helpers');
 
 describe('[AUDT] Audit', function () {
-  let user, username, password, access, readAccess, auditReader;
+  let user, username, password, access, readAccess, auditReader, sessionless;
   let eventsPath;
 
   let sysLogSpy, storageSpy, eventForUserSpy;
@@ -56,6 +56,8 @@ describe('[AUDT] Audit', function () {
     });
     auditReader = auditReader.attrs;
     await user.session(auditReader.token);
+    // personal access without a session: loaded, then refused
+    sessionless = (await user.access({ type: 'personal', token: cuid() })).attrs;
     user = user.attrs;
     eventsPath = '/' + username + '/events/';
   });
@@ -313,6 +315,28 @@ describe('[AUDT] Audit', function () {
         const log = entries[0];
         assert.strictEqual(log.content.id, 'invalid-access-token');
         assert.deepEqual(log.streamIds, [addAccessStreamIdPrefix(AuditAccessIds.INVALID), addActionStreamIdPrefix('events.get')]);
+        assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
+      });
+    });
+    describe('[AT59] with a personal access whose session is gone', function () {
+      let now;
+      before(async function () {
+        now = timestamp.now();
+        res = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', sessionless.token);
+      });
+      it('[AFID1] must return 403 naming the refused access in Pryv-Access-Id', function () {
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, 'invalid-access-token');
+        assert.strictEqual(res.headers['pryv-access-id'], sessionless.id);
+      });
+      it('[AFID2] must audit the error under the refused access', async function () {
+        const entries = await getAuditEvents({ fromTime: now }, atLeastOne);
+        assert.strictEqual(entries.length, 1);
+        const log = entries[0];
+        assert.strictEqual(log.content.id, 'invalid-access-token');
+        assert.deepEqual(log.streamIds, [addAccessStreamIdPrefix(sessionless.id), addActionStreamIdPrefix('events.get')]);
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
     });

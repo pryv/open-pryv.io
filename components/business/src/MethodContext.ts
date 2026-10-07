@@ -26,6 +26,12 @@ class MethodContext {
   user: UserDef;
   // Populated lazily by retrieveAccess*; consumers must guard against null.
   access: InstanceType<typeof AccessLogic> | null;
+  /**
+   * Id of the access that was loaded but refused by a later check (expired
+   * session, DPoP, revoked client, custom auth step). `access` is cleared on
+   * that failure; the audit trail and the `Pryv-Access-Id` header still name it.
+   */
+  failedAccessId: string | null;
   // Legacy field, not actively used today; kept for compatibility.
   streams: unknown;
   accessToken: string | null;
@@ -104,6 +110,7 @@ class MethodContext {
     this.user = { id: null, username };
     this.mall = null;
     this.access = null;
+    this.failedAccessId = null;
     this.customAuthStepFn = customAuthStepFn;
     this.accessToken = null;
     this.callerId = null;
@@ -236,9 +243,12 @@ class MethodContext {
       // those 2 last are executed in callbatch for each call.
       // Load the streams we can access.
       if (!access.isPersonal()) { await access.loadPermissions(); }
+      this.failedAccessId = null;
     } catch (err) {
       // An access that failed any check above is not usable by a later step
-      // that ignores this error (e.g. the account deletion route).
+      // that ignores this error (e.g. the account deletion route). Its id is
+      // kept for the audit trail and the response header.
+      this.failedAccessId = this.access?.id ?? null;
       this.access = null;
       if (err != null && !(err instanceof APIError)) {
         throw errors.unexpectedError(err);
@@ -517,6 +527,11 @@ class MethodContext {
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // Sessions opened since user ids are recorded name their account directly.
     if (typeof session.userId === 'string' && session.userId !== this.user?.id) {
+      throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
+    }
+    // A session naming no account at all (neither user id nor username) cannot
+    // be bound to this one.
+    if (typeof session.userId !== 'string' && typeof session.username !== 'string') {
       throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
     }
     // A personal access is only as good as a session opened for this same

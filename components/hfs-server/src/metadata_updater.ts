@@ -22,10 +22,11 @@ const FLUSH_INTERVAL_MS = 500; // flush check frequency
 
 const logger = getLogger('metadata-updater');
 
-type UpdateRequest = {
+// `authorId`: the writing access id (plus caller id), never a token
+export type UpdateRequest = {
   userId: string;
   eventId: string;
-  author: string;
+  authorId: string;
   timestamp: number;
   // deltaTimes as the series store holds them: nanoseconds after the event's time
   dataExtent: { from: number; to: number };
@@ -65,7 +66,7 @@ class PendingUpdate {
     if (this.key() !== other.key()) throw new Error('Key mismatch in merge.');
     const ts = (e: PendingUpdate) => e.request.timestamp;
     const later = ts(other) > ts(this) ? other : this;
-    this.request.author = later.request.author;
+    this.request.authorId = later.request.authorId;
     this.request.timestamp = ts(later);
     const ext = this.request.dataExtent;
     const oExt = other.request.dataExtent;
@@ -131,7 +132,7 @@ async function flush (update: PendingUpdate) {
     return {
       ...stored,
       duration,
-      modifiedBy: req.author,
+      modifiedBy: req.authorId,
       modified: req.timestamp
     };
   });

@@ -7,7 +7,7 @@
 import type {} from 'node:fs';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 
-type PryvRequest = Request & { context?: { retrieveExpandedAccess: (sl: unknown) => Promise<void>; access?: { id: string } | null } };
+type PryvRequest = Request & { context?: { retrieveExpandedAccess: (sl: unknown) => Promise<void>; access?: { id: string } | null; failedAccessId?: string | null } };
 
 // Returns a middleware function that loads the access into `req.context.access`.
 // The access is loaded from the token previously extracted by the `initContext` middleware.
@@ -38,8 +38,10 @@ export default function loadAccess (storageLayer: unknown): RequestHandler {
 function setAccessIdHeader (req: PryvRequest, res: Response): Response {
   if (req != null) {
     const requestCtx = req.context;
-    if (requestCtx != null && requestCtx.access != null) {
-      res.header('Pryv-Access-Id', requestCtx.access.id);
+    // on a refused access, the id of the access that was presented
+    const accessId = requestCtx?.access?.id ?? requestCtx?.failedAccessId;
+    if (accessId != null) {
+      res.header('Pryv-Access-Id', accessId);
     }
   }
   return res;

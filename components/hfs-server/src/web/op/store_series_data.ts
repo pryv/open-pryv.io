@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { Request, Response } from 'express';
+import type { UpdateRequest } from '../../metadata_updater.ts';
 const require = createRequire(import.meta.url);
 
 type SeriesMetaLike = {
@@ -19,7 +20,7 @@ type CtxLike = {
   series: { get: (namespace: string, name: string) => Promise<{ append: (data: unknown) => Promise<unknown> }> };
   metadata: { forSeries: (userName: string, eventId: string, accessToken: unknown, clientIp: string | null) => Promise<SeriesMetaLike> };
   typeRepository: unknown;
-  metadataUpdater: { scheduleUpdate: (req: unknown) => Promise<unknown> };
+  metadataUpdater: { scheduleUpdate: (req: { entries: UpdateRequest[] }) => Promise<unknown> };
 };
 
 //  POST /events/:event_id/series - Store data in a series.
@@ -73,7 +74,7 @@ async function storeSeriesData (ctx: CtxLike, req: Request, res: Response) {
         userId: userName,
         eventId,
         // The access id (plus caller id), never the credential itself.
-        author: seriesMeta.authorId,
+        authorId: seriesMeta.authorId,
         timestamp: now,
         dataExtent: data.minmax()
       }
@@ -99,4 +100,4 @@ function parseData (createRequest: unknown, meta: SeriesMetaLike, typeRepo: unkn
 export default storeSeriesData;
 export { storeSeriesData };
 
-type DataMatrix = { minmax: () => unknown }; // shape of business.series.DataMatrix used here
+type DataMatrix = { minmax: () => { from: number; to: number } }; // shape of business.series.DataMatrix used here

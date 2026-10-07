@@ -27,6 +27,7 @@ type MethodContext = {
   methodId: string;
   user?: { id?: string };
   access: AccessRef;
+  failedAccessId?: string | null;
   tracing: Tracing;
   source?: unknown;
   originalQuery?: unknown;
@@ -122,7 +123,8 @@ class Audit {
     context.tracing.startSpan('audit.errorApiCall');
     const userId = context?.user?.id;
     if (context.access?.id == null) {
-      context.access = { id: AuditAccessIds.INVALID };
+      // an access loaded then refused by a later check is recorded by its id
+      context.access = { id: context.failedAccessId ?? AuditAccessIds.INVALID };
     }
     const event: AuditEventLike = buildDefaultEvent(context);
     event.type = CONSTANTS.EVENT_TYPE_ERROR;

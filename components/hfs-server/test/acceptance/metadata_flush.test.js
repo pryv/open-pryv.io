@@ -41,7 +41,7 @@ describe('[HFDU] series metadata flush: duration', function () {
 
   it('[HFDU1] points up to deltaTime 1 s give a duration of 1 s, with a valid integrity', async function () {
     const accessId = cuid();
-    await flush({ request: { userId, eventId, author: accessId, timestamp: 1791362386, dataExtent: { from: 0, to: 1e9 } } });
+    await flush({ request: { userId, eventId, authorId: accessId, timestamp: 1791362386, dataExtent: { from: 0, to: 1e9 } } });
     const event = await mall.events.getOne(userId, eventId);
     assert.strictEqual(event.duration, 1);
     assert.strictEqual(event.modifiedBy, accessId);
@@ -52,9 +52,9 @@ describe('[HFDU] series metadata flush: duration', function () {
 
   it('[HFDU2] a shorter extent keeps the stored duration; a longer one extends it', async function () {
     const accessId = cuid();
-    await flush({ request: { userId, eventId, author: accessId, timestamp: 1791362387, dataExtent: { from: 0, to: 5e8 } } });
+    await flush({ request: { userId, eventId, authorId: accessId, timestamp: 1791362387, dataExtent: { from: 0, to: 5e8 } } });
     assert.strictEqual((await mall.events.getOne(userId, eventId)).duration, 1);
-    await flush({ request: { userId, eventId, author: accessId, timestamp: 1791362388, dataExtent: { from: 0, to: 2e9 } } });
+    await flush({ request: { userId, eventId, authorId: accessId, timestamp: 1791362388, dataExtent: { from: 0, to: 2e9 } } });
     assert.strictEqual((await mall.events.getOne(userId, eventId)).duration, 2);
   });
 });

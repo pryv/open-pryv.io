@@ -4,8 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import AccessLogic from './AccessLogic.ts';
+import { managingAccessBase } from './refs.ts';
+import type { Permission, PermissionLevel } from '../types/public.ts';
 
 /**
  * Read-only check of the accesses an app access created: does any of them
@@ -17,15 +18,12 @@ const require = createRequire(import.meta.url);
  * Nothing is written: the creator's check runs on copies.
  */
 
-const AccessLogic = require('./AccessLogic.ts').default;
-const { managingAccessBase } = require('./refs.ts');
-
+// the fields read here; the creator row is handed whole to AccessLogic
 type AccessRow = {
   id?: string;
   type?: string;
   createdBy?: unknown;
   permissions?: Array<Record<string, unknown>>;
-  [k: string]: unknown;
 };
 
 export type ScopeFinding = {
@@ -71,9 +69,9 @@ export async function auditAccessScope (userId: string, accesses: AccessRow[], d
     }
     if (creator.type === 'personal') continue; // the owner reaches everything
 
-    const streamPerms = (child.permissions ?? [])
+    const streamPerms: Permission[] = (child.permissions ?? [])
       .filter((p) => typeof p?.streamId === 'string')
-      .map((p) => ({ streamId: p.streamId, level: p.level }));
+      .map((p) => ({ streamId: p.streamId as string, level: p.level as PermissionLevel }));
     if (streamPerms.length === 0) continue;
     result.checked++;
 
@@ -86,7 +84,7 @@ export async function auditAccessScope (userId: string, accesses: AccessRow[], d
       continue;
     }
     const added = candidate.permissions.slice(streamPerms.length)
-      .filter((p: Record<string, unknown>) => typeof p?.streamId === 'string').length;
+      .filter((p) => 'streamId' in p && typeof p.streamId === 'string').length;
     if (added > 0) {
       result.findings.push({ accessId: child.id!, type: String(child.type), creatorId, reason: 'reaches-carve-out', missingEntries: added });
     }

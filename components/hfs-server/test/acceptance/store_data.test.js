@@ -540,8 +540,8 @@ describe('[SDHF] Storing data in a HF series', function () {
             const entries = calls.flatMap((c) => c.entries);
             assert.ok(entries.length >= 1);
             for (const e of entries) {
-              assert.strictEqual(e.author, 'mocked-access-id');
-              assert.notStrictEqual(e.author, 'AUTH_TOKEN');
+              assert.strictEqual(e.authorId, 'mocked-access-id');
+              assert.notStrictEqual(e.authorId, 'AUTH_TOKEN');
             }
           });
         });

@@ -312,7 +312,7 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
         const entries = calls.flatMap((c) => c.entries);
         assert.ok(entries.length >= 2);
         for (const e of entries) {
-          assert.strictEqual(e.author, accessId);
+          assert.strictEqual(e.authorId, accessId);
           assert.ok(!JSON.stringify(e).includes(accessToken), 'the token is not in the update');
         }
       });
@@ -325,7 +325,7 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
         const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
         const entries = calls.flatMap((c) => c.entries);
         assert.ok(entries.length >= 1);
-        assert.strictEqual(entries[0].author, accessId + ' oo03-caller');
+        assert.strictEqual(entries[0].authorId, accessId + ' oo03-caller');
       });
     });
     function storeData (request, data) {
