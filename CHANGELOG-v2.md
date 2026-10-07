@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+### Events: integrity verifies with a fractional duration
+
+- **Fix.** An event created or updated with a fractional `duration` (e.g. `0.1` with a `time` around
+  1.7e9) carried an `integrity` hash that never verified: the stored end time cannot hold
+  `time + duration` exactly, so the duration read back differs slightly (`0.0999999046…`) from the one
+  that was hashed. The hash is now computed over the duration as it is read back. The value returned
+  is unchanged (it already was the read-back one). Events written by earlier releases keep their
+  failing hash until rewritten: `bin/integrity-check.js` reports them, and any `events.update` of
+  such an event recomputes its hash.
+
+### HF series: repair tool for oversized durations
+
+- **Fix.** `bin/hfs-duration-repair.js` repairs the series events written by releases before
+  2.0.0-rc.40, whose `duration` held nanoseconds (one second of data gave 1,000,000,000 s): they
+  matched every later time-range query and many carried an integrity hash that did not verify. The
+  tool finds the series events that end more than a day in the future, reads each series' last point
+  from the series storage and sets the duration to that extent, through the regular write path (the
+  integrity hash is recomputed and verifies). An event whose series holds no point at the stored
+  extent is reported and left as is. `modified` is refreshed so syncing clients fetch the corrected
+  event; `modifiedBy` is kept; version history, where kept, is not rewritten.
+- **Operators:** after upgrading, once per core: `node bin/hfs-duration-repair.js --dry-run`, then
+  without the flag. The core may keep running. Safe to re-run. Docker:
+  `docker exec -u node <container> node bin/hfs-duration-repair.js --dry-run`. A multi-core joiner
+  started with `--config config/host-config.yml` passes the same flag. `--user <username>` limits the
+  run to one account. The tool needs the series storage and refuses to run without it.
+
+### Let's Encrypt: the contact email is optional
+
+- **Change.** `letsEncrypt.email` is no longer required when `letsEncrypt.enabled` is true: without
+  it the ACME account is registered with no contact, which ACME allows. Let's Encrypt stopped sending
+  expiry emails in June 2025 and no longer stores the address. The default is now `null` (was the
+  `REPLACE ME` placeholder); boot validation and `check-config` stop asking for it, and the `init`
+  wizard's email question (answer key `le.email`) can be left empty.
+- An existing account keeps the contact it was registered with; nothing changes for configured
+  installs. Setting or changing `letsEncrypt.email` later does not update an account already
+  registered.
+- Embedded DNS (`dns.active`): the SOA admin falls back to `admin@<domain>` unless
+  `letsEncrypt.email` holds an address; before, an unset email published the `REPLACE ME`
+  placeholder as the SOA admin.
+
+## 2.0.0-rc.42 - 2026-10-07
+
+**Docker operators: before upgrading, check that `storages.engines.sqlite.path` points at a mounted
+volume** (see "Docker image: refuses a user data root" below); the image now refuses to start
+otherwise. Native installs: move to Node 24.18.1.
+
+### Install wizard: the launcher survives a reboot, the config is private
+
+- **Fix.** The `run-pryv.sh` launcher written by `init` now starts the container with
+  `--restart unless-stopped` and `--stop-timeout 30`: before, the platform stayed down after a host
+  reboot, and Docker's default 10 s stop could cut the platform database's snapshot short (the
+  server needs up to 30 s, see INSTALL.md). The "Start the server" command the wizard prints carries
+  the same flags.
+- **Security.** `pryv-config.yml`, which holds the admin key and the other generated secrets, is now
+  written with mode 0600 instead of 0644 (also when overwritten with `--force`). When the wizard runs
+  in the image, the file belongs to uid 1000, the user the server runs as: editing it on the host
+  then needs root (or uid 1000). The manual `docker run` examples in INSTALL.md carry the same two
+  flags as the launcher.
+- **Operators with an existing install:** `chmod 600 pryv-config.yml` (and, for the non-root image,
+  `chown 1000:1000 pryv-config.yml`), and add the two flags to the `docker run` line of your
+  `run-pryv.sh` by hand. Do not re-run `init --force` for this: it generates new secrets.
+
 ### Docker image: refuses a user data root on the container's own filesystem
 
 - **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that

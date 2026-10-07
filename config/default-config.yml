@@ -648,7 +648,7 @@ platform:
 # `letsEncrypt.hostnames` field so the two can't drift.
 letsEncrypt:
   enabled: false                                  # feature off by default — existing deployments unchanged
-  email: 'REPLACE ME'                             # ACME account contact (required when enabled)
+  email: null                                     # optional ACME account contact (Let's Encrypt no longer sends expiry emails)
   atRestKey: 'REPLACE ME'                         # base64 of 32 random bytes; encrypts cert + account keys at rest in rqlite
   renewBeforeDays: 30
   staging: false                                  # use Let's Encrypt staging (testing only)

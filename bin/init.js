@@ -184,6 +184,28 @@ function emitFile (absPath, content, mode) {
   return true;
 }
 
+// uid/gid of the image's `node` user, which the server runs as
+const IMAGE_NODE_UID = 1000;
+
+/**
+ * The config holds the platform secrets: readable by its owner only (the mode
+ * passed to writeFileSync applies to new files only, hence the chmod). When the
+ * wizard runs as root inside the image (where this script is /app/bin/init.js),
+ * the file goes to the `node` user so the server can read it; elsewhere the
+ * owner is left as is. Some bind mounts refuse ownership changes: warn, the
+ * file is written.
+ */
+function secureConfigFile (absPath) {
+  fs.chmodSync(absPath, 0o600);
+  const insideImage = __dirname === '/app/bin';
+  if (!insideImage || typeof process.getuid !== 'function' || process.getuid() !== 0) return;
+  try {
+    fs.chownSync(absPath, IMAGE_NODE_UID, IMAGE_NODE_UID);
+  } catch (err) {
+    console.warn(`  ⚠ could not hand ${absPath} to uid ${IMAGE_NODE_UID} (${err.code}): the server runs as that user, run \`chown ${IMAGE_NODE_UID}:${IMAGE_NODE_UID}\` on it from the host.`);
+  }
+}
+
 // Programmatic answers (--config-from file → env → prompt). Every ask*()
 // takes a stable `key`; the env var form is PRYV_INIT_<KEY> with dots
 // uppercased to underscores (e.g. key 'db.engine' → PRYV_INIT_DB_ENGINE).
@@ -1203,9 +1225,17 @@ async function main () {
   let customSsl = null;
   if (tlsStrategy === 'letsEncrypt') {
     console.log('▸ Let\'s Encrypt');
+    let leEmail = await ask('  Contact email for the ACME account (optional, enter to skip)', '', 'le.email');
+    while (leEmail && !leEmail.includes('@')) {
+      if (OPTS.nonInteractive || autoAnswer('le.email') !== undefined) {
+        throw invalidAnswer('le.email', leEmail, 'an email address, or empty for none');
+      }
+      console.log('  (an email address, or enter to skip)');
+      leEmail = await ask('  Contact email for the ACME account (optional, enter to skip)', '', 'le.email');
+    }
     leConfig = {
       enabled: true,
-      email: await askNonEmpty('  Contact email (for ACME registration)', undefined, 'le.email'),
+      ...(leEmail ? { email: leEmail } : {}),
       atRestKey: genSecrets ? genSecret(32) : await askNonEmpty('  letsEncrypt.atRestKey (32 bytes b64 — encrypts cert at rest)', undefined, 'le.atrestkey'),
       certRenewer: true,
       staging: await askYesNo('  Use STAGING (recommended for first boot — avoids prod rate limits)?', true, 'le.staging')
@@ -1648,7 +1678,10 @@ async function main () {
     authUiUrl
   });
   console.log();
-  if (emitFile(absConfigPath, yamlBody + appendix)) {
+  // Overwriting (--force): close the file before the new secrets go in
+  if (!OPTS.dryRun && fs.existsSync(absConfigPath)) fs.chmodSync(absConfigPath, 0o600);
+  if (emitFile(absConfigPath, yamlBody + appendix, 0o600)) {
+    secureConfigFile(absConfigPath);
     console.log(`✓ Wrote ${absConfigPath}`);
   }
 
@@ -1730,7 +1763,9 @@ async function main () {
       '  docker rm -f "$NAME" >/dev/null',
       'fi',
       '',
-      'exec docker run -d --name "$NAME" \\',
+      '# --restart: Docker starts it again after a crash or a host reboot.',
+      '# --stop-timeout: the server needs up to 30 s to stop its platform database.',
+      'exec docker run -d --name "$NAME" --restart unless-stopped --stop-timeout 30 \\',
       `  -v "$CONFIG_DIR":${containerConfigDir} \\`,
       // Data dir is always mounted at the in-container path the YAML
       // refers to (sibling to the config). In the default case
@@ -1885,7 +1920,7 @@ async function main () {
     console.log('  ./run-pryv.sh');
     console.log('    (override host data dir with: PRYV_DATA_DIR=/host/path ./run-pryv.sh)');
   } else {
-    console.log('  docker run -d --name pryvio \\');
+    console.log('  docker run -d --name pryvio --restart unless-stopped --stop-timeout 30 \\');
     console.log(`    -v "$(pwd)":${configDir} \\`);
     console.log(`    -v "$(pwd)/data":${dataFolder} \\`);
     console.log(`    ${dockerPorts.join(' ')} \\`);

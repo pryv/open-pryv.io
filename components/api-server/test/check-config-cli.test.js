@@ -123,6 +123,20 @@ services:
     assert.strictEqual(legacyKey.status, 0, legacyKey.stdout + legacyKey.stderr);
     assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
   });
+
+  it('[CKCF6] letsEncrypt.email is optional, but a placeholder in it is a problem', () => {
+    const le = `
+letsEncrypt:
+  enabled: true
+  atRestKey: c2VjcmV0LWtleS1mb3ItdGVzdHMtMzItYnl0ZXMtbG9uZw==
+`;
+    const noEmail = runCheck(BASE + le);
+    assert.strictEqual(noEmail.status, 0, noEmail.stdout + noEmail.stderr);
+    assert.doesNotMatch(noEmail.stdout + noEmail.stderr, /letsEncrypt\.email/);
+    const placeholder = runCheck(BASE + le + "  email: 'REPLACE ME'\n");
+    assert.strictEqual(placeholder.status, 1, placeholder.stdout + placeholder.stderr);
+    assert.match(placeholder.stdout + placeholder.stderr, /letsEncrypt\.email holds a placeholder/);
+  });
 });
 
 describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {

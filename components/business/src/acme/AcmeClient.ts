@@ -35,7 +35,7 @@ type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
 type AcmeAuthz = { identifier: { value: string }; [k: string]: unknown };
 type ChallengeFn = (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => Promise<unknown>;
 type AcmeClientInstance = {
-  createAccount: (opts: { termsOfServiceAgreed: boolean; contact: string[] }) => Promise<unknown>;
+  createAccount: (opts: { termsOfServiceAgreed: boolean; contact?: string[] }) => Promise<unknown>;
   getAccountUrl: () => string;
   auto: (opts: { csr: Buffer | string; challengePriority: string[]; challengeCreateFn: ChallengeFn; challengeRemoveFn: ChallengeFn }) => Promise<string>;
 };
@@ -46,7 +46,7 @@ type AcmeLibLike = {
   };
   Client: new (opts: { directoryUrl: string; accountKey: Buffer | string; accountUrl?: string }) => AcmeClientInstance;
 };
-type AcmeAccount = { accountKey: Buffer | string; accountUrl: string; [k: string]: unknown };
+type AcmeAccountLike = { accountKey: Buffer | string; accountUrl: string; [k: string]: unknown };
 
 /**
  * Create a new ACME account. Runs ONCE per cluster — the returned
@@ -54,12 +54,12 @@ type AcmeAccount = { accountKey: Buffer | string; accountUrl: string; [k: string
  * case) and reused on every subsequent cert issuance. Fresh accounts
  * burn rate-limit quota.
  *
- * @param opts.email
+ * @param [opts.email]       - account contact; optional in ACME (Let's Encrypt
+ *                              no longer stores it), registered without one when absent
  * @param [opts.directoryUrl] - default: LE production
  * @param [opts.acmeLib]      - default: require('acme-client'); injectable for tests
  */
-async function createAccount ({ email, directoryUrl, acmeLib }: { email?: string; directoryUrl?: string; acmeLib?: AcmeLibLike } = {}) {
-  if (!email) throw new Error('AcmeClient.createAccount: email is required');
+async function createAccount ({ email, directoryUrl, acmeLib }: { email?: string | null; directoryUrl?: string; acmeLib?: AcmeLibLike } = {}) {
   const lib = acmeLib || require('acme-client');
   const url = directoryUrl || DIRECTORY_PRODUCTION;
 
@@ -67,13 +67,13 @@ async function createAccount ({ email, directoryUrl, acmeLib }: { email?: string
   const client = new lib.Client({ directoryUrl: url, accountKey });
   await client.createAccount({
     termsOfServiceAgreed: true,
-    contact: ['mailto:' + email]
+    ...(email ? { contact: ['mailto:' + email] } : {})
   });
 
   return {
     accountKey: Buffer.isBuffer(accountKey) ? accountKey.toString() : accountKey,
     accountUrl: client.getAccountUrl(),
-    email,
+    email: email || null,
     directoryUrl: url
   };
 }
@@ -101,7 +101,7 @@ async function createAccount ({ email, directoryUrl, acmeLib }: { email?: string
 async function issueCert (opts: {
   commonName?: string;
   altNames?: string[];
-  account?: AcmeAccount;
+  account?: AcmeAccountLike;
   challengeCreateFn?: ChallengeFn;
   challengeRemoveFn?: ChallengeFn;
   challengePriority?: string[];
