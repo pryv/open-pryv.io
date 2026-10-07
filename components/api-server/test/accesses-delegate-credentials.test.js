@@ -72,6 +72,14 @@ describe('[ADCR] accesses: credentials and a delegated personal access', functio
     assert.strictEqual(own.body.access.token, delegateShareToken);
   });
 
+  it('[ADCR5] accesses.update does not return an owner token to the delegate', async function () {
+    const res = await coreRequest.put(`/${username}/accesses/${ownerAppId}`).set('Authorization', delegateToken)
+      .send({ name: 'adcr-app' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.access.token, undefined);
+    assert.strictEqual(res.body.access.apiEndpoint, undefined);
+  });
+
   it('[ADCR4] accesses.checkApp never hands an owner app access to the delegate', async function () {
     const res = await coreRequest.post(`/${username}/accesses/check-app`).set('Authorization', delegateToken)
       .send({ requestingAppId: 'adcr-app', requestedPermissions: [{ streamId: 'adcr-s', level: 'read', defaultName: 'S' }] });

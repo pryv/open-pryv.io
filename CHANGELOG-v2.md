@@ -21,16 +21,18 @@
   in `accesses.create` is refused with `403`. Deleting an access releases its alias only when it is
   one of the same account's aliases.
 - **Security.** A delegated personal access sees the `token` (and `apiEndpoint`) of itself and of the
-  accesses it created only, in `accesses.get`, `accesses.getOne` (and its history) and
-  `accesses.checkApp`; the owner's own tokens are not returned to it, and `checkApp` no longer offers
-  it an app access the owner created.
+  accesses it created only, in `accesses.get`, `accesses.getOne` (and its history),
+  `accesses.update` and `accesses.checkApp`; the owner's own tokens are not returned to it. An app
+  authorised through a delegated session therefore gets an access of its own (removed with the
+  delegation) instead of the one the owner granted.
 
 ### Sessions and account deletion
 
 - **Security.** Login sessions record the account they belong to: a session is reused at login, and
   accepted, only for that account. A session left under a username by a former owner of that name is
   never handed to the account that holds the name now. Existing sessions keep working; the next login
-  of each app opens a new one.
+  of each app opens a new one, and a delegate's token issued before the upgrade is replaced once, the
+  next time it is issued.
 - **Security** (deployments that list `personalToken` in `user-account.delete`). A personal token only
   deletes its own account, whatever the transport (batch calls and socket.io included), and an access
   that failed its checks (logged out, expired) can no longer delete the account.

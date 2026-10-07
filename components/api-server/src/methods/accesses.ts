@@ -863,8 +863,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // refs, internal serial fields stripped).
       const wire = composeWireAccess(newHead);
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-      result.access = wire;
       result.__updateNotification = { baseId: baseId!, serial: newSerial, compositeId: wire.id! };
+      result.access = mayShowCredentials(context, newHead) ? wire : withoutCredentials(wire);
       // Refresh the breach-scope reverse-index from the authoritative new head
       // (stateless full-row write; keyed by the base id). Non-fatal — never
       // rejects, so it cannot trip the surrounding catch.
