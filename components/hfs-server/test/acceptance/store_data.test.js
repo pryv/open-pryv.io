@@ -41,8 +41,8 @@ describe('[SDHF] Storing data in a HF series', function () {
     after(() => {
       server.stop();
     });
-    after(function () {
-      pryv.clean();
+    after(async function () {
+      await pryv.clean();
     });
     const nowEvent = timestamp.now();
     // Set up a few ids that we'll use for testing. NOTE that these ids will
@@ -181,8 +181,8 @@ describe('[SDHF] Storing data in a HF series', function () {
       hfServer.stop();
       apiServer.stop();
     });
-    after(function () {
-      pryv.clean();
+    after(async function () {
+      await pryv.clean();
     });
     let userId, parentStreamId, accessToken;
     before(() => {
@@ -579,8 +579,8 @@ describe('[SDHF] Storing data in a HF series', function () {
       after(() => {
         server.stop();
       });
-      after(function () {
-        pryv.clean();
+      after(async function () {
+        await pryv.clean();
       });
       let userId, parentStreamId, accessToken;
       before(() => {
@@ -698,8 +698,8 @@ describe('[SDHF] Storing data in a HF series', function () {
       after(() => {
         server.stop();
       });
-      after(function () {
-        pryv.clean();
+      after(async function () {
+        await pryv.clean();
       });
       // Database fixture: `eventId` will contain the event that has a type
       // 'series:ratio/generic'
@@ -847,8 +847,8 @@ describe('[SDHF] Storing data in a HF series', function () {
       after(() => {
         server.stop();
       });
-      after(function () {
-        pryv.clean();
+      after(async function () {
+        await pryv.clean();
       });
       // Database fixture: `eventId` will contain the event that has a type
       // 'series:ratio/generic'
@@ -914,8 +914,8 @@ describe('[SDHF] Storing data in a HF series', function () {
       after(() => {
         server.stop();
       });
-      after(function () {
-        pryv.clean();
+      after(async function () {
+        await pryv.clean();
       });
       let userId, streamId, createOnlyToken, event;
       before(async () => {

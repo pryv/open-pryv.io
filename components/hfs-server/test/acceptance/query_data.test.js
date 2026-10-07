@@ -23,8 +23,8 @@ describe('[HFSQ] Querying data from a HF series', function () {
     database = await produceStorageConnection();
     pryv = databaseFixture(database);
   });
-  after(function () {
-    pryv.clean();
+  after(async function () {
+    await pryv.clean();
   });
   // Set up a few ids that we'll use for testing. NOTE that these ids will
   // change on every test run.

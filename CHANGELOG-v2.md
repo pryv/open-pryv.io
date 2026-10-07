@@ -39,6 +39,14 @@ after upgrading, run `bin/hfs-author-scrub.js` once per core (see "HF series").
   events whose author `versioning.deletionMode` keeps are not rewritten: revoking the access is what
   neutralises those values, so use `--revoke`.
 
+### HF series: the event's duration is in seconds
+
+- **Fix.** Writing points to a high-frequency series set the series event's `duration` in nanoseconds
+  instead of seconds: one second of data gave a duration of 1,000,000,000 s, so the event matched every
+  later time-range query, and for many such events the stored integrity did not verify. New
+  writes now set the duration in seconds. Series events written by earlier releases keep the oversized
+  duration (a later write never shortens it); a repair tool for them will come in a later release.
+
 ### Event ids and attachment paths
 
 - **Security.** A client-supplied event id must be exactly one of the accepted shapes: the

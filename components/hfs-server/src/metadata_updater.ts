@@ -27,8 +27,11 @@ type UpdateRequest = {
   eventId: string;
   author: string;
   timestamp: number;
+  // deltaTimes as the series store holds them: nanoseconds after the event's time
   dataExtent: { from: number; to: number };
 };
+
+const NANOS_PER_SECOND = 1e9;
 
 // --- PendingUpdate ---
 
@@ -119,13 +122,15 @@ async function flush (update: PendingUpdate) {
   const usersRepository = await getUsersRepository();
   const userId = await usersRepository.getUserIdForUsername(req.userId);
   const mall = await getMall();
+  // The event's duration is in seconds, like every event's.
+  const duration = req.dataExtent.to / NANOS_PER_SECOND;
   // Checked and written on the event as stored at write time: an update
   // landed since (a client edit, a longer duration) is kept.
   await mall.events.updateWithMerge(userId, req.eventId, (stored: { duration?: number | null }) => {
-    if (stored.duration != null && req.dataExtent.to <= stored.duration) return null;
+    if (stored.duration != null && duration <= stored.duration) return null;
     return {
       ...stored,
-      duration: req.dataExtent.to,
+      duration,
       modifiedBy: req.author,
       modified: req.timestamp
     };
@@ -194,4 +199,4 @@ class MetadataForgetter {
   }
 }
 
-export { MetadataUpdater, MetadataForgetter };
+export { MetadataUpdater, MetadataForgetter, flush };

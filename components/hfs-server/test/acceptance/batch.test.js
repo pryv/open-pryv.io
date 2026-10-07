@@ -31,8 +31,8 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
     before(function () {
       pryv = databaseFixture(database);
     });
-    after(function () {
-      pryv.clean();
+    after(async function () {
+      await pryv.clean();
     });
     // Set up a basic object structure so that we can test. Ids will change with
     // every test run.
@@ -125,8 +125,8 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
     before(function () {
       pryv = databaseFixture(database);
     });
-    after(function () {
-      pryv.clean();
+    after(async function () {
+      await pryv.clean();
     });
     // Set up a basic object structure so that we can test. Ids will change with
     // every test run.
@@ -237,8 +237,8 @@ describe('[HFBT] Storing BATCH data in a HF series', function () {
       before(function () {
         pryv = databaseFixture(database);
       });
-      after(function () {
-        pryv.clean();
+      after(async function () {
+        await pryv.clean();
       });
       let userId, streamId, createOnlyToken, event;
       before(async () => {
