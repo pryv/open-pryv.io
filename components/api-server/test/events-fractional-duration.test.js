@@ -86,4 +86,23 @@ describe('[EFRD] events: integrity with a fractional duration', function () {
     await mall.events.update(userId, { ...stored, duration: 4.2 });
     assertVerifies(await readBack(created.body.event.id));
   });
+
+  it('[EFRD5] normaliseDurationToStored keeps what a store gives back', function () {
+    const { normaliseDurationToStored } = require('mall/src/helpers/eventsUtils.ts');
+    const t = 1700000000.123;
+    const fractional = { time: t, duration: 0.1 };
+    normaliseDurationToStored(fractional);
+    assert.strictEqual(fractional.duration, (t + 0.1) - t);
+    for (const duration of [0, 1e-12]) {
+      const e = { time: t, duration };
+      normaliseDurationToStored(e);
+      assert.ok(!('duration' in e), duration + ' reads back as no duration');
+    }
+    const running = { time: t, duration: null };
+    normaliseDurationToStored(running);
+    assert.strictEqual(running.duration, null);
+    const noTime = { duration: 0.1 };
+    normaliseDurationToStored(noTime);
+    assert.strictEqual(noTime.duration, 0.1);
+  });
 });

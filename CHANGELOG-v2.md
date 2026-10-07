@@ -9,7 +9,8 @@
   `time + duration` exactly, so the duration read back differs slightly (`0.0999999046…`) from the one
   that was hashed. The hash is now computed over the duration as it is read back. The value returned
   is unchanged (it already was the read-back one). Events written by earlier releases keep their
-  failing hash until rewritten.
+  failing hash until rewritten: `bin/integrity-check.js` reports them, and any `events.update` of
+  such an event recomputes its hash.
 
 ### HF series: repair tool for oversized durations
 

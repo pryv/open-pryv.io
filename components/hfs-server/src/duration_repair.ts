@@ -64,23 +64,52 @@ export function isCandidate (event: EventLike, now: number): boolean {
 
 /**
  * `duration`: the stored duration (seconds); `m`: the series' maximum
- * deltaTime at or after the candidate extent (seconds), or null when none.
+ * deltaTime (seconds) at or after the candidate extent `duration / 1e9`, or
+ * null when none; `atExtent`: whether the series holds a point at that extent.
+ * The old writer stored the deltaTime of an existing point, so a duration it
+ * wrote always has a point at its extent; without one (e.g. a duration a
+ * client set), the value is not explained by the data and is left alone.
  */
-export function classify (duration: number, m: number | null): Classification {
+export function classify (duration: number, m: number | null, atExtent: boolean): Classification {
   if (m == null) return { kind: 'unexplained' };
   if (m >= duration - EXTENT_TOLERANCE_S) return { kind: 'legit' };
+  if (!atExtent) return { kind: 'unexplained' };
   const candidate = duration / NANOS_PER_SECOND;
   return { kind: 'repair', duration: m, exact: Math.abs(m - candidate) <= EXACT_TOLERANCE_S };
 }
 
-/** Maximum deltaTime (seconds) of the series points at or after `fromSeconds`, or null. */
-export async function seriesMaxDelta (series: SeriesLike, fromSeconds: number): Promise<number | null> {
+/** Deltatimes (seconds) of the series points at or after `fromSeconds` (one indexed query). */
+async function deltaTimesFrom (series: SeriesLike, fromSeconds: number): Promise<number[]> {
   const data = await series.query(fromSeconds > 0 ? { from: fromSeconds } : {});
-  let max: number | null = null;
+  const deltas: number[] = [];
   data.eachRow((row) => {
     const delta = Number(row.get('deltaTime'));
-    if (Number.isFinite(delta) && (max == null || delta > max)) max = delta;
+    if (Number.isFinite(delta)) deltas.push(delta);
   });
+  return deltas;
+}
+
+/**
+ * What the series data says about a stored `duration` (seconds): first
+ * whether data reaches the duration itself (a tail query), then the points
+ * from the candidate extent `duration / 1e9` on. Never reads a whole series
+ * unless the candidate extent is under a millisecond.
+ */
+export async function probeSeries (series: SeriesLike, duration: number): Promise<{ max: number | null; atExtent: boolean }> {
+  const tail = await deltaTimesFrom(series, duration - EXTENT_TOLERANCE_S);
+  if (tail.length > 0) return { max: maxOf(tail), atExtent: true };
+  const candidate = duration / NANOS_PER_SECOND;
+  const deltas = await deltaTimesFrom(series, candidate - EXTENT_TOLERANCE_S);
+  if (deltas.length === 0) return { max: null, atExtent: false };
+  return {
+    max: maxOf(deltas),
+    atExtent: deltas.some((d) => Math.abs(d - candidate) <= EXACT_TOLERANCE_S)
+  };
+}
+
+function maxOf (values: number[]): number {
+  let max = values[0];
+  for (const v of values) if (v > max) max = v;
   return max;
 }
 
@@ -111,8 +140,8 @@ export async function repairUserSeriesDurations ({ mall, seriesRepo, seriesNames
     result.candidates++;
     const duration = event.duration as number;
     const series = await seriesRepo.get(seriesNamespace, 'event.' + event.id);
-    const m = await seriesMaxDelta(series, duration / NANOS_PER_SECOND - EXTENT_TOLERANCE_S);
-    const verdict = classify(duration, m);
+    const probe = await probeSeries(series, duration);
+    const verdict = classify(duration, probe.max, probe.atExtent);
     if (verdict.kind === 'legit') { result.legit++; continue; }
     if (verdict.kind === 'unexplained') { result.unexplained.push(username + '/' + event.id); continue; }
     if (dryRun) {

@@ -164,6 +164,8 @@ function printUsage (stream) {
     '  node bin/hfs-duration-repair.js --config config/host-config.yml',
     '',
     'Run once per core, after upgrading. Safe to re-run. The core may be running.',
+    'With the SQLite series engine, even a dry run creates the (empty) series file of an',
+    'account that has a candidate event but no series data yet.',
     ''
   ].join('\n'));
 }

@@ -56,7 +56,7 @@ describe('[HFDR] hfs-duration-repair tool', function () {
     mall = await getMall();
     userId = cuid();
     streamId = cuid();
-    for (const key of ['A', 'B', 'G', 'F', 'U', 'N']) ids[key] = cuid();
+    for (const key of ['A', 'B', 'G', 'F', 'U', 'C', 'N']) ids[key] = cuid();
     const user = await pryv.user(userId, {});
     await user.stream({ id: streamId });
 
@@ -84,6 +84,9 @@ describe('[HFDR] hfs-duration-repair tool', function () {
     await user.event({ id: ids.F, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 3 * 86400 });
     await appendPoints(ids.F, [0, 3 * 86400 * 1e9]);
     await user.event({ id: ids.U, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 1e9 });
+    // C: a client-set duration ending in the future, with data beyond the candidate extent but none at it.
+    await user.event({ id: ids.C, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 10 * 365 * 86400 });
+    await appendPoints(ids.C, [0, 5e9]);
     await user.event({ id: ids.N, type: 'note/txt', content: 'n', streamIds: [streamId], time: T, duration: 1e9 });
     planted = await readAll();
   });
@@ -107,11 +110,12 @@ describe('[HFDR] hfs-duration-repair tool', function () {
   it('[HFDR1] a dry run reports the candidates and writes nothing', async function () {
     if (integrity.events.isActive) assert.ok(!verifies(planted.A), 'precondition: A carries an old hash that does not verify');
     const out = runTool('--dry-run');
-    assert.match(out, /candidates\s+5\b/);
+    assert.match(out, /candidates\s+6\b/);
     assert.match(out, /repaired\s+3 \(would be\)/);
     assert.match(out, /data extends to the duration\s+1\b/);
-    assert.match(out, /no series point at the extent\s+1\b/);
-    assert.ok(out.includes(userId + '/' + ids.U), 'the unexplained event is listed');
+    assert.match(out, /no series point at the extent\s+2\b/);
+    assert.ok(out.includes(userId + '/' + ids.U), 'U is listed');
+    assert.ok(out.includes(userId + '/' + ids.C), 'C is listed');
     assert.deepStrictEqual(await readAll(), planted);
   });
 
@@ -128,15 +132,15 @@ describe('[HFDR] hfs-duration-repair tool', function () {
       assert.ok(e.modified > planted[key].modified, key + ' modified refreshed');
       assert.strictEqual(e.modifiedBy, planted[key].modifiedBy, key + ' modifiedBy kept');
     }
-    for (const key of ['F', 'U', 'N']) assert.deepStrictEqual(afterRepair[key], planted[key], key + ' untouched');
+    for (const key of ['F', 'U', 'C', 'N']) assert.deepStrictEqual(afterRepair[key], planted[key], key + ' untouched');
   });
 
   it('[HFDR3] a re-run repairs nothing and changes nothing', async function () {
     const out = runTool();
-    assert.match(out, /candidates\s+2\b/);
+    assert.match(out, /candidates\s+3\b/);
     assert.match(out, /repaired\s+0\b/);
     assert.match(out, /data extends to the duration\s+1\b/);
-    assert.match(out, /no series point at the extent\s+1\b/);
+    assert.match(out, /no series point at the extent\s+2\b/);
     assert.deepStrictEqual(await readAll(), afterRepair);
   });
 
@@ -153,10 +157,12 @@ describe('[HFDR] hfs-duration-repair tool', function () {
 
     const duration = 1e9;
     const c = duration / 1e9;
-    assert.deepStrictEqual(classify(duration, null), { kind: 'unexplained' });
-    assert.deepStrictEqual(classify(duration, duration - 5e-4), { kind: 'legit' });
-    assert.deepStrictEqual(classify(duration, c), { kind: 'repair', duration: c, exact: true });
-    assert.deepStrictEqual(classify(duration, c + 1), { kind: 'repair', duration: c + 1, exact: false });
-    assert.deepStrictEqual(classify(duration, c - 2e-3), { kind: 'repair', duration: c - 2e-3, exact: false });
+    assert.deepStrictEqual(classify(duration, null, false), { kind: 'unexplained' });
+    assert.deepStrictEqual(classify(duration, duration - 5e-4, false), { kind: 'legit' });
+    assert.deepStrictEqual(classify(duration, c, true), { kind: 'repair', duration: c, exact: true });
+    assert.deepStrictEqual(classify(duration, c + 1, true), { kind: 'repair', duration: c + 1, exact: false });
+    assert.deepStrictEqual(classify(duration, c - 2e-3, true), { kind: 'repair', duration: c - 2e-3, exact: false });
+    // data beyond the candidate extent but no point at it: not the old writer's value
+    assert.deepStrictEqual(classify(duration, c + 4, false), { kind: 'unexplained' });
   });
 });
