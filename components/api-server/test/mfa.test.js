@@ -61,6 +61,16 @@ function totpCodeFor (secretB32, offsetSteps = 0) {
   return totpCode(base32Decode(secretB32), { time: now + offsetSteps * 30, periodSeconds: 30, digits: 6 });
 }
 
+// The enrolment confirm uses the previous step's code, so the following verify
+// has a step of its own (replay protection). Generated in the last seconds of a
+// step, that code is two steps old once the server checks it, outside the
+// one-step drift: wait for the next step first.
+async function previousStepCodeFor (secretB32) {
+  const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+  if (left < 5) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 100));
+  return totpCodeFor(secretB32, -1);
+}
+
 const mfaConfig = {
   services: {
     mfa: {
@@ -205,7 +215,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       const secret = act.body.secret;
       const confirm = await coreRequest
         .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
-        .send({ code: totpCodeFor(secret, -1) });
+        .send({ code: await previousStepCodeFor(secret) });
       assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
       assert.strictEqual(confirm.body.recoveryCodes.length, 10);
       const loginRes = await coreRequest
@@ -618,7 +628,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', act.body.mfaToken)
-          .send({ code: totpCodeFor(secret, -1) });
+          .send({ code: await previousStepCodeFor(secret) });
         assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
       });
 
@@ -805,7 +815,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', act.body.mfaToken)
-          .send({ code: totpCodeFor(secret, -1) });
+          .send({ code: await previousStepCodeFor(secret) });
         assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
         return confirm.body.recoveryCodes;
       }
