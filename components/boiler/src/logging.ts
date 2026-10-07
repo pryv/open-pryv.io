@@ -404,8 +404,8 @@ function _inspectAndHide (o: unknown): unknown {
     const res: Record<string, unknown> = {};
     const obj = o as Record<string, unknown>;
     for (const key of Object.keys(obj)) {
-      if (['password', 'passwordHash', 'newPassword'].includes(key)) {
-        res[key] = '(hidden password)';
+      if (SENSITIVE_KEYS.has(key.toLowerCase())) {
+        res[key] = key.toLowerCase().includes('password') ? '(hidden password)' : '(hidden)';
       } else {
         res[key] = inspectAndHide(obj[key]);
       }
@@ -415,11 +415,16 @@ function _inspectAndHide (o: unknown): unknown {
   return o;
 }
 
+// Keys whose values are credentials, compared lower-cased.
+const SENSITIVE_KEYS = new Set(['password', 'passwordhash', 'newpassword', 'oldpassword', 'resettoken',
+  'recoverycode', 'token', 'emailproof', 'invitationtoken', 'secret', 'handoff', 'refreshtoken',
+  'accesstoken', 'authorization', 'mfatoken']);
+
 // Hides sensitive values (auth tokens and passwords) in log messages
 function hideSensitiveValues (msg: unknown) {
   if (typeof msg !== 'string') return msg;
-  const tokenRegexp = /auth=c([a-z0-9-]*)/g;
-  const passwordRegexp = /"(password|passwordHash|newPassword)"[:=]"([^"]*)"/g;
+  const tokenRegexp = /auth=([^&\s"']+)/g;
+  const passwordRegexp = /"(password|passwordHash|newPassword|oldPassword|resetToken|recoveryCode|token|emailProof|invitationToken|mfaToken|refreshToken|accessToken)"[:=]"([^"]*)"/g;
   const mask = '(hidden)';
 
   const res = msg

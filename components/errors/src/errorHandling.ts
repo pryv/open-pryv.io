@@ -27,6 +27,25 @@ interface ErrorHandling {
 const errorHandling: ErrorHandling = {} as ErrorHandling;
 export { errorHandling };
 export type { ErrorHandling };
+// Request bodies carry credentials (passwords, reset tokens, recovery codes,
+// invitation tokens...), so an error log keeps the body's keys and only the
+// values of the fields below, which never hold one.
+const LOGGABLE_BODY_FIELDS = ['appId', 'username', 'method', 'type', 'id', 'streamIds', 'streamId', 'name', 'languageCode'];
+
+function summarizeBody (body: unknown): unknown {
+  if (body == null || typeof body !== 'object') return body == null ? body : typeof body;
+  if (Array.isArray(body)) return body.map((item) => summarizeBody(item));
+  const record = body as Record<string, unknown>;
+  const summary: Record<string, unknown> = { keys: Object.keys(record) };
+  for (const field of LOGGABLE_BODY_FIELDS) {
+    const value = record[field];
+    if (typeof value === 'string' || typeof value === 'number' || (Array.isArray(value) && value.every((v) => typeof v === 'string'))) {
+      summary[field] = value;
+    }
+  }
+  return summary;
+}
+
 /**
  * Logs the given error.
  *
@@ -46,7 +65,7 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
     metadata.context = {
       location: redactUrl(req.url),
       method: req.method,
-      data: req.body
+      data: summarizeBody(req.body)
     };
   }
   if (error instanceof APIError) {

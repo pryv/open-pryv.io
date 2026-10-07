@@ -14,6 +14,7 @@ import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:
 import type { TLSSocket } from 'node:tls';
 import type { Logger } from '@pryv/boiler';
 import type { HostedSite, ProxySite, StaticSite } from 'business/src/hostedSites.ts';
+import { redactUrl } from 'utils/src/redactUrl.ts';
 
 /**
  * In-process dispatcher for hosted sites: a reserved platform name that
@@ -325,7 +326,7 @@ function buildHostedSitesIngress (opts: {
       addUpstreamPolicies(outHeaders, proxyRes);
       res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
       pipeline(proxyRes, res, (err: NodeJS.ErrnoException | null) => {
-        if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${req.url}: ${err.code ?? err.message}`);
+        if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${redactUrl(req.url)}: ${err.code ?? err.message}`);
       });
     });
 
@@ -334,16 +335,16 @@ function buildHostedSitesIngress (opts: {
       upstreamTimedOut = true;
       proxyReq.destroy();
       if (res.destroyed) return;
-      logger.warn(`[hosted-sites] ${site.name}: upstream idle for ${upstreamIdleTimeoutMs} ms ${req.url}`);
+      logger.warn(`[hosted-sites] ${site.name}: upstream idle for ${upstreamIdleTimeoutMs} ms ${redactUrl(req.url)}`);
       if (!res.headersSent) plain(res, 504, 'Gateway Timeout', {}, req.method === 'HEAD');
       else res.destroy();
     });
     proxyReq.on('error', (err: Error) => {
       if (upstreamTimedOut || res.destroyed) {
-        logger.debug(`[hosted-sites] ${site.name}: upstream request dropped ${req.url}: ${err.message}`);
+        logger.debug(`[hosted-sites] ${site.name}: upstream request dropped ${redactUrl(req.url)}: ${err.message}`);
         return;
       }
-      logger.warn(`[hosted-sites] ${site.name}: upstream error ${req.url}: ${err.message}`);
+      logger.warn(`[hosted-sites] ${site.name}: upstream error ${redactUrl(req.url)}: ${err.message}`);
       if (!res.headersSent) plain(res, 502, 'Bad Gateway', {}, req.method === 'HEAD');
       else res.destroy();
     });

@@ -6,12 +6,13 @@
  */
 
 /**
- * A request URL as it may be logged: the `auth` query value (an access token;
- * the only way an <img> tag or a plain link can send one) replaced by `***`.
+ * A request URL as it may be logged: credential-bearing query values (`auth`,
+ * the only way an <img> tag or a plain link can send an access token, and the
+ * one-time tokens of the reset / verification / MFA links) replaced by `***`.
  */
 function redactUrl (url: string | undefined | null): string {
   if (url == null) return '';
-  return url.replace(/([?&]auth=)[^&#]*/g, '$1***');
+  return url.replace(/([?&](?:auth|resetToken|verifyToken|mfaToken|token)=)[^&#]*/gi, '$1***');
 }
 
 export { redactUrl };
