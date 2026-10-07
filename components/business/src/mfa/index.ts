@@ -250,9 +250,9 @@ class SmsMethod implements MfaMethod {
   }
 }
 
-// Per-method cache. The SMS `SingleService` holds a per-instance username->code
-// map spanning challenge->verify, so a method MUST be a singleton across a
-// flow (same rationale as the old `_mfaService`). Reset in tests.
+// Per-method cache: one method instance per process (same rationale as the
+// old `_mfaService`; the SMS `SingleService` keeps its pending codes in
+// cluster_kv, shared by the workers). Reset in tests.
 let _methodCache: Map<string, MfaMethod> | null = null;
 function methodCache (): Map<string, MfaMethod> {
   if (_methodCache === null) _methodCache = new Map();
