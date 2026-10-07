@@ -11,6 +11,7 @@ const errors = require('errors').factory;
 const validation = require('../../schema/validation.ts');
 const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId.ts');
 const { getLogger } = require('@pryv/boiler');
+const { parseTrustedApps, isTrustedApp } = require('business/src/auth/trustedApps.ts');
 const logger = getLogger('commonFunctions');
 
 type MethodContext = {
@@ -18,8 +19,7 @@ type MethodContext = {
   methodId: string;
   [k: string]: unknown;
 };
-type AuthSettings = { trustedApps: string; [k: string]: unknown };
-type TrustedApp = { appId: string; originRegExp: RegExp };
+type AuthSettings = { trustedApps?: unknown; [k: string]: unknown };
 type SchemaError = { path: string; params?: unknown[]; code?: string; message?: string; schemaId?: unknown; param?: string; [k: string]: unknown };
 type ParamsSchema = {
   messages?: Record<string, Record<string, { message?: string; code?: string }>>;
@@ -49,7 +49,6 @@ export const basicAccessAuthorizationCheck = function (context: MethodContext, _
 };
 /**
  * Returns a check whether the given app ID / origin pair match a trusted app defined in settings.
- * (Lazy-loads and caches the `trustedApps` setting.)
  * The returned function expects the call's `params` to have `appId` and `origin` properties.
  *
  */
@@ -59,57 +58,20 @@ export const getTrustedAppCheck = function getTrustedAppCheck (getAuthSettings: 
   // config.get('auth')`) means config.set() / injectTestConfig() /
   // future async config sources reach this helper through the closure.
   // The trustedApps list is parsed on every request from the freshly-
-  // resolved slice — negligible cost (a single split on a short
-  // comma-separated list) and strictly more correct than a module-scope
+  // resolved slice — negligible cost (a short comma-separated list)
+  // and strictly more correct than a module-scope
   // memoization that would freeze the list at first request and make
   // tests' config injection invisible.
   return function requireTrustedApp (_context: MethodContext, params: { appId?: string; origin?: string }, _result: ResultBag, next: Next) {
-    if (!isTrustedApp(params.appId, params.origin)) {
+    // Matching rules: business/src/auth/trustedApps.ts. Boot validation
+    // refuses a missing setting or an invalid entry.
+    const { apps, errors: settingErrors } = parseTrustedApps(getAuthSettings()?.trustedApps);
+    for (const settingError of settingErrors) logger.error('Invalid auth.trustedApps setting: ' + settingError);
+    if (!isTrustedApp(apps, params.appId, params.origin)) {
       return next(errors.invalidCredentials('The app id ("appId") is either missing or ' + 'not trusted.'));
     }
     next();
   };
-  function isTrustedApp (appId: string | undefined, origin: string | undefined): boolean {
-    const trustedApps: TrustedApp[] = [];
-    getAuthSettings().trustedApps.split(',').forEach(function (pair: string) {
-      const parts = /^\s*(\S+)\s*@\s*(\S+)\s*$/.exec(pair);
-      if (parts == null || !Array.isArray(parts) || parts.length !== 3) {
-        logger.error('Invalid Trusted app settings, please check: ' + pair);
-        return;
-      }
-      trustedApps.push({
-        appId: parts[1],
-        originRegExp: getRegExp(parts[2])
-      });
-    });
-    if (!appId) {
-      return false;
-    }
-    let trustedApp;
-    for (let i = 0, n = trustedApps.length; i < n; i++) {
-      trustedApp = trustedApps[i];
-      // accept wildcards for app ids (for use in tests/dev/staging only)
-      if (trustedApp.appId !== appId && trustedApp.appId !== '*') {
-        continue;
-      }
-      if (trustedApp.originRegExp.test(origin || '')) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function getRegExp (origin: string): RegExp {
-    // BUG The blacklist approach taken here is probably wrong; we're assuming
-    //  that we can escape all the active parts of a string using a list of
-    //  special chars; we're almost sure to miss something while doing that. A
-    //  better approach would be to whitelist all characters that are allowed
-    //  in the input language.
-    // first escape the origin string
-    let rxString = origin.replace(/([.*+?^=!:${}()|[\]\/\\])/g, '\\$1'); // eslint-disable-line no-useless-escape
-    // then replace wildcards
-    rxString = rxString.replace(/\\\*/g, '\\S*');
-    return new RegExp('^' + rxString + '$');
-  }
 };
 /** Produces a middleware function to verify parameters against the schema
  * given in `paramsSchema`.

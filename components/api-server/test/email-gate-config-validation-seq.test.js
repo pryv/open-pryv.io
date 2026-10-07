@@ -99,6 +99,21 @@ describe('[MLCP] mail capability predicate', () => {
     assert.ok(res.problems.some((p) => /services\.email\.enabled is false/.test(p)));
   });
 
+  it('[MLCP8] a placeholder key or host (e.g. OVERRIDE ME) counts as unset', () => {
+    const mandrill = {
+      'services:email:method': 'mandrill',
+      'services:email:url': 'https://mandrill.example.com/send'
+    };
+    for (const key of ['OVERRIDE ME', 'change-me', 'xxx']) {
+      const res = describeMailCapability(fakeConfig({ ...mandrill, 'services:email:key': key }));
+      assert.strictEqual(res.ok, false, `key ${key}`);
+      assert.match(res.problems[0], /services\.email\.key/);
+    }
+    const res = describeMailCapability(fakeConfig({ ...inProcessOk, 'services:email:smtp:host': 'OVERRIDE ME' }));
+    assert.strictEqual(res.ok, false);
+    assert.match(res.problems[0], /services\.email\.smtp\.host/);
+  });
+
   it('[MLCP6] an unknown method yields method null and a problem', () => {
     const res = describeMailCapability(fakeConfig({ 'services:email:method': 'smtp' }));
     assert.strictEqual(res.ok, false);

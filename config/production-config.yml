@@ -1,42 +1,16 @@
 ---
+# Base layer added under `override-config.yml` when NODE_ENV=production and no
+# `--config` is given (the Docker image default). Deployment-neutral values
+# only: secrets, `auth.trustedApps`, the auth UI page URLs and the mail setup
+# belong to each deployment's own override (see INSTALL.md).
 env: production
 http:
   ip: 127.0.0.1
   port: 9000
   trustedProxies: ['loopback']   # see default-config.yml
-register:
-  secret: OVERRIDE ME
 auth:
-  adminAccessKey: OVERRIDE ME
-  trustedApps: "*@https://*.pryv.me*, *@http://pryv.github.io"
   sessionMaxAge: 1209600000
-  ssoCookieDomain: ".pryv.io"
-  ssoCookieSignSecret: OVERRIDE ME
-  filesReadTokenSecret: OVERRIDE ME
   passwordResetRequestMaxAge: 3600000
-  passwordResetPageURL: https://account.pryv.me/reset-password
-  emailVerificationPageURL: https://account.pryv.me/verify-email
-# Third-party sign-in (OIDC relying party). Disabled by default; uncomment and
-# fill in to enable. `clientSecret` is a per-core secret — keep it YAML-only.
-# sso:
-#   enabled: true
-#   landingPageURL: https://account.pryv.me/sso-signin
-#   providers:
-#     google:
-#       issuer: https://accounts.google.com
-#       clientId: OVERRIDE ME
-#       clientSecret: OVERRIDE ME
-#       label: Google
-services:
-  register:
-    url: https://reg.pryv.io
-  email:
-    welcomeTemplate: welcome-email
-    resetPasswordTemplate: reset-password
-    verifyEmailTemplate: verify-email
-    method: mandrill
-    url: https://mandrillapp.com/api/1.0/messages/send-template.json
-    key: OVERRIDE ME
 logs:
   console:
     active: true

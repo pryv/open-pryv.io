@@ -53,9 +53,27 @@ try {
   process.exit(1);
 }
 
-function get (dottedPath) {
-  return dottedPath.split('.').reduce((obj, key) => (obj == null ? obj : obj[key]), config);
+function get (dottedPath, from = config) {
+  return dottedPath.split('.').reduce((obj, key) => (obj == null ? obj : obj[key]), from);
 }
+
+// The base layer boot adds under this file when it runs as
+// config/override-config.yml without `--config` (Docker image default):
+// config/<NODE_ENV>-config.yml. With `--config <file>` no such layer is added.
+const nodeEnv = process.env.NODE_ENV;
+const baseLayerName = nodeEnv ? `config/${nodeEnv}-config.yml` : null;
+const baseLayerPath = baseLayerName ? path.resolve(__dirname, '..', baseLayerName) : null;
+let baseLayer = null;
+if (baseLayerPath != null && fs.existsSync(baseLayerPath)) {
+  try {
+    baseLayer = yaml.load(fs.readFileSync(baseLayerPath, 'utf8'));
+  } catch (e) {
+    baseLayer = null;
+  }
+}
+const baseLayerNote = baseLayer != null
+  ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
+  : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`;
 
 function isMissingOrSentinel (v) {
   if (v == null) return true;
@@ -86,6 +104,19 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
     problems.push(`auth.${key} ${weakSecretReason(value)}: set a long random value of your own`);
   } else if (weakSecretReason(value, { production: true }) != null) {
     warnings.push(`auth.${key} ${weakSecretReason(value, { production: true })}: a production core refuses to boot with it`);
+  }
+}
+
+// auth.trustedApps — required at boot, every entry must parse (same parser as
+// the server). The base layer may supply it.
+{
+  const { parseTrustedApps } = require('../components/business/src/auth/trustedApps.ts');
+  const own = get('auth.trustedApps');
+  const value = own != null ? own : get('auth.trustedApps', baseLayer);
+  if (typeof value !== 'string' || value.trim() === '') {
+    problems.push("auth.trustedApps missing or empty (list your auth UI and app origins, e.g. '*@https://account.example.com')");
+  } else {
+    for (const error of parseTrustedApps(value).errors) problems.push(`auth.trustedApps: ${error}`);
   }
 }
 
@@ -350,6 +381,7 @@ if (get('http.trustedProxies') != null) {
 // summary
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);
+  console.error(`  ${baseLayerNote}`);
   console.error(`  ${problems.length} problem(s):`);
   problems.forEach(p => console.error(`    - ${p}`));
   if (warnings.length > 0) {
@@ -360,6 +392,7 @@ if (problems.length > 0) {
 }
 
 console.log(`✓ ${absPath}`);
+console.log(`  ${baseLayerNote}`);
 console.log('  All required-at-boot checks passed.');
 if (warnings.length > 0) {
   console.log(`  ${warnings.length} warning(s):`);

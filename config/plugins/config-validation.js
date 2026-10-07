@@ -127,24 +127,29 @@ function checkRequiredWhen (config, problems) {
 // a config file (or a common stand-in) is as good as public, so it never boots;
 // in production a short value is refused too.
 const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret'];
-const MIN_SECRET_LENGTH = 16;
-const PLACEHOLDER_SECRETS = ['override me', 'overrideme', 'override-me', 'override_me', 'changeme', 'change me',
-  'change-me', 'change_me', 'secret', 'password', 'admin', 'adminkey', 'todo', 'xxx'];
-// "OVERRIDE ME", "CHANGE_ME_WITH_SOMETHING", "please-replace-me", … anywhere in the value.
-const PLACEHOLDER_PATTERN = /(^|[^a-z])(override|change|replace)[ _-]?me([^a-z]|$)/i;
+const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/business/src/secretValues.ts');
 
-/**
- * Why a secret value is not acceptable, or null when it is.
- * @param {unknown} value
- * @param {{ production?: boolean }} [options] production also enforces MIN_SECRET_LENGTH
- */
-function weakSecretReason (value, options = {}) {
-  if (typeof value !== 'string') return null;
-  if (PLACEHOLDER_PATTERN.test(value) || PLACEHOLDER_SECRETS.includes(value.trim().toLowerCase())) return 'is a placeholder value';
-  if (options.production === true && value.length < MIN_SECRET_LENGTH) {
-    return `is shorter than ${MIN_SECRET_LENGTH} characters`;
+// `auth.trustedApps` gates the browser login and password-reset flows. Absent,
+// every such call would fail at request time; a malformed entry would be
+// silently skipped. Both refuse the boot instead.
+function checkTrustedApps (config, problems) {
+  const { parseTrustedApps } = require('../../components/business/src/auth/trustedApps.ts');
+  const value = config.get('auth:trustedApps');
+  if (typeof value !== 'string' || value.trim() === '') {
+    problems.push({
+      message: "required configuration key 'auth:trustedApps' is missing or empty: list the origins of your auth UI and apps, e.g. '*@https://account.example.com'.",
+      path: ['auth', 'trustedApps'],
+      payload: { path: 'auth:trustedApps' }
+    });
+    return;
   }
-  return null;
+  for (const error of parseTrustedApps(value).errors) {
+    problems.push({
+      message: `'auth:trustedApps' entry is invalid: ${error}`,
+      path: ['auth', 'trustedApps'],
+      payload: { path: 'auth:trustedApps' }
+    });
+  }
 }
 
 // Enum-style validation for `audit:onUserDelete` mode + gate for
@@ -446,6 +451,7 @@ async function validate (config) {
   }
 
   checkRequiredWhen(config, problems);
+  checkTrustedApps(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
   checkPlatformEngineTopology(config, problems);
@@ -588,6 +594,7 @@ module.exports = {
   reportProblems,
   collectWarnings,
   checkRequiredWhen,
+  checkTrustedApps,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,
   checkPlatformEngineTopology,

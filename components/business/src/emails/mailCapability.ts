@@ -18,6 +18,8 @@
  * verification mail would be sent.
  */
 
+import { PLACEHOLDER_PATTERN, weakSecretReason } from '../secretValues.ts';
+
 export type ConfigReader = { get: (key: string) => unknown };
 
 export type ScopedConfigReader = ConfigReader & {
@@ -51,10 +53,9 @@ const METHODS: readonly string[] = ['in-process', 'microservice', 'mandrill'];
 
 /**
  * A value is treated as "missing / unset" when it would render the feature
- * non-functional: null/undefined, the empty string, or one of the two
- * placeholder sentinels. Same semantics as the config-validation plugin's
- * helper of the same name; duplicated rather than imported because that plugin
- * is a CJS file under `config/` and the business layer must not depend on it.
+ * non-functional: null/undefined, the empty string, a `REPLACE` or `${VAR}`
+ * sentinel, or a template placeholder such as `OVERRIDE ME` (the shared
+ * predicate in secretValues.ts).
  */
 function isMissingOrSentinel (value: unknown): boolean {
   if (value == null) return true;
@@ -62,7 +63,7 @@ function isMissingOrSentinel (value: unknown): boolean {
   if (value === '') return true;
   if (value.includes('REPLACE')) return true;
   if (/\$\{[A-Z_][A-Z0-9_]*\}/.test(value)) return true;
-  return false;
+  return PLACEHOLDER_PATTERN.test(value);
 }
 
 export function describeMailCapability (config: ConfigReader): MailCapability {
@@ -97,7 +98,8 @@ export function describeMailCapability (config: ConfigReader): MailCapability {
     if (isMissingOrSentinel(config.get('services:email:url'))) {
       problems.push('services.email.url missing or unset');
     }
-    if (isMissingOrSentinel(config.get('services:email:key'))) {
+    const key = config.get('services:email:key');
+    if (isMissingOrSentinel(key) || weakSecretReason(key) != null) {
       problems.push('services.email.key missing or unset');
     }
   }

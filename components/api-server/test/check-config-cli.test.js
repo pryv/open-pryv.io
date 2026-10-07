@@ -21,13 +21,16 @@ const cuid = require('cuid');
 const CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
-function runCheck (yamlBody) {
+function runCheck (yamlBody, nodeEnv = process.env.NODE_ENV) {
   const file = path.join(os.tmpdir(), 'check-config-' + cuid.slug() + '.yml');
   fs.writeFileSync(file, yamlBody);
+  const env = Object.assign({}, process.env);
+  if (nodeEnv == null) delete env.NODE_ENV; else env.NODE_ENV = nodeEnv;
   try {
     const res = spawnSync('node', [CLI, file], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
+      env,
       timeout: 30000
     });
     return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
@@ -50,6 +53,7 @@ auth:
   adminAccessKey: an-admin-key
   filesReadTokenSecret: a-files-secret
   passwordResetPageURL: https://app.example.com/reset-password
+  trustedApps: '*@https://app.example.com'
 storages:
   base:
     engine: sqlite
@@ -118,5 +122,31 @@ services:
 `);
     assert.strictEqual(legacyKey.status, 0, legacyKey.stdout + legacyKey.stderr);
     assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
+  });
+});
+
+describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
+  this.timeout(60000);
+
+  it('[CKBL1] says which base layer boot adds under the file', () => {
+    const prod = runCheck(BASE, 'production');
+    assert.strictEqual(prod.status, 0, prod.stdout + prod.stderr);
+    assert.match(prod.stdout, /Base layer: NODE_ENV=production, so boot without --config adds config\/production-config\.yml/);
+    const none = runCheck(BASE, null);
+    assert.strictEqual(none.status, 0, none.stdout + none.stderr);
+    assert.match(none.stdout, /Base layer: none/);
+  });
+
+  it('[CKBL2] in production a missing auth.trustedApps is a problem: the base layer no longer supplies it', () => {
+    const res = runCheck(BASE.replace("  trustedApps: '*@https://app.example.com'\n", ''), 'production');
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /auth\.trustedApps missing or empty/);
+    assert.match(res.stderr, /Base layer: NODE_ENV=production/);
+  });
+
+  it('[CKBL3] an auth.trustedApps entry with a misplaced wildcard is a problem', () => {
+    const res = runCheck(BASE.replace("'*@https://app.example.com'", "'*@https://app.*.example.com'"), 'production');
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /auth\.trustedApps: .*only allowed as the whole first label/);
   });
 });

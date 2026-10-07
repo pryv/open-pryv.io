@@ -1224,15 +1224,16 @@ async function main () {
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
   // auth UI origin (otherwise the /reg/access flow loaded from the auth app
   // — whichever app-web-user-account host is configured — returns 403 because
-  // its origin isn't trusted). Compose `*@<origin>*` entries deduplicated.
+  // its origin isn't trusted). Compose exact `*@<origin>` entries, deduplicated
+  // (origins are matched on scheme, host and port; paths never matter).
   function originOf (u) {
     try { return new URL(u).origin; } catch (_) { return u; }
   }
   const trustedOrigins = new Set();
   trustedOrigins.add(originOf(publicUrl));
   trustedOrigins.add(originOf(authUiUrl));
-  const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}*`).join(', ');
-  const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl wildcard)', defaultTrustedApps, 'auth.trustedapps');
+  const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}`).join(', ');
+  const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl origins)', defaultTrustedApps, 'auth.trustedapps');
 
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const serviceSerial = await ask('  service.serial (build tag)', today, 'service.serial');

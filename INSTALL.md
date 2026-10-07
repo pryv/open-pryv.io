@@ -94,7 +94,9 @@ Exit 0 = all required-at-boot checks passed. Exit 1 = at least one problem (prin
 auth:
   adminAccessKey: <random-32-char-string>
   filesReadTokenSecret: <random-32-char-string>
-  trustedApps: '*@https://your-domain.com*'
+  trustedApps: '*@https://your-domain.com, *@https://your-account-app.example.com'
+  passwordResetPageURL: https://your-account-app.example.com/reset-password
+  emailVerificationPageURL: https://your-account-app.example.com/verify-email
 
 cluster:
   apiWorkers: 2       # N API workers sharing :3000
@@ -156,6 +158,18 @@ storages:
 ```
 
 On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30`, or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
+
+`config/production-config.yml` (the layer the Docker image adds) carries only deployment-neutral values. `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `auth.trustedApps`, `auth.passwordResetPageURL`, `auth.emailVerificationPageURL` and `services.email` must come from your own config: the core refuses to start when the secrets, `auth.trustedApps` or (with password-reset mail on, the default) `auth.passwordResetPageURL` are missing.
+
+### Trusted apps
+
+`auth.trustedApps` lists which apps may drive the browser sign-in and password-reset flows, and from which origins: comma-separated `<appId>@<origin>` entries.
+
+- `<appId>`: an exact app id, or `*` for any app id.
+- `<origin>`: `*` (any origin, including requests without one), or `<scheme>://<host>[:<port>]`. Scheme, host and port are compared separately; paths never matter (a `Referer` is reduced to its origin).
+- The host may start with a whole `*.` label: `https://*.example.com` matches every subdomain of `example.com` (not `example.com` itself, and never `example.com.other.net`). A `*` anywhere else in the host is refused at boot.
+- `:*` as the port matches any port on that host, e.g. `http://127.0.0.1:*`.
+- Older configs wrote a trailing `*` (`https://*.example.com*`). It is still accepted: right after the host it means any port, after a port or a path it adds nothing. It no longer extends the host name.
 
 ### Assets
 
