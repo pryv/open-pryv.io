@@ -315,10 +315,13 @@ describe('[PGTD] DELETE /users/:username', () => {
           // at module-load (still `false`), not the live mutated value.
           const config = await getConfig();
           if (config.get('caching:isActive') && pubsub.isTransportEnabled()) {
-            assert.strictEqual(delivered.length, 1);
-            assert.strictEqual(delivered[0].scopeName, 'cache.' + MESSAGES.UNSET_USER);
-            assert.strictEqual(delivered[0].eventName, MESSAGES.UNSET_USER);
-            assert.strictEqual(delivered[0].payload.username, userToDelete.attrs.id);
+            const busts = delivered.filter((d) => d.scopeName === 'cache.' + MESSAGES.UNSET_USER);
+            assert.strictEqual(busts.length, delivered.length, 'only name/user busts are sent');
+            for (const b of busts) assert.strictEqual(b.eventName, MESSAGES.UNSET_USER);
+            // the name bust, and an id-keyed bust sent whatever names this
+            // process held, so workers that only know an alias clear it too
+            assert.ok(busts.some((b) => b.payload.username === userToDelete.attrs.username), 'name bust');
+            assert.ok(busts.some((b) => b.payload.username == null && b.payload.userId === userToDelete.attrs.id), 'id-keyed bust');
           }
         });
         it(`[${testIDs[i][3]}] should not delete entries of other users`, async function () {

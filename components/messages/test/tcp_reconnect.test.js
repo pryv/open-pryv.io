@@ -164,4 +164,18 @@ describe('[PRCN] TcpPubsub reconnect after broker loss', function () {
     }
     assert.ok(received.includes('evt-after'), 'invalidation delivered after reconnect');
   });
+
+  it('[RC03] tells listeners the connection dropped, then that it is back', async () => {
+    const states = [];
+    const remove = tcpPubsub.onConnectionStateChange((state) => states.push(state));
+    try {
+      await rawBroker.kill();
+      rawBroker = null;
+      await waitFor(() => states.includes('reconnected'), 8000);
+      assert.strictEqual(states[0], 'disconnected', 'the drop is reported first');
+      assert.strictEqual(states[states.length - 1], 'reconnected');
+    } finally {
+      remove();
+    }
+  });
 });

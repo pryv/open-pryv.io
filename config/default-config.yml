@@ -425,6 +425,10 @@ custom:
 # === PER-CORE: local cache toggle ===
 caching:
   isActive: true
+  # Max age (seconds) of cached accesses, streams and username lookups. Bounds
+  # how long a worker that missed an invalidation keeps using a deleted or
+  # changed access. Costs about one storage read per user per worker per period.
+  accessMaxAgeSeconds: 60
 
 # === PER-CORE: local logs ===
 logs:

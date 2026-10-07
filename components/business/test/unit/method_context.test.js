@@ -137,6 +137,25 @@ describe('[MCTX] MethodContext', () => {
       assert.ok(cache.getAccessLogicForToken(userId, staleAccess.token) == null, 'stale entry must not be cached');
     });
 
+    it('[MCRS] storage refresh ignores a stale cached access and leaves the shared access in place until it succeeds', async () => {
+      // this worker still caches an access that storage no longer has
+      cache.setAccessLogic(userId, { id: staleAccess.id, token: staleAccess.token, expires: null });
+      const previous = { id: 'current-access' };
+      mc.access = previous;
+      const findOne = sinon.fake.yields(null, null);
+      let thrown = null;
+      try {
+        await mc.refreshExpandedAccessFromStorage({ accesses: { findOne } });
+      } catch (err) {
+        thrown = err;
+      }
+      assert.ok(thrown != null, 'a deleted access must be refused');
+      assert.strictEqual(thrown.id, 'invalid-access-token');
+      assert.strictEqual(findOne.callCount, 1, 'storage must be read');
+      assert.strictEqual(mc.access, previous, 'shared access never unset by a refresh');
+      assert.strictEqual(mc.bypassAccessCache, undefined, 'the flag stays on the copy');
+    });
+
     it('[MCEC] control: caches the access when no unset intervenes', async () => {
       const storage = { accesses: { findOne: sinon.fake.yields(null, staleAccess) } };
       await mc.retrieveAccessFromToken(storage);

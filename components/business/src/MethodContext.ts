@@ -92,6 +92,13 @@ class MethodContext {
    */
   readTokenAuthenticated: boolean;
 
+  /**
+   * Set on a revalidation copy: the access (and its managing access) is read
+   * from storage, never from the access cache, which this worker may hold
+   * stale after a missed invalidation.
+   */
+  bypassAccessCache?: boolean;
+
   constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: HttpHeaders, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
     this.user = { id: null, username };
@@ -242,12 +249,28 @@ class MethodContext {
   }
 
   /**
+   * Re-reads the access from storage (never from the access cache) and runs
+   * every expansion check on a copy of this context. `this.access` is replaced
+   * only once the fresh access passed them all, so calls sharing this context
+   * never see it unset. Throws like retrieveExpandedAccess.
+   */
+  async refreshExpandedAccessFromStorage (storage: StorageLike) {
+    const fresh: MethodContext = Object.assign(Object.create(Object.getPrototypeOf(this)), this, {
+      access: null,
+      bypassAccessCache: true
+    });
+    await fresh.retrieveExpandedAccess(storage);
+    this.access = fresh.access;
+  }
+
+  /**
    * Generic retrieve access
    */
   async _retrieveAccess (storage: StorageLike, query: Record<string, unknown>) {
-    // Capture the cache-invalidation epoch BEFORE the storage read: if a
-    // concurrent unset (local or cross-process synchro) lands during the await,
-    // setAccessLogic will skip re-inserting this now-stale AccessLogic. `this.access`
+    // Capture the cache-invalidation epoch BEFORE the storage read (this also
+    // starts following the user's invalidations): if a concurrent unset (local
+    // or cross-process synchro) lands during the await, setAccessLogic will skip
+    // re-inserting this now-stale AccessLogic. `this.access`
     // stays the request's own fresh read (authoritative for this request).
     const cacheEpoch = cache.getAccessLogicEpoch(this.user.id);
     const access = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, query, null, cb));
@@ -265,7 +288,7 @@ class MethodContext {
       throw errors.invalidAccessToken('The access token is missing: expected an ' +
                 '"Authorization" header or an "auth" query string parameter.');
     }
-    this.access = cache.getAccessLogicForToken(this.user.id, token);
+    this.access = this.bypassAccessCache ? null : cache.getAccessLogicForToken(this.user.id, token);
     if (this.access == null) {
       // retreiveing from Db
       await this._retrieveAccess(storage, { token });
@@ -305,7 +328,7 @@ class MethodContext {
     } catch {
       return;
     }
-    let managing = cache.getAccessLogicForId(this.user.id, base);
+    let managing = this.bypassAccessCache ? null : cache.getAccessLogicForId(this.user.id, base);
     if (managing == null) {
       const cacheEpoch = cache.getAccessLogicEpoch(this.user.id);
       const row = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, { id: base }, null, cb));

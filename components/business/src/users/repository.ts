@@ -601,6 +601,10 @@ class UsersRepository {
       }
     }
     await this.mall.deleteUser(userId);
+    // Keyed by id and sent whatever names this process knows: every process
+    // drops the account's cached accesses, streams and name mappings (the
+    // index is gone, so they cannot be refilled).
+    cache.unsetUserById(userId);
   }
 
   async count () {

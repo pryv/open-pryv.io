@@ -58,7 +58,7 @@ describe('[SYNC] Synchro', function () {
 
   beforeEach(() => {
     // empty eventual listener list
-    for (const userId of synchro.listenerMap.keys()) {
+    for (const userId of [...synchro.listenerMap.keys()]) {
       synchro.removeListenerForUserId(userId);
     }
   });
@@ -84,19 +84,23 @@ describe('[SYNC] Synchro', function () {
     assert.ok(cache.getAccessLogicForId('toto', 'test') == null);
   });
 
-  it('[8M1B] Registered listener should be removed on clearEvent', async () => {
-    cache.setStreams('toto-id', 'test', 'titi');
+  it('[8M1B] Registered listener should be kept on a data bust (stream write)', async () => {
+    cache.setStreams('toto-id', 'local', 'titi');
+    assert.strictEqual(cache.getStreams('toto-id', 'local'), 'titi');
     assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'should be registered');
     cache.unsetUserData('toto-id');
-    assert.strictEqual(synchro.listenerMap.has('toto-id'), false, 'should be removed');
+    assert.ok(cache.getStreams('toto-id', 'local') == null, 'data should be cleared');
+    assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'should still be registered');
   });
 
-  it('[KF7E] Registered listener should be removed on unsetUser', async () => {
+  it('[KF7E] unsetUser clears the name and the data', async () => {
     cache.setUserId('toto', 'toto-id');
-    cache.setStreams('toto-id', 'test', 'titi');
+    cache.setStreams('toto-id', 'local', 'titi');
+    assert.strictEqual(cache.getStreams('toto-id', 'local'), 'titi');
     assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'should be registered');
     cache.unsetUser('toto');
-    assert.strictEqual(synchro.listenerMap.has('toto-id'), false, 'should be removed');
+    assert.strictEqual(cache.getUserId('toto'), undefined, 'name should be cleared');
+    assert.ok(cache.getStreams('toto-id', 'local') == null, 'data should be cleared');
   });
 
   it('[OKHQ] Listeners should not receive "internal" messages', async () => {
@@ -111,23 +115,26 @@ describe('[SYNC] Synchro', function () {
 
   it('[Y5GA] Listeners should receive transport messages UNSET_USER_DATA', async () => {
     cache.setUserId('toto', 'toto-id');
-    cache.setStreams('toto-id', 'test', 'titi');
+    cache.setStreams('toto-id', 'local', 'titi');
+    assert.strictEqual(cache.getStreams('toto-id', 'local'), 'titi');
     assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'should be registered');
     await setTimeout(50);
     tcpPublish('cache.toto-id', 'toto-id', { action: MESSAGES.UNSET_USER_DATA });
     await setTimeout(50);
-    assert.strictEqual(synchro.listenerMap.has('toto-id'), false, 'should be removed');
+    assert.ok(cache.getStreams('toto-id', 'local') == null, 'data should be cleared');
+    assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'listener should be kept');
   });
 
   it('[Y5GU] Listeners should receive transport messages UNSET_USER', async () => {
     cache.setUserId('toto', 'toto-id');
-    cache.setStreams('toto-id', 'test', 'titi');
+    cache.setStreams('toto-id', 'local', 'titi');
+    assert.strictEqual(cache.getStreams('toto-id', 'local'), 'titi');
     assert.strictEqual(cache.getUserId('toto'), 'toto-id', 'userId should be cached');
     assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'should be registered');
     await setTimeout(50);
     tcpPublish('cache.unset-user', 'unset-user', { action: MESSAGES.UNSET_USER, username: 'toto' });
     await setTimeout(50);
-    assert.strictEqual(synchro.listenerMap.has('toto-id'), false, 'listner should be removed');
+    assert.ok(cache.getStreams('toto-id', 'local') == null, 'data should be cleared');
     assert.strictEqual(cache.getUserId('toto'), undefined, 'userId should be removed');
   });
 });

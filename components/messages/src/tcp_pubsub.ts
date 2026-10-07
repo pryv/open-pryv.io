@@ -28,6 +28,11 @@ type WireMessage =
   | { t: 'msg'; scope: Scope; event: string; payload: Payload };
 
 let testDeliverHook: DeliverHook | null = null;
+// Told when the broker connection drops and when it is back (subscriptions
+// re-sent): messages published in between are lost, so local state built on
+// them (e.g. caches) must not be trusted across the gap.
+type ConnectionState = 'disconnected' | 'reconnected';
+const connectionStateListeners = new Set<(state: ConnectionState) => void>();
 let client: TcpClient | null = null;
 let broker: TcpBroker | null = null;
 let initPromise: Promise<void> | null = null;
@@ -327,7 +332,23 @@ async function _doInit () {
 function onClientDisconnected () {
   if (shuttingDown) return;
   logger.error('pubsub broker connection lost — reconnecting (cache invalidations paused until restored)');
+  _notifyConnectionState('disconnected');
   _scheduleReconnect();
+}
+
+function _notifyConnectionState (state: ConnectionState) {
+  for (const listener of connectionStateListeners) {
+    try {
+      listener(state);
+    } catch (err: unknown) {
+      logger.warn('connection state listener failed', (err as Error).message);
+    }
+  }
+}
+
+function onConnectionStateChange (listener: (state: ConnectionState) => void): () => void {
+  connectionStateListeners.add(listener);
+  return () => { connectionStateListeners.delete(listener); };
 }
 
 function _scheduleReconnect () {
@@ -348,6 +369,7 @@ async function _reconnect () {
     await _electBrokerAndConnect(port);
     client.resubscribe();
     logger.info('pubsub reconnected, subscriptions restored');
+    _notifyConnectionState('reconnected');
   } catch (err: unknown) {
     logger.warn('pubsub reconnect attempt failed', (err as Error).message);
     _scheduleReconnect(); // failed attempt's close handler usually re-schedules; belt-and-braces
@@ -411,4 +433,9 @@ function _isConnectedForTests (): boolean {
   return client != null && client.cid != null;
 }
 
-export { init, deliver, subscribe, setTestDeliverHook, _closeForTests, _isConnectedForTests };
+// Test-only: replay a connection state change to the registered listeners.
+function _emitConnectionStateForTests (state: ConnectionState): void {
+  _notifyConnectionState(state);
+}
+
+export { init, deliver, subscribe, setTestDeliverHook, onConnectionStateChange, _closeForTests, _isConnectedForTests, _emitConnectionStateForTests };

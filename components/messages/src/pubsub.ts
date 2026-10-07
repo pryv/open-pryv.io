@@ -25,6 +25,7 @@ type Transport = {
   subscribe (scope: string, target: PubSub): Promise<Subscription>;
   deliver (scope: string, eventName: string, payload: unknown): void;
   setTestDeliverHook (hook: (...args: unknown[]) => void): void;
+  onConnectionStateChange (listener: (state: 'disconnected' | 'reconnected') => void): () => void;
 };
 type TestNotifier = { emit (eventName: string, payload?: unknown): void };
 
@@ -203,6 +204,12 @@ class PubSubFactory {
       console.log(new Error('Transport not initialized'));
     }
     transport!.setTestDeliverHook(deliverHook);
+  }
+
+  // Broker connection lost / restored (messages in between are lost).
+  onTransportStateChange (listener: (state: 'disconnected' | 'reconnected') => void): () => void {
+    initTransport();
+    return transport!.onConnectionStateChange(listener);
   }
 
   // used by tests to detect true "OpenSource" setup

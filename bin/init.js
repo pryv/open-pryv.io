@@ -790,6 +790,13 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   maxLiveRequests: 10000
 # #   maxRequestBytes: 16384
 
+# # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
+# # username lookups (default 60). Bounds how long a worker that missed an
+# # invalidation keeps using a deleted or changed access; a lower value costs
+# # more storage reads (about one per user per worker per period).
+# # caching:
+# #   accessMaxAgeSeconds: 60
+
 # # logs.console.format.json — one JSON object per line ({timestamp, level,
 # # name, pid, message, context}) for log collectors / log-based alerting.
 # # Also switchable per-run with the LOG_FORMAT=json environment variable.

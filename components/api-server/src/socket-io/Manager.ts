@@ -344,9 +344,10 @@ class Connection {
   // (also closing the general "revoked token keeps working on an open socket"
   // hole). A surviving-but-narrowed token has its now-forbidden scopes pruned.
   async revalidate (storageLayer: unknown): Promise<void> {
-    this.methodContext.access = null; // force a fresh read (the getter caches)
+    // Read from storage, not the access cache: this sweep is the backstop for
+    // a worker that missed an invalidation, whose cache may still be stale.
     try {
-      await this.methodContext.retrieveExpandedAccess(storageLayer as Parameters<MethodContext['retrieveExpandedAccess']>[0]);
+      await this.methodContext.refreshExpandedAccessFromStorage(storageLayer as Parameters<MethodContext['refreshExpandedAccessFromStorage']>[0]);
     } catch (err) {
       this.teardownScopes();
       this.socket.disconnect();

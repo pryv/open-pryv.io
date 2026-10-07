@@ -221,6 +221,21 @@ services:
     key: <shared-secret>
 ```
 
+### Access cache
+
+Each API worker caches accesses, stream trees and username lookups, and the
+workers tell each other when one of them changes. Every cached entry also has a
+maximum age, so a worker that missed such a message (broker restart, race) stops
+using a deleted or changed access after at most that long:
+
+```yaml
+caching:
+  accessMaxAgeSeconds: 60   # default; must be > 0
+```
+
+Lower values shorten that bound at the cost of more storage reads (about one per
+active user per worker per period).
+
 
 ## Running — standalone with HTTPS
 

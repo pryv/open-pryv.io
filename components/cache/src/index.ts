@@ -15,18 +15,26 @@ type SynchroModule = {
   setCache (cache: unknown): void;
   registerListenerForUserId (userId: string): void;
   removeListenerForUserId (userId: string): void;
-  unsetUser (username: string): void;
+  unsetUser (username: string | null, userId?: string | null): void;
   unsetUserData (userId: string): void;
   unsetAccessLogic (userId: string, accessLogic: { id: string; token: string }): void;
 };
 
 const _caches: Record<string, InstanceType<typeof LRU>> = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
+const MAX_USERNAMES = 20000; // name -> userId entries (usernames and aliases)
+const DEFAULT_MAX_AGE_SECONDS = 60;
+// Max age of every cached entry (accesses, streams, name -> userId). Bounds how
+// long a worker that missed an invalidation message can serve stale data.
+let maxAgeMs = DEFAULT_MAX_AGE_SECONDS * 1000;
 // Invariant: isSynchroActive === true implies synchro != null (both set
 // together in loadConfiguration) — the `synchro!` uses below rely on it.
 let synchro: SynchroModule | null = null;
 let isActive = false;
 let isSynchroActive = false;
+// False while the pub/sub broker connection is down: invalidations sent in the
+// meantime are lost, so reads miss and nothing is cached until it is back.
+let isTrusted = true;
 const logger = getLogger('cache');
 const debug: Record<string, (...args: unknown[]) => void> = {};
 for (const key of ['set', 'get', 'unset', 'clear']) {
@@ -38,16 +46,20 @@ for (const key of ['set', 'get', 'unset', 'clear']) {
 /**
  * username -> userId
  */
-const userIdForUsername = new Map();
+let userIdForUsername = newUsernameMap();
+function newUsernameMap () {
+  return new LRU({ max: MAX_USERNAMES, ttl: maxAgeMs });
+}
 function getNameSpace (namespace: string) {
   if (namespace == null) { console.log('XXXX', new Error('Null namespace')); }
   return (_caches[namespace] ||
         (_caches[namespace] = new LRU({
-          max: MAX_PER_CACHE_SIZE
+          max: MAX_PER_CACHE_SIZE,
+          ttl: maxAgeMs
         })));
 }
 function set (namespace: string, key: string, value: unknown) {
-  if (!isActive) { return; }
+  if (!isActive || !isTrusted) { return; }
   if (key == null) { throw new Error('Null key for' + namespace); }
   getNameSpace(namespace).set(key, value);
   debug.set(namespace, key);
@@ -60,7 +72,7 @@ function unset (namespace: string, key: string) {
   debug.unset(namespace, key);
 }
 function get (namespace: string, key: string) {
-  if (!isActive) { return null; }
+  if (!isActive || !isTrusted) { return null; }
   if (key == null) { throw new Error('Null key for' + namespace); }
   debug.get(namespace, key);
   return getNameSpace(namespace).get(key);
@@ -74,42 +86,88 @@ function clear (namespace?: string) {
     }
     debug.clear('userIdForUsername');
     userIdForUsername.clear();
-    // Counter stays monotonic (NOT reset), so clearing the map is safe: any
-    // epoch captured before this clear stays strictly below all future bumps.
-    accessLogicEpochByUserId.clear();
-    streamsEpochByKey.clear();
+    _resetEpochs();
   } else {
     delete _caches[namespace];
   }
   loadConfiguration(); // reload configuration
   debug.clear(namespace);
 }
+// Every in-flight fill captured an epoch below the new floor, so none of them
+// can insert after this (the counters are monotonic, never reset).
+function _resetEpochs () {
+  accessLogicEpochByUserId.clear();
+  accessLogicEpochFloor = ++accessLogicEpochCounter;
+  streamsEpochByKey.clear();
+  streamsEpochFloor = ++streamsEpochCounter;
+}
+/**
+ * Broker connection lost: stop serving and filling until it is back.
+ */
+function setUntrusted () {
+  if (isTrusted) { logger.warn('pub/sub connection lost: caching suspended'); }
+  isTrusted = false;
+}
+/**
+ * Broker connection restored: drop everything cached before or during the gap
+ * (invalidations sent then were lost), fence the fills in flight, resume.
+ */
+function flushAfterReconnect () {
+  for (const ns of Object.keys(_caches)) { _caches[ns].clear(); }
+  userIdForUsername.clear();
+  _resetEpochs();
+  isTrusted = true;
+  logger.info('pub/sub connection restored: caches flushed');
+}
+function getMaxAgeMs (): number {
+  return maxAgeMs;
+}
 // --------------- Users ---------------//
 function getUserId (username: string) {
-  if (!isActive) { return; }
+  if (!isActive || !isTrusted) { return; }
   debug.get('user-id', username);
   return userIdForUsername.get(username);
 }
 function setUserId (username: string, userId: string) {
-  if (!isActive) { return; }
+  if (!isActive || !isTrusted) { return; }
   debug.set('user-id', username, userId);
   userIdForUsername.set(username, userId);
 }
+/**
+ * Busts a name (username or alias). The message is always sent, with the
+ * userId when this process knows it, so processes holding only the other
+ * half of the mapping still clear it.
+ */
 function unsetUser (username: string, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   debug.unset('user-id', username);
-  const userId = getUserId(username);
-  if (userId == null) { return; }
-  unsetUserData(userId, false);
-  // notify userId delete
-  if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(username); }
+  const userId = userIdForUsername.peek(username, { allowStale: true });
+  if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(username, userId); }
   userIdForUsername.delete(username);
+  if (userId != null) { _unsetUserLocal(userId); }
+}
+/**
+ * Busts everything held for a userId (data and every name pointing to it), in
+ * every process. Used on account deletion, where names may be unknown here.
+ */
+function unsetUserById (userId: string, notifyOtherProcesses = true) {
+  if (!isActive) { return; }
+  debug.unset('user-id', userId);
+  if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(null, userId); }
+  _unsetUserLocal(userId);
+}
+function _unsetUserLocal (userId: string) {
+  const names = [];
+  for (const [name, id] of userIdForUsername.entries()) {
+    if (id === userId) { names.push(name); }
+  }
+  for (const name of names) { userIdForUsername.delete(name); }
+  unsetUserData(userId, false);
 }
 function unsetUserData (userId: string, notifyOtherProcesses = true) {
   if (!isActive) { return; }
-  if (isSynchroActive) {
-    synchro!.removeListenerForUserId(userId);
-  }
+  // The listener is kept: this user is still followed, so a bust sent before
+  // the next fill is not missed.
   // notify user data delete
   if (notifyOtherProcesses && isSynchroActive) {
     synchro!.unsetUserData(userId);
@@ -125,12 +183,24 @@ function unsetUserData (userId: string, notifyOtherProcesses = true) {
 // cross-process synchro bust) moved it meanwhile. Monotonic counter, same ABA-safe
 // reasoning as the access epoch.
 let streamsEpochCounter = 0;
+let streamsEpochFloor = 0;
 const streamsEpochByKey = new Map<string, number>();
 function _streamsEpochKey (userId: string, storeId: string): string {
   return storeId + ' ' + userId;
 }
+/**
+ * Called before a storage read whose result goes to setStreams. Also starts
+ * following the user, so an invalidation sent during the read is received.
+ */
 function getStreamsEpoch (userId: string, storeId = 'local'): number {
-  return streamsEpochByKey.get(_streamsEpochKey(userId, storeId)) ?? 0;
+  _followUser(userId);
+  return streamsEpochByKey.get(_streamsEpochKey(userId, storeId)) ?? streamsEpochFloor;
+}
+function _peekStreamsEpoch (userId: string, storeId: string): number {
+  return streamsEpochByKey.get(_streamsEpochKey(userId, storeId)) ?? streamsEpochFloor;
+}
+function _followUser (userId: string) {
+  if (isActive && isSynchroActive) { synchro!.registerListenerForUserId(userId); }
 }
 function _bumpStreamsEpoch (userId: string, storeId: string): void {
   streamsEpochByKey.set(_streamsEpochKey(userId, storeId), ++streamsEpochCounter);
@@ -142,8 +212,8 @@ function setStreams (userId: string, storeId = 'local', streams?: unknown, expec
   if (!isActive) { return; }
   // set-after-unset fence: skip the insert if an invalidation bumped the epoch
   // since the caller captured it (a stale read must not re-poison the cache).
-  if (expectedEpoch != null && expectedEpoch !== getStreamsEpoch(userId, storeId)) { return; }
-  if (isSynchroActive) { synchro!.registerListenerForUserId(userId); } // follow this user
+  if (expectedEpoch != null && expectedEpoch !== _peekStreamsEpoch(userId, storeId)) { return; }
+  _followUser(userId);
   set(NS.STREAMS_FOR_USERID + storeId, userId, streams);
 }
 function _unsetStreams (userId: string, storeId = 'local') {
@@ -165,9 +235,19 @@ function unsetStreams (userId: string, _storeId = 'local') {
 // map holds one small entry per user ever invalidated since boot: unbounded but
 // tiny, no eviction needed.
 let accessLogicEpochCounter = 0;
+let accessLogicEpochFloor = 0;
 const accessLogicEpochByUserId = new Map<string, number>();
+/**
+ * Called before a storage read whose result goes to setAccessLogic. Also
+ * starts following the user, so an invalidation sent during the read is
+ * received (and moves the epoch) instead of being missed.
+ */
 function getAccessLogicEpoch (userId: string): number {
-  return accessLogicEpochByUserId.get(userId) ?? 0;
+  _followUser(userId);
+  return _peekAccessLogicEpoch(userId);
+}
+function _peekAccessLogicEpoch (userId: string): number {
+  return accessLogicEpochByUserId.get(userId) ?? accessLogicEpochFloor;
 }
 function _bumpAccessLogicEpoch (userId: string): void {
   accessLogicEpochByUserId.set(userId, ++accessLogicEpochCounter);
@@ -206,8 +286,9 @@ function setAccessLogic (userId: string, accessLogic: { id: string; token: strin
   if (!isActive) { return; }
   // set-after-unset fence: skip the insert if an invalidation bumped the epoch
   // since the caller captured it (a stale read must not re-poison the cache).
-  if (expectedEpoch != null && expectedEpoch !== getAccessLogicEpoch(userId)) { return; }
-  if (synchro != null) { synchro.registerListenerForUserId(userId); }
+  if (expectedEpoch != null && expectedEpoch !== _peekAccessLogicEpoch(userId)) { return; }
+  if (!isTrusted) { return; }
+  _followUser(userId);
   let accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
   if (accessLogics == null) {
     accessLogics = {
@@ -230,7 +311,11 @@ const cache = {
   getUserId,
   setUserId,
   unsetUser,
+  unsetUserById,
   unsetUserData,
+  setUntrusted,
+  flushAfterReconnect,
+  getMaxAgeMs,
   setStreams,
   getStreams,
   getStreamsEpoch,
@@ -265,6 +350,19 @@ async function loadConfiguration () {
   const config = await getConfig();
   // could be true/false or 1/0 if launched from command line
   isActive = !!config.get('caching:isActive');
+  const maxAgeSeconds = Number(config.get('caching:accessMaxAgeSeconds') ?? DEFAULT_MAX_AGE_SECONDS);
+  if (Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0) {
+    maxAgeMs = Math.max(1, Math.round(maxAgeSeconds * 1000));
+  } else {
+    // 0 would mean "no expiry" to the LRU: never accept it silently
+    logger.warn('caching:accessMaxAgeSeconds must be a positive number, using ' + DEFAULT_MAX_AGE_SECONDS);
+    maxAgeMs = DEFAULT_MAX_AGE_SECONDS * 1000;
+  }
+  if (userIdForUsername.ttl !== maxAgeMs) {
+    // max age changed: entries built with the previous one are dropped
+    userIdForUsername = newUsernameMap();
+    for (const ns of Object.keys(_caches)) { delete _caches[ns]; }
+  }
   // Synchro (cross-process cache invalidation) is deliberately ALWAYS ON: with
   // forked API workers, a cache bust in one process MUST propagate to the
   // others, so there is no safe "off" state and no config gate.
