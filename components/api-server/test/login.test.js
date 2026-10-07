@@ -394,9 +394,10 @@ describe('[AUTH] auth', function () {
               }
               assert.ok(data.length > 10, 'Issue in configuration, logfile is empty. >> ' + logFilePath);
               const passwordFound = data.indexOf(wrongPasswordData.password);
-              const hiddenPasswordFound = data.indexOf('"password":"(hidden password)"');
+              // the error log lists the body keys, never the credential values
+              const passwordKeyListed = /"keys":\[[^\]]*"password"/.test(data);
               assert.strictEqual(passwordFound, -1, 'password is present in logs when it should not. >> \n' + data);
-              assert.ok(hiddenPasswordFound >= 0, 'log with hidden password not found.. >> \n' + data);
+              assert.ok(passwordKeyListed, 'log with the body keys not found.. >> \n' + data);
               stepDone();
             });
           }
