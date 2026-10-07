@@ -301,6 +301,7 @@ class MallUserEvents implements MallEvents {
   async update (userId: string, newEventData: Partial<EventLike>, mallTransaction?: Transaction, opts?: { onlyIfNotTrashed?: boolean; skipVersioning?: boolean }): Promise<EventLike | null> {
     // update integrity field and recalculate if needed
     // integrity caclulation is done on event.id and streamIds that includes the store prefix
+    eventsUtils.normaliseDurationToStored(newEventData);
     if (integrity.events.isActive) {
       integrity.events.set(newEventData);
     }
@@ -357,6 +358,7 @@ class MallUserEvents implements MallEvents {
         const next = merge(eventsUtils.convertEventFromStore(storeId, storeStored));
         if (next == null) return null;
         next.id = fullEventId;
+        eventsUtils.normaliseDurationToStored(next);
         if (integrity.events.isActive) integrity.events.set(next);
         return toStoreEvent(storeId, next);
       } catch (err) {
@@ -501,7 +503,8 @@ class MallUserEvents implements MallEvents {
       // get storeId from event id
       [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
     }
-    // set integrity
+    // set integrity, over the duration as the store will give it back
+    eventsUtils.normaliseDurationToStored(eventData);
     if (eventData.integrity != null) {
       if (!doNotOverrideIntegrity) integrity.events.set(eventData);
     } else {

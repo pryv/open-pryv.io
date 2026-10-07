@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Events: integrity verifies with a fractional duration
+
+- **Fix.** An event created or updated with a fractional `duration` (e.g. `0.1` with a `time` around
+  1.7e9) carried an `integrity` hash that never verified: the stored end time cannot hold
+  `time + duration` exactly, so the duration read back differs slightly (`0.0999999046…`) from the one
+  that was hashed. The hash is now computed over the duration as it is read back. The value returned
+  is unchanged (it already was the read-back one). Events written by earlier releases keep their
+  failing hash until rewritten: `bin/integrity-check.js` reports them, and any `events.update` of
+  such an event recomputes its hash.
+
+### HF series: repair tool for oversized durations
+
+- **Fix.** `bin/hfs-duration-repair.js` repairs the series events written by releases before
+  2.0.0-rc.40, whose `duration` held nanoseconds (one second of data gave 1,000,000,000 s): they
+  matched every later time-range query and many carried an integrity hash that did not verify. The
+  tool finds the series events that end more than a day in the future, reads each series' last point
+  from the series storage and sets the duration to that extent, through the regular write path (the
+  integrity hash is recomputed and verifies). An event whose series holds no point at the stored
+  extent is reported and left as is. `modified` is refreshed so syncing clients fetch the corrected
+  event; `modifiedBy` is kept; version history, where kept, is not rewritten.
+- **Operators:** after upgrading, once per core: `node bin/hfs-duration-repair.js --dry-run`, then
+  without the flag. The core may keep running. Safe to re-run. Docker:
+  `docker exec -u node <container> node bin/hfs-duration-repair.js --dry-run`. A multi-core joiner
+  started with `--config config/host-config.yml` passes the same flag. `--user <username>` limits the
+  run to one account. The tool needs the series storage and refuses to run without it.
+
 ### Let's Encrypt: the contact email is optional
 
 - **Change.** `letsEncrypt.email` is no longer required when `letsEncrypt.enabled` is true: without
