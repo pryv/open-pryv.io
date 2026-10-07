@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+**Upgrade promptly: this release carries several security fixes.** Before upgrading, check that
+`auth.adminAccessKey` and `auth.filesReadTokenSecret` are at least 16 characters (see the last entry);
+after upgrading, run `bin/hfs-author-scrub.js` once per core (see "HF series").
+
+### accesses.update only changes the updatable fields
+
+- **Security.** `accesses.update` accepts only `name`, `deviceName`, `permissions`, `expireAfter`,
+  `expires` and `clientData`, as its schema always documented; any other field (`type`, `token`, `id`,
+  `createdBy`, `alias`...) is refused with `403 forbidden` and the access is left unchanged. Before, an
+  app allowed to manage an access could change those fields too.
+- **Security.** A personal access is valid only with a session opened for the same account (a username
+  change keeps existing sessions working).
+
+### Registration: the user id, password hash and initial account events are the server's
+
+- **Security.** A registration (`POST /users`, `/reg/user`, `/reg/users`) no longer takes `id`,
+  `passwordHash` or `events` from its parameters; they are ignored. Creating a user whose id already
+  belongs to an account is refused, and the clean-up after a failed registration only removes what that
+  registration created. Custom account fields are unchanged.
+
+### HF series: `modifiedBy` is the writing access id
+
+- **Security.** Writing to a high-frequency series recorded the request's authorization value as the
+  series event's `modifiedBy`, so any access allowed to read the event could read it. It now records the
+  access id (with the caller id when one is given), like every other write.
+- **Operators:** data written by earlier releases keeps those values until cleaned. After upgrading the
+  code, run once per core, before restarting it:
+  `node bin/hfs-author-scrub.js --dry-run` (report), then `node bin/hfs-author-scrub.js --revoke`
+  (rewrite the values to access ids, delete the accesses concerned and close their sessions), then
+  restart. Add `--config <your host config>` where the core uses one. The tool prints no credential.
+
+### Event ids and attachment paths
+
+- **Security.** A client-supplied event id must be exactly one of the accepted shapes: the
+  store-prefixed form was not anchored at its end, so trailing characters passed validation. As defence
+  in depth, the filesystem attachment store and the previews worker refuse any id that would resolve
+  outside the account's directory.
+
+### Boot validation refuses placeholder secrets
+
+- **Security, BREAKING for weak configurations.** A core refuses to boot when `auth.adminAccessKey` or
+  `auth.filesReadTokenSecret` is a placeholder (such as the `OVERRIDE ME` of `production-config.yml`), in
+  every environment, or shorter than 16 characters when `NODE_ENV=production`. Set long random values of
+  your own (e.g. `openssl rand -hex 32`). `bin/check-config.js` reports the same.
+
 ### Previews no longer decode SVG
 
 - **Security (hardening).** Event previews are raster thumbnails, and SVG is decoded by `librsvg`, a
