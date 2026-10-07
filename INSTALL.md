@@ -7,7 +7,7 @@
   process aborts when a SQLite statement is garbage-collected
   ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)); SQLite is the default audit
   engine, so this hits every native install. The Docker image is not affected (it pins Node
-  24.18.0). See "Node major bumps" below for pinning the version.
+  24.18.1). Native installs should use 24.18.1, the security release of that line. See "Node major bumps" below for pinning the version.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **InfluxDB** 1.x (optional, for high-throughput HF series; PostgreSQL, the default, and SQLite also serve as series engine)
@@ -784,7 +784,7 @@ dokku storage:mount open-pryv-io \
 
 The image sets `NODE_ENV=production`; the override must point the data paths at `/app/data` with the snippet shown under "Docker (plain)" above.
 
-**After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. An `wget http://127.0.0.1:3000/reg/service/info` inside the container will succeed throughout — the symptom is only visible externally.
+**After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. A request from inside the container (`docker exec <container> node -e "fetch('http://127.0.0.1:3000/reg/service/info').then(r => console.log(r.status))"`) succeeds throughout — the symptom is only visible externally.
 
 **PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment. Open-Pryv.io v2 reads `storages.engines.postgresql.{host,port,database,user,password}` from `override-config.yml` directly — `DATABASE_URL` is **not** auto-consumed today. Populate the concrete keys in your override-config. A future `--from-database-url` convenience is tracked in the roadmap.
 
@@ -803,7 +803,7 @@ For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess
 dokku docker-options:add <app> deploy,run "-p 443:443/tcp"
 ```
 
-Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and `wget https://127.0.0.1:443` inside it succeeds.
+Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and a request to `https://127.0.0.1:443` from inside it succeeds (the image ships neither `curl` nor `wget`; use `node -e "fetch(…)"`).
 
 **Bare-metal embedded DNS (non-Docker)**: when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind (UDP and TCP alike) unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade: `apt install nodejs` wipes file capabilities**):
 

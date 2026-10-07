@@ -12,6 +12,12 @@
   `var-pryv/logs/api-server.errors.log`); `.gitignore` drops the literal-directory guard for them.
   INSTALL.md documents the real layer order (`--config` replaces the `NODE_ENV` file).
 
+## Node 24.18.1 in CI and the image
+
+- Every CI job pins `node-version: '24.18.1'`, matching the re-pinned base image digest
+  (`node:24.18.1-slim`). The Dockerfile runs `apt-get upgrade -y` in its first apt step and purges
+  `curl` with the other build dependencies.
+
 ## Release CI: multi-arch image, built per architecture
 
 - The tag-push `docker` job is split in two. `docker-build` runs once per architecture on a native

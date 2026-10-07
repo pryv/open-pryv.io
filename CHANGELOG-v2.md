@@ -20,6 +20,17 @@
   removing it (`docker cp <old-container>:/app/var-pryv/users /host/pryv/data/users`), then set
   `storages.engines.sqlite.path: /app/data/users` with `/host/pryv/data` mounted on `/app/data`.
 
+### Docker image: Node 24.18.1 and current Debian security updates
+
+- **Security.** The image moves to Node 24.18.1 (the security release of the 24.18 line; the image
+  stays below 24.19, see nodejs/node#65446), installs the Debian security updates available at build
+  time on top of the pinned base, and no longer ships `curl` (it was only needed to download rqlite
+  during the build). A scan of the image drops from 15 critical / 92 high findings to 3 / 69; the
+  remaining critical ones are in glibc (no Debian fix published yet) and in the `tar` package of the
+  npm copy bundled with Node (not used by the server).
+- **Operators:** native installs should use Node 24.18.1 too. Nothing in the server called `curl`;
+  a script of yours that runs `curl` inside the container needs another tool (e.g. `node -e "fetch(…)"`).
+
 ### Docker image: the server runs as a non-root user
 
 - **Security (hardening).** Every process in the container (master, workers, previews, rqlited) ran
