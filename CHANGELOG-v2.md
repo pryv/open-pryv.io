@@ -62,6 +62,29 @@ after upgrading, run `bin/hfs-author-scrub.js` once per core (see "HF series").
   such a file cached by an earlier release is no longer served and ages out with the cache clean-up.
   Raster formats (JPEG, PNG, GIF, WebP, ...) are unchanged.
 
+### Docker image: the server runs as a non-root user
+
+- **Security (hardening).** Every process in the container (master, workers, previews, rqlited) ran
+  as root. The server now runs as the image's `node` user (uid/gid 1000), with
+  `CAP_NET_BIND_SERVICE` as its only capability, so ports 53, 80 and 443 still bind. The container
+  still starts as root: the entrypoint hands the data directories (`/app/var-pryv`, `/app/data`,
+  `/app/pryv/data`, `/etc/pryv`, `/var/lib/pryv`, plus `PRYV_OWNED_DIRS`) to `node`, then drops.
+  The wizard modes (`init`, `check-config`, `config-to-env`) and other pass-through commands are
+  unchanged.
+- **Operators:** no action for the documented layouts: files written by earlier images are handed to
+  `node` at the first start (back up the data first, as for any upgrade). Data placed elsewhere by
+  `override-config.yml` needs `PRYV_OWNED_DIRS`; run one-shot tools with `docker exec -u node`; with
+  `--cap-drop ALL`, keep `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID` (and `NET_BIND_SERVICE` for a
+  port below 1024 under host networking). `PRYV_RUN_AS_ROOT=true` restores the previous behaviour.
+  INSTALL.md, "Container user".
+
+### Docker image for linux/arm64
+
+- `pryvio/open-pryv.io` is published for `linux/amd64` and `linux/arm64` under the same tag (built
+  natively on each architecture). The encryption-at-rest variant stays `linux/amd64` only for now.
+- The install wizard's `run-pryv.sh` now publishes TCP 53 next to UDP 53 when the embedded DNS is on
+  (RFC 7766 makes DNS over TCP mandatory).
+
 ## 2.0.0-rc.39 - 2026-10-06
 
 ### Image previews: sharp 0.35.5
