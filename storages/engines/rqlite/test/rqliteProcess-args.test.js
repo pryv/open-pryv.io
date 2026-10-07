@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { buildArgs } = require('../src/rqliteProcess.ts');
+const { buildArgs, bootWarnings } = require('../src/rqliteProcess.ts');
 
 describe('[RQARGS] rqliteProcess.buildArgs', () => {
   const baseOpts = {
@@ -38,9 +38,10 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       ]);
     });
 
-    it('binds 0.0.0.0 and advertises coreIp separately in multi-core (NAT-aware)', () => {
+    it('[RQHB1] multi-core keeps the HTTP API on loopback; Raft binds 0.0.0.0 and advertises coreIp (NAT-aware)', () => {
       const args = buildArgs({ ...baseOpts, coreIp: '10.0.0.5' });
-      assert.equal(args[args.indexOf('-http-addr') + 1], '0.0.0.0:4001');
+      // The HTTP API is unauthenticated and no peer needs it.
+      assert.equal(args[args.indexOf('-http-addr') + 1], '127.0.0.1:4001');
       assert(args.includes('-http-adv-addr'));
       assert.equal(args[args.indexOf('-http-adv-addr') + 1], '10.0.0.5:4001');
       // Raft listens on all interfaces; advertises the public IP to peers.
@@ -60,6 +61,22 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
     it('single-core binds the HTTP API on loopback (unauthenticated API must not be public)', () => {
       const args = buildArgs({ ...baseOpts });
       assert.equal(args[args.indexOf('-http-addr') + 1], '127.0.0.1:4001');
+    });
+
+    it('[RQHB2] binds the HTTP API to the opted-in httpBindAddr (single- and multi-core)', () => {
+      for (const coreIp of [null, '10.0.0.5']) {
+        const args = buildArgs({ ...baseOpts, coreIp, httpBindAddr: '0.0.0.0' });
+        assert.equal(args[args.indexOf('-http-addr') + 1], '0.0.0.0:4001');
+      }
+      const specific = buildArgs({ ...baseOpts, coreIp: '10.0.0.5', httpBindAddr: '10.0.0.5' });
+      assert.equal(specific[specific.indexOf('-http-addr') + 1], '10.0.0.5:4001');
+    });
+
+    it('[RQHB3] brackets an IPv6 httpBindAddr and refuses one that carries a port', () => {
+      const args = buildArgs({ ...baseOpts, httpBindAddr: '::' });
+      assert.equal(args[args.indexOf('-http-addr') + 1], '[::]:4001');
+      assert.throws(() => buildArgs({ ...baseOpts, httpBindAddr: '0.0.0.0:4001' }), /without a port/);
+      assert.throws(() => buildArgs({ ...baseOpts, httpBindAddr: '' }), /httpBindAddr/);
     });
 
     it('never passes -raft-cluster-remove-shutdown (a restart is not a decommission)', () => {
@@ -203,6 +220,30 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
     it('puts the data dir after all TLS flags (must stay last)', () => {
       const args = buildArgs({ ...baseOpts, tls });
       assert.equal(args[args.length - 1], '/var/pryv/rqlite-data');
+    });
+  });
+
+  describe('boot warnings', () => {
+    const tls = { caFile: '/tls/ca.crt', certFile: '/tls/node.crt', keyFile: '/tls/node.key' };
+
+    it('[RQTW1] warns when the HTTP API is bound to a non-loopback address', () => {
+      const warnings = bootWarnings({ httpBindAddr: '0.0.0.0', httpPort: 4001, coreIp: '10.0.0.5', tls });
+      assert.equal(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0], /0\.0\.0\.0:4001.*unauthenticated/);
+    });
+
+    it('[RQTW2] says nothing for the loopback default or an explicit loopback address', () => {
+      for (const httpBindAddr of [null, undefined, '127.0.0.1', 'localhost', '::1', '[::1]']) {
+        assert.deepEqual(bootWarnings({ httpBindAddr, coreIp: '10.0.0.5', tls }), [], String(httpBindAddr));
+      }
+      assert.deepEqual(bootWarnings({}), [], 'single-core default');
+    });
+
+    it('[RQTW3] warns when a multi-core node runs without Raft TLS', () => {
+      const warnings = bootWarnings({ coreIp: '10.0.0.5', tls: null });
+      assert.equal(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0], /multi-core.*without Raft TLS.*refuse to start/);
+      assert.deepEqual(bootWarnings({ coreIp: null, tls: null }), [], 'single-core without TLS is fine');
     });
   });
 

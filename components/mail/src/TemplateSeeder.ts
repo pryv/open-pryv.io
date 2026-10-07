@@ -27,6 +27,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const { getLogger } = require('@pryv/boiler');
+const { validateMailTemplate, describe } = require('./templateValidator.ts');
 const logger = getLogger('mail-template-seeder');
 
 /**
@@ -59,6 +60,7 @@ async function seedIfEmpty ({ platformDB, templatesRootDir }: { platformDB: Plat
   }
 
   let count = 0;
+  let refused = 0;
   for (const type of await listDirs(templatesRootDir)) {
     const typeDir = path.join(templatesRootDir, type);
     for (const lang of await listDirs(typeDir)) {
@@ -68,12 +70,18 @@ async function seedIfEmpty ({ platformDB, templatesRootDir }: { platformDB: Plat
         if (!file.endsWith('.pug')) continue;
         const part = file.replace(/\.pug$/, '');
         const pug = await fs.readFile(path.join(langDir, file), 'utf8');
+        const { ok, problems } = validateMailTemplate({ type, lang, part, pug });
+        if (!ok) {
+          logger.warn(`not seeding mail template ${describe({ type, lang, part })}: ${problems.join('; ')}`);
+          refused++;
+          continue;
+        }
         await platformDB.setMailTemplate(type, lang, part, pug);
         count++;
       }
     }
   }
-  logger.info(`seeded ${count} mail-template row(s) from ${templatesRootDir}`);
+  logger.info(`seeded ${count} mail-template row(s) from ${templatesRootDir}` + (refused > 0 ? ` (${refused} refused)` : ''));
   return { seeded: true, count };
 }
 

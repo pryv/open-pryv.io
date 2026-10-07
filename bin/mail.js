@@ -8,12 +8,12 @@
  */
 
 // CLI for inspecting and editing in-process mail templates in PlatformDB.
-// Works whether the master process is running or not — changes propagate
-// to other cores via rqlite replication, and to sibling workers on the
-// local core via IPC (see `process.send({type:'mail:template-invalidate'})`
-// in the admin-API routes). When this CLI runs standalone, no IPC push
-// happens — sibling workers will pick up the change on their next periodic
-// refresh OR the next `mail.refresh()` call.
+// Works whether the master process is running or not: rows replicate to the
+// other cores through rqlite. This CLI sends no refresh to running workers
+// (there is no periodic refresh either): they load the new version when they
+// restart. Templates are Pug limited to an allowed subset
+// (components/mail/src/templateValidator.ts): `set` and `seed` refuse the
+// others, and `validate` reports stored rows outside it.
 //
 // Usage:
 //   node bin/mail.js templates list
@@ -21,10 +21,12 @@
 //   node bin/mail.js templates set <type> <lang> <part> --file <path>
 //   node bin/mail.js templates delete <type> <lang> [part]
 //   node bin/mail.js templates seed [--from <dir>]
+//   node bin/mail.js templates validate
 //   node bin/mail.js send-test <type> <lang> <recipient-email>
 
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { validateMailTemplate, assertValidMailTemplate, describe } = require('../components/mail/src/templateValidator.ts');
 
 if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
   printUsage(process.stdout);
@@ -114,8 +116,9 @@ async function runTemplates (platformDB, args) {
     case 'set': return await runSet(platformDB, args);
     case 'delete': return await runDelete(platformDB, args);
     case 'seed': return await runSeed(platformDB, args);
+    case 'validate': return await runValidate(platformDB);
     default:
-      throw new Error('templates: unknown subcommand "' + (sub || '') + '" (expected list|get|set|delete|seed)');
+      throw new Error('templates: unknown subcommand "' + (sub || '') + '" (expected list|get|set|delete|seed|validate)');
   }
 }
 
@@ -148,9 +151,28 @@ async function runSet (platformDB, args) {
   requirePositional(args, ['type', 'lang', 'part'], 'templates set');
   if (!args.file) throw new Error('templates set: --file <path> is required');
   const pug = await fs.readFile(args.file, 'utf8');
+  assertValidMailTemplate({ type: args.type, lang: args.lang, part: args.part, pug });
   await platformDB.setMailTemplate(args.type, args.lang, args.part, pug);
   console.log(`set ${args.type}/${args.lang}/${args.part} (${pug.length} byte(s))`);
-  console.log('Other workers on this core will refresh on their next request; other cores via rqlite replication.');
+  console.log('Running workers keep the previous version until they restart (on every core).');
+}
+
+// Report-only: lists the stored templates that are outside the allowed Pug
+// subset. Those rows are skipped when templates are loaded for sending.
+async function runValidate (platformDB) {
+  const rows = await platformDB.getAllMailTemplates();
+  let invalid = 0;
+  for (const row of rows) {
+    const { ok, problems } = validateMailTemplate(row);
+    if (ok) continue;
+    invalid++;
+    console.log(`INVALID ${describe(row)}: ${problems.join('; ')}`);
+  }
+  console.log(`${rows.length} template row(s) checked, ${invalid} invalid.`);
+  if (invalid > 0) {
+    console.log('Invalid rows are not used for sending: fix them with `templates set` (or delete them).');
+    process.exit(2);
+  }
 }
 
 async function runDelete (platformDB, args) {
@@ -175,6 +197,11 @@ async function runSeed (platformDB, args) {
         if (!file.endsWith('.pug')) continue;
         const part = file.replace(/\.pug$/, '');
         const pug = await fs.readFile(path.join(langDir, file), 'utf8');
+        const { ok, problems } = validateMailTemplate({ type, lang, part, pug });
+        if (!ok) {
+          console.error(`not seeding ${describe({ type, lang, part })}: ${problems.join('; ')}`);
+          continue;
+        }
         await platformDB.setMailTemplate(type, lang, part, pug);
         count++;
       }
@@ -257,6 +284,7 @@ function printUsage (stream) {
   stream.write('  node bin/mail.js templates set <type> <lang> <part> --file <path>\n');
   stream.write('  node bin/mail.js templates delete <type> <lang> [part]\n');
   stream.write('  node bin/mail.js templates seed [--from <dir>]   (default: the bundled template set)\n');
+  stream.write('  node bin/mail.js templates validate   (report-only; exit 2 when a stored row is not allowed)\n');
   stream.write('  node bin/mail.js send-test <type> <lang> <recipient-email>\n');
   stream.write('\n');
   stream.write('<part> is "html" or "subject" (without the .pug suffix).\n');

@@ -34,6 +34,9 @@ testNotifications:
 dnsLess:
   isActive: true
   publicUrl: http://127.0.0.1:3000/
+# Local multi-core setups run their cores on http://127.0.0.1.
+cluster:
+  allowInsecurePeerUrl: true
 custom:
   systemStreams:
     account:

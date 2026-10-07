@@ -200,6 +200,68 @@ describe('[DXCU] cross-core delegation peer-URL resolution', function () {
     await cancelInvite();
   });
 
+  it('[DXCU-04] the cross-core call is time-bounded and never follows a redirect', async function () {
+    await seedPeerCore({});
+    const res = await attachRequest();
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    assert.strictEqual(inviteCalls.length, 1);
+    const { options } = inviteCalls[0];
+    assert.strictEqual(options.redirect, 'error', 'a redirect must not resend the admin key elsewhere');
+    assert.ok(options.signal instanceof AbortSignal, 'the call carries a timeout signal');
+    assert.strictEqual(options.signal.aborted, false);
+    await cancelInvite();
+  });
+
+  it('[DXCU-05] an http url in a peer row is ignored unless cluster.allowInsecurePeerUrl', async function () {
+    const saved = config.get('cluster:allowInsecurePeerUrl');
+    config.set('cluster:allowInsecurePeerUrl', false);
+    try {
+      await seedPeerCore({ url: 'http://plain-b.example.org/' });
+      const res = await attachRequest();
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(inviteCalls.length, 1);
+      assert.strictEqual(inviteCalls[0].url, 'https://' + CORE_B + '.' + DOMAIN + '/system/delegation/invite',
+        'the http url is not used: the derived https endpoint is');
+      await cancelInvite();
+    } finally {
+      config.set('cluster:allowInsecurePeerUrl', saved);
+      await platform._refreshCoreUrlCache();
+    }
+  });
+
+  it('[DXCU-06] /system/users/validate refuses a core that is malformed or not registered', async function () {
+    await seedPeerCore({});
+    const adminKey = config.get('auth:adminAccessKey');
+    const body = (core) => ({
+      username: 'dxcuv' + cuid().slice(-8),
+      invitationToken: (config.get('invitationTokens') || [])[0] || 'any',
+      uniqueFields: {},
+      core
+    });
+    for (const core of ['evil.example.org/x', 'Upper', 'not-registered']) {
+      const res = await coreRequest.post('/system/users/validate').set('Authorization', adminKey).send(body(core));
+      assert.strictEqual(res.status, 400, core + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.reservation, false);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+    }
+    const accepted = body(CORE_B);
+    try {
+      const ok = await coreRequest.post('/system/users/validate').set('Authorization', adminKey).send(accepted);
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+      assert.strictEqual(ok.body.reservation, true);
+    } finally {
+      // the reservation has no account behind it
+      await platform.deleteUser(accepted.username);
+      await platform.deleteUserCore(accepted.username);
+    }
+  });
+
+  it('[DXCU-07] the legacy server rename refuses a malformed destination core id', async function () {
+    const adminKey = config.get('auth:adminAccessKey');
+    const res = await coreRequest.get('/reg/admin/servers/' + CORE_B + '/rename/Not_A_Core').set('Authorization', adminKey);
+    assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+  });
+
   it('[DXCU-03] no url and no domain is refused, NOT delivered to this core itself', async function () {
     const selfUrl = 'https://' + CORE_A + '.' + DOMAIN + '/';
     const restoreNoDomain = injectTestConfigSnapshot({ dns: { domain: null } });

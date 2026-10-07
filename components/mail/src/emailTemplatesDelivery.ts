@@ -13,6 +13,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const EmailTemplates = require('email-templates');
+const { validateMailTemplate, describe } = require('./templateValidator.ts');
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail-delivery');
@@ -68,7 +69,16 @@ async function createEmailTemplatesDelivery (opts: DeliveryOpts): Promise<Delive
     views: { root: tmpDir },
     transport: smtp,
     preview: false,
-    send: true
+    send: true,
+    // CSS inlining only: never fetch or read a stylesheet, script or image a
+    // rendered template points at. `inlineAttribute` is the per-element
+    // override (`data-inline` by default) that would force a fetch anyway;
+    // it is used as a regular expression, and this one never matches.
+    juiceResources: {
+      applyStyleTags: false,
+      removeStyleTags: false,
+      webResources: { relativeTo: tmpDir, images: false, svgs: false, scripts: false, links: false, inlineAttribute: '(?!)' }
+    }
   });
 
   return {
@@ -100,10 +110,16 @@ async function materialiseTemplates (tmpDir: string, getAllMailTemplates: () => 
       logger.warn('skipping malformed template row', { row });
       continue;
     }
+    // Only allowed templates reach the compiler; their segments are plain
+    // names, so the paths below stay inside tmpDir.
+    const { ok, problems } = validateMailTemplate(row);
+    if (!ok) {
+      logger.warn(`skipping mail template ${describe(row)}: ${problems.join('; ')}`);
+      continue;
+    }
     const dir = path.join(tmpDir, row.type, row.lang);
     await fs.mkdir(dir, { recursive: true });
-    const filename = row.part.endsWith('.pug') ? row.part : `${row.part}.pug`;
-    await fs.writeFile(path.join(dir, filename), row.pug, 'utf8');
+    await fs.writeFile(path.join(dir, `${row.part}.pug`), row.pug, 'utf8');
     count++;
   }
   logger.debug(`materialised ${count} template file(s)`);

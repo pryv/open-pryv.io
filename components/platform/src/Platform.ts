@@ -34,6 +34,7 @@ const reservedWords = new Set(require('./reserved-words.json').list);
 // (e.g. its batch call `POST /users` is the registration route).
 const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
 const { hostedSiteNames } = require('business/src/hostedSites.ts');
+const { coreIdProblem, isValidCoreId, peerUrlProblem, insecurePeerUrlAllowed } = require('./coreIdentity.ts');
 
 /**
  * Field name used when hashing a username as a key (i.e. when the
@@ -444,6 +445,12 @@ class Platform {
    *
    */
   coreIdToUrl (coreId: string): string {
+    // A malformed id would make the derived host whatever precedes a '/', '@'
+    // or '#': answer the unusable empty URL instead.
+    if (!isValidCoreId(coreId)) {
+      logger.warn('coreIdToUrl: refusing invalid core id ' + JSON.stringify(coreId));
+      return '';
+    }
     let url;
     if (this.#coreUrlCache.has(coreId)) {
       url = this.#coreUrlCache.get(coreId);
@@ -467,8 +474,18 @@ class Platform {
   async _refreshCoreUrlCache () {
     const cores = await this.#db.getAllCoreInfos();
     const fresh = new Map();
+    const allowInsecure = insecurePeerUrlAllowed(this.#config);
     for (const info of cores) {
       if (info && info.id && info.url) {
+        // This core's own row comes from its validated config. A peer row
+        // that breaks the rules is ignored (the URL falls back to derivation).
+        if (info.id !== this.coreId) {
+          const problem = coreIdProblem(info.id) ?? peerUrlProblem(info.url, { allowInsecure });
+          if (problem != null) {
+            logger.warn('ignoring the URL of a core-info row: ' + problem);
+            continue;
+          }
+        }
         fresh.set(info.id, info.url);
       }
     }
@@ -646,6 +663,7 @@ class Platform {
    * Set which core hosts a user. Plaintext input; hashed internally.
    */
   async setUserCore (username: string, coreId: string) {
+    assertCoreId(coreId);
     await this.#db.setUserCore(this.hashFor(USERNAME_FIELD, username), coreId);
   }
 
@@ -659,6 +677,7 @@ class Platform {
    * stays for legitimate re-assignment (admin move, migration, restore, alias).
    */
   async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> {
+    assertCoreId(coreId);
     return await this.#db.setUserCoreIfNotExists(this.hashFor(USERNAME_FIELD, username), coreId);
   }
 
@@ -668,6 +687,7 @@ class Platform {
    * `cleartext` mode this is equivalent to `setUserCore`.
    */
   async setUserCoreByPreHashedUsername (usernameToken: string, coreId: string) {
+    assertCoreId(coreId);
     await this.#db.setUserCore(usernameToken, coreId);
   }
 
@@ -1452,6 +1472,12 @@ function parseHeaders (stored: string): Record<string, string> {
     logger.warn('observability: otlp-headers is not valid JSON — ignoring');
     return {};
   }
+}
+
+// A user-core row names a core: refuse a value that is not a core id.
+function assertCoreId (coreId: unknown): void {
+  const problem = coreIdProblem(coreId);
+  if (problem != null) throw errors.invalidParametersFormat(problem);
 }
 
 // Service URLs in this codebase carry a trailing slash by convention

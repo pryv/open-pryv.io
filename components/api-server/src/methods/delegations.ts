@@ -28,6 +28,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
+const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('platform/src/coreIdentity.ts');
 const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
@@ -227,16 +228,32 @@ export default async function produceDelegationsApiMethods (api: { register (...
         }
       }
       // cross-core: admin-key gated system endpoint.
-      const base = String(target.coreBaseUrl).replace(/\/$/, '');
-      const res = await fetch(base + '/system/delegation/invite', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: String(adminAccessKey) },
-        body: JSON.stringify(payload),
-      });
-      let body: unknown = null;
-      try { body = await res.json(); } catch (_e) { body = null; }
-      return { ok: res.ok, status: res.status, body };
+      return await postAsAdminToCore(target.coreBaseUrl, '/system/delegation/invite', payload);
     };
+  }
+
+  /**
+   * POST to another core's admin-key gated system endpoint. The target URL is
+   * checked first (it receives the admin key); the call is time-bounded and
+   * never follows a redirect.
+   */
+  async function postAsAdminToCore (coreBaseUrl: string | undefined, path: string, payload: Record<string, unknown>) {
+    const problem = peerUrlProblem(coreBaseUrl, { allowInsecure: insecurePeerUrlAllowed(config) });
+    if (problem != null) {
+      logger.warn('refusing a core-to-core call: ' + problem);
+      throw delegation.attach.delegationError(
+        delegation.errorIds.DelegationErrorIds.UNKNOWN_CORE,
+        'Could not resolve the target core endpoint', 400);
+    }
+    const base = String(coreBaseUrl).replace(/\/$/, '');
+    const res = await fetch(base + path, peerFetchOptions({
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: String(adminAccessKey) },
+      body: JSON.stringify(payload),
+    }));
+    let body: unknown = null;
+    try { body = await res.json(); } catch (_e) { body = null; }
+    return { ok: res.ok, status: res.status, body };
   }
 
   /**
@@ -291,15 +308,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
           throw err;
         }
       }
-      const base = String(target.coreBaseUrl).replace(/\/$/, '');
-      const res = await fetch(base + '/system/delegation/create-account', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: String(adminAccessKey) },
-        body: JSON.stringify(payload),
-      });
-      let body: unknown = null;
-      try { body = await res.json(); } catch (_e) { body = null; }
-      return { ok: res.ok, status: res.status, body };
+      return await postAsAdminToCore(target.coreBaseUrl, '/system/delegation/create-account', payload);
     };
   }
 

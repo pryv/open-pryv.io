@@ -847,8 +847,20 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #     rqlite:
 # #       logFile: var-pryv/logs/rqlited.log
 
+# # storages.engines.rqlite.httpBindAddr: the embedded rqlited's HTTP API
+# # listens on loopback only (default null), also on multi-core: it is
+# # unauthenticated, and cores replicate over the Raft port. Setting an
+# # address exposes it there (a boot warning says so).
+# # storages:
+# #   engines:
+# #     rqlite:
+# #       httpBindAddr: null
+
 # # core.url — pin this core's externally-reachable URL when 'dns.active'
 # # is false but you still want a stable identity (DNSless multi-core).
+# # It must be an https origin (no path); core.id is 1-63 lowercase letters,
+# # digits or '-'. cluster.allowInsecurePeerUrl: true accepts http: for a
+# # development or test cluster only.
 # # core:
 # #   id: core-use1
 # #   url: https://core-use1.example.com

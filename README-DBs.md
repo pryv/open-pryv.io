@@ -80,7 +80,9 @@ multi-core mode (each core runs its own node, joined into one Raft
 cluster via DNS discovery on `lsc.{dns.domain}`).
 
 - Data lives in `var-pryv/rqlite-data/` (Raft log + SQLite snapshot)
-- HTTP API: `http://localhost:4001` (default)
+- HTTP API: `http://localhost:4001` (default), listening on loopback only
+  in every mode (unauthenticated; peers use the Raft port). See
+  `storages.engines.rqlite.httpBindAddr` in `config/default-config.yml`.
 
 **Single-core dnsLess deployments in full PG mode** may set
 `storages.platform.engine: postgresql` instead: platform data lives in

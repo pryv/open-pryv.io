@@ -16,6 +16,8 @@ const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
 const { setMinimalMethodContext, setMethodId, isAdminKey } = require('middleware');
 const { redactUrl } = require('utils/src/redactUrl.ts');
+const { coreIdProblem } = require('platform/src/coreIdentity.ts');
+const { validateMailTemplate } = require('mail/src/templateValidator.ts');
 
 function errMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -131,8 +133,9 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // Reads use application/json; PUT accepts text/plain (raw Pug) OR
   // JSON `{ pug }`. Writes push `mail:template-invalidate` over IPC so
   // every worker on this core refreshes its materialised Pug tmp-dir on
-  // the next request; other cores pick up the change via rqlite
-  // replication + their own master's periodic cache re-read.
+  // the next request; the workers of other cores read the replicated row at
+  // their next start (there is no periodic refresh). A template outside the
+  // allowed Pug subset (see mail/src/templateValidator.ts) is refused.
   expressApp.get(Paths.System + '/admin/mail/templates', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
@@ -167,6 +170,9 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const { type, lang, part } = req.params;
       const pug = req.body && typeof req.body.pug === 'string' ? req.body.pug : null;
       if (pug == null) return next(errors.invalidRequestStructure('body must be { pug: string }'));
+      // Templates compile to code: only the allowed subset is stored.
+      const { ok, problems } = validateMailTemplate({ type, lang, part, pug });
+      if (!ok) return next(errors.invalidParametersFormat('mail template is not allowed', { problems }));
       const platformDB = require('storages').platformDB;
       await platformDB.setMailTemplate(type, lang, part, pug);
       if (typeof process.send === 'function') {
@@ -262,6 +268,17 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const isTokenValid = await platform.isInvitationTokenValid(invitationToken);
       if (!isTokenValid) {
         return res.status(400).json({ reservation: false, error: { id: 'invitationToken-invalid' } });
+      }
+
+      // A provided core must name a registered core, checked before anything
+      // is reserved.
+      const wantedCore = req.body.core;
+      if (wantedCore && !platform.isSingleCore) {
+        const problem = coreIdProblem(wantedCore) ??
+          ((await platform.getCoreInfo(wantedCore)) == null ? 'unknown core ' + JSON.stringify(wantedCore) : null);
+        if (problem != null) {
+          return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: problem } });
+        }
       }
 
       // 2. Check username uniqueness PLATFORM-WIDE. The local index holds only

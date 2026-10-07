@@ -144,7 +144,44 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
     const rows = readBody.results[0].values || [];
     assert.deepEqual(rows, [['phase-1-ok']], `row not replicated; body=${JSON.stringify(readBody)}`);
   });
+
+  it('[RQML2] with every HTTP API on loopback, a follower forwards writes and strong reads and /nodes reports each node reachable', async () => {
+    assert(nodeA != null && nodeB != null, 'cluster from the previous case');
+    const followerUrl = await findFollower(['http://127.0.0.1:14001', 'http://127.0.0.1:14003']);
+    // Each node advertises an HTTP address nobody can reach (spawnRqlited):
+    // forwarding and reachability must go over the Raft port only.
+    assert.equal(nodeA._args[nodeA._args.indexOf('-http-addr') + 1], '127.0.0.1:14001');
+    const write = await fetch(followerUrl + '/db/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([['INSERT INTO t (k, v) VALUES (?, ?)', 'follower', 'forwarded']])
+    });
+    assert.equal(write.status, 200);
+    const writeBody = await write.json();
+    assert(!writeBody.results.some(r => r.error), `follower write errors: ${JSON.stringify(writeBody)}`);
+
+    const read = await fetch(followerUrl + '/db/query?level=strong', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([['SELECT v FROM t WHERE k = ?', 'follower']])
+    });
+    assert.equal(read.status, 200);
+    const readBody = await read.json();
+    assert.deepEqual(readBody.results[0].values, [['forwarded']], JSON.stringify(readBody));
+
+    const nodes = await (await fetch(followerUrl + '/nodes?nonvoters')).json();
+    assert.deepEqual(Object.keys(nodes).sort(), ['node-a', 'node-b']);
+    for (const n of Object.values(nodes)) assert.equal(n.reachable, true, JSON.stringify(nodes));
+  });
 });
+
+async function findFollower (urls) {
+  for (const url of urls) {
+    const status = await (await fetch(url + '/status')).json();
+    if (status?.store?.raft?.state === 'Follower') return url;
+  }
+  throw new Error('no follower among ' + urls.join(', '));
+}
 
 // --- PKI helpers ---------------------------------------------------------
 
@@ -188,12 +225,17 @@ function spawnRqlited ({ nodeId, dataDir, httpPort, raftPort, tls, coreIp, joinU
     tls,
     coreIp
   });
+  // The HTTP API listens on loopback; advertise an unroutable address
+  // (TEST-NET-1) so nothing in the cluster can rely on reaching a peer's
+  // HTTP API.
+  args[args.indexOf('-http-adv-addr') + 1] = `192.0.2.1:${httpPort}`;
   // Insert -join before the final dataDir positional argument
   if (joinUrl != null) {
     const dd = args.pop();
     args.push('-join', joinUrl, dd);
   }
   const proc = spawn(RQLITED_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  proc._args = args;
   proc._logs = [];
   proc.stdout.on('data', (d) => { proc._logs.push(`[${nodeId}] ${d.toString().trim()}`); });
   proc.stderr.on('data', (d) => { proc._logs.push(`[${nodeId}:err] ${d.toString().trim()}`); });

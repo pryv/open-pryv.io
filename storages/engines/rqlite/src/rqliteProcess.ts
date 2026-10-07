@@ -57,6 +57,12 @@ interface RqliteOpts {
   discoveryEnabled?: boolean;
   nonVoter?: boolean;
   coreIp?: string | null;
+  /**
+   * Address the HTTP API listens on (`storages.engines.rqlite.httpBindAddr`).
+   * Null (default): loopback. The API is unauthenticated: binding it elsewhere
+   * is an explicit opt-in and logs a warning at boot.
+   */
+  httpBindAddr?: string | null;
   tls?: TlsConfig | null;
   readyTimeoutMs?: number;
   /**
@@ -83,20 +89,22 @@ function buildArgs (opts: RqliteOpts): string[] {
     discoveryEnabled = false,
     nonVoter = false,
     coreIp = null,
+    httpBindAddr = null,
     tls = null,
     dataDir
   } = opts;
 
   const advAddr = (coreIp || '127.0.0.1');
+  // The HTTP API is plaintext and unauthenticated (the tls block below only
+  // secures the raft channel), so it listens on loopback in every mode unless
+  // the operator binds it elsewhere explicitly. Peers never need it: they
+  // replicate, forward writes and answer /nodes over the Raft port.
   // Multi-core: advAddr is the core's public IP which is NAT'd on EC2 and
-  // most cloud VMs (the network interface doesn't actually hold that IP).
-  // Bind 0.0.0.0 for both listeners and pass -*-adv-addr so peers still
-  // contact us at the public address. Single-core stays on 127.0.0.1 for
-  // BOTH listeners: the HTTP API is plaintext and unauthenticated (the tls
-  // block below only secures the raft channel), so it must never be
-  // reachable from outside the host when no peer needs it.
+  // most cloud VMs (the network interface doesn't actually hold that IP), so
+  // Raft binds 0.0.0.0 and -raft-adv-addr tells peers the public address.
+  // Single-core keeps Raft on loopback too.
   const isMultiCore = (coreIp != null);
-  const httpAddr = isMultiCore ? `0.0.0.0:${httpPort}` : `127.0.0.1:${httpPort}`;
+  const httpAddr = `${formatBindHost(httpBindAddr ?? '127.0.0.1')}:${httpPort}`;
   const raftBindAddr = isMultiCore ? `0.0.0.0:${raftPort}` : `${advAddr}:${raftPort}`;
 
   const args: string[] = [
@@ -162,6 +170,61 @@ function buildArgs (opts: RqliteOpts): string[] {
   return args;
 }
 
+/** A bind address for `host:port`: an IPv6 address gets brackets. */
+function formatBindHost (addr: string): string {
+  if (typeof addr !== 'string' || addr.trim() === '') {
+    throw new Error('storages.engines.rqlite.httpBindAddr must be an address (e.g. 127.0.0.1), or null for loopback');
+  }
+  const host = addr.trim();
+  if (host.startsWith('[')) return host;
+  if (host.includes(':')) {
+    // One colon is "host:port"; IPv6 addresses have at least two.
+    if (host.indexOf(':') === host.lastIndexOf(':')) {
+      throw new Error(`storages.engines.rqlite.httpBindAddr takes an address without a port (got ${JSON.stringify(addr)}); the port comes from storages.engines.rqlite.url`);
+    }
+    return `[${host}]`;
+  }
+  return host;
+}
+
+/** Host to probe the local HTTP API on: loopback unless bound to one address. */
+function probeHost (httpBindAddr: string | null): string {
+  if (httpBindAddr == null) return '127.0.0.1';
+  const host = httpBindAddr.trim().replace(/^\[|\]$/g, '');
+  if (host === '0.0.0.0' || host === '::') return '127.0.0.1';
+  return formatBindHost(host);
+}
+
+function isLoopbackHost (addr: string): boolean {
+  const host = addr.trim().replace(/^\[|\]$/g, '').toLowerCase();
+  return host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
+}
+
+/**
+ * Warnings to log when rqlited starts with `opts`. Pure; exported for tests.
+ * - the HTTP API bound to a non-loopback address (unauthenticated read/write
+ *   access to the platform database for whoever reaches it);
+ * - a multi-core node (`core.ip` set) whose Raft channel is not TLS: any host
+ *   that reaches the Raft port can join or address the cluster. A later
+ *   release refuses to start in that case.
+ */
+function bootWarnings (opts: Pick<RqliteOpts, 'httpBindAddr' | 'coreIp' | 'tls' | 'httpPort'>): string[] {
+  const warnings: string[] = [];
+  const { httpBindAddr = null, coreIp = null, tls = null, httpPort = 4001 } = opts;
+  if (httpBindAddr != null && !isLoopbackHost(httpBindAddr)) {
+    warnings.push(`rqlite HTTP API listens on ${httpBindAddr}:${httpPort} (storages.engines.rqlite.httpBindAddr). ` +
+      'It is unauthenticated and gives full read and write access to the platform database: ' +
+      'make sure no host outside this machine can reach that port, or remove the setting to listen on loopback only.');
+  }
+  if (coreIp != null && tls == null) {
+    warnings.push('multi-core node (core.ip is set) without Raft TLS (storages.engines.rqlite.tls is null): ' +
+      'any host that reaches the Raft port can join or address the cluster. Issue node certificates ' +
+      '(`node bin/bootstrap.js init-ca-holder`, see SINGLE-TO-MULTIPLE.md) and set storages.engines.rqlite.tls; ' +
+      'a later release will refuse to start a multi-core node without it.');
+  }
+  return warnings;
+}
+
 /**
  * Resolve the readiness budget from config. Accepts a number or a numeric
  * string (environment overrides arrive as strings); null / undefined fall
@@ -192,6 +255,8 @@ async function start (opts: RqliteOpts): Promise<void> {
   fs.mkdirSync(absDataDir, { recursive: true });
 
   const args = buildArgs({ ...opts, dataDir: absDataDir });
+
+  for (const warning of bootWarnings(opts)) warn(warning);
 
   if (tls != null) {
     log(`rqlited TLS enabled: ca=${tls.caFile} cert=${tls.certFile} verifyClient=${tls.verifyClient !== false}`);
@@ -258,7 +323,7 @@ async function start (opts: RqliteOpts): Promise<void> {
   });
 
   // Wait for HTTP API to become ready
-  const httpUrl = `http://127.0.0.1:${httpPort}`;
+  const httpUrl = `http://${probeHost(opts.httpBindAddr ?? null)}:${httpPort}`;
   let elapsedMs: number;
   try {
     elapsedMs = await Promise.race([waitForReady(httpUrl, readyTimeoutMs, warn), earlyExit]);
@@ -388,4 +453,4 @@ async function waitForExternal (url: string, timeoutMs: number | undefined, log:
   log(`External rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
-export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, DEFAULT_READY_TIMEOUT_MS, STOP_KILL_TIMEOUT_MS };
+export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, bootWarnings, DEFAULT_READY_TIMEOUT_MS, STOP_KILL_TIMEOUT_MS };

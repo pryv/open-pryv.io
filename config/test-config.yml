@@ -71,6 +71,9 @@ storages:
 dnsLess:
   isActive: false
   publicUrl: http://127.0.0.1:3000/
+# Local multi-core tests run their cores on http://127.0.0.1.
+cluster:
+  allowInsecurePeerUrl: true
 custom:
   systemStreams:
     account:

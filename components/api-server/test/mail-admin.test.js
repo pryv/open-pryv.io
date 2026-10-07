@@ -125,4 +125,28 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     // Without services.email.smtp.host the route must refuse fast.
     assert.ok(res.status >= 400 && res.status < 600, 'expected 4xx/5xx, got ' + res.status);
   });
+
+  it('[MA10] PUT refuses a template carrying code and stores nothing', async () => {
+    const type = 'code-' + cuid();
+    for (const pug of ['- global.x = 1\np x', 'p !{username}', 'p #{process.env.HOME}', 'include /etc/hosts']) {
+      const res = await coreRequest
+        .put('/system/admin/mail/templates/' + type + '/en/html')
+        .set(authHeaders())
+        .send({ pug });
+      assert.strictEqual(res.status, 400, pug + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+    }
+    assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'html'), null);
+  });
+
+  it('[MA11] PUT refuses a type, lang or part outside ^[a-z0-9-]+$', async () => {
+    for (const p of ['Bad_Type/en/html', 'welcome-email/EN/html', 'welcome-email/en/html.pug']) {
+      const res = await coreRequest
+        .put('/system/admin/mail/templates/' + p)
+        .set(authHeaders())
+        .send({ pug: 'p ok' });
+      assert.strictEqual(res.status, 400, p + ': ' + JSON.stringify(res.body));
+    }
+    assert.deepStrictEqual((await platformDB.getAllMailTemplates()).length, 0);
+  });
 });

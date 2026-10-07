@@ -26,6 +26,7 @@ const Bundle = require('./Bundle.ts');
 const BundleEncryption = require('./BundleEncryption.ts');
 const TokenStore = require('./TokenStore.ts').default;
 const DnsRegistration = require('./DnsRegistration.ts');
+const { coreIdProblem, peerUrlProblem } = require('platform/src/coreIdentity.ts');
 
 // Opaque PlatformDB handle — passed through to TokenStore/DnsRegistration, never inspected here.
 type PlatformDBLike = unknown;
@@ -49,6 +50,8 @@ interface NewCoreOpts {
   hosting?: string | null;
   outPath: string;
   ttlMs?: number;
+  /** Accept an http: `url` (development and test clusters only). */
+  allowInsecurePeerUrl?: boolean;
 }
 
 interface InitCaHolderOpts {
@@ -103,8 +106,18 @@ async function newCore (opts: NewCoreOpts) {
   requireOpts(opts, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
-    secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs
+    secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs,
+    allowInsecurePeerUrl = false
   } = opts;
+
+  // The id becomes a DNS label and a certificate name; the url receives the
+  // admin key from the other cores. Refuse before anything is written.
+  const idProblem = coreIdProblem(coreId);
+  if (idProblem != null) throw new Error('new-core: ' + idProblem);
+  if (url != null) {
+    const urlProblem = peerUrlProblem(url, { allowInsecure: allowInsecurePeerUrl });
+    if (urlProblem != null) throw new Error('new-core: ' + urlProblem);
+  }
 
   // 1. Cluster CA — generate on first call, reuse afterwards.
   const ca = new ClusterCA({ dir: caDir });
@@ -347,6 +360,8 @@ interface PromoteCoreOpts {
   rqliteBaseUrl: string;
   coreId: string;
   force?: boolean;
+  /** The target's applied Raft index, read ON the target (`applied-index`). */
+  targetAppliedIndex?: number | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -364,14 +379,20 @@ interface PromoteCoreOpts {
  *   - the resulting cluster must NOT be exactly 2 voters (the 2-of-2 quorum
  *     trap) — run >=3 voters for real fault tolerance.
  *
- * @param opts.rqliteBaseUrl - leader's rqlite HTTP base, e.g. http://127.0.0.1:4001
- * @param opts.coreId        - id of the non-voter to promote
- * @param [opts.force]       - override the reachability/lag/2-voter guards
- * @param [opts.fetchImpl]   - injectable fetch (tests)
+ * Only the leader's own rqlite HTTP API is contacted: each core's HTTP API
+ * listens on loopback, so a peer's is not reachable. The caught-up check
+ * compares the leader's applied index with `targetAppliedIndex`, which the
+ * operator reads on the target with `applied-index`.
+ *
+ * @param opts.rqliteBaseUrl        - leader's rqlite HTTP base, e.g. http://127.0.0.1:4001
+ * @param opts.coreId               - id of the non-voter to promote
+ * @param [opts.force]              - override the reachability/lag/2-voter guards
+ * @param [opts.targetAppliedIndex] - the target's applied index (read on the target)
+ * @param [opts.fetchImpl]          - injectable fetch (tests)
  */
 async function promoteCore (opts: PromoteCoreOpts) {
   requireOpts(opts, ['rqliteBaseUrl', 'coreId']);
-  const { rqliteBaseUrl, coreId, force = false, fetchImpl = fetch } = opts;
+  const { rqliteBaseUrl, coreId, force = false, targetAppliedIndex = null, fetchImpl = fetch } = opts;
   const base = rqliteBaseUrl.replace(/\/$/, '');
 
   const res = await fetchImpl(`${base}/nodes?nonvoters`);
@@ -394,19 +415,19 @@ async function promoteCore (opts: PromoteCoreOpts) {
     );
   }
 
-  // Caught-up check via the target's own /status (api_addr from /nodes).
+  // Caught-up check: the leader's applied index against the one the operator
+  // read on the target. The target's own HTTP API is never contacted.
   let lag: number | null = null;
-  if (target.api_addr) {
-    try {
-      const tStatus = await (await fetchImpl(`${target.api_addr.replace(/\/$/, '')}/status`)).json() as RaftStatus;
-      const lStatus = await (await fetchImpl(`${base}/status`)).json() as RaftStatus;
-      const tApplied = tStatus?.store?.raft?.applied_index;
-      const lApplied = lStatus?.store?.raft?.applied_index;
-      if (Number.isFinite(tApplied) && Number.isFinite(lApplied)) lag = (lApplied as number) - (tApplied as number);
-    } catch { lag = null; }
+  if (targetAppliedIndex != null) {
+    if (!Number.isInteger(targetAppliedIndex) || targetAppliedIndex < 0) {
+      throw new Error(`target applied index must be a non-negative integer (got ${JSON.stringify(targetAppliedIndex)})`);
+    }
+    const lApplied = await readAppliedIndex(base, fetchImpl);
+    if (lApplied != null) lag = lApplied - targetAppliedIndex;
   }
   if (lag == null && !force) {
-    throw new Error(`could not verify "${coreId}" is caught up with the leader; pass --force to skip the check`);
+    throw new Error(`could not verify "${coreId}" is caught up with the leader: run \`node bin/bootstrap.js applied-index\` on "${coreId}" ` +
+      'and pass its value with --target-applied-index <n>, or pass --force to skip the check');
   }
   if (lag != null && lag > MAX_PROMOTE_LAG && !force) {
     throw new Error(`core "${coreId}" is behind the leader by ${lag} entries — wait for it to catch up, or pass --force`);
@@ -424,4 +445,16 @@ async function promoteCore (opts: PromoteCoreOpts) {
 
 interface RaftStatus { store?: { raft?: { applied_index?: number } } }
 
-export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder, promoteCore };
+/** Applied Raft index of the rqlite answering at `base` (`/status`), or null. */
+async function readAppliedIndex (base: string, fetchImpl: typeof fetch = fetch): Promise<number | null> {
+  try {
+    const res = await fetchImpl(`${base.replace(/\/$/, '')}/status`);
+    if (!res.ok) return null;
+    const applied = ((await res.json()) as RaftStatus)?.store?.raft?.applied_index;
+    return Number.isFinite(applied) ? applied as number : null;
+  } catch {
+    return null;
+  }
+}
+
+export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder, promoteCore, readAppliedIndex };

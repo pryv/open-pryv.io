@@ -106,4 +106,21 @@ describe('[MAILSEED] TemplateSeeder', () => {
       }
     }
   });
+
+  it('[MSEED6] does not seed a template outside the allowed Pug subset or with a bad segment', async () => {
+    const dir = await makeTemplatesDir();
+    try {
+      await fs.mkdir(path.join(dir, 'code-email/en'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'code-email/en/html.pug'), "- require('child_process')\np x", 'utf8');
+      await fs.mkdir(path.join(dir, 'Upper/en'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'Upper/en/html.pug'), 'p x', 'utf8');
+      const platformDB = fakePlatformDB();
+      const result = await seedIfEmpty({ platformDB, templatesRootDir: dir });
+      assert.strictEqual(result.count, 6, 'only the six valid rows');
+      assert.ok(!platformDB.rows.has('code-email/en/html'));
+      assert.ok(!platformDB.rows.has('Upper/en/html'));
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 });

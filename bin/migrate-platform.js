@@ -154,7 +154,15 @@ async function migrate (source, target, { dryRun, force }) {
   if (!dryRun) for (const { key, value } of observability) await target.setObservabilityValue(key, value);
   report('observability values', observability.length);
 
-  const mailTemplates = await source.getAllMailTemplates();
+  // Templates outside the allowed Pug subset are not copied (they are never
+  // used for sending either).
+  const { validateMailTemplate, describe } = require('../components/mail/src/templateValidator.ts');
+  const mailTemplates = [];
+  for (const row of await source.getAllMailTemplates()) {
+    const { ok, problems } = validateMailTemplate(row);
+    if (ok) mailTemplates.push(row);
+    else console.log(`skipping mail template ${describe(row)}: ${problems.join('; ')}`);
+  }
   if (!dryRun) for (const { type, lang, part, pug } of mailTemplates) await target.setMailTemplate(type, lang, part, pug);
   report('mail templates', mailTemplates.length);
 

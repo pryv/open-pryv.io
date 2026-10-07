@@ -81,6 +81,35 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
   });
 
   describe('newCore()', () => {
+    function optsIn (dir, db, extra) {
+      return Object.assign(baseOpts({
+        caDir: path.join(dir, 'ca'),
+        tokensPath: path.join(dir, 'tokens.json'),
+        outPath: path.join(dir, 'bundle.age'),
+        platformDB: db
+      }), extra);
+    }
+
+    it('[BNCV1] refuses a core id outside the grammar before writing anything', async () => {
+      for (const coreId of ['Core-B', 'core_b', 'evil.example.org/x', '-core', 'a'.repeat(64)]) {
+        const db = makeFakeDB();
+        await assert.rejects(cliOps.newCore(optsIn(tmp, db, { coreId })), /core id .* is invalid/, coreId);
+        assert.equal(db._coreInfos.size, 0, coreId);
+        assert.equal(fs.existsSync(path.join(tmp, 'ca')), false, 'no CA generated for ' + coreId);
+      }
+    });
+
+    it('[BNCV2] refuses an http, credential-bearing or path-carrying --url; http only with the insecure flag', async () => {
+      for (const url of ['http://b.example.com', 'https://user:pw@b.example.com', 'https://b.example.com/api', 'https://b.example.com/#x']) {
+        const db = makeFakeDB();
+        await assert.rejects(cliOps.newCore(optsIn(tmp, db, { url })), /core URL/, url);
+        assert.equal(db._coreInfos.size, 0, url);
+      }
+      const db = makeFakeDB();
+      await cliOps.newCore(optsIn(tmp, db, { url: 'http://127.0.0.1:3001', allowInsecurePeerUrl: true }));
+      assert.equal(db._coreInfos.get('core-b').url, 'http://127.0.0.1:3001');
+    });
+
     it('writes a decryptable, schema-valid bundle and pre-registers in PlatformDB + DNS', async () => {
       const db = makeFakeDB();
       const out = path.join(tmp, 'bundle.age');
@@ -240,20 +269,21 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
   describe('promoteCore()', function () {
     const LEADER = 'http://leader-host:4001';
 
-    function makeFetch ({ nodes, leaderApplied = 100, targetApplied = 100, removeStatus = 200 }) {
-      const calls = { remove: null, removeCount: 0 };
+    // Only the leader's own rqlite answers: a peer's HTTP API listens on
+    // loopback and is never reachable from the leader.
+    function makeFetch ({ nodes, leaderApplied = 100, removeStatus = 200 }) {
+      const calls = { remove: null, removeCount: 0, urls: [] };
       const jsonRes = (obj) => ({ ok: true, status: 200, json: async () => obj });
       const fetchImpl = async (url, opts) => {
+        calls.urls.push(url);
+        if (!url.startsWith(LEADER)) throw new TypeError('fetch failed (unreachable: ' + url + ')');
         if (url.includes('/nodes')) return jsonRes(nodes);
         if (url.includes('/remove')) {
           calls.removeCount++;
           calls.remove = JSON.parse(opts.body);
           return { ok: removeStatus === 200, status: removeStatus };
         }
-        if (url.includes('/status')) {
-          const applied = url.includes('target-host') ? targetApplied : leaderApplied;
-          return jsonRes({ store: { raft: { applied_index: applied } } });
-        }
+        if (url.includes('/status')) return jsonRes({ store: { raft: { applied_index: leaderApplied } } });
         throw new Error('unexpected url ' + url);
       };
       return { fetchImpl, calls };
@@ -265,13 +295,39 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
       'core-b': { voter: false, reachable: true, api_addr: 'http://target-host:4001' }
     };
 
-    it('removes a reachable, caught-up non-voter when result is >=3 voters', async () => {
+    it('[BPRC1] removes a reachable, caught-up non-voter when result is >=3 voters, without contacting the target', async () => {
       const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes });
-      const result = await cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl });
+      const result = await cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', targetAppliedIndex: 98, fetchImpl });
       assert.equal(result.voterCountBefore, 2);
       assert.equal(result.voterCountAfter, 3);
+      assert.equal(result.lag, 2);
       assert.equal(calls.removeCount, 1);
       assert.deepEqual(calls.remove, { id: 'core-b' });
+      assert.deepEqual(calls.urls.filter((u) => !u.startsWith(LEADER)), [], 'no request to the target core');
+    });
+
+    it('[BPRC2] refuses without the target applied index (never fetches the target), unless --force', async () => {
+      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }),
+        /applied-index.*--target-applied-index/);
+      assert.equal(calls.removeCount, 0);
+      assert.deepEqual(calls.urls.filter((u) => !u.startsWith(LEADER)), [], 'no request to the target core');
+      const forced = await cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', force: true, fetchImpl });
+      assert.equal(forced.lag, null);
+      assert.equal(calls.removeCount, 1);
+    });
+
+    it('[BPRC3] refuses a malformed target applied index', async () => {
+      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', targetAppliedIndex: -1, fetchImpl }),
+        /non-negative integer/);
+      assert.equal(calls.removeCount, 0);
+    });
+
+    it('[BPRC4] readAppliedIndex reads the local rqlite /status, or null', async () => {
+      const { fetchImpl } = makeFetch({ nodes: threeVoterNodes, leaderApplied: 42 });
+      assert.equal(await cliOps.readAppliedIndex(LEADER, fetchImpl), 42);
+      assert.equal(await cliOps.readAppliedIndex('http://elsewhere:4001', fetchImpl), null);
     });
 
     it('refuses when the target is already a voter (no remove)', async () => {
@@ -319,8 +375,8 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
     });
 
     it('refuses a lagging target without --force', async () => {
-      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes, leaderApplied: 1000, targetApplied: 100 });
-      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }), /behind the leader/);
+      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes, leaderApplied: 1000 });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', targetAppliedIndex: 100, fetchImpl }), /behind the leader/);
       assert.equal(calls.removeCount, 0);
     });
   });

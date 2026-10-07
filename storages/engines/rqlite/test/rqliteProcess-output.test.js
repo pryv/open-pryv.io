@@ -222,6 +222,34 @@ describe('[RQOU] rqlited output and stop do not depend on the master', function 
     assert.match(errors[0], /rqlited did not stop within 0\.5s, killed: its snapshot may be incomplete/);
   });
 
+  it('[RQTW4] start() of a multi-core node without Raft TLS logs the warning and keeps the HTTP API on loopback', async () => {
+    const rp = require(SRC);
+    const fake = writeFake(dir, 'fake-warn', 'snapshot');
+    fakes.push(fake);
+    const httpPort = await freePort();
+    const warnings = [];
+    const logged = [];
+    await rp.start({
+      coreId: 'rqtw4',
+      binPath: fake.bin,
+      dataDir: path.join(dir, 'data-tw4'),
+      httpPort,
+      raftPort: httpPort + 1,
+      coreIp: '127.0.0.1',
+      tls: null,
+      readyTimeoutMs: 10000,
+      logFile: path.join(dir, 'rqtw4.log'),
+      log: (msg) => logged.push(msg),
+      warn: (msg) => warnings.push(msg)
+    });
+    try {
+      assert.equal(warnings.filter((w) => /without Raft TLS/.test(w)).length, 1, JSON.stringify(warnings));
+      assert.ok(logged.some((l) => l.includes(`-http-addr 127.0.0.1:${httpPort}`)), JSON.stringify(logged));
+    } finally {
+      await rp.stop(() => {});
+    }
+  });
+
   it('[RQO5] the default kill delay leaves room for a slow snapshot', () => {
     const { STOP_KILL_TIMEOUT_MS } = require(SRC);
     assert.equal(STOP_KILL_TIMEOUT_MS, 20000);

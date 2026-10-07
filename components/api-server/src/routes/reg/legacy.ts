@@ -17,6 +17,7 @@ const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
+const { coreIdProblem } = require('platform/src/coreIdentity.ts');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:admin');
@@ -301,6 +302,8 @@ export default function (expressApp: ExpressApp, app: App) {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
+      const dstProblem = coreIdProblem(dstName);
+      if (dstProblem != null) return next(errors.invalidParametersFormat(dstProblem));
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       // getAllUserCores returns mappings with `username` in PlatformDB

@@ -29,7 +29,9 @@
 //   node bin/bootstrap.js list-tokens [--tokens-path <path>]
 //   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
 //                                               [--tokens-path <path>]
-//   node bin/bootstrap.js promote-core <coreId> [--force]
+//   node bin/bootstrap.js promote-core <coreId> [--target-applied-index <n>]
+//                                               [--force]
+//   node bin/bootstrap.js applied-index
 //
 // All orchestration lives in business/src/bootstrap/cliOps.js — this file
 // only handles argv parsing, config loading and operator-facing output.
@@ -69,6 +71,7 @@ require('@pryv/boiler').init({
       case 'list-tokens': await runListTokens(args); break;
       case 'revoke-token': await runRevokeToken(args); break;
       case 'promote-core': await runPromoteCore(args); break;
+      case 'applied-index': await runAppliedIndex(); break;
       default:
         console.error('Unknown command: ' + args.command);
         printUsage(process.stderr);
@@ -114,7 +117,8 @@ async function runNewCore (args) {
     url: args.url || null,
     hosting: args.hosting || null,
     outPath,
-    ttlMs
+    ttlMs,
+    allowInsecurePeerUrl: config.get('cluster:allowInsecurePeerUrl') === true
   });
 
   console.log('');
@@ -238,11 +242,21 @@ async function runPromoteCore (args) {
   const config = await getConfig();
   const rqliteBaseUrl = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
 
+  let targetAppliedIndex = null;
+  const rawIndex = args['target-applied-index'];
+  if (rawIndex != null) {
+    if (typeof rawIndex !== 'string' || !/^[0-9]+$/.test(rawIndex)) {
+      throw new Error('promote-core: --target-applied-index takes a non-negative integer');
+    }
+    targetAppliedIndex = parseInt(rawIndex, 10);
+  }
+
   console.log(`Promoting "${args.coreId}" to voter via leader ${rqliteBaseUrl} ...`);
   const result = await cliOps.promoteCore({
     rqliteBaseUrl,
     coreId: args.coreId,
-    force: args.force === true
+    force: args.force === true,
+    targetAppliedIndex
   });
 
   console.log(
@@ -256,6 +270,15 @@ async function runPromoteCore (args) {
   console.log('  3. Restart the core — it rejoins as a voter via the cluster\'s DNS discovery.');
   console.log('');
   console.log('Verify with: node bin/bootstrap.js list-tokens  (and the leader\'s /nodes endpoint).');
+}
+
+async function runAppliedIndex () {
+  const { cliOps } = require('business/src/bootstrap/index.ts');
+  const config = await getConfig();
+  const rqliteBaseUrl = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
+  const applied = await cliOps.readAppliedIndex(rqliteBaseUrl);
+  if (applied == null) throw new Error(`applied-index: could not read the Raft status of the local rqlite at ${rqliteBaseUrl}`);
+  console.log(String(applied));
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +423,9 @@ function printUsage (stream = process.stderr) {
   node bin/bootstrap.js list-tokens [--tokens-path <path>]
   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
                                               [--tokens-path <path>]
-  node bin/bootstrap.js promote-core <coreId> [--force]
+  node bin/bootstrap.js promote-core <coreId> [--target-applied-index <n>]
+                                              [--force]
+  node bin/bootstrap.js applied-index
 
 Flags:
   --id              new core's identifier (required for new-core)
@@ -412,6 +437,9 @@ Flags:
   --ca-dir          CA directory (default: /etc/pryv/ca or cluster.ca.path)
   --tls-dir         TLS material dir for init-ca-holder (default: /etc/pryv/tls
                      or http.ssl.tlsDir)
+  --target-applied-index
+                    promote-core: the target's applied Raft index, printed by
+                     \`applied-index\` run on the target
   --force           promote-core: override the reachability / caught-up / 2-voter guards
   --no-write-config init-ca-holder: do not merge rqlite.tls.* into override-config
   --tokens-path     token-store JSON file (default: /var/lib/pryv/bootstrap-tokens.json
@@ -430,8 +458,14 @@ promote-core:
   Promote a non-voting core to a voter. Run on the leader. Validates the
   target is a reachable, caught-up non-voter and refuses to create a 2-voter
   cluster (the 2-of-2 quorum trap), then removes it from the Raft config.
-  Finish by unsetting core.nonVoter on the target and restarting it so it
-  rejoins as a voter. Promote only when going to >=3 voters. See
-  SINGLE-TO-MULTIPLE.md.
+  The caught-up check needs the target's applied index: run
+  \`applied-index\` on the target first and pass the value with
+  --target-applied-index (rqlite's HTTP API only listens on loopback, so the
+  leader cannot read it). Finish by unsetting core.nonVoter on the target
+  and restarting it so it rejoins as a voter. Promote only when going to
+  >=3 voters. See SINGLE-TO-MULTIPLE.md.
+
+applied-index:
+  Print the applied Raft index of this core's own rqlite.
 `);
 }

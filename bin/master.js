@@ -151,6 +151,8 @@ if (cluster.isPrimary) {
           // quorum). Promote to voter only at >=3 cores.
           nonVoter: config.get('core:nonVoter') === true,
           coreIp: config.get('core:ip') || null,
+          // The HTTP API listens on loopback unless explicitly bound elsewhere.
+          httpBindAddr: rqliteConfig.httpBindAddr || null,
           tls: rqliteConfig.tls || null,
           // How long to wait for rqlited's HTTP API at boot. Nodes with a
           // large platform dataset or slow disks can need more than the
@@ -296,6 +298,13 @@ if (cluster.isPrimary) {
         const templatesRootDir = config.get('services:email:templatesRootDir') || bundledTemplatesDir;
         const result = await seedIfEmpty({ platformDB, templatesRootDir });
         if (result.seeded) log(`Mail templates seeded (${result.count} row(s) from ${templatesRootDir})`);
+        // Stored templates outside the allowed Pug subset are skipped when
+        // mail is sent; say so at boot rather than at the first send.
+        const { validateMailTemplate, describe } = require('../components/mail/src/templateValidator.ts');
+        for (const row of await platformDB.getAllMailTemplates()) {
+          const { ok, problems } = validateMailTemplate(row);
+          if (!ok) warn(`mail template ${describe(row)} is not used: ${problems.join('; ')} (fix it with bin/mail.js templates set; list them with bin/mail.js templates validate)`);
+        }
         // The registration gate mails a code on every sign-up. If an operator
         // deleted that template through the CLI, every registration would fail
         // at delivery time with nothing pointing at the cause.

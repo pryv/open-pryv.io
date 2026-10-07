@@ -382,6 +382,22 @@ function checkTrustedProxies (config, problems) {
   }
 }
 
+// core.id becomes a DNS label and the host of derived core URLs; on a
+// multi-core deployment core.url is where peers send the admin key.
+function checkCoreIdentity (config, problems) {
+  const { coreIdProblem, peerUrlProblem, insecurePeerUrlAllowed } = require('../../components/platform/src/coreIdentity.ts');
+  const coreId = config.get('core:id');
+  if (coreId != null) {
+    const problem = coreIdProblem(coreId);
+    if (problem != null) problems.push({ message: problem + '.', path: ['core', 'id'], payload: { coreId } });
+  }
+  if (config.get('core:isSingleCore') !== false) return;
+  const coreUrl = config.get('core:url');
+  if (coreUrl == null || coreUrl === '') return;
+  const problem = peerUrlProblem(coreUrl, { allowInsecure: insecurePeerUrlAllowed(config) });
+  if (problem != null) problems.push({ message: problem + '.', path: ['core', 'url'], payload: { coreUrl } });
+}
+
 // Inside the published image (PRYV_IMAGE_TAG is baked into it), refuse to boot
 // when the user data root (per-user databases, attachments, SQLite audit and
 // series) would sit on the container's own filesystem or on a tmpfs: it would
@@ -461,6 +477,7 @@ async function validate (config) {
   checkHostedSites(config, problems);
   checkTrustedProxies(config, problems);
   checkUserDataRootPersistence(config, problems);
+  checkCoreIdentity(config, problems);
 
   return problems;
 }
@@ -604,6 +621,7 @@ module.exports = {
   checkHostedSites,
   checkTrustedProxies,
   checkUserDataRootPersistence,
+  checkCoreIdentity,
   isMissingOrSentinel,
   weakSecretReason,
   MIN_SECRET_LENGTH,

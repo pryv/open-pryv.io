@@ -32,6 +32,7 @@ const { Sender } = require('./Sender.ts');
 const { TemplateRepository } = require('./TemplateRepository.ts');
 const { createEmailTemplatesDelivery } = require('./emailTemplatesDelivery.ts');
 const errors = require('./errors.ts');
+const { segmentProblem } = require('./templateValidator.ts');
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail');
@@ -86,8 +87,9 @@ async function init (opts: MailInitOpts): Promise<void> {
 
   // Cluster workers: subscribe to master's `mail:template-invalidate` broadcast
   // so the local tmp-dir is re-materialised from PlatformDB right after any
-  // admin-API PUT/DELETE on this core. Other cores pick up the same row
-  // change via rqlite replication + their master's periodic refresh.
+  // admin-API PUT/DELETE on this core. There is no periodic refresh: the
+  // workers of OTHER cores read the replicated row at their next start (or
+  // first mail send), so restart them after editing a template.
   if (typeof process.send === 'function') {
     ipcListener = (msg: IpcMessage) => {
       if (msg && msg.type === 'mail:template-invalidate') {
@@ -111,7 +113,12 @@ async function send ({ type, lang, recipient, substitutions }: SendParams): Prom
   if (!type || !recipient || !recipient.email) {
     throw errors.invalidRequestStructure('send: { type, recipient.email } are required');
   }
-  const template = await state.templateRepository.find(type, lang || 'en');
+  // type and lang name directories of the materialised templates.
+  const typeProblem = segmentProblem('type', type);
+  if (typeProblem != null) throw errors.invalidRequestStructure('send: ' + typeProblem);
+  const wantedLang = typeof lang === 'string' ? lang.toLowerCase() : null;
+  const usableLang = wantedLang != null && segmentProblem('lang', wantedLang) == null ? wantedLang : 'en';
+  const template = await state.templateRepository.find(type, usableLang);
   const result = await state.sender.renderAndSend(template, substitutions || {}, recipient);
   return { sent: true, result };
 }

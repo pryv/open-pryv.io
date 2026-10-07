@@ -83,7 +83,7 @@ dns:
 
 With `dns.active: true`, the embedded DNS server answers on `dns.port` over UDP and TCP (open both inbound) and returns RFC 2308 negative answers (NXDOMAIN / NODATA with the apex SOA from `dns.records.root.soa`), which validating resolvers and Let's Encrypt's CAA check require.
 
-Restart the existing core. It will now identify itself as `core-a` and be reachable at `https://core-a.mc.example.com/`. The embedded rqlited continues to run as a single-node cluster — until the first new core joins.
+Restart the existing core. It will now identify itself as `core-a` and be reachable at `https://core-a.mc.example.com/`. The embedded rqlited continues to run as a single-node cluster — until the first new core joins. Its Raft port now listens on all interfaces (its HTTP API stays on loopback); until `init-ca-holder` (step 3) has set `storages.engines.rqlite.tls` and the core has restarted, the boot log warns that the Raft channel is not TLS, and a later release will refuse to start a multi-core node without it.
 
 **Verify:**
 ```bash
@@ -97,7 +97,13 @@ curl -s 'https://core-a.mc.example.com/reg/cores?username=<existing-user>'
 
 ### 3. Issue a bootstrap bundle for the new core
 
-On `core-a` (the existing core, which holds the cluster CA):
+On `core-a` (the existing core, which holds the cluster CA), once, before the first bundle: generate the cluster CA and this core's own node certificate, which also writes `storages.engines.rqlite.tls` into its `override-config.yml`, then restart `core-a` so its Raft port requires mutual TLS:
+
+```bash
+node bin/bootstrap.js init-ca-holder
+```
+
+Then issue the bundle:
 
 ```bash
 node bin/bootstrap.js new-core \
@@ -264,7 +270,7 @@ curl -s -XDELETE "http://127.0.0.1:4001/remove" -d '{"id":"core-b"}'
 #   - the platform DB re-replicates from the leader on rejoin; user data is untouched
 ```
 
-Before promoting a non-voter to voter, confirm it is reachable and fully caught up via `GET /nodes?nonvoters` on the leader. **Do not promote into a two-voter configuration** — that re-creates the 2-of-2 trap.
+Before promoting a non-voter to voter, confirm it is reachable (`GET /nodes?nonvoters` on the leader) and fully caught up. `node bin/bootstrap.js promote-core <coreId>` does both checks: run `node bin/bootstrap.js applied-index` on the target first (each core's rqlite HTTP API listens on loopback, so the leader cannot read the target's index), then pass the printed value with `--target-applied-index <n>` on the leader. **Do not promote into a two-voter configuration** — that re-creates the 2-of-2 trap.
 
 ### Health checks can strand an unreachable voter
 
@@ -299,7 +305,9 @@ When running behind nginx (including Dokku), each core needs:
 2. **Socket.IO** — WebSocket upgrade location for `/socket.io/`.
 3. **Upload size** — `client_max_body_size` matching `uploads.maxSizeMb`.
 
-The rqlite Raft port (default 4002) does **not** go through nginx: it's a peer-to-peer mTLS connection between cores. Open it in any firewall between cores. Keep rqlite's HTTP port (default 4001) closed to the outside: it is unauthenticated, and cores replicate and forward writes over the Raft port.
+The rqlite Raft port (default 4002) does **not** go through nginx: it's a peer-to-peer mTLS connection between cores. Open it in any firewall between cores, and only to the other cores. rqlite's HTTP port (default 4001) listens on loopback only, also on multi-core: it is unauthenticated, and cores replicate, forward writes and answer `/nodes` over the Raft port. Keep 4001 closed in your firewall as well. Only `storages.engines.rqlite.httpBindAddr` binds it elsewhere (with a boot warning); no step in this guide needs that.
+
+Core ids (`core.id`, `--id`) are 1 to 63 lowercase letters, digits or `-`. A `core.url` (and `new-core --url`) must be an `https://host[:port]` origin with no path, credentials, query or fragment; `cluster.allowInsecurePeerUrl: true` accepts `http:` on a development or test cluster only. Core-to-core calls carry the admin key, time out after 10 s and never follow a redirect.
 
 ## Rollback
 
