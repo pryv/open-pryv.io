@@ -65,6 +65,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   api.register('auth.register',
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.register.params),
+    stripServerOwnedFields,
     enforcePasswordRules,
     registration.prepareUserData.bind(registration),
     // Registration email gate: refuse an unproved address BEFORE any cross-core
@@ -79,6 +80,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     registration.createUser.bind(registration),
     registration.buildResponse.bind(registration),
     registration.sendWelcomeMail.bind(registration));
+
+  // The registration params stay open to the platform's custom account fields,
+  // but the new user's id, stored password hash and initial account events are
+  // the server's: a public registration never sets them (system.createUser,
+  // admin-only, still may).
+  function stripServerOwnedFields (_context: MethodContext, params: RegisterParams, _result: ResultBag, next: MethodNext) {
+    const p = params as unknown as Record<string, unknown>;
+    for (const key of ['id', 'passwordHash', 'events']) delete p[key];
+    next();
+  }
 
   async function enforcePasswordRules (_context: MethodContext, params: RegisterParams, _result: ResultBag, next: MethodNext) {
     try {
