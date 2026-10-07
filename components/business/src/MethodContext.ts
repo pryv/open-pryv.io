@@ -491,10 +491,17 @@ class MethodContext {
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // A personal access is only as good as a session opened for this same
     // account: a session of another user (or a token set on the access by
-    // other means) does not make it valid.
+    // other means) does not make it valid. A session keeps the username it
+    // was opened under, so after a username change it is matched through the
+    // users index, which still resolves the former name (kept as an alias).
     const sessionUsername = session.username;
     if (typeof sessionUsername === 'string' && this.user?.username != null && sessionUsername !== this.user.username) {
-      throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
+      const { getUsersLocalIndex } = require('storage');
+      const usersIndex = await getUsersLocalIndex();
+      const sessionUserId = await usersIndex.getUserId(sessionUsername);
+      if (sessionUserId == null || sessionUserId !== this.user.id) {
+        throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
+      }
     }
     // Keep the session alive (don't await, see below)
     storage.sessions.touch(token, () => null);
