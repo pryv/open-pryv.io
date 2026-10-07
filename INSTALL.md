@@ -765,7 +765,7 @@ dokku storage:mount open-pryv-io \
 dokku config:set open-pryv-io NODE_ENV=production PRYV_DATADIR=/app/data PRYV_LOGSDIR=/app/data/logs
 ```
 
-**After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. An `wget http://127.0.0.1:3000/reg/service/info` inside the container will succeed throughout — the symptom is only visible externally.
+**After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. A request from inside the container (`docker exec <container> node -e "fetch('http://127.0.0.1:3000/reg/service/info').then(r => console.log(r.status))"`) succeeds throughout — the symptom is only visible externally.
 
 **PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment. Open-Pryv.io v2 reads `storages.engines.postgresql.{host,port,database,user,password}` from `override-config.yml` directly — `DATABASE_URL` is **not** auto-consumed today. Populate the concrete keys in your override-config. A future `--from-database-url` convenience is tracked in the roadmap.
 
@@ -784,7 +784,7 @@ For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess
 dokku docker-options:add <app> deploy,run "-p 443:443/tcp"
 ```
 
-Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and `wget https://127.0.0.1:443` inside it succeeds.
+Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and a request to `https://127.0.0.1:443` from inside it succeeds (the image ships neither `curl` nor `wget`; use `node -e "fetch(…)"`).
 
 **Bare-metal embedded DNS (non-Docker)**: when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind (UDP and TCP alike) unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade: `apt install nodejs` wipes file capabilities**):
 

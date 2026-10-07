@@ -8,7 +8,8 @@
   stays below 24.19, see nodejs/node#65446), installs the Debian security updates available at build
   time on top of the pinned base, and no longer ships `curl` (it was only needed to download rqlite
   during the build). A scan of the image drops from 15 critical / 92 high findings to 3 / 69; the
-  remaining critical ones have no Debian fix yet (glibc) or sit in the npm copy bundled with Node.
+  remaining critical ones are in glibc (no Debian fix published yet) and in the `tar` package of the
+  npm copy bundled with Node (not used by the server).
 - **Operators:** native installs should use Node 24.18.1 too. Nothing in the server called `curl`;
   a script of yours that runs `curl` inside the container needs another tool (e.g. `node -e "fetch(…)"`).
 
