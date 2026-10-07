@@ -130,4 +130,39 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     const after = await coreRequest.get('/' + alias + '/access-info').set('Authorization', token);
     assert.equal(after.status, 404, 'alias should no longer resolve');
   });
+
+  it('[AL06] an alias chosen by the client is refused at creation', async function () {
+    const res = await createAccess({
+      name: 'chosen alias',
+      alias: 'r-' + cuid.slug(),
+      permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
+    });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+  });
+
+  it('[AL07] deleting an access whose stored alias is another user\'s releases nothing of that user', async function () {
+    // The other user owns a minted alias.
+    const otherName = cuid();
+    const otherUser = await fixtures().user(otherName);
+    const otherToken = cuid();
+    await otherUser.access({ token: otherToken, type: 'app', permissions: [{ streamId: '*', level: 'manage' }] });
+    const minted = await coreRequest.post('/' + otherName + '/accesses').set('Authorization', otherToken)
+      .send({ name: 'minted', randomAlias: true, permissions: [{ streamId: '*', level: 'read' }] });
+    assert.equal(minted.status, 201, JSON.stringify(minted.body));
+    const { alias, token: aliasedToken } = minted.body.access;
+
+    // An access of this user stored with that alias and with the other
+    // user's username (as written before aliases were server-only).
+    for (const name of [alias, otherName]) {
+      const id = cuid();
+      await fixtureUser.access({ id, token: cuid(), name: 'planted ' + name, type: 'shared', alias: name, createdBy: `master_${username}`, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      const del = await coreRequest.delete('/' + username + '/accesses/' + id).set('Authorization', masterToken);
+      assert.equal(del.status, 200, JSON.stringify(del.body));
+    }
+
+    const viaAlias = await coreRequest.get('/' + alias + '/access-info').set('Authorization', aliasedToken);
+    assert.equal(viaAlias.status, 200, 'the other user\'s alias still resolves: ' + JSON.stringify(viaAlias.body));
+    const viaName = await coreRequest.get('/' + otherName + '/access-info').set('Authorization', otherToken);
+    assert.equal(viaName.status, 200, 'the other user\'s username still resolves');
+  });
 });

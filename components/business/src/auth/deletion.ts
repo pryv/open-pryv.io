@@ -47,7 +47,7 @@ class Deletion {
    * 1- is a valid admin token
    * 2- is a valid personalToken
    */
-  checkIfAuthorized (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+  async checkIfAuthorized (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
       if (this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
@@ -58,6 +58,15 @@ class Deletion {
       if (context.access &&
                 context.access.isPersonal &&
                 context.access.isPersonal()) {
+        // A personal token only deletes its own account, whatever the
+        // transport (a batch call or socket.io names the target in params).
+        const usersRepository = await getUsersRepository();
+        const targetId = typeof params.username === 'string'
+          ? await usersRepository.getUserIdForUsername(params.username)
+          : null;
+        if (targetId == null || targetId !== context.user?.id) {
+          return next(errors.forbidden('A personal token can only delete its own account.'));
+        }
         return next();
       }
       // If personal Token is available, then error code is different
@@ -188,6 +197,7 @@ class Deletion {
       await usersRepository.deleteOne(context.user.id, context.user.username);
       await Promise.all(removals);
       await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
+      await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));

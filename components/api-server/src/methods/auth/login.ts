@@ -130,9 +130,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   function openSession (context: MethodContext, params: { appId: string }, result: ResultBag, next: Next) {
+    // The user id makes a session match only its own account: a session of a
+    // former owner of this username (renamed or deleted) is never reused.
     context.sessionData = {
       username: context.user.username,
-      appId: params.appId
+      appId: params.appId,
+      userId: context.user.id
     };
     sessionsStorage.getMatching(context.sessionData, function (err: Error | null, sessionId: string | null) {
       if (err) { return next(errors.unexpectedError(err)); }

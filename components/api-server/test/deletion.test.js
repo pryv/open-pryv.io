@@ -111,6 +111,29 @@ describe('[PGTD] DELETE /users/:username', () => {
         assert.strictEqual(res.status, 403); // not 404 as when option is not activated
       });
     });
+    it('[USA5] a personal token cannot delete another account through a batch call', async function () {
+      await initiateUserWithData(username2);
+      await withInjectedConfig({ 'user-account': { delete: ['personalToken'] } }, async () => {
+        res = await request
+          .post(`/${username1}/`)
+          .set('Authorization', personalAccessToken)
+          .send([{ method: 'auth.delete', params: { username: username2 } }]);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.ok(res.body.results[0].error != null, 'the batch entry is refused: ' + JSON.stringify(res.body.results[0]));
+        assert.ok(await usersRepository.getUserIdForUsername(username2) != null, 'the other account is intact');
+      });
+    });
+    it('[USA6] a personal token whose session was closed cannot delete the account', async function () {
+      const storageLayer = await require('storage').getStorageLayer();
+      await promisify(storageLayer.sessions.destroy.bind(storageLayer.sessions))(personalAccessToken);
+      await withInjectedConfig({ 'user-account': { delete: ['personalToken'] } }, async () => {
+        res = await request
+          .delete(`/users/${username1}`)
+          .set('Authorization', personalAccessToken);
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.ok(await usersRepository.getUserIdForUsername(username1) != null, 'the account is intact');
+      });
+    });
     it('[UK8H] Should accept when "personalToken" and "adminToken" are active and a valid admin token is provided', async function () {
       await withInjectedConfig({ 'user-account': { delete: ['personalToken', 'adminToken'] } }, async () => {
         res = await request

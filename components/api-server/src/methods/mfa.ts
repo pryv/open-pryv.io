@@ -43,6 +43,8 @@ type ThrottleState = { failures: number; lastFailureAt: number; notBefore: numbe
 type StoredThrottle = Partial<ThrottleState> & { count?: number; windowStartedAt?: number; lockedUntil?: number };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 const errors = require('errors').factory;
+const APIError = require('errors').APIError;
+const delegation = require('delegation');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
@@ -524,12 +526,20 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   );
 
   /**
-   * Step that requires the call to be made with a personal access token.
-   * Uses the same shape as other auth-bound steps in service-core.
+   * Step that requires the call to be made with a personal access token from
+   * the account's own login: a delegate's personal access is refused, so a
+   * delegate can neither turn the owner's MFA off nor replace it (which would
+   * lock the owner out of the direct login that ends a delegation).
    */
   function requirePersonalAccess (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     if (!context.access || context.access.type !== 'personal') {
       return next(errors.forbidden('A personal access token is required for this operation.'));
+    }
+    if (!delegation.isGenuineLoginAccess(context.access)) {
+      return next(new APIError(
+        delegation.errorIds.DelegationErrorIds.GENUINE_LOGIN_REQUIRED,
+        'This operation requires a direct login to this account; a delegated session cannot change its MFA',
+        { httpStatus: 403 }));
     }
     next();
   }

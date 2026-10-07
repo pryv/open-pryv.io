@@ -48,12 +48,12 @@ type IssueTokenDeps = {
   mall: MallLike;
   now: () => number;
   /**
-   * Reuse-or-generate a session for {username, appId} and return its id — the
-   * exact login-flow `sessionsStorage.getMatching(...) else generate(...)`
-   * behaviour, injected so this module stays free of storage-layer imports. The
-   * returned id becomes the PAT token.
+   * Reuse-or-generate a session for {username, appId, userId} and return its
+   * id — the exact login-flow `sessionsStorage.getMatching(...) else
+   * generate(...)` behaviour, injected so this module stays free of
+   * storage-layer imports. The returned id becomes the PAT token.
    */
-  mintSession: (username: string, appId: string) => Promise<string>;
+  mintSession: (username: string, appId: string, userId: string) => Promise<string>;
 };
 
 type PeerResult = { ok: boolean; status: number; body: unknown };
@@ -121,7 +121,7 @@ async function handleIssueToken (deps: IssueTokenDeps, params: {
   }
 
   const appId = delegateAppId(delegate);
-  const token = await deps.mintSession(params.bUsername, appId);
+  const token = await deps.mintSession(params.bUsername, appId, params.bUserId);
 
   const clientDataDelegation = {
     kind: C.CLIENTDATA_KIND.DELEGATE_PAT,

@@ -177,9 +177,13 @@ class UsersRepository {
 
   /**
    * Release an alias previously reserved with {@link mintAlias} — reverses all
-   * three writes. No-op-safe for missing rows.
+   * three writes. No-op-safe for missing rows. Releases nothing unless the name
+   * resolves, on this core, to `ownerUserId` as one of its aliases: never
+   * another user's username or alias, never a name nobody reserved.
    */
-  async releaseAlias (alias: string): Promise<void> {
+  async releaseAlias (alias: string, ownerUserId: string): Promise<void> {
+    const aliases = await this.usersIndex.getAliasesForId(ownerUserId);
+    if (!aliases.includes(alias)) return;
     await this.platform.deleteUserUniqueField('alias', alias);
     await this.usersIndex.deleteAlias(alias);
     if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
@@ -337,8 +341,8 @@ class UsersRepository {
     return userAccountEvents[0].content;
   }
 
-  async createSessionForUser (username: string, appId: string, transactionSession: unknown) {
-    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
+  async createSessionForUser (username: string, appId: string, transactionSession: unknown, userId?: string) {
+    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.sessionsStorage.generate({ username, appId, userId }, { transactionSession }, cb));
   }
 
   async createPersonalAccessForUser (userId: string, token: string, appId: string, transactionSession: unknown) {
@@ -439,7 +443,7 @@ class UsersRepository {
       if (withSession &&
                 this.validateAllStorageObjectsInitialized() &&
                 user.appId != null) {
-        const token = await this.createSessionForUser(user.username, user.appId as string, localTransaction.transactionSession) as string;
+        const token = await this.createSessionForUser(user.username, user.appId as string, localTransaction.transactionSession, user.id) as string;
         const access = await this.createPersonalAccessForUser(user.id, token, user.appId as string, localTransaction.transactionSession) as { id: string; token: string };
         accessId = access?.id;
         user.token = access.token;

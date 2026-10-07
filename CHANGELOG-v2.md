@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+**Upgrade promptly: this release carries security fixes.** No configuration change is needed.
+
+### MFA
+
+- **Security.** SMS MFA in `single` mode: the pending code is shared by the API workers and
+  `mfa.verify` / `mfa.confirm` refuse unless that exact code is sent. Before, a verify could pass
+  without the code. Deployments running TOTP or SMS `challenge-verify` were not concerned. Side effect
+  of the fix: a correct code is no longer refused when the verify reaches another worker.
+- **Security.** `mfa.activate` and `mfa.deactivate` require a personal token from the account's own
+  login: a delegated personal access (account delegation) gets `403`
+  `delegation-genuine-login-required`, so a delegate can no longer turn the owner's MFA off or replace
+  it.
+
+### Accesses
+
+- **Security.** The `alias` of an access is set by the server only (`randomAlias: true`); an `alias`
+  in `accesses.create` is refused with `403`. Deleting an access releases its alias only when it is
+  one of the same account's aliases.
+- **Security.** A delegated personal access sees the `token` (and `apiEndpoint`) of itself and of the
+  accesses it created only, in `accesses.get`, `accesses.getOne` (and its history),
+  `accesses.update` and `accesses.checkApp`; the owner's own tokens are not returned to it. An app
+  authorised through a delegated session therefore gets an access of its own (removed with the
+  delegation) instead of the one the owner granted.
+
+### Sessions and account deletion
+
+- **Security.** Login sessions record the account they belong to: a session is reused at login, and
+  accepted, only for that account. A session left under a username by a former owner of that name is
+  never handed to the account that holds the name now. Existing sessions keep working; the next login
+  of each app opens a new one, and a delegate's token issued before the upgrade is replaced once, the
+  next time it is issued.
+- **Security** (deployments that list `personalToken` in `user-account.delete`). A personal token only
+  deletes its own account, whatever the transport (batch calls and socket.io included), and an access
+  that failed its checks (logged out, expired) can no longer delete the account.
+
 ### Docker image: refuses a user data root on the container's own filesystem
 
 - **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that
