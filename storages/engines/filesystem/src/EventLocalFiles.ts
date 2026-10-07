@@ -187,11 +187,24 @@ async function cleanupIfEmpty (dirPath: string): Promise<void> {
 }
 
 function getAttachmentPath (userId: string, eventId: string, fileId: string): string {
-  return path.join(getEventPath(userId, eventId), fileId);
+  return contained(getEventPath(userId, eventId), fileId);
 }
 
 function getEventPath (userId: string, eventId: string): string {
-  return path.join(getUserPath(userId), eventId);
+  return contained(getUserPath(userId), eventId);
+}
+
+/**
+ * `base/segment`, refused unless it resolves strictly inside `base`: an id is
+ * a single path segment, never a way to reach a sibling or parent directory.
+ */
+function contained (base: string, segment: string): string {
+  const resolvedBase = path.resolve(base);
+  const target = path.resolve(resolvedBase, segment);
+  if (typeof segment !== 'string' || segment === '' || path.dirname(target) !== resolvedBase) {
+    throw new Error('Invalid attachment path segment: ' + JSON.stringify(segment));
+  }
+  return target;
 }
 
 function getUserPath (userId: string): string {
