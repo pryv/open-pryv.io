@@ -2,6 +2,99 @@
 
 ## Unreleased
 
+**Upgrade promptly: this release carries security fixes, and some need operator attention before
+the restart.** Read "Configuration" and "Multi-core" below. Before restarting each core on the new
+code: run `node bin/check-config.js` (with your `--config`), and on multi-core platforms
+`node bin/mail.js templates validate`; after upgrading, see "Operator tools".
+
+### Configuration: the production layer carries deployment-neutral settings only (BREAKING)
+
+- `config/production-config.yml` (added under your override when the server runs with
+  `NODE_ENV=production` and no `--config`, as the Docker image does) no longer carries
+  platform-specific values. If your deployment relied on it, set these in your own override or
+  environment before upgrading: `auth.adminAccessKey`, `auth.filesReadTokenSecret`,
+  `auth.trustedApps`, `auth.passwordResetPageURL` (unless password-reset mail is off),
+  `auth.emailVerificationPageURL` (otherwise email verification stays off, with a boot warning), and
+  `services.email` (the Mandrill default is gone; the default is `in-process`, which needs
+  `services.email.smtp.host`). `bin/check-config.js` reports which base layer the server adds.
+- **Security.** `auth.trustedApps` is required (boot refuses a missing, empty or unparsable value) and
+  is matched as origins: scheme, host and port are compared, paths are ignored, and `*` is only
+  accepted as a whole leading label (`https://*.example.com` matches its subdomains, never
+  `example.com.other.net`). A trailing `*` from older configs still works and means "any port".
+
+### Accounts and sessions
+
+- **Security.** Password reset: requests are throttled (per account 1 per minute and 5 per day, per
+  client address 20 per hour; `429 too-many-attempts` with `Retry-After`); reset tokens are stored
+  hashed, are single use, one per account (a new request invalidates the previous link; a reset
+  refused by the password rules needs a new link); links mailed before the upgrade must be requested
+  again. A completed reset revokes every personal session and personal access of the account
+  (including delegated ones; apps sign in again); a password change revokes the account's other
+  personal sessions and pending reset links.
+- **Security.** Logs: error logs keep the request body's keys and a few harmless values, never
+  credential values; credential keys are masked wherever they are logged, and URL redaction covers
+  current access tokens and one-time link tokens. Check the retention of logs written by earlier
+  releases (they may hold reset tokens or passwords from refused requests).
+- **Security.** Cached accesses expire after `caching.accessMaxAgeSeconds` (new, default 60 s); a
+  worker follows a user's invalidations before reading its accesses, keeps following them across
+  stream writes and flushes its caches when the pub/sub connection comes back; account deletion
+  always broadcasts its cache invalidation. The socket.io revalidation reads storage.
+- **Security.** A personal session with no account is refused; a refused access keeps its id in the
+  audit trail and in `Pryv-Access-Id`.
+- `backloop` is a reserved username (it was a test-only registration path); invitation tokens are
+  claimed atomically (one registration per token) and given back if the registration fails;
+  `POST /access/invitationtoken/check` answers errors instead of stopping the worker.
+
+### Accesses and events
+
+- **Security.** A shared access created or widened by an app (or a shared access) carries the
+  creator's narrower rules for the sub-streams it covers, so it never reaches more than its creator;
+  those entries appear in the created access's `permissions`. `bin/access-scope-audit.js` reports
+  existing accesses that reach further (read only).
+- **Security.** Reads of a single event (`events.getOne`, attachments, previews, HF series) apply the
+  exclusions `events.get` applies: an app or shared token gets `403` for an event it cannot list.
+- **Security.** App and shared tokens can no longer update events of the CMC inbox or internal
+  streams, move events into or out of them, change a CMC event type, nor create internal events
+  outside their own capability's responses stream (`403`, `data.id: 'cmc-protected-event-write'`);
+  CMC content is validated, and the counterparty sender re-stamped, on update as on create.
+
+### MFA
+
+- **Security.** `mfa.verify` and `mfa.confirm` reserve their attempt on the MFA session and on the
+  account before the code is checked: parallel attempts cannot exceed the limits; an attempt that
+  keeps losing to concurrent ones is refused with `429`.
+
+### Admin key and multi-core (BREAKING for some multi-core setups)
+
+- **Security.** The admin key is compared in constant time everywhere, is read only from the
+  `Authorization` header on `DELETE /users/:username` (no `?auth=`, Bearer or Basic form), and failed
+  attempts are logged with the client address. `/reg/records` answers `404` to a missing or wrong key,
+  like the other admin routes.
+- **Security.** rqlite's HTTP API binds to loopback (`127.0.0.1:<port>`) on every core; set
+  `storages.engines.rqlite.httpBindAddr` to expose it (boot warning). Anything reaching a peer's
+  rqlite HTTP port stops working; cores never need it (writes and reads reach the leader over Raft).
+  `bootstrap.js promote-core` now needs `--target-applied-index <n>` (read on the target with
+  `bootstrap.js applied-index`) or `--force`. A multi-core core without
+  `storages.engines.rqlite.tls` logs a boot warning (a later release will refuse it).
+- **Security.** Mail templates stored in the platform database are validated against a safe subset
+  before use (invalid ones are skipped and listed at boot; `bin/mail.js templates validate` lists
+  them); resource inlining is off.
+- **Security.** Core ids must match `[a-z0-9][a-z0-9-]*` and core URLs must be https origins
+  (`cluster.allowInsecurePeerUrl` for development only); core-to-core calls time out and refuse
+  redirects; `/system/users/validate` refuses an unknown or malformed core.
+- **Security.** Joining a core: the joiner stages the bundle's files and moves them into place only
+  after an accepted acknowledgement, which is bound to the joiner's certificate fingerprint and
+  checked before the token is consumed (every refusal is `401 ack-refused`, the reason is logged on
+  the issuing core). `new-core` refuses an existing id unless `--replace`. A delivered bundle plus its
+  passphrase is equivalent to the admin key plus a cluster identity, and `revoke-token` does not undo
+  it: see SINGLE-TO-MULTIPLE.md, "If a bundle may have been exposed".
+
+### Operator tools
+
+- `node bin/platform-backloop-cleanup.js` (report, then `--apply`): removes platform rows a former
+  test-only registration path left (once per platform).
+- `node bin/access-scope-audit.js [--user u]`: reports accesses that reach further than their creator.
+
 ### Events: integrity verifies with a fractional duration
 
 - **Fix.** An event created or updated with a fractional `duration` (e.g. `0.1` with a `time` around
