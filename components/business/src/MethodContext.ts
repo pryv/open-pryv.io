@@ -487,8 +487,15 @@ class MethodContext {
     if (access.type !== ACCESS_TYPE_PERSONAL) { return; }
     // assert: type === 'personal'
     const token = access.token;
-    const session = await fromCallback((cb: NodeCallback) => storage.sessions.get(token, cb));
+    const session = await fromCallback((cb: NodeCallback) => storage.sessions.get(token, cb)) as { username?: unknown } | null;
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
+    // A personal access is only as good as a session opened for this same
+    // account: a session of another user (or a token set on the access by
+    // other means) does not make it valid.
+    const sessionUsername = session.username;
+    if (typeof sessionUsername === 'string' && this.user?.username != null && sessionUsername !== this.user.username) {
+      throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
+    }
     // Keep the session alive (don't await, see below)
     storage.sessions.touch(token, () => null);
   }
