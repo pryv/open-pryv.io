@@ -172,7 +172,7 @@ class MetadataLoader {
         // Because user was retrieved above.
         if (user == null) { throw new Error('AF: user != null'); }
         if (event == null) { return returnValueCallback(errors.unknownResource('event', eventId)); }
-        const serieMetadata = new SeriesMetadataImpl(access, user, event as EventModel);
+        const serieMetadata = new SeriesMetadataImpl(access, user, event as EventModel, methodContext.getTrackingAuthorId());
         serieMetadata.init().then(() => {
           returnValueCallback(null, serieMetadata);
         }, (error: unknown) => {
@@ -213,8 +213,12 @@ class SeriesMetadataImpl {
   _access: AccessModel;
 
   _event: EventModel;
-  constructor (access: AccessModel, user: UserModel, event: EventModel) {
+
+  /** Who writes through this series: the access id (plus caller id), never the credential. */
+  authorId: string;
+  constructor (access: AccessModel, user: UserModel, event: EventModel, authorId: string) {
     this._access = access;
+    this.authorId = authorId;
     this._event = event;
     this.userName = user.username;
     this.eventId = event.id;

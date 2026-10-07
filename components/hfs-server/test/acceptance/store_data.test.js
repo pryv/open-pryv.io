@@ -534,6 +534,16 @@ describe('[SDHF] Storing data in a HF series', function () {
             const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
             assert.strictEqual(calls.length >= 1, true);
           });
+          it('[GU3M] records the series metadata author, never the request token', async () => {
+            await storeData(produceData()).expect(200);
+            const calls = await server.process.sendToChild('getMetadataUpdaterCalls');
+            const entries = calls.flatMap((c) => c.entries);
+            assert.ok(entries.length >= 1);
+            for (const e of entries) {
+              assert.strictEqual(e.author, 'mocked-access-id');
+              assert.notStrictEqual(e.author, 'AUTH_TOKEN');
+            }
+          });
         });
       });
       describe('[SD35] with auth failure', function () {
