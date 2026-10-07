@@ -222,7 +222,21 @@ class TokenStore {
   _save (store: StoreData) {
     fs.mkdirSync(path.dirname(this.path), { recursive: true });
     const tmp = this.path + '.tmp-' + process.pid + '-' + Date.now();
-    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
+    // Exclusive create: never write through an entry already at the temp path
+    // (a link planted in a directory another user can write to).
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeSync(fd, JSON.stringify(store, null, 2));
+      // The issuing CLI may run as root (e.g. `docker exec` into a container
+      // whose server runs as an unprivileged user): hand the file to the owner
+      // of its directory, so the server can still consume the token.
+      if (process.getuid?.() === 0) {
+        const dirStat = fs.statSync(path.dirname(this.path));
+        if (dirStat.uid !== 0) fs.fchownSync(fd, dirStat.uid, dirStat.gid);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, this.path);
   }
 }

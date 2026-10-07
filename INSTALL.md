@@ -613,6 +613,9 @@ Notes:
   mount — encrypt those operator-side / with bucket SSE.
 - Key custody, rotation, and disaster recovery (key lost = data lost) are covered in
   the companion's [`docs/OPERATING.md`](https://github.com/pryv/container-encrypted-volume/blob/master/docs/OPERATING.md).
+- The volume is unlocked and mounted as root; the server then runs as `node` like the
+  stock image (see **Container user**), and the mount, under `/app/var-pryv`, is
+  handed to `node` at each start.
 
 ## Docker / Dokku deployment
 
@@ -710,6 +713,24 @@ docker run \
 
 The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
 
+The image is published for `linux/amd64` and `linux/arm64` under the same tag; `docker pull` picks the host's architecture. The encryption-at-rest variant (`pryvio/open-pryv.io-encrypted`) is `linux/amd64` only for now.
+
+#### Container user
+
+The server runs as the image's unprivileged `node` user (uid/gid 1000), not as root. The container still starts as root: the entrypoint first hands the data directories to `node`, then drops to `node`, keeping only `CAP_NET_BIND_SERVICE` so ports 53, 80 and 443 still bind. This covers the normal boot (no arguments) and `node bin/master.js …` (the form the wizard's `run-pryv.sh` uses); `init`, `check-config`, `config-to-env` and other pass-through commands keep running as root, because they write into operator mounts.
+
+- **Data directories handed to `node`** at each start: `/app/var-pryv`, `/app/data`, `/app/pryv/data`, `/etc/pryv/tls` and `/var/lib/pryv` (each only if present), plus any directory listed in `PRYV_OWNED_DIRS` (space-separated). Only entries not already owned by `node` change, so after the first start this is a walk of the trees (an inode walk, proportional to the number of files; start with `--user 1000:1000` to skip it once everything belongs to uid 1000). Symbolic links inside them are changed, never followed. Set `PRYV_OWNED_DIRS` (directories holding only Pryv data: never `/` or a system directory) when `override-config.yml` puts data (`storages.engines.*` paths, `letsEncrypt.tlsDir`, `http.ssl.*`, `logs.*.path`, `cluster.tokens.path`) anywhere else. The cluster CA (`/etc/pryv/ca`) is not handed over: only `bin/bootstrap.js` uses it.
+- **Files the server only reads** must be readable by uid 1000: `override-config.yml` and a custom `http.ssl.keyFile` mounted from the host with mode 0600 and a root owner are not. Make them readable (or list their directory in `PRYV_OWNED_DIRS`).
+- **Upgrading** from an image that ran as root needs no action for the layouts above: files written by the earlier image are root-owned, and the first start of the new image hands them to `node` (the boot log reports `docker-entrypoint: N path(s) under <dir> handed to user node`). Back up the data directories before the upgrade as usual. On the host, the files then belong to uid 1000. `letsEncrypt.onRotateScript` now runs as `node` too.
+- **One-shot tools in a running container** (`docker exec … node bin/backup.js`, `bin/hfs-author-scrub.js`, …): run them as `node` (`docker exec -u node …`) so the files they write stay readable by the server. A file a root `docker exec` leaves in a data directory is handed back to `node` at the next start. `bin/bootstrap.js` is the exception: it writes the cluster CA, so it runs as root; the join tokens it writes are handed to the owner of their directory, so the running server can consume them.
+- **Joining a cluster** (`node bin/master.js --bootstrap …`): the entrypoint prepares `/app/config/override-config.yml` for the server to write. With `--bootstrap-config-dir` or `--bootstrap-tls-dir` pointing elsewhere, that directory must be writable by uid 1000.
+- **Started through a shell** (`sh -c "node bin/master.js …"`, as some PaaS start commands do), the entrypoint cannot recognise the server and it keeps running as root; the boot log then shows `docker-entrypoint: WARNING …`. Start it as `node bin/master.js …`.
+- **Kubernetes:** `runAsNonRoot: true` refuses the image (it starts as root); either set `runAsUser: 1000`, `runAsGroup: 1000` and `fsGroup: 1000` (the entrypoint then changes nothing), or keep the default user with `allowPrivilegeEscalation: false`, which works with the drop.
+- **`--user 1000:1000`** starts the server as `node` directly; the entrypoint then changes nothing, so the data directories must already belong to uid 1000.
+- **`--cap-drop ALL`**: the entrypoint needs `CHOWN`, `DAC_OVERRIDE` (to walk directories that `node` created with mode 0700), `SETUID` and `SETGID` to prepare and drop; add `NET_BIND_SERVICE` too when the server binds a port below 1024 (Docker lets unprivileged users bind low ports by default, through `net.ipv4.ip_unprivileged_port_start=0`, except with `--network host`).
+- **`--read-only`** root filesystem: a `--tmpfs /app/var-pryv` mount is root-owned when created and is handed to `node` at start like the other directories; keep `--tmpfs /tmp` too (uploads and mail templates are staged there).
+- `PRYV_RUN_AS_ROOT=true` keeps the server on root, as images before this change did. Not recommended: it exists for setups not yet adapted.
+
 When running with `letsEncrypt.enabled: true` (master serves HTTPS itself
 instead of being fronted by a reverse proxy), publish 443 (HTTP-01 also
 needs 80, DNS-01 doesn't):
@@ -772,7 +793,7 @@ sudo setcap 'cap_net_bind_service=+ep' "$(which node)"
 sudo getcap "$(which node)"   # expect: cap_net_bind_service=ep
 ```
 
-Without the cap, the embedded DNS server cannot bind and `master.js` fails fast: it exits with `Master startup failed: Error: DNS server failed to bind udp <ip>:53: …` (the same happens when another process already holds UDP or TCP 53). The cap covers both the UDP and the TCP listener. (Docker images don't need this: `node` runs as PID 1 / root inside the container.)
+Without the cap, the embedded DNS server cannot bind and `master.js` fails fast: it exits with `Master startup failed: Error: DNS server failed to bind udp <ip>:53: …` (the same happens when another process already holds UDP or TCP 53). The cap covers both the UDP and the TCP listener. (Docker images don't need this: the entrypoint keeps `CAP_NET_BIND_SERVICE` when it drops to the `node` user, see **Container user** below.)
 
 **Native HTTPS (ports 80 / 443)** when running ACME directly inside the
 container (`letsEncrypt.enabled: true`) needs the same publishing dance —

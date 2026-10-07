@@ -261,5 +261,22 @@ describe('[TOKENSTORE] TokenStore', () => {
       const s = new TokenStore({ path: storePath });
       assert.throws(() => s.listActive(), /unsupported version 99/);
     });
+
+    it('[TKSL1] refuses to write through an entry already at its temp path', () => {
+      const target = path.join(tmpDir, 'target.key');
+      fs.writeFileSync(target, 'precious');
+      const now = 1700000000000;
+      const realNow = Date.now;
+      Date.now = () => now;
+      try {
+        fs.symlinkSync(target, storePath + '.tmp-' + process.pid + '-' + now);
+        const s = new TokenStore({ path: storePath });
+        assert.throws(() => s.mint({ coreId: 'core-b', now }), { code: 'EEXIST' });
+      } finally {
+        Date.now = realNow;
+      }
+      assert.equal(fs.readFileSync(target, 'utf8'), 'precious');
+      assert.equal(fs.existsSync(storePath), false);
+    });
   });
 });

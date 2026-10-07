@@ -38,6 +38,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
       "https://github.com/rqlite/rqlite/releases/download/v${RQLITE_VERSION}/rqlite-v${RQLITE_VERSION}-linux-${ARCH}.tar.gz" && \
     echo "${RQLITE_SHA256}  /tmp/rqlite.tar.gz" | sha256sum -c - && \
     mkdir -p /app/bin-ext /app/var-pryv/rqlite-data && \
+    chown node:node /app/var-pryv /app/var-pryv/rqlite-data && \
     tar xzf /tmp/rqlite.tar.gz -C /tmp --strip-components=1 && \
     cp /tmp/rqlited /app/bin-ext/ && \
     chmod +x /app/bin-ext/rqlited && \
@@ -95,7 +96,17 @@ RUN if [ "${IMAGE_TAG}" != "dev" ]; then \
 # know which container ports may be published.
 EXPOSE 80 443 3000 3001 4000 53/udp 53/tcp
 
-# Entry-point dispatcher: no args → normal master.js boot;
+# The server runs as the image's unprivileged `node` user (uid/gid 1000). The
+# image itself stays on root (no USER directive) because the entrypoint first
+# hands the data directories to `node` (volumes from earlier images were
+# written by root), then drops to `node` with only CAP_NET_BIND_SERVICE, via
+# util-linux `setpriv`. The writable directories of a mount-less container are
+# prepared here so a fresh container has nothing to change.
+RUN command -v setpriv && \
+    mkdir -p /app/data /etc/pryv/tls /var/lib/pryv && \
+    chown -R node:node /app/data /app/var-pryv /etc/pryv/tls /var/lib/pryv
+
+# Entry-point dispatcher: no args → normal master.js boot (as `node`);
 # `init <path>` → interactive config wizard; `check-config <path>` → validate
 # existing config; anything else → exec passthrough.
 ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
