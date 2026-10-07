@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MAX=332   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
+MAX=331   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
           # converting 10 oauth2 files to real ESM imports. The remaining oauth2
           # shims are legitimate: lazy in-function require() (init-order safety),
           # bcrypt (ships no type declarations), or files whose typed imports
@@ -32,6 +32,7 @@ MAX=332   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
           # via the established createRequire convention (delegationAccounts.ts also
           # avoids a business/api-server circular import). Convert down where
           # feasible during the TS-migration.
+          # 332->331: measured 331 on master (2026-10-07), locked in.
 
 COUNT=$(grep -rl --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \
