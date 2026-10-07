@@ -588,3 +588,56 @@ describe('[SSOCFG] config-validation third-party sign-in (SSO)', () => {
     assert.strictEqual(problems.length, 0, 'empty callbackBaseURL is allowed (derived from public URL)');
   });
 });
+
+describe('[CVWS] config-validation weak secrets', () => {
+  const { checkRequiredWhen } = require('../../../config/plugins/config-validation.js');
+  function fakeConfig (map) {
+    return { get: (key) => map[key] };
+  }
+  const allHappy = {
+    'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: true },
+    'services:email:resetPassword': true,
+    'auth:passwordResetPageURL': 'https://example.com/reset',
+    'auth:emailVerificationPageURL': 'https://example.com/verify',
+    'auth:adminAccessKey': 'some-real-admin-key',
+    'auth:filesReadTokenSecret': 'some-real-secret',
+    'letsEncrypt:enabled': false
+  };
+
+  it('[CVWS1] a shipped placeholder secret never boots, whatever the environment', () => {
+    for (const key of ['auth:adminAccessKey', 'auth:filesReadTokenSecret']) {
+      for (const value of ['OVERRIDE ME', 'override me', 'CHANGEME', 'change-me']) {
+        const problems = [];
+        checkRequiredWhen(fakeConfig({ ...allHappy, [key]: value }), problems);
+        const p = problems.find((p) => p.payload && p.payload.path === key);
+        assert.ok(p, `expected a problem for ${key} = ${value}`);
+        assert.strictEqual(p.payload.weakSecret, true);
+        assert.ok(!p.message.includes(value), 'the message does not echo the value');
+      }
+    }
+  });
+
+  it('[CVWS2] in production, a secret shorter than the minimum is refused; a long one passes', () => {
+    const { MIN_SECRET_LENGTH } = require('../../../config/plugins/config-validation.js');
+    const saved = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      let problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, 'auth:adminAccessKey': 'x'.repeat(MIN_SECRET_LENGTH - 1) }), problems);
+      assert.ok(problems.find((p) => p.payload && p.payload.path === 'auth:adminAccessKey' && p.payload.weakSecret));
+      problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, 'auth:adminAccessKey': 'a1'.repeat(16), 'auth:filesReadTokenSecret': 'b2'.repeat(16) }), problems);
+      assert.strictEqual(problems.length, 0, JSON.stringify(problems));
+    } finally {
+      process.env.NODE_ENV = saved;
+    }
+  });
+
+  it('[CVWS3] outside production, a short (non-placeholder) secret is accepted', () => {
+    const { weakSecretReason } = require('../../../config/plugins/config-validation.js');
+    assert.strictEqual(weakSecretReason('short-key'), null);
+    assert.match(weakSecretReason('short-key', { production: true }), /shorter than/);
+    assert.match(weakSecretReason('OVERRIDE ME'), /placeholder/);
+    assert.strictEqual(weakSecretReason(undefined), null);
+  });
+});

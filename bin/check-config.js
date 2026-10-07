@@ -31,6 +31,9 @@ try {
   process.exit(1);
 }
 
+// Same secret rule as the boot validation, so the two can never disagree.
+const { weakSecretReason } = require('../config/plugins/config-validation.js');
+
 const configPath = process.argv[2];
 if (!configPath) {
   console.error('Usage: check-config <config-path>');
@@ -76,8 +79,13 @@ for (const field of REQUIRED_SERVICE_FIELDS) {
 
 // auth.* always-required secrets
 for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
-  if (isMissingOrSentinel(get(`auth.${key}`))) {
+  const value = get(`auth.${key}`);
+  if (isMissingOrSentinel(value)) {
     problems.push(`auth.${key} missing or unset`);
+  } else if (weakSecretReason(value) != null) {
+    problems.push(`auth.${key} ${weakSecretReason(value)}: set a long random value of your own`);
+  } else if (weakSecretReason(value, { production: true }) != null) {
+    warnings.push(`auth.${key} ${weakSecretReason(value, { production: true })}: a production core refuses to boot with it`);
   }
 }
 
