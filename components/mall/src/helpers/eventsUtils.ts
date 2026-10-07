@@ -65,6 +65,23 @@ function endTimeFromStoreToDuration (eventData: EventLike): EventLike {
   }
   return eventData;
 }
+/**
+ * Sets `duration` to the value a store will give back: stores keep
+ * `endTime = time + duration` and read `duration = endTime - time`, and with
+ * fractional numbers that float round trip changes the value (0.1 at a time
+ * around 1.7e9 comes back as 0.0999999046...). The integrity hash must be
+ * computed over what is read back, so call this before hashing. A duration
+ * that comes back as 0 is read back as absent, so it is removed.
+ */
+function normaliseDurationToStored (eventData: Partial<EventLike>): void {
+  if (typeof eventData.time !== 'number' || typeof eventData.duration !== 'number') return;
+  const stored = (eventData.time + eventData.duration) - eventData.time;
+  if (stored === 0) {
+    delete eventData.duration;
+  } else {
+    eventData.duration = stored;
+  }
+}
 // state
 function stateToStore (eventData: EventLike) {
   eventData.trashed = eventData.trashed === true;
@@ -226,4 +243,4 @@ class ConvertEventFromStoreStream extends Transform {
     callback();
   };
 }
-export { convertEventToStore, convertEventFromStore, ConvertEventFromStoreStream };
+export { convertEventToStore, convertEventFromStore, ConvertEventFromStoreStream, normaliseDurationToStored };

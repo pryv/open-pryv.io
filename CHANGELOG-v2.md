@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Events: integrity verifies with a fractional duration
+
+- **Fix.** An event created or updated with a fractional `duration` (e.g. `0.1` with a `time` around
+  1.7e9) carried an `integrity` hash that never verified: the stored end time cannot hold
+  `time + duration` exactly, so the duration read back differs slightly (`0.0999999046…`) from the one
+  that was hashed. The hash is now computed over the duration as it is read back. The value returned
+  is unchanged (it already was the read-back one). Events written by earlier releases keep their
+  failing hash until rewritten.
+
 ### Let's Encrypt: the contact email is optional
 
 - **Change.** `letsEncrypt.email` is no longer required when `letsEncrypt.enabled` is true: without
