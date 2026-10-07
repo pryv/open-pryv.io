@@ -24,12 +24,19 @@ just install          # npm install across all workspaces
 
 ## Configuration
 
-YAML config files, loaded in order (last wins):
+Configuration layers, in order (last wins):
 
 1. `config/default-config.yml`
-2. `config/{NODE_ENV}-config.yml`
-3. `--config /path/to/override.yml`
-4. `--key:path=value` on command line
+2. built-in path defaults (`var-pryv/…` under the install directory)
+3. **either** `--config /path/to/config.yml` **or**, when no `--config` is given,
+   `config/{NODE_ENV}-config.yml`. `--config` replaces the `NODE_ENV` file, it does not stack on
+   it. The Docker image sets `NODE_ENV=production`, so without `--config` it layers
+   `config/production-config.yml` under your override.
+4. environment variables (`SECTION__KEY=value`)
+5. `--key:path=value` on the command line
+6. `config/override-config.yml`
+
+Values are taken literally: nothing expands `${VAR}` inside the YAML files.
 
 ### Quickest path: `docker run … init` (interactive wizard)
 
@@ -595,7 +602,7 @@ docker run --privileged \
 ```
 
 Then relocate the data roots onto the encrypted mount in your `override-config.yml`
-(they support `${ENV}` interpolation; do **not** reuse `/app/var-pryv/rqlite-data`,
+(absolute paths, no variable expansion; do **not** reuse `/app/var-pryv/rqlite-data`,
 which is a declared `VOLUME`):
 
 ```yaml
@@ -625,10 +632,12 @@ The container writes to two distinct roots. Only these need to survive restart:
 
 | Container path | Purpose | Must persist? |
 |---|---|---|
-| `/app/data` | User files, attachments, previews, audit SQLite (`PRYV_DATADIR`) | **YES** |
+| `/app/data` | Your data root: per-user SQLite databases, attachments and SQLite audit / series (`storages.engines.sqlite.path`), previews (`storages.engines.filesystem.previewsDirPath`), and the error log if you want it kept (`logs.file.path`). **The server does not use `/app/data` unless your `override-config.yml` says so** (snippet under "Docker (plain)" below). | **YES** |
 | `/app/var-pryv/rqlite-data` | PlatformDB — rqlite Raft log + SQLite snapshot | **YES** |
 | `/app/bin-ext/rqlited` | rqlited binary baked into the image | **NO** — never mount over |
 | `/app/config/override-config.yml` | Operator-owned overrides | YES (or bake into image) |
+
+Inside the image the server refuses to start when `storages.engines.sqlite.path` would sit on the container's own filesystem (or on a tmpfs) while an engine writes durable data there (SQLite base, audit or series storage, or the filesystem attachment store); `PRYV_EPHEMERAL_DATA_OK=true` lifts this for a throwaway container. The check only sees whether the path is on a mount: it cannot tell a named volume from an anonymous one or a Kubernetes `emptyDir`, so choose durable storage yourself.
 
 The Dockerfile declares `VOLUME ["/app/var-pryv/rqlite-data"]` so this is the default persistent path for docker operators. **Do NOT bind-mount `/app/var-pryv` wholesale** — earlier image builds placed the rqlited binary at `/app/var-pryv/rqlite-bin/rqlited`, and a stray broad mount used to shadow it. The binary is now at `/app/bin-ext/rqlited`, outside any data path, so the trap is avoided by default.
 
@@ -698,15 +707,25 @@ docker run -d --name pryvio --read-only \
 
 ### Docker (plain)
 
-If you generated the config + launcher via the wizard (see **Configuration → Quickest path** above), just run the sibling `run-pryv.sh`. Otherwise, the manual form:
+If you generated the config + launcher via the wizard (see **Configuration → Quickest path** above), just run the sibling `run-pryv.sh`. Otherwise, the manual form. The image sets `NODE_ENV=production` itself; the mounts below only hold data once your `override-config.yml` points the data paths at them:
+
+```yaml
+# override-config.yml (in addition to the minimal production config above)
+storages:
+  engines:
+    sqlite:     { path: /app/data/users }            # per-user DBs, attachments, SQLite audit + series
+    filesystem: { previewsDirPath: /app/data/previews }
+logs:
+  file: { active: false }     # console only; or: { path: /app/data/logs/api-server.errors.log }
+```
+
+(`rqlite.dataDir` keeps its default, `/app/var-pryv/rqlite-data`, the declared `VOLUME` mounted below.)
 
 ```bash
 docker run \
   -v /host/pryv/data:/app/data \
   -v /host/pryv/rqlite-data:/app/var-pryv/rqlite-data \
   -v /host/pryv/override-config.yml:/app/config/override-config.yml:ro \
-  -e NODE_ENV=production \
-  -e PRYV_DATADIR=/app/data \
   -p 3000:3000 \
   pryvio/open-pryv.io:2.0.0-rc.2
 ```
@@ -761,9 +780,9 @@ dokku storage:mount open-pryv-io \
   /var/lib/dokku/data/storage/open-pryv-io/rqlite-data:/app/var-pryv/rqlite-data
 dokku storage:mount open-pryv-io \
   /var/lib/dokku/data/storage/open-pryv-io/config/override-config.yml:/app/config/override-config.yml
-
-dokku config:set open-pryv-io NODE_ENV=production PRYV_DATADIR=/app/data PRYV_LOGSDIR=/app/data/logs
 ```
+
+The image sets `NODE_ENV=production`; the override must point the data paths at `/app/data` with the snippet shown under "Docker (plain)" above.
 
 **After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. An `wget http://127.0.0.1:3000/reg/service/info` inside the container will succeed throughout — the symptom is only visible externally.
 

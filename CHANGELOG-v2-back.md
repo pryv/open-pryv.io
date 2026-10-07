@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## User data root persistence check
+
+- `config-validation.js` `checkUserDataRootPersistence` (exported, tests [DRPC]): only when
+  `PRYV_IMAGE_TAG` is set (baked into every image build) and `PRYV_EPHEMERAL_DATA_OK` is not `true`,
+  and only when an engine writes under `storages.engines.sqlite.path` (sqlite base / audit / series,
+  filesystem file store). It reads `/proc/self/mountinfo` (unreadable: skipped), takes the longest
+  mount point covering the resolved path on a path-component boundary (octal escapes decoded, a
+  later line wins at the same point) and refuses when that is `/` or a `tmpfs`.
+- `production-config.yml` drops its `storages` block and the `${PRYV_LOGSDIR}` log path (now
+  `var-pryv/logs/api-server.errors.log`); `.gitignore` drops the literal-directory guard for them.
+  INSTALL.md documents the real layer order (`--config` replaces the `NODE_ENV` file).
+
 ## Release CI: multi-arch image, built per architecture
 
 - The tag-push `docker` job is split in two. `docker-build` runs once per architecture on a native

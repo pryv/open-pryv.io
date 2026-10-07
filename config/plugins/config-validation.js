@@ -10,6 +10,8 @@
  * Should validate (or not) the configuration and display appropriate messages
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { getLogger } = require('@pryv/boiler');
 let logger; // initalized at load();
 
@@ -375,6 +377,57 @@ function checkTrustedProxies (config, problems) {
   }
 }
 
+// Inside the published image (PRYV_IMAGE_TAG is baked into it), refuse to boot
+// when the user data root (per-user databases, attachments, SQLite audit and
+// series) would sit on the container's own filesystem or on a tmpfs: it would
+// be lost when the container is recreated. Only the mount the path lands on is
+// checked; a named volume, a bind mount or an anonymous volume all count as
+// mounted. Raw installs never see PRYV_IMAGE_TAG, where "mount point /" is a
+// real disk, so the check must stay behind it.
+function checkUserDataRootPersistence (config, problems, deps = {}) {
+  const env = deps.env || process.env;
+  if (typeof env.PRYV_IMAGE_TAG !== 'string' || env.PRYV_IMAGE_TAG === '') return;
+  if (env.PRYV_EPHEMERAL_DATA_OK === 'true') return;
+  const engines = {
+    base: config.get('storages:base:engine'),
+    file: config.get('storages:file:engine'),
+    audit: config.get('storages:audit:engine'),
+    series: config.get('storages:series:engine')
+  };
+  const usesRoot = engines.base === 'sqlite' || engines.file === 'filesystem' ||
+    engines.audit === 'sqlite' || engines.series === 'sqlite';
+  if (!usesRoot) return;
+  const rootSetting = config.get('storages:engines:sqlite:path');
+  if (typeof rootSetting !== 'string' || rootSetting === '') return;
+  let mountinfo;
+  try {
+    mountinfo = (deps.readMountinfo || (() => fs.readFileSync('/proc/self/mountinfo', 'utf8')))();
+  } catch (err) {
+    logger?.debug('user data root check skipped, mount table unreadable: ' + (err instanceof Error ? err.message : String(err)));
+    return;
+  }
+  const dataRoot = path.resolve(rootSetting);
+  let best = null;
+  for (const line of mountinfo.split('\n')) {
+    if (line === '') continue;
+    const fields = line.split(' ');
+    const separator = fields.indexOf('-', 6);
+    if (fields.length < 5 || separator === -1) continue;
+    const mountPoint = fields[4].replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+    const covers = mountPoint === '/' || dataRoot === mountPoint || dataRoot.startsWith(mountPoint + '/');
+    // On equal length the later line wins: a later mount shadows an earlier one at the same point.
+    if (covers && (best == null || mountPoint.length >= best.mountPoint.length)) {
+      best = { mountPoint, fstype: fields[separator + 1] };
+    }
+  }
+  if (best == null || (best.mountPoint !== '/' && best.fstype !== 'tmpfs')) return;
+  problems.push({
+    message: `user data root 'storages.engines.sqlite.path' (${dataRoot}) is on the container's ephemeral filesystem (${best.mountPoint}, ${best.fstype}): per-user databases, attachments and the SQLite audit log written there are lost when the container is recreated. Point it at a mounted volume, e.g. 'storages.engines.sqlite.path: /app/data/users' with '-v /host/pryv/data:/app/data', or set PRYV_EPHEMERAL_DATA_OK=true for a throwaway container.`,
+    path: ['storages', 'engines', 'sqlite', 'path'],
+    payload: { path: dataRoot, mountPoint: best.mountPoint, fstype: best.fstype, engines }
+  });
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -401,6 +454,7 @@ async function validate (config) {
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
   checkTrustedProxies(config, problems);
+  checkUserDataRootPersistence(config, problems);
 
   return problems;
 }
@@ -542,6 +596,7 @@ module.exports = {
   checkMfaConfig,
   checkHostedSites,
   checkTrustedProxies,
+  checkUserDataRootPersistence,
   isMissingOrSentinel,
   weakSecretReason,
   MIN_SECRET_LENGTH,
