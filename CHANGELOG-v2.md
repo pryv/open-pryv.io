@@ -30,8 +30,14 @@ after upgrading, run `bin/hfs-author-scrub.js` once per core (see "HF series").
 - **Operators:** data written by earlier releases keeps those values until cleaned. After upgrading the
   code, run once per core, before restarting it:
   `node bin/hfs-author-scrub.js --dry-run` (report), then `node bin/hfs-author-scrub.js --revoke`
-  (rewrite the values to access ids, delete the accesses concerned and close their sessions), then
-  restart. Add `--config <your host config>` where the core uses one. The tool prints no credential.
+  (rewrite the values to access ids, then delete the accesses concerned as `accesses.delete` does:
+  sessions closed, their webhooks removed, the access index updated), then restart. Add
+  `--config <your host config>` where the core uses one. With the Docker image, run it inside the
+  running container once it runs the new image (`docker exec <container> node bin/hfs-author-scrub.js
+  --dry-run`, then `--revoke`), then restart the container. The tool prints no credential.
+- The tool rewrites live events only. Event version history (kept when versioning is on) and deleted
+  events whose author `versioning.deletionMode` keeps are not rewritten: revoking the access is what
+  neutralises those values, so use `--revoke`.
 
 ### Event ids and attachment paths
 

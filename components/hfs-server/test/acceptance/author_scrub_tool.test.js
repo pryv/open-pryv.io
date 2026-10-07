@@ -17,6 +17,8 @@ const { databaseFixture } = require('test-helpers');
 const { getMall } = require('mall');
 const storage = require('storage');
 const { fromCallback } = require('utils');
+const { getPlatform } = require('platform');
+const { getAccessIndex } = require('platform/src/accessIndex.ts');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
@@ -28,7 +30,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 describe('[HAST] hfs-author-scrub tool', function () {
   this.timeout(120_000);
   let pryv, mall, storageLayer;
-  let userId, streamId, eventId, accessId, accessToken, cleanEventId;
+  let userId, streamId, eventId, accessId, accessToken, cleanEventId, webhookId;
 
   before(async function () {
     const database = await produceStorageConnection();
@@ -41,10 +43,12 @@ describe('[HAST] hfs-author-scrub tool', function () {
     cleanEventId = cuid();
     accessId = cuid();
     accessToken = cuid();
+    webhookId = cuid();
     const user = await pryv.user(userId, {});
     await user.stream({ id: streamId });
     await user.access({ id: accessId, token: accessToken, type: 'personal' });
     await user.session(accessToken);
+    await user.webhook({ id: webhookId }, accessId);
     await user.event({ id: eventId, type: 'series:mass/kg', streamIds: [streamId], modifiedBy: accessToken + ' caller-x' });
     await user.event({ id: cleanEventId, type: 'note/txt', content: 'x', streamIds: [streamId], modifiedBy: accessId });
   });
@@ -88,13 +92,19 @@ describe('[HAST] hfs-author-scrub tool', function () {
     assert.ok((await liveAccessIds()).includes(accessId), 'nothing left to match, nothing revoked');
   });
 
-  it('[HAST4] --revoke deletes the access whose token was stored, and closes its session', async function () {
+  it('[HAST4] --revoke deletes the access like accesses.delete: session, webhooks, index row marked deleted', async function () {
     await mall.events.update(userId, { ...(await mall.events.getOne(userId, eventId)), modifiedBy: accessToken }, null, { skipVersioning: true });
+    const webhooksBefore = await fromCallback((cb) => storageLayer.webhooks.find({ id: userId }, { accessId }, null, cb));
+    assert.deepStrictEqual(webhooksBefore.map((w) => w.id), [webhookId], 'fixture: the access owns a webhook');
     const out = runTool('--revoke');
     assert.match(out, /accesses revoked\s+1/);
     assert.ok(!(await liveAccessIds()).includes(accessId), 'the access is deleted');
     const session = await fromCallback((cb) => storageLayer.sessions.get(accessToken, cb));
     assert.strictEqual(session, null, 'the session is closed');
     assert.strictEqual((await mall.events.getOne(userId, eventId)).modifiedBy, accessId);
+    const webhooksAfter = await fromCallback((cb) => storageLayer.webhooks.find({ id: userId }, { accessId }, null, cb));
+    assert.deepStrictEqual(webhooksAfter, [], 'the webhooks of the access are deleted');
+    const entry = await getAccessIndex(await getPlatform(), accessId);
+    assert.ok(entry != null && typeof entry.deleted === 'number', 'the access index row is kept and marked deleted');
   });
 });

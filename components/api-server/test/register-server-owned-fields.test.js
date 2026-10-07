@@ -80,6 +80,8 @@ describe('[RGOF] registration: server-owned user fields', function () {
     const username = newName('rgofd');
     const res = await register({ username, events: [{ streamIds: [':_system:language'], content: 'xx-not-a-language-at-all' }] });
     assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+    const stored = await usersRepository.getUserByUsername(username);
+    assert.strictEqual(stored.language, 'en', 'the account field comes from the validated params');
     const ok = await login(username, 'rgof-passw0rd');
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
   });

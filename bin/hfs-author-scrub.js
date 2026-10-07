@@ -21,11 +21,14 @@
 // suffix when there is one. Writes pass `skipVersioning` and go through the
 // mall, which recomputes the event's integrity.
 //
-// With `--revoke`, every still-live access found that way is deleted and its
-// session destroyed: its token must be treated as disclosed to every access
-// that could read those events. Running cores keep accesses in an in-process
-// cache: restart them after a revoke (the documented upgrade order runs this
-// tool between the code update and the restart).
+// With `--revoke`, every still-live access found that way is deleted the way
+// `accesses.delete` deletes it (webhooks of the access, the access, its alias
+// reservation, its breach-scope index row marked deleted) and its session
+// destroyed: its token must be treated as disclosed to every access that could
+// read those events. Accesses an app or shared access created are kept (their
+// own tokens were not stored) and listed. Running cores keep accesses in an
+// in-process cache: restart them after a revoke (the documented upgrade order
+// runs this tool between the code update and the restart).
 //
 // Version rows: REPORTED, NOT REWRITTEN (no supported write path addresses a
 // version row; see bin/cmc-scrub-credentials.js). A core with history off,
@@ -85,10 +88,39 @@ require('@pryv/boiler').init({
     const { getMall } = require('mall');
     const { fromCallback } = require('utils');
     const { authorFor } = require('hfs-server/src/author_scrub.ts');
+    const WebhooksRepository = require('business').webhooks.Repository;
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const { getPlatform } = require('platform');
+    const { markAccessDeletedInIndex } = require('platform/src/accessIndex.ts');
+    const timestamp = require('unix-timestamp');
 
     const mall = await getMall();
     const usersIndex = await getUsersLocalIndex();
     const storageLayer = await getStorageLayer();
+    const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
+    const failures = [];
+
+    // Same steps and order as `accesses.delete` (methods/accesses.ts), minus the
+    // cascade to accesses this one created and the cache bust (restart instead).
+    async function revokeAccess (user, accessId, token) {
+      const row = await fromCallback((cb) => storageLayer.accesses.findOne(user, { id: accessId }, null, cb));
+      if (row == null) return false;
+      await webhooksRepository.deleteByAccess(user, accessId);
+      await fromCallback((cb) => storageLayer.accesses.delete(user, { id: accessId }, cb));
+      await fromCallback((cb) => storageLayer.sessions.destroy(token, cb));
+      if (typeof row.alias === 'string') await (await getUsersRepository()).releaseAlias(row.alias);
+      try {
+        await markAccessDeletedInIndex(await getPlatform(), user.username, row, timestamp.now());
+      } catch (err) {
+        failures.push(user.username + ' access ' + accessId + ': index row not marked deleted (' + err.message + ')');
+      }
+      return true;
+    }
+
+    async function createdAccessesCount (user, accessId) {
+      const created = await fromCallback((cb) => storageLayer.accesses.find(user, { createdBy: accessId }, null, cb));
+      return (created || []).filter((a) => a.id !== accessId).length;
+    }
 
     const byUsername = await usersIndex.getAllByUsername(); // { username: userId }
     let usernames = Object.keys(byUsername);
@@ -141,11 +173,11 @@ require('@pryv/boiler').init({
 
       for (const access of hitAccesses.values()) {
         counts.accessesConcerned++;
-        concerned.push({ username, accessId: access.id, type: access.type, live: access.live });
+        const entry = { username, accessId: access.id, type: access.type, live: access.live, created: 0 };
+        concerned.push(entry);
+        if (access.live && access.type !== 'personal') entry.created = await createdAccessesCount(user, access.id);
         if (!args.revoke || !access.live || args.dryRun) continue;
-        await fromCallback((cb) => storageLayer.accesses.delete(user, { id: access.id }, cb));
-        await fromCallback((cb) => storageLayer.sessions.destroy(access.token, cb));
-        counts.accessesRevoked++;
+        if (await revokeAccess(user, access.id, access.token)) counts.accessesRevoked++;
       }
     }
 
@@ -155,7 +187,8 @@ require('@pryv/boiler').init({
     console.log('  accesses concerned   ' + counts.accessesConcerned);
     console.log('  accesses revoked     ' + counts.accessesRevoked);
     for (const c of concerned) {
-      console.log('    ' + c.username + ' access ' + c.accessId + ' (' + c.type + ', ' + (c.live ? 'live' : 'already deleted') + ')');
+      console.log('    ' + c.username + ' access ' + c.accessId + ' (' + c.type + ', ' + (c.live ? 'live' : 'already deleted') + ')' +
+        (c.created > 0 ? '; ' + c.created + ' access(es) it created are kept' : ''));
     }
     if (counts.accessesRevoked > 0) {
       console.log('');
@@ -170,6 +203,12 @@ require('@pryv/boiler').init({
       console.log('  NOT CLEANED: ' + dirtyHistory.length + ' event(s) keep a credential in their VERSION');
       console.log('  HISTORY (no supported write path addresses a version row). Revoke the access.');
       for (const entry of dirtyHistory) console.log('    ' + entry);
+    }
+    if (failures.length > 0) {
+      console.log('');
+      console.log('  FAILED: ' + failures.length + ' revoked access(es) not marked deleted in the access index:');
+      for (const f of failures) console.log('    ' + f);
+      process.exit(1);
     }
     process.exit(0);
   } catch (err) {
