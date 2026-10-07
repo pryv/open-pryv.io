@@ -15,7 +15,8 @@ export interface PlatformEntry {
 export interface AcmeAccount {
   accountKey: string;
   accountUrl: string;
-  email: string;
+  /** ACME contact; null when the account was registered without one */
+  email: string | null;
 }
 
 export interface TlsCertificate {

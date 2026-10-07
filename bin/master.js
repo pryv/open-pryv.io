@@ -448,7 +448,8 @@ if (cluster.isPrimary) {
         log('FATAL: ' + dnsBootstrapFatal);
         log('       ACME orchestrator will NOT start (would burn the LE rate limit on a guaranteed-fail issuance).');
       } else {
-        const adminEmail = config.get('letsEncrypt:email') || ('admin@' + dnsDomain);
+        const leEmail = config.get('letsEncrypt:email');
+        const adminEmail = (typeof leEmail === 'string' && leEmail.includes('@')) ? leEmail : ('admin@' + dnsDomain);
         const rfc1035Admin = adminEmail.replace('@', '.') + '.';
         const primaryNs = `core.${dnsDomain}.`;
         const existingRoot = (config.get('dns:records:root') || {});

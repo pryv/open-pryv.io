@@ -122,12 +122,19 @@ describe('[CERTRENEWER] CertRenewer', function () {
         /32-byte Buffer/
       );
     });
-    it('rejects missing email', () => {
+    it('[CRNE] accepts a missing email: the account is created and stored without a contact', async () => {
       const db = makeFakePlatformDB();
-      assert.throws(
-        () => new CertRenewer({ platformDB: db, atRestKey }),
-        /email is required/
-      );
+      const { lib, events } = makeFakeAcmeLib({
+        bundlePem: realCertPem('irrelevant'),
+        accountUrl: 'https://acme/acct/100'
+      });
+      const renewer = new CertRenewer({ platformDB: db, atRestKey, acmeLib: lib });
+      const account = await renewer.ensureAccount();
+      assert.equal(account.email, null);
+      assert.equal((await renewer.getAccount()).email, null);
+      const createAccount = events.find(e => e[0] === 'createAccount');
+      assert.ok(createAccount, 'createAccount was called');
+      assert.equal(createAccount[1].contact, undefined);
     });
   });
 

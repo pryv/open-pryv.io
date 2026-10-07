@@ -1206,9 +1206,17 @@ async function main () {
   let customSsl = null;
   if (tlsStrategy === 'letsEncrypt') {
     console.log('▸ Let\'s Encrypt');
+    let leEmail = await ask('  Contact email for the ACME account (optional, enter to skip)', '', 'le.email');
+    while (leEmail && !leEmail.includes('@')) {
+      if (OPTS.nonInteractive || autoAnswer('le.email') !== undefined) {
+        throw invalidAnswer('le.email', leEmail, 'an email address, or empty for none');
+      }
+      console.log('  (an email address, or enter to skip)');
+      leEmail = await ask('  Contact email for the ACME account (optional, enter to skip)', '', 'le.email');
+    }
     leConfig = {
       enabled: true,
-      email: await askNonEmpty('  Contact email (for ACME registration)', undefined, 'le.email'),
+      ...(leEmail ? { email: leEmail } : {}),
       atRestKey: genSecrets ? genSecret(32) : await askNonEmpty('  letsEncrypt.atRestKey (32 bytes b64 — encrypts cert at rest)', undefined, 'le.atrestkey'),
       certRenewer: true,
       staging: await askYesNo('  Use STAGING (recommended for first boot — avoids prod rate limits)?', true, 'le.staging')

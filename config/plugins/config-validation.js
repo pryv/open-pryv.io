@@ -69,7 +69,6 @@ const REQUIRED_WHEN = [
   { path: 'auth:filesReadTokenSecret', when: () => true },
   // LetsEncrypt at-rest secrets — required only when the feature is on.
   { path: 'letsEncrypt:atRestKey', when: c => c.get('letsEncrypt:enabled') === true },
-  { path: 'letsEncrypt:email', when: c => c.get('letsEncrypt:enabled') === true },
   // `sso.landingPageURL` receives the one-time sign-in handoff after a
   // successful third-party (OIDC) login — required once SSO is enabled with at
   // least one provider, else the callback has nowhere to hand off. (Structural
@@ -496,7 +495,7 @@ function checkIncompleteFields (obj, finalPath, parentPath, key, problems, confi
   }
   if (typeof obj === 'object') {
     // Skip REPLACE scan on disabled blocks — operators leave `REPLACE ME`
-    // sentinels on fields they don't use (e.g. letsEncrypt.{email,atRestKey}
+    // sentinels on fields they don't use (e.g. letsEncrypt.atRestKey
     // when letsEncrypt.enabled=false), and these would otherwise fail-fast
     // the whole startup.
     if (obj.active === false) return;

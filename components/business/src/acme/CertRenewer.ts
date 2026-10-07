@@ -28,8 +28,8 @@ const AcmeClient = require('./AcmeClient.ts');
 const AT_REST_PURPOSE = 'pryv-at-rest-tls-v1';
 
 type PlatformDB = {
-  getAcmeAccount (): Promise<{ accountKey: Buffer; accountUrl: string; email: string } | null>;
-  setAcmeAccount (acc: { accountKey: Buffer; accountUrl: string; email: string }): Promise<unknown>;
+  getAcmeAccount (): Promise<{ accountKey: Buffer; accountUrl: string; email: string | null } | null>;
+  setAcmeAccount (acc: { accountKey: Buffer; accountUrl: string; email: string | null }): Promise<unknown>;
   getCertificate (hostname: string): Promise<{ certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number } | null>;
   setCertificate (hostname: string, cert: { certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number }): Promise<unknown>;
   listCertificates? (): Promise<unknown[]>;
@@ -39,33 +39,32 @@ type PlatformDB = {
 };
 type DnsServerLike = { refreshFromPlatform?: () => Promise<unknown> };
 type DnsWriter = { create (name: string, value: string): Promise<unknown>; remove (name: string, value: string): Promise<unknown> };
-type Account = { accountKey: string; accountUrl: string; email: string };
+type Account = { accountKey: string; accountUrl: string; email: string | null };
 type AcmeAuthz = { identifier: { value: string } };
 type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
 
 class CertRenewer {
   #platformDB: PlatformDB;
   #atRestKey: Buffer;
-  #email: string;
+  #email: string | null;
   #directoryUrl: string;
   #acmeLib: unknown;
 
   /**
    * @param opts.platformDB   - needs setAcmeAccount/getAcmeAccount/setCertificate/getCertificate/listCertificates
    * @param opts.atRestKey    - 32-byte symmetric key for encrypting private-key material
-   * @param opts.email        - ACME account contact; required to create an account
+   * @param [opts.email]      - ACME account contact; optional (none when absent)
    * @param [opts.directoryUrl] - default: LE production
    * @param [opts.acmeLib]    - default: require('acme-client'); injectable for tests
    */
-  constructor ({ platformDB, atRestKey, email, directoryUrl, acmeLib }: { platformDB?: PlatformDB; atRestKey?: Buffer; email?: string; directoryUrl?: string; acmeLib?: unknown } = {}) {
+  constructor ({ platformDB, atRestKey, email, directoryUrl, acmeLib }: { platformDB?: PlatformDB; atRestKey?: Buffer; email?: string | null; directoryUrl?: string; acmeLib?: unknown } = {}) {
     if (platformDB == null) throw new Error('CertRenewer: platformDB is required');
     if (!Buffer.isBuffer(atRestKey) || atRestKey.length !== 32) {
       throw new Error('CertRenewer: atRestKey must be a 32-byte Buffer');
     }
-    if (!email) throw new Error('CertRenewer: email is required');
     this.#platformDB = platformDB;
     this.#atRestKey = atRestKey;
-    this.#email = email;
+    this.#email = email || null;
     this.#directoryUrl = directoryUrl || AcmeClient.DIRECTORY_PRODUCTION;
     this.#acmeLib = acmeLib;
   }
