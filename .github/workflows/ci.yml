@@ -266,20 +266,29 @@ jobs:
           severity-cutoff: critical
 
   # OFFICIAL release path: tag-push → CI runs tests → builds + pushes
-  # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub.
+  # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub, as one
+  # multi-arch image (linux/amd64 + linux/arm64).
   # This is the channel implementers + downstream consumers pull from.
-  docker:
+  #
+  # Each architecture is built natively on its own runner (no QEMU emulation:
+  # the native addons compile at normal speed) and pushed by digest only, with
+  # no tag. The `docker` job below then joins the digests into one manifest
+  # list, tags it, and signs + attests that list.
+  docker-build:
     needs: [test-postgres, lint, typecheck, prod-boot-smoke, security-audit, sbom]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-22.04
-    # id-token: write enables keyless (OIDC) cosign signing + SLSA provenance —
-    # no long-lived signing key is stored; the identity is this workflow run.
-    # attestations: write lets actions/attest-build-provenance record the
-    # provenance attestation against the image.
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v6
       # Native installs check out the tag and read the COMMITTED `.api-version`
@@ -302,11 +311,12 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
       # Prove the release image reports its own tag BEFORE anything is pushed.
-      # Build the stock image locally (single-arch, loaded into the daemon) with
-      # the release build-arg, then assert the stamped `.api-version` equals the
-      # tag. A dropped build-arg, a refactored Dockerfile, or a renamed version
-      # file fails the tag build here instead of publishing a frozen
+      # Build the stock image locally (loaded into the daemon) with the release
+      # build-arg, then assert the stamped `.api-version` equals the tag. A
+      # dropped build-arg, a refactored Dockerfile, or a renamed version file
+      # fails the tag build here instead of publishing a frozen
       # `service/info.version`. The encryption variant is `FROM` this image, so
       # it inherits the same stamped file — verifying the stock build covers both.
       - name: Build stock image for version verification
@@ -314,6 +324,7 @@ jobs:
         with:
           context: .
           load: true
+          platforms: linux/${{ matrix.arch }}
           build-args: |
             IMAGE_TAG=${{ github.ref_name }}
           tags: open-pryv-verify:candidate
@@ -339,23 +350,87 @@ jobs:
             exit 1
           fi
           echo "verified: image .api-version = $stamped"
-      - uses: docker/build-push-action@v7
-        id: build_stock
+      # The native addons must load on this architecture: a missing prebuilt
+      # binary or a failed rebuild only shows when the module is required.
+      - name: Assert native modules load
+        run: |
+          docker run --rm --entrypoint node open-pryv-verify:candidate -e \
+            "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
+      - name: Build + push by digest
+        id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
+          platforms: linux/${{ matrix.arch }}
           # Bake the git tag into the image as PRYV_IMAGE_TAG so the install
           # wizard's generated run-pryv.sh + check-config.sh launchers default
           # their PRYV_IMAGE to the same tag the container was pulled from.
           build-args: |
             IMAGE_TAG=${{ github.ref_name }}
-          tags: |
-            pryvio/open-pryv.io:${{ github.ref_name }}
-            pryvio/open-pryv.io:2.0.0-pre
+          outputs: type=image,name=pryvio/open-pryv.io,push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker:
+    needs: [docker-build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    # id-token: write enables keyless (OIDC) cosign signing + SLSA provenance —
+    # no long-lived signing key is stored; the identity is this workflow run.
+    # attestations: write lets actions/attest-build-provenance record the
+    # provenance attestation against the image.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: /tmp/digests
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      # One manifest list over the per-architecture digests; `docker pull`
+      # picks the puller's architecture. Both architectures must be present.
+      - name: Create + push multi-arch manifest
+        id: manifest
+        env:
+          TAG: ${{ github.ref_name }}
+        working-directory: /tmp/digests
+        run: |
+          count=$(ls | wc -l)
+          if [ "$count" != "2" ]; then
+            echo "::error::expected 2 per-architecture digests, found $count"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            -t "pryvio/open-pryv.io:${TAG}" \
+            -t pryvio/open-pryv.io:2.0.0-pre \
+            $(printf 'pryvio/open-pryv.io@sha256:%s ' *)
+          docker buildx imagetools inspect "pryvio/open-pryv.io:${TAG}"
+          digest=$(docker buildx imagetools inspect "pryvio/open-pryv.io:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
       # Encryption-at-rest variant: layers the container-encrypted-volume payload
       # onto the stock image just pushed above (base image unchanged; encryption
       # opt-in via CEV_ENABLED at runtime). The payload is pulled from Docker Hub
       # (pryvio/container-encrypted-volume), public + same registry as this image.
+      # linux/amd64 only: the payload image is published for amd64 only, so an
+      # arm64 build has nothing to copy from.
       # Pushed here, BEFORE the Sigstore steps, so a transient keyless-signing /
       # OIDC hiccup can never leave this variant unpushed: both images are
       # available in the registry regardless of the signing outcome.
@@ -364,6 +439,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.encrypted
+          platforms: linux/amd64
           push: true
           build-args: |
             IMAGE_TAG=${{ github.ref_name }}
@@ -372,16 +448,18 @@ jobs:
             pryvio/open-pryv.io-encrypted:2.0.0-pre
       # Container-image SBOM (CycloneDX) for the released image, published as a
       # build artifact so downstream consumers / procurement can ingest the
-      # exact shipped composition (base image layers + npm tree).
+      # exact shipped composition (base image layers + npm tree). Resolved from
+      # the manifest list for the runner's architecture (amd64); the npm tree
+      # is the same on both.
       - name: Generate image SBOM (CycloneDX)
         uses: anchore/sbom-action@v0
         with:
-          image: pryvio/open-pryv.io@${{ steps.build_stock.outputs.digest }}
+          image: pryvio/open-pryv.io@${{ steps.manifest.outputs.digest }}
           format: cyclonedx-json
           output-file: sbom-image.cyclonedx.json
           artifact-name: sbom-image.cyclonedx.json
-      # Keyless (OIDC) signature over the pushed image digest. Pullers verify
-      # with: cosign verify pryvio/open-pryv.io@<digest>
+      # Keyless (OIDC) signature over the pushed manifest-list digest. Pullers
+      # verify with: cosign verify pryvio/open-pryv.io@<digest>
       #   --certificate-identity-regexp 'https://github.com/pryv/open-pryv.io/.*'
       #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - name: Install cosign
@@ -391,11 +469,12 @@ jobs:
       # body, which cosign surfaces as "fetching ambient OIDC credentials: invalid
       # character ... looking for beginning of value". The image is already pushed,
       # so this only re-attempts the signature over the same digest.
+      # `--recursive` also signs each per-architecture image in the list.
       - name: Sign image (keyless)
         run: |
-          digest='${{ steps.build_stock.outputs.digest }}'
+          digest='${{ steps.manifest.outputs.digest }}'
           for attempt in 1 2 3; do
-            if cosign sign --yes "pryvio/open-pryv.io@${digest}"; then
+            if cosign sign --yes --recursive "pryvio/open-pryv.io@${digest}"; then
               exit 0
             fi
             echo "::warning::cosign sign attempt ${attempt} failed; retrying in 15s"
@@ -409,5 +488,5 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: docker.io/pryvio/open-pryv.io
-          subject-digest: ${{ steps.build_stock.outputs.digest }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true

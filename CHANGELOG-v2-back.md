@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## Release CI: multi-arch image, built per architecture
+
+- The tag-push `docker` job is split in two. `docker-build` runs once per architecture on a native
+  runner (`ubuntu-22.04` for amd64, `ubuntu-24.04-arm` for arm64, no QEMU): the version assertions,
+  a new check that the native addons (`better-sqlite3`, `sharp`) load, then a push by digest without a
+  tag. `docker` joins the two digests into one manifest list (`docker buildx imagetools create`),
+  tags it `<tag>` + `2.0.0-pre`, builds the encryption-at-rest variant (amd64 only: its payload image
+  is amd64 only), and runs the SBOM, the keyless signature (`cosign sign --recursive`: the list and
+  each platform image) and the provenance attestation against the list digest.
+- `scripts/docker-entrypoint.sh` drops the server to `node` with util-linux `setpriv`
+  (`--no-new-privs`, ambient `CAP_NET_BIND_SERVICE` only) after handing it the data directories:
+  each root is resolved with `readlink -f`, then `find … -execdir chown -h`, so a link inside the data
+  is changed, never followed, and no path is re-resolved from the root between the walk and the
+  chown. The Dockerfile asserts `setpriv` is present and pre-owns `/app/data`, `/app/var-pryv`,
+  `/etc/pryv/tls` and `/var/lib/pryv`.
+- `TokenStore` running as root chowns the token file to the owner of its directory before the
+  atomic rename.
+
 ## Placeholder secrets: one predicate
 
 - `development-config.yml` ships `dev-only-admin-access-key` / `dev-only-files-read-token-secret`

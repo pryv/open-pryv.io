@@ -1639,7 +1639,8 @@ async function main () {
   // Image tag is overridable via $PRYV_IMAGE.
   // Public-port surface: clients only hit the api port (HFS + previews are
   // dispatched in-process per INSTALL.md Option C). Publish 80 only when
-  // ACME needs HTTP-01. Publish 53/udp only when the embedded DNS is on.
+  // ACME needs HTTP-01. Publish 53 (UDP and TCP: RFC 7766 makes TCP
+  // mandatory) only when the embedded DNS is on.
   const dockerPorts = [];
   if (tlsStrategy === 'letsEncrypt' || tlsStrategy === 'custom') {
     dockerPorts.push('-p 443:443');
@@ -1647,7 +1648,7 @@ async function main () {
   } else {
     dockerPorts.push('-p 3000:3000');
   }
-  if (!dnsLess) dockerPorts.push('-p 53:53/udp');
+  if (!dnsLess) dockerPorts.push('-p 53:53/udp', '-p 53:53/tcp');
 
   const configFileName = path.basename(absConfigPath);
   const runScriptPath = path.join(configDir, 'run-pryv.sh');
