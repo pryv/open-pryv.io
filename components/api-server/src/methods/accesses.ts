@@ -362,6 +362,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const accessesRepository = storageLayer.accesses;
       params.token = accessesRepository.generateToken();
     }
+    // An alias is a platform-wide routing name: only the server mints one.
+    if (params.alias != null) {
+      return next(errors.forbidden('The alias of an access is set by the server; request one with "randomAlias".'));
+    }
     // Mint a routable, platform-unique alias when requested. Replaces the
     // username in this access's apiEndpoint so the real username never leaks.
     if (params.randomAlias === true) {
@@ -1077,7 +1081,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (aliasesToRelease.length > 0) {
       const usersRepository = await getUsersRepository();
       for (const alias of aliasesToRelease) {
-        await usersRepository.releaseAlias(alias);
+        await usersRepository.releaseAlias(alias, context.user.id);
       }
     }
     result.accessDeletion = { id: params.id };

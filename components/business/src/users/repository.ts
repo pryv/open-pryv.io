@@ -177,9 +177,13 @@ class UsersRepository {
 
   /**
    * Release an alias previously reserved with {@link mintAlias} — reverses all
-   * three writes. No-op-safe for missing rows.
+   * three writes. No-op-safe for missing rows. Releases nothing unless the name
+   * resolves, on this core, to `ownerUserId` as one of its aliases: never
+   * another user's username or alias, never a name nobody reserved.
    */
-  async releaseAlias (alias: string): Promise<void> {
+  async releaseAlias (alias: string, ownerUserId: string): Promise<void> {
+    const aliases = await this.usersIndex.getAliasesForId(ownerUserId);
+    if (!aliases.includes(alias)) return;
     await this.platform.deleteUserUniqueField('alias', alias);
     await this.usersIndex.deleteAlias(alias);
     if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
