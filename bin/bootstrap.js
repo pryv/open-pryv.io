@@ -334,7 +334,8 @@ function resolveContext (config, args) {
 }
 
 function isUsableSecret (v) {
-  return typeof v === 'string' && v.length > 0 && v !== 'REPLACE ME';
+  const { weakSecretReason } = require('../config/plugins/config-validation.js');
+  return typeof v === 'string' && v.length > 0 && !v.includes('REPLACE') && weakSecretReason(v) == null;
 }
 
 function httpPortFromUrl (url) {

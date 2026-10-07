@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Placeholder secrets: one predicate
+
+- `development-config.yml` ships `dev-only-admin-access-key` / `dev-only-files-read-token-secret`
+  instead of `CHANGE_ME_WITH_SOMETHING`, which boot validation now treats as a placeholder (any
+  `override me` / `change me` / `replace me` variant is). `tools/performance` defaults to the same
+  admin key. `bin/bootstrap.js` refuses to ship a placeholder secret in a bundle with the same
+  predicate as boot validation, and the API server's own `REPLACE_ME` check (which matched nothing) is
+  removed: boot validation owns it.
+
 ## Coverage on c8; no more sprintf-js or vulnerable shell-quote in dev tooling
 
 - Coverage moves from nyc to c8 (V8-native). nyc instrumented sources through its own require hook,

@@ -128,6 +128,8 @@ const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret'];
 const MIN_SECRET_LENGTH = 16;
 const PLACEHOLDER_SECRETS = ['override me', 'overrideme', 'override-me', 'override_me', 'changeme', 'change me',
   'change-me', 'change_me', 'secret', 'password', 'admin', 'adminkey', 'todo', 'xxx'];
+// "OVERRIDE ME", "CHANGE_ME_WITH_SOMETHING", "please-replace-me", … anywhere in the value.
+const PLACEHOLDER_PATTERN = /(^|[^a-z])(override|change|replace)[ _-]?me([^a-z]|$)/i;
 
 /**
  * Why a secret value is not acceptable, or null when it is.
@@ -136,7 +138,7 @@ const PLACEHOLDER_SECRETS = ['override me', 'overrideme', 'override-me', 'overri
  */
 function weakSecretReason (value, options = {}) {
   if (typeof value !== 'string') return null;
-  if (PLACEHOLDER_SECRETS.includes(value.trim().toLowerCase())) return 'is a placeholder value';
+  if (PLACEHOLDER_PATTERN.test(value) || PLACEHOLDER_SECRETS.includes(value.trim().toLowerCase())) return 'is a placeholder value';
   if (options.production === true && value.length < MIN_SECRET_LENGTH) {
     return `is shorter than ${MIN_SECRET_LENGTH} characters`;
   }

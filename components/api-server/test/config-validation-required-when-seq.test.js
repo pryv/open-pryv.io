@@ -606,7 +606,7 @@ describe('[CVWS] config-validation weak secrets', () => {
 
   it('[CVWS1] a shipped placeholder secret never boots, whatever the environment', () => {
     for (const key of ['auth:adminAccessKey', 'auth:filesReadTokenSecret']) {
-      for (const value of ['OVERRIDE ME', 'override me', 'CHANGEME', 'change-me']) {
+      for (const value of ['OVERRIDE ME', 'override me', 'CHANGEME', 'change-me', 'CHANGE_ME_WITH_SOMETHING', 'please-override-me']) {
         const problems = [];
         checkRequiredWhen(fakeConfig({ ...allHappy, [key]: value }), problems);
         const p = problems.find((p) => p.payload && p.payload.path === key);
@@ -639,5 +639,8 @@ describe('[CVWS] config-validation weak secrets', () => {
     assert.match(weakSecretReason('short-key', { production: true }), /shorter than/);
     assert.match(weakSecretReason('OVERRIDE ME'), /placeholder/);
     assert.strictEqual(weakSecretReason(undefined), null);
+    for (const devValue of ['dev-only-admin-access-key', 'dev-only-files-read-token-secret']) {
+      assert.strictEqual(weakSecretReason(devValue, { production: true }), null, 'development-config.yml boots');
+    }
   });
 });

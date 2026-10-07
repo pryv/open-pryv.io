@@ -51,6 +51,9 @@ function getPreviewPath (user: UserLike, eventId: string, dimension: string | nu
  */
 function getEventPreviewsDir (user: UserLike, eventId: string): string {
   const root = path.resolve(getPreviewsDirPath());
+  if (typeof user.id !== 'string' || user.id === '' || typeof eventId !== 'string' || eventId === '') {
+    throw new Error('Invalid previews path segment: ' + JSON.stringify({ userId: user.id, eventId }));
+  }
   const userDir = path.resolve(root, user.id);
   const eventDir = path.resolve(userDir, eventId);
   if (path.dirname(userDir) !== root || path.dirname(eventDir) !== userDir) {

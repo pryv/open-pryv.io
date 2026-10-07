@@ -19,7 +19,7 @@ const defaults = {
   matrix: false,
   seedFile: null, // path to seed-result.json
   clean: false, // cleanup mode: delete seeded users via API
-  adminKey: 'CHANGE_ME_WITH_SOMETHING', // auth:adminAccessKey for system API
+  adminKey: 'dev-only-admin-access-key', // auth:adminAccessKey for system API (development-config.yml)
   sweep: null, // concurrency sweep: comma-separated levels e.g. "1,5,10,25,50"
   all: false // run all scenarios in one combined result
 };

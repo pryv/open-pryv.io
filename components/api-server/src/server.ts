@@ -64,11 +64,6 @@ class Server {
     await app.initiate();
     const config = await getConfig();
     this.config = config;
-    const defaultParam = this.findDefaultParam();
-    if (defaultParam != null) {
-      this.logger.error(`Config parameter "${defaultParam}" has a default value, please change it`);
-      process.exit(1);
-    }
     // setup test notification bus (IPC-based)
     await this.setupTestsNotificationBus();
     // register API methods
@@ -168,12 +163,6 @@ class Server {
       await this.startWebhooksService();
     }
     this.logger.debug('start completed');
-  }
-
-  findDefaultParam () {
-    const DEFAULT_VALUES = ['REPLACE_ME'];
-    if (DEFAULT_VALUES.includes(this.config.get('auth:adminAccessKey') as string)) { return 'auth:adminAccessKey'; }
-    return null;
   }
 
   /**

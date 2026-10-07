@@ -200,8 +200,8 @@ function getEventPath (userId: string, eventId: string): string {
  */
 function contained (base: string, segment: string): string {
   const resolvedBase = path.resolve(base);
-  const target = path.resolve(resolvedBase, segment);
-  if (typeof segment !== 'string' || segment === '' || path.dirname(target) !== resolvedBase) {
+  const target = typeof segment === 'string' && segment !== '' ? path.resolve(resolvedBase, segment) : null;
+  if (target == null || path.dirname(target) !== resolvedBase) {
     throw new Error('Invalid attachment path segment: ' + JSON.stringify(segment));
   }
   return target;
