@@ -942,6 +942,48 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('[INVCL] claimInvitationToken() / releaseInvitationToken()', () => {
+      const info = () => ({ createdAt: Date.now(), createdBy: 'admin', description: 'd', keyHashed: true });
+
+      it('[INVCL1] claims an unconsumed token once, keeping its other fields', async () => {
+        const key = 'k' + cuid();
+        await db.createInvitationToken(key, info());
+        assert.strictEqual(await db.claimInvitationToken(key, 'alice', 1700000000000), true);
+        const stored = await db.getInvitationToken(key);
+        assert.strictEqual(stored.consumedBy, 'alice');
+        assert.strictEqual(stored.consumedAt, 1700000000000);
+        assert.strictEqual(stored.description, 'd');
+        assert.strictEqual(stored.keyHashed, true);
+        assert.strictEqual(await db.claimInvitationToken(key, 'bob', 1700000000001), false);
+        assert.strictEqual((await db.getInvitationToken(key)).consumedBy, 'alice');
+      });
+
+      it('[INVCL2] concurrent claims: exactly one true', async () => {
+        const key = 'k' + cuid();
+        await db.createInvitationToken(key, info());
+        const results = await Promise.all(['a', 'b', 'c', 'd', 'e'].map((u) => db.claimInvitationToken(key, u, Date.now())));
+        assert.strictEqual(results.filter(Boolean).length, 1);
+      });
+
+      it('[INVCL3] a missing token cannot be claimed', async () => {
+        assert.strictEqual(await db.claimInvitationToken('k' + cuid(), 'alice', Date.now()), false);
+      });
+
+      it('[INVCL4] release frees the claim only for its holder', async () => {
+        const key = 'k' + cuid();
+        await db.createInvitationToken(key, info());
+        await db.claimInvitationToken(key, 'alice', Date.now());
+        await db.releaseInvitationToken(key, 'bob');
+        assert.strictEqual((await db.getInvitationToken(key)).consumedBy, 'alice');
+        await db.releaseInvitationToken(key, 'alice');
+        const stored = await db.getInvitationToken(key);
+        assert.strictEqual(stored.consumedBy, undefined);
+        assert.strictEqual(stored.consumedAt, undefined);
+        assert.strictEqual(stored.description, 'd');
+        assert.strictEqual(await db.claimInvitationToken(key, 'bob', Date.now()), true);
+      });
+    });
+
     describe('[PLIC] checkStoreIntegrity()', () => {
       it('[PLIC01] reports a healthy store as ok, with no duplicate keys', async () => {
         await db.setPlatformKv('plic/' + cuid(), 'v');

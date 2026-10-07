@@ -14,6 +14,7 @@ const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { seriesNamespace } = require('business/src/series/namespace.ts');
 const errors = require('errors').factory;
+const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
@@ -22,6 +23,7 @@ type MethodContext = {
   user: { id: string; username: string };
   access?: { id?: string; isPersonal? (): boolean };
   authorizationHeader?: string;
+  source?: { ip?: string };
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
@@ -50,8 +52,15 @@ class Deletion {
   async checkIfAuthorized (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
-      if (this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
+      if (isAdminKey(context.authorizationHeader, this.config.get('auth:adminAccessKey'))) {
         return setAdminAuditAccessId(context, params, result, next);
+      }
+      // Neither the key nor the header: a near-miss key would land in the log.
+      if (!context.access?.isPersonal?.()) {
+        this.logger.warn('Unauthorized attempt to delete an account', {
+          username: params.username,
+          ip: context.source?.ip
+        });
       }
     }
     if (canDelete.includes('personalToken')) {

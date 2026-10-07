@@ -965,8 +965,9 @@ class Platform {
    *   another hosting has fewer users.
    */
   async validateRegistration (username: string, invitationToken: string, uniqueFields: Record<string, string>, hosting: string | null) {
-    // 1. Check invitation token
-    await this.#checkInvitationToken(invitationToken);
+    // 1. Check invitation token (claimed atomically in step 6, once the
+    //    registration is known to happen on this core)
+    const invitationKey = await this.#checkInvitationToken(invitationToken);
 
     // 2. Check reserved usernames (hosted-site names re-read first: another
     //    core may have started advertising one since this core booted)
@@ -1010,7 +1011,28 @@ class Platform {
       return { redirect: this.coreIdToUrl(selectedCoreId) };
     }
 
-    // 6. Claim the username for THIS core, BEFORE the slower per-field
+    // 6. Consume the invitation token atomically: of concurrent registrations
+    //    presenting the same token, only one goes on. Released below if this
+    //    registration fails afterwards (and by the caller if creation fails).
+    if (invitationKey != null) {
+      const claimed = await this.#db.claimInvitationToken(invitationKey, username, Date.now());
+      if (!claimed) {
+        throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
+      }
+    }
+    try {
+      await this.#reserveForRegistration(username, usernameToken, uniqueFields, usersRepository);
+    } catch (err) {
+      if (invitationKey != null) await this.#releaseInvitationKey(invitationKey, username);
+      throw err;
+    }
+    return { invitationClaimed: invitationKey != null };
+  }
+
+  /** Steps 7-8 of validateRegistration: claim the username, then the unique fields. */
+  async #reserveForRegistration (username: string, usernameToken: string, uniqueFields: Record<string, string>,
+    usersRepository: { usernameExists: (u: string) => Promise<boolean> }) {
+    // 7. Claim the username for THIS core, BEFORE the slower per-field
     //    reservation loop (shrinking the check-then-act window to one Raft
     //    round). Multi-core uses the atomic claim so a concurrent registration
     //    of the same name on another core loses; single-core keeps the plain
@@ -1024,7 +1046,7 @@ class Platform {
       }
     }
 
-    // 7. Atomically reserve the OTHER unique fields (username handled above).
+    // 8. Atomically reserve the OTHER unique fields (username handled above).
     const conflicts: Record<string, string> = {};
     const reservedHere: Array<[string, string]> = [];
     for (const [field, value] of Object.entries(uniqueFields)) {
@@ -1047,7 +1069,7 @@ class Platform {
       for (const [field, valueToken] of reservedHere) {
         await this.#db.deleteUserUniqueField(field, valueToken);
       }
-      // Release the username claim from step 6 so the name is free to retry.
+      // Release the username claim from step 7 so the name is free to retry.
       // Guard on the local index (B3): never remove a row a concurrent
       // same-name winner already owns locally. insertOne has not run in this
       // call, so in the common single-registration case the guard passes and
@@ -1058,8 +1080,6 @@ class Platform {
       }
       throw errors.itemAlreadyExists('user', conflicts);
     }
-
-    return {};
   }
 
   /**
@@ -1067,15 +1087,17 @@ class Platform {
    * - No tokens in PlatformDB AND null config → allow all (no check)
    * - Token exists and not consumed → valid
    * - Token missing or already consumed → invalid
+   * Returns the storage key of a PlatformDB token (to be claimed), or null
+   * when nothing is to be consumed (no check, or a static config token).
    */
-  async #checkInvitationToken (invitationToken: string) {
+  async #checkInvitationToken (invitationToken: string): Promise<string | null> {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
     if (allTokens.length === 0) {
       const configTokens = this.#config.get('invitationTokens');
       // null/undefined config → allow all registrations
-      if (configTokens == null) return;
+      if (configTokens == null) return null;
       // empty array → block all
       if (Array.isArray(configTokens) && configTokens.length === 0) {
         throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
@@ -1084,13 +1106,27 @@ class Platform {
       if (!Array.isArray(configTokens) || !configTokens.includes(invitationToken)) {
         throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
       }
-      return;
+      return null;
     }
 
     // PlatformDB has tokens — check against them (keyed by the token's hash).
-    const tokenInfo = await this.#db.getInvitationToken(this.#hashInvitationToken(invitationToken));
+    const key = this.#hashInvitationToken(invitationToken);
+    const tokenInfo = await this.#db.getInvitationToken(key);
     if (tokenInfo == null || tokenInfo.consumedBy != null) {
       throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
+    }
+    return key;
+  }
+
+  /** Best-effort release of a claim; a failure leaves the token consumed. */
+  async #releaseInvitationKey (key: string, username: string) {
+    try {
+      await this.#db.releaseInvitationToken(key, username);
+    } catch (err) {
+      logger.warn('failed to release an invitation token after a failed registration', {
+        username,
+        error: err instanceof Error ? err.message : String(err)
+      });
     }
   }
 
@@ -1105,16 +1141,21 @@ class Platform {
   }
 
   /**
-   * Consume an invitation token (mark as used).
+   * Consume an invitation token (mark as used), atomically: false when it was
+   * already consumed or is not a PlatformDB token (static config tokens are
+   * never consumed).
    * @param username - the user who consumed it
    */
-  async consumeInvitationToken (token: string, username: string) {
-    const key = this.#hashInvitationToken(token);
-    const info = await this.#db.getInvitationToken(key);
-    if (info == null) return; // static config token or no tokens — nothing to consume
-    info.consumedAt = Date.now();
-    info.consumedBy = username;
-    await this.#db.updateInvitationToken(key, info);
+  async consumeInvitationToken (token: string, username: string): Promise<boolean> {
+    return await this.#db.claimInvitationToken(this.#hashInvitationToken(token), username, Date.now());
+  }
+
+  /**
+   * Give back a token consumed by `username` during a registration that then
+   * failed. Best-effort: never throws.
+   */
+  async releaseInvitationToken (token: string, username: string) {
+    await this.#releaseInvitationKey(this.#hashInvitationToken(token), username);
   }
 
   /**

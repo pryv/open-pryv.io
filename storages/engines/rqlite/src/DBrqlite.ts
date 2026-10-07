@@ -322,6 +322,28 @@ class DBrqlite {
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
+  /**
+   * Mark the token consumed only if it is not already: one conditional write,
+   * linearized by Raft, so of N concurrent claims exactly ONE reports true.
+   */
+  async claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean> {
+    const result = await this.execute(
+      `UPDATE keyValue SET value = json_set(value, '$.consumedBy', ?, '$.consumedAt', ?)
+       WHERE key = ? AND json_extract(value, '$.consumedBy') IS NULL`,
+      [consumedBy, consumedAt, 'invitation/' + token]
+    );
+    return (result?.rows_affected ?? 0) > 0;
+  }
+
+  /** Undo a claim, only while it is still held by `consumedBy`. */
+  async releaseInvitationToken (token: string, consumedBy: string): Promise<void> {
+    await this.execute(
+      `UPDATE keyValue SET value = json_remove(value, '$.consumedBy', '$.consumedAt')
+       WHERE key = ? AND json_extract(value, '$.consumedBy') = ?`,
+      ['invitation/' + token, consumedBy]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**

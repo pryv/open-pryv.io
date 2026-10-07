@@ -218,6 +218,22 @@ describe('[BMM2] registration: DNS-less', () => {
         const error = JSON.parse(res.error.text);
         assert.deepEqual(error.error.data, { username: registerData.username, email: registerData.email }, '[M2HD] should respond with the correct error data');
       });
+
+      it('[BKL1] the username "backloop" is reserved: refused, no account, its email stays free', async function () {
+        const registerData = generateRegisterBody();
+        registerData.username = 'backloop';
+        let res = await request.post('/users').send(registerData);
+        assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
+        assert.deepEqual(res.body.error.data, { username: 'backloop' });
+        const usersRepository = await getUsersRepository();
+        assert.strictEqual(await usersRepository.usernameExists('backloop'), false);
+
+        const other = generateRegisterBody();
+        other.email = registerData.email;
+        res = await request.post('/users').send(other);
+        assert.strictEqual(res.status, 201, 'the email was not reserved: ' + JSON.stringify(res.body));
+      });
     });
 
     describe('[RD11] When providing an indexed value that is neither a number nor a string', () => {

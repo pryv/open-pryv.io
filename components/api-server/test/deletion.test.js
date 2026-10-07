@@ -27,6 +27,7 @@ const { getMall } = require('mall');
 const cache = require('cache').default;
 const { MESSAGES } = require('cache/src/synchro.ts');
 const { join } = require('node:path');
+const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
 const { tmpdir } = require('node:os');
 
 let app;
@@ -132,6 +133,37 @@ describe('[PGTD] DELETE /users/:username', () => {
           .set('Authorization', personalAccessToken);
         assert.strictEqual(res.status, 403, JSON.stringify(res.body));
         assert.ok(await usersRepository.getUserIdForUsername(username1) != null, 'the account is intact');
+      });
+    });
+    it('[USA7] the admin key counts only as the raw Authorization header (not ?auth=, Bearer or Basic)', async function () {
+      await withInjectedConfig({ 'user-account': { delete: ['adminToken'] } }, async () => {
+        const attempts = [
+          request.delete(`/users/${username1}`).query({ auth: authKey }),
+          request.delete(`/users/${username1}`).set('Authorization', 'Bearer ' + authKey),
+          request.delete(`/users/${username1}`).set('Authorization', 'Basic ' + Buffer.from(authKey + ':').toString('base64'))
+        ];
+        for (const attempt of attempts) {
+          res = await attempt;
+          assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+        }
+        assert.ok(await usersRepository.getUserIdForUsername(username1) != null, 'the account is intact');
+      });
+    });
+    it('[USA8] a refused deletion logs a warning with the client IP, never the key sent', async function () {
+      const nearMiss = authKey.slice(0, -1) + 'x';
+      await withInjectedConfig({ 'user-account': { delete: ['adminToken'] } }, async () => {
+        const capture = captureWarnings();
+        try {
+          res = await request.delete(`/users/${username1}`).set('Authorization', nearMiss);
+        } finally {
+          capture.restore();
+        }
+        assert.strictEqual(res.status, 404);
+        const warning = capture.warnings.find((w) => /Unauthorized attempt to delete/.test(String(w.args[0])));
+        assert.ok(warning != null, 'a warning is logged');
+        assert.strictEqual(warning.args[1].username, username1);
+        assert.ok(typeof warning.args[1].ip === 'string' && warning.args[1].ip.length > 0, 'with the client IP');
+        assert.ok(!JSON.stringify(warning.args).includes(nearMiss), 'never the key sent');
       });
     });
     it('[UK8H] Should accept when "personalToken" and "adminToken" are active and a valid admin token is provided', async function () {

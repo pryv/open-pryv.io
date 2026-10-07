@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from '../_types.ts';
-import type { Request, Response, Application as ExpressApp } from 'express';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
  * /reg/records — admin endpoints for managing runtime DNS entries.
@@ -21,17 +21,27 @@ const require = createRequire(import.meta.url);
  * periodic refresh.
  *
  * Auth: `auth:adminAccessKey` (BOOTSTRAP, must be identical across cores).
+ * A missing or wrong key answers 404, like the other admin routes.
  */
 
 const { getPlatform } = require('platform');
+const errors = require('errors').factory;
+const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { clientIp } = require('middleware/src/clientIp.ts');
+const { redactUrl } = require('utils/src/redactUrl.ts');
+const { getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('routes:reg:records');
 
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const adminAccessKey = app.config.get('auth:adminAccessKey') as string | undefined;
 
   function isAuthorized (req: Request): boolean {
-    const secret = req.headers.authorization;
-    return secret != null && secret === adminAccessKey;
+    if (isAdminKey(req.headers.authorization, adminAccessKey)) return true;
+    // Never the headers: a near-miss key would land in the log.
+    logger.warn('Unauthorized attempt to access an admin route', { url: redactUrl(req.url), ip: clientIp(req) });
+    return false;
   }
 
   function nudgeMaster (subdomain: string): void {
@@ -40,12 +50,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     }
   }
 
-  expressApp.post('/reg/records', async (req: Request, res: Response) => {
-    if (!isAuthorized(req)) {
-      return res.status(403).json({
-        error: { id: 'forbidden', message: 'Invalid admin authorization' }
-      });
-    }
+  expressApp.post('/reg/records', async (req: Request, res: Response, next: NextFunction) => {
+    if (!isAuthorized(req)) return next(errors.unknownResource());
 
     const { subdomain, records } = req.body;
     if (!subdomain || typeof subdomain !== 'string') {
@@ -73,12 +79,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     res.status(200).json({ subdomain, records, status: 'ok' });
   });
 
-  expressApp.delete('/reg/records/:subdomain', async (req: Request, res: Response) => {
-    if (!isAuthorized(req)) {
-      return res.status(403).json({
-        error: { id: 'forbidden', message: 'Invalid admin authorization' }
-      });
-    }
+  expressApp.delete('/reg/records/:subdomain', async (req: Request, res: Response, next: NextFunction) => {
+    if (!isAuthorized(req)) return next(errors.unknownResource());
 
     const { subdomain } = req.params;
     if (!subdomain || typeof subdomain !== 'string') {

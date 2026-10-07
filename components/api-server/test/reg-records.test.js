@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, assert, config */
 
 const cuid = require('cuid');
+const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
 
 describe('[RGRC] Register records admin endpoint', () => {
   let adminAccessKey;
@@ -51,8 +52,8 @@ describe('[RGRC] Register records admin endpoint', () => {
           subdomain: '_acme-challenge',
           records: { txt: ['token'] }
         });
-      assert.strictEqual(res.status, 403);
-      assert.strictEqual(res.body.error.id, 'forbidden');
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.body.error.id, 'unknown-resource');
     });
 
     it('[RR03] must reject request with wrong admin key', async () => {
@@ -62,7 +63,28 @@ describe('[RGRC] Register records admin endpoint', () => {
           subdomain: '_acme-challenge',
           records: { txt: ['token'] }
         });
-      assert.strictEqual(res.status, 403);
+      assert.strictEqual(res.status, 404);
+    });
+
+    it('[RR07] a near-miss key answers 404, stores nothing, and logs a warning with the client IP but not the key', async () => {
+      const sub = '_acme-nearmiss-' + cuid();
+      const nearMiss = adminAccessKey.slice(0, -1) + 'x';
+      const capture = captureWarnings();
+      let res;
+      try {
+        res = await coreRequest.post('/reg/records')
+          .set('Authorization', nearMiss)
+          .send({ subdomain: sub, records: { txt: ['token'] } });
+      } finally {
+        capture.restore();
+      }
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.body.error.id, 'unknown-resource');
+      assert.strictEqual(await platform.getDnsRecord(sub), null);
+      const warning = capture.warnings.find((w) => /Unauthorized attempt/.test(String(w.args[0])));
+      assert.ok(warning != null, 'a warning is logged');
+      assert.ok(typeof warning.args[1].ip === 'string' && warning.args[1].ip.length > 0, 'with the client IP');
+      assert.ok(!JSON.stringify(warning.args).includes(nearMiss), 'never the key sent');
     });
 
     it('[RR04] must reject request with missing subdomain', async () => {
@@ -122,8 +144,8 @@ describe('[RGRC] Register records admin endpoint', () => {
 
     it('[RR11] must reject delete without admin auth', async () => {
       const res = await coreRequest.delete('/reg/records/_acme-challenge');
-      assert.strictEqual(res.status, 403);
-      assert.strictEqual(res.body.error.id, 'forbidden');
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.body.error.id, 'unknown-resource');
     });
 
     it('[RR12] must 404 on unknown subdomain', async () => {

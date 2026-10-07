@@ -324,7 +324,7 @@ describe('[SYER] system (ex-register)', function () {
     describe('[SY04] when it just replies OK', function () {
       before(server.ensureStarted.bind(server, helpers.dependencies.settings));
 
-      it('[9K71] must run the process but not save anything for test username "backloop"',
+      it('[BKL2] must refuse the reserved username "backloop", creating and reserving nothing',
         async function () {
           const settings = structuredClone(helpers.dependencies.settings);
 
@@ -354,18 +354,22 @@ describe('[SYER] system (ex-register)', function () {
             language: 'fr'
           };
           const postAsync2 = promisify(post);
-          const res = await postAsync2(data);
+          try {
+            await postAsync2(data);
+            throw new Error('The response should not be successful');
+          } catch (err) {
+            validation.checkError(err.response, {
+              status: 409,
+              id: ErrorIds.ItemAlreadyExists,
+              data: { username: 'backloop' }
+            });
+          }
 
-          validation.check(res, {
-            status: 201,
-            schema: methodsSchema.createUser.result
-          });
-          const createdUserId = res.body.id;
-
-          // getUpdatedUsers
           const users = await usersRepository.getAll();
           assert.strictEqual(users.length, originalCount, 'users');
-          assert.ok(_.find(users, { id: createdUserId }) == null);
+          const platform = await getPlatform();
+          assert.strictEqual(await platform.getUsersUniqueField('email', data.email), null, 'email not reserved');
+          assert.strictEqual(await platform.getUserCore('backloop'), null, 'no name->core row');
         });
 
       it('[VGF5] must return a correct 400 error if the sent data is badly formatted', function (done) {

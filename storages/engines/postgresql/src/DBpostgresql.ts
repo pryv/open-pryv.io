@@ -243,6 +243,30 @@ class DBpostgresql {
     await this.#delete('invitation/' + token);
   }
 
+  /**
+   * Mark the token consumed only if it is not already: one conditional
+   * UPDATE, so of N concurrent claims exactly ONE reports true.
+   */
+  async claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE platform_kv
+       SET value = (value::jsonb || jsonb_build_object('consumedBy', $2::text, 'consumedAt', $3::bigint))::text
+       WHERE key = $1 AND (value::jsonb ->> 'consumedBy') IS NULL`,
+      ['invitation/' + token, consumedBy, consumedAt]
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  /** Undo a claim, only while it is still held by `consumedBy`. */
+  async releaseInvitationToken (token: string, consumedBy: string): Promise<void> {
+    await this.db.query(
+      `UPDATE platform_kv
+       SET value = (value::jsonb - 'consumedBy' - 'consumedAt')::text
+       WHERE key = $1 AND (value::jsonb ->> 'consumedBy') = $2`,
+      ['invitation/' + token, consumedBy]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**

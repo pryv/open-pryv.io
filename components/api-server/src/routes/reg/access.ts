@@ -784,11 +784,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
    * POST /access/invitationtoken/check — Check validity of an invitation token.
    * Returns plain text 'true' or 'false'.
    */
-  expressApp.post('/access/invitationtoken/check', async (req: PryvRequest, res: Response) => {
-    const token = req.body.invitationtoken;
-    const { getPlatform } = require('platform');
-    const platform = await getPlatform();
-    const isValid = await platform.isInvitationTokenValid(token);
-    res.type('text/plain').send(isValid ? 'true' : 'false');
+  expressApp.post('/access/invitationtoken/check', async (req: PryvRequest, res: Response, next: NextFunction) => {
+    try {
+      const token = req.body.invitationtoken;
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      const isValid = await platform.isInvitationTokenValid(token);
+      res.type('text/plain').send(isValid ? 'true' : 'false');
+    } catch (err) { next(err); }
   });
 };

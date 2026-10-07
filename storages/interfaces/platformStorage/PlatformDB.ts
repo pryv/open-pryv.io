@@ -241,6 +241,10 @@ export interface PlatformDB {
   getAllInvitationTokens (): Promise<InvitationTokenEntry[]>;
   updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
   deleteInvitationToken (token: string): Promise<void>;
+  /** Atomically mark an unconsumed token consumed; false when it already was (or is missing). */
+  claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean>;
+  /** Clear a claim made by `consumedBy` (no-op when someone else holds it). */
+  releaseInvitationToken (token: string, consumedBy: string): Promise<void>;
 
   // Integrity (read-only)
   checkStoreIntegrity (): Promise<PlatformIntegrityReport>;
@@ -385,6 +389,10 @@ const PlatformDB: PlatformDB = {
   async updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void> { throw new Error('Not implemented'); },
 
   async deleteInvitationToken (token: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean> { throw new Error('Not implemented'); },
+
+  async releaseInvitationToken (token: string, consumedBy: string): Promise<void> { throw new Error('Not implemented'); },
 
   async checkStoreIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
 };

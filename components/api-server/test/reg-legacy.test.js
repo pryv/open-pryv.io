@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 
 /* global initTests, initCore, coreRequest, assert, config */
 
+const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
+
 describe('[RGLG] Legacy register routes + invitations', () => {
   let adminAccessKey;
   let testUser;
@@ -195,6 +197,92 @@ describe('[RGLG] Legacy register routes + invitations', () => {
     it('[LG44] must reject without admin auth', async () => {
       const res = await coreRequest.get('/reg/admin/invitations/post?count=1');
       assert.strictEqual(res.status, 404);
+    });
+
+    it('[LG45] a wrong key answers 404 and logs a warning with the client IP but not the key', async () => {
+      const nearMiss = adminAccessKey.slice(0, -1) + 'x';
+      const capture = captureWarnings();
+      let res;
+      try {
+        res = await coreRequest.get('/reg/admin/invitations').set('Authorization', nearMiss);
+      } finally {
+        capture.restore();
+      }
+      assert.strictEqual(res.status, 404);
+      const warning = capture.warnings.find((w) => /Unauthorized attempt/.test(String(w.args[0])));
+      assert.ok(warning != null, 'a warning is logged');
+      assert.ok(typeof warning.args[1].ip === 'string' && warning.args[1].ip.length > 0, 'with the client IP');
+      assert.ok(!JSON.stringify(warning.args).includes(nearMiss), 'never the key sent');
+    });
+  });
+
+  // --- Invitation token consumption ---
+
+  describe('[LGIC] invitation token consumption', () => {
+    async function newToken () {
+      const res = await coreRequest.get('/reg/admin/invitations/post?count=1')
+        .set('Authorization', adminAccessKey);
+      return res.body.data[0].id;
+    }
+
+    function registration (invitationToken, overrides = {}) {
+      const username = 'lgic' + Math.random().toString(36).slice(2, 10);
+      return Object.assign({
+        appId: 'test-legacy',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@legacy-test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+        language: 'en',
+        invitationToken
+      }, overrides);
+    }
+
+    async function isValid (token) {
+      const res = await coreRequest.post('/access/invitationtoken/check').send({ invitationtoken: token });
+      return res.text === 'true';
+    }
+
+    it('[LG50] two concurrent registrations with one token: exactly one account is created', async () => {
+      const token = await newToken();
+      const bodies = [registration(token), registration(token)];
+      const results = await Promise.all(bodies.map((b) => coreRequest.post('/users').send(b)));
+      const statuses = results.map((r) => r.status).sort();
+      assert.deepStrictEqual(statuses, [201, 400], JSON.stringify(results.map((r) => r.body)));
+      const refused = results.find((r) => r.status === 400);
+      assert.strictEqual(refused.body.error.id, 'invalid-operation');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const created = await Promise.all(bodies.map((b) => usersRepository.usernameExists(b.username)));
+      assert.strictEqual(created.filter(Boolean).length, 1, 'one account only');
+      assert.strictEqual(await isValid(token), false, 'the token is consumed');
+    });
+
+    it('[LG51] a registration refused after the token check gives the token back', async () => {
+      const token = await newToken();
+      // the email is already taken: refused once the token is claimed
+      let res = await coreRequest.post('/users').send(registration(token, { email: testEmail }));
+      assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+      assert.strictEqual(await isValid(token), true, 'the token is still usable');
+      res = await coreRequest.post('/users').send(registration(token));
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(await isValid(token), false);
+    });
+  });
+
+  describe('POST /access/invitationtoken/check', () => {
+    it('[LG52] a platform failure answers 500 instead of crashing the worker', async () => {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      platform.isInvitationTokenValid = async () => { throw new Error('platform unavailable'); };
+      let res;
+      try {
+        res = await coreRequest.post('/access/invitationtoken/check').send({ invitationtoken: 'x' });
+      } finally {
+        delete platform.isInvitationTokenValid;
+      }
+      assert.strictEqual(res.status, 500);
+      assert.strictEqual(typeof platform.isInvitationTokenValid, 'function', 'prototype method restored');
     });
   });
 });

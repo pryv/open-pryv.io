@@ -62,9 +62,20 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     commonFns.getParamsValidation(methodsSchema.createUser.params),
     registration.prepareUserData,
+    refuseReservedUsername,
     registration.createUser.bind(registration),
     registration.sendWelcomeMail.bind(registration)
   );
+
+  // `backloop` was a registration test name; the admin path refuses it too.
+  // Other reserved names stay possible here (migrations may carry them).
+  function refuseReservedUsername (context: MethodContext & { newUser: { username: string } }, _params: unknown, _result: ResultBag, next: Next) {
+    const username = context.newUser.username;
+    if (typeof username === 'string' && username.toLowerCase() === 'backloop') {
+      return next(errors.itemAlreadyExists('user', { username }));
+    }
+    next();
+  }
 
   // --------------------------------------------------------------- getUserInfo
   systemAPI.register('system.getUserInfo',

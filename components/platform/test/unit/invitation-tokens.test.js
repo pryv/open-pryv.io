@@ -36,7 +36,17 @@ function makeFakePlatformDB () {
       return [...invitations.entries()].map(([key, info]) => ({ id: key, ...info }));
     },
     async updateInvitationToken (key, info) { invitations.set(key, JSON.parse(JSON.stringify(info))); },
-    async deleteInvitationToken (key) { invitations.delete(key); }
+    async deleteInvitationToken (key) { invitations.delete(key); },
+    async claimInvitationToken (key, consumedBy, consumedAt) {
+      const info = invitations.get(key);
+      if (info == null || info.consumedBy != null) return false;
+      Object.assign(info, { consumedBy, consumedAt });
+      return true;
+    },
+    async releaseInvitationToken (key, consumedBy) {
+      const info = invitations.get(key);
+      if (info != null && info.consumedBy === consumedBy) { delete info.consumedBy; delete info.consumedAt; }
+    }
   };
 }
 

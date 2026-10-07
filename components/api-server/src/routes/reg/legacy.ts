@@ -14,6 +14,12 @@ const require = createRequire(import.meta.url);
  */
 
 const errors = require('errors').factory;
+const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { clientIp } = require('middleware/src/clientIp.ts');
+const { redactUrl } = require('utils/src/redactUrl.ts');
+const { getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('routes:reg:admin');
 
 type App = { config: { get (key: string): unknown } };
 type UserCore = { coreId: string; username: string };
@@ -39,8 +45,9 @@ export default function (expressApp: ExpressApp, app: App) {
 
   // --- Admin auth middleware (same as system routes) ---
   function checkAdmin (req: Request, _res: Response, next: NextFunction) {
-    const secret = req.headers.authorization;
-    if (secret == null || secret !== adminAccessKey) {
+    if (!isAdminKey(req.headers.authorization, adminAccessKey)) {
+      // Never the headers: a near-miss key would land in the log.
+      logger.warn('Unauthorized attempt to access an admin route', { url: redactUrl(req.url), ip: clientIp(req) });
       return next(errors.unknownResource());
     }
     next();

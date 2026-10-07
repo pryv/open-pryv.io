@@ -21,6 +21,12 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
   const initContextMiddleware = middleware.initContext(app.storageLayer);
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
   expressApp.delete('/users/:username',
+    // The admin key counts only as the raw header: getAuth below also accepts
+    // the `auth` query parameter and Basic/Bearer forms, and rewrites the header.
+    function keepRawAuthorization (req: Request, res: Response, next: NextFunction) {
+      res.locals.rawAuthorization = req.header('authorization');
+      next();
+    },
     middleware.getAuth,
     initContextMiddleware,
     middleware.setMethodId('auth.delete'),
@@ -34,7 +40,7 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
       // express @types narrow params/headers slightly — both behave as `string`
       // at runtime here (single-valued path param + standard Authorization header).
       req.context!.user.username = req.params.username as string;
-      req.context!.authorizationHeader = req.headers.authorization;
+      req.context!.authorizationHeader = res.locals.rawAuthorization;
       api.call(req.context, req.params, methodCallback(res, next, 200));
     }
   );

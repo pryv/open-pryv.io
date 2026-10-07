@@ -30,8 +30,8 @@ type Platform = {
   coreId: string;
   selectCoreForRegistration: (hosting: unknown) => Promise<string | null>;
   coreIdToUrl: (id: string) => string;
-  validateRegistration: (username: string, invitationToken: unknown, uniqueFields: Record<string, unknown>, hosting: unknown) => Promise<{ redirect?: string } | undefined>;
-  consumeInvitationToken: (token: string, username: string) => Promise<unknown>;
+  validateRegistration: (username: string, invitationToken: unknown, uniqueFields: Record<string, unknown>, hosting: unknown) => Promise<{ redirect?: string; invitationClaimed?: boolean } | undefined>;
+  releaseInvitationToken: (token: string, username: string) => Promise<void>;
 };
 type ServicesSettings = { email?: { enabled?: boolean | { welcome?: boolean; resetPassword?: boolean }; welcomeTemplate?: string; [k: string]: unknown }; [k: string]: unknown };
 type SystemStreamSettings = { isUnique?: boolean; isShown?: boolean; [k: string]: unknown };
@@ -46,6 +46,7 @@ type MethodContext = {
   newUser: NewUserLike;
   user: { id: string; username: string };
   emailProofVerified?: boolean;
+  invitationClaimed?: boolean;
   [k: string]: unknown;
 };
 type RegisterParams = {
@@ -217,6 +218,8 @@ class Registration {
         result.redirect = validation.redirect;
         return next();
       }
+      // The invitation token is now consumed; given back if creation fails.
+      context.invitationClaimed = validation?.invitationClaimed === true;
     } catch (error) {
       return next(error);
     }
@@ -230,13 +233,6 @@ class Registration {
     // Multi-core: either legacy redirect flow OR new transparent forward
     // already returned the target's response — nothing to do locally.
     if (result.redirect || result.forwarded) return next();
-    // if it is testing user, skip registration process
-    if (context.newUser.username === 'backloop') {
-      result.id = 'dummy-test-user';
-      context.newUser.id = result.id;
-      context.user.username = context.newUser.username;
-      return next();
-    }
     try {
       const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
@@ -279,6 +275,9 @@ class Registration {
         }
       }
     } catch (err) {
+      if (context.invitationClaimed === true) {
+        await this.platform.releaseInvitationToken(context.newUser.invitationToken as string, context.newUser.username);
+      }
       return next(err);
     }
     next();
@@ -303,13 +302,6 @@ class Registration {
       result.core = { url: result.redirect };
       delete result.redirect;
       return next();
-    }
-    // Consume invitation token on successful registration
-    if (context.newUser.invitationToken) {
-      await this.platform.consumeInvitationToken(
-        context.newUser.invitationToken as string,
-        context.newUser.username
-      );
     }
     result.username = context.newUser.username;
     result.apiEndpoint = ApiEndpoint.build(context.newUser.username, context.newUser.token as string | undefined);
