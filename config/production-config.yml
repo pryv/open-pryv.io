@@ -4,12 +4,6 @@ http:
   ip: 127.0.0.1
   port: 9000
   trustedProxies: ['loopback']   # see default-config.yml
-storages:
-  engines:
-    filesystem:
-      # Attachments co-locate under the user local directory
-      # (storages:engines:sqlite:path); no separate attachments directory.
-      previewsDirPath: "${PRYV_DATADIR}/service-core-files/previews"
 register:
   secret: OVERRIDE ME
 auth:
@@ -51,6 +45,6 @@ logs:
   file:
     active: true
     level: error
-    path: "${PRYV_LOGSDIR}/api-server.errors.log"
+    path: var-pryv/logs/api-server.errors.log
     maxFileBytes: 4096
     maxNbFiles: 20

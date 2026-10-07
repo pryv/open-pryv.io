@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Docker image: refuses a user data root on the container's own filesystem
+
+- **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that
+  nothing ever expanded, so the documented plain-Docker and Dokku forms failed at boot unless the
+  override restated both keys. They are gone (previews and the error log default under
+  `var-pryv/`), and INSTALL.md now shows the override the `/app/data` mount needs:
+  `storages.engines.sqlite.path: /app/data/users`, `storages.engines.filesystem.previewsDirPath:
+  /app/data/previews`, and `logs.file` (off, or a path under `/app/data`). Nothing reads
+  `PRYV_DATADIR` / `PRYV_LOGSDIR`; drop them.
+- **Safety, BREAKING for installs already losing data.** Inside the image, the server refuses to
+  start when `storages.engines.sqlite.path` (per-user databases, attachments, SQLite audit and
+  series) is on the container's own filesystem or on a tmpfs while an engine writes there: that data
+  is lost whenever the container is recreated. `PRYV_EPHEMERAL_DATA_OK=true` lifts it for a
+  throwaway container. Raw (non-Docker) installs are not checked.
+- **Operators:** if an upgrade stops on this message, copy what the old container still holds before
+  removing it (`docker cp <old-container>:/app/var-pryv/users /host/pryv/data/users`), then set
+  `storages.engines.sqlite.path: /app/data/users` with `/host/pryv/data` mounted on `/app/data`.
+
 ### Docker image: the server runs as a non-root user
 
 - **Security (hardening).** Every process in the container (master, workers, previews, rqlited) ran

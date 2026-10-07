@@ -45,9 +45,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm -rf /tmp/rqlite*
 
 # Declare /app/var-pryv/rqlite-data as a volume — the one and only path docker
-# operators need to persist for PlatformDB state. /app/data is also persistent
-# (PRYV_DATADIR) but its layout is deployment-specific so we leave it to the
-# operator to mount explicitly.
+# operators need to persist for PlatformDB state. /app/data is the conventional
+# user data root (storages.engines.sqlite.path etc. in the operator's override),
+# but its layout is deployment-specific so we leave it to the operator to mount
+# explicitly.
 VOLUME ["/app/var-pryv/rqlite-data"]
 
 # Copy all source (workspaces need component package.json files for install)
