@@ -36,7 +36,8 @@ type MFAProfile = {
 type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: TotpState };
 
 type UserRef = { id: string; username: string };
-/** Per-user failure tally. Times in ms; `notBefore` is 0 when no delay applies. */
+/** Per-user failure tally, counted when an attempt is reserved. Times in ms;
+ *  `lastFailureAt` is the last reserved attempt; `notBefore` is 0 when no delay applies. */
 type ThrottleState = { failures: number; lastFailureAt: number; notBefore: number };
 /** What may be stored: the current shape, or the former lockout shape
  *  (`{ count, windowStartedAt, lockedUntil }`) on an upgraded deployment. */
@@ -88,7 +89,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // password can re-authenticate and get a fresh budget, so the second factor
   // stays brute-forceable. The tally below therefore accrues on the USER,
   // across logins. Past `backoff.freeFailures` failures each further one
-  // imposes a delay before the next attempt (doubling, capped). It is a delay,
+  // imposes a delay before the next attempt (doubling, capped). Every attempt
+  // is counted BEFORE its code is checked (and the count cleared on success),
+  // so attempts sent in parallel cannot all pass the check. It is a delay,
   // never a lockout: a caller holding the password must not be able to lock
   // the real user out of their second factor, so the real user waits at most
   // `backoff.maxSeconds`, and a success clears the tally.
@@ -127,7 +130,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     return null;
   }
 
-  /** A tally whose last failure is older than the window counts as none. */
+  /** A tally whose last attempt is older than the window counts as none. */
   function liveThrottle (state: ThrottleState | null, now: number, attemptsCfg: AttemptsCfg): ThrottleState | null {
     if (state == null) return null;
     if (now - state.lastFailureAt > attemptsCfg.perAccountWindowSeconds * 1000) return null;
@@ -155,45 +158,90 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     const now = Date.now();
     const state = liveThrottle(asThrottleState((await readPrivateProfile(user))?.data?.mfaThrottle), now, attemptsCfg);
     if (state == null || state.notBefore <= now) return null;
-    const retryAfterSeconds = Math.ceil((state.notBefore - now) / 1000);
+    return backoffErrorFor(state.notBefore, now);
+  }
+
+  function backoffErrorFor (notBefore: number, now: number): Error {
+    const retryAfterSeconds = Math.ceil((notBefore - now) / 1000);
     return errors.tooManyAttempts(retryAfterSeconds, {
       message: `Too many failed MFA attempts for this account; retry in ${retryAfterSeconds} s.`,
       data: { retryAfterSeconds }
     });
   }
 
+  function sessionCeilingError (): Error {
+    return errors.invalidAccessToken('Too many failed MFA attempts; the MFA session has been invalidated. Please log in again.');
+  }
+
+  /** At least one attempt per session, whatever the configured ceiling. */
+  function perSessionCeiling (attemptsCfg: AttemptsCfg): number {
+    return Math.max(attemptsCfg.perSession, 1);
+  }
+
   /**
-   * Attempt limiter (all methods). Records a failed verify/confirm against
-   * BOTH ceilings: the pending session (invalidated at its ceiling, forcing a
-   * re-login) and the account tally (which delays the NEXT attempt once past
-   * the free failures). Returns the error to surface for THIS attempt.
+   * Attempt limiter (all methods), run BEFORE the code is checked. Takes one
+   * slot on the pending session, then one on the account tally, each with a
+   * compare-and-set, so N attempts in flight at once take N slots and none
+   * past a ceiling reaches the method. The session goes first so the account
+   * tally only counts attempts that are then evaluated.
+   *
+   * Returns `{ attempts }` (the session slot taken) or the error to surface.
    */
-  async function limitOrPassThrough (mfaToken: unknown, user: UserRef, attemptsCfg: AttemptsCfg, verifyErr: Error): Promise<Error> {
-    await recordAccountFailure(user, attemptsCfg);
-    const attempts = await sessionStore().recordFailedAttempt(mfaToken);
-    if (attempts >= attemptsCfg.perSession) {
+  async function reserveAttempt (mfaToken: unknown, user: UserRef, attemptsCfg: AttemptsCfg): Promise<{ attempts: number } | { error: Error }> {
+    // Read-only first: during a delay, refuse without spending a session slot.
+    const backoffErr = await mfaBackoffError(user, attemptsCfg);
+    if (backoffErr) return { error: backoffErr };
+    const slot = await sessionStore().reserveAttempt(mfaToken, perSessionCeiling(attemptsCfg));
+    if ('refused' in slot) {
+      if (slot.refused === 'gone') return { error: errors.invalidAccessToken('Invalid or expired MFA session token.') };
+      if (slot.refused === 'ceiling') {
+        await sessionStore().clear(mfaToken);
+        return { error: sessionCeilingError() };
+      }
+      return { error: busyError() };
+    }
+    const accountErr = await reserveAccountAttempt(user, attemptsCfg);
+    if (accountErr) return { error: accountErr };
+    return { attempts: slot.attempts };
+  }
+
+  /**
+   * After a failed verify/confirm, whose slots were already taken: invalidate
+   * the session once it has used its last slot. Returns the error to surface.
+   */
+  async function afterFailedAttempt (mfaToken: unknown, attempts: number, attemptsCfg: AttemptsCfg, verifyErr: Error): Promise<Error> {
+    if (attempts >= perSessionCeiling(attemptsCfg)) {
       await sessionStore().clear(mfaToken);
-      return errors.invalidAccessToken('Too many failed MFA attempts; the MFA session has been invalidated. Please log in again.');
+      return sessionCeilingError();
     }
     return verifyErr;
   }
 
+  function busyError (): Error {
+    return errors.tooManyAttempts(1, {
+      message: 'Too many concurrent MFA attempts for this account; retry in 1 s.',
+      data: { retryAfterSeconds: 1 }
+    });
+  }
+
   /**
-   * Accrue one failed second factor against the account, atomically across
-   * API workers: each accrual is a compare-and-set on the stored tally, so N
-   * concurrent wrong guesses count N. A race is only ever lost to another
-   * accrual that succeeded, so every retry is progress; the bound only caps a
-   * pathological burst, where giving up still leaves a tally at least as high
-   * as all but the lost ones.
+   * Count one second-factor attempt against the account before it is checked,
+   * atomically across API workers: a compare-and-set on the stored tally, so N
+   * attempts in flight take N slots. Refused while the delay set by the
+   * PREVIOUS attempt runs, so a burst reaches the method at most
+   * `freeFailures + 1` times. A success clears the tally afterwards. A race is
+   * only ever lost to another reservation that succeeded; one that keeps
+   * losing is refused (fail closed), never let through uncounted.
    */
-  async function recordAccountFailure (user: UserRef, attemptsCfg: AttemptsCfg): Promise<void> {
-    if (attemptsCfg.backoff.maxSeconds === 0) return; // per-account backoff disabled
+  async function reserveAccountAttempt (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
+    if (attemptsCfg.backoff.maxSeconds === 0) return null; // per-account backoff disabled
     const T = ['data', 'mfaThrottle'];
     for (let tries = 0; tries < 10; tries++) {
       const now = Date.now();
       const item = await readPrivateProfile(user);
       const stored = item?.data?.mfaThrottle;
       const previous = liveThrottle(asThrottleState(stored), now, attemptsCfg);
+      if (previous != null && previous.notBefore > now) return backoffErrorFor(previous.notBefore, now);
       const failures = (previous?.failures ?? 0) + 1;
       const delaySeconds = delayForFailures(failures, attemptsCfg.backoff);
       const next: ThrottleState = { failures, lastFailureAt: now, notBefore: delaySeconds > 0 ? now + delaySeconds * 1000 : 0 };
@@ -230,9 +278,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           `MFA failures for user "${user.username}" reached the maximum backoff: ${delaySeconds}s between second-factor attempts until one succeeds or the window lapses.`
         );
       }
-      return;
+      return null;
     }
-    mfaLogger.warn(`MFA failure for user "${user.username}" not counted: lost the race to concurrent failures 10 times in a row.`);
+    mfaLogger.warn(`MFA attempt for user "${user.username}" refused: lost the race to concurrent attempts 10 times in a row.`);
+    return busyError();
   }
 
   /**
@@ -329,12 +378,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const cfg = getMfaConfig();
         const method = getMFAMethodForProfile(profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
-        const backoffErr = await mfaBackoffError(user, cfg.attempts);
-        if (backoffErr) return next(backoffErr);
+        const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
+        if ('error' in slot) return next(slot.error);
         try {
           await method.verify(user.username, profile, { headers: {}, body: params });
         } catch (verifyErr) {
-          return next(await limitOrPassThrough(params.mfaToken, user, cfg.attempts, verifyErr as Error));
+          return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }
         // TOTP: mark the enrolment confirmed. saveMFAProfile atomically replaces
         // any previous enrolment (whole data.mfa is overwritten).
@@ -402,8 +451,6 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const cfg = getMfaConfig();
         const method = getMFAMethodForProfile(session.profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
-        const backoffErr = await mfaBackoffError(user, cfg.attempts);
-        if (backoffErr) return next(backoffErr);
         // TOTP replay guard must consult the AUTHORITATIVE stored enrolment, not
         // the login-time session snapshot (F1). The enrolment must still exist
         // AND be the same secret this session authenticated against: if it was
@@ -421,10 +468,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           session.profile.totp.lastUsedStep = Math.max(stored.totp.lastUsedStep ?? -1, session.profile.totp.lastUsedStep ?? -1);
         }
         const stepBefore = isTotp ? session.profile.totp.lastUsedStep : null;
+        const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
+        if ('error' in slot) return next(slot.error);
         try {
           await method.verify(user.username, session.profile, { headers: {}, body: params });
         } catch (verifyErr) {
-          return next(await limitOrPassThrough(params.mfaToken, user, cfg.attempts, verifyErr as Error));
+          return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }
         // Consume the accepted step with ONE conditional write, BEFORE releasing
         // the token (a storage failure fails closed): it succeeds only if the
@@ -443,7 +492,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
             // Lost the race for this step, a drift-window regression, or the
             // enrolment rotated after the check above: this code is no longer
             // acceptable, which is a failed attempt, not a success.
-            return next(await limitOrPassThrough(params.mfaToken, user, cfg.attempts,
+            return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts,
               errors.invalidParametersFormat('The provided MFA code is invalid.', { id: 'invalid-mfa-code' })));
           }
         }

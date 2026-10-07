@@ -109,13 +109,29 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.equal(fromB.context.user, 'alice');
   });
 
-  it('[MT6A] parallel failed attempts on one session each count', async () => {
+  it('[MT6A] parallel attempts on one session each take their own slot', async () => {
     // Several guesses in flight at once (possibly on different workers): a
     // read-then-write counter lets them all read the same count.
     const store = new SessionStore(1800, { kvClient: harness.kvClient });
     const token = await store.create(new Profile({ x: 1 }), { user: 'alice' });
-    const counts = await Promise.all(Array.from({ length: 10 }, () => store.recordFailedAttempt(token)));
-    assert.deepEqual([...counts].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const slots = await Promise.all(Array.from({ length: 10 }, () => store.reserveAttempt(token, 100)));
+    assert.deepEqual(slots.map((s) => s.attempts).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     assert.equal((await store.get(token)).attempts, 10);
+  });
+
+  it('[MT6B] parallel attempts past the ceiling are refused, never reserved', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), { user: 'alice' });
+    const slots = await Promise.all(Array.from({ length: 20 }, () => store.reserveAttempt(token, 5)));
+    const reserved = slots.filter((s) => s.attempts != null).map((s) => s.attempts).sort((a, b) => a - b);
+    assert.deepEqual(reserved, [1, 2, 3, 4, 5]);
+    assert.isTrue(slots.filter((s) => s.attempts == null).every((s) => s.refused === 'ceiling' || s.refused === 'busy'));
+    assert.equal((await store.get(token)).attempts, 5);
+    assert.deepEqual(await store.reserveAttempt(token, 5), { refused: 'ceiling' });
+  });
+
+  it('[MT6C] an unknown session is refused as gone', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    assert.deepEqual(await store.reserveAttempt('not-a-real-token', 5), { refused: 'gone' });
   });
 });

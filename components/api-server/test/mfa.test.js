@@ -1076,6 +1076,83 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(data.mfaThrottle.failures, FREE + 1);
         assert.strictEqual(data.mfaThrottle.lockedUntil, undefined, 'the former shape is replaced');
       });
+
+      // Parallel attempts: each one is counted before its code is checked, so
+      // attempts in flight at once cannot all pass the check and reach the
+      // method. Evaluations are counted at the method itself, which is slowed
+      // down (as a remote SMS check would be) so the attempts overlap.
+      async function countingVerifies (fn) {
+        const TotpService = require('business/src/mfa/TotpService.ts').default;
+        const original = TotpService.prototype.verify;
+        const counter = { calls: 0 };
+        TotpService.prototype.verify = async function (...args) {
+          counter.calls++;
+          await sleep(200);
+          return original.apply(this, args);
+        };
+        try {
+          counter.result = await fn();
+        } finally {
+          TotpService.prototype.verify = original;
+        }
+        return counter;
+      }
+
+      function burst (tokens, perToken, code = '000000') {
+        const requests = [];
+        for (const token of tokens) {
+          for (let i = 0; i < perToken; i++) {
+            requests.push(coreRequest.post(`/${username}/mfa/verify`).set('Authorization', token).send({ code }));
+          }
+        }
+        return Promise.all(requests);
+      }
+
+      function assertRefusedOrFailed (results) {
+        for (const r of results) {
+          assert.ok([400, 401, 429].includes(r.status), `unexpected answer in a burst: ${r.status} ${JSON.stringify(r.body)}`);
+        }
+      }
+
+      it('[MA12L] a parallel burst on one session reaches the method at most the per-session ceiling', async function () {
+        await setUp({}, { maxSeconds: 0 });
+        const token = (await login()).body.mfaToken;
+        const K = 20;
+        const { calls, result } = await countingVerifies(() => burst([token], K));
+        assertRefusedOrFailed(result);
+        assert.ok(calls >= 1 && calls <= PER_SESSION, `${calls} of ${K} parallel guesses reached the method (ceiling ${PER_SESSION})`);
+        assert.strictEqual(result.filter((r) => r.status === 400).length, calls - 1,
+          'every evaluated guess but the one using the last slot answers as a wrong code');
+        const after = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', token).send({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(after.status, 401, 'a correct code after the session ceiling is refused');
+      });
+
+      it('[MA12M] a parallel burst on one session: the account tally equals the evaluated attempts', async function () {
+        // A delay long enough that it cannot lapse during the burst.
+        await setUp({}, { baseSeconds: 60, maxSeconds: 60 });
+        const token = (await login()).body.mfaToken;
+        const K = 20;
+        const { calls, result } = await countingVerifies(() => burst([token], K));
+        assertRefusedOrFailed(result);
+        assert.ok(calls >= 1 && calls <= FREE + 1, `${calls} of ${K} parallel guesses reached the method (cap ${FREE + 1})`);
+        const { data } = await storedProfile();
+        assert.strictEqual(data.mfaThrottle.failures, calls, 'every evaluated attempt counted, and only those');
+      });
+
+      it('[MA12N] parallel bursts across several sessions respect the account ceiling, and a correct code after it is refused', async function () {
+        await setUp({}, { baseSeconds: 60, maxSeconds: 60 });
+        const tokens = [];
+        for (let i = 0; i < 8; i++) tokens.push((await login()).body.mfaToken);
+        const { calls, result } = await countingVerifies(() => burst(tokens, PER_SESSION));
+        assertRefusedOrFailed(result);
+        assert.ok(calls >= 1 && calls <= FREE + 1, `${calls} of ${tokens.length * PER_SESSION} parallel guesses reached the method (cap ${FREE + 1})`);
+        const { data } = await storedProfile();
+        assert.strictEqual(data.mfaThrottle.failures, calls, 'every evaluated attempt counted, and only those');
+        const correct = await countingVerifies(() => guessOnFreshLogin(totpCodeFor(secret, 0)));
+        assertDelayed(correct.result);
+        assert.strictEqual(correct.calls, 0, 'a correct code past the ceiling is refused before it is checked');
+      });
     });
   });
 });

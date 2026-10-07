@@ -26,7 +26,7 @@ const Profile = require('./Profile.ts').default;
 interface KvClientLike {
   get: (key: string) => Promise<unknown>;
   /** Resolves whether it wrote: an unguarded write always does; the
-   * `ifEquals` write of recordFailedAttempt may not, and is retried. */
+   * `ifEquals` write of reserveAttempt may not, and is retried. */
   set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
@@ -113,25 +113,28 @@ class SessionStore {
   }
 
   /**
-   * Record a failed verify/confirm attempt against a session and return the new
-   * count. Preserves the session (TTL is refreshed). Used by the attempt
-   * limiter, which clears the session once the count reaches its ceiling.
+   * Reserve one verify/confirm attempt on a session BEFORE the code is checked,
+   * so the ceiling holds however many attempts are in flight at once.
+   * Preserves the session (TTL is refreshed).
+   *
+   * Answers `{ attempts }` (this attempt's number, 1-based) when reserved, or
+   * the reason it was not: `gone` (no such session), `ceiling` (`max` attempts
+   * already reserved), `busy` (kept losing the compare-and-set; fail closed).
    */
-  async recordFailedAttempt (id: string): Promise<number> {
-    // Compare-and-set: parallel failed attempts on one session (possibly on
-    // different API workers) each count, instead of overwriting each other's
-    // increment and letting more guesses through than the ceiling allows.
+  async reserveAttempt (id: string, max: number): Promise<{ attempts: number } | { refused: 'gone' | 'ceiling' | 'busy' }> {
+    // Compare-and-set: parallel attempts on one session (possibly on different
+    // API workers) each take their own slot, and none past `max`.
     for (let tries = 0; tries < 20; tries++) {
       const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
-      if (!session) return 0;
-      const next = { ...session, attempts: (session.attempts ?? 0) + 1 };
+      if (!session) return { refused: 'gone' };
+      const previous = session.attempts ?? 0;
+      if (previous >= max) return { refused: 'ceiling' };
+      const next = { ...session, attempts: previous + 1 };
       if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) {
-        return next.attempts;
+        return { attempts: next.attempts };
       }
     }
-    // Only a burst of concurrent failures on this very session gets here:
-    // fail closed, as if the ceiling were reached.
-    return Number.MAX_SAFE_INTEGER;
+    return { refused: 'busy' };
   }
 
   /**
