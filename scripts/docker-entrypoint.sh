@@ -40,7 +40,12 @@ run_server () {
       *" --bootstrap "*)
         case " $* " in
           *" --bootstrap-config-dir "*) ;;
-          *) touch /app/config/override-config.yml && chown node:node /app/config/override-config.yml ;;
+          *)
+            # 0600: it will carry the cluster secrets.
+            touch /app/config/override-config.yml
+            chmod 600 /app/config/override-config.yml
+            chown node:node /app/config/override-config.yml
+            ;;
         esac
         ;;
     esac
