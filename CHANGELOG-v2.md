@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.40 - 2026-10-07
 
 **Upgrade promptly: this release carries several security fixes.** Before upgrading, check that
 `auth.adminAccessKey` and `auth.filesReadTokenSecret` are at least 16 characters (see the last entry);
