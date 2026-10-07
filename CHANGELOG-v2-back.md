@@ -9,9 +9,14 @@
   tags it `<tag>` + `2.0.0-pre`, builds the encryption-at-rest variant (amd64 only: its payload image
   is amd64 only), and runs the SBOM, the keyless signature (`cosign sign --recursive`: the list and
   each platform image) and the provenance attestation against the list digest.
-- `scripts/docker-entrypoint.sh` drops the server to `node` with util-linux `setpriv` after handing
-  it the data directories; the Dockerfile asserts `setpriv` is present and pre-owns `/app/data` and
-  `/app/var-pryv`.
+- `scripts/docker-entrypoint.sh` drops the server to `node` with util-linux `setpriv`
+  (`--no-new-privs`, ambient `CAP_NET_BIND_SERVICE` only) after handing it the data directories:
+  each root is resolved with `readlink -f`, then `find … -execdir chown -h`, so a link inside the data
+  is changed, never followed, and no path is re-resolved from the root between the walk and the
+  chown. The Dockerfile asserts `setpriv` is present and pre-owns `/app/data`, `/app/var-pryv`,
+  `/etc/pryv/tls` and `/var/lib/pryv`.
+- `TokenStore` running as root chowns the token file to the owner of its directory before the
+  atomic rename.
 
 ## Placeholder secrets: one predicate
 

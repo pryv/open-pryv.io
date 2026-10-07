@@ -68,15 +68,20 @@ after upgrading, run `bin/hfs-author-scrub.js` once per core (see "HF series").
   as root. The server now runs as the image's `node` user (uid/gid 1000), with
   `CAP_NET_BIND_SERVICE` as its only capability, so ports 53, 80 and 443 still bind. The container
   still starts as root: the entrypoint hands the data directories (`/app/var-pryv`, `/app/data`,
-  `/app/pryv/data`, `/etc/pryv`, `/var/lib/pryv`, plus `PRYV_OWNED_DIRS`) to `node`, then drops.
-  The wizard modes (`init`, `check-config`, `config-to-env`) and other pass-through commands are
-  unchanged.
+  `/app/pryv/data`, `/etc/pryv/tls`, `/var/lib/pryv`, plus `PRYV_OWNED_DIRS`) to `node`, then drops
+  (no new privileges). The cluster CA stays root's. The wizard modes (`init`, `check-config`,
+  `config-to-env`) and other pass-through commands are unchanged.
 - **Operators:** no action for the documented layouts: files written by earlier images are handed to
   `node` at the first start (back up the data first, as for any upgrade). Data placed elsewhere by
-  `override-config.yml` needs `PRYV_OWNED_DIRS`; run one-shot tools with `docker exec -u node`; with
+  `override-config.yml` needs `PRYV_OWNED_DIRS`; files the server only reads (config, a custom TLS
+  key) must be readable by uid 1000; run one-shot tools with `docker exec -u node` (`bin/bootstrap.js`
+  stays root); start the server as `node bin/master.js …`, not through `sh -c`; with
   `--cap-drop ALL`, keep `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID` (and `NET_BIND_SERVICE` for a
-  port below 1024 under host networking). `PRYV_RUN_AS_ROOT=true` restores the previous behaviour.
-  INSTALL.md, "Container user".
+  port below 1024 under host networking); on Kubernetes, `runAsNonRoot: true` needs
+  `runAsUser: 1000`. `PRYV_RUN_AS_ROOT=true` restores the previous behaviour. INSTALL.md,
+  "Container user".
+- Join tokens written by `bin/bootstrap.js` running as root are handed to the owner of their
+  directory, so a server running as another user can consume them.
 
 ### Docker image for linux/arm64
 

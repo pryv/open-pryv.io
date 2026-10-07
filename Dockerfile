@@ -103,8 +103,8 @@ EXPOSE 80 443 3000 3001 4000 53/udp 53/tcp
 # util-linux `setpriv`. The writable directories of a mount-less container are
 # prepared here so a fresh container has nothing to change.
 RUN command -v setpriv && \
-    mkdir -p /app/data && \
-    chown -R node:node /app/data /app/var-pryv
+    mkdir -p /app/data /etc/pryv/tls /var/lib/pryv && \
+    chown -R node:node /app/data /app/var-pryv /etc/pryv/tls /var/lib/pryv
 
 # Entry-point dispatcher: no args → normal master.js boot (as `node`);
 # `init <path>` → interactive config wizard; `check-config <path>` → validate
