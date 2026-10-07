@@ -25,7 +25,8 @@ const require = createRequire(import.meta.url);
  *         "issuedAt":   1713090000000,
  *         "expiresAt":  1713176400000,
  *         "consumedAt": null | 1713090900000,
- *         "consumerIp": null | "1.2.3.4"
+ *         "consumerIp": null | "1.2.3.4",
+ *         "certFingerprint": "AA:BB:..."   (node cert shipped with the token)
  *       },
  *       ...
  *     }
@@ -51,6 +52,7 @@ interface TokenEntry {
   expiresAt: number;
   consumedAt: number | null;
   consumerIp: string | null;
+  certFingerprint?: string;
 }
 
 interface StoreData {
@@ -74,9 +76,11 @@ class TokenStore {
    *
    * @param opts.coreId
    * @param [opts.ttlMs=24h]
+   * @param [opts.certFingerprint] - SHA-256 fingerprint of the node cert
+   *   shipped with this token; the ack must present the same one
    * @param [opts.now=Date.now()] - injectable for testing
    */
-  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }: { coreId: string; ttlMs?: number; now?: number }) {
+  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, certFingerprint, now = Date.now() }: { coreId: string; ttlMs?: number; certFingerprint?: string; now?: number }) {
     if (!coreId) throw new Error('TokenStore.mint: coreId is required');
     if (!(Number.isInteger(ttlMs) && ttlMs > 0)) {
       throw new Error('TokenStore.mint: ttlMs must be a positive integer');
@@ -90,6 +94,7 @@ class TokenStore {
       consumedAt: null,
       consumerIp: null
     };
+    if (certFingerprint != null) entry.certFingerprint = certFingerprint;
     const store = this._load();
     store.tokens[hash] = entry;
     this._save(store);
@@ -112,6 +117,9 @@ class TokenStore {
     if (entry == null) return { ok: false, reason: 'unknown' };
     if (entry.consumedAt != null) return { ok: false, reason: 'already-consumed' };
     if (entry.expiresAt <= now) return { ok: false, reason: 'expired' };
+    if (entry.certFingerprint != null) {
+      return { ok: true, coreId: entry.coreId, certFingerprint: entry.certFingerprint };
+    }
     return { ok: true, coreId: entry.coreId };
   }
 
@@ -172,6 +180,21 @@ class TokenStore {
     }
     if (count > 0) this._save(store);
     return count;
+  }
+
+  /**
+   * Revoke one raw token if it has not been consumed. Returns true when an
+   * entry was removed.
+   */
+  revoke (rawToken: string): boolean {
+    if (typeof rawToken !== 'string' || rawToken.length === 0) return false;
+    const store = this._load();
+    const hash = sha256(rawToken);
+    const entry = store.tokens[hash];
+    if (entry == null || entry.consumedAt != null) return false;
+    delete store.tokens[hash];
+    this._save(store);
+    return true;
   }
 
   /**

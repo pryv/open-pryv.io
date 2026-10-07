@@ -201,6 +201,63 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
       assert.equal(cliOps.listTokens({ tokensPath }).length, 0);
     });
 
+    it('[BNCX1] refuses an id that is already registered and leaves its rows, tokens and output untouched', async () => {
+      const db = makeFakeDB();
+      const live = { id: 'core-b', ip: '198.51.100.2', url: null, hosting: 'eu', available: true };
+      db._coreInfos.set('core-b', live);
+      db._dns.set('core-b', { a: ['198.51.100.2'] });
+      db._dns.set('lsc', { a: ['198.51.100.1', '198.51.100.2'] });
+      const tokensPath = path.join(tmp, 'tokens.json');
+
+      await assert.rejects(cliOps.newCore(optsIn(tmp, db)), /already registered[\s\S]*--replace/);
+      assert.deepEqual(db._coreInfos.get('core-b'), live);
+      assert.deepEqual(db._dns.get('core-b'), { a: ['198.51.100.2'] });
+      assert.deepEqual(db._dns.get('lsc'), { a: ['198.51.100.1', '198.51.100.2'] });
+      assert.equal(cliOps.listTokens({ tokensPath }).length, 0);
+      assert.equal(fs.existsSync(path.join(tmp, 'bundle.age')), false);
+    });
+
+    it('[BNCX2] --replace re-issues for a registered id and revokes its earlier token', async () => {
+      const db = makeFakeDB();
+      const tokensPath = path.join(tmp, 'tokens.json');
+      await cliOps.newCore(optsIn(tmp, db));
+      await cliOps.newCore(optsIn(tmp, db, { replace: true, outPath: path.join(tmp, 'bundle2.age') }));
+      assert.equal(cliOps.listTokens({ tokensPath }).length, 1);
+      assert.equal(db._coreInfos.get('core-b').available, false);
+    });
+
+    it('[BNCX3] a failed --replace restores the previous rows; a failed issue revokes only the token it minted', async () => {
+      const TokenStore = require('../../src/bootstrap/TokenStore.ts').default;
+      const db = makeFakeDB();
+      const live = { id: 'core-b', ip: '198.51.100.2', url: null, hosting: 'eu', available: true };
+      db._coreInfos.set('core-b', live);
+      db._dns.set('core-b', { a: ['198.51.100.2'] });
+      db._dns.set('lsc', { a: ['198.51.100.2'] });
+      const badOut = path.join(tmp, 'is-a-dir');
+      fs.mkdirSync(badOut);
+
+      await assert.rejects(cliOps.newCore(optsIn(tmp, db, { replace: true, outPath: badOut })), /EISDIR|illegal operation/);
+      assert.deepEqual(db._coreInfos.get('core-b'), live);
+      assert.deepEqual(db._dns.get('core-b'), { a: ['198.51.100.2'] });
+      assert.deepEqual(db._dns.get('lsc'), { a: ['198.51.100.2'] });
+
+      // Fresh id with an unrelated active token for it: the rollback keeps it.
+      const tokensPath = path.join(tmp, 'tokens2.json');
+      new TokenStore({ path: tokensPath }).mint({ coreId: 'core-c' });
+      await assert.rejects(cliOps.newCore(optsIn(tmp, makeFakeDB(), { coreId: 'core-c', tokensPath, outPath: badOut })), /EISDIR|illegal operation/);
+      assert.equal(cliOps.listTokens({ tokensPath }).length, 1);
+    });
+
+    it('[BFPR3] records the node certificate fingerprint with the token', async () => {
+      const { sha256Fingerprint } = require('../../src/bootstrap/applyBundle.ts');
+      const db = makeFakeDB();
+      const result = await cliOps.newCore(optsIn(tmp, db));
+      const decoded = BundleEncryption.decrypt(fs.readFileSync(result.outPath, 'utf8'), result.passphrase);
+      const onDisk = JSON.parse(fs.readFileSync(path.join(tmp, 'tokens.json'), 'utf8'));
+      const [entry] = Object.values(onDisk.tokens);
+      assert.equal(entry.certFingerprint, sha256Fingerprint(decoded.node.certPem));
+    });
+
     it('rejects ttlMs that is not a positive integer', async () => {
       await assert.rejects(
         cliOps.newCore({
@@ -263,6 +320,18 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
       assert.equal(db._coreInfos.get('core-b'), undefined);
       assert.equal(db._dns.get('core-b'), undefined);
       assert.equal(db._dns.get('lsc'), undefined);
+    });
+
+    it('[BRVK1] revoke-token warns that a delivered bundle is not invalidated', function () {
+      this.timeout(60_000);
+      assert.match(cliOps.REVOKE_WARNING, /does NOT invalidate/);
+      const repoRoot = path.resolve(import.meta.dirname, '../../../..');
+      const out = execFileSync(process.execPath, [
+        path.join(repoRoot, 'bin/bootstrap.js'), 'revoke-token', 'core-x', '--tokens-path', path.join(tmp, 'tokens.json')
+      ], { cwd: repoRoot, encoding: 'utf8' });
+      assert.match(out, /Revoked 0 active token\(s\) for core-x/);
+      assert.ok(out.includes(cliOps.REVOKE_WARNING), out);
+      assert.match(out, /If a bundle may have been exposed/);
     });
   });
 

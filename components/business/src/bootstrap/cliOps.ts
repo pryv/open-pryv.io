@@ -26,10 +26,31 @@ const Bundle = require('./Bundle.ts');
 const BundleEncryption = require('./BundleEncryption.ts');
 const TokenStore = require('./TokenStore.ts').default;
 const DnsRegistration = require('./DnsRegistration.ts');
+const { sha256Fingerprint } = require('./applyBundle.ts');
 const { coreIdProblem, peerUrlProblem } = require('platform/src/coreIdentity.ts');
 
-// Opaque PlatformDB handle — passed through to TokenStore/DnsRegistration, never inspected here.
+// PlatformDB handle — passed through to DnsRegistration; read here only for
+// the existing-core check and the rollback snapshot.
 type PlatformDBLike = unknown;
+type Row = Record<string, unknown>;
+type PlatformRows = {
+  getCoreInfo: (id: string) => Promise<Row | null>;
+  setCoreInfo: (id: string, info: Row) => Promise<unknown>;
+  getDnsRecord: (sub: string) => Promise<Row | null>;
+  setDnsRecord: (sub: string, rec: Row) => Promise<unknown>;
+  deleteDnsRecord: (sub: string) => Promise<unknown>;
+};
+
+const LSC_SUBDOMAIN = 'lsc';
+
+/** Printed by `revoke-token`: what revoking does and does not undo. */
+const REVOKE_WARNING =
+  'WARNING: revoking stops the ack and (with --ip) removes the pre-registration. ' +
+  'It does NOT invalidate what the bundle carries: the platform admin key, the other ' +
+  'platform secrets and a cluster node certificate valid for a year. If the bundle and ' +
+  'its passphrase may have been read, or were delivered to a host you no longer trust, ' +
+  'follow "If a bundle may have been exposed" in SINGLE-TO-MULTIPLE.md (rotate the ' +
+  'platform secrets, re-issue the cluster CA and node certificates).';
 
 interface NewCoreOpts {
   platformDB: PlatformDBLike;
@@ -52,6 +73,8 @@ interface NewCoreOpts {
   ttlMs?: number;
   /** Accept an http: `url` (development and test clusters only). */
   allowInsecurePeerUrl?: boolean;
+  /** Re-issue for a core id that already has a core-info row. */
+  replace?: boolean;
 }
 
 interface InitCaHolderOpts {
@@ -79,8 +102,13 @@ const OVERRIDE_HEADER_SUFFIX =
  * signed by the cluster CA, encrypts everything with a generated passphrase
  * and writes the armored payload to `outPath`.
  *
- * On any failure after PlatformDB writes, rolls back: revokes the token and
- * unregisters the core. Throws the original error.
+ * Refuses a core id that already has a core-info row unless `replace` is
+ * set; `replace` revokes the earlier tokens for that id. The node cert
+ * fingerprint is recorded with the token, so the ack must present it.
+ *
+ * On any failure after PlatformDB writes, rolls back: revokes the token it
+ * minted and restores the previous rows (or unregisters a new core). Throws
+ * the original error.
  *
  * @param opts.platformDB
  * @param opts.caDir
@@ -107,8 +135,9 @@ async function newCore (opts: NewCoreOpts) {
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
     secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs,
-    allowInsecurePeerUrl = false
+    allowInsecurePeerUrl = false, replace = false
   } = opts;
+  const rows = platformDB as PlatformRows;
 
   // The id becomes a DNS label and a certificate name; the url receives the
   // admin key from the other cores. Refuse before anything is written.
@@ -119,6 +148,17 @@ async function newCore (opts: NewCoreOpts) {
     if (urlProblem != null) throw new Error('new-core: ' + urlProblem);
   }
 
+  // An existing row is a live or already issued core: overwriting it would
+  // repoint its records, and a rollback would delete them.
+  const previousInfo = await rows.getCoreInfo(coreId);
+  if (previousInfo != null && !replace) {
+    throw new Error(`new-core: core "${coreId}" is already registered. If its earlier bundle was never used, ` +
+      `run \`revoke-token ${coreId} --ip <ip>\` first; to re-issue for this id anyway, pass --replace.`);
+  }
+  const snapshot = previousInfo == null
+    ? null
+    : { info: previousInfo, record: await rows.getDnsRecord(coreId), lsc: await rows.getDnsRecord(LSC_SUBDOMAIN) };
+
   // 1. Cluster CA — generate on first call, reuse afterwards.
   const ca = new ClusterCA({ dir: caDir });
   const ensured = ca.ensure();
@@ -127,16 +167,18 @@ async function newCore (opts: NewCoreOpts) {
   const hostname = dnsDomain ? `${coreId}.${dnsDomain}` : coreId;
   const { certPem, keyPem } = ca.issueNodeCert({ coreId, ip, hostname });
 
-  // 3. One-time join token. Persisted to tokensPath; raw token only returned
-  //    here, never logged.
+  // 3. One-time join token, bound to the node cert's fingerprint. Persisted
+  //    to tokensPath; raw token only returned here, never logged.
   const tokenStore = new TokenStore({ path: tokensPath });
-  const minted = tokenStore.mint(ttlMs != null ? { coreId, ttlMs } : { coreId });
+  if (replace) tokenStore.revokeByCoreId(coreId);
+  const certFingerprint = sha256Fingerprint(certPem);
+  const minted = tokenStore.mint(ttlMs != null ? { coreId, ttlMs, certFingerprint } : { coreId, certFingerprint });
 
   // 4. Pre-register in PlatformDB + DNS. Past this point we own rollback.
   let registered = false;
   try {
-    await DnsRegistration.registerNewCore({ platformDB, coreId, ip, url, hosting });
     registered = true;
+    await DnsRegistration.registerNewCore({ platformDB, coreId, ip, url, hosting });
 
     const ackUrl = ackUrlBase.replace(/\/+$/, '') + ACK_PATH;
     const platformSecrets: {
@@ -182,11 +224,23 @@ async function newCore (opts: NewCoreOpts) {
   } catch (err) {
     if (registered) {
       try {
-        await DnsRegistration.unregisterNewCore({ platformDB, coreId, ip });
+        if (snapshot != null) {
+          await restoreRows(rows, coreId, snapshot);
+        } else {
+          await DnsRegistration.unregisterNewCore({ platformDB, coreId, ip });
+        }
       } catch (_) { /* swallow rollback failure — surface the original error */ }
     }
-    try { tokenStore.revokeByCoreId(coreId); } catch (_) { /* same */ }
+    try { tokenStore.revoke(minted.token); } catch (_) { /* same */ }
     throw err;
+  }
+}
+
+async function restoreRows (rows: PlatformRows, coreId: string, snapshot: { info: Row; record: Row | null; lsc: Row | null }) {
+  await rows.setCoreInfo(coreId, snapshot.info);
+  for (const [sub, rec] of [[coreId, snapshot.record], [LSC_SUBDOMAIN, snapshot.lsc]] as Array<[string, Row | null]>) {
+    if (rec != null) await rows.setDnsRecord(sub, rec);
+    else await rows.deleteDnsRecord(sub);
   }
 }
 
@@ -200,7 +254,8 @@ function listTokens ({ tokensPath }: { tokensPath: string }) {
 
 /**
  * Revoke active tokens for `coreId`. When `platformDB` and `ip` are given,
- * also undoes the DNS + PlatformDB pre-registration.
+ * also undoes the DNS + PlatformDB pre-registration. Nothing the bundle
+ * carries is invalidated; `warning` says so for the operator.
  *
  * @param opts.tokensPath
  * @param opts.coreId
@@ -217,7 +272,7 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
   if (platformDB != null && ip != null) {
     unregister = await DnsRegistration.unregisterNewCore({ platformDB, coreId, ip });
   }
-  return { tokensRevoked, unregister };
+  return { tokensRevoked, unregister, warning: REVOKE_WARNING };
 }
 
 /**
@@ -457,4 +512,4 @@ async function readAppliedIndex (base: string, fetchImpl: typeof fetch = fetch):
   }
 }
 
-export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder, promoteCore, readAppliedIndex };
+export { ACK_PATH, TLS_FILE_NAMES, REVOKE_WARNING, newCore, listTokens, revokeToken, initCaHolder, promoteCore, readAppliedIndex };

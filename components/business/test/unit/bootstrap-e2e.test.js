@@ -164,6 +164,52 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
     }
   });
 
+  it('[BFPR2] the ack is bound to the issued node certificate: another fingerprint is refused, the issued one joins', async () => {
+    const platformDB = makeFakeDB();
+    const tokensPath = path.join(tmp, 'tokens.json');
+    const tokenStore = new TokenStore({ path: tokensPath });
+    const { server, baseUrl } = await startAckServer({ tokenStore, platformDB });
+
+    try {
+      const outPath = path.join(tmp, 'bundle.age');
+      const issued = await cliOps.newCore({
+        platformDB,
+        caDir: path.join(tmp, 'ca'),
+        tokensPath,
+        dnsDomain: 'mc.example.com',
+        ackUrlBase: baseUrl,
+        secrets: {
+          adminAccessKey: 'admin-key-0123456789abcdef0123',
+          filesReadTokenSecret: 'files-secret-0123456789abcdef0'
+        },
+        rqlite: { raftPort: 4002, httpPort: 4001 },
+        coreId: 'core-b',
+        ip: '203.0.113.7',
+        outPath
+      });
+      const consumeOpts = {
+        bundlePath: outPath,
+        passphrase: issued.passphrase,
+        configDir: path.join(tmp, 'cfg'),
+        tlsDir: path.join(tmp, 'tls'),
+        log: () => {}
+      };
+      const otherFingerprint = 'AB:'.repeat(31) + 'AB';
+      await assert.rejects(consumer.consume({
+        ...consumeOpts,
+        httpClient: (url, body, ca) => consumer.defaultHttpClient(url, { ...body, tlsFingerprint: otherFingerprint }, ca)
+      }), /ack failed: HTTP 401[\s\S]*ack-refused/);
+      assert.equal(tokenStore.listActive().length, 1, 'token not consumed');
+      assert.equal(platformDB._cores.get('core-b').available, false);
+
+      await consumer.consume(consumeOpts);
+      assert.equal(platformDB._cores.get('core-b').available, true);
+      assert.equal(tokenStore.listActive().length, 0);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   it('replay: a second consume of the same (re-created) bundle fails at ack', async () => {
     // The bundle file is deleted on first consume, so we copy it aside
     // first to simulate an attacker re-presenting the same payload.
@@ -210,10 +256,13 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
           tlsDir: path.join(tmp, 'tls-2'),
           log: () => {}
         }),
-        /ack failed: HTTP 401[\s\S]*already-consumed/
+        /ack failed: HTTP 401[\s\S]*ack-refused/
       );
       // The replayed bundle was kept (operator can investigate)
       assert.equal(fs.existsSync(stash), true);
+      // and nothing of it was written on the replaying host
+      assert.equal(fs.existsSync(path.join(tmp, 'cfg-2', 'override-config.yml')), false);
+      assert.equal(fs.existsSync(path.join(tmp, 'tls-2')), false);
     } finally {
       await new Promise(resolve => server.close(resolve));
     }
@@ -318,7 +367,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
           tlsDir: path.join(tmp, 'tls'),
           log: () => {}
         }),
-        /ack failed: HTTP 401[\s\S]*expired/
+        /ack failed: HTTP 401[\s\S]*ack-refused/
       );
       assert.equal(platformDB._cores.get('core-b').available, false);
     } finally {
@@ -410,7 +459,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
           tlsDir: path.join(tmp, 'tls'),
           log: () => {}
         }),
-        /ack failed: HTTP 401[\s\S]*unknown/
+        /ack failed: HTTP 401[\s\S]*ack-refused/
       );
       // Pre-registration also gone
       assert.equal(platformDB._cores.get('core-b'), undefined);

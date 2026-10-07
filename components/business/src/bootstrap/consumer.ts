@@ -14,15 +14,18 @@ const require = createRequire(import.meta.url);
  *   1. Read the armored bundle file from `bundlePath`.
  *   2. Resolve the passphrase from `--bootstrap-passphrase-file` (preferred)
  *      or interactively from a TTY. Tests inject `passphrase` directly.
- *   3. applyBundle(...) — decrypt, validate, materialize override-config.yml
- *      and TLS files (see ./applyBundle.js).
+ *   3. stageBundle(...) — decrypt, validate, write override-config.yml and
+ *      the TLS files to a private staging directory (see ./applyBundle.js).
  *   4. POST {coreId, token, tlsFingerprint} to the bundle's ackUrl, with the
  *      bundled CA cert pinned (`ca:` option on the https request) so we
  *      refuse to ack any TLS endpoint that isn't issued by the cluster CA.
  *      `trustSystemCa` drops the pin and verifies against the system CA
  *      store instead (for cores whose API origin is fronted by a public/ACME
  *      cert); the join token remains the authenticator.
- *   5. Delete the original bundle file on success — once acked, the bundle
+ *   5. On a 200, move the staged files into place; on any failure before
+ *      that (clock skew, network, refused ack), remove them, so a refused
+ *      join leaves no platform secret and no node key on disk.
+ *   6. Delete the original bundle file on success — once acked, the bundle
  *      is spent (the join token has been burned on the issuing core).
  *
  * Pure-ish: no boiler, no PlatformDB, no rqlited. The httpClient dep is
@@ -119,12 +122,56 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
       'Raft quorum. Only safe at >=3 voters — two voters give a 2-of-2 cluster ' +
       'where either core dying is an outage.');
   }
-  const applied = await applyBundleMod.applyBundle({
+  // Secrets and the node key stay in a staging directory until the issuing
+  // core accepts the ack; any failure before that removes them.
+  const applied = await applyBundleMod.stageBundle({
     armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter
   });
+  log(`Staged the bundle files in ${applied.stagingDir}`);
+  let ackResponse: HttpResponse;
+  try {
+    ackResponse = await checkClockAndAck({ applied, trustSystemCa, clockSkewSeconds, clockProbe, httpClient, log });
+  } catch (err) {
+    try {
+      applied.discard();
+      log('Removed the staged files: nothing was written to ' + configDir + ' or ' + tlsDir);
+    } catch (cleanupErr) {
+      log(`Warning: could not remove the staging directory ${applied.stagingDir}: ${(cleanupErr as Error).message}; delete it by hand, it holds platform secrets`);
+    }
+    throw err;
+  }
+
+  try {
+    applied.commit();
+  } catch (err) {
+    throw new Error(`ack accepted (the join token is spent) but moving the staged files into place failed: ${(err as Error).message}. ` +
+      `The files are in ${applied.stagingDir}: move them to ${tlsDir} and ${applied.overridePath} by hand, then start the core without --bootstrap.`);
+  }
   log(`Wrote ${applied.overridePath}`);
   log(`Wrote TLS files in ${tlsDir}`);
 
+  let bundleDeleted = false;
+  try {
+    fs.unlinkSync(bundlePath);
+    bundleDeleted = true;
+    log(`Deleted bundle file ${bundlePath} (token has been burned).`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`Warning: could not delete bundle file ${bundlePath}: ${message}`);
+  }
+
+  return {
+    coreId: applied.coreId,
+    ackResponse: ackResponse.body,
+    overridePath: applied.overridePath,
+    tlsPaths: applied.tlsPaths,
+    bundleDeleted
+  };
+}
+
+type StagedLike = { bundle: { cluster: { ca: { certPem: string } } }; ackUrl: string; coreId: string; joinToken: string; tlsFingerprint: string };
+
+async function checkClockAndAck ({ applied, trustSystemCa, clockSkewSeconds, clockProbe, httpClient, log }: { applied: StagedLike; trustSystemCa: boolean; clockSkewSeconds: number; clockProbe: ClockProbe; httpClient: HttpClient; log: (msg: string) => void }): Promise<HttpResponse> {
   // By default we pin the cluster CA on the ack POST, refusing any TLS
   // endpoint not issued by the cluster CA. But the ack URL is the existing
   // core's normal API origin, which on any internet-facing deploy terminates
@@ -162,24 +209,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   }
   const ackBody = ackResponse.body as { cluster?: { cores?: unknown[] } } | null;
   log(`Ack accepted; cluster has ${ackBody?.cluster?.cores?.length ?? '?'} core(s)`);
-
-  let bundleDeleted = false;
-  try {
-    fs.unlinkSync(bundlePath);
-    bundleDeleted = true;
-    log(`Deleted bundle file ${bundlePath} (token has been burned).`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`Warning: could not delete bundle file ${bundlePath}: ${message}`);
-  }
-
-  return {
-    coreId: applied.coreId,
-    ackResponse: ackResponse.body,
-    overridePath: applied.overridePath,
-    tlsPaths: applied.tlsPaths,
-    bundleDeleted
-  };
+  return ackResponse;
 }
 
 async function checkClockSkew ({ origin, caCertPem, clockSkewSeconds, clockProbe, log }: { origin: string; caCertPem: string; clockSkewSeconds: number; clockProbe: ClockProbe; log: (msg: string) => void }): Promise<void> {

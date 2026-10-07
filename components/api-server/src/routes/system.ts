@@ -239,6 +239,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // Auth is the one-time join token in the request body, NOT the admin key
   // (see bypass in checkAuth below). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
+  // Refusals share one 401 body; their reason is logged here.
   expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const TokenStore = require('business/src/bootstrap/index.ts').TokenStore;
@@ -249,7 +250,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       }
       const tokenStore = new TokenStore({ path: tokensPath });
       const platformDB = require('storages').platformDB;
-      const handle = ackHandler.makeHandler({ tokenStore, platformDB });
+      const handle = ackHandler.makeHandler({ tokenStore, platformDB, log: (msg: string) => logger.warn(msg) });
       const result = await handle({ body: req.body, ip: req.ip });
       res.status(result.statusCode).json(result.body);
     } catch (err) {

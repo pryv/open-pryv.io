@@ -22,6 +22,11 @@ const os = require('node:os');
 const TokenStore = require('../../src/bootstrap/TokenStore.ts').default;
 const ackHandler = require('../../src/bootstrap/ackHandler.ts');
 
+// Every refusal carries this body; the reason is logged only.
+const REFUSED = { error: { id: 'ack-refused', message: 'join acknowledgement refused' } };
+const FPR = 'AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99';
+const OTHER_FPR = FPR.replace(/^AA/, '01');
+
 function makeFakeDB (initial = {}) {
   const cores = new Map(Object.entries(initial.cores || {}));
   const dns = new Map(Object.entries(initial.dns || {}));
@@ -81,7 +86,7 @@ describe('[ACKHANDLER] ackHandler', function () {
       // Token burned: second call rejects
       const replay = await handle({ body: { coreId: 'core-b', token } });
       assert.equal(replay.statusCode, 401);
-      assert.equal(replay.body.error.reason, 'already-consumed');
+      assert.deepEqual(replay.body, REFUSED);
     });
 
     it('records consumerIp on the token entry', async () => {
@@ -103,10 +108,11 @@ describe('[ACKHANDLER] ackHandler', function () {
   });
 
   describe('error cases', () => {
-    let handle, db;
+    let handle, db, logs;
     beforeEach(() => {
       db = makeFakeDB({ cores: { 'core-b': { id: 'core-b', available: false } } });
-      handle = ackHandler.makeHandler({ tokenStore, platformDB: db });
+      logs = [];
+      handle = ackHandler.makeHandler({ tokenStore, platformDB: db, log: (m) => logs.push(m) });
     });
 
     it('400 when coreId is missing', async () => {
@@ -124,16 +130,49 @@ describe('[ACKHANDLER] ackHandler', function () {
     it('401 when token is unknown', async () => {
       const res = await handle({ body: { coreId: 'core-b', token: 'made-up' } });
       assert.equal(res.statusCode, 401);
-      assert.equal(res.body.error.reason, 'unknown');
+      assert.deepEqual(res.body, REFUSED);
+      assert.match(logs[0], /token unknown/);
     });
 
-    it('401 when token belongs to a different coreId', async () => {
+    it('[BACK1] a token presented with another coreId is refused without being consumed, and the body names no reason', async () => {
+      db._cores.set('core-c', { id: 'core-c', available: false });
       const { token } = tokenStore.mint({ coreId: 'core-c' });
       const res = await handle({ body: { coreId: 'core-b', token } });
       assert.equal(res.statusCode, 401);
-      assert.equal(res.body.error.id, 'token-coreid-mismatch');
-      // And critically: PlatformDB was NOT mutated
+      assert.deepEqual(res.body, REFUSED);
+      assert.match(logs[0], /issued for coreId "core-c"/);
+      // PlatformDB not mutated, token still usable by its own core
       assert.equal(db._cores.get('core-b').available, false);
+      assert.deepEqual(tokenStore.verify(token), { ok: true, coreId: 'core-c' });
+      const own = await handle({ body: { coreId: 'core-c', token } });
+      assert.equal(own.statusCode, 200);
+    });
+
+    it('[BACK2] a token whose core has no pre-registered row is refused without being consumed', async () => {
+      const emptyDB = makeFakeDB();
+      const handle2 = ackHandler.makeHandler({ tokenStore, platformDB: emptyDB, log: (m) => logs.push(m) });
+      const { token } = tokenStore.mint({ coreId: 'core-b' });
+      const res = await handle2({ body: { coreId: 'core-b', token } });
+      assert.equal(res.statusCode, 401);
+      assert.deepEqual(res.body, REFUSED);
+      assert.match(logs[0], /no pre-registered core-info row/);
+      assert.deepEqual(tokenStore.verify(token), { ok: true, coreId: 'core-b' });
+    });
+
+    it('[BFPR1] a node certificate fingerprint other than the issued one is refused and the token is not consumed', async () => {
+      const { token } = tokenStore.mint({ coreId: 'core-b', certFingerprint: FPR });
+      for (const tlsFingerprint of [OTHER_FPR, undefined, '']) {
+        const res = await handle({ body: { coreId: 'core-b', token, tlsFingerprint } });
+        assert.equal(res.statusCode, 401, String(tlsFingerprint));
+        assert.deepEqual(res.body, REFUSED);
+      }
+      assert.match(logs[0], /fingerprint differs/);
+      assert.equal(db._cores.get('core-b').available, false);
+      assert.equal(tokenStore.verify(token).ok, true);
+
+      const ok = await handle({ body: { coreId: 'core-b', token, tlsFingerprint: FPR.toLowerCase() } });
+      assert.equal(ok.statusCode, 200);
+      assert.equal(db._cores.get('core-b').available, true);
     });
 
     it('401 when token is expired', async () => {
@@ -146,20 +185,8 @@ describe('[ACKHANDLER] ackHandler', function () {
       const { token } = tokenStore.mint({ coreId: 'core-b', ttlMs: 50, now: Date.now() - 100 });
       const res = await handle({ body: { coreId: 'core-b', token } });
       assert.equal(res.statusCode, 401);
-      assert.equal(res.body.error.reason, 'expired');
-    });
-
-    it('404 when token verifies but coreInfo is missing', async () => {
-      const emptyDB = makeFakeDB();
-      const handle2 = ackHandler.makeHandler({ tokenStore, platformDB: emptyDB });
-      const { token } = tokenStore.mint({ coreId: 'core-b' });
-      const res = await handle2({ body: { coreId: 'core-b', token } });
-      assert.equal(res.statusCode, 404);
-      assert.equal(res.body.error.id, 'core-not-pre-registered');
-      // And the token IS consumed (we don't reverse): operator must mint a new one.
-      const verify = tokenStore.verify(token);
-      assert.equal(verify.ok, false);
-      assert.equal(verify.reason, 'already-consumed');
+      assert.deepEqual(res.body, REFUSED);
+      assert.match(logs[0], /token expired/);
     });
   });
 });

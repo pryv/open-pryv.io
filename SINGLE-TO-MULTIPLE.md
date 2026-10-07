@@ -29,15 +29,15 @@ The existing core (call it `core-a`) holds a self-signed **cluster CA** in `/etc
 1. On `core-a`, you run `bin/bootstrap.js new-core --id core-b --ip <ip>`. This:
    - generates the cluster CA on first run (one time only — back up `/etc/pryv/ca/`),
    - issues a node cert + key signed by the CA, scoped to `core-b`,
-   - mints a one-time join token (24h TTL by default),
+   - mints a one-time join token (24h TTL by default), bound to the fingerprint of that node cert,
    - pre-registers `core-b` in PlatformDB as `available:false` and publishes its DNS records,
    - bundles everything (identity, platform secrets, TLS material, ack URL, token) into a passphrase-encrypted file.
-2. You transfer the bundle file and the passphrase to `core-b` over a secure channel (separate channels recommended).
+2. You transfer the bundle file and the passphrase to `core-b` on two separate channels. **The bundle and its passphrase together are equivalent to the platform admin key plus a cluster node identity** (see "Cluster security").
 3. On `core-b`, you run `bin/master.js --bootstrap <bundle> --bootstrap-passphrase-file <pass>`. This:
    - decrypts and validates the bundle,
-   - writes `override-config.yml` and the TLS files to disk,
+   - stages `override-config.yml` and the TLS files in a private directory,
    - POSTs an ack to `core-a` (TLS pinned to the bundled CA),
-   - on success, deletes the bundle file (the join token is one-shot),
+   - on success, moves the staged files into place and deletes the bundle file (the join token is one-shot); on any failure, removes the staged files, so nothing from the bundle is left on disk,
    - chains into normal startup — joining the rqlite cluster over mTLS.
 
 Once the ack lands, `core-a` flips `core-b` to `available:true` in PlatformDB. Both cores now serve the cluster.
@@ -124,6 +124,10 @@ Bundle written:
   passphrase : AbCd-EfGh-IjKl-MnOp
   expires    : 2026-04-18T08:42:00.000Z
   ack URL    : https://core-a.mc.example.com/system/admin/cores/ack
+
+The bundle and its passphrase together are equivalent to the platform
+admin key plus a cluster node identity: keep them on separate channels
+and delete both once the new core has joined.
 ```
 
 > **Back up `/etc/pryv/ca/` immediately** after the first run. The CA private key never leaves this host. If you lose it, you cannot add or rotate cores without a new cluster.
@@ -133,11 +137,13 @@ The CLI:
 - pre-registered `core-b` in PlatformDB as `available:false`,
 - appended `1.2.3.4` to the `lsc.mc.example.com` DNS record,
 - added a `core-b.mc.example.com` A record,
-- minted a one-time, 24h-TTL join token.
+- minted a one-time, 24h-TTL join token, recorded with the node certificate's fingerprint.
+
+`new-core` refuses an id that is already registered; see "Operations: managing in-flight bundles" for `--replace`.
 
 ### 4. Transfer bundle + passphrase to the new core
 
-Send the bundle file and the passphrase **on different channels** (e.g. file via `scp`, passphrase via password manager / Signal / sealed envelope). The bundle is encrypted with AES-256-GCM keyed off the passphrase via scrypt, but the passphrase itself is the only thing standing between an attacker who steals the file and full cluster admin access.
+Send the bundle file and the passphrase **on different channels** (e.g. file via `scp`, passphrase via password manager / Signal / sealed envelope). The bundle is encrypted with AES-256-GCM keyed off the passphrase via scrypt, but the passphrase itself is the only thing standing between an attacker who steals the file and full cluster admin access: together they carry `auth.adminAccessKey` (admin on every core), the other platform secrets and a node certificate + key the cluster accepts for a year. The join token does not protect them, and revoking it does not take them back. Delete both copies once the new core has joined, and if either may have been read by someone else, follow [If a bundle may have been exposed](#if-a-bundle-may-have-been-exposed).
 
 ### 5. Boot the new core in `--bootstrap` mode
 
@@ -168,15 +174,18 @@ node bin/master.js \
 
 For a ≥3-core HA cluster, add `--bootstrap-as-voter` to each core that should vote.
 
-> **Clock check.** Before the ack, the new core reads the existing core's time (`meta.serverTime` of its API root, else the HTTP `Date` header) and refuses the join when the two clocks differ by more than 30 s: the master exits 1, the join token is not used and the bundle file is kept, so fix the clock and run the same command again. `--bootstrap-clock-skew-seconds <n>` changes the threshold (`0` disables the check).
+> **Clock check.** Before the ack, the new core reads the existing core's time (`meta.serverTime` of its API root, else the HTTP `Date` header) and refuses the join when the two clocks differ by more than 30 s: the master exits 1, the join token is not used, nothing from the bundle is written to disk and the bundle file is kept, so fix the clock and run the same command again. `--bootstrap-clock-skew-seconds <n>` changes the threshold (`0` disables the check).
 
 The master process:
 - decrypts and validates the bundle,
-- writes `override-config.yml` to its config directory and `/etc/pryv/tls/{ca,node}.{crt,key}` (mode 0600 for the key),
+- stages `override-config.yml` and `{ca,node}.{crt,key}` in a private directory (`.bootstrap-staging-*`, mode 0700) inside its config directory,
 - checks its clock against the existing core's and refuses the join on more than 30 s of skew (see above),
-- POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA (or, with `--bootstrap-ack-trust-system-ca`, verified against the system CA store),
-- on success, deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
+- POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA (or, with `--bootstrap-ack-trust-system-ca`, verified against the system CA store), carrying the node certificate fingerprint the issuing core recorded with the token,
+- on success, moves `override-config.yml` into its config directory and the TLS files into `/etc/pryv/tls/` (mode 0600 for the key and the override), then deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
+- on any failure before that (refused ack, network error, clock skew), removes the staged files and exits 1: no platform secret and no node key stay on disk,
 - continues into normal startup — `rqlited` joins the cluster over mTLS.
+
+Every refused ack gets the same `401 ack-refused` answer; the issuing core logs the reason (unknown, expired or used token, token issued for another core id, core not pre-registered, certificate fingerprint mismatch). A refused ack does not use up the token.
 
 The ack response includes a snapshot of the cluster's cores so you can sanity-check what you've joined.
 
@@ -215,9 +224,11 @@ so a core with a different name set shows a different hash.
 
 - **Raft channel uses mTLS.** Bootstrap-issued cores ship with `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` set in `override-config.yml`. Both ends of every Raft connection verify the peer's cert against the cluster CA — a stranger on the network cannot join or impersonate a peer.
 - **The cluster CA private key lives only on the issuing core**, in `/etc/pryv/ca/ca.key` (mode 0600). Only this host can issue new node certs. Back up this directory off-host.
-- **Join tokens are one-shot.** A token verifies exactly once at the ack endpoint and is then burned; replays return 401. Default TTL 24h.
+- **Join tokens are one-shot.** A token verifies exactly once at the ack endpoint and is then burned; replays return 401. Default TTL 24h. The token is bound to the node certificate issued with it: an ack presenting another certificate fingerprint is refused (bundles issued by earlier versions carry no recorded fingerprint and are not checked).
 - **Bundles are AES-256-GCM encrypted** with a passphrase derived via scrypt. Tampering breaks GCM auth at decrypt time.
-- **The ack endpoint bypasses admin-key auth.** It's gated by the join token instead — the new core doesn't yet have the admin key in a usable place when it acks. Once acked, every subsequent admin call uses the standard `auth.adminAccessKey`.
+- **A bundle plus its passphrase is a credential, not a request to join.** It carries `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`, `platform.piiHmacKey` (when set) and a node certificate + key valid for a year. Whoever decrypts it holds admin access to every core over the public API, and, with network access to the Raft port, a cluster node identity. The join token and the ack only decide whether the issuing core marks the new core `available`; they protect none of what the bundle carries. Keep the two halves on separate channels and delete both after the join.
+- **The ack endpoint bypasses admin-key auth.** It is gated by the join token (and the certificate fingerprint) instead, because the new core only installs the admin key it received once the ack is accepted. Once acked, every subsequent admin call uses the standard `auth.adminAccessKey`.
+- **No certificate revocation.** rqlite has no revocation list: a node certificate stays valid until it expires (one year) or the cluster CA changes. Restrict the Raft port to the known peer IPs in your firewall.
 - **The Raft port (default 4002) is no longer required to be VPN-protected** between cores by default. Plain TCP between cores is rejected by `verifyClient: true`.
 
 ## Cluster availability & container orchestrators
@@ -293,9 +304,29 @@ node bin/bootstrap.js list-tokens
 node bin/bootstrap.js revoke-token core-c --ip 5.6.7.8
 # Revoked 1 active token(s) for core-c.
 # Cleaned up DNS/PlatformDB: coreInfoDeleted=true, perCoreDeleted=true, lscIpsAfter=[1.2.3.4]
+#
+# WARNING: revoking stops the ack and (with --ip) removes the pre-registration. It does NOT
+# invalidate what the bundle carries: ...
 ```
 
-If `--ip` is omitted, only the token is revoked; the DNS / PlatformDB pre-registration stays. Pass `--ip <ip>` to fully unwind the issuance.
+If `--ip` is omitted, only the token is revoked; the DNS / PlatformDB pre-registration stays. Pass `--ip <ip>` to also undo the pre-registration.
+
+**Revoking does not undo a delivered bundle.** It stops the ack, so the issuing core never marks that core `available`, but the admin key, the other platform secrets and the node certificate inside the bundle stay valid. If the bundle was only ever on hosts you trust and was deleted, revoking is enough. If the bundle and its passphrase may have been read by someone else, or were delivered to a host you no longer trust, follow [If a bundle may have been exposed](#if-a-bundle-may-have-been-exposed).
+
+`new-core` refuses a core id that is already registered (a live core, or an earlier bundle not yet acked): run `revoke-token <id> --ip <ip>` first when the earlier bundle was never used, or pass `--replace` to re-issue for that id (its earlier join tokens are revoked). If issuing fails, `new-core` restores the rows it changed and revokes only the token it minted.
+
+## If a bundle may have been exposed
+
+A bundle plus its passphrase is equivalent to the platform admin key plus a cluster node identity. When both may have been read by someone else (a lost laptop, a shared channel, a host you no longer trust), or when a joined core is decommissioned because it is no longer trusted, assume the holder has admin access on every core and can present a valid node certificate. Revoking the token does not change that. Rotate everything the bundle carried:
+
+1. **`auth.adminAccessKey`**: set a new value in the configuration of **every** core and restart them. When `services.mfa.methods.totp.secretsKey` is unset, the key that encrypts TOTP secrets is derived from the admin key: rotating it makes the enrolled TOTP secrets unreadable, and those users sign in with their recovery codes and enrol again. Setting `secretsKey` now (to a new value) has the same effect once; afterwards the admin key can be rotated independently.
+2. **`auth.filesReadTokenSecret`**: set a new value on every core (outstanding file-read tokens stop working).
+3. **`letsEncrypt.atRestKey`**: set a new value on every core. The certificate and ACME account rows stored in the platform DB were encrypted with the old key, and their private keys were readable with it: re-issue those certificates under the new key.
+4. **`platform.piiHmacKey`** (when set): rotate it with `bin/platform-pii-rotate.js` (see [INSTALL.md](INSTALL.md), "Pepper rotation").
+5. **Raft membership**: remove any node you do not run from the Raft configuration (on the leader: `curl -s -XDELETE http://127.0.0.1:4001/remove -d '{"id":"<core-id>"}'`) and check `GET /nodes?nonvoters` on the leader. Restrict the Raft port (default 4002) in your firewall to the IPs of the cores you run.
+6. **Cluster CA and node certificates**: rqlite has no certificate revocation, so a node certificate stays valid until it expires (one year) unless the CA changes. Generate a new cluster CA and give every core a new node certificate: on the CA holder, move `/etc/pryv/ca/` and its TLS directory aside and run `node bin/bootstrap.js init-ca-holder`; then re-join each other core with a fresh bundle (`new-core --id <id> --ip <ip> --replace`, transferred and consumed as in the step-by-step above, after the secrets above were rotated). `--bootstrap` rewrites that core's `override-config.yml`: keep a copy of any setting you added there. Restart every core so all Raft connections use the new CA.
+
+Rotate in that order where you can: the new bundles then carry the new secrets.
 
 ## Nginx notes
 
@@ -314,7 +345,7 @@ Core ids (`core.id`, `--id`) are 1 to 63 lowercase letters, digits or `-`. A `co
 To revert to single-core:
 
 1. Stop the new core(s).
-2. On the original core, run `node bin/bootstrap.js revoke-token <id> --ip <ip>` for each removed core to clean up DNS + PlatformDB.
+2. On the original core, run `node bin/bootstrap.js revoke-token <id> --ip <ip>` for each removed core to clean up DNS + PlatformDB. This does not invalidate the secrets and the node certificate the removed cores received: if those hosts are not decommissioned under your control, follow [If a bundle may have been exposed](#if-a-bundle-may-have-been-exposed).
 3. Change the original core's config back: `dnsLess.isActive: true`, restore `dnsLess.publicUrl`, remove `core.id` / `dns.domain`.
 4. Restart — the embedded rqlited will run as a standalone node again with the same data.
 

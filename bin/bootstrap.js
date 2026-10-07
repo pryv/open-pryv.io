@@ -24,6 +24,7 @@
 //                                  [--url <url>] [--hosting <h>]
 //                                  [--out <path>] [--token-ttl <ms>]
 //                                  [--ca-dir <path>] [--tokens-path <path>]
+//                                  [--replace]
 //   node bin/bootstrap.js init-ca-holder [--ca-dir <path>] [--tls-dir <path>]
 //                                        [--no-write-config]
 //   node bin/bootstrap.js list-tokens [--tokens-path <path>]
@@ -118,7 +119,8 @@ async function runNewCore (args) {
     hosting: args.hosting || null,
     outPath,
     ttlMs,
-    allowInsecurePeerUrl: config.get('cluster:allowInsecurePeerUrl') === true
+    allowInsecurePeerUrl: config.get('cluster:allowInsecurePeerUrl') === true,
+    replace: args.replace === true
   });
 
   console.log('');
@@ -127,6 +129,10 @@ async function runNewCore (args) {
   console.log('  passphrase : ' + result.passphrase);
   console.log('  expires    : ' + new Date(result.expiresAt).toISOString());
   console.log('  ack URL    : ' + result.ackUrl);
+  console.log('');
+  console.log('The bundle and its passphrase together are equivalent to the platform');
+  console.log('admin key plus a cluster node identity: keep them on separate channels');
+  console.log('and delete both once the new core has joined.');
   console.log('');
   console.log('Next steps:');
   console.log('  1. Transfer the bundle file AND passphrase to the new core');
@@ -234,6 +240,8 @@ async function runRevokeToken (args) {
   } else {
     console.log('(skip DNS/PlatformDB cleanup: pass --ip <ip> to remove pre-registration)');
   }
+  console.log('');
+  console.log(result.warning);
 }
 
 async function runPromoteCore (args) {
@@ -418,6 +426,7 @@ function printUsage (stream = process.stderr) {
                                  [--url <url>] [--hosting <h>]
                                  [--out <path>] [--token-ttl <ms>]
                                  [--ca-dir <path>] [--tokens-path <path>]
+                                 [--replace]
   node bin/bootstrap.js init-ca-holder [--ca-dir <path>] [--tls-dir <path>]
                                        [--no-write-config]
   node bin/bootstrap.js list-tokens [--tokens-path <path>]
@@ -434,6 +443,8 @@ Flags:
   --hosting         hosting region label, surfaced in /reg/hostings
   --out             bundle output path (default: ./bootstrap-<id>.json.age)
   --token-ttl       join-token lifetime in ms (default: 24h)
+  --replace         new-core: re-issue for an id that is already registered
+                     (revokes its earlier join tokens)
   --ca-dir          CA directory (default: /etc/pryv/ca or cluster.ca.path)
   --tls-dir         TLS material dir for init-ca-holder (default: /etc/pryv/tls
                      or http.ssl.tlsDir)
@@ -467,5 +478,10 @@ promote-core:
 
 applied-index:
   Print the applied Raft index of this core's own rqlite.
+
+revoke-token:
+  Stops the ack and, with --ip, removes the pre-registration. It does not
+  invalidate the secrets or the node certificate a delivered bundle carries;
+  see "If a bundle may have been exposed" in SINGLE-TO-MULTIPLE.md.
 `);
 }

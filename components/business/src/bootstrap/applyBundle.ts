@@ -11,9 +11,15 @@ const require = createRequire(import.meta.url);
  *
  * Given the armored bundle file content + the passphrase, this module:
  *   1. Decrypts and schema-validates the bundle.
- *   2. Writes the TLS material (CA cert, node cert + key) to `tlsDir`.
- *   3. Writes an `override-config.yml` to `configDir` carrying the cluster
- *      identity, platform secrets and rqlite mTLS pointers.
+ *   2. Stages the TLS material (CA cert, node cert + key) and an
+ *      `override-config.yml` carrying the cluster identity, platform secrets
+ *      and rqlite mTLS pointers in a private directory inside `configDir`.
+ *   3. On `commit()`, moves them into `tlsDir` / `configDir`; `discard()`
+ *      removes them instead.
+ *
+ * `stageBundle` leaves the decision to the caller: the consumer commits only
+ * after the issuing core accepted the ack, so a refused join leaves no
+ * secret and no node key on disk. `applyBundle` stages and commits at once.
  *
  * The new core's master process picks the override file up automatically:
  * @pryv/boiler always loads `override-config.yml` from `baseConfigDir` at
@@ -60,8 +66,88 @@ const TLS_FILE_NAMES = {
   cert: 'node.crt',
   key: 'node.key'
 };
+const OVERRIDE_FILE_NAME = 'override-config.yml';
+const STAGING_PREFIX = '.bootstrap-staging-';
+
+interface StagedBundle {
+  bundle: BundleShape;
+  overridePath: string;
+  tlsPaths: TlsPaths;
+  stagingDir: string;
+  tlsFingerprint: string;
+  ackUrl: string;
+  joinToken: string;
+  coreId: string;
+  commit: () => void;
+  discard: () => void;
+}
 
 /**
+ * Decrypt and validate the bundle, then write every file it carries to a
+ * private staging directory (`<configDir>/.bootstrap-staging-*`, mode 0700).
+ * Nothing reaches `tlsDir` or the live override until `commit()`.
+ * Leftover staging directories of an interrupted run are removed first.
+ *
+ * Returned paths (`overridePath`, `tlsPaths`) are the final locations.
+ */
+async function stageBundle ({ armoredBundle, passphrase, configDir, tlsDir, asNonVoter = true }: ApplyBundleOpts): Promise<StagedBundle> {
+  if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
+    throw new Error('applyBundle: armoredBundle is required');
+  }
+  if (typeof passphrase !== 'string' || passphrase.length === 0) {
+    throw new Error('applyBundle: passphrase is required');
+  }
+  if (!configDir) throw new Error('applyBundle: configDir is required');
+  if (!tlsDir) throw new Error('applyBundle: tlsDir is required');
+
+  const bundle = Bundle.validate(BundleEncryption.decrypt(armoredBundle, passphrase));
+
+  const tlsPaths = tlsPathsIn(tlsDir);
+  const overridePath = path.join(configDir, OVERRIDE_FILE_NAME);
+  const createdDir: string | undefined = fs.mkdirSync(configDir, { recursive: true });
+  removeStaleStaging(configDir);
+  const stagingDir = fs.mkdtempSync(path.join(configDir, STAGING_PREFIX));
+  fs.chmodSync(stagingDir, 0o700);
+
+  const discard = () => {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    if (createdDir != null) removeEmptyDirs(configDir, createdDir);
+  };
+  try {
+    writeTlsFiles(stagingDir, bundle);
+    writeOverrideConfig(stagingDir, bundle, tlsPaths, asNonVoter);
+  } catch (err) {
+    discard();
+    throw err;
+  }
+
+  const commit = () => {
+    fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+    moveFile(path.join(stagingDir, TLS_FILE_NAMES.ca), tlsPaths.caFile);
+    moveFile(path.join(stagingDir, TLS_FILE_NAMES.cert), tlsPaths.certFile);
+    moveFile(path.join(stagingDir, TLS_FILE_NAMES.key), tlsPaths.keyFile);
+    // Last: without the override the core does not use the TLS files.
+    moveFile(path.join(stagingDir, OVERRIDE_FILE_NAME), overridePath);
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  };
+
+  return {
+    bundle,
+    overridePath,
+    tlsPaths,
+    stagingDir,
+    tlsFingerprint: sha256Fingerprint(bundle.node.certPem),
+    ackUrl: bundle.cluster.ackUrl,
+    joinToken: bundle.cluster.joinToken,
+    coreId: bundle.node.id,
+    commit,
+    discard
+  };
+}
+
+/**
+ * Stage and commit at once (no ack in between).
+ *
  * @param opts.armoredBundle - armored ciphertext (output of bin/bootstrap.js)
  * @param opts.passphrase
  * @param opts.configDir - directory to write override-config.yml into (e.g. baseConfigDir)
@@ -75,48 +161,63 @@ const TLS_FILE_NAMES = {
  *   coreId: string
  * }>}
  */
-async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir, asNonVoter = true }: ApplyBundleOpts) {
-  if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
-    throw new Error('applyBundle: armoredBundle is required');
-  }
-  if (typeof passphrase !== 'string' || passphrase.length === 0) {
-    throw new Error('applyBundle: passphrase is required');
-  }
-  if (!configDir) throw new Error('applyBundle: configDir is required');
-  if (!tlsDir) throw new Error('applyBundle: tlsDir is required');
+async function applyBundle (opts: ApplyBundleOpts) {
+  const staged = await stageBundle(opts);
+  staged.commit();
+  const { commit, discard, stagingDir, ...applied } = staged;
+  return applied;
+}
 
-  const bundle = Bundle.validate(BundleEncryption.decrypt(armoredBundle, passphrase));
-
-  const tlsPaths = writeTlsFiles(tlsDir, bundle);
-  const tlsFingerprint = sha256Fingerprint(bundle.node.certPem);
-
-  const overridePath = writeOverrideConfig(configDir, bundle, tlsPaths, asNonVoter);
-
+function tlsPathsIn (tlsDir: string): TlsPaths {
   return {
-    bundle,
-    overridePath,
-    tlsPaths,
-    tlsFingerprint,
-    ackUrl: bundle.cluster.ackUrl,
-    joinToken: bundle.cluster.joinToken,
-    coreId: bundle.node.id
+    caFile: path.join(tlsDir, TLS_FILE_NAMES.ca),
+    certFile: path.join(tlsDir, TLS_FILE_NAMES.cert),
+    keyFile: path.join(tlsDir, TLS_FILE_NAMES.key)
   };
 }
 
-function writeTlsFiles (tlsDir: string, bundle: BundleShape): TlsPaths {
-  fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
-  const caFile = path.join(tlsDir, TLS_FILE_NAMES.ca);
-  const certFile = path.join(tlsDir, TLS_FILE_NAMES.cert);
-  const keyFile = path.join(tlsDir, TLS_FILE_NAMES.key);
-  fs.writeFileSync(caFile, bundle.cluster.ca.certPem, { mode: 0o644 });
-  fs.writeFileSync(certFile, bundle.node.certPem, { mode: 0o644 });
-  fs.writeFileSync(keyFile, bundle.node.keyPem, { mode: 0o600 });
-  return { caFile, certFile, keyFile };
+function writeTlsFiles (dir: string, bundle: BundleShape): void {
+  const p = tlsPathsIn(dir);
+  fs.writeFileSync(p.caFile, bundle.cluster.ca.certPem, { mode: 0o644 });
+  fs.writeFileSync(p.certFile, bundle.node.certPem, { mode: 0o644 });
+  fs.writeFileSync(p.keyFile, bundle.node.keyPem, { mode: 0o600 });
 }
 
-function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths, asNonVoter: boolean = true): string {
-  fs.mkdirSync(configDir, { recursive: true });
-  const overridePath = path.join(configDir, 'override-config.yml');
+/** Rename, or copy + rename within the target directory across filesystems. */
+function moveFile (from: string, to: string): void {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
+    const tmp = to + '.tmp-' + process.pid;
+    fs.copyFileSync(from, tmp, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(tmp, fs.statSync(from).mode & 0o777);
+    fs.renameSync(tmp, to);
+    fs.unlinkSync(from);
+  }
+}
+
+function removeStaleStaging (configDir: string): void {
+  for (const name of fs.readdirSync(configDir)) {
+    if (name.startsWith(STAGING_PREFIX)) {
+      fs.rmSync(path.join(configDir, name), { recursive: true, force: true });
+    }
+  }
+}
+
+/** Remove `dir` and its parents up to `top` (the first directory created), while empty. */
+function removeEmptyDirs (dir: string, top: string): void {
+  let current = path.resolve(dir);
+  const stop = path.resolve(top);
+  while (current.startsWith(stop)) {
+    try { fs.rmdirSync(current); } catch { return; }
+    if (current === stop) return;
+    current = path.dirname(current);
+  }
+}
+
+function writeOverrideConfig (dir: string, bundle: BundleShape, tlsPaths: TlsPaths, asNonVoter: boolean = true): string {
+  const overridePath = path.join(dir, OVERRIDE_FILE_NAME);
 
   const override: Record<string, unknown> = {
     core: pruneNull({
@@ -187,8 +288,10 @@ function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: 
   const header =
     '# Generated by `bin/master.js --bootstrap` on ' + new Date().toISOString() + '.\n' +
     '# Do not edit by hand — re-running --bootstrap overwrites this file.\n' +
-    '# To customize beyond what the bundle ships, layer additional config\n' +
-    '# files via --config or env vars; @pryv/boiler merges them on top.\n\n';
+    '# It holds platform secrets: keep it readable by the service user only.\n' +
+    '# This file is the highest-precedence config layer: its values win over\n' +
+    '# --config files and env vars, so settings it carries cannot be\n' +
+    '# overridden elsewhere.\n\n';
   fs.writeFileSync(overridePath, header + yaml.dump(override, { lineWidth: 200 }), { mode: 0o600 });
   return overridePath;
 }
@@ -216,4 +319,4 @@ function pemToDer (pem: string): Buffer {
   return Buffer.from(b64, 'base64');
 }
 
-export { TLS_FILE_NAMES, applyBundle, sha256Fingerprint };
+export { TLS_FILE_NAMES, STAGING_PREFIX, applyBundle, stageBundle, sha256Fingerprint };

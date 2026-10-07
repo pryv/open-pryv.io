@@ -11,10 +11,13 @@ import type {} from 'node:fs';
  * POST /system/admin/cores/ack handler.
  *
  * Called by a freshly bootstrapped core to confirm it has joined. The
- * one-time join token from the bundle authenticates the call: if it
- * verifies, we burn the token, flip the matching core's `available` bit to
- * true and return a cluster snapshot so the caller can sanity-check what
- * it's joining.
+ * one-time join token from the bundle authenticates the call. Every check
+ * runs before the token is burned: token valid, token minted for this
+ * coreId, core pre-registered, node certificate fingerprint equal to the
+ * one recorded at issuance. Only then is the token consumed, the core's
+ * `available` bit flipped to true and a cluster snapshot returned.
+ *
+ * Every refusal gets the same 401 body; the reason goes to `log` only.
  *
  * The handler is decoupled from Express so it can be unit-tested with a
  * fake `platformDB` and an in-memory `tokenStore`. The route wiring in
@@ -23,31 +26,32 @@ import type {} from 'node:fs';
  * Possible return.statusCode values:
  *   200 — token verified, core marked available
  *   400 — malformed body (missing coreId/token)
- *   401 — token unknown / expired / already-consumed / coreId mismatch
- *   404 — token valid but no matching core-info row in PlatformDB
+ *   401 — refused (reason logged server-side)
  *   500 — internal failure (caller should re-raise / log)
  */
 
-const VALID_REASONS = new Set(['unknown', 'expired', 'already-consumed', 'invalid-format']);
-
 type CoreInfo = { id: string; url?: string | null; hosting?: string | null; available?: boolean; [k: string]: unknown };
 type DnsRecord = { a?: string[]; [k: string]: unknown };
-type TokenVerdict = { ok: true; coreId: string } | { ok: false; reason: string };
-type TokenStoreLike = { consume: (token: string, opts: { consumerIp: string | null }) => TokenVerdict };
+type TokenVerdict = { ok: true; coreId: string; certFingerprint?: string } | { ok: false; reason: string };
+type TokenStoreLike = {
+  verify: (token: string) => TokenVerdict;
+  consume: (token: string, opts: { consumerIp: string | null }) => TokenVerdict;
+};
 type PlatformDBLike = {
   getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
   setCoreInfo: (coreId: string, info: CoreInfo) => Promise<unknown>;
   getAllCoreInfos?: () => Promise<CoreInfo[]>;
   getDnsRecord?: (subdomain: string) => Promise<DnsRecord | null>;
 };
-type AckRequest = { body?: { coreId?: unknown; token?: unknown }; ip?: string };
+type AckRequest = { body?: { coreId?: unknown; token?: unknown; tlsFingerprint?: unknown }; ip?: string };
 type AckResponse = { statusCode: number; body: Record<string, unknown> };
 
 /**
  * @param deps.tokenStore - business/src/bootstrap/TokenStore instance
  * @param deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
+ * @param [deps.log] - receives the reason of each refusal
  */
-function makeHandler ({ tokenStore, platformDB }: { tokenStore: TokenStoreLike; platformDB: PlatformDBLike }) {
+function makeHandler ({ tokenStore, platformDB, log = () => {} }: { tokenStore: TokenStoreLike; platformDB: PlatformDBLike; log?: (msg: string) => void }) {
   if (tokenStore == null) throw new Error('ackHandler: tokenStore is required');
   if (platformDB == null) throw new Error('ackHandler: platformDB is required');
 
@@ -60,25 +64,27 @@ function makeHandler ({ tokenStore, platformDB }: { tokenStore: TokenStoreLike; 
     if (!coreId || !token) {
       return errResponse(400, 'invalid-body', 'coreId and token are required');
     }
+    const refuse = (reason: string): AckResponse => {
+      log(`cores/ack refused for coreId ${JSON.stringify(coreId)} from ${consumerIp ?? 'unknown ip'}: ${reason}`);
+      return errResponse(401, 'ack-refused', 'join acknowledgement refused');
+    };
 
-    const verdict: TokenVerdict = tokenStore.consume(token, { consumerIp });
-    if (!verdict.ok) {
-      // Map TokenStore reasons to a single 401 — we deliberately don't tell
-      // the caller *why* the token failed (no oracle for guessing).
-      const reason = VALID_REASONS.has(verdict.reason) ? verdict.reason : 'invalid';
-      return errResponse(401, 'token-invalid', 'token rejected', { reason });
-    }
-    if (verdict.coreId !== coreId) {
-      // Token was minted for a different core. Defensive — should never
-      // happen unless the operator hand-edited the bundle.
-      return errResponse(401, 'token-coreid-mismatch', 'token does not belong to this coreId');
-    }
+    const verdict: TokenVerdict = tokenStore.verify(token);
+    if (!verdict.ok) return refuse('token ' + verdict.reason);
+    if (verdict.coreId !== coreId) return refuse(`token was issued for coreId ${JSON.stringify(verdict.coreId)}`);
 
     const existing = await platformDB.getCoreInfo(coreId);
-    if (existing == null) {
-      return errResponse(404, 'core-not-pre-registered',
-        `no PlatformDB row for ${coreId}; the bootstrap CLI must run on the issuing core first`);
+    if (existing == null) return refuse('no pre-registered core-info row (run new-core on the issuing core)');
+
+    if (verdict.certFingerprint != null) {
+      const presented = typeof body.tlsFingerprint === 'string' ? body.tlsFingerprint.toUpperCase() : null;
+      if (presented !== verdict.certFingerprint.toUpperCase()) {
+        return refuse('node certificate fingerprint differs from the one issued with the token');
+      }
     }
+
+    const consumed: TokenVerdict = tokenStore.consume(token, { consumerIp });
+    if (!consumed.ok) return refuse('token ' + consumed.reason);
 
     const updated = { ...existing, available: true };
     await platformDB.setCoreInfo(coreId, updated);
@@ -109,10 +115,10 @@ function makeHandler ({ tokenStore, platformDB }: { tokenStore: TokenStoreLike; 
   };
 }
 
-function errResponse (statusCode: number, id: string, message: string, extra: Record<string, unknown> = {}): AckResponse {
+function errResponse (statusCode: number, id: string, message: string): AckResponse {
   return {
     statusCode,
-    body: { error: { id, message, ...extra } }
+    body: { error: { id, message } }
   };
 }
 

@@ -33,10 +33,11 @@
 //   this when building a >=3-voter HA cluster (two voters give a fragile 2-of-2
 //   quorum where either core dying is an outage).
 //
-// In --bootstrap mode the master decrypts the bundle, writes
-// `override-config.yml` + TLS files, posts an ack to the issuing core, then
-// falls through into normal startup — picking up the freshly-written config
-// via @pryv/boiler's highest-precedence override-file slot.
+// In --bootstrap mode the master decrypts the bundle, stages
+// `override-config.yml` + TLS files, posts an ack to the issuing core, moves
+// the staged files into place once the ack is accepted (removes them on any
+// failure), then falls through into normal startup — picking up the
+// freshly-written config via @pryv/boiler's highest-precedence override-file slot.
 //
 // Config keys:
 //   cluster.apiWorkers      — number of API workers (default: 2)

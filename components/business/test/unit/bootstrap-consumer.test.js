@@ -242,6 +242,135 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
   });
 });
 
+describe('[BSTG] consumer.consume writes nothing before an accepted ack', function () {
+  this.timeout(20_000);
+  let tmp, configDir, tlsDir;
+  const OPERATOR_OVERRIDE = 'operator: kept\n';
+
+  before(function () {
+    try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); } catch {
+      this.skip();
+    }
+  });
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-consume-stage-'));
+    configDir = path.join(tmp, 'config');
+    tlsDir = path.join(tmp, 'tls');
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, 'override-config.yml'), OPERATOR_OVERRIDE);
+  });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  function assertNothingWritten () {
+    assert.deepEqual(fs.readdirSync(configDir), ['override-config.yml'], 'no staging directory left');
+    assert.equal(fs.readFileSync(path.join(configDir, 'override-config.yml'), 'utf8'), OPERATOR_OVERRIDE);
+    assert.equal(fs.existsSync(tlsDir), false, 'no TLS directory, no node key');
+  }
+
+  it('[BSTG1] a refused ack leaves no secret, key or override on disk and keeps the bundle', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    const logs = [];
+    await assert.rejects(consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir,
+      tlsDir,
+      httpClient: async () => ({ statusCode: 401, body: { error: { id: 'ack-refused' } } }),
+      log: (m) => logs.push(m)
+    }), /ack failed: HTTP 401/);
+    assertNothingWritten();
+    assert.equal(fs.existsSync(bundlePath), true);
+    assert.ok(logs.some((l) => l.startsWith('Removed the staged files')));
+  });
+
+  it('[BSTG2] a network error or a clock refusal before the ack leaves nothing on disk either', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    await assert.rejects(consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir,
+      tlsDir,
+      httpClient: async () => { throw new Error('connect ECONNREFUSED'); },
+      log: () => {}
+    }), /ECONNREFUSED/);
+    assertNothingWritten();
+
+    await assert.rejects(consumer.consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir,
+      tlsDir,
+      clockProbe: async () => ({ serverTimeMs: Date.now() + 120_000, rttMs: 1, localMs: Date.now() }),
+      httpClient: async () => ({ statusCode: 200, body: {} }),
+      log: () => {}
+    }), /clock skew/);
+    assertNothingWritten();
+  });
+
+  it('[BSTG3] the files reach their place only after the ack is accepted', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    const overridePath = path.join(configDir, 'override-config.yml');
+    let seenAtAck = null;
+    const result = await consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir,
+      tlsDir,
+      httpClient: async () => {
+        seenAtAck = {
+          override: fs.readFileSync(overridePath, 'utf8'),
+          tlsDir: fs.existsSync(tlsDir)
+        };
+        return { statusCode: 200, body: { ok: true, cluster: { cores: [] } } };
+      },
+      log: () => {}
+    });
+    assert.deepEqual(seenAtAck, { override: OPERATOR_OVERRIDE, tlsDir: false });
+
+    assert.equal(result.overridePath, overridePath);
+    assert.match(fs.readFileSync(overridePath, 'utf8'), /adminAccessKey: admin-key-0123456789abcdef0123/);
+    assert.equal(fs.statSync(overridePath).mode & 0o777, 0o600);
+    assert.ok(fs.readFileSync(result.tlsPaths.keyFile, 'utf8').includes('PRIVATE KEY'));
+    assert.equal(fs.statSync(result.tlsPaths.keyFile).mode & 0o777, 0o600);
+    assert.ok(fs.existsSync(result.tlsPaths.caFile));
+    assert.ok(fs.existsSync(result.tlsPaths.certFile));
+    assert.deepEqual(fs.readdirSync(configDir), ['override-config.yml'], 'staging directory removed');
+    assert.equal(fs.existsSync(bundlePath), false);
+  });
+
+  it('[BSTG4] a staging directory left by an interrupted run is removed', async () => {
+    const stale = path.join(configDir, '.bootstrap-staging-old');
+    fs.mkdirSync(stale);
+    fs.writeFileSync(path.join(stale, 'node.key'), 'stale');
+    const { bundlePath } = writeBundle(tmp);
+    await assert.rejects(consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir,
+      tlsDir,
+      httpClient: async () => ({ statusCode: 401, body: {} }),
+      log: () => {}
+    }), /HTTP 401/);
+    assertNothingWritten();
+  });
+
+  it('[BSTG5] a config directory that did not exist is not left behind', async () => {
+    fs.rmSync(configDir, { recursive: true });
+    const nested = path.join(tmp, 'new', 'config');
+    const { bundlePath } = writeBundle(tmp);
+    await assert.rejects(consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir: nested,
+      tlsDir,
+      httpClient: async () => ({ statusCode: 401, body: {} }),
+      log: () => {}
+    }), /HTTP 401/);
+    assert.equal(fs.existsSync(path.join(tmp, 'new')), false);
+    assert.equal(fs.existsSync(tlsDir), false);
+  });
+});
+
 describe('[CKBJ] consumer.consume clock-skew check', function () {
   this.timeout(20_000);
   let tmp;
