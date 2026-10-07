@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Install wizard: the launcher survives a reboot, the config is private
+
+- **Fix.** The `run-pryv.sh` launcher written by `init` now starts the container with
+  `--restart unless-stopped` and `--stop-timeout 30`: before, the platform stayed down after a host
+  reboot, and Docker's default 10 s stop could cut the platform database's snapshot short (the
+  server needs up to 30 s, see INSTALL.md). The "Start the server" command the wizard prints carries
+  the same flags.
+- **Security.** `pryv-config.yml`, which holds the admin key and the other generated secrets, is now
+  written with mode 0600 instead of 0644 (also when overwritten with `--force`). When the wizard runs
+  in the image, the file belongs to uid 1000, the user the server runs as: editing it on the host
+  then needs root (or uid 1000). The manual `docker run` examples in INSTALL.md carry the same two
+  flags as the launcher.
+- **Operators with an existing install:** `chmod 600 pryv-config.yml` (and, for the non-root image,
+  `chown 1000:1000 pryv-config.yml`), and add the two flags to the `docker run` line of your
+  `run-pryv.sh` by hand. Do not re-run `init --force` for this: it generates new secrets.
+
 ### Docker image: refuses a user data root on the container's own filesystem
 
 - **Fix.** `production-config.yml` carried `${PRYV_DATADIR}` / `${PRYV_LOGSDIR}` placeholders that

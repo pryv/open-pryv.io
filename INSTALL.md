@@ -60,10 +60,10 @@ The wizard:
 - Prompts for ~15 deployment-specific choices; defaults are pre-filled and accepted with enter.
 - Auto-derives the user-data folder to `<pwd>/data` (sibling to the config). No prompt.
 - Pins `letsEncrypt.tlsDir: <pwd>/data/tls` so the ACME-issued cert lives on the same operator-mounted volume as the workers' `http.ssl.{certFile,keyFile}` paths — survives container restarts cleanly.
-- Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*.
+- Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*. `pryv-config.yml` is written with mode 0600 and, when the wizard runs in the image, owned by uid 1000 (the server's `node` user, see **Container user**). Editing it on the host then needs root (or uid 1000).
 - For `dnsLess: false` (multi-core / subdomain-per-user), prints a host pre-flight block with the commands to free UDP/53 on the host (disable `systemd-resolved` on Ubuntu 24+ / Fedora / modern Debian).
-- Refuses to overwrite an existing `pryv-config.yml` — move the file aside to re-run.
-- Writes a sibling `run-pryv.sh` launcher that pins the image, self-locates via `cd "$(dirname "$0")" && pwd`, mounts config + data, and publishes the right ports for the configuration you chose:
+- Refuses to overwrite an existing `pryv-config.yml`: move the file aside to re-run. `--force` overwrites it and generates every secret anew: never on a live install.
+- Writes a sibling `run-pryv.sh` launcher that pins the image, self-locates via `cd "$(dirname "$0")" && pwd`, mounts config + data, publishes the right ports for the configuration you chose, restarts the container after a crash or a host reboot (`--restart unless-stopped`) and gives it 30 s to stop (`--stop-timeout 30`, see the stop note under **Minimal production config**):
 
 ```bash
 # Inside the install dir created above:
@@ -155,7 +155,7 @@ storages:
       logFile: null                    # null: rqlited writes to the master's stdout/stderr; or a file it appends to
 ```
 
-On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30`, or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
+On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30` or `docker run --stop-timeout 30` (the launcher the `init` wizard writes sets it), or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
 
 ### Assets
 
@@ -697,7 +697,7 @@ The same CLI migrates the other way (`--from rqlite --to postgresql`) when adopt
 The shape is verifiable: the app container runs with `--read-only` rootfs + tmpfs mounts, e.g.
 
 ```bash
-docker run -d --name pryvio --read-only \
+docker run -d --name pryvio --restart unless-stopped --stop-timeout 30 --read-only \
   --tmpfs /tmp --tmpfs /app/var-pryv \
   -v /host/config:/app/pryv:ro \
   -p 3000:3000 \
@@ -722,7 +722,7 @@ logs:
 (`rqlite.dataDir` keeps its default, `/app/var-pryv/rqlite-data`, the declared `VOLUME` mounted below.)
 
 ```bash
-docker run \
+docker run -d --name pryvio --restart unless-stopped --stop-timeout 30 \
   -v /host/pryv/data:/app/data \
   -v /host/pryv/rqlite-data:/app/var-pryv/rqlite-data \
   -v /host/pryv/override-config.yml:/app/config/override-config.yml:ro \
@@ -739,7 +739,7 @@ The image is published for `linux/amd64` and `linux/arm64` under the same tag; `
 The server runs as the image's unprivileged `node` user (uid/gid 1000), not as root. The container still starts as root: the entrypoint first hands the data directories to `node`, then drops to `node`, keeping only `CAP_NET_BIND_SERVICE` so ports 53, 80 and 443 still bind. This covers the normal boot (no arguments) and `node bin/master.js …` (the form the wizard's `run-pryv.sh` uses); `init`, `check-config`, `config-to-env` and other pass-through commands keep running as root, because they write into operator mounts.
 
 - **Data directories handed to `node`** at each start: `/app/var-pryv`, `/app/data`, `/app/pryv/data`, `/etc/pryv/tls` and `/var/lib/pryv` (each only if present), plus any directory listed in `PRYV_OWNED_DIRS` (space-separated). Only entries not already owned by `node` change, so after the first start this is a walk of the trees (an inode walk, proportional to the number of files; start with `--user 1000:1000` to skip it once everything belongs to uid 1000). Symbolic links inside them are changed, never followed. Set `PRYV_OWNED_DIRS` (directories holding only Pryv data: never `/` or a system directory) when `override-config.yml` puts data (`storages.engines.*` paths, `letsEncrypt.tlsDir`, `http.ssl.*`, `logs.*.path`, `cluster.tokens.path`) anywhere else. The cluster CA (`/etc/pryv/ca`) is not handed over: only `bin/bootstrap.js` uses it.
-- **Files the server only reads** must be readable by uid 1000: `override-config.yml` and a custom `http.ssl.keyFile` mounted from the host with mode 0600 and a root owner are not. Make them readable (or list their directory in `PRYV_OWNED_DIRS`).
+- **Files the server only reads** must be readable by uid 1000: `override-config.yml` and a custom `http.ssl.keyFile` mounted from the host with mode 0600 and a root owner are not. Make them readable (or list their directory in `PRYV_OWNED_DIRS`). The `pryv-config.yml` written by the `init` wizard already belongs to uid 1000 (mode 0600).
 - **Upgrading** from an image that ran as root needs no action for the layouts above: files written by the earlier image are root-owned, and the first start of the new image hands them to `node` (the boot log reports `docker-entrypoint: N path(s) under <dir> handed to user node`). Back up the data directories before the upgrade as usual. On the host, the files then belong to uid 1000. `letsEncrypt.onRotateScript` now runs as `node` too.
 - **One-shot tools in a running container** (`docker exec … node bin/backup.js`, `bin/hfs-author-scrub.js`, …): run them as `node` (`docker exec -u node …`) so the files they write stay readable by the server. A file a root `docker exec` leaves in a data directory is handed back to `node` at the next start. `bin/bootstrap.js` is the exception: it writes the cluster CA, so it runs as root; the join tokens it writes are handed to the owner of their directory, so the running server can consume them.
 - **Joining a cluster** (`node bin/master.js --bootstrap …`): the entrypoint prepares `/app/config/override-config.yml` for the server to write. With `--bootstrap-config-dir` or `--bootstrap-tls-dir` pointing elsewhere, that directory must be writable by uid 1000.
