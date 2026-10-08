@@ -11,7 +11,7 @@ import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 import type { DbRow } from './BaseStorageSQLite.ts';
 const require = createRequire(import.meta.url);
 
-const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
+const { BaseStorageSQLite, decorateSQLiteDuplicateError } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
@@ -200,25 +200,33 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     if (prepared.headId != null) {
       return super.insertOne(userId, prepared, callback);
     }
-    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: Error | null, existing?: Array<AccessItem | null>) => {
-      if (err) return callback(err);
-      for (const ex of (existing || [])) {
+    // Check and insert in one write transaction (BEGIN IMMEDIATE): as two
+    // steps, two concurrent inserts (two logins for the same app, in this
+    // process or another) could both pass the check.
+    const duplicateAwareCallback: Callback<AccessItem | null> = (err, result) => {
+      if (err != null) decorateSQLiteDuplicateError(err);
+      callback(err, result);
+    };
+    this._userDbAndWrite(userId, duplicateAwareCallback, (udb) => udb.db.transaction(() => {
+      const { sql: where, params } = this.buildWhere({ deleted: null, headId: null });
+      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`.trim()).all(...params);
+      for (const ex of this.rowsToItems(rows)) {
         if (ex == null) continue;
-        if (ex.id === prepared.id) continue; // same row (shouldn't happen — defensive)
+        if (ex.id === prepared.id) continue; // same row (should not happen, defensive)
         if (ex.token != null && ex.token === prepared.token) {
-          return callback(duplicateIndexError(['token'], { token: '(hidden)' }));
+          throw duplicateIndexError(['token'], { token: '(hidden)' });
         }
         if (ex.name != null && ex.type != null &&
             ex.name === prepared.name &&
             ex.type === prepared.type &&
             (ex.deviceName ?? null) === (prepared.deviceName ?? null)) {
-          return callback(duplicateIndexError(['name', 'type', 'deviceName'], {
+          throw duplicateIndexError(['name', 'type', 'deviceName'], {
             name: prepared.name, type: prepared.type, deviceName: prepared.deviceName ?? null
-          }));
+          });
         }
       }
-      super.insertOne(userId, prepared, callback);
-    });
+      return this._insertOneSync(udb, prepared);
+    }).immediate());
   }
 }
 

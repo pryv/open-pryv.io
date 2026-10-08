@@ -62,6 +62,7 @@ function colSql (name: string): string {
  */
 function decorateSQLiteDuplicateError (err: unknown): void {
   const e = err as { code?: string, message?: string, isDuplicate?: boolean, isDuplicateIndex?: (key: string) => boolean };
+  if (e.isDuplicate === true) return; // already shaped (a check made in code)
   const isDup = e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || e.code === 'SQLITE_CONSTRAINT_UNIQUE';
   e.isDuplicate = isDup;
   e.isDuplicateIndex = (key: string): boolean => {
@@ -356,22 +357,24 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       if (err != null) decorateSQLiteDuplicateError(err);
       callback(err, result);
     };
-    this._userDbAndWrite(userOrUserId, duplicateAwareCallback, (udb) => {
-      const prepared = this.applyDefaults(item);
-      const { id, head_id, deleted, data } = this.itemToRow(prepared);
-      const cols: string[] = ['id'];
-      const placeholders: string[] = ['?'];
-      const vals: SqlParam[] = [id];
-      if (this.hasHeadIdCol) { cols.push('head_id'); placeholders.push('?'); vals.push(head_id); }
-      if (this.hasDeletedCol) { cols.push('deleted'); placeholders.push('?'); vals.push(deleted); }
-      cols.push('data'); placeholders.push('?'); vals.push(data);
+    this._userDbAndWrite(userOrUserId, duplicateAwareCallback, (udb) => this._insertOneSync(udb, item));
+  }
 
-      udb.db.prepare(`INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`)
-        .run(...vals);
+  protected _insertOneSync (udb: UserDb, item: Partial<TItem>): TItem | null {
+    const prepared = this.applyDefaults(item);
+    const { id, head_id, deleted, data } = this.itemToRow(prepared);
+    const cols: string[] = ['id'];
+    const placeholders: string[] = ['?'];
+    const vals: SqlParam[] = [id];
+    if (this.hasHeadIdCol) { cols.push('head_id'); placeholders.push('?'); vals.push(head_id); }
+    if (this.hasDeletedCol) { cols.push('deleted'); placeholders.push('?'); vals.push(deleted); }
+    cols.push('data'); placeholders.push('?'); vals.push(data);
 
-      const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(id);
-      return this.rowToItem(row);
-    });
+    udb.db.prepare(`INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`)
+      .run(...vals);
+
+    const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(id);
+    return this.rowToItem(row);
   }
 
   // The read-modify-write methods below run under BEGIN IMMEDIATE: the write
@@ -764,5 +767,5 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 }
 
-export { BaseStorageSQLite };
+export { BaseStorageSQLite, decorateSQLiteDuplicateError };
 export type { DbRow };
