@@ -16,7 +16,8 @@ const __ex_integrity = require('./integrity/index.ts').default;
 export { __ex_integrity as integrity };
 const __ex_webhooks = {
     Webhook: require('./webhooks/Webhook.ts').default,
-    Repository: require('./webhooks/repository.ts').default
+    Repository: require('./webhooks/repository.ts').default,
+    destination: require('./webhooks/destination.ts')
   };
 export { __ex_webhooks as webhooks };
 const __ex_users = require('./users/index.ts');

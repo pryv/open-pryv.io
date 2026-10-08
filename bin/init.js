@@ -794,10 +794,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   attachmentSizeMaxKB: 10240   # 10 MiB per attachment
 # #   previewsCacheMaxAgeMs: 86400000
 
-# # webhooks — global delivery tuning. Default cooldownMs is generous.
+# # webhooks — global delivery tuning. Calls to loopback, private, link-local
+# # and other reserved addresses are refused unless listed in
+# # allowedPrivateHosts (host names, IPs or CIDR ranges).
 # # webhooks:
-# #   cooldownMs: 5000
+# #   minIntervalMs: 5000
 # #   maxRetries: 5
+# #   allowedPrivateHosts: []
+# #   requestTimeoutMs: 10000
 
 # # access.trustedAuthUrls — let apps request their OWN auth page on
 # # POST /reg/access (optional 'authUrl' body field). Only URLs matching an

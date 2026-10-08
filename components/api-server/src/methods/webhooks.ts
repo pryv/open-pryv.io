@@ -35,6 +35,7 @@ const methodsSchema = require('../schema/webhooksMethods.ts');
 
 const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
+const { webhookUrlProblem, describeCallFailure } = require('business').webhooks.destination;
 const { prepareScopeQuery, prepareAccessScopeQuery } = require('./helpers/scopeQueryUtils.ts');
 
 // Validate + prepare a raw webhook scopes map { key -> { kind, query } } into
@@ -138,19 +139,34 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
   );
 
   async function createWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
-    context.initTrackingProperties(params);
+    const urlProblem = webhookUrlProblem(params.url);
+    if (urlProblem != null) {
+      return next(errors.invalidParametersFormat(urlProblem, [{ param: 'url', message: urlProblem }]));
+    }
+    let scopes;
     try {
-      if (params.scopes != null) params.scopes = await prepareWebhookScopes(context, params.scopes);
+      if (params.scopes != null) scopes = await prepareWebhookScopes(context, params.scopes);
     } catch (e) {
       return next(e);
     }
-    const webhook = new Webhook(Object.assign({
+    // The params schema admits only `url` and `scopes`; every other field is
+    // set by the server.
+    const tracking = context.initTrackingProperties({});
+    const settings = getWebhooks();
+    const webhook = new Webhook({
+      url: params.url,
+      scopes,
+      created: tracking.created,
+      createdBy: tracking.createdBy,
+      modified: tracking.modified,
+      modifiedBy: tracking.modifiedBy,
       user: context.user,
       accessId: context.access.id,
       webhooksRepository,
-      runsSize: getWebhooks().runsSize,
-      minIntervalMs: getWebhooks().minIntervalMs
-    }, params));
+      runsSize: settings.runsSize,
+      minIntervalMs: settings.minIntervalMs,
+      maxRetries: settings.maxRetries
+    });
 
     try {
       await webhook.save();
@@ -295,7 +311,10 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     try {
       await checkedWebhook.makeCall([TEST_MESSAGE]);
     } catch (e) {
-      return next(errors.unknownReferencedResource('webhook', 'url', checkedWebhook.url, e));
+      // Same answer whatever the failure (refused destination, connection
+      // error, timeout, non-2xx); the reason is logged here only.
+      logger.info(`webhooks.test ${checkedWebhook.id} failed: ${describeCallFailure(e)}`);
+      return next(errors.unknownReferencedResource('webhook', 'url', checkedWebhook.url));
     }
     result.webhook = checkedWebhook.forApi();
     next();

@@ -381,6 +381,15 @@ function checkTrustedProxies (config, problems) {
   }
 }
 
+// webhooks.allowedPrivateHosts entries (host names, IPs, CIDR ranges) and
+// webhooks.requestTimeoutMs.
+function checkWebhooks (config, problems) {
+  const { describeWebhooksConfig } = require('../../components/business/src/webhooks/destination.ts');
+  for (const p of describeWebhooksConfig(config.get('webhooks')).problems) {
+    problems.push({ message: p.message, path: p.path, payload: {} });
+  }
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -475,6 +484,7 @@ async function validate (config) {
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
   checkTrustedProxies(config, problems);
+  checkWebhooks(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
 

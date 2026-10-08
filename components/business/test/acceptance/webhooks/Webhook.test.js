@@ -467,6 +467,51 @@ describe('[WHBK] Webhook', () => {
     });
   });
 
+  // The boot message and every change notification go through send().
+  describe('[WXB0] when the destination is refused', () => {
+    const postPath = '/refused-destination';
+    const user = { id: 'wxb-user', username: 'wxb-user' };
+    let mockServer, config, savedAllowList, webhook;
+
+    before(async () => {
+      config = require('@pryv/boiler').getConfigSync();
+      savedAllowList = config.get('webhooks:allowedPrivateHosts');
+      config.set('webhooks:allowedPrivateHosts', []);
+      mockServer = new HttpServer(postPath, 200);
+      await mockServer.listen();
+    });
+
+    after(async () => {
+      config.set('webhooks:allowedPrivateHosts', savedAllowList);
+      if (webhook != null) webhook.stop();
+      await mockServer.close();
+    });
+
+    it('[WXB1] is not called, each attempt is a failed run and the refusal is logged once', async () => {
+      const repo = new WebhooksRepository(storage, userStorage);
+      const warnings = [];
+      webhook = new Webhook({
+        accessId: cuid(),
+        url: 'http://localhost:' + PORT + postPath,
+        minIntervalMs: 10,
+        webhooksRepository: repo,
+        user
+      });
+      webhook.setLogger({ info () {}, warn (msg) { warnings.push(msg); } });
+      await webhook.save();
+      await webhook.send('hello');
+      const deadline = Date.now() + 3000;
+      while (webhook.failCount < 3 && Date.now() < deadline) await awaiting.delay(20);
+      assert.ok(webhook.failCount >= 3, 'failCount ' + webhook.failCount);
+      assert.strictEqual(webhook.runs[0].status, 0);
+      assert.strictEqual(mockServer.getMessageCount(), 0);
+      assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
+      assert.ok(warnings[0].includes("'localhost'") && !warnings[0].includes(postPath), warnings[0]);
+      webhook.stop();
+      await repo.deleteOne(user, webhook.id);
+    });
+  });
+
   describe('[WCAD-FIRE] fire-time access-validity check', () => {
     const postPath = '/should-not-fire';
     const url = 'http://127.0.0.1:' + PORT + postPath;

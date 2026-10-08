@@ -72,6 +72,9 @@ storages:
 dnsLess:
   isActive: false
   publicUrl: http://127.0.0.1:3000/
+# Test webhook receivers listen on the loopback interface.
+webhooks:
+  allowedPrivateHosts: ['127.0.0.1', 'localhost', '::1']
 # Local multi-core tests run their cores on http://127.0.0.1.
 cluster:
   allowInsecurePeerUrl: true

@@ -20,6 +20,7 @@ function pick<T extends object> (obj: T, keys: string[]): Partial<T> {
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 const { pubsub } = require('messages');
+const { postWebhook, describeCallFailure } = require('./destination.ts');
 
 class Webhook {
   id;
@@ -77,6 +78,9 @@ class Webhook {
   scopes: WebhookScopes | null;
 
   engineSubscriber!: Subscriber | null;
+
+  // A refused destination is logged once, not on every retry.
+  destinationRefusalLogged: boolean;
   constructor (params: WebhookCtorParams) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
@@ -101,6 +105,7 @@ class Webhook {
     this.runsSize = params.runsSize || 50;
     this.scopes = params.scopes || null;
     this.engineSubscriber = null;
+    this.destinationRefusalLogged = false;
   }
 
   startListenting (username: string) {
@@ -157,11 +162,15 @@ class Webhook {
       const res = await this.makeCall(sentBuffer);
       status = res.status;
     } catch (e: unknown) {
-      const err = e as { response?: { status?: number } };
+      const err = e as { response?: { status?: number }; kind?: string };
       if (err.response != null) {
         status = err.response.status ?? 0;
       } else {
         status = 0;
+      }
+      if ((err.kind === 'refused' || err.kind === 'invalid-url') && !this.destinationRefusalLogged) {
+        this.destinationRefusalLogged = true;
+        warn(this, 'Webhook ' + this.id + ' not called, destination not accepted: ' + describeCallFailure(e));
       }
     }
     log(this, 'Webhook ' + this.id + ' run with status ' + status);
@@ -177,6 +186,7 @@ class Webhook {
       }
     } else {
       this.currentRetries = 0;
+      this.destinationRefusalLogged = false;
     }
     this.runCount++;
     this.lastRun = { status, timestamp: timestamp.now() };
@@ -212,27 +222,20 @@ class Webhook {
   }
 
   /**
-   * Only make the HTTP call - used for webhook.test API method
+   * Only make the HTTP call - used for webhook.test API method.
+   * The destination is checked at call time (see ./destination.ts); any
+   * failure rejects with a WebhookCallError, with `response.status` set when
+   * the receiver answered.
    */
-  async makeCall (messages: WebhookMessage[]) {
-    const res = await fetch(this.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages,
-        meta: {
-          apiVersion: this.apiVersion,
-          serverTime: timestamp.now(),
-          serial: this.serial
-        }
-      })
+  async makeCall (messages: WebhookMessage[]): Promise<{ status: number }> {
+    return await postWebhook(this.url, {
+      messages,
+      meta: {
+        apiVersion: this.apiVersion,
+        serverTime: timestamp.now(),
+        serial: this.serial
+      }
     });
-    if (!res.ok) {
-      const err: Error & { response?: { status: number } } = new Error(`HTTP ${res.status}`);
-      err.response = { status: res.status };
-      throw err;
-    }
-    return { status: res.status };
   }
 
   stop () {
@@ -347,6 +350,10 @@ export { Webhook };
 function log (webhook: Webhook, msg: string) {
   if (webhook.logger == null) { return; }
   webhook.logger.info(msg);
+}
+function warn (webhook: Webhook, msg: string) {
+  if (webhook.logger == null) { return; }
+  webhook.logger.warn(msg);
 }
 async function makeUpdate (fields: string[] | null, webhook: Webhook) {
   if (webhook.repository == null) {

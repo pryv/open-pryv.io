@@ -1081,4 +1081,175 @@ describe('[WH01] webhooks', () => {
       });
     });
   });
+
+  describe('[WV00] create input and destination rules', () => {
+    const http = require('node:http');
+    let vUsername, vAppToken, vAppId, vOtherAppId, config, savedAllowList;
+    let receiver, receivedCount, receiverStatus;
+
+    function setAllowList (list) {
+      config.set('webhooks:allowedPrivateHosts', list);
+    }
+    function create (body) {
+      return coreRequest
+        .post(`/${vUsername}/webhooks`)
+        .set('Authorization', vAppToken)
+        .send(body);
+    }
+    async function storedWebhooksCount () {
+      const findAsync = promisify((u, q, o, cb) => getWebhooksStorage().find(u, q, o, cb));
+      return (await findAsync({ id: vUsername }, {}, {})).length;
+    }
+
+    before(async () => {
+      await fixtures.clean();
+      config = require('@pryv/boiler').getConfigSync();
+      savedAllowList = config.get('webhooks:allowedPrivateHosts');
+      vUsername = cuid();
+      vAppToken = cuid();
+      vAppId = cuid();
+      vOtherAppId = cuid();
+      await fixtures.user(vUsername, {}, async (user) => {
+        user.access({ id: vAppId, type: 'app', token: vAppToken });
+        user.access({ id: vOtherAppId, type: 'app', token: cuid() });
+      });
+      receivedCount = 0;
+      receiverStatus = 200;
+      receiver = http.createServer((req, res) => {
+        receivedCount++;
+        req.resume();
+        res.statusCode = receiverStatus;
+        res.end();
+      });
+      // default host: listens on both loopback families, as `localhost` may resolve to either
+      await new Promise((resolve) => receiver.listen(0, resolve));
+    });
+    after(async () => {
+      setAllowList(savedAllowList);
+      receiver.closeAllConnections();
+      await new Promise((resolve) => receiver.close(resolve));
+      await fixtures.clean();
+    });
+
+    describe('[WV01] without allowed private hosts', () => {
+      before(() => setAllowList([]));
+      after(() => setAllowList(savedAllowList));
+
+      it('[WVA1] refuses a URL with a loopback, private, link-local or metadata IP address', async () => {
+        for (const url of [
+          'http://127.0.0.1:5553/notifications', 'http://2130706433/', 'http://10.0.0.1/hook', 'http://172.16.5.4/hook',
+          'http://192.168.1.10/hook', 'http://169.254.169.254/latest/meta-data/', 'http://100.64.0.1/hook',
+          'http://[::1]/hook', 'http://[::ffff:127.0.0.1]/hook', 'http://[fd00::1]/hook', 'http://[fe80::1]/hook', 'http://0.0.0.0/hook'
+        ]) {
+          const res = await create({ url });
+          assert.strictEqual(res.status, 400, url);
+          assert.strictEqual(res.body.error.id, ErrorIds.InvalidParametersFormat, url);
+        }
+        assert.strictEqual(await storedWebhooksCount(), 0);
+      });
+
+      it('[WVA2] refuses other schemes, credentials and over-long URLs', async () => {
+        for (const url of [
+          'ftp://hooks.example.com/', 'file:///etc/passwd', 'https://user:secret@hooks.example.com/',
+          'hooks.example.com/no-scheme', 'https://hooks.example.com/' + 'a'.repeat(2048)
+        ]) {
+          const res = await create({ url });
+          assert.strictEqual(res.status, 400, url.slice(0, 60));
+        }
+        assert.strictEqual(await storedWebhooksCount(), 0);
+      });
+
+      it('[WVA3] webhooks.test of a host name resolving to loopback: same error as a failed call, nothing reaches the receiver', async () => {
+        const port = receiver.address().port;
+        const created = await create({ url: `http://localhost:${port}/wva3?k=v` });
+        assert.strictEqual(created.status, 201);
+        const id = created.body.webhook.id;
+
+        // reference: an allowed receiver answering 404
+        setAllowList(['localhost']);
+        receiverStatus = 404;
+        const reference = await coreRequest.post(`/${vUsername}/webhooks/${id}/test`).set('Authorization', vAppToken);
+        assert.strictEqual(reference.status, 400);
+        assert.strictEqual(receivedCount, 1);
+
+        setAllowList([]);
+        receiverStatus = 200;
+        const refused = await coreRequest.post(`/${vUsername}/webhooks/${id}/test`).set('Authorization', vAppToken);
+        assert.strictEqual(refused.status, 400);
+        assert.strictEqual(refused.body.error.id, ErrorIds.UnknownReferencedResource);
+        assert.deepStrictEqual(refused.body.error, reference.body.error);
+        assert.strictEqual(receivedCount, 1, 'the refused call must not reach the receiver');
+      });
+    });
+
+    describe('[WV02] with allowed private hosts', () => {
+      it('[WVA4] lets an allowed private host through', async () => {
+        setAllowList(['localhost']);
+        receiverStatus = 200;
+        const before = receivedCount;
+        const created = await create({ url: `http://localhost:${receiver.address().port}/wva4` });
+        assert.strictEqual(created.status, 201);
+        const res = await coreRequest.post(`/${vUsername}/webhooks/${created.body.webhook.id}/test`).set('Authorization', vAppToken);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(receivedCount, before + 1);
+        setAllowList(savedAllowList);
+      });
+
+      it('[WVA5] accepts an allowed private IP literal at creation', async () => {
+        setAllowList(['10.20.0.0/16']);
+        const res = await create({ url: 'http://10.20.1.2/wva5' });
+        assert.strictEqual(res.status, 201);
+        const other = await create({ url: 'http://10.21.1.2/wva5' });
+        assert.strictEqual(other.status, 400);
+        setAllowList(savedAllowList);
+      });
+    });
+
+    describe('[WV03] server-managed fields', () => {
+      it('[WVB1] refuses an accessId, even of another access of the user', async () => {
+        const res = await create({ url: 'https://wvb1.example.com/hook', accessId: vOtherAppId });
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.id, ErrorIds.InvalidParametersFormat);
+      });
+
+      it('[WVB2] refuses id, maxRetries, minIntervalMs, state, counters and tracking properties', async () => {
+        for (const extra of [
+          { id: cuid() }, { maxRetries: 1000 }, { minIntervalMs: 1 }, { state: 'inactive' }, { runCount: 3 },
+          { failCount: 2 }, { currentRetries: 1 }, { runs: [] }, { lastRun: { status: 200, timestamp: 1 } },
+          { created: 1 }, { createdBy: 'someone' }, { unknownField: true }
+        ]) {
+          const res = await create(Object.assign({ url: `https://wvb2-${cuid()}.example.com/hook` }, extra));
+          assert.strictEqual(res.status, 400, JSON.stringify(extra));
+          assert.strictEqual(res.body.error.id, ErrorIds.InvalidParametersFormat, JSON.stringify(extra));
+        }
+      });
+
+      it('[WVB3] creates from url (and scopes) with server-assigned values', async () => {
+        const res = await create({ url: 'https://wvb3.example.com/hook' });
+        assert.strictEqual(res.status, 201);
+        const w = res.body.webhook;
+        assert.strictEqual(w.accessId, vAppId);
+        assert.strictEqual(w.state, 'active');
+        assert.strictEqual(w.maxRetries, config.get('webhooks:maxRetries'));
+        assert.strictEqual(w.minIntervalMs, config.get('webhooks:minIntervalMs'));
+        assert.strictEqual(w.runCount, 0);
+        assert.strictEqual(w.failCount, 0);
+        assert.strictEqual(w.currentRetries, 0);
+        assert.deepStrictEqual(w.runs, []);
+        assert.strictEqual(w.createdBy, vAppId);
+      });
+
+      it('[WVB4] update refuses accessId and an unknown state', async () => {
+        const created = await create({ url: 'https://wvb4.example.com/hook' });
+        const id = created.body.webhook.id;
+        const res = await coreRequest.put(`/${vUsername}/webhooks/${id}`).set('Authorization', vAppToken).send({ accessId: vOtherAppId });
+        assert.strictEqual(res.status, 403);
+        const bad = await coreRequest.put(`/${vUsername}/webhooks/${id}`).set('Authorization', vAppToken).send({ state: 'paused' });
+        assert.strictEqual(bad.status, 400);
+        const after = await coreRequest.get(`/${vUsername}/webhooks/${id}`).set('Authorization', vAppToken);
+        assert.strictEqual(after.body.webhook.accessId, vAppId);
+        assert.strictEqual(after.body.webhook.state, 'active');
+      });
+    });
+  });
 });

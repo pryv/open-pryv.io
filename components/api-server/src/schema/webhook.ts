@@ -17,8 +17,23 @@ const string = helpers.string;
 const number = helpers.number;
 const array = helpers.array;
 
+const { MAX_URL_LENGTH } = require('business/src/webhooks/destination.ts');
+
 export default function (action: string) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
+
+  if (action === Action.CREATE) {
+    // Only the fields a client sets; everything else (id, accessId, state,
+    // retry settings, run counters, tracking properties) is assigned by the
+    // server, and sending it is refused.
+    return object({
+      url: string({ maxLength: MAX_URL_LENGTH }),
+      scopes: object({}, { additionalProperties: true })
+    }, {
+      required: ['url'],
+      additionalProperties: false
+    });
+  }
 
   const base = object({
     id: string(),
@@ -61,11 +76,9 @@ export default function (action: string) {
         'modifiedBy'
       ];
       break;
-    case Action.CREATE:
-      base.required = ['url'];
-      break;
     case Action.UPDATE:
       base.alterableProperties = ['state', 'scopes'];
+      base.properties.state = string({ enum: ['active', 'inactive'] });
       break;
   }
 

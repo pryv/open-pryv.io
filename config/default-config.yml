@@ -428,6 +428,18 @@ webhooks:
   minIntervalMs: 5000
   maxRetries: 5
   runsSize: 20
+  # Webhook URLs must use https or http, without credentials. When a webhook
+  # is called, its host is resolved and the call is refused when an address is
+  # loopback, private (RFC 1918), carrier-grade NAT, link-local (incl. cloud
+  # metadata), unique-local or link-local IPv6, unspecified, multicast,
+  # broadcast or otherwise reserved (also as IPv4-mapped IPv6).
+  # List here the receivers on a private network that may be called anyway:
+  # host names (exact match), IPs or CIDR ranges, e.g.
+  # ['hooks.internal.example', '10.1.2.0/24'].
+  allowedPrivateHosts: []
+  # A call without an answer within this delay counts as failed. Redirects are
+  # not followed: a 3xx answer counts as failed too.
+  requestTimeoutMs: 10000
 
 # === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
 versioning:
