@@ -166,6 +166,7 @@ describe('[AD01] Accesses with account streams', function () {
             });
             it('[L99L] should allow to access visible events in storageUsed', async () => {
               res = await request.get(eventsBasePath).set('authorization', accountAccessData.token);
+              // 6 account fields; the derived verification event only comes when `types` asks for it
               assert.strictEqual(res.body.events.length, 6);
               validation.validateAccountEvents(res.body.events);
             });

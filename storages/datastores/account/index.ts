@@ -28,6 +28,7 @@ const ds = require('@pryv/datastore');
 const { CONTENT_QUERY_SUPPORT } = require('../../shared/contentQueryConditions.ts');
 const AccountUserStreams = require('./AccountUserStreams.ts');
 const AccountUserEvents = require('./AccountUserEvents.ts');
+import type { DerivedField } from './AccountUserEvents.ts';
 
 interface SystemStream {
   id: string;
@@ -48,6 +49,19 @@ interface InitParams {
 
 let userAccountStorage: UserAccountStorageLike | null = null;
 let fieldStreamMap: Map<string, SystemStream> | null = null;
+// Derived (read-only, computed) account events, by field name. Filled by the
+// layer that owns their logic; read by reference, so registering before or
+// after init works.
+const derivedFields: Map<string, DerivedField> = new Map();
+
+/**
+ * Register a derived account event `fieldName`: computed at read time from the
+ * base field's event, returned in the base field's stream (see
+ * AccountUserEvents `create`).
+ */
+function registerDerivedField (fieldName: string, definition: DerivedField): void {
+  derivedFields.set(fieldName, definition);
+}
 
 const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
   async init (this: { streams: unknown; events: unknown }, params: InitParams) {
@@ -73,7 +87,7 @@ const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
 
     // AccountUserStreams gets its own copy (it mutates via cleanStreamTree)
     this.streams = AccountUserStreams.create(structuredClone(streamTree));
-    this.events = AccountUserEvents.create(fieldStreamMap, getStorage);
+    this.events = AccountUserEvents.create(fieldStreamMap, getStorage, derivedFields);
 
     return this;
   },
@@ -94,7 +108,7 @@ const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
   }
 });
 
-export { accountStore };
+export { accountStore, registerDerivedField };
 export default accountStore;
 
 /**

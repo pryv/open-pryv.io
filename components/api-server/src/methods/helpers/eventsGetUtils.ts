@@ -612,8 +612,13 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
     // Fetch account events non-streaming (always a small set: < 10 account fields).
     // Remove skip/limit — account events are few and we apply global skip/limit after merge.
     const accountParams = paramsByStoreId[accountStoreId];
+    const accountSkip = accountParams.skip || 0;
+    const accountLimit = accountParams.limit;
     delete accountParams.skip;
     delete accountParams.limit;
+    // API reads also get the derived account events (e.g. `verification/email`
+    // next to the primary email); internal readers never ask for them.
+    accountParams.includeDerived = true;
     const accountEvents = await mall.events.getWithParamsByStore(
       context.user.id, { [accountStoreId]: accountParams }
     );
@@ -660,9 +665,13 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
       result.addToConcatArrayStream('events', Readable.from(merged));
       delete paramsByStoreId[localStoreId];
     } else {
-      // Only account store, no local store
-      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + accountEvents.length;
-      result.addToConcatArrayStream('events', Readable.from(accountEvents));
+      // Only account store, no local store: skip/limit were removed from the
+      // store query above, apply them here
+      let selected = accountEvents;
+      if (accountSkip) selected = selected.slice(accountSkip);
+      if (accountLimit != null) selected = selected.slice(0, accountLimit);
+      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + selected.length;
+      result.addToConcatArrayStream('events', Readable.from(selected));
     }
   }
   // Stream remaining stores (audit, etc.) as before

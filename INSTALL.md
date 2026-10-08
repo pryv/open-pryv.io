@@ -60,7 +60,7 @@ The wizard:
 - Prompts for ~15 deployment-specific choices; defaults are pre-filled and accepted with enter.
 - Auto-derives the user-data folder to `<pwd>/data` (sibling to the config). No prompt.
 - Pins `letsEncrypt.tlsDir: <pwd>/data/tls` so the ACME-issued cert lives on the same operator-mounted volume as the workers' `http.ssl.{certFile,keyFile}` paths — survives container restarts cleanly.
-- Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*. `pryv-config.yml` is written with mode 0600 and, when the wizard runs in the image, owned by uid 1000 (the server's `node` user, see **Container user**). Editing it on the host then needs root (or uid 1000).
+- Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`, `platform.piiHmacKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*. `pryv-config.yml` is written with mode 0600 and, when the wizard runs in the image, owned by uid 1000 (the server's `node` user, see **Container user**). Editing it on the host then needs root (or uid 1000).
 - For `dnsLess: false` (multi-core / subdomain-per-user), prints a host pre-flight block with the commands to free UDP/53 on the host (disable `systemd-resolved` on Ubuntu 24+ / Fedora / modern Debian).
 - Refuses to overwrite an existing `pryv-config.yml`: move the file aside to re-run. `--force` overwrites it and generates every secret anew: never on a live install.
 - Writes a sibling `run-pryv.sh` launcher that pins the image, self-locates via `cd "$(dirname "$0")" && pwd`, mounts config + data, publishes the right ports for the configuration you chose, restarts the container after a crash or a host reboot (`--restart unless-stopped`) and gives it 30 s to stop (`--stop-timeout 30`, see the stop note under **Minimal production config**):
@@ -97,6 +97,11 @@ auth:
   trustedApps: '*@https://your-domain.com, *@https://your-account-app.example.com'
   passwordResetPageURL: https://your-account-app.example.com/reset-password
   emailVerificationPageURL: https://your-account-app.example.com/verify-email
+
+platform:
+  # PlatformDB PII is hashed by default: the core refuses to start without the key.
+  # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  piiHmacKey: <base64-of-32-random-bytes>   # the same value on every core
 
 cluster:
   apiWorkers: 2       # N API workers sharing :3000
@@ -159,7 +164,7 @@ storages:
 
 On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30` or `docker run --stop-timeout 30` (the launcher the `init` wizard writes sets it), or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
 
-`config/production-config.yml` (the layer the Docker image adds) carries only deployment-neutral values. `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `auth.trustedApps`, `auth.passwordResetPageURL`, `auth.emailVerificationPageURL` and `services.email` must come from your own config: the core refuses to start when the secrets, `auth.trustedApps` or (with password-reset mail on, the default) `auth.passwordResetPageURL` are missing.
+`config/production-config.yml` (the layer the Docker image adds) carries only deployment-neutral values. `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `platform.piiHmacKey`, `auth.trustedApps`, `auth.passwordResetPageURL`, `auth.emailVerificationPageURL` and `services.email` must come from your own config: the core refuses to start when the secrets (`platform.piiHmacKey` unless `platform.piiMode: cleartext`), `auth.trustedApps` or (with password-reset mail on, the default) `auth.passwordResetPageURL` are missing.
 
 ### Trusted apps
 
@@ -762,7 +767,7 @@ docker run -d --name pryvio --restart unless-stopped --stop-timeout 30 \
 
 The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
 
-The image is published for `linux/amd64` and `linux/arm64` under the same tag; `docker pull` picks the host's architecture. The encryption-at-rest variant (`pryvio/open-pryv.io-encrypted`) is `linux/amd64` only for now.
+The image is published for `linux/amd64` and `linux/arm64` under the same tag; `docker pull` picks the host's architecture. The encryption-at-rest variant (`pryvio/open-pryv.io-encrypted`) is published for both architectures as well.
 
 #### Container user
 
@@ -1079,9 +1084,12 @@ Legacy single-region deployments that prefer plaintext can opt out by setting `p
 
 ```yaml
 platform:
-  piiMode: hashed                                 # cleartext (default) | hashed
+  piiMode: hashed                                 # hashed (default) | cleartext
   piiHmacKey: <BASE64-32-BYTES>                   # MUST be identical on every core
 ```
+
+With `piiMode: hashed`, a core refuses to start when `piiHmacKey` is missing, empty or a
+placeholder (`bin/check-config.js` reports it too). The install wizard (`bin/init.js`) generates it.
 
 Generate the pepper with:
 

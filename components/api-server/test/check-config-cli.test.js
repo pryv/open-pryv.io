@@ -41,7 +41,7 @@ function runCheck (yamlBody, nodeEnv = process.env.NODE_ENV) {
 
 // Everything the other checks demand, so the only variable under test is the
 // email-verification block.
-const BASE = `
+const BASE_WITHOUT_PII_KEY = `
 service:
   name: Test
   serial: "2026091501"
@@ -65,6 +65,12 @@ dnsLess:
 access:
   defaultAuthUrl: https://app.example.com/auth
 `;
+// PII is hashed by default, so a complete config carries the pepper.
+const PII_KEY = `
+platform:
+  piiHmacKey: WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=
+`;
+const BASE = BASE_WITHOUT_PII_KEY + PII_KEY;
 
 describe('[CKCF] bin/check-config.js email verification', function () {
   this.timeout(60000);
@@ -190,6 +196,44 @@ describe('[CKSE] bin/check-config.js series engine with a SQLite base', function
       '      host: localhost\n      port: 5432\n      database: pryv\n      user: pryv\n      password: a-db-password\n'));
     assert.strictEqual(pg.status, 0, pg.stdout + pg.stderr);
     assert.doesNotMatch(pg.stdout + pg.stderr, /storages\.series\.engine/);
+  });
+});
+
+describe('[CKPK] bin/check-config.js platform.piiHmacKey', function () {
+  this.timeout(60000);
+
+  it('[CKPK1] hashed PII (the default) without a key is a problem', () => {
+    for (const body of [
+      BASE_WITHOUT_PII_KEY,
+      BASE_WITHOUT_PII_KEY + "\nplatform:\n  piiMode: hashed\n  piiHmacKey: 'REPLACE ME'\n"
+    ]) {
+      const res = runCheck(body, null);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stdout + res.stderr, /platform\.piiHmacKey missing or unset/);
+    }
+  });
+
+  it('[CKPK2] cleartext PII needs no key', () => {
+    const res = runCheck(BASE_WITHOUT_PII_KEY + '\nplatform:\n  piiMode: cleartext\n', null);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.doesNotMatch(res.stdout + res.stderr, /piiHmacKey/);
+  });
+
+  it('[CKPK4] the public development/test pepper is flagged: a production core refuses it', () => {
+    const res = runCheck(BASE, null);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout + res.stderr,
+      /platform\.piiHmacKey is the public development\/test value: a production core refuses to boot with it/);
+    const own = runCheck(BASE_WITHOUT_PII_KEY + '\nplatform:\n  piiHmacKey: ' +
+      require('node:crypto').randomBytes(32).toString('base64') + '\n', null);
+    assert.strictEqual(own.status, 0, own.stdout + own.stderr);
+    assert.doesNotMatch(own.stdout + own.stderr, /piiHmacKey/);
+  });
+
+  it('[CKPK3] the development base layer supplies the key', () => {
+    const res = runCheck(BASE_WITHOUT_PII_KEY, 'development');
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.doesNotMatch(res.stdout + res.stderr, /platform\.piiHmacKey missing/);
   });
 });
 

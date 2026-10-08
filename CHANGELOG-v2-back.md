@@ -1,5 +1,76 @@
 # Changelog - Internal (no API impact)
 
+## Release CI: encryption-at-rest variant built for arm64 too
+
+- `Dockerfile.encrypted` copies the payload from `pryvio/container-encrypted-volume:v0.1.2`, the first
+  payload release published for both architectures.
+- The tag-push `docker` job registers QEMU (`docker/setup-qemu-action`) and builds the variant with
+  `platforms: linux/amd64,linux/arm64`. Only its `apt-get install` (cryptsetup, e2fsprogs,
+  openssl, ca-certificates) runs emulated; the stock image stays built natively per architecture.
+
+## Welcome mail verification link
+
+- `business/src/emails/verifyLink.ts`: `buildVerifyLink` (moved from `account.ts`
+  `deliverVerifyEmail`, same output) and `foundingVerifyLink(userId, username, email)` (mints and
+  stamps a token on the founding container record when the verification mail is enabled and the
+  address is not proved). `registration.sendWelcomeMail` resolves it in the background with the
+  mail itself and sends the plain welcome mail if it fails. Tests [WELC] (API, Mandrill nock) and
+  [WEL05] (template rendering).
+
+## Boot validation: `platform.piiHmacKey` is required when PII is hashed
+
+- **Operators:** a core whose `platform.piiMode` is `hashed` (the default since 2.0.0-rc.3) now
+  refuses to start when `platform.piiHmacKey` is missing, empty or a `REPLACE` placeholder. Before,
+  it started and then failed every registration (and any other PlatformDB PII operation) with
+  `unexpected-error`. Configs made by the install wizard already carry the key; a hand-written
+  config without it must add one (the same value on every core, see INSTALL.md "PlatformDB PII
+  hashing (default since 2.0.0-rc.3)"; the minimal production config and the hand-written joiner
+  config in SINGLE-TO-MULTIPLE.md now show it). A core that logs `piiMode=hashed requested but
+  piiHmacKey is missing` today is the one affected. `platform.piiMode: cleartext` needs no key.
+- **Operators:** with `NODE_ENV=production`, the pepper published for development and tests (in
+  `config/development-config.yml` and the test harness) is refused like a placeholder secret;
+  `bin/check-config.js` warns about it. `components/business/src/secretValues.ts` keeps the list of
+  such public values; `platform:piiHmacKey` joins the validator's secret paths.
+- `config/plugins/config-validation.js` `REQUIRED_WHEN` entry, gated like `Platform`'s own
+  resolution (unset `piiMode` = cleartext), with a hint on how to generate the key;
+  `bin/check-config.js` reports the same problem (resolving `piiMode` from the file, then the base
+  layer, then the `hashed` default). CLI tools that do not run the boot validator keep Platform's
+  deferred error.
+- `config/development-config.yml` carries a public development key (the test harness value), so a
+  stock `NODE_ENV=development` checkout can register users.
+- Tests `[CVPK1]`-`[CVPK4]`, `[CKPK1]`-`[CKPK4]`, `[CVLY1]` extended; the check-config CLI tests'
+  base config carries a key.
+
+## Derived account events (`verification/email`)
+
+- `storages/datastores/account`: `registerDerivedField(name, { baseField, type, provider })`
+  registers a read-only event computed at read time from a base field's event and returned in the
+  base field's stream, right after it. `AccountUserEvents.get` adds them only when the store query
+  carries `includeDerived` (internal readers such as `getUserById` / `User`, `getOnePropertyValue`
+  and `updateOne` map account events to fields by stream and must never see them) AND its `types`
+  names their type (exactly or `class/*`: existing API readers of a stream keep getting one event
+  per field); the account store's type filter also understands `class/*` now; `getOne`
+  resolves a derived id directly; `getHistory` returns `[]`; `update` refuses it.
+- The mall copies `includeDerived` through `getStoreQueryFromParams` (its store-query whitelist);
+  `eventsGetUtils.findEventsFromStore` sets it on the account-store params only (`events.get`, so
+  socket.io and batch calls too). The account event id rule in `convertEventFromStore` is now the
+  first stream id's prefix + the field name (identical for real fields).
+- `business/src/emails/status.ts`: `isAddressProved` (now used by the SSO email matching, same
+  semantics) and `primaryVerification`; `registerVerificationEvent()` is called from the events
+  methods' init. Tests [SIBS] (API) and [SIB2A] (adapter).
+
+## Account events read their times from the field history
+
+- `UserAccountStorage.getAccountFieldsWithMeta(userId)` (PostgreSQL: `DISTINCT ON (field)` with a
+  `MIN(time)` window; SQLite: latest row per field with a `MIN(time)` subquery) returns each field's
+  current value with its latest time, author and first time. `AccountUserEvents.get` builds events
+  from it and `getOne` from `getAccountFieldHistory`, instead of stamping `timestamp.now()`.
+  Conformance [ATM06]-[ATM07], adapter [ATM01]/[ATM02]/[ATM05], API [ATMS].
+- The account datastore adapter test (`[ACDS]`) moved from `storages/datastores/account/test/` to
+  `components/storage/test/unit/`: the storages workspace has no `test` folder, so the runner skipped
+  it and it had never run. Its stale assertions (error ids, history semantics) were aligned with the
+  current behaviour.
+
 ## Image build: native addons rebuilt one at a time
 
 - The Dockerfile runs `npm rebuild --foreground-scripts`. Without it npm runs the implicit

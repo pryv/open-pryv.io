@@ -34,6 +34,8 @@ type EventsParams = {
   limit?: number;
   content?: NormalizedCondition[];
   clientData?: NormalizedCondition[];
+  /** Also return derived (read-only, computed) events; only the account store has some. Off by default. */
+  includeDerived?: boolean;
   [k: string]: unknown;
 };
 type StoreContext = { storeId: string | null };
@@ -190,5 +192,6 @@ function getStoreQueryFromParams (params: EventsParams) {
   if (params.modifiedSince != null) { query.modifiedSince = params.modifiedSince; }
   if (params.content != null) { query.content = params.content; }
   if (params.clientData != null) { query.clientData = params.clientData; }
+  if (params.includeDerived === true) { query.includeDerived = true; }
   return query;
 }

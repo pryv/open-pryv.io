@@ -1,5 +1,87 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Welcome mail: "verify my email" link
+
+- When verification is not required at registration
+  (`account.emailVerification.requireAtRegistration: false`), the founding address of a new account
+  is not proved. The welcome mail now carries a link to prove it, the same link the verification
+  mail sends: the server mints a verification token for the founding address (its hash is stored,
+  the token itself only travels in the mail) and passes **`VERIFY_LINK`**, plus `VERIFY_URL` and
+  `VERIFY_TOKEN` (the page and the code to paste when a mail client breaks the link, as in the
+  verification mail), to the `welcome-email` template. The bundled templates (en, fr) show a
+  "Verify my email address" block only when `VERIFY_LINK` is set.
+- No link when the address was proved by code at registration, or when the verification mail is
+  off (`services.email.enabled.verifyEmail`, `auth.emailVerificationPageURL`): one welcome mail, no
+  separate verification mail, in every case.
+- **Upgrading an `in-process` deployment (the default method): the link does not show until the
+  stored template is updated.** The bundled templates are copied into PlatformDB only on a first
+  boot with no template stored, so an existing platform keeps its current `welcome-email`. Re-set
+  it from the bundled files, on one core (templates are platform-wide):
+  `node bin/mail.js templates set welcome-email en html --file components/mail/templates/welcome-email/en/html.pug`
+  and the same for `fr` (or add an `if VERIFY_LINK` block to your own stored template). Then run
+  `node bin/mail.js templates validate`.
+- **Operators with their own `welcome-email` template** (`microservice` / `mandrill` delivery): add
+  a block on `VERIFY_LINK` (a conditional on the merge variable) to show the link; without it, the
+  mail is unchanged.
+- **Fix.** `services.email.enabled: false` (the boolean form) now also turns the welcome mail off;
+  only `enabled: { welcome: false }` did.
+- The token lives `account.emailVerification.tokenMaxAgeMs` (default 24 h). When it has expired, the
+  account page's "resend verification" sends a fresh link; the resend cooldown starts with the
+  welcome mail.
+
+### Account email: verification state readable by apps
+
+- An access that can read `:system:email` (an app granted "Read Email", or a personal token) can
+  now **ask** for the verification state of that address: `events.get` on `:system:email` with
+  `types: ['verification/email']` (or `verification/*`, or both types to get the address too)
+  returns, in that stream, a read-only event of type `verification/email`, id
+  `:system:emailVerification`, content `{ verified, method, verifiedAt }`; `events.getOne` on that
+  id returns it too. **A read without `types` is unchanged**: it still returns the single
+  `email/string` event, so existing readers of the stream are not affected.
+  - `verified` describes the address currently in the `email/string` event, and is true only when
+    its ownership was **proved**: `method` is `email-link` (the holder clicked a mailed link),
+    `email-code` (pasted a mailed code at registration) or `operator`. `registration` (the founding
+    address, not proved) and `legacy` (set without proof) read as `verified: false`.
+  - When the primary address changes, the event follows the new address (an unproved new primary
+    reads `verified: false`); it is never removed while an address exists.
+  - It is derived at read time, never stored, and cannot be created, updated or deleted. It has no
+    history. Its `time` is the address event's (when both types are requested, the address comes
+    first); its `modified` moves when the address or its proof changes.
+- **Disclosure.** Apps granted "Read Email" before this release can also ask for the proof state of
+  the address (the method and date, never the other addresses of the account), without new consent.
+  Operators who want the consent text to say so can rename the email field's `name` in
+  `custom.systemStreams`.
+- Proving an address (`account.verifyEmail`), changing the primary (`account.update` with
+  `emails.setPrimary`) and any account-field update now also notify `eventsChanged` (socket.io), so
+  an app watching events sees the change.
+- The new types `verification/email` and `email/string` are in the event-types dictionary.
+
+### Events
+
+- **Fix.** `skip` and `limit` were ignored by `events.get` when every requested stream is an account
+  field stream (for example `streams=[":system:email"]&limit=1`).
+- **Fix.** A class wildcard in `types` (for example `email/*`) now matches account events; it
+  matched none before (exact types did).
+
+- **Fix.** Account events (`:_system:language`, `:system:email` and the other account fields) now
+  carry the time their value was set: `time` and `modified` are the time of the current value,
+  `created` the time of the field's first value (`createdBy` and `modifiedBy` both name the author
+  of the current value). They used to report the time of the read, so `modifiedSince` always
+  matched them (an incremental sync fetched them on every call), a `fromTime` / `toTime` window
+  ending before the read never did, and their `integrity` changed on every read. Their `integrity`
+  is now stable across reads (it changes once, with this upgrade).
+  - Consequence for exports by time window, such as `@pryv/account-backup`'s initial run (one
+    request per month, up to the run's start): they now include the account events. Before, the
+    account fields that exist only as events (operator-declared fields) were missing from a backup
+    that never ran incrementally (`account.json` still carried the language and email).
+
+### Docker images
+
+- The encryption-at-rest variant `pryvio/open-pryv.io-encrypted` is now published for `linux/amd64`
+  and `linux/arm64` under the same tag, like the stock image.
+
 ## 2.0.0-rc.43 - 2026-10-07
 
 **Upgrade promptly: this release carries security fixes, and some need operator attention before

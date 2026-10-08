@@ -213,10 +213,14 @@ function convertEventFromStore (storeId: string, eventData: EventLike) {
   deletionFromStore(event);
   removeEmptyAttachments(event);
   if (storeId === storeDataUtils.AccountStoreId) {
-    // Account events: use first stream ID as event ID for correct Mall routing
-    // 'email' → ':system:email' (so parseStoreIdAndStoreItemId routes to account store)
+    // Account events: the first stream ID's prefix + the field name, for correct
+    // Mall routing: 'email' in ':system:email' → ':system:email' (the stream id
+    // itself), a derived 'emailVerification' in the same stream →
+    // ':system:emailVerification' (so parseStoreIdAndStoreItemId routes both to
+    // the account store)
     if (event.streamIds && event.streamIds.length > 0) {
-      event.id = event.streamIds[0];
+      const streamId = event.streamIds[0];
+      event.id = streamId.substring(0, streamId.lastIndexOf(':') + 1) + event.id;
     }
   } else {
     addStoreId(storeId, event);

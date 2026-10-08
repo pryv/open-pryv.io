@@ -421,9 +421,21 @@ export const removeAccountStreamsEvents = function (items) {
   return removeSystemEvents(items);
 };
 
+/** Types of the read-only events the server derives inside account streams (one per base field). */
+export const DERIVED_ACCOUNT_EVENT_TYPES = ['verification/email'];
+
+/**
+ * Splits API results into ordinary events, account field events (one per
+ * field) and derived account events (e.g. the `verification/email` event that
+ * accompanies the email).
+ */
 export const separateAccountStreamsAndOtherEvents = function (items) {
   const { events, systemEvents } = separateSystemEvents(items);
-  return { events, accountStreamsEvents: systemEvents };
+  return {
+    events,
+    accountStreamsEvents: systemEvents.filter((e) => !DERIVED_ACCOUNT_EVENT_TYPES.includes(e.type)),
+    derivedAccountEvents: systemEvents.filter((e) => DERIVED_ACCOUNT_EVENT_TYPES.includes(e.type))
+  };
 };
 
 export const removeAccountStreams = function (streams) {
@@ -497,6 +509,7 @@ export const validateAccountEvents = function (actualAccountEvents) {
   expectedSreamIds.forEach(streamId => {
     let foundEvent = false;
     actualAccountEvents.forEach(event => {
+      if (DERIVED_ACCOUNT_EVENT_TYPES.includes(event.type)) return; // derived, not the field itself
       if (event.streamIds.includes(streamId)) {
         foundEvent = true;
         // validate type
