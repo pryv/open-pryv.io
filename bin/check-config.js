@@ -188,6 +188,22 @@ if (get('account.emailVerification.requireAtRegistration') === true) {
   }
 }
 
+// platform.piiHmacKey — required when PlatformDB PII is hashed, which is the
+// default-config value of platform.piiMode (mirrors REQUIRED_WHEN in
+// config/plugins/config-validation.js; this tool does not read default-config)
+{
+  const own = (key) => {
+    const value = get(`platform.${key}`);
+    return value != null ? value : get(`platform.${key}`, baseLayer);
+  };
+  const piiMode = own('piiMode') != null ? own('piiMode') : 'hashed';
+  const key = own('piiHmacKey');
+  if (piiMode === 'hashed' && (typeof key !== 'string' || isMissingOrSentinel(key))) {
+    problems.push('platform.piiHmacKey missing or unset (required when platform.piiMode is hashed, the default): ' +
+      'base64 of 32 random bytes, the same value on every core');
+  }
+}
+
 // letsEncrypt.atRestKey — required when letsEncrypt.enabled is true
 // (letsEncrypt.email is optional: the ACME account then has no contact)
 if (get('letsEncrypt.enabled') === true && isMissingOrSentinel(get('letsEncrypt.atRestKey'))) {

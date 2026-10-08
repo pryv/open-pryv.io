@@ -69,6 +69,18 @@ const REQUIRED_WHEN = [
   { path: 'auth:filesReadTokenSecret', when: () => true },
   // LetsEncrypt at-rest secrets — required only when the feature is on.
   { path: 'letsEncrypt:atRestKey', when: c => c.get('letsEncrypt:enabled') === true },
+  // PlatformDB PII pepper — required when PII is hashed (the shipped default).
+  // Platform defers a missing key to the first PII operation so CLI tools that
+  // never touch PII can start; a server would then boot and refuse every
+  // registration. The gate mirrors Platform's own resolution (unset = cleartext).
+  {
+    path: 'platform:piiHmacKey',
+    when: c => (c.get('platform:piiMode') || 'cleartext') === 'hashed',
+    // Platform only accepts a string; anything else is deferred like a missing key.
+    isMissing: v => typeof v !== 'string' || isMissingOrSentinel(v),
+    hint: 'set it to base64 of 32 random bytes (`node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"`), ' +
+      'the same value on every core (or env var `platform__piiHmacKey`), or set platform.piiMode: cleartext'
+  },
   // `sso.landingPageURL` receives the one-time sign-in handoff after a
   // successful third-party (OIDC) login — required once SSO is enabled with at
   // least one provider, else the callback has nowhere to hand off. (Structural
@@ -98,12 +110,13 @@ function isMissingOrSentinel (value) {
 }
 
 function checkRequiredWhen (config, problems) {
-  for (const { path, when } of REQUIRED_WHEN) {
+  for (const { path, when, isMissing, hint } of REQUIRED_WHEN) {
     if (!when(config)) continue;
     const value = config.get(path);
-    if (isMissingOrSentinel(value)) {
+    if ((isMissing || isMissingOrSentinel)(value)) {
       problems.push({
-        message: `required configuration key '${path}' is missing or unset — required for this deployment's feature set.`,
+        message: `required configuration key '${path}' is missing or unset — required for this deployment's feature set.` +
+          (hint ? ' ' + hint : ''),
         path: path.split(':'),
         payload: { path, presentButEmpty: value === '' || (typeof value === 'string' && (value.includes('REPLACE') || /\$\{[A-Z_][A-Z0-9_]*\}/.test(value))) }
       });

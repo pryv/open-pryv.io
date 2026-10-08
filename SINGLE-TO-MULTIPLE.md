@@ -461,7 +461,7 @@ Then merge `1.2.3.4` into the `lsc.mc.example.com` record (read it first, append
 
 ### A.4 Hand-write `override-config.yml` on the new core
 
-Copy the platform-wide secrets from the existing core (`auth.adminAccessKey`, `auth.filesReadTokenSecret`) and write:
+Copy the platform-wide secrets from the existing core (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `platform.piiHmacKey`) and write:
 
 ```yaml
 core:
@@ -478,6 +478,9 @@ dnsLess:
 auth:
   adminAccessKey: '<copy from core-a>'
   filesReadTokenSecret: '<copy from core-a>'
+platform:
+  # Required while PII is hashed (the default); the same value as core-a.
+  piiHmacKey: '<copy from core-a>'
 storages:
   engines:
     rqlite:
@@ -489,6 +492,9 @@ storages:
         keyFile: /etc/pryv/tls/node.key
         verifyClient: true
 ```
+
+If core-a runs with `platform.piiMode: cleartext`, set the same mode here: every core must agree on it,
+and neither the bootstrap bundle nor this recipe carries the mode, only the key.
 
 `chmod 600 override-config.yml` — it carries the admin key.
 
