@@ -136,4 +136,27 @@ describe('[SQSR] SQLite series', function () {
     const neverDir = require('storage/src/userLocalDirectory.ts').getPathForUser(never);
     assert.ok(!fs.existsSync(neverDir), 'dropping a namespace that never had series must not create its directory');
   });
+
+  // API and HFS workers are separate processes, each with its own handle
+  // cache: a drop in one (account deletion, restore) must not leave the
+  // others reading the erased file or writing into it. Two connections stand
+  // in for two processes.
+  it('[SQXP] a drop by another process is seen by a connection holding the file open', async function () {
+    const other = new SeriesConnectionSQLite();
+    const ns = 'user.sqsrxproc' + cuid.slug();
+    try {
+      await other.writeMeasurement('event.before', [{ fields: { value: 1 }, timestamp: 1e9 }], { database: ns });
+
+      await conn.dropDatabase(ns);
+      await other.writeMeasurement('event.after', [{ fields: { value: 2 }, timestamp: 2e9 }], { database: ns });
+
+      const seenByOther = (await other.query('SHOW MEASUREMENTS', { database: ns })).map((m) => m.name);
+      assert.deepStrictEqual(seenByOther, ['event.after'], 'the erased points must not be readable');
+      const rows = await conn.query('SELECT * FROM "event.after"', { database: ns });
+      assert.deepStrictEqual(rows, [{ time: 2000, value: 2 }], 'the point written after the drop must be in the file on disk');
+    } finally {
+      await other.dropDatabase(ns);
+      await conn.dropDatabase(ns);
+    }
+  });
 });

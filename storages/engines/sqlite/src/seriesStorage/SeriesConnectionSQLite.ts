@@ -47,6 +47,7 @@ type SeriesDb = {
   dropEvent (id: string): Promise<unknown>;
   listEventIds (): string[];
   selectRows (sql: string, params: unknown[]): SeriesRow[];
+  fileId?: string | null;
 };
 
 class SeriesConnectionSQLite {
@@ -87,8 +88,8 @@ class SeriesConnectionSQLite {
       cached.close();
       this.cache.delete(name);
     }
-    const dirPath = _internals.userLocalDirectory.getPathForUser(name);
-    const dbPath = path.join(dirPath, `${FILE_PREFIX}-${VERSION}.sqlite`);
+    const dbPath = this.existingPathForUser(name);
+    const dirPath = path.dirname(dbPath);
     for (const file of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
       try {
         await fs.unlink(file);
@@ -254,16 +255,34 @@ class SeriesConnectionSQLite {
 
   /**
    * Open (or return cached) SeriesDatabase for the given userId.
+   *
+   * A cached handle is only reused while it still points at the file on
+   * disk. Several processes share these files (API and HFS workers, the
+   * backup / restore tools), and `dropDatabase` in one of them unlinks a
+   * file the others may hold open. SQLite keeps serving an unlinked file
+   * through its open handle, so without this check the other processes
+   * would keep reading the erased points and write new ones into a file
+   * nobody can reach, which are lost when the handle closes.
    */
   async forUser (userId: string): Promise<SeriesDb> {
     const cached = this.cache.get(userId);
-    if (cached) return cached;
+    if (cached) {
+      if (cached.fileId != null && await fileIdentity(this.existingPathForUser(userId)) === cached.fileId) return cached;
+      this.logger.debug(`forUser: series file of ${userId} was removed or replaced, reopening`);
+      this.cache.delete(userId); // dispose closes the stale handle
+    }
 
     const dbPath = await this.pathForUser(userId);
     const db = new SeriesDatabase(this.logger, { dbPath });
     await db.init();
+    db.fileId = await fileIdentity(dbPath);
     this.cache.set(userId, db);
     return db;
+  }
+
+  /** The series file path, without creating its directory. */
+  existingPathForUser (userId: string): string {
+    return path.join(_internals.userLocalDirectory.getPathForUser(userId), `${FILE_PREFIX}-${VERSION}.sqlite`);
   }
 
   async pathForUser (userId: string): Promise<string> {
@@ -316,6 +335,21 @@ function parseInfluxSelect (query: string): { measurement: string, conditions: A
   }
 
   return { measurement, conditions };
+}
+
+/**
+ * Identity (device + inode) of the file at `filePath`, or null when it does
+ * not exist. A file removed and created again under the same path gets
+ * another identity.
+ */
+async function fileIdentity (filePath: string): Promise<string | null> {
+  try {
+    const st = await fs.stat(filePath, { bigint: true });
+    return `${st.dev}:${st.ino}`;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 async function getUsersBaseDir (): Promise<string> {
