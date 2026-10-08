@@ -95,7 +95,9 @@ const mfaConfig = {
             body: '',
             headers: {}
           }
-        }
+        },
+        // Re-sends right after a login are part of these flows.
+        sendLimits: { minIntervalSeconds: 0 }
       },
       sessions: { ttlSeconds: 1800 }
     }
@@ -324,7 +326,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       try {
         await _resetMFASingletons();
         nock(SMS_HOST).post('/challenge').reply(200, {});
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const act = await coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ phone: '+41791234567' });
         assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
         const confirm = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code: '1234' });
@@ -494,7 +496,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(res.status, 403);
       });
 
-      it('[MA3C] propagates an SMS provider error as 400', async function () {
+      it('[MA3C] propagates an SMS provider error as 400, without the provider answer, and leaves no pending session', async function () {
         nock(SMS_HOST).post('/challenge').reply(500, { id: 'sms-down', message: 'down' });
 
         const res = await coreRequest
@@ -503,6 +505,9 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .send({ phone: '+41791234567' });
 
         assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.data.id, 'mfa-sms-provider-error', JSON.stringify(res.body));
+        assert.ok(!JSON.stringify(res.body).includes('sms-down'), JSON.stringify(res.body));
+        assert.strictEqual(res.body.mfaToken, undefined);
       });
     });
 
@@ -525,7 +530,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       /** A login pending its second factor; returns its mfaToken. */
       async function pendingLogin () {
         const mfaToken = await pendingEnrolment();
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', mfaToken).send({ code: '1234' });
         assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
         nock(SMS_HOST).post('/challenge').reply(200, {});
@@ -536,9 +541,14 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       }
 
       it('[MA17A] a malformed or missing code is refused (400) on confirm and verify, before any provider request', async function () {
-        const enrolToken = await pendingEnrolment();
         const loginToken = await pendingLogin();
-        const provider = nock(SMS_HOST).post('/verify').reply(200, {});
+        // A pending enrolment opened after the login (an activation replaces
+        // any earlier pending one), over the active enrolment: with a step-up.
+        nock(SMS_HOST).post('/challenge').reply(200, {});
+        const act = await activate({ phone: '+41791234567', password });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        const enrolToken = act.body.mfaToken;
+        const provider = nock(SMS_HOST).post('/verify').reply(204);
         for (const body of [{ code: '12&4' }, { code: '1234"' }, { code: '%0d%0a' }, { code: '1234\r\n' }, { code: '{{ phone }}' }, { code: 1234 }, {}]) {
           assertMalformed(await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', enrolToken).send(body));
           assertMalformed(await coreRequest.post(`/${username}/mfa/verify`).set('Authorization', loginToken).send(body));
@@ -552,7 +562,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MA17B] only the code of a verify body reaches the provider', async function () {
         const loginToken = await pendingLogin();
         let verifyBody = null;
-        nock(SMS_HOST).post('/verify').reply(200, function (_uri, body) { verifyBody = body; return {}; });
+        nock(SMS_HOST).post('/verify').reply(200, function (_uri, body) { verifyBody = body; return ''; });
         const res = await coreRequest.post(`/${username}/mfa/verify`).set('Authorization', loginToken)
           .send({ code: '1234', phone: '+10000000000', to: 'x' });
         assert.strictEqual(res.status, 200, JSON.stringify(res.body));
@@ -613,7 +623,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       });
 
       it('[MA4A] verifies the code, persists profile.mfa, returns 10 recovery codes', async function () {
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
 
         const res = await coreRequest
           .post(`/${username}/mfa/confirm`)
@@ -626,7 +636,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       });
 
       it('[MA4B] rejects an invalid mfaToken with 401', async function () {
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
 
         const res = await coreRequest
           .post(`/${username}/mfa/confirm`)
@@ -655,7 +665,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       beforeEach(async function () {
         // Activate + confirm to install profile.mfa.
         nock(SMS_HOST).post('/challenge').reply(200, {});
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const activateRes = await coreRequest
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
@@ -680,7 +690,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       });
 
       it('[MA5A] mfa.verify with a valid code releases the real Pryv access token', async function () {
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
 
         const res = await coreRequest
           .post(`/${username}/mfa/verify`)
@@ -718,7 +728,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       beforeEach(async function () {
         // Install MFA profile via activate + confirm.
         nock(SMS_HOST).post('/challenge').reply(200, {});
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const activateRes = await coreRequest
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
@@ -774,7 +784,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
         let challengeBody = null;
         nock(SMS_HOST).post('/challenge').reply(200, function (_uri, body) { challengeBody = body; return {}; });
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const act = await coreRequest
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
@@ -800,7 +810,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
       beforeEach(async function () {
         nock(SMS_HOST).post('/challenge').reply(200, {});
-        nock(SMS_HOST).post('/verify').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(204);
         const activateRes = await coreRequest
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
@@ -890,6 +900,266 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   });
 
   // --------------------------------------------------------------------
+  // Challenge-verify: what makes the provider's answer to a verify a success.
+  describe('[MCVP] challenge-verify success predicate', function () {
+    let restoreConfig;
+    afterEach(function () { if (restoreConfig) restoreConfig(); restoreConfig = null; });
+
+    async function pendingEnrolment (success) {
+      const verify = { success };
+      restoreConfig = injectTestConfigSnapshot({ services: { mfa: { ...mfaConfig.services.mfa, sms: { ...mfaConfig.services.mfa.sms, endpoints: { ...mfaConfig.services.mfa.sms.endpoints, verify: { ...mfaConfig.services.mfa.sms.endpoints.verify, ...verify } } } } } });
+      await _resetMFASingletons();
+      nock(SMS_HOST).post('/challenge').reply(200, {});
+      const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ phone: '+41791234567' });
+      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      return act.body.mfaToken;
+    }
+    const confirm = (mfaToken) => coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', mfaToken).send({ code: '123456' });
+    function assertInvalidCode (res) {
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.data.id, 'invalid-mfa-code', JSON.stringify(res.body));
+    }
+
+    it('[MCVP1] with { jsonPath: status, equals: approved }: "pending" is refused, "approved" accepted', async function () {
+      const mfaToken = await pendingEnrolment({ jsonPath: 'status', equals: 'approved' });
+      nock(SMS_HOST).post('/verify').reply(200, { status: 'pending' });
+      assertInvalidCode(await confirm(mfaToken));
+      nock(SMS_HOST).post('/verify').reply(200, { status: 'approved' });
+      const ok = await confirm(mfaToken);
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+      assert.strictEqual(ok.body.recoveryCodes.length, 10);
+    });
+
+    it('[MCVP2] without a predicate: an empty 2xx is accepted, a 2xx with a body is refused', async function () {
+      // Explicitly unset: a nested key injected by an earlier test can survive
+      // its restore in the merged config.
+      const mfaToken = await pendingEnrolment(null);
+      nock(SMS_HOST).post('/verify').reply(200, { status: 'approved' });
+      assertInvalidCode(await confirm(mfaToken));
+      nock(SMS_HOST).post('/verify').reply(200, '');
+      const ok = await confirm(mfaToken);
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    });
+  });
+
+  // --------------------------------------------------------------------
+  // SMS single mode: the core generates the code, the provider delivers it.
+  describe('[MSMS] SMS single mode', function () {
+    let restoreConfig;
+    let sends;
+
+    function singleConfig (sms = {}) {
+      return {
+        services: {
+          mfa: {
+            active: true,
+            defaultMethod: 'sms',
+            methods: {
+              totp: { active: true, secretsKey: TOTP_SECRETS_KEY },
+              sms: {
+                active: true,
+                mode: 'single',
+                endpoints: {
+                  single: {
+                    url: SMS_HOST + '/send',
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: '{ "to": "{{ phone }}", "text": "Your code: {{ code }}" }'
+                  }
+                },
+                ...sms,
+                sendLimits: { minIntervalSeconds: 0, perUserPerHour: 100, perDestinationPerDay: 100, ...sms.sendLimits }
+              }
+            },
+            sessions: { ttlSeconds: 1800 }
+          }
+        }
+      };
+    }
+    async function setUp (sms) {
+      restoreConfig = injectTestConfigSnapshot(singleConfig(sms));
+      await _resetMFASingletons();
+    }
+    beforeEach(function () {
+      sends = [];
+      nock(SMS_HOST).post('/send').times(50).reply(200, (_uri, body) => { sends.push(body); return ''; });
+    });
+    afterEach(function () { if (restoreConfig) restoreConfig(); restoreConfig = null; });
+
+    const codeOf = (send) => /^Your code: ([0-9]+)$/.exec(send.text)[1];
+    const lastCode = () => codeOf(sends[sends.length - 1]);
+    function activate (user = username, token = personalToken, phone = '+41791234567') {
+      return coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ method: 'sms', phone });
+    }
+    function confirm (mfaToken, code) {
+      return coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', mfaToken).send({ code });
+    }
+    function login (user = username) {
+      return coreRequest.post(`/${user}/auth/login`).set('Origin', 'http://test.pryv.local')
+        .send({ username: user, password, appId: 'pryv-test' });
+    }
+    function verify (mfaToken, code) {
+      return coreRequest.post(`/${username}/mfa/verify`).set('Authorization', mfaToken).send({ code });
+    }
+    function challenge (mfaToken) {
+      return coreRequest.post(`/${username}/mfa/challenge`).set('Authorization', mfaToken).send({});
+    }
+    async function enrol (user = username, token = personalToken, phone = '+41791234567') {
+      const act = await activate(user, token, phone);
+      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      const res = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code: lastCode() });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    }
+    function assertInvalidCode (res) {
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.data.id, 'invalid-mfa-code', JSON.stringify(res.body));
+    }
+    function assertTooManySends (res) {
+      assert.strictEqual(res.status, 429, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'too-many-attempts');
+      const seconds = res.body.error.data.retryAfterSeconds;
+      assert.ok(Number.isInteger(seconds) && seconds >= 1, `retryAfterSeconds: ${seconds}`);
+      assert.strictEqual(res.headers['retry-after'], String(seconds));
+      return seconds;
+    }
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('[MSMS1] enrolment and login each send a 6-digit code, accepted on its own session', async function () {
+      await setUp();
+      await enrol();
+      assert.match(sends[0].text, /^Your code: [0-9]{6}$/);
+      assert.strictEqual(sends[0].to, '+41791234567');
+      const loginRes = await login();
+      assert.strictEqual(loginRes.body.mfaMethod, 'sms', JSON.stringify(loginRes.body));
+      assert.strictEqual(sends.length, 2);
+      const enrolCode = codeOf(sends[0]);
+      if (enrolCode !== lastCode()) assertInvalidCode(await verify(loginRes.body.mfaToken, enrolCode));
+      const ok = await verify(loginRes.body.mfaToken, lastCode());
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+      assert.ok(ok.body.token != null);
+    });
+
+    it('[MSMS2] a code is refused after its lifetime while its session lives; a new challenge sends one that works', async function () {
+      await setUp({ codeTtlSeconds: 1 });
+      await enrol();
+      const loginRes = await login();
+      const expired = lastCode();
+      await sleep(1200);
+      assertInvalidCode(await verify(loginRes.body.mfaToken, expired));
+      const again = await challenge(loginRes.body.mfaToken);
+      assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+      const ok = await verify(loginRes.body.mfaToken, lastCode());
+      assert.strictEqual(ok.status, 200, `the session outlived the code: ${JSON.stringify(ok.body)}`);
+    });
+
+    it('[MSMS3] two login sessions get different codes; a code works on its own session only', async function () {
+      await setUp({ codeLength: 10 });
+      await enrol();
+      const a = await login();
+      const codeA = lastCode();
+      const b = await login();
+      const codeB = lastCode();
+      assert.match(codeA, /^[0-9]{10}$/);
+      assert.notStrictEqual(codeA, codeB);
+      assertInvalidCode(await verify(b.body.mfaToken, codeA));
+      assert.strictEqual((await verify(b.body.mfaToken, codeB)).status, 200);
+      assert.strictEqual((await verify(a.body.mfaToken, codeA)).status, 200);
+    });
+
+    it('[MSMS4] a re-challenge replaces the code of the session', async function () {
+      await setUp({ codeLength: 10 });
+      await enrol();
+      const loginRes = await login();
+      const first = lastCode();
+      const again = await challenge(loginRes.body.mfaToken);
+      assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+      const second = lastCode();
+      assert.notStrictEqual(first, second);
+      assertInvalidCode(await verify(loginRes.body.mfaToken, first));
+      assert.strictEqual((await verify(loginRes.body.mfaToken, second)).status, 200);
+    });
+
+    it('[MSMS5] a second send on one session within the interval answers 429, and sends nothing', async function () {
+      await setUp({ sendLimits: { minIntervalSeconds: 30 } });
+      await enrol();
+      const loginRes = await login();
+      assert.ok(loginRes.body.mfaToken != null, JSON.stringify(loginRes.body));
+      const count = sends.length;
+      const seconds = assertTooManySends(await challenge(loginRes.body.mfaToken));
+      assert.ok(seconds <= 30, `retry in ${seconds}`);
+      assert.strictEqual(sends.length, count, 'no SMS sent');
+      // The pending code is unchanged.
+      assert.strictEqual((await verify(loginRes.body.mfaToken, lastCode())).status, 200);
+    });
+
+    it('[MSMS6] past the sends per user per hour, a login answers 429 with no token, and sends nothing', async function () {
+      await setUp({ sendLimits: { perUserPerHour: 3 } });
+      await enrol(); // 1
+      assert.ok((await login()).body.mfaToken != null); // 2
+      assert.ok((await login()).body.mfaToken != null); // 3
+      const refused = await login();
+      assertTooManySends(refused);
+      assert.strictEqual(refused.body.token, undefined);
+      assert.strictEqual(refused.body.mfaToken, undefined);
+      assert.strictEqual(sends.length, 3);
+    });
+
+    it('[MSMS7] past the sends per destination per day, a send for another user to the same phone answers 429', async function () {
+      await setUp({ sendLimits: { perDestinationPerDay: 2 } });
+      await enrol(); // 1, to +41791234567
+      const other = ('mfa' + cuid.slug()).toLowerCase();
+      const otherToken = cuid();
+      const otherUser = await fixtures.user(other, { password });
+      await otherUser.access({ type: 'personal', token: otherToken, name: 'pryv-test' });
+      await otherUser.session(otherToken);
+      const act = await activate(other, otherToken); // 2, same phone
+      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assertTooManySends(await login()); // 3rd send to that phone, first user
+      const elsewhere = await activate(other, otherToken, '+41790000000');
+      assert.strictEqual(elsewhere.status, 302, `another phone is not held back: ${JSON.stringify(elsewhere.body)}`);
+    });
+
+    it('[MSMS8] a new activation invalidates the previous pending enrolment', async function () {
+      await setUp();
+      const first = await activate();
+      assert.strictEqual(first.status, 302, JSON.stringify(first.body));
+      const firstCode = lastCode();
+      const second = await activate();
+      assert.strictEqual(second.status, 302, JSON.stringify(second.body));
+      const refused = await confirm(first.body.mfaToken, firstCode);
+      assert.strictEqual(refused.status, 401, JSON.stringify(refused.body));
+      const ok = await confirm(second.body.mfaToken, lastCode());
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    });
+
+    it('[MSMS9] neither the login parameters (password included) nor the challenge parameters reach the MFA method', async function () {
+      await setUp();
+      await enrol();
+      const { SmsMethod } = require('business/src/mfa/index.ts');
+      const original = SmsMethod.prototype.challenge;
+      const seen = [];
+      SmsMethod.prototype.challenge = function (u, profile, clientRequest) {
+        seen.push(clientRequest);
+        return original.call(this, u, profile, clientRequest);
+      };
+      try {
+        const loginRes = await login();
+        assert.ok(loginRes.body.mfaToken != null, JSON.stringify(loginRes.body));
+        const again = await challenge(loginRes.body.mfaToken);
+        assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+      } finally {
+        SmsMethod.prototype.challenge = original;
+      }
+      assert.strictEqual(seen.length, 2);
+      for (const clientRequest of seen) {
+        assert.ok(!JSON.stringify(clientRequest).includes(password), JSON.stringify(clientRequest));
+        assert.deepStrictEqual(clientRequest.body, {});
+      }
+      assert.ok(sends.every((s) => s.to === '+41791234567'), 'the stored phone, never one from the request');
+    });
+  });
+
+  // --------------------------------------------------------------------
   // TOTP (authenticator app) — the default method when MFA is enabled.
   // In-process core: test and server share one clock, so step-offset codes
   // are deterministic. Confirm advances the replay guard, so the login-verify
@@ -970,6 +1240,20 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(res.status, 302);
         assert.strictEqual(res.body.method, 'totp');
         assert.ok(res.body.otpauthUri != null);
+      });
+
+      it('[MA10F] a second activation invalidates the first pending enrolment', async function () {
+        const first = await activateTotp();
+        const second = await activateTotp();
+        assert.strictEqual(second.status, 302, JSON.stringify(second.body));
+        const refused = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', first.body.mfaToken)
+          .send({ code: totpCodeFor(first.body.secret, 0) });
+        assert.strictEqual(refused.status, 401, JSON.stringify(refused.body));
+        const ok = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', second.body.mfaToken)
+          .send({ code: totpCodeFor(second.body.secret, 0) });
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
       });
     });
 
@@ -1255,16 +1539,37 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         // Started while the account had no MFA, so no step-up was asked...
         const early = await activateWith({});
         assert.strictEqual(early.status, 302);
-        // ...then an enrolment is made on another session.
+        // ...then an enrolment is made on another session, whose activation
+        // also invalidates the earlier pending one.
         await enrol();
         const before = (await storedProfile()).data.mfa;
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`).set('Authorization', early.body.mfaToken)
           .send({ code: totpCodeFor(early.body.secret, 0) });
-        assert.strictEqual(confirm.status, 400, JSON.stringify(confirm.body));
-        assert.strictEqual(confirm.body.error.id, 'invalid-operation');
+        assert.strictEqual(confirm.status, 401, JSON.stringify(confirm.body));
+        assert.strictEqual(confirm.body.error.id, 'invalid-access-token');
         const after = await assertMfaStillActive();
         assert.strictEqual(after.totp.secret, before.totp.secret, 'the enrolment made meanwhile is kept');
+      });
+
+      it('[MSU13] an activation cannot be confirmed over an enrolment written meanwhile by another path', async function () {
+        const early = await activateWith({});
+        assert.strictEqual(early.status, 302);
+        // An enrolment that did not go through mfa.activate on this core
+        // (e.g. restored), so it did not invalidate the pending activation.
+        const { user, profile, data } = await storedProfile();
+        const enrolled = { data: { mfa: { content: { phone: '+41791234567' }, recoveryCodes: ['restored'] } } };
+        await new Promise((resolve, reject) => {
+          const cb = (err) => err ? reject(err) : resolve();
+          if (data == null) profile.insertOne(user, { id: 'private', ...enrolled }, cb);
+          else profile.updateOne(user, { id: 'private' }, enrolled, cb);
+        });
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', early.body.mfaToken)
+          .send({ code: totpCodeFor(early.body.secret, 0) });
+        assert.strictEqual(confirm.status, 400, JSON.stringify(confirm.body));
+        assert.strictEqual(confirm.body.error.id, 'invalid-operation');
+        assert.deepStrictEqual((await storedProfile()).data.mfa.recoveryCodes, ['restored'], 'the enrolment written meanwhile is kept');
       });
 
       it('[MSU10] both a password and a code, or a non-string, are refused as malformed', async function () {

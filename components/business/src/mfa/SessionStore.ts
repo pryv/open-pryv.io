@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { randomUUID: uuidv4 } = require('node:crypto');
 const Profile = require('./Profile.ts').default;
+const errors = require('errors').factory;
 
 /**
  * MFA session store, backed by `cluster_kv` (master-held in-memory map +
@@ -45,11 +46,21 @@ interface ProfileLike {
   [k: string]: unknown;
 }
 
+/**
+ * The pending SMS code of a session (SMS single mode, where the core generates
+ * the code): its hash only, and when it stops being accepted.
+ */
+interface SmsCode {
+  hash: string;
+  expiresAt: number;
+}
+
 interface StoredSession {
   id: string;
   profile: { content: Record<string, unknown>; recoveryCodes: string[]; method?: string; totp?: unknown };
   context: unknown;
   attempts: number;
+  smsCode?: SmsCode | null;
 }
 
 class SessionStore {
@@ -63,12 +74,15 @@ class SessionStore {
   ttlMilliseconds: number;
   kv: KvClientLike;
   namespace: string;
+  /** Key prefix of the per-user pending-enrolment slot. */
+  enrolSlotNamespace: string;
 
   constructor (ttlSeconds = 1800, opts: SessionStoreOpts = {}) {
     this.ttlMilliseconds = ttlSeconds * 1000;
     const clusterKv = require('messages/src/cluster_kv.ts');
     this.kv = opts.kvClient || clusterKv.clientFor();
     this.namespace = opts.namespace || 'mfa-session/';
+    this.enrolSlotNamespace = this.namespace.replace(/\/$/, '') + '-enrol-slot/';
   }
 
   /**
@@ -100,7 +114,7 @@ class SessionStore {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
-  async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown; attempts: number } | undefined> {
+  async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown; attempts: number; smsCode: SmsCode | null } | undefined> {
     const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
     if (!session) return undefined;
     const profile = new Profile(
@@ -109,7 +123,48 @@ class SessionStore {
       session.profile?.method,
       session.profile?.totp as undefined
     );
-    return { id: session.id, profile, context: session.context, attempts: session.attempts ?? 0 };
+    return { id: session.id, profile, context: session.context, attempts: session.attempts ?? 0, smsCode: session.smsCode ?? null };
+  }
+
+  /**
+   * Replace the pending SMS code of a session (null drops it), with a
+   * compare-and-set so a concurrent attempt reservation is not lost. Answers
+   * false when the session is gone (or the write kept losing).
+   */
+  async setSmsCode (id: string, smsCode: SmsCode | null): Promise<boolean> {
+    for (let tries = 0; tries < 20; tries++) {
+      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      if (!session) return false;
+      const next = { ...session, smsCode };
+      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Make `id` the one pending enrolment of a user: the session that held the
+   * user's slot before, if any, is cleared, so pending enrolments cannot pile
+   * up. Compare-and-set on the slot, so of concurrent activations exactly one
+   * session keeps it. Answers the id of the session cleared, or null.
+   */
+  async takeEnrolSlot (userKey: string, id: string): Promise<string | null> {
+    const key = this.enrolSlotNamespace + userKey;
+    for (let tries = 0; tries < 20; tries++) {
+      const previous = await this.kv.get(key);
+      if (await this.kv.set(key, id, { ttlMs: this.ttlMilliseconds, ifEquals: previous ?? null })) {
+        if (typeof previous === 'string' && previous !== id) {
+          await this.clear(previous);
+          return previous;
+        }
+        return null;
+      }
+    }
+    // Kept losing to concurrent activations: this one does not get the slot.
+    await this.clear(id);
+    throw errors.tooManyAttempts(1, {
+      message: 'Too many concurrent MFA activations for this account; retry in 1 s.',
+      data: { retryAfterSeconds: 1 }
+    });
   }
 
   /**
@@ -175,3 +230,4 @@ class SessionStore {
 
 export default SessionStore;
 export { SessionStore };
+export type { SmsCode };

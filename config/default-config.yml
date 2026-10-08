@@ -241,6 +241,23 @@ services:
                               # (URL, JSON or form body; a header value with a
                               # control character is refused) and substituted
                               # once: a value is never expanded again.
+        # Mode `single` (the core generates the code): digits of the code (4 to
+        # 10) and how long a code is accepted. A code belongs to one pending MFA
+        # session (only its hash is kept, in the session); a new challenge on
+        # the session replaces it and restarts its lifetime.
+        codeLength: 6
+        codeTtlSeconds: 300
+        # Limits on SMS sends (login challenge, mfa.challenge re-send, SMS
+        # mfa.activate), both modes. A send over a limit answers 429
+        # too-many-attempts with retryAfterSeconds, and nothing is sent. Each
+        # limit is disabled by 0 (a boot warning says so). The destination is
+        # counted by a hash of the phone number, across users.
+        sendLimits:
+          minIntervalSeconds: 30    # between two sends on one MFA session
+          perUserPerHour: 5         # sends per user, window opened by the first
+          perDestinationPerDay: 10  # sends per phone number, window opened by the first
+        # The legacy mode (`mode` above) reads codeLength, codeTtlSeconds and
+        # sendLimits from the legacy `sms` block below first, then from here.
     # LEGACY endpoints location, read by the shim (and by methods.sms when its
     # own `endpoints` is empty). SECRET: headers may carry provider API keys.
     sms:
@@ -255,6 +272,13 @@ services:
           method: POST
           body: ''
           headers: {}
+          # How a provider confirms a code (challenge-verify mode), e.g.
+          #   success: { jsonPath: status, equals: approved }
+          # A verify then succeeds only on a 2xx JSON answer whose value at
+          # `jsonPath` (dot-separated property names, e.g. data.result)
+          # strictly equals `equals` (a string, number or boolean). Without
+          # it, only an EMPTY 2xx answer (e.g. 204) is a success and a 2xx
+          # with a body is refused; the boot warns while it is missing.
         single:
           url: ''
           method: POST

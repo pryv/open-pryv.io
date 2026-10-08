@@ -124,6 +124,21 @@ describe('[MNORM] normalizeMfaConfig', function () {
     assert.deepStrictEqual(legacy.methods.sms.contentKeys, ['language'], 'the legacy mode reads it too');
   });
 
+  it('[MNORM17] SMS code and send settings: defaults, own block first (legacy block first in the legacy mode), invalid values default', function () {
+    const DEFAULTS = { codeLength: 6, codeTtlSeconds: 300, sendLimits: { minIntervalSeconds: 30, perUserPerHour: 5, perDestinationPerDay: 10 } };
+    const tuning = (n) => ({ codeLength: n.methods.sms.codeLength, codeTtlSeconds: n.methods.sms.codeTtlSeconds, sendLimits: n.methods.sms.sendLimits });
+    const modern = (sms, legacy) => tuning(normalizeMfaConfig({ active: true, methods: { sms: { active: true, mode: 'single', ...sms } }, sms: legacy }));
+    const legacyMode = (legacy, own) => tuning(normalizeMfaConfig({ mode: 'single', methods: { sms: own }, sms: { endpoints: { single: { url: 'x' } }, ...legacy } }));
+    assert.deepStrictEqual(modern({}), DEFAULTS);
+    assert.deepStrictEqual(legacyMode({}), DEFAULTS);
+    assert.deepStrictEqual(modern({ codeLength: 8, codeTtlSeconds: 60, sendLimits: { perUserPerHour: 2 } }, { codeLength: 10, sendLimits: { perUserPerHour: 9, minIntervalSeconds: 0 } }),
+      { codeLength: 8, codeTtlSeconds: 60, sendLimits: { minIntervalSeconds: 0, perUserPerHour: 2, perDestinationPerDay: 10 } }, 'own first, key by key');
+    assert.deepStrictEqual(legacyMode({ codeLength: 10, sendLimits: { perUserPerHour: 9 } }, { codeLength: 6, codeTtlSeconds: 60, sendLimits: { perUserPerHour: 5 } }),
+      { codeLength: 10, codeTtlSeconds: 60, sendLimits: { minIntervalSeconds: 30, perUserPerHour: 9, perDestinationPerDay: 10 } }, 'legacy block first in the legacy mode');
+    assert.deepStrictEqual(modern({ codeLength: 3, codeTtlSeconds: 0, sendLimits: { perUserPerHour: -1, perDestinationPerDay: 0 } }),
+      { ...DEFAULTS, sendLimits: { ...DEFAULTS.sendLimits, perDestinationPerDay: 0 } }, 'out of range: default; 0 kept (disabled)');
+  });
+
   const ATTEMPTS_DEFAULTS = {
     perSession: 5,
     perAccountWindowSeconds: 900,

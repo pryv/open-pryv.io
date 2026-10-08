@@ -132,7 +132,7 @@ describe('[MSRQ] mfa/smsRequest: inputs and rendering of SMS provider requests',
       originalFetch = globalThis.fetch;
       globalThis.fetch = async (url, init) => {
         sent.push({ url, init });
-        return new Response('{}', { status: 200 });
+        return new Response(null, { status: 204 });
       };
     });
     afterEach(() => { globalThis.fetch = originalFetch; });
@@ -181,6 +181,70 @@ describe('[MSRQ] mfa/smsRequest: inputs and rendering of SMS provider requests',
         assert.strictEqual(err.data?.id, 'invalid-mfa-content');
       }
       assert.strictEqual(sent.length, 0);
+    });
+  });
+
+  // A verify succeeds on a 2xx whose answer passes the success predicate;
+  // without one, only on an empty answer.
+  describe('[MSVP] challenge-verify success predicate', () => {
+    let answer, originalFetch;
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => new Response(answer.body, { status: answer.status, headers: { 'content-type': 'application/json' } });
+    });
+    afterEach(() => { globalThis.fetch = originalFetch; });
+
+    function service (success) {
+      const verify = { url: 'https://sms.example/v', method: 'POST', headers: {}, body: '{"code":"{{ code }}"}' };
+      if (success !== undefined) verify.success = success;
+      const svc = new ChallengeVerifyService({ sms: { endpoints: { challenge: { url: 'https://sms.example/c', method: 'POST', headers: {}, body: '' }, verify } } });
+      svc.logger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {} };
+      return svc;
+    }
+    async function outcome (success, status, body) {
+      answer = { status, body };
+      try {
+        await service(success).verify('alice', { content: { phone: '+41791234567' } }, { body: { code: '123456' } });
+        return 'accepted';
+      } catch (err) {
+        assert.strictEqual(err.data?.id, 'invalid-mfa-code', err.message);
+        return 'refused';
+      }
+    }
+    const STATUS_APPROVED = { jsonPath: 'status', equals: 'approved' };
+
+    it('[MSVP1] with a predicate: only the expected value at the path is a success', async () => {
+      assert.strictEqual(await outcome(STATUS_APPROVED, 200, '{"status":"pending"}'), 'refused');
+      assert.strictEqual(await outcome(STATUS_APPROVED, 200, '{"status":"approved"}'), 'accepted');
+      assert.strictEqual(await outcome(STATUS_APPROVED, 200, ''), 'refused', 'an empty answer is not a confirmation then');
+      assert.strictEqual(await outcome(STATUS_APPROVED, 200, 'approved'), 'refused', 'not JSON');
+      assert.strictEqual(await outcome(STATUS_APPROVED, 200, '{"data":{"status":"approved"}}'), 'refused');
+      assert.strictEqual(await outcome({ jsonPath: 'data.result', equals: true }, 200, '{"data":{"result":true}}'), 'accepted');
+      assert.strictEqual(await outcome({ jsonPath: 'data.result', equals: true }, 200, '{"data":{"result":"true"}}'), 'refused', 'strict equality');
+      assert.strictEqual(await outcome({ jsonPath: 'toString', equals: 'x' }, 200, '{}'), 'refused', 'own properties only');
+    });
+
+    it('[MSVP2] without a predicate: an empty 2xx is a success, a 2xx with a body is refused', async () => {
+      assert.strictEqual(await outcome(undefined, 200, ''), 'accepted');
+      assert.strictEqual(await outcome(undefined, 204, null), 'accepted');
+      assert.strictEqual(await outcome(undefined, 200, '{"status":"approved"}'), 'refused');
+      assert.strictEqual(await outcome(undefined, 200, '{}'), 'refused');
+    });
+
+    it('[MSVP3] a non-2xx is never a success, whatever its body', async () => {
+      try {
+        answer = { status: 400, body: '{"status":"approved"}' };
+        await service(STATUS_APPROVED).verify('alice', { content: {} }, { body: { code: '123456' } });
+        assert.fail('expected a refusal');
+      } catch (err) {
+        assert.strictEqual(err.data?.id, 'mfa-sms-provider-error');
+      }
+    });
+
+    it('[MSVP4] a malformed predicate refuses every verify', async () => {
+      for (const bad of [{}, { jsonPath: '' }, { jsonPath: 'status' }, { jsonPath: 'a..b', equals: 'x' }, { jsonPath: 'status', equals: { a: 1 } }, 'status']) {
+        assert.strictEqual(await outcome(bad, 200, '{"status":"x","a":{"b":"x"}}'), 'refused', JSON.stringify(bad));
+      }
     });
   });
 });

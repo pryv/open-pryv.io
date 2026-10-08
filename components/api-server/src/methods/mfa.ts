@@ -498,9 +498,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const extra = await method.enroll(context.user.username, profile, enrolParams);
         // `replaces` pins the enrolment this activation was allowed to
         // replace (null: none), checked again when it is confirmed.
-        const token = await sessionStore().create(profile, { user: context.user, kind: 'enroll', replaces: enrolmentFingerprint(stored) });
+        const store = sessionStore();
+        const token = await store.create(profile, { user: context.user, kind: 'enroll', replaces: enrolmentFingerprint(stored) });
+        // The first challenge of the enrolment (an SMS for the SMS method),
+        // sent for this session. Nothing of the activate body is passed.
+        let challengeExtra: Record<string, unknown>;
+        try {
+          challengeExtra = await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: token });
+        } catch (err) {
+          await store.clear(token);
+          throw err;
+        }
+        // One pending enrolment per user: this one invalidates any earlier
+        // one, whatever its method.
+        await store.takeEnrolSlot(String(user.id), token);
         result.mfaToken = token;
-        Object.assign(result, extra);
+        Object.assign(result, challengeExtra, extra);
         next();
       } catch (err) {
         next(err);
@@ -540,7 +553,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         if ('error' in slot) return next(slot.error);
         try {
           // Only the code is handed over: nothing else of the body reaches a provider.
-          await method.verify(user.username, profile, { headers: {}, body: { code: params.code } });
+          await method.verify(user.username, profile, { headers: {}, body: { code: params.code }, sessionId: params.mfaToken });
         } catch (verifyErr) {
           return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }
@@ -578,7 +591,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // account in backoff must not be usable to spam challenge deliveries.
         const backoffErr = await mfaBackoffError(user, cfg.attempts);
         if (backoffErr) return next(backoffErr);
-        const extra = await method.challenge(user.username, session.profile, { headers: {}, body: params });
+        // Nothing of the request body is passed: a challenge needs none of it.
+        const extra = await method.challenge(user.username, session.profile, { headers: {}, body: {}, sessionId: params.mfaToken });
         result.message = 'Please verify the MFA challenge.';
         Object.assign(result, extra); // { method } for totp, so clients render the right prompt
         next();
@@ -631,7 +645,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
         if ('error' in slot) return next(slot.error);
         try {
-          await method.verify(user.username, session.profile, { headers: {}, body: { code: params.code } });
+          await method.verify(user.username, session.profile, { headers: {}, body: { code: params.code }, sessionId: params.mfaToken });
         } catch (verifyErr) {
           return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }

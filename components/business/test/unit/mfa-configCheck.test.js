@@ -135,6 +135,53 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.match(phone.warnings[0], /"phone".*no effect/);
   });
 
+  it('[MCHK14] SMS codeLength (4 to 10), codeTtlSeconds and sendLimits are type-checked; a disabled limit warns', function () {
+    const sms = (fn) => withChange((c) => {
+      c.methods.sms.active = true;
+      c.methods.sms.endpoints = { single: { url: 'https://sms.example/s' } };
+      fn(c);
+    });
+    assert.deepStrictEqual(sms((c) => { c.methods.sms.codeLength = 8; c.methods.sms.codeTtlSeconds = 120; }), { problems: [], warnings: [] });
+    for (const bad of [3, 11, 6.5, 'six', true]) {
+      assert.deepStrictEqual(paths(sms((c) => { c.methods.sms.codeLength = bad; })), ['services.mfa.methods.sms.codeLength'], JSON.stringify(bad));
+    }
+    assert.deepStrictEqual(paths(sms((c) => { c.sms.codeLength = 2; })), ['services.mfa.sms.codeLength']);
+    assert.deepStrictEqual(paths(sms((c) => { c.methods.sms.codeTtlSeconds = 0; })), ['services.mfa.methods.sms.codeTtlSeconds']);
+    assert.deepStrictEqual(paths(sms((c) => { c.methods.sms.sendLimits = 'strict'; })), ['services.mfa.methods.sms.sendLimits']);
+    assert.deepStrictEqual(paths(sms((c) => { c.methods.sms.sendLimits.perUserPerHour = -1; c.methods.sms.sendLimits.minIntervalSeconds = 'soon'; })).sort(),
+      ['services.mfa.methods.sms.sendLimits.minIntervalSeconds', 'services.mfa.methods.sms.sendLimits.perUserPerHour']);
+    const off = sms((c) => { c.methods.sms.sendLimits.perDestinationPerDay = 0; });
+    assert.deepStrictEqual(off.problems, []);
+    assert.match(off.warnings.join(' '), /perDestinationPerDay is 0, which disables this limit/);
+    const longCode = sms((c) => { c.methods.sms.codeTtlSeconds = 3600; });
+    assert.match(longCode.warnings.join(' '), /codeTtlSeconds \(3600\) exceeds sessions\.ttlSeconds/);
+  });
+
+  it('[MCHK15] challenge-verify: a missing verify success predicate warns, a malformed one is a problem', function () {
+    const cv = (fn) => withChange((c) => {
+      c.methods.sms.active = true;
+      c.methods.sms.mode = 'challenge-verify';
+      c.sms.endpoints.challenge.url = 'https://sms.example/c';
+      c.sms.endpoints.verify.url = 'https://sms.example/v';
+      fn(c);
+    });
+    const missing = cv(() => {});
+    assert.deepStrictEqual(missing.problems, []);
+    assert.strictEqual(missing.warnings.length, 1, JSON.stringify(missing.warnings));
+    assert.match(missing.warnings[0], /services\.mfa\.sms\.endpoints\.verify\.success is not set.*2xx with a body is refused/);
+    assert.deepStrictEqual(cv((c) => { c.sms.endpoints.verify.success = { jsonPath: 'data.status', equals: 'approved' }; }), { problems: [], warnings: [] });
+    for (const bad of [{ jsonPath: 'status' }, { jsonPath: '', equals: 'x' }, { jsonPath: 'status', equals: ['x'] }, 'status']) {
+      assert.deepStrictEqual(paths(cv((c) => { c.sms.endpoints.verify.success = bad; })), ['services.mfa.sms.endpoints.verify.success'], JSON.stringify(bad));
+    }
+    // The legacy mode too.
+    const legacy = withChange((c) => {
+      c.mode = 'challenge-verify';
+      c.sms.endpoints.challenge.url = 'https://sms.example/c';
+      c.sms.endpoints.verify.url = 'https://sms.example/v';
+    });
+    assert.match(legacy.warnings.join(' '), /verify\.success is not set/);
+  });
+
   it('[MCHK9] sessions.ttlSeconds below 1 is a problem', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.sessions.ttlSeconds = 0; })), ['services.mfa.sessions.ttlSeconds']);
   });

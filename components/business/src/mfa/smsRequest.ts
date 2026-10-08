@@ -181,8 +181,55 @@ function renderRequest (endpoint: EndpointTemplate, values: Values): { url: stri
   };
 }
 
+/**
+ * Challenge-verify: what makes a provider's 2xx answer to a verify request a
+ * success. With a predicate `{ jsonPath, equals }`, the answer must be JSON and
+ * its value at `jsonPath` (dot-separated property names, e.g. `status` or
+ * `data.result`) must strictly equal `equals`. Without one, only an empty
+ * answer (e.g. 204) is a success: a body the core cannot interpret is never
+ * taken for a confirmation.
+ */
+type SuccessPredicate = { jsonPath: string; equals: string | number | boolean };
+
+const JSON_PATH_PATTERN = /^[^.\s]+(\.[^.\s]+)*$/;
+
+function isValidSuccessPredicate (predicate: unknown): predicate is SuccessPredicate {
+  if (predicate == null || typeof predicate !== 'object' || Array.isArray(predicate)) return false;
+  const { jsonPath, equals } = predicate as Record<string, unknown>;
+  return typeof jsonPath === 'string' && JSON_PATH_PATTERN.test(jsonPath) &&
+    ['string', 'number', 'boolean'].includes(typeof equals);
+}
+
+/** The value at a dotted path, own properties only; undefined when absent. */
+function valueAtPath (root: unknown, jsonPath: string): unknown {
+  let node: unknown = root;
+  for (const segment of jsonPath.split('.')) {
+    if (node == null || typeof node !== 'object' || !Object.prototype.hasOwnProperty.call(node, segment)) return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
+}
+
+/**
+ * Whether a verify answer body (of a 2xx response) confirms the code.
+ * @param predicate - the endpoint's `success`, or null/undefined when none is configured
+ */
+function verifyAnswerAccepted (bodyText: string, predicate: unknown): boolean {
+  if (predicate == null) return bodyText.trim() === '';
+  if (!isValidSuccessPredicate(predicate)) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return false;
+  }
+  return valueAtPath(parsed, predicate.jsonPath) === predicate.equals;
+}
+
 export {
   CODE_PATTERN, PHONE_PATTERN, CONTENT_MAX_BYTES, NON_CONTENT_KEYS, RESERVED_CONTENT_KEYS,
   isValidCode, invalidCodeError, smsEnrolmentContent, checkNoEnrolmentContent, toValues,
-  renderUrl, renderHeaders, renderBody, renderRequest
+  renderUrl, renderHeaders, renderBody, renderRequest,
+  isValidSuccessPredicate, valueAtPath, verifyAnswerAccepted
 };
+export type { SuccessPredicate };

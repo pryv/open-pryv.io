@@ -361,10 +361,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    * MFA integration. Runs as the final step of auth.login.
    *
    * When `mfaResolveForLogin` found an active enrolment with an active method:
-   *   1. Call the method's challenge() (an SMS for the SMS method; nothing to
-   *      send for TOTP)
-   *   2. Stash the already-issued Pryv access token + apiEndpoint + user in a new
+   *   1. Stash the already-issued Pryv access token + apiEndpoint + user in a new
    *      SessionStore session, keyed by a fresh mfaToken
+   *   2. Call the method's challenge() for that session (an SMS for the SMS
+   *      method; nothing to send for TOTP); on failure the session is cleared
    *   3. Delete `token`/`apiEndpoint` from the response and replace with `mfaToken`
    *
    * The caller must then call `mfa.verify` with the mfaToken + code to
@@ -375,20 +375,28 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    * Otherwise this step is a no-op and the original login response is
    * returned unchanged.
    */
-  async function mfaCheckIfActive (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+  async function mfaCheckIfActive (context: MethodContext, _params: Record<string, unknown>, result: ResultBag, next: Next) {
     const pending = context.mfaLogin as MfaLoginState | undefined;
     if (pending == null) return next();
     const { cfg: mfaCfg, profile, method } = pending;
     try {
-      await method.challenge(context.user.username, profile, { headers: {}, body: params });
-
       // Stash the already-issued token in a pending session. Only release on mfa.verify.
-      const mfaToken = await getMFASessionStore(mfaCfg).create(profile, {
+      const store = getMFASessionStore(mfaCfg);
+      const mfaToken = await store.create(profile, {
         user: context.user,
         token: result.token,
         apiEndpoint: result.apiEndpoint,
         kind: 'login'
       });
+      // The challenge of this session (an SMS for the SMS method). None of
+      // the login parameters is passed: the password never reaches the MFA
+      // method layer. A failed challenge leaves no pending session behind.
+      try {
+        await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: mfaToken });
+      } catch (err) {
+        await store.clear(mfaToken);
+        throw err;
+      }
 
       // Replace the response: caller must complete MFA before they see the real token.
       delete result.token;

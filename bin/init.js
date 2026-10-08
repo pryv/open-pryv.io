@@ -702,6 +702,15 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #             headers: { Authorization: 'Bearer <api-token>' }
 # #             body: '{"to": "{{ phone }}", "text": "code {{ code }}"}'
 # #         contentKeys: []        # enrolment keys accepted besides phone (E.164)
+# #         codeLength: 6          # single mode: digits of the code (4 to 10)
+# #         codeTtlSeconds: 300    # single mode: how long a code is accepted
+# #         sendLimits:            # 429 past a limit; 0 disables it
+# #           minIntervalSeconds: 30    # between two sends on one MFA session
+# #           perUserPerHour: 5
+# #           perDestinationPerDay: 10  # per phone number, across users
+# #         # challenge-verify mode: how the provider confirms a code; without
+# #         # it only an empty 2xx answer (e.g. 204) is a success.
+# #         # endpoints.verify.success: { jsonPath: status, equals: approved }
 # #     attempts:                  # failed second-factor limits
 # #       perSession: 5            # wrong codes allowed in one pending MFA session
 # #       perAccountWindowSeconds: 900  # a failure older than this starts the tally afresh

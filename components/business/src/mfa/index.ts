@@ -24,6 +24,9 @@ const ChallengeVerifyService = require('./ChallengeVerifyService.ts').default;
 const SingleService = require('./SingleService.ts').default;
 const SessionStore = require('./SessionStore.ts').default;
 const generateCode = require('./generateCode.ts').default;
+const { MIN_CODE_LENGTH, MAX_CODE_LENGTH } = require('./generateCode.ts');
+const { DEFAULT_CODE_LENGTH, DEFAULT_CODE_TTL_SECONDS } = require('./SingleService.ts');
+const { SmsSendLimiter, SEND_LIMIT_DEFAULTS, smsDestination } = require('./smsSendLimits.ts');
 const { smsEnrolmentContent, RESERVED_CONTENT_KEYS } = require('./smsRequest.ts');
 
 type MFAConfig = {
@@ -60,6 +63,17 @@ function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceL
 // ----------------------------------------------------------------------
 
 type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; contentKeys?: string[]; [k: string]: unknown };
+type SendLimitsCfg = {
+  minIntervalSeconds: number;
+  perUserPerHour: number;
+  perDestinationPerDay: number;
+};
+/** The SMS settings besides the endpoints and content keys. */
+type SmsTuningCfg = {
+  codeLength: number;
+  codeTtlSeconds: number;
+  sendLimits: SendLimitsCfg;
+};
 type BackoffCfg = {
   freeFailures: number;
   baseSeconds: number;
@@ -91,7 +105,7 @@ type RawMfaConfig = MFAConfig & {
   active?: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
-  sms?: { endpoints?: Record<string, unknown>; contentKeys?: unknown };
+  sms?: { endpoints?: Record<string, unknown>; contentKeys?: unknown; codeLength?: unknown; codeTtlSeconds?: unknown; sendLimits?: unknown };
   attempts?: Record<string, unknown>;
   stepUp?: { required?: unknown };
   allowLoginWhenMethodInactive?: unknown;
@@ -179,6 +193,39 @@ function normalizeContentKeys (cfg: RawMfaConfig): string[] {
   return raw.filter((k): k is string => typeof k === 'string' && k !== '' && !RESERVED_CONTENT_KEYS.includes(k));
 }
 
+/**
+ * Normalize the SMS code and send settings: `codeLength`, `codeTtlSeconds`,
+ * `sendLimits`. Each is read from `methods.sms` and from the legacy `sms`
+ * block; the legacy mode reads the legacy block first, the multi-method model
+ * `methods.sms` first (the first that sets a key wins, key by key for
+ * `sendLimits`). A value out of range keeps the default; the boot check
+ * refuses it.
+ */
+function normalizeSmsTuning (cfg: RawMfaConfig, legacyFirst: boolean): SmsTuningCfg {
+  const own = (cfg.methods?.sms ?? {}) as Record<string, unknown>;
+  const legacy = (cfg.sms ?? {}) as Record<string, unknown>;
+  const layers = legacyFirst ? [legacy, own] : [own, legacy];
+  const first = (key: string): unknown => {
+    for (const layer of layers) {
+      const value = layer[key];
+      if (value != null && value !== '') return value;
+    }
+    return undefined;
+  };
+  const intIn = (value: unknown, min: number, max: number, fallback: number): number => {
+    const n = Number(value);
+    return (value != null && Number.isInteger(n) && n >= min && n <= max) ? n : fallback;
+  };
+  // Lowest precedence first: each layer overrides the keys it sets.
+  let sendLimits: SendLimitsCfg = { ...SEND_LIMIT_DEFAULTS };
+  for (const layer of [...layers].reverse()) sendLimits = mergeCounts(sendLimits, layer.sendLimits);
+  return {
+    codeLength: intIn(first('codeLength'), MIN_CODE_LENGTH, MAX_CODE_LENGTH, DEFAULT_CODE_LENGTH),
+    codeTtlSeconds: intIn(first('codeTtlSeconds'), 1, Number.MAX_SAFE_INTEGER, DEFAULT_CODE_TTL_SECONDS),
+    sendLimits
+  };
+}
+
 let _warnedLegacyMode = false;
 function mfaLogger (): { warn: (...args: unknown[]) => void } {
   try {
@@ -227,7 +274,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
       active: true,
       defaultMethod: 'sms',
       methods: {
-        sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {}, contentKeys: normalizeContentKeys(cfg) },
+        sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {}, contentKeys: normalizeContentKeys(cfg), ...normalizeSmsTuning(cfg, true) },
         totp: { active: false }
       },
       sessions,
@@ -246,7 +293,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
     const smsEndpoints = (smsIn.endpoints && Object.keys(smsIn.endpoints).length > 0)
       ? smsIn.endpoints
       : (cfg.sms?.endpoints || {}); // fall back to the legacy endpoints location
-    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints, contentKeys: normalizeContentKeys(cfg) };
+    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints, contentKeys: normalizeContentKeys(cfg), ...normalizeSmsTuning(cfg, false) };
     const defaultMethod = cfg.defaultMethod || 'totp';
     // NB: we do NOT throw here if `defaultMethod` names an inactive method.
     // This normalizer runs on the login path too, so throwing would brick all
@@ -265,48 +312,64 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
 
 /**
  * SMS adapter: exposes the HTTP-provider `ChallengeVerifyService` /
- * `SingleService` through the `MfaMethod` contract. Their internals and the
- * HTTP `Service` base class are untouched.
+ * `SingleService` through the `MfaMethod` contract, and checks the SMS send
+ * limits (`smsSendLimits.ts`) before every send.
  */
+type SendLimiterLike = { reserve: (send: { sessionId: string; username: string; destination: string }) => Promise<void> };
+
 class SmsMethod implements MfaMethod {
   readonly name = 'sms';
   service: { challenge: Function; verify: Function };
   contentKeys: string[];
+  limiter: SendLimiterLike | null;
   /**
    * @param contentKeys - enrolment keys accepted besides `phone`
+   * @param limiter - the send limits, checked before every send (null: none, for unit tests)
    */
-  constructor (service: { challenge: Function; verify: Function }, contentKeys: string[] = []) {
+  constructor (service: { challenge: Function; verify: Function }, contentKeys: string[] = [], limiter: SendLimiterLike | null = null) {
     this.service = service;
     this.contentKeys = contentKeys;
+    this.limiter = limiter;
   }
 
   checkEnrolParams (params: Record<string, unknown>): void {
     smsEnrolmentContent(params, this.contentKeys);
   }
 
-  async enroll (username: string, profile: ProfileType, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async enroll (_username: string, profile: ProfileType, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     // SMS enrolment content = `phone` plus the allow-listed keys of the
-    // activate body (never the method or step-up fields), validated; then
-    // send the challenge.
+    // activate body (never the method or step-up fields), validated. The
+    // challenge is sent once the MFA session exists (see `challenge`).
     const content = smsEnrolmentContent(params, this.contentKeys);
     (profile as unknown as { content: Record<string, unknown> }).content = content;
-    await this.service.challenge(username, profile, { headers: {}, body: {} });
     return {};
   }
 
+  /**
+   * Send an SMS for the session `clientRequest.sessionId`, within the send
+   * limits. Nothing of the client request reaches the provider service.
+   */
   async challenge (username: string, profile: ProfileType, clientRequest: MfaClientRequest): Promise<Record<string, unknown>> {
-    await this.service.challenge(username, profile, clientRequest);
+    const sessionId = clientRequest?.sessionId;
+    if (typeof sessionId !== 'string' || sessionId === '') {
+      throw new Error('SMS MFA challenge without an MFA session');
+    }
+    const content = (profile as unknown as { content?: Record<string, unknown> }).content;
+    if (this.limiter != null) await this.limiter.reserve({ sessionId, username, destination: smsDestination(content) });
+    await this.service.challenge(username, profile, { headers: {}, body: {}, sessionId });
     return {};
   }
 
   async verify (username: string, profile: ProfileType, clientRequest: MfaClientRequest): Promise<void> {
-    await this.service.verify(username, profile, clientRequest);
+    const code = (clientRequest?.body || {}).code;
+    await this.service.verify(username, profile, { headers: {}, body: { code }, sessionId: clientRequest?.sessionId });
   }
 }
 
 // Per-method cache: one method instance per process (same rationale as the
-// old `_mfaService`; the SMS `SingleService` keeps its pending codes in
-// cluster_kv, shared by the workers). Reset in tests.
+// old `_mfaService`; the SMS `SingleService` keeps its pending codes in the
+// MFA session records and the send limits their counters, both in cluster_kv,
+// shared by the workers). Reset in tests.
 let _methodCache: Map<string, MfaMethod> | null = null;
 function methodCache (): Map<string, MfaMethod> {
   if (_methodCache === null) _methodCache = new Map();
@@ -316,8 +379,17 @@ function methodCache (): Map<string, MfaMethod> {
 function buildSmsMethod (smsCfg: MethodCfg, sessions: NormalizedMfaConfig['sessions']): MfaMethod {
   const legacyShaped = { sms: { endpoints: smsCfg.endpoints || {} }, sessions };
   const contentKeys = Array.isArray(smsCfg.contentKeys) ? smsCfg.contentKeys : [];
-  if (smsCfg.mode === 'challenge-verify') return new SmsMethod(new ChallengeVerifyService(legacyShaped), contentKeys);
-  if (smsCfg.mode === 'single') return new SmsMethod(new SingleService(legacyShaped), contentKeys);
+  const sendLimits = (smsCfg.sendLimits as SendLimitsCfg | undefined) ?? { ...SEND_LIMIT_DEFAULTS };
+  const limiter = new SmsSendLimiter(sendLimits);
+  if (smsCfg.mode === 'challenge-verify') return new SmsMethod(new ChallengeVerifyService(legacyShaped), contentKeys, limiter);
+  if (smsCfg.mode === 'single') {
+    const single = new SingleService(legacyShaped, {
+      sessionStore: getMFASessionStore({ sessions }),
+      codeLength: smsCfg.codeLength as number | undefined,
+      codeTtlSeconds: smsCfg.codeTtlSeconds as number | undefined
+    });
+    return new SmsMethod(single, contentKeys, limiter);
+  }
   throw new Error(`Unknown SMS MFA mode "${smsCfg.mode}". Expected challenge-verify or single`);
 }
 
@@ -393,14 +465,14 @@ function getMFASessionStore (mfaConfig: MFAConfig | null | undefined): MFASessio
  * through cluster_kv (master IPC).
  */
 async function _resetMFASingletons (): Promise<void> {
-  if (_sessionStore) {
-    try { await _sessionStore.clearAll(); } catch (_) { /* may fail outside cluster — ignore */ }
-  }
+  // Clears the whole MFA state in cluster_kv (sessions, enrolment slots, SMS
+  // send counters), even when no session store was built in this process.
+  try { await (_sessionStore ?? new SessionStore()).clearAll(); } catch (_) { /* may fail outside cluster: ignore */ }
   _mfaService = null;
   _sessionStore = null;
   _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, normalizeStepUp, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
-export type { AttemptsCfg, BackoffCfg, StepUpCfg, NormalizedMfaConfig };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, normalizeStepUp, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod, SmsSendLimiter, normalizeSmsTuning };
+export type { AttemptsCfg, BackoffCfg, StepUpCfg, NormalizedMfaConfig, SendLimitsCfg, SmsTuningCfg };
 export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';

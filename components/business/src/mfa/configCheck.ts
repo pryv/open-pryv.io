@@ -5,7 +5,9 @@
  * Refer to LICENSE file
  */
 import { normalizeMfaConfig, normalizeAttempts } from './index.ts';
-import { NON_CONTENT_KEYS } from './smsRequest.ts';
+import { NON_CONTENT_KEYS, isValidSuccessPredicate } from './smsRequest.ts';
+import { MIN_CODE_LENGTH, MAX_CODE_LENGTH } from './generateCode.ts';
+import { SEND_LIMIT_DEFAULTS } from './smsSendLimits.ts';
 
 /**
  * Boot-time check of `services.mfa`. The MFA normalizer on the login path
@@ -23,6 +25,7 @@ type Raw = Record<string, unknown>;
 const MODES = ['disabled', 'single', 'challenge-verify'];
 const SMS_MODES = ['single', 'challenge-verify'];
 const KEY_BYTES = 32;
+const SEND_LIMIT_KEYS = Object.keys(SEND_LIMIT_DEFAULTS);
 
 const obj = (v: unknown): Raw => (v != null && typeof v === 'object' && !Array.isArray(v)) ? v as Raw : {};
 const isSet = (v: unknown): boolean => v != null && v !== '';
@@ -112,6 +115,7 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
           warnings.push(`${path.join('.')} lists "phone", which is always accepted; the entry has no effect.`);
         }
       }
+      checkSmsTuning(raw, sms, problems, warnings);
     }
 
     const sessions = obj(raw.sessions);
@@ -174,6 +178,66 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
   }
 
   return { problems, warnings };
+}
+
+/**
+ * The SMS code and send settings of an active SMS method, and the verify
+ * success predicate of the challenge-verify mode. Values are read from the raw
+ * blocks (the normalizer replaces an invalid one by its default).
+ */
+function checkSmsTuning (raw: Raw, sms: Raw, problems: Problem[], warnings: string[]): void {
+  const base = ['services', 'mfa'];
+  const blocks: Array<[Raw, string[]]> = [
+    [obj(obj(raw.methods).sms), [...base, 'methods', 'sms']],
+    [obj(raw.sms), [...base, 'sms']]
+  ];
+  const isInt = (v: unknown, min: number, max: number): boolean => {
+    if (typeof v !== 'number' && typeof v !== 'string') return false;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= min && n <= max;
+  };
+  for (const [block, path] of blocks) {
+    if (isSet(block.codeLength) && !isInt(block.codeLength, MIN_CODE_LENGTH, MAX_CODE_LENGTH)) {
+      problems.push({ message: `codeLength must be an integer from ${MIN_CODE_LENGTH} to ${MAX_CODE_LENGTH}, got ${JSON.stringify(block.codeLength)}.`, path: [...path, 'codeLength'] });
+    }
+    if (isSet(block.codeTtlSeconds) && !isInt(block.codeTtlSeconds, 1, Number.MAX_SAFE_INTEGER)) {
+      problems.push({ message: `codeTtlSeconds must be an integer of at least 1, got ${JSON.stringify(block.codeTtlSeconds)}.`, path: [...path, 'codeTtlSeconds'] });
+    }
+    if (!isSet(block.sendLimits)) continue;
+    if (typeof block.sendLimits !== 'object' || Array.isArray(block.sendLimits)) {
+      problems.push({ message: `sendLimits must be a mapping, got ${JSON.stringify(block.sendLimits)}.`, path: [...path, 'sendLimits'] });
+      continue;
+    }
+    const limits = obj(block.sendLimits);
+    for (const key of SEND_LIMIT_KEYS) {
+      if (isSet(limits[key]) && !isInt(limits[key], 0, Number.MAX_SAFE_INTEGER)) {
+        problems.push({ message: `sendLimits.${key} must be a non-negative integer (0 disables it), got ${JSON.stringify(limits[key])}.`, path: [...path, 'sendLimits', key] });
+      }
+    }
+  }
+
+  // Effective values (as normalized).
+  const effective = obj(sms.sendLimits);
+  const off = SEND_LIMIT_KEYS.filter((k) => effective[k] === 0);
+  if (off.length > 0) {
+    warnings.push(`services.mfa.methods.sms.sendLimits: ${off.join(', ')} ${off.length > 1 ? 'are' : 'is'} 0, which disables ${off.length > 1 ? 'these limits' : 'this limit'} on SMS sends. Throttle SMS sends elsewhere (e.g. at the provider).`);
+  }
+  const sessionTtl = Number(obj(raw.sessions).ttlSeconds ?? 1800);
+  if (sms.mode === 'single' && typeof sms.codeTtlSeconds === 'number' && Number.isFinite(sessionTtl) && sms.codeTtlSeconds > sessionTtl) {
+    warnings.push(`services.mfa.methods.sms.codeTtlSeconds (${sms.codeTtlSeconds}) exceeds sessions.ttlSeconds (${sessionTtl}): a code lives no longer than its MFA session.`);
+  }
+
+  if (sms.mode === 'challenge-verify') {
+    const ownEndpoints = obj(obj(obj(raw.methods).sms).endpoints);
+    const endpointsPath = Object.keys(ownEndpoints).length > 0 ? [...base, 'methods', 'sms', 'endpoints'] : [...base, 'sms', 'endpoints'];
+    const verify = obj(obj(sms.endpoints).verify);
+    const success = verify.success;
+    if (success == null) {
+      warnings.push(`${endpointsPath.join('.')}.verify.success is not set: a provider answer to a verify is taken as a success only when it is empty (e.g. 204), and a 2xx with a body is refused. Set success: { jsonPath, equals } to the field and value by which this provider confirms a code.`);
+    } else if (!isValidSuccessPredicate(success)) {
+      problems.push({ message: `verify.success must be { jsonPath: "<dotted.path>", equals: <string, number or boolean> }, got ${JSON.stringify(success)}; every SMS verify would be refused.`, path: [...endpointsPath, 'verify', 'success'] });
+    }
+  }
 }
 
 /**

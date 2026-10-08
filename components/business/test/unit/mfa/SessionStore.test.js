@@ -147,4 +147,42 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.equal((await store.get(token)).attempts, 0);
     assert.isFalse(await store.releaseAttempt('not-a-real-token'));
   });
+
+  it('[MT7A] setSmsCode() stores a code with the session, replaces it, and keeps the attempt count', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), { user: 'alice' });
+    assert.isNull((await store.get(token)).smsCode);
+    await store.reserveAttempt(token, 5);
+    assert.isTrue(await store.setSmsCode(token, { hash: 'h1', expiresAt: 1 }));
+    assert.isTrue(await store.setSmsCode(token, { hash: 'h2', expiresAt: 2 }));
+    const got = await store.get(token);
+    assert.deepEqual(got.smsCode, { hash: 'h2', expiresAt: 2 });
+    assert.equal(got.attempts, 1);
+    assert.isTrue(await store.setSmsCode(token, null));
+    assert.isNull((await store.get(token)).smsCode);
+    assert.isFalse(await store.setSmsCode('not-a-real-token', { hash: 'h', expiresAt: 1 }));
+  });
+
+  it('[MT7B] takeEnrolSlot() keeps one pending enrolment per user: the previous session is cleared', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const first = await store.create(new Profile({ x: 1 }), { kind: 'enroll' });
+    assert.isNull(await store.takeEnrolSlot('u1', first));
+    const second = await store.create(new Profile({ x: 2 }), { kind: 'enroll' });
+    assert.equal(await store.takeEnrolSlot('u1', second), first);
+    assert.isFalse(await store.has(first));
+    assert.isTrue(await store.has(second));
+    // Another user's slot is untouched.
+    const other = await store.create(new Profile({ x: 3 }), { kind: 'enroll' });
+    assert.isNull(await store.takeEnrolSlot('u2', other));
+    assert.isTrue(await store.has(second));
+  });
+
+  it('[MT7C] concurrent takeEnrolSlot() calls leave exactly one pending enrolment', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const tokens = await Promise.all(Array.from({ length: 8 }, (_, i) => store.create(new Profile({ i }), { kind: 'enroll' })));
+    await Promise.all(tokens.map((t) => store.takeEnrolSlot('u1', t).catch(() => null)));
+    const alive = [];
+    for (const t of tokens) if (await store.has(t)) alive.push(t);
+    assert.lengthOf(alive, 1, JSON.stringify(alive));
+  });
 });
