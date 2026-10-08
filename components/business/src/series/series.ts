@@ -30,6 +30,14 @@ type SeriesData = {
   eachRow (cb: (row: Row) => void): void;
 };
 
+/**
+ * The largest deltaTime (seconds) a series point can have: the series engines
+ * store deltaTimes as 64-bit integer nanoseconds. A query bound beyond it is
+ * not sent to the engine (it does not fit their time type, and beyond the
+ * year 275760 not even a date): it is resolved here.
+ */
+const MAX_DELTA_TIME_S = 2 ** 63 / 1e9;
+
 function timestampToDateString (v: number | string): string {
   const date = new Date(typeof v === 'number' ? v * 1000 : v);
   return "'" + date.toISOString().replace('T', ' ').replace('Z', '000000') + "'";
@@ -92,6 +100,10 @@ class Series {
    */
   query (query: SeriesQuery) {
     const queryOptions = { database: this.namespace };
+    // No stored point at or after a `from` above the range, nor before a `to` under it.
+    if ((query.from != null && query.from > MAX_DELTA_TIME_S) || (query.to != null && query.to < -MAX_DELTA_TIME_S)) {
+      return Promise.resolve(DataMatrix.empty());
+    }
     const measurementName = this.name;
     const condition = this.buildExpression(query);
     const wherePart = condition.length > 0 ? 'WHERE ' + condition.join(' AND ') : '';
@@ -125,10 +137,11 @@ class Series {
    */
   buildExpression (query: SeriesQuery): string[] {
     const subConditions: string[] = [];
-    if (query.from) {
+    // A bound outside the stored range holds for every point: no condition.
+    if (query.from && query.from >= -MAX_DELTA_TIME_S) {
       subConditions.push(`time >= ${timestampToDateString(query.from)}`);
     }
-    if (query.to) {
+    if (query.to && query.to <= MAX_DELTA_TIME_S) {
       subConditions.push(`time < ${timestampToDateString(query.to)}`);
     }
     return subConditions;

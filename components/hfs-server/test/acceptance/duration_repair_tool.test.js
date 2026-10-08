@@ -19,7 +19,7 @@ const business = require('business');
 const { integrity } = business;
 const { DataMatrix } = require('business/src/series/data_matrix.ts');
 const { seriesNamespace } = require('business/src/series/namespace.ts');
-const { FUTURE_MARGIN_S, isCandidate, classify } = require('../../src/duration_repair.ts');
+const { FUTURE_MARGIN_S, isCandidate, classify, repairUserSeriesDurations } = require('../../src/duration_repair.ts');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
@@ -164,5 +164,126 @@ describe('[HFDR] hfs-duration-repair tool', function () {
     assert.deepStrictEqual(classify(duration, c - 2e-3, true), { kind: 'repair', duration: c - 2e-3, exact: false });
     // data beyond the candidate extent but no point at it: not the old writer's value
     assert.deepStrictEqual(classify(duration, c + 4, false), { kind: 'unexplained' });
+  });
+});
+
+/**
+ * [HFOV] The durations the old writer inflated from more than a few seconds
+ * of data are beyond the range a series engine stores deltaTimes in (64-bit
+ * integer nanoseconds). The tool checks and repairs them without querying the
+ * series with such a bound, and one failing event does not stop the run.
+ */
+describe('[HFOV] hfs-duration-repair tool: durations beyond the series range', function () {
+  this.timeout(120_000);
+  const T = 1791362385;
+  // extent (s) of each planted series: its inflated duration is extent * 1e9
+  //   M: 50 s   -> 5e10 s, in nanoseconds beyond the 64-bit integer range
+  //   L: 7140 s -> 7.14e12 s, in nanoseconds only printable in exponent form
+  //   X: 2e4 s  -> 2e13 s, beyond the range of a date
+  const extents = { M: 50, L: 7140, X: 20000 };
+  // L is the latest, so the first one checked (as in the reported failure)
+  const times = { M: T + 1, L: T + 2, X: T };
+  let pryv, mall, userId, streamId;
+  const ids = {};
+  let planted = {};
+
+  async function readAll () {
+    const out = {};
+    for (const [key, id] of Object.entries(ids)) out[key] = await mall.events.getOne(userId, id);
+    return out;
+  }
+
+  function runTool (...args) {
+    return execFileSync(process.execPath, ['bin/hfs-duration-repair.js', '--user', userId, ...args], {
+      cwd: repoRoot,
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      encoding: 'utf8'
+    });
+  }
+
+  before(async function () {
+    const database = await produceStorageConnection();
+    pryv = databaseFixture(database);
+    mall = await getMall();
+    userId = cuid();
+    streamId = cuid();
+    const user = await pryv.user(userId, {});
+    await user.stream({ id: streamId });
+    const repo = new business.series.Repository(await produceSeriesConnection());
+    for (const [key, extent] of Object.entries(extents)) {
+      ids[key] = cuid();
+      await user.event({ id: ids[key], type: 'series:mass/kg', streamIds: [streamId], time: times[key], duration: extent * 1e9 });
+      const series = await repo.get(seriesNamespace(userId), 'event.' + ids[key]);
+      await series.append(new DataMatrix(['deltaTime', 'value'], [[0, 1], [extent * 1e9, 2]]));
+    }
+    planted = await readAll();
+  });
+
+  after(async function () {
+    await pryv.clean();
+  });
+
+  it('[HFOV1] a dry run checks them without error and writes nothing', async function () {
+    const out = runTool('--dry-run');
+    assert.match(out, /candidates\s+3\b/);
+    assert.match(out, /repaired\s+3 \(would be\)\s+\[confirmed exact 3, series grew since 0\]/);
+    assert.match(out, /check or write failed, skipped\s+0\b/);
+    assert.deepStrictEqual(await readAll(), planted);
+  });
+
+  it('[HFOV2] the repair sets each to its extent in seconds', async function () {
+    const out = runTool();
+    assert.match(out, /repaired\s+3\s+\[confirmed exact 3, series grew since 0\]/);
+    assert.match(out, /check or write failed, skipped\s+0\b/);
+    const after = await readAll();
+    for (const [key, extent] of Object.entries(extents)) {
+      assert.strictEqual(after[key].duration, extent, key);
+      if (integrity.events.isActive) assert.strictEqual(integrity.events.compute(after[key]).integrity, after[key].integrity, key + ' integrity verifies');
+    }
+  });
+
+  it('[HFOV3] a series query with a bound beyond the stored range answers, on every series engine', async function () {
+    const repo = new business.series.Repository(await produceSeriesConnection());
+    const series = await repo.get(seriesNamespace(userId), 'event.' + ids.L);
+    const count = async (query) => { let n = 0; (await series.query(query)).eachRow(() => n++); return n; };
+    assert.strictEqual(await count({ from: 5e10 }), 0, 'from beyond the range: no point');
+    assert.strictEqual(await count({ from: 1, to: 5e10 }), 1, 'to beyond the range: no upper bound');
+    assert.strictEqual(await count({ from: 1, to: 2e13 }), 1, 'to beyond the range of a date: no upper bound');
+    assert.strictEqual(await count({ from: -5e10, to: 5e10 }), 2, 'both beyond the range: every point');
+    assert.strictEqual(await count({ from: -6e10, to: -5e10 }), 0, 'to under the range: no point');
+  });
+
+  it('[HFOV4] an event whose check fails is listed with the error kind only; the others are still repaired', async function () {
+    const leaked = '7.139999999999999e+21';
+    const events = [
+      { id: 'bad', type: 'series:mass/kg', time: T, duration: 1e9 },
+      { id: 'good', type: 'series:mass/kg', time: T, duration: 1e9 }
+    ];
+    const written = [];
+    const fakeMall = {
+      events: {
+        get: async () => events,
+        updateWithMerge: async (uid, id, merge) => { written.push(id); return merge({ ...events.find((e) => e.id === id) }); }
+      }
+    };
+    const fakeRepo = {
+      get: async (namespace, name) => ({
+        query: async () => {
+          if (name === 'event.bad') throw Object.assign(new Error('invalid input syntax for type bigint: "' + leaked + '"'), { code: '22P02' });
+          return new DataMatrix(['deltaTime', 'value'], [[0, 1], [1, 2]]);
+        }
+      })
+    };
+    for (const dryRun of [true, false]) {
+      written.length = 0;
+      const r = await repairUserSeriesDurations({
+        mall: fakeMall, seriesRepo: fakeRepo, seriesNamespace: 'ns', userId: 'u', username: 'u', now: T, dryRun
+      });
+      assert.strictEqual(r.candidates, 2);
+      assert.strictEqual(r.repaired, 1, 'dryRun ' + dryRun);
+      assert.deepStrictEqual(r.failed, ['u/bad (Error 22P02)']);
+      assert.ok(!JSON.stringify(r).includes(leaked), 'no data value in the result');
+      assert.deepStrictEqual(written, dryRun ? [] : ['good']);
+    }
   });
 });

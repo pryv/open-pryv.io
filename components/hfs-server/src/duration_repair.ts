@@ -93,7 +93,9 @@ async function deltaTimesFrom (series: SeriesLike, fromSeconds: number): Promise
  * What the series data says about a stored `duration` (seconds): first
  * whether data reaches the duration itself (a tail query), then the points
  * from the candidate extent `duration / 1e9` on. Never reads a whole series
- * unless the candidate extent is under a millisecond.
+ * unless the candidate extent is under a millisecond. An inflated duration is
+ * usually beyond the deltaTimes a series can store (64-bit integer
+ * nanoseconds, about 9.2e9 s): the tail query then answers no point.
  */
 export async function probeSeries (series: SeriesLike, duration: number): Promise<{ max: number | null; atExtent: boolean }> {
   const tail = await deltaTimesFrom(series, duration - EXTENT_TOLERANCE_S);
@@ -121,9 +123,25 @@ export type UserRepairResult = {
   legit: number;
   unexplained: string[];
   skippedChanged: number;
+  /** `<username>/<eventId> (<error kind>)` of the events whose check or write failed; left as is. */
+  failed: string[];
 };
 
-/** Finds and (unless `dryRun`) repairs the oversized series durations of one user. */
+/**
+ * The kind of an error, without its message: a storage error message can
+ * quote the values it was given, and the report must not print data.
+ */
+function errorKind (err: unknown): string {
+  const e = err as { name?: unknown; code?: unknown } | null;
+  const name = typeof e?.name === 'string' ? e.name : 'Error';
+  return (typeof e?.code === 'string' || typeof e?.code === 'number') ? name + ' ' + e.code : name;
+}
+
+/**
+ * Finds and (unless `dryRun`) repairs the oversized series durations of one
+ * user. An event whose check or write fails is counted in `failed` and left
+ * as is; the others are still processed.
+ */
 export async function repairUserSeriesDurations ({ mall, seriesRepo, seriesNamespace, userId, username, now, dryRun }: {
   mall: MallLike;
   seriesRepo: SeriesRepoLike;
@@ -133,30 +151,38 @@ export async function repairUserSeriesDurations ({ mall, seriesRepo, seriesNames
   now: number;
   dryRun: boolean;
 }): Promise<UserRepairResult> {
-  const result: UserRepairResult = { candidates: 0, repaired: 0, exact: 0, grown: 0, legit: 0, unexplained: [], skippedChanged: 0 };
+  const result: UserRepairResult = { candidates: 0, repaired: 0, exact: 0, grown: 0, legit: 0, unexplained: [], skippedChanged: 0, failed: [] };
   const events = await mall.events.get(userId, { state: 'all', fromTime: now + FUTURE_MARGIN_S, limit: 1_000_000 });
   for (const event of (events || [])) {
     if (!isCandidate(event, now)) continue;
     result.candidates++;
+    try {
+      await repairOne(event);
+    } catch (err) {
+      result.failed.push(username + '/' + event.id + ' (' + errorKind(err) + ')');
+    }
+  }
+  return result;
+
+  async function repairOne (event: EventLike): Promise<void> {
     const duration = event.duration as number;
     const series = await seriesRepo.get(seriesNamespace, 'event.' + event.id);
     const probe = await probeSeries(series, duration);
     const verdict = classify(duration, probe.max, probe.atExtent);
-    if (verdict.kind === 'legit') { result.legit++; continue; }
-    if (verdict.kind === 'unexplained') { result.unexplained.push(username + '/' + event.id); continue; }
+    if (verdict.kind === 'legit') { result.legit++; return; }
+    if (verdict.kind === 'unexplained') { result.unexplained.push(username + '/' + event.id); return; }
     if (dryRun) {
       result.repaired++;
       if (verdict.exact) result.exact++; else result.grown++;
-      continue;
+      return;
     }
     const written = await mall.events.updateWithMerge(userId, event.id, (stored) => {
       // Changed since it was read (a client edit or a flush): leave it to a re-run.
       if (!(typeof stored.duration === 'number' && Math.abs(stored.duration - duration) <= EXTENT_TOLERANCE_S)) return null;
       return { ...stored, duration: verdict.duration, modified: Date.now() / 1000 };
     }, null, { skipVersioning: true });
-    if (written == null) { result.skippedChanged++; continue; }
+    if (written == null) { result.skippedChanged++; return; }
     result.repaired++;
     if (verdict.exact) result.exact++; else result.grown++;
   }
-  return result;
 }

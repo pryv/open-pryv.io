@@ -103,6 +103,7 @@ require('@pryv/boiler').init({
     const now = Date.now() / 1000;
     const totals = { users: usernames.length, candidates: 0, repaired: 0, exact: 0, grown: 0, legit: 0, skippedChanged: 0 };
     const unexplained = [];
+    const failed = [];
     for (const username of usernames) {
       const userId = byUsername[username];
       const r = await repairUserSeriesDurations({
@@ -115,6 +116,7 @@ require('@pryv/boiler').init({
       totals.legit += r.legit;
       totals.skippedChanged += r.skippedChanged;
       unexplained.push(...r.unexplained);
+      failed.push(...r.failed);
     }
 
     console.log('hfs-duration-repair: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'repair'));
@@ -125,6 +127,8 @@ require('@pryv/boiler').init({
     console.log('  data extends to the duration    ' + totals.legit + '   (left as is)');
     console.log('  no series point at the extent   ' + unexplained.length + '   (left as is; listed below)');
     for (const entry of unexplained) console.log('    ' + entry);
+    console.log('  check or write failed, skipped  ' + failed.length + '   (left as is; listed below with the error kind)');
+    for (const entry of failed) console.log('    ' + entry);
     console.log('  changed under us, skipped       ' + totals.skippedChanged + '   (re-run to retry)');
     process.exit(0);
   } catch (err) {
