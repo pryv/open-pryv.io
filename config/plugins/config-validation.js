@@ -126,7 +126,8 @@ function checkRequiredWhen (config, problems) {
       const reason = weakSecretReason(value, { production: process.env.NODE_ENV === 'production' });
       if (reason != null) {
         problems.push({
-          message: `secret '${path}' ${reason}: set a long random value of your own (e.g. \`openssl rand -hex 32\`).`,
+          message: `secret '${path}' ${reason}: ` +
+            (hint || 'set a long random value of your own (e.g. `openssl rand -hex 32`).'),
           path: path.split(':'),
           payload: { path, weakSecret: true }
         });
@@ -137,8 +138,9 @@ function checkRequiredWhen (config, problems) {
 
 // Secrets that grant platform-wide powers. A value shipped as a placeholder in
 // a config file (or a common stand-in) is as good as public, so it never boots;
-// in production a short value is refused too.
-const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret'];
+// in production a short value, or one published for development and tests, is
+// refused too.
+const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey'];
 const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/business/src/secretValues.ts');
 
 // `auth.trustedApps` gates the browser login and password-reset flows. Absent,

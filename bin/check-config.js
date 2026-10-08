@@ -201,6 +201,10 @@ if (get('account.emailVerification.requireAtRegistration') === true) {
   if (piiMode === 'hashed' && (typeof key !== 'string' || isMissingOrSentinel(key))) {
     problems.push('platform.piiHmacKey missing or unset (required when platform.piiMode is hashed, the default): ' +
       'base64 of 32 random bytes, the same value on every core');
+  } else if (piiMode === 'hashed' && weakSecretReason(key) != null) {
+    problems.push(`platform.piiHmacKey ${weakSecretReason(key)}: base64 of 32 random bytes of your own`);
+  } else if (piiMode === 'hashed' && weakSecretReason(key, { production: true }) != null) {
+    warnings.push(`platform.piiHmacKey ${weakSecretReason(key, { production: true })}: a production core refuses to boot with it`);
   }
 }
 

@@ -191,6 +191,17 @@ describe('[CKPK] bin/check-config.js platform.piiHmacKey', function () {
     assert.doesNotMatch(res.stdout + res.stderr, /piiHmacKey/);
   });
 
+  it('[CKPK4] the public development/test pepper is flagged: a production core refuses it', () => {
+    const res = runCheck(BASE, null);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout + res.stderr,
+      /platform\.piiHmacKey is the public development\/test value: a production core refuses to boot with it/);
+    const own = runCheck(BASE_WITHOUT_PII_KEY + '\nplatform:\n  piiHmacKey: ' +
+      require('node:crypto').randomBytes(32).toString('base64') + '\n', null);
+    assert.strictEqual(own.status, 0, own.stdout + own.stderr);
+    assert.doesNotMatch(own.stdout + own.stderr, /piiHmacKey/);
+  });
+
   it('[CKPK3] the development base layer supplies the key', () => {
     const res = runCheck(BASE_WITHOUT_PII_KEY, 'development');
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);

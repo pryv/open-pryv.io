@@ -27,13 +27,24 @@ export function isPlaceholderValue (value: unknown): boolean {
   return PLACEHOLDER_PATTERN.test(value) || PLACEHOLDER_SECRETS.includes(value.trim().toLowerCase());
 }
 
+// Secrets published in this repository for development and tests
+// (config/development-config.yml, scripts/components-run). Fine there; in
+// production they are as good as no secret.
+const PUBLIC_DEVELOPMENT_SECRETS: readonly string[] = [
+  'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=' // platform.piiHmacKey
+];
+
 /**
  * Why a secret value is not acceptable, or null when it is.
- * `production` also enforces MIN_SECRET_LENGTH.
+ * `production` also enforces MIN_SECRET_LENGTH and refuses the values
+ * published for development and tests.
  */
 export function weakSecretReason (value: unknown, options: { production?: boolean } = {}): string | null {
   if (typeof value !== 'string') return null;
   if (isPlaceholderValue(value)) return 'is a placeholder value';
+  if (options.production === true && PUBLIC_DEVELOPMENT_SECRETS.includes(value.trim())) {
+    return 'is the public development/test value';
+  }
   if (options.production === true && value.length < MIN_SECRET_LENGTH) {
     return `is shorter than ${MIN_SECRET_LENGTH} characters`;
   }

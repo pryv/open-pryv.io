@@ -656,6 +656,28 @@ describe('[CVWS] config-validation weak secrets', () => {
     }
   });
 
+  it('[CVPK4] in production, the public development/test pepper is refused; a key of your own boots', () => {
+    const publicKey = 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=';
+    const ownKey = require('node:crypto').randomBytes(32).toString('base64');
+    const run = (key) => {
+      const problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, 'platform:piiMode': 'hashed', 'platform:piiHmacKey': key }), problems);
+      return problems.find((p) => p.payload && p.payload.path === 'platform:piiHmacKey');
+    };
+    assert.strictEqual(run(publicKey), undefined, 'accepted outside production (tests use it)');
+    const saved = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const p = run(publicKey);
+      assert.ok(p && p.payload.weakSecret, 'refused in production');
+      assert.match(p.message, /public development\/test value/);
+      assert.match(p.message, /randomBytes\(32\)/, 'the hint fits a pepper, not a hex secret');
+      assert.strictEqual(run(ownKey), undefined);
+    } finally {
+      process.env.NODE_ENV = saved;
+    }
+  });
+
   it('[CVPK3] development-config.yml carries a usable key for the hashed default', () => {
     const yaml = require('js-yaml');
     const fs = require('node:fs');
