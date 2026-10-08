@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Welcome mail: "verify my email" link
+
+- When verification is not required at registration
+  (`account.emailVerification.requireAtRegistration: false`), the founding address of a new account
+  is not proved. The welcome mail now carries a link to prove it, the same link the verification
+  mail sends: the server mints a verification token for the founding address (its hash is stored,
+  the token itself only travels in the mail) and passes **`VERIFY_LINK`** to the `welcome-email`
+  template. The bundled templates (en, fr) show a "Verify my email address" block only when
+  `VERIFY_LINK` is set.
+- No link when the address was proved by code at registration, or when the verification mail is
+  off (`services.email.enabled.verifyEmail`, `auth.emailVerificationPageURL`): one welcome mail, no
+  separate verification mail, in every case.
+- **Upgrading an `in-process` deployment (the default method): the link does not show until the
+  stored template is updated.** The bundled templates are copied into PlatformDB only on a first
+  boot with no template stored, so an existing platform keeps its current `welcome-email`. Re-set
+  it from the bundled files, on one core (templates are platform-wide):
+  `node bin/mail.js templates set welcome-email en html --file components/mail/templates/welcome-email/en/html.pug`
+  and the same for `fr` (or add an `if VERIFY_LINK` block to your own stored template). Then run
+  `node bin/mail.js templates validate`.
+- **Operators with their own `welcome-email` template** (`microservice` / `mandrill` delivery): add
+  a block on `VERIFY_LINK` (a conditional on the merge variable) to show the link; without it, the
+  mail is unchanged.
+- **Fix.** `services.email.enabled: false` (the boolean form) now also turns the welcome mail off;
+  only `enabled: { welcome: false }` did.
+- The token lives `account.emailVerification.tokenMaxAgeMs` (default 24 h). When it has expired, the
+  account page's "resend verification" sends a fresh link; the resend cooldown starts with the
+  welcome mail.
+
 ### Account email: verification state readable by apps
 
 - An access that can read `:system:email` (an app granted "Read Email", or a personal token) now

@@ -17,6 +17,7 @@ const timestamp = require('unix-timestamp');
 const { getPlatform } = require('platform');
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
+const { foundingVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { User } = require('business/src/users/index.ts');
 const { getLogger } = require('@pryv/boiler');
 const { ApiEndpoint } = require('utils');
@@ -331,7 +332,8 @@ class Registration {
     if (!emailSettings) return next();
     // Skip this step if welcome mail is deactivated
     const emailActivation = emailSettings.enabled as { welcome?: boolean } | boolean | undefined;
-    if (typeof emailActivation === 'object' && emailActivation?.welcome === false) {
+    if (emailActivation === false ||
+        (typeof emailActivation === 'object' && emailActivation?.welcome === false)) {
       return next();
     }
     const recipient = {
@@ -339,15 +341,36 @@ class Registration {
       name: context.newUser.username,
       type: 'to'
     };
-    const substitutions = {
+    const substitutions: Record<string, unknown> = {
       USERNAME: context.newUser.username,
       EMAIL: context.newUser.email
     };
-    mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
-      // Don't fail creation process itself (mail isn't critical), just log error
-      if (err) {
-        errorHandling.logError(err, null, this.logger);
+    // In the background, like the mail itself: when the founding address is
+    // not proved (no code at registration) and the verification mail is on,
+    // the welcome mail also carries VERIFY_LINK. A failure there sends the
+    // plain welcome mail.
+    const { id, username, email } = context.newUser;
+    (async () => {
+      if (id != null && email != null) {
+        try {
+          const link = await foundingVerifyLink(id as string, username as string, email as string);
+          if (link != null) substitutions.VERIFY_LINK = link;
+        } catch (err) {
+          this.logger.warn('welcome mail sent without a verification link', {
+            username, error: err instanceof Error ? err.message : String(err)
+          });
+        }
       }
+      mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
+        // Don't fail creation process itself (mail isn't critical), just log error
+        if (err) {
+          errorHandling.logError(err, null, this.logger);
+        }
+      });
+    })().catch((err: unknown) => {
+      // sendmail can throw synchronously (e.g. a malformed delivery URL): the
+      // account exists and the response is sent, so log it, never crash
+      errorHandling.logError(err instanceof Error ? err : new Error(String(err)), null, this.logger);
     });
     next();
   }

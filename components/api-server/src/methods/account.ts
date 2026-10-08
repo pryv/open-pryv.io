@@ -61,6 +61,7 @@ const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require(
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
+const { buildVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
 const cache = require('cache').default;
 const timestamp = require('unix-timestamp');
@@ -414,21 +415,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // The REQUIRED_WHEN boot check guarantees `auth.emailVerificationPageURL` is
   // populated when the verification mail is enabled.
   //
-  // The link carries the username as well as the token: the landing page has to
-  // address `/:username/account/verify-email`, and it cannot derive the username
-  // from the address, because PlatformDB stores emails hashed when the operator
-  // enables that mode.
+  // (see buildVerifyLink for what the link carries and why)
   function deliverVerifyEmail (recipientEmail: string, username: string, lang: string, token: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const emailSettings = getEmail();
       const pageURL = getAuth().emailVerificationPageURL;
-      // The operator's page URL may already carry a query (the reference app
-      // needs `pryvServiceInfoUrl` on it), so pick the separator rather than
-      // always appending '?', which would fold our parameters into the value
-      // of the operator's last one.
-      const separator = pageURL.includes('?') ? '&' : '?';
-      const verifyLink = pageURL + separator + 'verifyToken=' + encodeURIComponent(token) +
-        '&username=' + encodeURIComponent(username);
+      const verifyLink = buildVerifyLink(pageURL, token, username);
       const recipient = { email: recipientEmail, name: username, type: 'to' };
       const substitutions = {
         VERIFY_TOKEN: token,

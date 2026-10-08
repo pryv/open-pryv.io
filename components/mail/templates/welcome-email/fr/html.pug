@@ -1,4 +1,10 @@
 h1 Bienvenue, #{USERNAME}
 p Votre compte a été créé. Vous pouvez maintenant connecter des applications et des appareils, contrôler ce que vous partagez et gérer vos données.
 p L'adresse email enregistrée sur ce compte est #[strong #{EMAIL}].
+if VERIFY_LINK
+  p
+    | Merci de confirmer que cette adresse vous appartient, afin que les applications que vous utilisez puissent s'y fier :
+  p
+    a(href=VERIFY_LINK target="_blank" rel="noopener") Vérifier mon adresse email
+  p Le lien expire après un certain temps ; dans ce cas, demandez-en un nouveau depuis la page de votre compte.
 p Si vous n'êtes pas à l'origine de la création de ce compte, merci de contacter l'opérateur de ce service.

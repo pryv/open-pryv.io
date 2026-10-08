@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Welcome mail verification link
+
+- `business/src/emails/verifyLink.ts`: `buildVerifyLink` (moved from `account.ts`
+  `deliverVerifyEmail`, same output) and `foundingVerifyLink(userId, username, email)` (mints and
+  stamps a token on the founding container record when the verification mail is enabled and the
+  address is not proved). `registration.sendWelcomeMail` resolves it in the background with the
+  mail itself and sends the plain welcome mail if it fails. Tests [WELC] (API, Mandrill nock) and
+  [WEL05] (template rendering).
+
 ## Derived account events (`verification/email`)
 
 - `storages/datastores/account`: `registerDerivedField(name, { baseField, type, provider })`

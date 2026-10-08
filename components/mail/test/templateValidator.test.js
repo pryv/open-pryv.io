@@ -114,6 +114,20 @@ describe('[MTVA] mail template validator', () => {
     assert.strictEqual(segmentProblem('lang', 'pt-br'), null);
   });
 
+  it('[WEL05] the welcome mail shows the verify link only when VERIFY_LINK is set (en, fr)', () => {
+    const pug = require('pug');
+    const link = 'https://app.example.com/verify-email?verifyToken=t0k&username=ada';
+    for (const [lang, label] of [['en', 'Verify my email address'], ['fr', 'Vérifier mon adresse email']]) {
+      const render = pug.compileFile(path.join(BUNDLED, 'welcome-email', lang, 'html.pug'));
+      const withLink = render({ USERNAME: 'ada', EMAIL: 'ada@example.com', VERIFY_LINK: link });
+      assert.ok(withLink.includes('href="' + link.replace(/&/g, '&amp;') + '"'), lang + ': ' + withLink);
+      assert.ok(withLink.includes(label), lang);
+      const without = render({ USERNAME: 'ada', EMAIL: 'ada@example.com' });
+      assert.ok(!without.includes('verify-email') && !without.includes(label), lang + ': ' + without);
+      assert.ok(without.includes('ada@example.com'), lang);
+    }
+  });
+
   it('[MTVA5] a local is a dotted identifier path that names no global', () => {
     for (const ok of ['USERNAME', 'user.name', 'CODE_MAX_AGE_MINUTES', 'token']) assert.ok(isLocalPath(ok), ok);
     for (const bad of ['process', 'globalThis', 'require', 'this', 'locals', 'pug_mixins', 'Buffer', 'URL', 'a.__proto__',
