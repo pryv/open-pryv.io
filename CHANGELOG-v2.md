@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Events
+
+- **Fix.** Account events (`:_system:language`, `:system:email` and the other account fields) now
+  carry the time their value was set: `time` and `modified` are the time of the current value,
+  `created` the time of the field's first value. They used to report the time of the read, so
+  `modifiedSince`, `fromTime` and `toTime` always matched them (an incremental sync fetched them on
+  every call) and their `integrity` changed on every read. Their `integrity` is now stable across
+  reads (it changes once, with this upgrade).
+
 ## 2.0.0-rc.43 - 2026-10-07
 
 **Upgrade promptly: this release carries security fixes, and some need operator attention before

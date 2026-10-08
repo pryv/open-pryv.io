@@ -48,6 +48,7 @@ const userAccountStorage = _internals.createUserAccountStorage({
   clearHistory,
   getKeyValueDataForStore,
   getAccountFields,
+  getAccountFieldsWithMeta,
   getAccountField,
   setAccountField,
   getAccountFieldHistory,
@@ -130,6 +131,22 @@ async function getAccountFields (userId: string): Promise<Record<string, unknown
   const fields: Record<string, unknown> = {};
   for (const row of rows as Array<{ field: string, value: string }>) {
     fields[row.field] = JSON.parse(row.value);
+  }
+  return fields;
+}
+
+async function getAccountFieldsWithMeta (userId: string): Promise<Record<string, { value: unknown, time: number, createdBy: string, firstTime: number }>> {
+  const db = await getUserDB(userId);
+  // Latest entry per field, plus the time of its first entry
+  const rows = db.prepare(
+    'SELECT a.field, a.value, a.time, a.createdBy, ' +
+    '(SELECT MIN(b.time) FROM account_fields b WHERE b.field = a.field) AS firstTime ' +
+    'FROM account_fields a WHERE (a.field, a.time) IN ' +
+    '(SELECT field, MAX(time) FROM account_fields GROUP BY field)'
+  ).all() as Array<{ field: string, value: string, time: number, createdBy: string, firstTime: number }>;
+  const fields: Record<string, { value: unknown, time: number, createdBy: string, firstTime: number }> = {};
+  for (const row of rows) {
+    fields[row.field] = { value: JSON.parse(row.value), time: row.time, createdBy: row.createdBy, firstTime: row.firstTime };
   }
   return fields;
 }

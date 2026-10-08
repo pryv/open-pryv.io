@@ -30,6 +30,17 @@ export interface AccountFieldHistoryEntry {
   createdBy: string;
 }
 
+/** Current value of an account field, with the times recorded in its history. */
+export interface AccountFieldWithMeta {
+  value: unknown;
+  /** Time of the current value (latest entry). */
+  time: number;
+  /** Author of the current value. */
+  createdBy: string;
+  /** Time of the field's first entry. */
+  firstTime: number;
+}
+
 export interface UserAccountStorageExport {
   passwords: PasswordEntry[];
   storeKeyValues: Array<{ storeId: string, key: string, value: unknown }>;
@@ -48,6 +59,7 @@ export interface UserAccountStorage {
 
   // Account fields
   getAccountFields (userId: string): Promise<Record<string, unknown>>;
+  getAccountFieldsWithMeta (userId: string): Promise<Record<string, AccountFieldWithMeta>>;
   getAccountField (userId: string, field: string): Promise<unknown>;
   setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<AccountFieldEntry>;
   getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<AccountFieldHistoryEntry[]>;
@@ -81,6 +93,8 @@ const UserAccountStorage: UserAccountStorage = {
   // --- Account fields --- //
 
   async getAccountFields (userId: string): Promise<Record<string, unknown>> { throw new Error('Not implemented'); },
+
+  async getAccountFieldsWithMeta (userId: string): Promise<Record<string, AccountFieldWithMeta>> { throw new Error('Not implemented'); },
 
   async getAccountField (userId: string, field: string): Promise<unknown> { throw new Error('Not implemented'); },
 

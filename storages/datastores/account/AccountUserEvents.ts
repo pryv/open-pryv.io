@@ -42,9 +42,11 @@ type EventQuery = {
 };
 type EventOptions = { sortAscending?: boolean; skip?: number; limit?: number };
 type FieldHistoryEntry = { value: unknown; time: number; createdBy?: string };
+type FieldWithMeta = { value: unknown; time: number; createdBy?: string; firstTime: number };
 type Storage = {
   getAccountField (userId: string, fieldName: string): Promise<unknown>;
   getAccountFields (userId: string): Promise<Record<string, unknown>>;
+  getAccountFieldsWithMeta (userId: string): Promise<Record<string, FieldWithMeta>>;
   getAccountFieldHistory (userId: string, fieldName: string): Promise<FieldHistoryEntry[]>;
   setAccountField (userId: string, fieldName: string, value: unknown, by: string, time: number): Promise<void>;
 };
@@ -74,19 +76,21 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
       const fieldName = toFieldName(eventId);
       const streamConfig = fieldStreamMap.get(fieldName);
       if (!streamConfig) return null;
-      const value = await storage.getAccountField(userId, fieldName);
-      if (value == null) return null;
-      return fieldToEvent(fieldName, value, streamConfig);
+      // History is newest first: [0] is the current value, the last entry the first one
+      const history = await storage.getAccountFieldHistory(userId, fieldName);
+      if (history.length === 0 || history[0].value == null) return null;
+      const current = history[0];
+      return fieldToEvent(fieldName, current.value, streamConfig, current.time, current.createdBy, history[history.length - 1].time);
     },
 
     async get (userId: string, query: EventQuery, options: EventOptions): Promise<EventLike[]> {
       const storage = await getStorage();
-      const fields = await storage.getAccountFields(userId);
+      const fields = await storage.getAccountFieldsWithMeta(userId);
       let events: EventLike[] = [];
-      for (const [fieldName, value] of Object.entries(fields)) {
+      for (const [fieldName, field] of Object.entries(fields)) {
         const streamConfig = fieldStreamMap.get(fieldName);
         if (!streamConfig) continue;
-        events.push(fieldToEvent(fieldName, value, streamConfig));
+        events.push(fieldToEvent(fieldName, field.value, streamConfig, field.time, field.createdBy, field.firstTime));
       }
       events = filterByQuery(events, query);
       events = applyOptions(events, options);
@@ -178,8 +182,11 @@ function toFieldName (eventId: string): string {
 
 /**
  * Convert a stored field to an event object.
+ * `time` and `modified` are the time of the current value, `created` the time of
+ * the field's first entry (defaults to `time`); both come from the stored
+ * history so that time and `modifiedSince` filters see real dates.
  */
-function fieldToEvent (fieldName: string, value: unknown, streamConfig: StreamConfig, time?: number, createdBy?: string): EventLike {
+function fieldToEvent (fieldName: string, value: unknown, streamConfig: StreamConfig, time?: number, createdBy?: string, created?: number): EventLike {
   const now = time || timestamp.now();
   return {
     id: fieldName,
@@ -187,7 +194,7 @@ function fieldToEvent (fieldName: string, value: unknown, streamConfig: StreamCo
     type: streamConfig.type,
     content: value,
     time: now,
-    created: now,
+    created: created || now,
     createdBy: createdBy || 'system',
     modified: now,
     modifiedBy: createdBy || 'system'

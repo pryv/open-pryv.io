@@ -151,6 +151,29 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
     });
 
+    describe('getAccountFieldsWithMeta()', () => {
+      it('[ATM06] must return each field\'s current value with its latest and first times', async () => {
+        const uId = cuid();
+        await storage.setAccountField(uId, 'email', 'a@example.com', 'first', 1000);
+        await storage.setAccountField(uId, 'email', 'b@example.com', 'second', 3000);
+        await storage.setAccountField(uId, 'email', 'c@example.com', 'third', 2000);
+        await storage.setAccountField(uId, 'language', 'fr', 'lang', 1500);
+        const fields = await storage.getAccountFieldsWithMeta(uId);
+        assert.deepStrictEqual(fields, {
+          email: { value: 'b@example.com', time: 3000, createdBy: 'second', firstTime: 1000 },
+          language: { value: 'fr', time: 1500, createdBy: 'lang', firstTime: 1500 }
+        });
+        // same current values as getAccountFields()
+        const plain = await storage.getAccountFields(uId);
+        assert.deepStrictEqual(plain, { email: 'b@example.com', language: 'fr' });
+        if (cleanupFn) await cleanupFn(uId);
+      });
+
+      it('[ATM07] must return an empty object for a user without fields', async () => {
+        assert.deepStrictEqual(await storage.getAccountFieldsWithMeta(cuid()), {});
+      });
+    });
+
     describe('migration methods', () => {
       it('_exportAll() must return passwords and storeKeyValues', async () => {
         const uId = cuid();

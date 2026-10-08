@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## Account events read their times from the field history
+
+- `UserAccountStorage.getAccountFieldsWithMeta(userId)` (PostgreSQL: `DISTINCT ON (field)` with a
+  `MIN(time)` window; SQLite: latest row per field with a `MIN(time)` subquery) returns each field's
+  current value with its latest time, author and first time. `AccountUserEvents.get` builds events
+  from it and `getOne` from `getAccountFieldHistory`, instead of stamping `timestamp.now()`.
+  Conformance [ATM06]-[ATM07], adapter [ATM01]/[ATM02]/[ATM05], API [ATMS].
+- The account datastore adapter test (`[ACDS]`) moved from `storages/datastores/account/test/` to
+  `components/storage/test/unit/`: the storages workspace has no `test` folder, so the runner skipped
+  it and it had never run. Its stale assertions (error ids, history semantics) were aligned with the
+  current behaviour.
+
 ## Image build: native addons rebuilt one at a time
 
 - The Dockerfile runs `npm rebuild --foreground-scripts`. Without it npm runs the implicit

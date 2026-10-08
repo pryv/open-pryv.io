@@ -106,6 +106,25 @@ const userAccountStorage = (_internals.createUserAccountStorage as (impl: unknow
     return fields;
   },
 
+  async getAccountFieldsWithMeta (userId: string): Promise<Record<string, { value: unknown; time: number; createdBy: string; firstTime: number }>> {
+    const res = await db.query(
+      'SELECT DISTINCT ON (field) field, value, time, created_by, ' +
+      'MIN(time) OVER (PARTITION BY field) AS first_time ' +
+      'FROM account_fields WHERE user_id = $1 ORDER BY field, time DESC',
+      [userId]
+    );
+    const fields: Record<string, { value: unknown; time: number; createdBy: string; firstTime: number }> = {};
+    for (const row of res.rows) {
+      fields[row.field as string] = {
+        value: row.value,
+        time: row.time as number,
+        createdBy: row.created_by as string,
+        firstTime: row.first_time as number
+      };
+    }
+    return fields;
+  },
+
   async getAccountField (userId: string, field: string): Promise<unknown | null> {
     const res = await db.query(
       'SELECT value FROM account_fields WHERE user_id = $1 AND field = $2 ORDER BY time DESC LIMIT 1',
