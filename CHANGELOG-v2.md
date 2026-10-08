@@ -33,22 +33,24 @@
 
 ### Account email: verification state readable by apps
 
-- An access that can read `:system:email` (an app granted "Read Email", or a personal token) now
-  also gets, **in the same stream**, a read-only event of type `verification/email`, id
-  `:system:emailVerification`, content `{ verified, method, verifiedAt }`:
-  - `verified` is true only when ownership of the primary address was **proved**: `method` is
-    `email-link` (the holder clicked a mailed link), `email-code` (pasted a mailed code at
-    registration) or `operator`. `registration` (the founding address, not proved) and `legacy`
-    (set without proof) read as `verified: false`.
+- An access that can read `:system:email` (an app granted "Read Email", or a personal token) can
+  now **ask** for the verification state of that address: `events.get` on `:system:email` with
+  `types: ['verification/email']` (or `verification/*`, or both types to get the address too)
+  returns, in that stream, a read-only event of type `verification/email`, id
+  `:system:emailVerification`, content `{ verified, method, verifiedAt }`; `events.getOne` on that
+  id returns it too. **A read without `types` is unchanged**: it still returns the single
+  `email/string` event, so existing readers of the stream are not affected.
+  - `verified` describes the address currently in the `email/string` event, and is true only when
+    its ownership was **proved**: `method` is `email-link` (the holder clicked a mailed link),
+    `email-code` (pasted a mailed code at registration) or `operator`. `registration` (the founding
+    address, not proved) and `legacy` (set without proof) read as `verified: false`.
+  - When the primary address changes, the event follows the new address (an unproved new primary
+    reads `verified: false`); it is never removed while an address exists.
   - It is derived at read time, never stored, and cannot be created, updated or deleted. It has no
-    history. Its `time` is the address event's (the address stays first in time-sorted results);
-    its `modified` moves when the address or its proof changes.
-  - **Read the address with `types: ['email/string']`** and the state with
-    `types: ['verification/email']` rather than relying on position: a client that took the first
-    (or only) event of `:system:email` as the address keeps working in the default sort, but the
-    type filter is the robust way.
-- **Disclosure.** Apps granted "Read Email" before this release also learn the proof state of the
-  address (the method and date, never the other addresses of the account), without new consent.
+    history. Its `time` is the address event's (when both types are requested, the address comes
+    first); its `modified` moves when the address or its proof changes.
+- **Disclosure.** Apps granted "Read Email" before this release can also ask for the proof state of
+  the address (the method and date, never the other addresses of the account), without new consent.
   Operators who want the consent text to say so can rename the email field's `name` in
   `custom.systemStreams`.
 - Proving an address (`account.verifyEmail`), changing the primary (`account.update` with
@@ -60,6 +62,8 @@
 
 - **Fix.** `skip` and `limit` were ignored by `events.get` when every requested stream is an account
   field stream (for example `streams=[":system:email"]&limit=1`).
+- **Fix.** A class wildcard in `types` (for example `email/*`) now matches account events; it
+  matched none before (exact types did).
 
 - **Fix.** Account events (`:_system:language`, `:system:email` and the other account fields) now
   carry the time their value was set: `time` and `modified` are the time of the current value,

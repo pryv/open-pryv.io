@@ -147,9 +147,8 @@ describe('[AD01] Accesses with account streams', function () {
           });
           it('[S3IQ] should enable user to read visible stream event with this access', async () => {
             res = await request.get(eventsBasePath).set('authorization', accountAccessData.token);
-            // the address, then its derived verification event
-            assert.deepStrictEqual(res.body.events.map((e) => e.type), ['email/string', 'verification/email']);
-            assert.ok(res.body.events.every((e) => e.streamIds[0] === systemEmailStreamId));
+            assert.strictEqual(res.body.events.length, 1);
+            assert.strictEqual(res.body.events[0].streamIds[0], systemEmailStreamId);
           });
 
           describe('[AD09] for the "account" stream', () => {
@@ -167,9 +166,8 @@ describe('[AD01] Accesses with account streams', function () {
             });
             it('[L99L] should allow to access visible events in storageUsed', async () => {
               res = await request.get(eventsBasePath).set('authorization', accountAccessData.token);
-              // 6 account fields + the email's derived verification event
-              assert.strictEqual(res.body.events.length, 7);
-              assert.strictEqual(res.body.events.filter((e) => e.type === 'verification/email').length, 1);
+              // 6 account fields; the derived verification event only comes when `types` asks for it
+              assert.strictEqual(res.body.events.length, 6);
               validation.validateAccountEvents(res.body.events);
             });
           });

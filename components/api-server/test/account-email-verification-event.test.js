@@ -9,10 +9,11 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * The read-only `verification/email` event returned with the account email
- * (Pattern C): an access that can read `:system:email` also gets, in the same
- * stream, whether the primary address is proved, how and when. It is derived
- * from the emails container at read time and never written.
+ * The read-only `verification/email` event of the account email (Pattern C):
+ * an access that can read `:system:email` can ask for it by type, in the same
+ * stream, to learn whether the primary address is proved, how and when; a read
+ * without `types` is unchanged. It is derived from the emails container at
+ * read time and never written.
  */
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
@@ -74,8 +75,11 @@ describe('[SIBS] account email verification event', function () {
     return res.body.events;
   }
 
+  // Both events: the sibling is returned only when `types` asks for it.
+  const BOTH = { types: ['email/string', TYPE] };
+
   async function sibling (u, token) {
-    const events = await getEvents(u, {}, token);
+    const events = await getEvents(u, { types: [TYPE] }, token);
     return events.find((e) => e.type === TYPE);
   }
 
@@ -95,9 +99,11 @@ describe('[SIBS] account email verification event', function () {
   }
 
   describe('[SIB0] what an app reading the email sees', function () {
-    it('[SIB01] both events, the address first, in the email stream', async function () {
+    it('[SIB01] a read without types is unchanged (one event); asking for the type adds the sibling, address first', async function () {
       const u = await makeUser(null);
-      const events = await getEvents(u);
+      const plain = await getEvents(u);
+      assert.deepStrictEqual(plain.map((e) => [e.id, e.type, e.content]), [[EMAIL, 'email/string', u.email]]);
+      const events = await getEvents(u, BOTH);
       assert.strictEqual(events.length, 2, JSON.stringify(events));
       assert.strictEqual(events[0].id, EMAIL);
       assert.strictEqual(events[0].type, 'email/string');
@@ -106,9 +112,15 @@ describe('[SIBS] account email verification event', function () {
       assert.deepStrictEqual(events[1].streamIds, [EMAIL]);
       assert.strictEqual(events[1].time, events[0].time, 'the sibling carries the address time');
       // and with limit 1, only the address
-      const first = await getEvents(u, { limit: 1 });
+      const first = await getEvents(u, Object.assign({ limit: 1 }, BOTH));
       assert.strictEqual(first.length, 1);
       assert.strictEqual(first[0].id, EMAIL);
+      // the address stays first in ascending order too
+      const ascending = await getEvents(u, Object.assign({ sortAscending: true }, BOTH));
+      assert.deepStrictEqual(ascending.map((e) => e.id), [EMAIL, SIBLING]);
+      // a class wildcard asks for it too
+      const wildcard = await getEvents(u, { types: ['verification/*'] });
+      assert.deepStrictEqual(wildcard.map((e) => e.id), [SIBLING]);
     });
 
     it('[SIB02] the founding address is not proved (registration)', async function () {
@@ -136,7 +148,7 @@ describe('[SIBS] account email verification event', function () {
     it('[SIB03] a link-proved address made primary reads as proved; [SIB06] back to an unproved one reads false', async function () {
       const u = await makeUser(null);
       const second = await provedSecondaryAsPrimary(u);
-      const events = await getEvents(u);
+      const events = await getEvents(u, BOTH);
       assert.strictEqual(events[0].content, second);
       const proved = events.find((e) => e.type === TYPE);
       assert.strictEqual(proved.content.verified, true);
@@ -165,9 +177,10 @@ describe('[SIBS] account email verification event', function () {
 
     it('[SIB13] both events keep the same integrity across reads', async function () {
       const u = await makeUser(null);
-      const a = await getEvents(u);
+      const a = await getEvents(u, BOTH);
       await new Promise((resolve) => setTimeout(resolve, 20));
-      const b = await getEvents(u);
+      const b = await getEvents(u, BOTH);
+      assert.strictEqual(a.length, 2);
       assert.ok(a.every((e) => typeof e.integrity === 'string'), 'integrity is on in the test config');
       assert.deepStrictEqual(b.map((e) => e.integrity), a.map((e) => e.integrity));
       assert.deepStrictEqual(b.map((e) => e.modified), a.map((e) => e.modified));
@@ -203,7 +216,8 @@ describe('[SIBS] account email verification event', function () {
 
     it('[SIB11] an app without the email permission sees neither, star included', async function () {
       const u = await makeUser(null);
-      const star = await coreRequest.get('/' + u.username + '/events').set('Authorization', u.starToken);
+      const star = await coreRequest.get('/' + u.username + '/events').set('Authorization', u.starToken)
+        .query({ types: ['email/string', TYPE] });
       assert.strictEqual(star.status, 200, JSON.stringify(star.body));
       assert.ok(!star.body.events.some((e) => (e.streamIds || []).includes(EMAIL)), JSON.stringify(star.body.events));
       const one = await coreRequest.get('/' + u.username + '/events/' + encodeURIComponent(SIBLING))
