@@ -109,8 +109,8 @@ describe('[FG5R] Events of system streams', () => {
         delete readableMap[':_system:storageUsed'];
         const accountStreamIds = Object.keys(readableMap);
         assert.strictEqual(separatedEvents.accountStreamsEvents.length, accountStreamIds.length);
-        // plus the email's derived verification event
-        assert.deepStrictEqual(separatedEvents.derivedAccountEvents.map((e) => e.streamIds), [[':system:email']]);
+        // the email's derived verification event only comes when `types` asks for it
+        assert.deepStrictEqual(separatedEvents.derivedAccountEvents, [], 'no derived event without types');
         accountStreamIds.forEach(accountStreamId => {
           let found = false;
           separatedEvents.accountStreamsEvents.forEach(event => {
@@ -142,7 +142,7 @@ describe('[FG5R] Events of system streams', () => {
         delete readableMap[':_system:storageUsed'];
         const accountStreamIds = Object.keys(readableMap);
         assert.strictEqual(separatedEvents.accountStreamsEvents.length, accountStreamIds.length);
-        assert.deepStrictEqual(separatedEvents.derivedAccountEvents.map((e) => e.streamIds), [[':system:email']]);
+        assert.deepStrictEqual(separatedEvents.derivedAccountEvents, [], 'no derived event without types');
         accountStreamIds.forEach(accountStreamId => {
           let found = false;
           separatedEvents.accountStreamsEvents.forEach(event => {
@@ -175,9 +175,11 @@ describe('[FG5R] Events of system streams', () => {
 
       it('[GF3A] should return only the account event for which a permission was explicitely provided', async () => {
         res = await request.get(basePath).query({ streams: [addCustomerPrefixToStreamId('email')] }).set('authorization', sharedAccess.attrs.token);
-        // the address, then its derived verification event, both in the email stream
-        assert.deepStrictEqual(res.body.events.map((e) => e.type), ['email/string', 'verification/email']);
-        assert.ok(res.body.events.every((e) => e.streamIds.includes(systemStreamId)));
+        assert.strictEqual(res.body.events.length, 1);
+        assert.strictEqual(res.body.events[0].streamIds.includes(systemStreamId), true);
+        // asking for both types adds the derived verification event, after the address
+        const both = await request.get(basePath).query({ streams: [addCustomerPrefixToStreamId('email')], types: ['email/string', 'verification/email'] }).set('authorization', sharedAccess.attrs.token);
+        assert.deepStrictEqual(both.body.events.map((e) => e.type), ['email/string', 'verification/email']);
       });
     });
 

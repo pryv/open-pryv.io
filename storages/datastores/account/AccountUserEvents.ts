@@ -87,8 +87,10 @@ type DerivedField = {
  * @param getStorage - returns userAccountStorage (async)
  * @param derivedFields - derived field name → definition. Derived events are
  *   returned by `get` only when the query sets `includeDerived` (internal
- *   readers map account events to fields by stream and must never see them),
- *   and by `getOne` when asked for by id. They cannot be written.
+ *   readers map account events to fields by stream and must never see them)
+ *   AND its `types` names their type (existing readers of the stream keep
+ *   getting one event per field), and by `getOne` when asked for by id. They
+ *   cannot be written.
  */
 function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Promise<Storage>, derivedFields: Map<string, DerivedField> = new Map()) {
   /** A derived definition for `name`; a real (operator-declared) field of the same name wins. */
@@ -118,16 +120,18 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
   /**
    * `events` with, after each base event, the derived events that accompany it.
    * `events` are already filtered by stream (a derived event shares its base's
-   * streamIds); a derived type the query's `types` excludes is not computed.
+   * streamIds). A derived event is returned only when the query's `types` asks
+   * for its type (exactly or `class/*`): a read without types keeps returning
+   * one event per account field, as before derived events existed.
    */
   async function withDerived (userId: string, events: EventLike[], types?: string[]): Promise<EventLike[]> {
-    if (derivedFields.size === 0) return events;
+    if (derivedFields.size === 0 || types == null || types.length === 0) return events;
     const result: EventLike[] = [];
     for (const event of events) {
       result.push(event);
       for (const [name, def] of derivedFields) {
         if (def.baseField !== event.id || derivedDef(name) == null) continue;
-        if (types != null && types.length > 0 && !types.includes(def.type)) continue;
+        if (!typeRequested(def.type, types)) continue;
         const derived = await derivedEvent(userId, name, event);
         if (derived != null) result.push(derived);
       }
@@ -299,6 +303,11 @@ function eventIdFromStreamIds (streamIds: string[] | undefined, fieldMap: Map<st
   return null;
 }
 
+/** True when `type` is one of `requested`, exactly or through a `class/*` wildcard. */
+function typeRequested (type: string, requested: string[]): boolean {
+  return requested.some((t) => t === type || (t.endsWith('/*') && type.startsWith(t.slice(0, -1))));
+}
+
 /**
  * Filter events by query (streams, types, state).
  *
@@ -321,8 +330,8 @@ function filterByQuery (events: EventLike[], query: EventQuery | null | undefine
   }
 
   if (query.types && query.types.length > 0) {
-    const typeSet = new Set(query.types);
-    events = events.filter((e) => typeSet.has(e.type));
+    const types = query.types;
+    events = events.filter((e) => typeRequested(e.type, types));
   }
 
   // Account events are never "running" period events (no duration concept)

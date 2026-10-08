@@ -77,11 +77,12 @@ export async function primaryVerification (userId: string, primary: string): Pro
 }
 
 /**
- * Make API reads of the account email also return its verification state: a
- * read-only `verification/email` event in the same stream, derived from the
- * container at read time (see AccountUserEvents). Its `time` is the address
- * event's, so the address stays first in time-sorted results; its `modified`
- * follows the latest of the two changes.
+ * Let API reads of the account email ask for its verification state: a
+ * read-only `verification/email` event in the same stream, returned when the
+ * request's `types` names it (see AccountUserEvents), derived from the
+ * container at read time. Its `time` is the address event's, so the address
+ * stays first when both are requested; its `modified` follows the latest of
+ * the two changes.
  */
 export function registerVerificationEvent (): void {
   registerDerivedField(VERIFICATION_FIELD, {

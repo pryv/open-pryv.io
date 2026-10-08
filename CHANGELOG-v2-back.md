@@ -39,7 +39,9 @@
   registers a read-only event computed at read time from a base field's event and returned in the
   base field's stream, right after it. `AccountUserEvents.get` adds them only when the store query
   carries `includeDerived` (internal readers such as `getUserById` / `User`, `getOnePropertyValue`
-  and `updateOne` map account events to fields by stream and must never see them); `getOne`
+  and `updateOne` map account events to fields by stream and must never see them) AND its `types`
+  names their type (exactly or `class/*`: existing API readers of a stream keep getting one event
+  per field); the account store's type filter also understands `class/*` now; `getOne`
   resolves a derived id directly; `getHistory` returns `[]`; `update` refuses it.
 - The mall copies `includeDerived` through `getStoreQueryFromParams` (its store-query whitelist);
   `eventsGetUtils.findEventsFromStore` sets it on the account-store params only (`events.get`, so
