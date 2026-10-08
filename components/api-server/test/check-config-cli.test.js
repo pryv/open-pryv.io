@@ -57,6 +57,8 @@ auth:
 storages:
   base:
     engine: sqlite
+  series:
+    engine: sqlite
 dnsLess:
   isActive: true
   publicUrl: https://core.example.com/
@@ -162,6 +164,32 @@ describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
     const res = runCheck(BASE.replace("'*@https://app.example.com'", "'*@https://app.*.example.com'"), 'production');
     assert.strictEqual(res.status, 1, res.stdout + res.stderr);
     assert.match(res.stderr, /auth\.trustedApps: .*only allowed as the whole first label/);
+  });
+});
+
+describe('[CKSE] bin/check-config.js series engine with a SQLite base', function () {
+  this.timeout(60000);
+
+  const PROBLEM = /storages\.series\.engine=postgresql requires storages\.base\.engine: postgresql/;
+  const withoutSeries = BASE.replace('  series:\n    engine: sqlite\n', '');
+
+  it('[CKSE1] PostgreSQL series on a SQLite base is a problem, also when the series engine is left to its default', () => {
+    for (const body of [BASE.replace('  series:\n    engine: sqlite\n', '  series:\n    engine: postgresql\n'), withoutSeries]) {
+      const res = runCheck(body);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stderr, PROBLEM);
+    }
+  });
+
+  it('[CKSE2] SQLite or InfluxDB series on a SQLite base, and PostgreSQL series on a PostgreSQL base, pass', () => {
+    for (const engine of ['sqlite', 'influxdb']) {
+      const res = runCheck(BASE.replace('  series:\n    engine: sqlite\n', `  series:\n    engine: ${engine}\n`));
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    }
+    const pg = runCheck(withoutSeries.replace('    engine: sqlite\n', '    engine: postgresql\n  engines:\n    postgresql:\n' +
+      '      host: localhost\n      port: 5432\n      database: pryv\n      user: pryv\n      password: a-db-password\n'));
+    assert.strictEqual(pg.status, 0, pg.stdout + pg.stderr);
+    assert.doesNotMatch(pg.stdout + pg.stderr, /storages\.series\.engine/);
   });
 });
 

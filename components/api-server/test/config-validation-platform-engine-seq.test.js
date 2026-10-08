@@ -119,3 +119,61 @@ describe('[CVPE] config-validation platform-engine topology', () => {
     assert.strictEqual(problems.length, 4, JSON.stringify(problems, null, 2));
   });
 });
+
+/**
+ * [CVSD] The PostgreSQL series engine runs on the base storage's
+ * PostgreSQL connection, which only exists with a PostgreSQL base: a SQLite
+ * base with PostgreSQL series must refuse the boot (it would otherwise boot
+ * and fail every series call). The PostgreSQL audit and file engines open
+ * their own pool and stay accepted with a SQLite base.
+ */
+describe('[CVSD] config-validation series engine dependency', () => {
+  let checkSeriesEngineDependency, validate;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    ({ checkSeriesEngineDependency, validate } = require('../../../config/plugins/config-validation.js'));
+  });
+
+  function engines (base, series, extra = {}) {
+    const map = { 'storages:base:engine': base, 'storages:series:engine': series, ...extra };
+    return { get: (key) => map[key] };
+  }
+
+  it('[CVSD1] SQLite base with PostgreSQL series → one problem naming the valid choices', () => {
+    const problems = [];
+    checkSeriesEngineDependency(engines('sqlite', 'postgresql'), problems);
+    assert.strictEqual(problems.length, 1, JSON.stringify(problems, null, 2));
+    assert.deepStrictEqual(problems[0].path, ['storages', 'series', 'engine']);
+    assert.match(problems[0].message, /requires 'storages\.base\.engine: postgresql'/);
+    assert.match(problems[0].message, /'storages\.series\.engine: sqlite' or 'influxdb'/);
+  });
+
+  it('[CVSD2] the valid pairings, and PostgreSQL audit / file engines with a SQLite base, pass', () => {
+    for (const [base, series] of [['postgresql', 'postgresql'], ['postgresql', 'sqlite'], ['postgresql', 'influxdb'],
+      ['sqlite', 'sqlite'], ['sqlite', 'influxdb']]) {
+      const problems = [];
+      checkSeriesEngineDependency(engines(base, series, {
+        'storages:audit:engine': 'postgresql',
+        'storages:file:engine': 'postgresql'
+      }), problems);
+      assert.strictEqual(problems.length, 0, `${base} + ${series}: ${JSON.stringify(problems)}`);
+    }
+  });
+
+  it('[CVSD3] validate() runs the check', async () => {
+    const config = await require('@pryv/boiler').getConfig();
+    const base = config.get('storages:base:engine');
+    const series = config.get('storages:series:engine');
+    try {
+      config.set('storages:base:engine', 'sqlite');
+      config.set('storages:series:engine', 'postgresql');
+      const problems = await validate(config);
+      assert.ok(problems.some((p) => p.path.join(':') === 'storages:series:engine'), JSON.stringify(problems, null, 2));
+    } finally {
+      config.set('storages:base:engine', base);
+      config.set('storages:series:engine', series);
+    }
+  });
+});

@@ -268,6 +268,26 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
+// storages.series.engine: postgresql needs a PostgreSQL base engine (mirrors
+// checkSeriesEngineDependency in config/plugins/config-validation.js). The
+// series engine defaults to postgresql, so a file that only switches the base
+// engine to SQLite is refused too: resolve it like boot does.
+{
+  const baseEngine = get('storages.base.engine');
+  let seriesEngine = get('storages.series.engine') ?? get('storages.series.engine', baseLayer);
+  if (seriesEngine == null) {
+    try {
+      const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
+      seriesEngine = get('storages.series.engine', defaults);
+    } catch (err) {
+      warnings.push(`storages.series.engine could not be resolved here (${err.message}); master.js still checks it at boot.`);
+    }
+  }
+  if (!isMissingOrSentinel(baseEngine) && baseEngine !== 'postgresql' && seriesEngine === 'postgresql') {
+    problems.push(`storages.series.engine=postgresql requires storages.base.engine: postgresql (got "${baseEngine}"); with a SQLite base set storages.series.engine: sqlite or influxdb (the series engine defaults to postgresql)`);
+  }
+}
+
 // storages.platform.engine — rqlite (default, multi-core capable) or
 // postgresql (single-core dnsLess diskless shape; mirrors
 // checkPlatformEngineTopology in config/plugins/config-validation.js)

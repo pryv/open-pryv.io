@@ -206,6 +206,24 @@ function checkPlatformEngineTopology (config, problems) {
   }
 }
 
+// The PostgreSQL series engine runs on the base engine's PostgreSQL
+// connection, which the storage layer opens only when the base engine is
+// PostgreSQL. With a SQLite base the server would boot and fail every series
+// read and write (and the series step of account deletion). The PostgreSQL
+// audit and file engines open their own pool, so they work with any base.
+// The series engine defaults to postgresql: a config that switches only the
+// base engine to SQLite lands here too.
+function checkSeriesEngineDependency (config, problems) {
+  const seriesEngine = config.get('storages:series:engine');
+  const baseEngine = config.get('storages:base:engine');
+  if (seriesEngine !== 'postgresql' || baseEngine === 'postgresql') return;
+  problems.push({
+    message: `'storages.series.engine: postgresql' requires 'storages.base.engine: postgresql' (the PostgreSQL series engine uses the base storage connection), got '${baseEngine}'. With a SQLite base, set 'storages.series.engine: sqlite' or 'influxdb' (the series engine defaults to postgresql).`,
+    path: ['storages', 'series', 'engine'],
+    payload: { 'storages.series.engine': seriesEngine, 'storages.base.engine': baseEngine }
+  });
+}
+
 // Conflicting DNS-topology flags. `dns.active: true` runs the embedded DNS
 // and advertises per-user-subdomain URLs (service/info `api`, reserved
 // `reg.<domain>` register URL, …), but `dnsLess.isActive` — which defaults
@@ -479,6 +497,7 @@ async function validate (config) {
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
   checkPlatformEngineTopology(config, problems);
+  checkSeriesEngineDependency(config, problems);
   checkSsoConfig(config, problems);
   checkEmailVerificationGate(config, problems);
   checkMfaConfig(config, problems);
@@ -624,6 +643,7 @@ module.exports = {
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,
   checkPlatformEngineTopology,
+  checkSeriesEngineDependency,
   checkSsoConfig,
   checkEmailVerificationGate,
   checkMfaConfig,

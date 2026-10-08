@@ -132,7 +132,7 @@ storages:
   file:
     engine: filesystem
   series:
-    engine: postgresql    # or sqlite, or influxdb
+    engine: postgresql    # or sqlite, or influxdb (postgresql requires base on postgresql)
   audit:
     engine: sqlite        # or postgresql
   engines:
@@ -637,6 +637,7 @@ which is a declared `VOLUME`):
 ```yaml
 storages:
   base:   { engine: sqlite }      # SQLite base storage lands on the mount
+  series: { engine: sqlite }      # series on PostgreSQL requires base on PostgreSQL
   engines:
     sqlite:     { path: /app/var-pryv/encrypted/mnt/users }   # attachments co-locate here → already on the encrypted mount
     rqlite:     { dataDir: /app/var-pryv/encrypted/mnt/rqlite-data }
