@@ -285,7 +285,15 @@ services:
           body: ''
           headers: {}
     sessions:
+      # Lifetime of a pending MFA session (between a login or an activation
+      # and its verify or confirm), fixed when it is opened: attempts and
+      # re-sent challenges do not extend it.
       ttlSeconds: 1800
+      # Most pending MFA sessions this core holds at once (each is held in
+      # memory). Past it, a login or an activation that needs one answers
+      # 429 too-many-requests until sessions are completed or expire.
+      # 0 disables the cap.
+      maxPending: 10000
     # Failed second-factor limits. `perSession` bounds one pending MFA session
     # (the historical fixed limit). Failures also accrue per account across
     # logins, so re-authenticating does not hand out a fresh budget: after
@@ -374,9 +382,10 @@ services:
     # requireAtRegistration): carries the copy/paste code, not a link.
     emailChallengeTemplate: email-challenge
     # Sent when the account's MFA changes (see enabled.mfaChange). The template
-    # gets USERNAME, MFA_CHANGE (enrolled | replaced | deactivated | recovered)
-    # and one flag per change (MFA_ENROLLED, MFA_REPLACED, MFA_DEACTIVATED,
-    # MFA_RECOVERED: 'true' for the change that happened, '' otherwise).
+    # gets USERNAME, MFA_CHANGE (enrolled | replaced | deactivated | recovered
+    # | deactivatedByAdmin) and one flag per change (MFA_ENROLLED,
+    # MFA_REPLACED, MFA_DEACTIVATED, MFA_RECOVERED, MFA_DEACTIVATED_BY_ADMIN:
+    # 'true' for the change that happened, '' otherwise).
     mfaChangeTemplate: mfa-change
     defaultLang: en
     # --- in-process mode only ---

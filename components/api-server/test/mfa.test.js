@@ -71,6 +71,19 @@ async function previousStepCodeFor (secretB32) {
   return totpCodeFor(secretB32, -1);
 }
 
+// Reading an object key (e.g. `services:mfa`) merges the scopes into the
+// LOWEST scope's own objects (nconf), so a key injected for one test can stay
+// behind in the shipped defaults after its restore. Where a test injects a key
+// whose shipped value other tests rely on, it puts that value back this way.
+async function putBackShippedValue (shipped) {
+  const undo = injectTestConfigSnapshot(shipped);
+  try {
+    (await getConfig()).get('services:mfa');
+  } finally {
+    undo();
+  }
+}
+
 const mfaConfig = {
   services: {
     mfa: {
@@ -896,6 +909,21 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/recover`).send({ username, password, recoveryCode: valid });
         assert.strictEqual(okRes.status, 200, `the valid code must be accepted: ${JSON.stringify(okRes.body)}`);
       });
+
+      it('[MA7F] refuses when the body names another account than the path', async function () {
+        const otherName = ('mfo' + cuid.slug()).toLowerCase();
+        await fixtures.user(otherName, { password: 'mfa-other-pwd-123' });
+        const res = await coreRequest
+          .post(`/${otherName}/mfa/recover`)
+          .send({ username, password, recoveryCode: recoveryCodes[1] });
+        assert.strictEqual(res.status, 401, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-credentials');
+        // The enrolment is untouched: the same code still works on its own path.
+        const okRes = await coreRequest
+          .post(`/${username}/mfa/recover`)
+          .send({ username, password, recoveryCode: recoveryCodes[1] });
+        assert.strictEqual(okRes.status, 200, JSON.stringify(okRes.body));
+      });
     });
   });
 
@@ -1156,6 +1184,64 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.deepStrictEqual(clientRequest.body, {});
       }
       assert.ok(sends.every((s) => s.to === '+41791234567'), 'the stored phone, never one from the request');
+    });
+
+    function assertEnrolmentChanged (res) {
+      assert.strictEqual(res.status, 401, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-access-token');
+      assert.match(res.body.error.message, /enrolment changed since login/);
+      assert.strictEqual(res.body.token, undefined);
+    }
+
+    it('[MSMS10] once the SMS enrolment is replaced (same phone), a login session is refused by verify and by challenge (401)', async function () {
+      await setUp();
+      await enrol();
+      const a = await login();
+      const codeA = lastCode();
+      const b = await login();
+      assert.ok(a.body.mfaToken != null && b.body.mfaToken != null);
+      const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
+        .send({ method: 'sms', phone: '+41791234567', password });
+      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual((await confirm(act.body.mfaToken, lastCode())).status, 200);
+      const sent = sends.length;
+      assertEnrolmentChanged(await verify(a.body.mfaToken, codeA));
+      assertEnrolmentChanged(await challenge(b.body.mfaToken));
+      assert.strictEqual(sends.length, sent, 'nothing sent for the stale session');
+    });
+
+    it('[MSMS11] once MFA is turned off, a login session is refused by verify and by challenge (401)', async function () {
+      await setUp();
+      await enrol();
+      const a = await login();
+      const codeA = lastCode();
+      const b = await login();
+      const off = await coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send({ password });
+      assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+      assertEnrolmentChanged(await verify(a.body.mfaToken, codeA));
+      assertEnrolmentChanged(await challenge(b.body.mfaToken));
+    });
+
+    it('[MSMS12] re-sent challenges do not extend a login session past its lifetime', async function () {
+      await setUp();
+      const restoreTtl = injectTestConfigSnapshot({ services: { mfa: { sessions: { ttlSeconds: 2 } } } });
+      try {
+        await _resetMFASingletons();
+        await enrol();
+        const loginRes = await login();
+        for (let i = 0; i < 3; i++) {
+          await sleep(700);
+          const again = await challenge(loginRes.body.mfaToken);
+          if (i < 2) assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+        }
+        // 2.1 s after the login: the session is over, whatever was sent since.
+        const late = await verify(loginRes.body.mfaToken, lastCode());
+        assert.strictEqual(late.status, 401, `the session outlived its lifetime: ${JSON.stringify(late.body)}`);
+        assert.strictEqual(late.body.token, undefined);
+      } finally {
+        restoreTtl();
+        await putBackShippedValue({ services: { mfa: { sessions: { ttlSeconds: 1800 } } } });
+      }
     });
   });
 
@@ -1732,6 +1818,159 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         }
         await new Promise((resolve) => setTimeout(resolve, 300));
         assert.strictEqual(captured.length, 0, JSON.stringify(captured));
+      });
+
+      // mfa.recover and system.deactivateMfa are audited without a user (no
+      // access of the account), so they leave a row in the account's trail.
+      async function auditRows () {
+        const res = await coreRequest.get(`/${username}/events`).set('Authorization', personalToken)
+          .query({ streams: [':_audit:'], limit: 200 });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        return res.body.events ?? [];
+      }
+      async function enrolTotp () {
+        const act = await activateTotp();
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        return confirm.body.recoveryCodes;
+      }
+
+      /** The admin reset, through the system API (wired by the standalone
+       *  server, not by initCore: registered here on the app coreRequest uses). */
+      async function adminDeactivateMfa () {
+        const app = global.app;
+        await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+        const adminKey = (await getConfig()).get('auth:adminAccessKey');
+        return await coreRequest.delete(`/system/users/${username}/mfa`).set('Authorization', adminKey);
+      }
+
+      it('[MAUD1] mfa.recover leaves an mfa.recovered row in the account audit trail', async function () {
+        captureMails();
+        const recoveryCodes = await enrolTotp();
+        const recover = await coreRequest.post(`/${username}/mfa/recover`)
+          .send({ username, password, recoveryCode: recoveryCodes[0] });
+        assert.strictEqual(recover.status, 200, JSON.stringify(recover.body));
+        const row = (await auditRows()).find((e) => e.content?.action === 'mfa.recovered');
+        assert.ok(row != null, 'no mfa.recovered row');
+        assert.deepStrictEqual(row.content.record, { method: 'totp' });
+      });
+
+      it('[MAUD2] system.deactivateMfa leaves an mfa.deactivatedByAdmin row and sends a notice saying an administrator did it', async function () {
+        const captured = captureMails();
+        await enrolTotp();
+        await waitForMails(captured, 1);
+        const res = await adminDeactivateMfa();
+        assert.strictEqual(res.status, 204, JSON.stringify(res.body));
+        await waitForMails(captured, 2);
+        assert.strictEqual(captured.length, 2, 'the reset sent its notice');
+        const v = vars(captured[1]);
+        assert.strictEqual(v.MFA_CHANGE, 'deactivatedByAdmin');
+        assert.strictEqual(v.MFA_DEACTIVATED_BY_ADMIN, 'true');
+        assert.strictEqual(v.MFA_DEACTIVATED, '');
+        assert.deepStrictEqual(captured[1].message.to.map((t) => t.email), [email]);
+        const row = (await auditRows()).find((e) => e.content?.action === 'mfa.deactivatedByAdmin');
+        assert.ok(row != null, 'no mfa.deactivatedByAdmin row');
+        assert.deepStrictEqual(row.content.record, { enrolled: true, method: 'totp' });
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'MFA is off');
+      });
+
+      it('[MAUD3] system.deactivateMfa on an account without MFA: an audit row, no notice', async function () {
+        const captured = captureMails();
+        const res = await adminDeactivateMfa();
+        assert.strictEqual(res.status, 204, JSON.stringify(res.body));
+        const row = (await auditRows()).find((e) => e.content?.action === 'mfa.deactivatedByAdmin');
+        assert.ok(row != null, 'no mfa.deactivatedByAdmin row');
+        assert.deepStrictEqual(row.content.record, { enrolled: false });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.strictEqual(captured.length, 0, JSON.stringify(captured));
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // The pending MFA sessions are held in memory: their number is capped.
+    // ------------------------------------------------------------------
+    describe('[MCAP] cap on pending MFA sessions', function () {
+      let restoreCap;
+      beforeEach(async function () {
+        restoreCap = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPending: 2 } } } });
+        await _resetMFASingletons();
+      });
+      afterEach(async function () {
+        restoreCap();
+        await putBackShippedValue({ services: { mfa: { sessions: { maxPending: 10000 } } } });
+      });
+
+      it('[MCAP1] past maxPending sessions a login and an activation answer 429; a completed session frees a place', async function () {
+        const act = await activateTotp();
+        const secret = act.body.secret;
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        // The enrolment slot of that activation is still held: it does not count.
+        const a = await login();
+        assert.ok(a.body.mfaToken != null, JSON.stringify(a.body));
+        const b = await login();
+        assert.ok(b.body.mfaToken != null, JSON.stringify(b.body));
+        const refused = await login();
+        assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+        assert.strictEqual(refused.headers['retry-after'], '60');
+        assert.strictEqual(refused.body.token, undefined);
+        assert.strictEqual(refused.body.mfaToken, undefined);
+        const replace = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
+          .send({ method: 'totp', password });
+        assert.strictEqual(replace.status, 429, JSON.stringify(replace.body));
+        // Completing one session gives its place back.
+        const ok = await coreRequest.post(`/${username}/mfa/verify`).set('Authorization', a.body.mfaToken)
+          .send({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+        const again = await login();
+        assert.ok(again.body.mfaToken != null, JSON.stringify(again.body));
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // An MFA session acts only under the path of its own account.
+    // ------------------------------------------------------------------
+    describe('[MPUS] the MFA session belongs to the account of the request path', function () {
+      let other;
+      beforeEach(async function () {
+        other = ('mfo' + cuid.slug()).toLowerCase();
+        await fixtures.user(other, { password });
+      });
+      function assertUnknownToken (res) {
+        assert.strictEqual(res.status, 401, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-access-token');
+        assert.strictEqual(res.body.token, undefined);
+        assert.strictEqual(res.body.recoveryCodes, undefined);
+      }
+
+      it('[MPUS1] a login token used under another account path is refused by challenge and verify, and works under its own', async function () {
+        const act = await activateTotp();
+        const secret = act.body.secret;
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        const mfaToken = (await login()).body.mfaToken;
+        assert.ok(mfaToken != null);
+        const code = totpCodeFor(secret, 0);
+        assertUnknownToken(await coreRequest.post(`/${other}/mfa/challenge`).set('Authorization', mfaToken).send({}));
+        assertUnknownToken(await coreRequest.post(`/${other}/mfa/verify`).set('Authorization', mfaToken).send({ code }));
+        const ok = await coreRequest.post(`/${username}/mfa/verify`).set('Authorization', mfaToken).send({ code });
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+        assert.ok(ok.body.token != null);
+      });
+
+      it('[MPUS2] an enrolment token used under another account path is refused by confirm, and works under its own', async function () {
+        const act = await activateTotp();
+        const code = totpCodeFor(act.body.secret, 0);
+        assertUnknownToken(await coreRequest.post(`/${other}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code }));
+        const ok = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code });
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+        assert.strictEqual(ok.body.recoveryCodes.length, 10);
       });
     });
 

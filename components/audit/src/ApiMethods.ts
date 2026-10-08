@@ -113,7 +113,13 @@ const ALL_METHODS = [
   // sso.login is user-resolved (the signed-in account's trail); sso.refused has
   // no resolvable user at emit time (no-account / unproved email / mint error).
   'sso.login',
-  'sso.refused'
+  'sso.refused',
+  // MFA removed from outside the account's own session (a recovery code, an
+  // admin reset). Emitted directly via audit.eventForUser() from the mfa and
+  // system methods, whose own calls are audited without a user, so that the
+  // account's trail records the change.
+  'mfa.recovered',
+  'mfa.deactivatedByAdmin'
 ];
 
 const NOT_AUDITED_METHODS = [

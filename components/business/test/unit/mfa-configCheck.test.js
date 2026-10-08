@@ -186,6 +186,17 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.sessions.ttlSeconds = 0; })), ['services.mfa.sessions.ttlSeconds']);
   });
 
+  it('[MCHK16] sessions.maxPending: a non-negative integer; 0 warns (no cap); anything else is a problem', function () {
+    assert.strictEqual(SHIPPED.sessions.maxPending, 10000);
+    for (const bad of [-1, 1.5, 'many', true, [3]]) {
+      assert.deepStrictEqual(paths(withChange((c) => { c.sessions.maxPending = bad; })), ['services.mfa.sessions.maxPending'], JSON.stringify(bad));
+    }
+    const off = withChange((c) => { c.sessions.maxPending = 0; });
+    assert.deepStrictEqual(off.problems, []);
+    assert.match(off.warnings.join(' '), /maxPending is 0/);
+    assert.deepStrictEqual(withChange((c) => { c.sessions.maxPending = '25'; }), { problems: [], warnings: [] });
+  });
+
   it('[MCHK12] allowLoginWhenMethodInactive: true warns; a non-boolean is a problem; false or absent says nothing', function () {
     const on = withChange((c) => { c.allowLoginWhenMethodInactive = true; });
     assert.deepStrictEqual(on.problems, []);

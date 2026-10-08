@@ -121,5 +121,39 @@ class Profile {
   }
 }
 
+/** JSON with object keys sorted, so a value reads the same whatever the
+ *  key order a storage engine hands it back in. */
+function canonicalJson (value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
+  if (value != null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return '{' + Object.keys(obj).sort().filter((k) => obj[k] !== undefined)
+      .map((k) => JSON.stringify(k) + ':' + canonicalJson(obj[k])).join(',') + '}';
+  }
+  return JSON.stringify(value ?? null);
+}
+
+type FingerprintSource = {
+  isActive (): boolean;
+  method?: string;
+  content?: Record<string, unknown>;
+  totp?: { secret?: string } | null;
+  recoveryCodes?: string[];
+};
+
+/**
+ * Identifies one active enrolment (null when there is none): its method, its
+ * SMS content, its TOTP secret and its recovery codes. Recovery codes are
+ * minted at every confirmation, so a new enrolment, even of the same method
+ * and phone, never matches an earlier one, while a TOTP use (which only
+ * moves `lastUsedStep`) keeps it unchanged.
+ */
+function enrolmentFingerprint (profile: FingerprintSource): string | null {
+  if (!profile.isActive()) return null;
+  return crypto.createHash('sha256')
+    .update(canonicalJson([profile.method ?? 'sms', profile.content ?? {}, profile.totp?.secret ?? null, profile.recoveryCodes ?? []]))
+    .digest('hex');
+}
+
 export default Profile;
-export { Profile, hashRecoveryCode, isHashedRecoveryCode };
+export { Profile, hashRecoveryCode, isHashedRecoveryCode, enrolmentFingerprint };

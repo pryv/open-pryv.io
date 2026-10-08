@@ -23,7 +23,10 @@ type UserInfoStats = {
   storageUsed?: unknown;
 };
 type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number; calls?: Record<string, number> };
+type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: unknown };
 const commonFns = require('./helpers/commonFunctions.ts');
+const { notifyMfaChange, auditMfaChange } = require('./helpers/mfaChange.ts');
+const { Profile: MFAProfile } = require('business/src/mfa/index.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');
 const string = require('./helpers/string.ts');
@@ -285,7 +288,15 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   );
 
   async function deactivateMfa (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    let wasEnrolled: { method: string } | null = null;
     try {
+      // What the reset removes, for its audit row and its notice.
+      const before = await fromCallback((cb: (err?: unknown, res?: unknown) => void) =>
+        userProfileStorage.findOne(context.user, { id: 'private' }, null, cb)) as { data?: { mfa?: StoredMfa } } | null;
+      const stored = before?.data?.mfa;
+      if (stored != null && new MFAProfile(stored.content || {}, stored.recoveryCodes || [], stored.method, stored.totp).isActive()) {
+        wasEnrolled = { method: stored.method ?? 'sms' };
+      }
       await fromCallback((cb: (err?: unknown, res?: unknown) => void) => userProfileStorage.findOneAndUpdate(
         context.user,
         // The private profile explicitly: `{}` matched whichever profile row
@@ -299,6 +310,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     } catch (err) {
       return next(err);
     }
+    const user = context.user as { id: string; username: string };
+    // The call is audited without a user (an admin key, no access of the
+    // account): the account's own trail gets a row of its own, and its
+    // owner a notice when a second factor was actually removed.
+    await auditMfaChange(config, user.id, 'mfa.deactivatedByAdmin',
+      wasEnrolled != null ? { enrolled: true, method: wasEnrolled.method } : { enrolled: false });
+    if (wasEnrolled != null) notifyMfaChange(config, user, 'deactivatedByAdmin');
     next();
   }
 

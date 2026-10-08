@@ -177,6 +177,68 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.isTrue(await store.has(second));
   });
 
+  it('[MT8A] create() is refused at maxPending live sessions (429 too-many-requests), and accepted again once one is cleared', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 2 });
+    const a = await store.create(new Profile({ x: 1 }), {});
+    await store.create(new Profile({ x: 2 }), {});
+    let refused = null;
+    try { await store.create(new Profile({ x: 3 }), {}); } catch (err) { refused = err; }
+    assert.isNotNull(refused, 'the 3rd session must be refused');
+    assert.equal(refused.httpStatus, 429);
+    assert.equal(refused.id, 'too-many-requests');
+    assert.deepEqual(refused.httpHeaders, { 'Retry-After': '60' });
+    await store.clear(a);
+    assert.isTrue(await store.has(await store.create(new Profile({ x: 4 }), {})));
+  });
+
+  it('[MT8B] enrolment slots and SMS send counters do not count toward maxPending', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 2 });
+    // Other keys of the MFA state, more of them than the cap.
+    for (const k of ['a', 'b', 'c']) {
+      await harness.kvClient.set('mfa-sms-send/user/' + k, 1, { ttlMs: 60000 });
+      await harness.kvClient.set('mfa-session-enrol-slot/' + k, 'x', { ttlMs: 60000 });
+    }
+    const first = await store.create(new Profile({ x: 1 }), { kind: 'enroll' });
+    assert.isNull(await store.takeEnrolSlot('u1', first));
+    const second = await store.create(new Profile({ x: 2 }), { kind: 'enroll' });
+    assert.isNull(await store.takeEnrolSlot('u2', second));
+    assert.isTrue(await store.has(first));
+    assert.isTrue(await store.has(second));
+  });
+
+  it('[MT8C] maxPending: 0 disables the cap', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 0 });
+    for (let i = 0; i < 5; i++) await store.create(new Profile({ i }), {});
+  });
+
+  it('[MT9A] attempts, released attempts and new SMS codes never extend a session past its creation lifetime', async () => {
+    const store = new SessionStore(0.4, { kvClient: harness.kvClient }); // 400 ms
+    const token = await store.create(new Profile({ x: 1 }), {});
+    const until = Date.now() + 700;
+    // Keep rewriting the session, as re-challenges and attempts would.
+    while (Date.now() < until) {
+      await store.reserveAttempt(token, 1000);
+      await store.releaseAttempt(token);
+      await store.setSmsCode(token, { hash: 'h', expiresAt: Date.now() + 60000 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.isFalse(await store.has(token), 'the session outlived its lifetime');
+    assert.deepEqual(await store.reserveAttempt(token, 1000), { refused: 'gone' });
+    assert.isFalse(await store.setSmsCode(token, null));
+  });
+
+  it('[MT9B] a record past its expiresAt is refused even while the store still holds it', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), {});
+    const record = await harness.kvClient.get('mfa-session/' + token);
+    assert.isNumber(record.expiresAt);
+    await harness.kvClient.set('mfa-session/' + token, { ...record, expiresAt: Date.now() - 1 }, { ttlMs: 60000 });
+    assert.isUndefined(await store.get(token));
+    assert.isFalse(await store.has(token));
+    assert.deepEqual(await store.reserveAttempt(token, 5), { refused: 'gone' });
+    assert.isFalse(await store.setSmsCode(token, null));
+  });
+
   it('[MT7C] concurrent takeEnrolSlot() calls leave exactly one pending enrolment', async () => {
     const store = new SessionStore(1800, { kvClient: harness.kvClient });
     const tokens = await Promise.all(Array.from({ length: 8 }, (_, i) => store.create(new Profile({ i }), { kind: 'enroll' })));

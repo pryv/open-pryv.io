@@ -31,7 +31,7 @@ const { ready, getLogger } = require('@pryv/boiler');
 const mfaLogger = getLogger('methods:auth:mfa');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
-const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
+const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile: MFAProfile, enrolmentFingerprint } = require('business/src/mfa/index.ts');
 // Breach-scope reverse-index: personal accesses are created here at login (a
 // distinct site from accesses.create), so index them too. Non-fatal.
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
@@ -386,7 +386,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         user: context.user,
         token: result.token,
         apiEndpoint: result.apiEndpoint,
-        kind: 'login'
+        kind: 'login',
+        // The enrolment this session is opened against: mfa.challenge and
+        // mfa.verify refuse the session once the stored one differs.
+        enrolment: enrolmentFingerprint(profile)
       });
       // The challenge of this session (an SMS for the SMS method). None of
       // the login parameters is passed: the password never reaches the MFA

@@ -170,7 +170,8 @@ describe('[MAILFCD] mail façade', () => {
       ['enrolled', 'turned on', 'activée'],
       ['replaced', 'replaced', 'remplacée'],
       ['deactivated', 'turned off', 'désactivée'],
-      ['recovered', 'recovery code', 'code de récupération']
+      ['recovered', 'recovery code', 'code de récupération'],
+      ['deactivatedByAdmin', 'by an administrator', 'par un administrateur']
     ];
     const subjects = new Set();
     for (const [change, enSubject, frSubject] of cases) {
@@ -199,6 +200,7 @@ function mfaChangeSubstitutions (username, change) {
     MFA_ENROLLED: change === 'enrolled' ? 'true' : '',
     MFA_REPLACED: change === 'replaced' ? 'true' : '',
     MFA_DEACTIVATED: change === 'deactivated' ? 'true' : '',
-    MFA_RECOVERED: change === 'recovered' ? 'true' : ''
+    MFA_RECOVERED: change === 'recovered' ? 'true' : '',
+    MFA_DEACTIVATED_BY_ADMIN: change === 'deactivatedByAdmin' ? 'true' : ''
   };
 }

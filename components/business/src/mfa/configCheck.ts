@@ -125,6 +125,14 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
         problems.push({ message: `sessions.ttlSeconds must be a number of at least 1, got ${JSON.stringify(sessions.ttlSeconds)}.`, path: [...base, 'sessions', 'ttlSeconds'] });
       }
     }
+    if (isSet(sessions.maxPending)) {
+      const n = Number(sessions.maxPending);
+      if ((typeof sessions.maxPending !== 'number' && typeof sessions.maxPending !== 'string') || !Number.isInteger(n) || n < 0) {
+        problems.push({ message: `sessions.maxPending must be a non-negative integer (0 disables the cap), got ${JSON.stringify(sessions.maxPending)}.`, path: [...base, 'sessions', 'maxPending'] });
+      } else if (n === 0) {
+        warnings.push('services.mfa.sessions.maxPending is 0: the number of pending MFA sessions this core holds in memory is not capped.');
+      }
+    }
   }
 
   // Step-up on turning MFA off or replacing it. Checked whether MFA is active

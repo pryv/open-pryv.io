@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const { randomUUID: uuidv4 } = require('node:crypto');
 const Profile = require('./Profile.ts').default;
 const errors = require('errors').factory;
+const { APIError, ErrorIds } = require('errors');
 
 /**
  * MFA session store, backed by `cluster_kv` (master-held in-memory map +
@@ -27,8 +28,9 @@ const errors = require('errors').factory;
 interface KvClientLike {
   get: (key: string) => Promise<unknown>;
   /** Resolves whether it wrote: an unguarded write always does; the
-   * `ifEquals` write of reserveAttempt may not, and is retried. */
-  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => Promise<boolean>;
+   * `ifEquals` write of reserveAttempt may not, and is retried; the
+   * `ifUnderPrefix` write of create may not when the namespace is full. */
+  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown; ifUnderPrefix?: { prefix: string; max: number } }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
   clear: () => Promise<void>;
 }
@@ -36,7 +38,14 @@ interface KvClientLike {
 interface SessionStoreOpts {
   kvClient?: KvClientLike;
   namespace?: string;
+  /** Most live sessions at once (0: no cap). Default 10000. */
+  maxPending?: number;
 }
+
+const DEFAULT_MAX_PENDING = 10000;
+/** Retry-After of a refusal at the cap: the drain rate is unknown (sessions
+ * leave as users complete them, or on expiry), so a flat minute. */
+const CAP_RETRY_AFTER_SECONDS = 60;
 
 interface ProfileLike {
   content?: Record<string, unknown>;
@@ -61,32 +70,45 @@ interface StoredSession {
   context: unknown;
   attempts: number;
   smsCode?: SmsCode | null;
+  /** End of the session's life (ms epoch), fixed at creation. */
+  expiresAt?: number;
 }
 
 class SessionStore {
   /**
-   * @param ttlSeconds - session lifetime in seconds (default 1800)
+   * @param ttlSeconds - session lifetime in seconds (default 1800), counted
+   *   from creation: no later write extends it.
    * @param [opts]
    * @param [opts.kvClient] - injectable; defaults to a fresh
    *   `cluster_kv.clientFor()` over the live process IPC channel.
    * @param [opts.namespace='mfa-session/'] - key prefix in cluster_kv.
+   * @param [opts.maxPending=10000] - most live sessions at once; 0: no cap.
    */
   ttlMilliseconds: number;
   kv: KvClientLike;
   namespace: string;
   /** Key prefix of the per-user pending-enrolment slot. */
   enrolSlotNamespace: string;
+  maxPending: number;
 
   constructor (ttlSeconds = 1800, opts: SessionStoreOpts = {}) {
     this.ttlMilliseconds = ttlSeconds * 1000;
     const clusterKv = require('messages/src/cluster_kv.ts');
     this.kv = opts.kvClient || clusterKv.clientFor();
     this.namespace = opts.namespace || 'mfa-session/';
+    // Not under `namespace` (`mfa-session-enrol-slot/` does not start with
+    // `mfa-session/`), so the slots never count toward the session cap.
     this.enrolSlotNamespace = this.namespace.replace(/\/$/, '') + '-enrol-slot/';
+    this.maxPending = (typeof opts.maxPending === 'number' && Number.isInteger(opts.maxPending) && opts.maxPending >= 0)
+      ? opts.maxPending
+      : DEFAULT_MAX_PENDING;
   }
 
   /**
-   * Create a new session and return its mfaToken.
+   * Create a new session and return its mfaToken. Refused (429
+   * too-many-requests) when the store already holds `maxPending` live
+   * sessions: counted and written in one cluster_kv step, so concurrent
+   * creations cannot pass the cap together.
    *
    * @param profile - the MFA profile (with content + recoveryCodes)
    * @param context - opaque per-flow context (e.g. the resolved user, login params)
@@ -104,18 +126,50 @@ class SessionStore {
         ...(profile?.totp !== undefined ? { totp: profile.totp } : {})
       },
       context,
-      attempts: 0
+      attempts: 0,
+      expiresAt: Date.now() + this.ttlMilliseconds
     };
-    await this.kv.set(this.namespace + id, stored, { ttlMs: this.ttlMilliseconds });
+    const opts: { ttlMs: number; ifUnderPrefix?: { prefix: string; max: number } } = { ttlMs: this.ttlMilliseconds };
+    if (this.maxPending > 0) opts.ifUnderPrefix = { prefix: this.namespace, max: this.maxPending };
+    const written = await this.kv.set(this.namespace + id, stored, opts);
+    // A guarded write must say it wrote; anything else counts as refused.
+    if (opts.ifUnderPrefix != null && written !== true) throw capacityError();
     return id;
   }
 
+  /**
+   * The live record of a session, or null. A record past its `expiresAt` is
+   * refused even when the store has not dropped it yet.
+   */
+  async _read (id: string): Promise<StoredSession | null> {
+    const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+    if (!session) return null;
+    if (typeof session.expiresAt === 'number' && Date.now() >= session.expiresAt) return null;
+    return session;
+  }
+
+  /**
+   * Compare-and-set rewrite of a session, within its remaining lifetime (a
+   * rewrite never extends it). Answers false when the write lost (retry) or
+   * when no lifetime is left; `expired` tells the two apart. A record without
+   * `expiresAt` (written before it was recorded) gets one now, a full
+   * lifetime from this first rewrite.
+   */
+  async _rewrite (id: string, session: StoredSession, next: StoredSession): Promise<{ written: boolean; expired: boolean }> {
+    const expiresAt = typeof session.expiresAt === 'number' ? session.expiresAt : Date.now() + this.ttlMilliseconds;
+    const remaining = expiresAt - Date.now();
+    // cluster_kv takes a non-positive TTL as "never expires": never send one.
+    if (!(remaining > 0)) return { written: false, expired: true };
+    const written = await this.kv.set(this.namespace + id, { ...next, expiresAt }, { ttlMs: remaining, ifEquals: session });
+    return { written, expired: false };
+  }
+
   async has (id: string): Promise<boolean> {
-    return (await this.kv.get(this.namespace + id)) != null;
+    return (await this._read(id)) != null;
   }
 
   async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown; attempts: number; smsCode: SmsCode | null } | undefined> {
-    const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+    const session = await this._read(id);
     if (!session) return undefined;
     const profile = new Profile(
       session.profile?.content || {},
@@ -133,10 +187,11 @@ class SessionStore {
    */
   async setSmsCode (id: string, smsCode: SmsCode | null): Promise<boolean> {
     for (let tries = 0; tries < 20; tries++) {
-      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      const session = await this._read(id);
       if (!session) return false;
-      const next = { ...session, smsCode };
-      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) return true;
+      const { written, expired } = await this._rewrite(id, session, { ...session, smsCode });
+      if (expired) return false;
+      if (written) return true;
     }
     return false;
   }
@@ -170,7 +225,8 @@ class SessionStore {
   /**
    * Reserve one verify/confirm attempt on a session BEFORE the code is checked,
    * so the ceiling holds however many attempts are in flight at once.
-   * Preserves the session (TTL is refreshed).
+   * Preserves the session, within its remaining lifetime (an attempt never
+   * extends it).
    *
    * Answers `{ attempts }` (this attempt's number, 1-based) when reserved, or
    * the reason it was not: `gone` (no such session), `ceiling` (`max` attempts
@@ -180,14 +236,14 @@ class SessionStore {
     // Compare-and-set: parallel attempts on one session (possibly on different
     // API workers) each take their own slot, and none past `max`.
     for (let tries = 0; tries < 20; tries++) {
-      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      const session = await this._read(id);
       if (!session) return { refused: 'gone' };
       const previous = session.attempts ?? 0;
       if (previous >= max) return { refused: 'ceiling' };
       const next = { ...session, attempts: previous + 1 };
-      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) {
-        return { attempts: next.attempts };
-      }
+      const { written, expired } = await this._rewrite(id, session, next);
+      if (expired) return { refused: 'gone' };
+      if (written) return { attempts: next.attempts };
     }
     return { refused: 'busy' };
   }
@@ -199,14 +255,13 @@ class SessionStore {
    */
   async releaseAttempt (id: string): Promise<boolean> {
     for (let tries = 0; tries < 20; tries++) {
-      const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
+      const session = await this._read(id);
       if (!session) return false;
       const previous = session.attempts ?? 0;
       if (previous <= 0) return false;
-      const next = { ...session, attempts: previous - 1 };
-      if (await this.kv.set(this.namespace + id, next, { ttlMs: this.ttlMilliseconds, ifEquals: session })) {
-        return true;
-      }
+      const { written, expired } = await this._rewrite(id, session, { ...session, attempts: previous - 1 });
+      if (expired) return false;
+      if (written) return true;
     }
     return false;
   }
@@ -215,7 +270,7 @@ class SessionStore {
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
    */
   async clear (id: string): Promise<boolean> {
-    const existed = (await this.kv.get(this.namespace + id)) != null;
+    const existed = (await this._read(id)) != null;
     await this.kv.delete(this.namespace + id);
     return existed;
   }
@@ -226,6 +281,19 @@ class SessionStore {
   async clearAll () {
     await this.kv.clear();
   }
+}
+
+/**
+ * Refusal at the session cap: a capacity limit of this core, not a failed
+ * attempt of the caller, so 429 too-many-requests (as for the cap on pending
+ * access requests), and it says neither the cap nor how close it is.
+ */
+function capacityError (): Error {
+  const err = new APIError(ErrorIds.TooManyRequests,
+    'Too many MFA sessions are pending on this server. Please retry later.',
+    { httpStatus: 429, data: { retryAfterSeconds: CAP_RETRY_AFTER_SECONDS } });
+  err.httpHeaders = { 'Retry-After': String(CAP_RETRY_AFTER_SECONDS) };
+  return err;
 }
 
 export default SessionStore;

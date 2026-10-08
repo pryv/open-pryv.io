@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
  */
 
 const Profile = require('./Profile.ts').default;
+const { enrolmentFingerprint } = require('./Profile.ts');
 const Service = require('./Service.ts').default;
 const ChallengeVerifyService = require('./ChallengeVerifyService.ts').default;
 const SingleService = require('./SingleService.ts').default;
@@ -29,9 +30,10 @@ const { DEFAULT_CODE_LENGTH, DEFAULT_CODE_TTL_SECONDS } = require('./SingleServi
 const { SmsSendLimiter, SEND_LIMIT_DEFAULTS, smsDestination } = require('./smsSendLimits.ts');
 const { smsEnrolmentContent, RESERVED_CONTENT_KEYS } = require('./smsRequest.ts');
 
+type SessionsCfg = { ttlSeconds?: number; maxPending?: number };
 type MFAConfig = {
   mode?: 'disabled' | 'challenge-verify' | 'single' | string;
-  sessions?: { ttlSeconds?: number };
+  sessions?: SessionsCfg;
   [k: string]: unknown;
 };
 type MFAServiceLike = unknown; // Service implementation — opaque from the façade's POV
@@ -91,7 +93,7 @@ type NormalizedMfaConfig = {
   active: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
-  sessions?: { ttlSeconds?: number };
+  sessions?: { ttlSeconds: number; maxPending: number };
   attempts?: AttemptsCfg;
   stepUp: StepUpCfg;
   /**
@@ -178,6 +180,26 @@ function normalizeStepUp (raw: RawMfaConfig['stepUp']): StepUpCfg {
   return { required: src.required !== false };
 }
 
+const SESSIONS_DEFAULTS = {
+  ttlSeconds: 1800,
+  maxPending: 10000
+};
+
+/**
+ * Normalize `services.mfa.sessions`: `ttlSeconds` (a positive number) and
+ * `maxPending` (a non-negative integer, 0 disables the cap). An invalid or
+ * unset value keeps the default; the boot check refuses an invalid one.
+ */
+function normalizeSessions (raw: unknown): { ttlSeconds: number; maxPending: number } {
+  const src = (raw != null && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  const ttl = Number(src.ttlSeconds);
+  const max = Number(src.maxPending);
+  return {
+    ttlSeconds: (src.ttlSeconds != null && src.ttlSeconds !== '' && Number.isFinite(ttl) && ttl > 0) ? ttl : SESSIONS_DEFAULTS.ttlSeconds,
+    maxPending: (src.maxPending != null && src.maxPending !== '' && Number.isInteger(max) && max >= 0) ? max : SESSIONS_DEFAULTS.maxPending
+  };
+}
+
 /**
  * Normalize the SMS content-key allow-list: the keys an SMS enrolment may
  * carry besides `phone`. Read from `methods.sms.contentKeys`, falling back to
@@ -245,7 +267,7 @@ function mfaLogger (): { warn: (...args: unknown[]) => void } {
  */
 function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMfaConfig {
   const cfg = (raw || {}) as RawMfaConfig;
-  const sessions = cfg.sessions;
+  const sessions = normalizeSessions(cfg.sessions);
   const attempts = normalizeAttempts(cfg.attempts);
   // Carried on every branch, MFA off included: mfa.deactivate stays callable
   // when MFA is off server-wide, and its step-up rule must not change then.
@@ -450,12 +472,12 @@ function getMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceLike
 /**
  * Get (or lazily build) the process-wide MFA session store singleton.
  *
- * @param mfaConfig - `services.mfa` config block (read sessions.ttlSeconds)
+ * @param mfaConfig - `services.mfa` config block (read sessions.ttlSeconds and sessions.maxPending)
  */
 function getMFASessionStore (mfaConfig: MFAConfig | null | undefined): MFASessionStoreLike {
   if (_sessionStore === null) {
-    const ttl = mfaConfig?.sessions?.ttlSeconds ?? 1800;
-    _sessionStore = new SessionStore(ttl);
+    const sessions = normalizeSessions(mfaConfig?.sessions);
+    _sessionStore = new SessionStore(sessions.ttlSeconds, { maxPending: sessions.maxPending });
   }
   return _sessionStore!;
 }
@@ -473,6 +495,6 @@ async function _resetMFASingletons (): Promise<void> {
   _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, normalizeStepUp, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod, SmsSendLimiter, normalizeSmsTuning };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, normalizeStepUp, normalizeSessions, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod, SmsSendLimiter, normalizeSmsTuning, enrolmentFingerprint };
 export type { AttemptsCfg, BackoffCfg, StepUpCfg, NormalizedMfaConfig, SendLimitsCfg, SmsTuningCfg };
 export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';
