@@ -36,11 +36,12 @@ export function buildVerifyLink (pageURL: string, token: string, username: strin
 /**
  * For the welcome mail of a new account: when the verification mail is enabled
  * and the founding address is not proved (no code at registration), mint a
- * verification token for it, store its hash, and return the link. Null
- * otherwise. Stamping the token also starts the resend cooldown, as a
- * verification mail would.
+ * verification token for it, store its hash, and return the mail substitutions
+ * the verification mail also carries: the link, and the page URL + token for a
+ * holder whose mail client breaks the link. Null otherwise. Stamping the token
+ * also starts the resend cooldown, as a verification mail would.
  */
-export async function foundingVerifyLink (userId: string, username: string, email: string): Promise<string | null> {
+export async function foundingVerifyLink (userId: string, username: string, email: string): Promise<{ VERIFY_LINK: string, VERIFY_URL: string, VERIFY_TOKEN: string } | null> {
   const config = await getConfig();
   if (!describeVerificationMail(config).enabled) return null;
   const ev = await container.findRawByValue(userId, email);
@@ -49,5 +50,6 @@ export async function foundingVerifyLink (userId: string, username: string, emai
   const token = mintToken();
   const now = timestamp.now();
   await container.stampVerification(userId, ev, hashToken(token), timestamp.now(maxAgeMs / 1000), now);
-  return buildVerifyLink(config.get('auth:emailVerificationPageURL') as string, token, username);
+  const pageURL = config.get('auth:emailVerificationPageURL') as string;
+  return { VERIFY_LINK: buildVerifyLink(pageURL, token, username), VERIFY_URL: pageURL, VERIFY_TOKEN: token };
 }

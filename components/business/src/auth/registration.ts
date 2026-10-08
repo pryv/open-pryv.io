@@ -353,8 +353,8 @@ class Registration {
     (async () => {
       if (id != null && email != null) {
         try {
-          const link = await foundingVerifyLink(id as string, username as string, email as string);
-          if (link != null) substitutions.VERIFY_LINK = link;
+          const verify = await foundingVerifyLink(id as string, username as string, email as string);
+          if (verify != null) Object.assign(substitutions, verify);
         } catch (err) {
           this.logger.warn('welcome mail sent without a verification link', {
             username, error: err instanceof Error ? err.message : String(err)

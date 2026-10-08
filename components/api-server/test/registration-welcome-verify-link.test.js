@@ -122,6 +122,8 @@ describe('[WELC] welcome mail verification link', function () {
     assert.ok(typeof link === 'string' && link.startsWith('http://test.pryv.local/verify-email?verifyToken='), link);
     const url = new URL(link);
     assert.strictEqual(url.searchParams.get('username'), body.username);
+    assert.strictEqual(mergeVar(mails[0], 'VERIFY_TOKEN'), url.searchParams.get('verifyToken'), 'paste fallback: same token');
+    assert.strictEqual(mergeVar(mails[0], 'VERIFY_URL'), 'http://test.pryv.local/verify-email');
     const { ev } = await containerEvent(body.username, body.email);
     assert.strictEqual(typeof ev.content.verificationTokenHash, 'string', 'only the hash is stored');
     assert.ok(ev.content.verificationTokenExpires > Date.now() / 1000, 'the token has a future expiry');

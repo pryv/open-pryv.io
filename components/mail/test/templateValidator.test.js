@@ -119,9 +119,13 @@ describe('[MTVA] mail template validator', () => {
     const link = 'https://app.example.com/verify-email?verifyToken=t0k&username=ada';
     for (const [lang, label] of [['en', 'Verify my email address'], ['fr', 'Vérifier mon adresse email']]) {
       const render = pug.compileFile(path.join(BUNDLED, 'welcome-email', lang, 'html.pug'));
-      const withLink = render({ USERNAME: 'ada', EMAIL: 'ada@example.com', VERIFY_LINK: link });
+      const withLink = render({
+        USERNAME: 'ada', EMAIL: 'ada@example.com', VERIFY_LINK: link, VERIFY_URL: 'https://app.example.com/verify-email', VERIFY_TOKEN: 't0k'
+      });
       assert.ok(withLink.includes('href="' + link.replace(/&/g, '&amp;') + '"'), lang + ': ' + withLink);
       assert.ok(withLink.includes(label), lang);
+      assert.ok(withLink.includes('<code>t0k</code>') && withLink.includes('href="https://app.example.com/verify-email"'),
+        lang + ': the paste fallback is shown');
       const without = render({ USERNAME: 'ada', EMAIL: 'ada@example.com' });
       assert.ok(!without.includes('verify-email') && !without.includes(label), lang + ': ' + without);
       assert.ok(without.includes('ada@example.com'), lang);

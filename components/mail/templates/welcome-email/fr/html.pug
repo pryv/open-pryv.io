@@ -6,5 +6,14 @@ if VERIFY_LINK
     | Merci de confirmer que cette adresse vous appartient, afin que les applications que vous utilisez puissent s'y fier :
   p
     a(href=VERIFY_LINK target="_blank" rel="noopener") Vérifier mon adresse email
+  if VERIFY_TOKEN
+    p
+      | Si le lien ne s'ouvre pas, rendez-vous sur
+      |
+      a(href=VERIFY_URL target="_blank" rel="noopener") #{VERIFY_URL}
+      |
+      | et collez ce code :
+    p
+      code #{VERIFY_TOKEN}
   p Le lien expire après un certain temps ; dans ce cas, demandez-en un nouveau depuis la page de votre compte.
 p Si vous n'êtes pas à l'origine de la création de ce compte, merci de contacter l'opérateur de ce service.

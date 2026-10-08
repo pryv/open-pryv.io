@@ -8,9 +8,10 @@
   (`account.emailVerification.requireAtRegistration: false`), the founding address of a new account
   is not proved. The welcome mail now carries a link to prove it, the same link the verification
   mail sends: the server mints a verification token for the founding address (its hash is stored,
-  the token itself only travels in the mail) and passes **`VERIFY_LINK`** to the `welcome-email`
-  template. The bundled templates (en, fr) show a "Verify my email address" block only when
-  `VERIFY_LINK` is set.
+  the token itself only travels in the mail) and passes **`VERIFY_LINK`**, plus `VERIFY_URL` and
+  `VERIFY_TOKEN` (the page and the code to paste when a mail client breaks the link, as in the
+  verification mail), to the `welcome-email` template. The bundled templates (en, fr) show a
+  "Verify my email address" block only when `VERIFY_LINK` is set.
 - No link when the address was proved by code at registration, or when the verification mail is
   off (`services.email.enabled.verifyEmail`, `auth.emailVerificationPageURL`): one welcome mail, no
   separate verification mail, in every case.
