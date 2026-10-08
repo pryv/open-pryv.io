@@ -766,7 +766,7 @@ docker run -d --name pryvio --restart unless-stopped --stop-timeout 30 \
 
 The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
 
-The image is published for `linux/amd64` and `linux/arm64` under the same tag; `docker pull` picks the host's architecture. The encryption-at-rest variant (`pryvio/open-pryv.io-encrypted`) is `linux/amd64` only for now.
+The image is published for `linux/amd64` and `linux/arm64` under the same tag; `docker pull` picks the host's architecture. The encryption-at-rest variant (`pryvio/open-pryv.io-encrypted`) is published for both architectures as well.
 
 #### Container user
 

@@ -73,6 +73,11 @@
     account fields that exist only as events (operator-declared fields) were missing from a backup
     that never ran incrementally (`account.json` still carried the language and email).
 
+### Docker images
+
+- The encryption-at-rest variant `pryvio/open-pryv.io-encrypted` is now published for `linux/amd64`
+  and `linux/arm64` under the same tag, like the stock image.
+
 ## 2.0.0-rc.43 - 2026-10-07
 
 **Upgrade promptly: this release carries security fixes, and some need operator attention before

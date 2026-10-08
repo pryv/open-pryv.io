@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## Release CI: encryption-at-rest variant built for arm64 too
+
+- `Dockerfile.encrypted` copies the payload from `pryvio/container-encrypted-volume:v0.1.2`, the first
+  payload release published for both architectures.
+- The tag-push `docker` job registers QEMU (`docker/setup-qemu-action`) and builds the variant with
+  `platforms: linux/amd64,linux/arm64`. Only its `apt-get install` of the four LUKS tools runs
+  emulated; the stock image stays built natively per architecture.
+
 ## Welcome mail verification link
 
 - `business/src/emails/verifyLink.ts`: `buildVerifyLink` (moved from `account.ts`

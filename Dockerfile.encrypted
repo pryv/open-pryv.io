@@ -20,7 +20,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends cryptsetup e2fsprogs openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=pryvio/container-encrypted-volume:v0.1.1 /cev /opt/cev
+COPY --from=pryvio/container-encrypted-volume:v0.1.2 /cev /opt/cev
 
 ENV CEV_ENABLED=false \
     CEV_BACKEND=luks \
