@@ -408,10 +408,26 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     context.streamToDeleteAndDescendantIds = streamAndDescendantIds;
     const parentId = streamToDelete.parentId;
     const cleanDescendantIds = streamAndDescendantIds.map((s: string) => storeDataUtils.parseStoreIdAndStoreItemId(s)[1]);
+    // The actual deletion removes the whole subtree (and its events), so a
+    // non-personal access must be able to manage every stream in it, not only
+    // the target: a child granted at a lower level would otherwise be deleted
+    // through its parent.
+    if (!context.access.isPersonal()) {
+      for (const descendantId of streamAndDescendantIds) {
+        if (!(await context.access.canDeleteStream(descendantId))) {
+          return next(errors.forbidden());
+        }
+      }
+    }
     // check if root stream and linked events exist
     if (params.mergeEventsWithParent === true && parentId == null) {
       return next(errors.invalidOperation('Deleting a root stream with mergeEventsWithParent=true is rejected ' +
                 'since there is no parent stream to merge linked events in.', { streamId: params.id }));
+    }
+    // Merging moves the subtree's events into the parent stream, which amounts
+    // to creating events there.
+    if (params.mergeEventsWithParent === true && parentId != null && !(await context.access.canCreateEventsOnStream(parentId))) {
+      return next(errors.forbidden());
     }
     const events = await mall.events.getWithParamsByStore(context.user.id, {
       [storeId]: { streams: [{ any: cleanDescendantIds }], limit: 1 }

@@ -393,6 +393,165 @@ describe('[STRP] streams (Pattern C)', function () {
     });
   });
 
+  // The actual deletion of a trashed stream removes its whole subtree and its
+  // events (or moves them to the parent), so a non-personal access needs
+  // `manage` on every stream of the subtree, and `contribute` on the parent
+  // when merging the events into it.
+  describe('[STP06] DELETE /<id> subtree permissions for non-personal accesses', function () {
+    let fixtureUser, sdaUsername, sdaPersonalToken;
+
+    before(async function () {
+      const fixtures = getNewFixture();
+      // a dedicated user keeps these destructive tests apart from the others
+      sdaUsername = cuid();
+      fixtureUser = await fixtures.user(sdaUsername);
+      sdaPersonalToken = cuid();
+      await fixtureUser.access({ token: sdaPersonalToken, type: 'personal' });
+      await fixtureUser.session(sdaPersonalToken);
+    });
+
+    // P (root) > S > X, one event in S and one in X; returns the ids and an app
+    // token holding the permissions built by `permissionsFor`.
+    async function setupTree (permissionsFor) {
+      const suffix = cuid().slice(-8);
+      const ids = { P: 'sda-p-' + suffix, S: 'sda-s-' + suffix, X: 'sda-x-' + suffix, evS: cuid(), evX: cuid() };
+      await fixtureUser.stream({ id: ids.P, name: 'P ' + suffix });
+      await fixtureUser.stream({ id: ids.S, name: 'S ' + suffix, parentId: ids.P });
+      await fixtureUser.stream({ id: ids.X, name: 'X ' + suffix, parentId: ids.S });
+      await fixtureUser.event({ id: ids.evS, type: 'note/txt', content: 'in S', streamIds: [ids.S] });
+      await fixtureUser.event({ id: ids.evX, type: 'note/txt', content: 'in X', streamIds: [ids.X] });
+      const appToken = cuid();
+      await fixtureUser.access({ token: appToken, type: 'app', name: 'sda app ' + suffix, permissions: permissionsFor(ids) });
+      return { ids, appToken };
+    }
+
+    function streamPath (id) {
+      return '/' + sdaUsername + '/streams/' + id;
+    }
+
+    async function getStream (id) {
+      const mall = await getMall();
+      return await mall.streams.getOneWithNoChildren(sdaUsername, id, 'local');
+    }
+
+    // null when the event is unknown or deleted (a deletion leaves a tombstone)
+    async function getEvent (id) {
+      const res = await coreRequest
+        .get('/' + sdaUsername + '/events/' + id)
+        .set('Authorization', sdaPersonalToken);
+      if (res.status !== 200 || res.body.event.deleted != null) return null;
+      return res.body.event;
+    }
+
+    async function trash (id, token) {
+      const res = await coreRequest.del(streamPath(id)).set('Authorization', token);
+      assert.strictEqual(res.status, 200, 'trashing must succeed');
+      assert.strictEqual(res.body.stream.trashed, true);
+    }
+
+    it('[SDA1] must forbid deleting a trashed stream when the access cannot manage a descendant', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' },
+        { streamId: i.X, level: 'read' }
+      ]);
+      await trash(ids.S, appToken);
+
+      const res = await coreRequest
+        .del(streamPath(ids.S))
+        .set('Authorization', appToken)
+        .query({ mergeEventsWithParent: false });
+
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+      assert.ok(await getStream(ids.S), 'S must still exist');
+      assert.ok(await getStream(ids.X), 'X must still exist');
+      const evS = await getEvent(ids.evS);
+      const evX = await getEvent(ids.evX);
+      assert.ok(evS, 'event in S must still exist');
+      assert.ok(evX, 'event in X must still exist');
+      assert.deepStrictEqual(evS.streamIds, [ids.S]);
+      assert.deepStrictEqual(evX.streamIds, [ids.X]);
+    });
+
+    it('[SDA2] must delete a trashed stream and its descendants when the access manages all of them', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' },
+        { streamId: i.X, level: 'manage' }
+      ]);
+      await trash(ids.S, appToken);
+
+      const res = await coreRequest
+        .del(streamPath(ids.S))
+        .set('Authorization', appToken)
+        .query({ mergeEventsWithParent: false });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(await getStream(ids.S), null, 'S must be deleted');
+      assert.strictEqual(await getStream(ids.X), null, 'X must be deleted');
+      assert.strictEqual(await getEvent(ids.evS), null, 'event in S must be deleted');
+      assert.strictEqual(await getEvent(ids.evX), null, 'event in X must be deleted');
+    });
+
+    it('[SDA3] must forbid merging the events into a parent the access cannot contribute to', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.P, level: 'read' },
+        { streamId: i.S, level: 'manage' }
+      ]);
+      await trash(ids.S, appToken);
+
+      const res = await coreRequest
+        .del(streamPath(ids.S))
+        .set('Authorization', appToken)
+        .query({ mergeEventsWithParent: true });
+
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+      assert.ok(await getStream(ids.S), 'S must still exist');
+      assert.ok(await getStream(ids.X), 'X must still exist');
+      assert.deepStrictEqual((await getEvent(ids.evS)).streamIds, [ids.S], 'event in S must not move');
+      assert.deepStrictEqual((await getEvent(ids.evX)).streamIds, [ids.X], 'event in X must not move');
+    });
+
+    it('[SDA4] must merge the events into a parent the access can contribute to', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.P, level: 'contribute' },
+        { streamId: i.S, level: 'manage' }
+      ]);
+      await trash(ids.S, appToken);
+
+      const res = await coreRequest
+        .del(streamPath(ids.S))
+        .set('Authorization', appToken)
+        .query({ mergeEventsWithParent: true });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(await getStream(ids.S), null, 'S must be deleted');
+      assert.strictEqual(await getStream(ids.X), null, 'X must be deleted');
+      assert.deepStrictEqual((await getEvent(ids.evS)).streamIds, [ids.P], 'event in S must move to P');
+      assert.deepStrictEqual((await getEvent(ids.evX)).streamIds, [ids.P], 'event in X must move to P');
+    });
+
+    it('[SDA5] must still let a personal access delete a trashed stream with its descendants', async function () {
+      // the app access restricting X is irrelevant to the personal token
+      const { ids } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' },
+        { streamId: i.X, level: 'read' }
+      ]);
+      await trash(ids.S, sdaPersonalToken);
+
+      const res = await coreRequest
+        .del(streamPath(ids.S))
+        .set('Authorization', sdaPersonalToken)
+        .query({ mergeEventsWithParent: false });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(await getStream(ids.S), null, 'S must be deleted');
+      assert.strictEqual(await getStream(ids.X), null, 'X must be deleted');
+      assert.strictEqual(await getEvent(ids.evS), null, 'event in S must be deleted');
+      assert.strictEqual(await getEvent(ids.evX), null, 'event in X must be deleted');
+    });
+  });
+
   describe('[STP05] Sibling name conflicts', function () {
     let parentStreamId, childName;
 
