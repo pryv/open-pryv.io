@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.44 - 2026-10-08
 
 **Upgrade promptly: this release carries security fixes, and some change the MFA and API contract.**
 Read "MFA and API contract" below. Before restarting each core on the new code:
