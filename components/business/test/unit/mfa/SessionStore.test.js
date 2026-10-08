@@ -247,4 +247,40 @@ describe('[MFAT] mfa/SessionStore', () => {
     for (const t of tokens) if (await store.has(t)) alive.push(t);
     assert.lengthOf(alive, 1, JSON.stringify(alive));
   });
+
+  it('[MT7D] claimEnrolSlot() clears nothing; giveBackEnrolSlot() hands the slot back, or clears the previous one once a later claim superseded both', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const first = await enrol(1);
+    assert.isNull(await store.claimEnrolSlot('u1', first));
+    const second = await enrol(2);
+    assert.equal(await store.claimEnrolSlot('u1', second), first);
+    assert.isTrue(await store.has(first), 'a claim alone clears nothing');
+    // Refused: the slot goes back to the first, which stays the pending one.
+    await store.giveBackEnrolSlot('u1', second, first);
+    await store.clear(second);
+    assert.isTrue(await store.has(first));
+    const third = await enrol(3);
+    assert.equal(await store.claimEnrolSlot('u1', third), first);
+    // A later claim came in meanwhile: the refused one's previous is cleared.
+    const fourth = await enrol(4);
+    assert.equal(await store.claimEnrolSlot('u1', fourth), third);
+    await store.giveBackEnrolSlot('u1', third, first);
+    assert.isFalse(await store.has(first));
+    assert.equal(await store.takeEnrolSlot('u1', await enrol(5)), fourth);
+  });
+
+  it('[MT10A] addToContext() adds to the context of a live session, keeps its code and attempts, and answers false once it is gone', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const token = await store.create(new Profile({ x: 1 }), { kind: 'login', user: { id: 'u1' } });
+    assert.isTrue(await store.setSmsCode(token, { hash: 'h', expiresAt: Date.now() + 60000 }));
+    await store.reserveAttempt(token, 5);
+    assert.isTrue(await store.addToContext(token, { token: 't', apiEndpoint: 'e' }));
+    const got = await store.get(token);
+    assert.deepEqual(got.context, { kind: 'login', user: { id: 'u1' }, token: 't', apiEndpoint: 'e' });
+    assert.equal(got.smsCode.hash, 'h');
+    assert.equal(got.attempts, 1);
+    await store.clear(token);
+    assert.isFalse(await store.addToContext(token, { token: 't' }));
+  });
 });

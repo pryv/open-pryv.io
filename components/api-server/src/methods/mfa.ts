@@ -483,18 +483,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // replace (null: none), checked again when it is confirmed.
         const store = sessionStore();
         const token = await store.create(profile, { user: context.user, kind: 'enroll', replaces: enrolmentFingerprint(stored) });
+        // One pending enrolment per user: this one invalidates any earlier
+        // one, whatever its method. The slot is claimed before anything is
+        // sent, so an activation that loses it to concurrent ones (429) sends
+        // nothing; the earlier enrolment is cleared only once the challenge
+        // went out, so a refused activation leaves it usable.
+        const userKey = String(user.id);
+        const previous = await store.claimEnrolSlot(userKey, token);
         // The first challenge of the enrolment (an SMS for the SMS method),
         // sent for this session. Nothing of the activate body is passed.
         let challengeExtra: Record<string, unknown>;
         try {
           challengeExtra = await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: token });
         } catch (err) {
+          await store.giveBackEnrolSlot(userKey, token, previous);
           await store.clear(token);
           throw err;
         }
-        // One pending enrolment per user: this one invalidates any earlier
-        // one, whatever its method.
-        await store.takeEnrolSlot(String(user.id), token);
+        if (previous != null) await store.clear(previous);
         result.mfaToken = token;
         Object.assign(result, challengeExtra, extra);
         next();

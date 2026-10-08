@@ -20,6 +20,8 @@ type MfaLoginState = {
   cfg: Record<string, unknown>;
   profile: unknown;
   method: { name: string; challenge: (username: string, profile: unknown, clientRequest: Record<string, unknown>) => Promise<unknown> };
+  /** The pending MFA session, once `mfaOpenLoginSession` opened it. */
+  mfaToken?: string;
 };
 const commonFns = require('api-server/src/methods/helpers/commonFunctions.ts');
 const { ApiEndpoint } = require('utils');
@@ -76,6 +78,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     applyPrerequisitesForLogin,
     checkPassword,
     mfaResolveForLogin,
+    mfaOpenLoginSession,
     openSession,
     updateOrCreatePersonalAccess,
     addApiEndpoint,
@@ -103,6 +106,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     refuseIfAuthenticated,
     applyPrerequisitesForLogin,
     mfaResolveForLogin,
+    mfaOpenLoginSession,
     openSession,
     updateOrCreatePersonalAccess,
     addApiEndpoint,
@@ -358,14 +362,50 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   /**
+   * Opens the pending MFA session of the login and sends its challenge (an
+   * SMS for the SMS method; nothing to send for TOTP), when
+   * `mfaResolveForLogin` found an active enrolment with an active method.
+   *
+   * Runs BEFORE any session or personal access is written, so a login refused
+   * here (the cap on pending MFA sessions, the SMS send limits, a failing SMS
+   * provider) leaves no session behind and rotates no app token. The session
+   * receives the token to release once that token exists (`mfaCheckIfActive`);
+   * until then its mfaToken is known to this login only.
+   */
+  async function mfaOpenLoginSession (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const pending = context.mfaLogin as MfaLoginState | undefined;
+    if (pending == null) return next();
+    const { cfg: mfaCfg, profile, method } = pending;
+    try {
+      const store = getMFASessionStore(mfaCfg);
+      const mfaToken = await store.create(profile, {
+        user: context.user,
+        kind: 'login',
+        // The enrolment this session is opened against: mfa.challenge and
+        // mfa.verify refuse the session once the stored one differs.
+        enrolment: enrolmentFingerprint(profile)
+      });
+      // None of the login parameters is passed: the password never reaches
+      // the MFA method layer. A failed challenge leaves no pending session.
+      try {
+        await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: mfaToken });
+      } catch (err) {
+        await store.clear(mfaToken);
+        throw err;
+      }
+      pending.mfaToken = mfaToken;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
    * MFA integration. Runs as the final step of auth.login.
    *
-   * When `mfaResolveForLogin` found an active enrolment with an active method:
-   *   1. Stash the already-issued Pryv access token + apiEndpoint + user in a new
-   *      SessionStore session, keyed by a fresh mfaToken
-   *   2. Call the method's challenge() for that session (an SMS for the SMS
-   *      method; nothing to send for TOTP); on failure the session is cleared
-   *   3. Delete `token`/`apiEndpoint` from the response and replace with `mfaToken`
+   * When `mfaOpenLoginSession` opened a pending MFA session:
+   *   1. Stash the issued Pryv access token + apiEndpoint in that session
+   *   2. Delete `token`/`apiEndpoint` from the response and replace with `mfaToken`
    *
    * The caller must then call `mfa.verify` with the mfaToken + code to
    * receive the real Pryv access token. If they fail / never verify, the session
@@ -377,29 +417,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    */
   async function mfaCheckIfActive (context: MethodContext, _params: Record<string, unknown>, result: ResultBag, next: Next) {
     const pending = context.mfaLogin as MfaLoginState | undefined;
-    if (pending == null) return next();
-    const { cfg: mfaCfg, profile, method } = pending;
+    if (pending?.mfaToken == null) return next();
+    const { cfg: mfaCfg, method, mfaToken } = pending;
     try {
-      // Stash the already-issued token in a pending session. Only release on mfa.verify.
-      const store = getMFASessionStore(mfaCfg);
-      const mfaToken = await store.create(profile, {
-        user: context.user,
+      // Only mfa.verify releases the stashed token. A session that ended in
+      // between (it outlived its lifetime) releases nothing: fail closed.
+      const stashed = await getMFASessionStore(mfaCfg).addToContext(mfaToken, {
         token: result.token,
-        apiEndpoint: result.apiEndpoint,
-        kind: 'login',
-        // The enrolment this session is opened against: mfa.challenge and
-        // mfa.verify refuse the session once the stored one differs.
-        enrolment: enrolmentFingerprint(profile)
+        apiEndpoint: result.apiEndpoint
       });
-      // The challenge of this session (an SMS for the SMS method). None of
-      // the login parameters is passed: the password never reaches the MFA
-      // method layer. A failed challenge leaves no pending session behind.
-      try {
-        await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: mfaToken });
-      } catch (err) {
-        await store.clear(mfaToken);
-        throw err;
-      }
+      if (!stashed) throw errors.unexpectedError(new Error('The MFA session of this login ended before the login completed.'));
 
       // Replace the response: caller must complete MFA before they see the real token.
       delete result.token;

@@ -229,7 +229,7 @@ function verifyAnswerAccepted (bodyText: string, predicate: unknown): boolean {
 export {
   CODE_PATTERN, PHONE_PATTERN, CONTENT_MAX_BYTES, NON_CONTENT_KEYS, RESERVED_CONTENT_KEYS,
   isValidCode, invalidCodeError, smsEnrolmentContent, checkNoEnrolmentContent, toValues,
-  renderUrl, renderHeaders, renderBody, renderRequest,
+  renderUrl, renderHeaders, renderBody, renderRequest, declaredContentType,
   isValidSuccessPredicate, valueAtPath, verifyAnswerAccepted
 };
 export type { SuccessPredicate };

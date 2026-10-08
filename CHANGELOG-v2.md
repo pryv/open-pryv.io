@@ -54,8 +54,10 @@ Read "MFA and API contract" below. Before restarting each core on the new code:
   `mfa.activate`): `services.mfa.methods.sms.sendLimits` with `minIntervalSeconds: 30` (per MFA
   session), `perUserPerHour: 5` and `perDestinationPerDay: 10` (per phone number, across users); `0`
   disables a limit (boot warning). Over a limit: `429 too-many-attempts`, `data.retryAfterSeconds`
-  and `Retry-After`, and nothing is sent. A user has one pending enrolment at a time: a new
-  `mfa.activate` invalidates the earlier one.
+  and `Retry-After`, and nothing is sent. A login refused there, at the cap on pending MFA sessions
+  below, or by a failing SMS provider writes no session and no access. A user has one pending
+  enrolment at a time: a new `mfa.activate` invalidates the earlier one once its first challenge is
+  sent (a refused activation leaves the earlier one usable).
 - **Security.** Challenge-verify providers: a verify succeeds on
   `services.mfa.methods.sms.endpoints.verify.success: { jsonPath, equals }` (a 2xx JSON answer whose
   value at `jsonPath` strictly equals `equals`). Without it, only an empty 2xx answer (for example

@@ -151,6 +151,27 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     nock.enableNetConnect();
   });
 
+  /** The accesses (id + token) of `user` and the session a login of `appId` would reuse, if any. */
+  async function loginFootprintOf (user, appId) {
+    const userRow = await (await getUsersRepository()).getUserByUsername(user);
+    const layer = await storage.getStorageLayer();
+    const accesses = await new Promise((resolve, reject) =>
+      layer.accesses.find(userRow, {}, null, (err, res) => err ? reject(err) : resolve(res)));
+    const session = await new Promise((resolve, reject) =>
+      layer.sessions.getMatching({ username: user, appId, userId: userRow.id }, (err, id) => err ? reject(err) : resolve(id)));
+    return {
+      accesses: accesses.map((a) => ({ id: a.id, token: a.token })).sort((a, b) => a.id.localeCompare(b.id)),
+      session: session ?? null
+    };
+  }
+  // A trusted app with no personal access yet: a login that went through
+  // would have to write both a session and an access.
+  const FRESH_APP_ID = 'pryv-test-no-cors';
+  function loginToApp (user, appId) {
+    return coreRequest.post(`/${user}/auth/login`).set('Origin', 'http://test.pryv.local')
+      .send({ username: user, password, appId });
+  }
+
   // --------------------------------------------------------------------
   // MFA now ships ENABLED by default (TOTP), so the "disabled" path must be
   // asserted against an explicitly-disabled config, not the default.
@@ -303,9 +324,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   // An SMS enrolment made under the legacy SMS mode, then the server runs the
   // shipped multi-method default (TOTP active, SMS not active).
   describe('[MFIN] login of an account whose MFA method is not active on the server', function () {
-    // An app with no personal access yet, so a login that went through would
-    // have to write both a session and an access.
-    const appId = 'pryv-test-no-cors';
+    const appId = FRESH_APP_ID;
     let warnings, loggerProto, originalWarn;
 
     beforeEach(async function () {
@@ -336,25 +355,8 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         await _resetMFASingletons();
       }
     }
-    function login () {
-      return coreRequest
-        .post(`/${username}/auth/login`)
-        .set('Origin', 'http://test.pryv.local')
-        .send({ username, password, appId });
-    }
-    /** The user's accesses (id + token) and whether a session matches this login. */
-    async function loginFootprint () {
-      const user = await (await getUsersRepository()).getUserByUsername(username);
-      const layer = await storage.getStorageLayer();
-      const accesses = await new Promise((resolve, reject) =>
-        layer.accesses.find(user, {}, null, (err, res) => err ? reject(err) : resolve(res)));
-      const session = await new Promise((resolve, reject) =>
-        layer.sessions.getMatching({ username, appId, userId: user.id }, (err, id) => err ? reject(err) : resolve(id)));
-      return {
-        accesses: accesses.map((a) => ({ id: a.id, token: a.token })).sort((a, b) => a.id.localeCompare(b.id)),
-        session: session ?? null
-      };
-    }
+    const login = () => loginToApp(username, appId);
+    const loginFootprint = () => loginFootprintOf(username, appId);
     const warnedFor = () => warnings.filter((w) => w.includes(`"${username}"`));
 
     it('[MFIN1] an SMS enrolment while SMS is not active: 403 mfa-method-inactive, no token, no session or access written', async function () {
@@ -1227,6 +1229,72 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         restoreTtl();
       }
     });
+
+    /** From now on the SMS provider answers 500 (once). */
+    function failNextSend () {
+      nock.cleanAll();
+      nock(SMS_HOST).post('/send').reply(500, '');
+    }
+
+    it('[MSMS13] a login refused by a failing provider or by the send limits writes no session and no access', async function () {
+      await setUp({ sendLimits: { perUserPerHour: 2 } });
+      await enrol(); // 1
+      const before = await loginFootprintOf(username, FRESH_APP_ID);
+      assert.strictEqual(before.session, null, 'precondition: no session matches this login yet');
+
+      failNextSend();
+      const failed = await loginToApp(username, FRESH_APP_ID); // 2, counted: it reached the provider
+      assert.strictEqual(failed.status, 400, JSON.stringify(failed.body));
+      assert.strictEqual(failed.body.error.data.id, 'mfa-sms-provider-error', JSON.stringify(failed.body));
+      assert.deepStrictEqual(await loginFootprintOf(username, FRESH_APP_ID), before, 'the failed login wrote no session and no access');
+
+      const refused = await loginToApp(username, FRESH_APP_ID);
+      assertTooManySends(refused);
+      assert.strictEqual(refused.body.token, undefined);
+      assert.strictEqual(refused.body.mfaToken, undefined);
+      assert.deepStrictEqual(await loginFootprintOf(username, FRESH_APP_ID), before, 'the refused login wrote no session and no access');
+
+      // The tokens the account already had are untouched.
+      const who = await coreRequest.get(`/${username}/access-info`).set('Authorization', personalToken);
+      assert.strictEqual(who.status, 200, JSON.stringify(who.body));
+    });
+
+    it('[MSMS14] an activation that loses the enrolment slot to concurrent ones answers 429 and sends nothing', async function () {
+      await setUp();
+      const store = getMFASessionStore(singleConfig().services.mfa);
+      const kv = store.kv;
+      const originalSet = kv.set;
+      // Every compare-and-set on the slot loses, as under concurrent activations.
+      kv.set = function (key, ...rest) {
+        return key.startsWith(store.enrolSlotNamespace) ? Promise.resolve(false) : originalSet.call(this, key, ...rest);
+      };
+      let res;
+      try {
+        res = await activate();
+      } finally {
+        kv.set = originalSet;
+      }
+      assert.strictEqual(res.status, 429, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'too-many-attempts');
+      assert.strictEqual(res.body.mfaToken, undefined);
+      assert.strictEqual(sends.length, 0, 'no SMS sent');
+    });
+
+    it('[MSMS15] an activation refused by a failing provider or by the send limits leaves the earlier pending enrolment usable', async function () {
+      await setUp({ sendLimits: { perUserPerHour: 2 } });
+      const first = await activate(); // 1
+      assert.strictEqual(first.status, 302, JSON.stringify(first.body));
+      const firstCode = lastCode();
+
+      failNextSend();
+      const failed = await activate(); // 2
+      assert.strictEqual(failed.status, 400, JSON.stringify(failed.body));
+      assert.strictEqual(failed.body.error.data.id, 'mfa-sms-provider-error', JSON.stringify(failed.body));
+      assertTooManySends(await activate());
+
+      const ok = await confirm(first.body.mfaToken, firstCode);
+      assert.strictEqual(ok.status, 200, `the earlier enrolment was dropped: ${JSON.stringify(ok.body)}`);
+    });
   });
 
   // --------------------------------------------------------------------
@@ -1647,6 +1715,11 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assertStepUpMissing(await deactivate({ password, code: totpCodeFor(secret, 0) }));
         const notString = await deactivate({ password: 12345 });
         assert.strictEqual(notString.status, 400, JSON.stringify(notString.body));
+        assert.strictEqual(notString.body.error.id, 'invalid-parameters-format', JSON.stringify(notString.body));
+        // Refused by the deactivate params schema (`password` is typed there), before any step-up check.
+        assert.ok(Array.isArray(notString.body.error.data) &&
+          notString.body.error.data.some((e) => e.path === '#/password' && e.code === 'INVALID_TYPE'), JSON.stringify(notString.body));
+        assertStepUpMissing(await activateWith({ password: 12345 }));
         assertStepUpMissing(await activateWith({ password: { $ne: '' } }));
         await assertMfaStillActive();
       });
@@ -1913,6 +1986,21 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const again = await login();
         assert.ok(again.body.mfaToken != null, JSON.stringify(again.body));
       });
+
+      it('[MCAP2] a login refused at the cap writes no session and no access', async function () {
+        const act = await activateTotp();
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        assert.ok((await login()).body.mfaToken != null);
+        assert.ok((await login()).body.mfaToken != null);
+        const before = await loginFootprintOf(username, FRESH_APP_ID);
+        assert.strictEqual(before.session, null, 'precondition: no session matches this login yet');
+        const refused = await loginToApp(username, FRESH_APP_ID);
+        assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+        assert.deepStrictEqual(await loginFootprintOf(username, FRESH_APP_ID), before, 'the refused login wrote no session and no access');
+      });
     });
 
     // ------------------------------------------------------------------
@@ -1947,10 +2035,11 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.ok(ok.body.token != null);
       });
 
-      it('[MPUS2] an enrolment token used under another account path is refused by confirm, and works under its own', async function () {
+      it('[MPUS2] an enrolment token used under another account path is refused by confirm and challenge, and works under its own', async function () {
         const act = await activateTotp();
         const code = totpCodeFor(act.body.secret, 0);
         assertUnknownToken(await coreRequest.post(`/${other}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code }));
+        assertUnknownToken(await coreRequest.post(`/${other}/mfa/challenge`).set('Authorization', act.body.mfaToken).send({}));
         const ok = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code });
         assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
         assert.strictEqual(ok.body.recoveryCodes.length, 10);

@@ -9,6 +9,7 @@ import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { getLogger } = require('@pryv/boiler');
 const errors = require('errors').factory;
+const { declaredContentType } = require('./smsRequest.ts');
 
 /**
  * Base class for MFA services. Subclasses (`ChallengeVerifyService`,
@@ -65,7 +66,9 @@ class Service {
     if (method === 'POST') {
       if (body != null && typeof body !== 'string') {
         init.body = JSON.stringify(body);
-        if (init.headers['Content-Type'] == null) {
+        // Header names are case-insensitive: a template declaring
+        // `content-type` must not get a second one.
+        if (declaredContentType(init.headers) == null) {
           init.headers['Content-Type'] = 'application/json';
         }
       } else {

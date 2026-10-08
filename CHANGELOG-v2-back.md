@@ -47,14 +47,18 @@
   `phone` / code patterns used by the API schema, and the challenge-verify success predicate.
 - `business/src/mfa/smsSendLimits.ts`: `SmsSendLimiter` (per session, per user, per destination
   hash).
-- `SessionStore`: `setSmsCode` (hashed code with its own lifetime), `takeEnrolSlot` (one pending
-  enrolment per user), `reserveAttempt` / `releaseAttempt`, the `maxPending` cap and an absolute
-  expiry; `generateCode` uses `crypto.randomInt`.
+- `SessionStore`: `setSmsCode` (hashed code with its own lifetime), `takeEnrolSlot` /
+  `claimEnrolSlot` / `giveBackEnrolSlot` (one pending enrolment per user, the slot claimed before
+  the first challenge is sent), `addToContext`, the `maxPending` cap and an absolute expiry;
+  `reserveAttempt` / `releaseAttempt` now rewrite within the remaining lifetime; `generateCode`
+  uses `crypto.randomInt`.
 - `Profile.enrolmentFingerprint` binds a login session to the enrolment it was opened against.
 - `api-server/src/methods/helpers/mfaChange.ts`: `notifyMfaChange` (the `mfa-change` notice) and
   `auditMfaChange` (`mfa.recovered`, `mfa.deactivatedByAdmin` rows through `audit.eventForUser`).
-- The MFA resolution in `auth.login` / `auth.ssoLogin` runs before the session and personal access
-  are written; the login and `mfa.challenge` no longer forward the client params to the method.
+- The MFA resolution in `auth.login` / `auth.ssoLogin`, and the opening of the pending MFA session
+  with its challenge (`mfaOpenLoginSession`), run before the session and personal access are
+  written; the issued token is stashed in that session last. The login and `mfa.challenge` no
+  longer forward the client params to the method.
 - `bin/master.js` boot warning on SMS enrolments without an active SMS method
   (`describeInactiveSmsEnrolments`, PostgreSQL `countSmsMfaEnrolments`).
 - The bundled mail template set holds 20 rows (`mfa-change` added).

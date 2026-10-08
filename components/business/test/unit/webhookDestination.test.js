@@ -34,11 +34,15 @@ describe('[WDST] webhook destinations', function () {
       }
     });
 
-    it('[WDA2] refuses IPv6 loopback, unspecified, unique-local, link-local, multicast and IPv6 forms of refused IPv4', function () {
+    it('[WDA2] refuses IPv6 loopback, unspecified, unique-local, link-local, multicast, Teredo and IPv6 forms of refused IPv4', function () {
       for (const address of [
         '::1', '::', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'febf::1', 'ff02::1', 'fec0::1',
         '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:169.254.169.254', '::ffff:10.0.0.1',
-        '64:ff9b::a9fe:a9fe', '2002:7f00:1::1', '::127.0.0.1'
+        '64:ff9b::a9fe:a9fe', '2002:7f00:1::1', '::127.0.0.1',
+        // Local-use NAT64 (RFC 8215): read in its /96 layout, refused as a block otherwise.
+        '64:ff9b:1::7f00:1', '64:ff9b:1::a9fe:a9fe', '64:ff9b:1:808:8:800::', '64:ff9b:1:ffff::808:808',
+        // Teredo (2001::/32), whatever the IPv4 address it carries.
+        '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001::1'
       ]) {
         assert.equal(isRefusedAddress(address, NONE), true, address);
       }
@@ -47,7 +51,7 @@ describe('[WDST] webhook destinations', function () {
     it('[WDA3] accepts public addresses, also in their IPv6 forms', function () {
       for (const address of [
         '8.8.8.8', '1.1.1.1', '172.32.0.1', '100.128.0.1', '169.255.0.1', '2606:4700:4700::1111',
-        '2a00:1450:4001::1', '::ffff:8.8.8.8', '64:ff9b::808:808'
+        '2a00:1450:4001::1', '::ffff:8.8.8.8', '64:ff9b::808:808', '64:ff9b:1::808:808'
       ]) {
         assert.equal(isRefusedAddress(address, NONE), false, address);
       }

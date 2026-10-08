@@ -33,6 +33,7 @@ const container = require('business/src/emails/container.ts');
 const C = require('business/src/emails/constants.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
+const storage = require('storage');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
 const timestamp = require('unix-timestamp');
@@ -253,6 +254,60 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(verify.status, 200, 'mfa verify: ' + JSON.stringify(verify.body));
     assert.ok(verify.body.token != null, 'the real token is released only after the second factor');
     assert.strictEqual(location.includes(verify.body.token), false, 'the session token must not appear in the URL');
+  });
+
+  it('[SSOE10] an account enrolled in an MFA method not active on the server is refused: no mfaToken, no session, no access', async function () {
+    const email = cuid() + '@ssoe10.example.com';
+    const u = await makeProvedUser(email);
+    idp.control.email = email;
+    const appId = 'sso-' + PROVIDER;
+    const user = await (await getUsersRepository()).getUserByUsername(u.username);
+    const layer = await storage.getStorageLayer();
+    const call = (fn) => new Promise((resolve, reject) => fn((err, res) => err ? reject(err) : resolve(res)));
+
+    // An SMS enrolment as the legacy SMS mode stores it (no `method`: read as
+    // SMS), while this server runs the shipped default (TOTP only).
+    const mfa = { content: { phone: '+41791234567' }, recoveryCodes: ['sha256:' + 'a'.repeat(64)] };
+    const existing = await call((cb) => layer.profile.findOne(user, { id: 'private' }, null, cb));
+    if (existing == null) await call((cb) => layer.profile.insertOne(user, { id: 'private', data: { mfa } }, cb));
+    else await call((cb) => layer.profile.updateOne(user, { id: 'private' }, { data: { mfa } }, cb));
+
+    async function footprint () {
+      const accesses = await call((cb) => layer.accesses.find(user, {}, null, cb));
+      const session = await call((cb) => layer.sessions.getMatching({ username: u.username, appId, userId: user.id }, cb));
+      return {
+        accesses: accesses.map((a) => ({ id: a.id, token: a.token })).sort((a, b) => a.id.localeCompare(b.id)),
+        session: session ?? null
+      };
+    }
+    const before = await footprint();
+    assert.strictEqual(before.session, null, 'precondition: no session matches this sign-in yet');
+
+    // The callback answers a coarse refusal; the mint failure it logs is the method's error.
+    const loggerProto = Object.getPrototypeOf(require('@pryv/boiler').getLogger('routes:sso'));
+    const originalError = loggerProto.error;
+    const logged = [];
+    loggerProto.error = function (msg, ...rest) {
+      logged.push({ msg: String(msg), err: rest[0] });
+      return originalError.call(this, msg, ...rest);
+    };
+    let location;
+    try {
+      location = await runCallback();
+    } finally {
+      loggerProto.error = originalError;
+    }
+    assert.strictEqual(location, LANDING + '#ssoError=sso-failed');
+    const p = hashParams(location);
+    assert.strictEqual(p.ssoMfaToken, undefined);
+    assert.strictEqual(p.ssoKey, undefined);
+    assert.strictEqual(p.ssoStatus, undefined);
+    const mint = logged.find((l) => /session mint/.test(l.msg));
+    assert.ok(mint != null, 'the mint failure is logged: ' + JSON.stringify(logged.map((l) => l.msg)));
+    assert.strictEqual(mint.err?.id, 'mfa-method-inactive', 'refused as mfa-method-inactive, got ' + (mint.err?.id ?? mint.err));
+    assert.strictEqual(mint.err?.httpStatus, 403);
+
+    assert.deepStrictEqual(await footprint(), before, 'the refused sign-in wrote no session and no access');
   });
 
   it('[SSOE5] auth.ssoLogin is refused when reached with an access token (callBatch), and mints nothing', async function () {

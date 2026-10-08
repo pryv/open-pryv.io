@@ -197,21 +197,48 @@ class SessionStore {
   }
 
   /**
+   * Add `fields` to the context of a session, with a compare-and-set so a
+   * concurrent rewrite (an SMS code, an attempt) is not lost. Answers false
+   * when the session is gone (or the write kept losing).
+   */
+  async addToContext (id: string, fields: Record<string, unknown>): Promise<boolean> {
+    for (let tries = 0; tries < 20; tries++) {
+      const session = await this._read(id);
+      if (!session) return false;
+      const context = { ...(session.context as Record<string, unknown> | null ?? {}), ...fields };
+      const { written, expired } = await this._rewrite(id, session, { ...session, context });
+      if (expired) return false;
+      if (written) return true;
+    }
+    return false;
+  }
+
+  /**
    * Make `id` the one pending enrolment of a user: the session that held the
    * user's slot before, if any, is cleared, so pending enrolments cannot pile
    * up. Compare-and-set on the slot, so of concurrent activations exactly one
    * session keeps it. Answers the id of the session cleared, or null.
    */
   async takeEnrolSlot (userKey: string, id: string): Promise<string | null> {
+    const previous = await this.claimEnrolSlot(userKey, id);
+    if (previous != null) await this.clear(previous);
+    return previous;
+  }
+
+  /**
+   * The first half of `takeEnrolSlot`: `id` holds the user's slot from now
+   * on, and the session that held it before is NOT cleared yet, so the caller
+   * can still be refused without touching it: it then hands the slot back
+   * with `giveBackEnrolSlot`, else clears the previous session itself.
+   * Compare-and-set on the slot; throws 429 (and clears `id`) when it keeps
+   * losing to concurrent activations. Answers the previous holder, or null.
+   */
+  async claimEnrolSlot (userKey: string, id: string): Promise<string | null> {
     const key = this.enrolSlotNamespace + userKey;
     for (let tries = 0; tries < 20; tries++) {
       const previous = await this.kv.get(key);
       if (await this.kv.set(key, id, { ttlMs: this.ttlMilliseconds, ifEquals: previous ?? null })) {
-        if (typeof previous === 'string' && previous !== id) {
-          await this.clear(previous);
-          return previous;
-        }
-        return null;
+        return (typeof previous === 'string' && previous !== id) ? previous : null;
       }
     }
     // Kept losing to concurrent activations: this one does not get the slot.
@@ -220,6 +247,20 @@ class SessionStore {
       message: 'Too many concurrent MFA activations for this account; retry in 1 s.',
       data: { retryAfterSeconds: 1 }
     });
+  }
+
+  /**
+   * Hand the slot claimed by `id` back to `previous` (from
+   * `claimEnrolSlot`), for an activation refused after its claim: the
+   * previous pending enrolment stays the user's one. When a later activation
+   * claimed the slot meanwhile, that one supersedes both, so `previous` is
+   * cleared rather than left pending beside it.
+   */
+  async giveBackEnrolSlot (userKey: string, id: string, previous: string | null): Promise<void> {
+    if (previous == null) return;
+    const key = this.enrolSlotNamespace + userKey;
+    if (await this.kv.set(key, previous, { ttlMs: this.ttlMilliseconds, ifEquals: id })) return;
+    await this.clear(previous);
   }
 
   /**

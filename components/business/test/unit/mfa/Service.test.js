@@ -87,4 +87,34 @@ describe('[MFAS] mfa/Service', () => {
       assert.lengthOf(logged, 0);
     });
   });
+
+  describe('[MFCT] content type of an object body', () => {
+    let originalFetch, sent, svc;
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      sent = [];
+      globalThis.fetch = async (url, init) => { sent.push(init); return new Response('', { status: 200 }); };
+      svc = new Service({});
+    });
+    afterEach(() => { globalThis.fetch = originalFetch; });
+
+    const contentTypeNames = (init) => Object.keys(init.headers).filter((n) => n.toLowerCase() === 'content-type');
+
+    it('[MFCT1] a declared content type, whatever the case of its name, is kept and not sent twice', async () => {
+      for (const name of ['content-type', 'Content-Type', 'CONTENT-TYPE']) {
+        await svc._makeRequest('POST', 'https://sms.example/send', { [name]: 'application/vnd.sms+json' }, { to: '+41791234567' });
+        const init = sent[sent.length - 1];
+        assert.deepEqual(contentTypeNames(init), [name]);
+        assert.strictEqual(init.headers[name], 'application/vnd.sms+json');
+        assert.strictEqual(new Headers(init.headers).get('content-type'), 'application/vnd.sms+json');
+        assert.strictEqual(init.body, '{"to":"+41791234567"}');
+      }
+    });
+
+    it('[MFCT2] without a declared content type, an object body is sent as application/json', async () => {
+      await svc._makeRequest('POST', 'https://sms.example/send', { authorization: 'k' }, { to: '+41791234567' });
+      assert.deepEqual(contentTypeNames(sent[0]), ['Content-Type']);
+      assert.strictEqual(sent[0].headers['Content-Type'], 'application/json');
+    });
+  });
 });

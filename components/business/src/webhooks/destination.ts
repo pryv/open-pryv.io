@@ -50,7 +50,9 @@ const REFUSED_IPV4: Array<[string, number]> = [
 ];
 const REFUSED_IPV6: Array<[string, number]> = [
   ['::', 96], // unspecified, loopback, IPv4-compatible (deprecated)
+  ['64:ff9b:1::', 48], // local-use NAT64 outside its /96 layout (see embeddedIPv4)
   ['100::', 64], // discard-only
+  ['2001::', 32], // Teredo (carries an obfuscated IPv4 address)
   ['2001:db8::', 32], // documentation
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
@@ -118,13 +120,16 @@ function ipv6Groups (address: string): number[] | null {
   return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff) ? groups : null;
 }
 
-// IPv4 address carried by an IPv4-mapped, NAT64 (64:ff9b::/96) or 6to4
-// (2002::/16) IPv6 address.
+// IPv4 address carried by an IPv4-mapped, NAT64 (64:ff9b::/96, and the
+// local-use 64:ff9b:1::/96 of RFC 8215) or 6to4 (2002::/16) IPv6 address.
+// The rest of the local-use block 64:ff9b:1::/48 places the IPv4 address
+// where the site's prefix length puts it, which only the site knows: it is
+// refused as a block (REFUSED_IPV6).
 function embeddedIPv4 (g: number[]): string | null {
   const v4 = (hi: number, lo: number) => [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.');
   const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
   if (zero(0, 5) && g[5] === 0xffff) return v4(g[6], g[7]);
-  if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4(g[6], g[7]);
+  if (g[0] === 0x64 && g[1] === 0xff9b && (g[2] === 0 || g[2] === 1) && zero(3, 6)) return v4(g[6], g[7]);
   if (g[0] === 0x2002) return v4(g[1], g[2]);
   return null;
 }
@@ -139,8 +144,9 @@ function isRefusedAddress (address: string, allow: AllowList = emptyAllowList())
   const groups = ipv6Groups(address);
   if (groups == null) return true;
   if (allow.ranges.check(address, 'ipv6')) return false;
+  // A translated address is decided by the IPv4 address it carries.
   const v4 = embeddedIPv4(groups);
-  if (v4 != null && isRefusedAddress(v4, allow)) return true;
+  if (v4 != null) return isRefusedAddress(v4, allow);
   return REFUSED.check(address, 'ipv6');
 }
 
