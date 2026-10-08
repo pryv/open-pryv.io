@@ -64,6 +64,9 @@ require('@pryv/boiler').init({
   }, {
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
+    scope: 'default-audit-path',
+    file: path.resolve(__dirname, '../config/plugins/default-path.js')
+  }, {
     plugin: require('../config/plugins/core-identity')
   }, ...(configFileArg != null
     ? [{ scope: 'host-config', file: path.resolve(process.cwd(), configFileArg) }]
@@ -77,6 +80,11 @@ require('@pryv/boiler').init({
     const config = await getConfig();
 
     await require('storages').init(config);
+    // As the API server does: with audit active the mall serves the audit
+    // streams, which an access's permissions can name (`:_audit:...`), and
+    // checking such an access reads them from the audit storage. This tool
+    // writes no audit record.
+    if (config.get('audit:active')) await require('audit').default.init();
     const { getUsersLocalIndex, getStorageLayer } = require('storage');
     const { fromCallback } = require('utils');
     const { auditAccessScope } = require('business/src/accesses/scopeAudit.ts');

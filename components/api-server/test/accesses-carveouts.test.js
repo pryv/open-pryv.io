@@ -245,6 +245,35 @@ describe('[ACCV] accesses: creator carve-outs carried into child accesses', func
       assert.strictEqual(after.serial ?? null, before.serial ?? null);
     });
 
+    it('[ACCV10C] checks a child of an app access holding an audit stream permission', async function () {
+      const t = await tree();
+      const app = await appAccess([
+        { streamId: t.A, level: 'read' },
+        { streamId: t.B, level: 'none' },
+        { streamId: ':_audit:access-' + cuid(), level: 'read' }
+      ]);
+      const overId = cuid();
+      await fixtureUser.access({
+        id: overId,
+        token: cuid(),
+        name: 'over ' + overId,
+        type: 'shared',
+        permissions: [{ streamId: t.A, level: 'read' }],
+        createdBy: app.id,
+        modifiedBy: app.id
+      });
+      // the API server resolves the same audit stream when the app creates a child
+      const okChild = await createShared(app.token, [{ streamId: t.A, level: 'read' }]);
+      assert.strictEqual(levelOf(await storedPermissions(okChild.id), t.B), 'none');
+      const before = await fromCallback((cb) => accessStorage.findOne(user, { id: overId }, null, cb));
+
+      const out = await runTool('--dry-run');
+      assert.ok(out.includes('access ' + overId + ' (shared, created by ' + app.id + '): reaches a carve-out (1 missing entry)'), out);
+      assert.ok(!out.includes(okChild.id), 'the compliant child is not listed');
+      const after = await fromCallback((cb) => accessStorage.findOne(user, { id: overId }, null, cb));
+      assert.deepStrictEqual(after, before);
+    });
+
     it('[ACCV10B] --help prints the usage and exits 0', function () {
       const out = execFileSync(process.execPath, ['bin/access-scope-audit.js', '--help'], { cwd: repoRoot, encoding: 'utf8' });
       assert.match(out, /Report only: nothing is written/);

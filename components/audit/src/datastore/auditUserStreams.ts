@@ -58,6 +58,12 @@ Object.freeze(actionsStream);
 const auditStreams: AuditStreamItem[] = [accessesStream, actionsStream];
 Object.freeze(auditStreams);
 
+/** The user's audit storage; a clear error when `audit.init()` has not run. */
+async function userAuditStorage (userId: string) {
+  if (audit.storage == null) throw new Error('Audit streams: the audit storage is not initialized (call audit.init() after storages.init())');
+  return await audit.storage.forUser(userId);
+}
+
 const auditUserStreams: AuditUserStreams = ds.createUserStreams({
   async get (userId: string, query: StreamQueryLike): Promise<AuditStreamItem[]> {
     if (query.parentId === '*' || query.parentId == null) {
@@ -76,7 +82,7 @@ const auditUserStreams: AuditUserStreams = ds.createUserStreams({
   async getOne (userId: string, streamId: string, query: StreamQueryLike): Promise<AuditStreamItem | null> {
     // list accesses
     if (streamId === accessesStream.id) {
-      const userStorage = await audit.storage.forUser(userId);
+      const userStorage = await userAuditStorage(userId);
       const accesses = await userStorage.getAllAccesses();
       if (accesses == null) return null;
       const res: AuditStreamItem[] = accesses.map((access: AuditAccess) => {
@@ -95,7 +101,7 @@ const auditUserStreams: AuditUserStreams = ds.createUserStreams({
 
     // list actions
     if (streamId === actionsStream.id) {
-      const userStorage = await audit.storage.forUser(userId);
+      const userStorage = await userAuditStorage(userId);
       const actions = await userStorage.getAllActions();
       if (actions == null) return null;
       const res: AuditStreamItem[] = actions.map((action: AuditAction) => {
