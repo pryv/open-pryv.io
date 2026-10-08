@@ -22,6 +22,7 @@ const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjected
 const { listeningAgent } = require('./listeningAgent.ts');
 const { pollUntil } = require('./pollUntil.ts');
 const portHolder = require('./portHolder.ts');
+const { childStorageEngineEnv } = require('./testStorageEngines.ts');
 
 // Pattern C helpers (helpers-c.ts) is NOT exported here due to circular dependency.
 // Load it directly via: require('test-helpers/src/helpers-c.ts')
@@ -55,5 +56,6 @@ export {
   withInjectedConfig,
   injectTestConfigSnapshot,
   listeningAgent,
-  pollUntil
+  pollUntil,
+  childStorageEngineEnv
 };

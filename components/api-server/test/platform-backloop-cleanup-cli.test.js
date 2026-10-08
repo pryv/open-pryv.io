@@ -14,6 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { childStorageEngineEnv } = require('test-helpers');
 const cuid = require('cuid');
 
 const CLI = path.resolve(__dirname, '../../../bin/platform-backloop-cleanup.js');
@@ -21,6 +22,7 @@ const CLI = path.resolve(__dirname, '../../../bin/platform-backloop-cleanup.js')
 function runCli (args) {
   const res = spawnSync('node', [CLI, ...args], {
     cwd: path.resolve(__dirname, '../../../'),
+    env: { ...process.env, ...childStorageEngineEnv() },
     encoding: 'utf8',
     timeout: 60000
   });

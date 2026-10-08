@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const cuid = require('cuid');
 const { produceStorageConnection, produceSeriesConnection } = require('./test-helpers');
-const { databaseFixture } = require('test-helpers');
+const { databaseFixture, childStorageEngineEnv } = require('test-helpers');
 const { getMall } = require('mall');
 const business = require('business');
 const { integrity } = business;
@@ -98,7 +98,7 @@ describe('[HFDR] hfs-duration-repair tool', function () {
   function runTool (...args) {
     return execFileSync(process.execPath, ['bin/hfs-duration-repair.js', '--user', userId, ...args], {
       cwd: repoRoot,
-      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
       encoding: 'utf8'
     });
   }
@@ -196,7 +196,7 @@ describe('[HFOV] hfs-duration-repair tool: durations beyond the series range', f
   function runTool (...args) {
     return execFileSync(process.execPath, ['bin/hfs-duration-repair.js', '--user', userId, ...args], {
       cwd: repoRoot,
-      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
       encoding: 'utf8'
     });
   }

@@ -44,6 +44,11 @@ require('@pryv/boiler').init({
     }
   ]
 });
+// Storage engine of the run (`just test-sqlite` sets STORAGE_ENGINE=sqlite).
+// helpers-base applies it for the other components; these tests do not load
+// it, so apply it here, before any storage initialises. The HFS and API
+// children spawned through TestServerContext then inherit it.
+require('test-helpers/src/testStorageEngines.ts').applyTestStorageEngine();
 // Test helpers for all acceptance tests.
 const logger = require('@pryv/boiler').getLogger('test-helpers');
 const testHelpers = require('test-helpers');

@@ -68,16 +68,7 @@ const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
 // audit unit tests live in the audit component (which loads only
 // helpers-base.ts) — leaving audit untouched here keeps that suite
 // green while still aligning the rest of the storage engine choice.
-if (process.env.STORAGE_ENGINE === 'sqlite') {
-  const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
-  const { resolveTestSeriesEngine } = require('./resolveTestSeriesEngine.ts');
-  const cfg = getConfigUnsafe(true);
-  cfg.set('storages:base:engine', 'sqlite');
-  cfg.set('storages:series:engine', resolveTestSeriesEngine('sqlite'));
-  // Honour `storages__file__engine` over the 'filesystem' default so this
-  // memory-scope set agrees with the env source DIM-forked children read.
-  cfg.set('storages:file:engine', resolveTestFileEngine());
-}
+require('./testStorageEngines.ts').applyTestStorageEngine();
 
 // platform.piiMode defaults to "hashed" since 2.0.0-rc.3, and Platform.init
 // refuses to boot when piiHmacKey is unset. EVERY component test boots

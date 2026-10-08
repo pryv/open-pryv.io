@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const { spawnSync } = require('child_process');
+const { childStorageEngineEnv } = require('test-helpers');
 const cuid = require('cuid');
 
 const CLI = path.resolve(__dirname, '../../../bin/mail.js');
@@ -24,6 +25,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../../');
 function runCli (args) {
   const res = spawnSync('node', [CLI, ...args], {
     cwd: REPO_ROOT,
+    env: { ...process.env, ...childStorageEngineEnv() },
     encoding: 'utf8',
     timeout: 30000
   });

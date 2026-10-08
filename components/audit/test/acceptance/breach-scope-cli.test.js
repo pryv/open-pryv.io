@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawnSync } = require('child_process');
+const { childStorageEngineEnv } = require('test-helpers');
 
 // components/audit/test/acceptance -> repo root is four levels up.
 const CLI = path.resolve(__dirname, '../../../../bin/breach-scope.js');
@@ -26,7 +27,8 @@ function runCli (args) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 60000,
-    env: process.env // inherit NODE_ENV=test + rqlite/PG/pepper injection
+    // inherit NODE_ENV=test + rqlite/PG/pepper injection, and the run's storage engines
+    env: { ...process.env, ...childStorageEngineEnv() }
   });
   return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
 }

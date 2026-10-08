@@ -22,6 +22,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { execSync, spawn } = require('node:child_process');
+const { resolveTestSeriesEngine } = require('test-helpers/src/resolveTestSeriesEngine.ts');
 
 const LIB_JS_DIR = path.resolve(__dirname, '../../../external-ressources/lib-js');
 const SERVICE_CORE_DIR = path.resolve(__dirname, '../../../');
@@ -91,6 +92,13 @@ function engineEnvFromTestConfig () {
   // too (the API server acts as broker, HFS connects to it as subscriber), so a
   // parallel checkout doesn't collide on the canonical 4222.
   env.tcpBroker__port = String(TCP_BROKER_PORT);
+  // The engine of the run (`just test-sqlite` sets STORAGE_ENGINE=sqlite):
+  // the servers would otherwise boot on the default PostgreSQL. Same mapping
+  // as the other components' test helpers.
+  if (process.env.STORAGE_ENGINE === 'sqlite') {
+    env.storages__base__engine = 'sqlite';
+    env.storages__series__engine = resolveTestSeriesEngine('sqlite');
+  }
   return env;
 }
 

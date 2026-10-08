@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const { getConfig } = require('@pryv/boiler');
 const storage = require('storage');
 const { fromCallback } = require('utils');
+const { childStorageEngineEnv } = require('test-helpers');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../');
 
@@ -195,23 +196,10 @@ describe('[ACCV] accesses: creator carve-outs carried into child accesses', func
   });
 
   describe('[ACCV10] bin/access-scope-audit.js', function () {
-    // The test harness picks the storage engines in this process's memory
-    // config; a separate process reads the config files only, so hand the
-    // resolved engines over through the environment.
-    async function engineEnv () {
-      const config = await getConfig();
-      const env = {};
-      for (const kind of ['base', 'series', 'file']) {
-        const engine = config.get('storages:' + kind + ':engine');
-        if (engine != null) env['storages__' + kind + '__engine'] = engine;
-      }
-      return env;
-    }
-
     async function runTool (...args) {
       return execFileSync(process.execPath, ['bin/access-scope-audit.js', '--user', username, ...args], {
         cwd: repoRoot,
-        env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...(await engineEnv()) },
+        env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
         encoding: 'utf8'
       });
     }

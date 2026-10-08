@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawnSync } = require('child_process');
+const { childStorageEngineEnv } = require('test-helpers');
 const yaml = require('js-yaml');
 const cuid = require('cuid');
 
@@ -25,6 +26,7 @@ function runCli (args) {
   // Spawn the CLI as a child process so it exercises the real boiler + rqlite path.
   const res = spawnSync('node', [CLI, ...args], {
     cwd: path.resolve(__dirname, '../../../'),
+    env: { ...process.env, ...childStorageEngineEnv() },
     encoding: 'utf8',
     timeout: 30000
   });

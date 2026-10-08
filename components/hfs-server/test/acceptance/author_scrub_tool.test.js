@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const cuid = require('cuid');
 const { produceStorageConnection } = require('./test-helpers');
-const { databaseFixture } = require('test-helpers');
+const { databaseFixture, childStorageEngineEnv } = require('test-helpers');
 const { getMall } = require('mall');
 const storage = require('storage');
 const { fromCallback } = require('utils');
@@ -61,7 +61,7 @@ describe('[HAST] hfs-author-scrub tool', function () {
   function runTool (...args) {
     return execFileSync(process.execPath, ['bin/hfs-author-scrub.js', '--user', userId, ...args], {
       cwd: repoRoot,
-      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
       encoding: 'utf8'
     });
   }
@@ -167,7 +167,7 @@ describe('[HASP] hfs-author-scrub tool: trashed, deleted and paged rows', functi
   function runTool (...args) {
     return execFileSync(process.execPath, ['bin/hfs-author-scrub.js', '--user', userId, ...args], {
       cwd: repoRoot,
-      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     });

@@ -24,6 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { childStorageEngineEnv } = require('test-helpers');
 
 const CLI = path.resolve(__dirname, '../../../bin/sso-link.js');
 const PROVIDER = 'testidp';
@@ -32,6 +33,7 @@ const field = 'sso-' + PROVIDER;
 function runCli (args) {
   const res = spawnSync('node', [CLI, ...args], {
     cwd: path.resolve(__dirname, '../../../'),
+    env: { ...process.env, ...childStorageEngineEnv() },
     encoding: 'utf8',
     timeout: 30000
   });

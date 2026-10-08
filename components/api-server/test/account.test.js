@@ -192,9 +192,11 @@ describe('[ACCO] account', function () {
     it('[Y445] must properly compute storage size for all users in nightly script', async function () {
       const newAtt = testData.attachments.image;
       const execSync = require('child_process').execSync;
+      const { childStorageEngineEnv } = require('test-helpers');
+      const nightlyOpts = { env: { ...process.env, ...childStorageEngineEnv() } };
 
       // Initial nightly task
-      execSync('node ./bin/nightly');
+      execSync('node ./bin/nightly', nightlyOpts);
 
       // Verify initial storage usage
       const initialStorageInfo = await mall.getUserStorageInfos(user.id);
@@ -205,7 +207,7 @@ describe('[ACCO] account', function () {
       await addEventWithAttachmentAsync2(newAtt);
 
       // Another nightly task
-      execSync('node ./bin/nightly');
+      execSync('node ./bin/nightly', nightlyOpts);
 
       // Verify updated storage usage
       const updatedStorageInfo = await mall.getUserStorageInfos(user.id);
