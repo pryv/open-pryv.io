@@ -150,6 +150,8 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     const res = runCli(['templates', 'seed']);
     assert.strictEqual(res.status, 0, res.stderr);
     const rows = await platformDB.getAllMailTemplates();
-    assert.strictEqual(rows.length, 16);
+    // 5 template types (welcome-email, reset-password, verify-email,
+    // email-challenge, mfa-change) x 2 languages x 2 parts.
+    assert.strictEqual(rows.length, 20);
   });
 });
