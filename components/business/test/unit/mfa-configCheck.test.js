@@ -18,7 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
-const { describeMfaConfig } = require('../../src/mfa/configCheck.ts');
+const { describeMfaConfig, describeInactiveSmsEnrolments } = require('../../src/mfa/configCheck.ts');
 
 const SHIPPED = yaml.load(fs.readFileSync(path.resolve(import.meta.dirname, '../../../../config/default-config.yml'), 'utf8')).services.mfa;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -120,5 +120,61 @@ describe('[MCHK] describeMfaConfig', function () {
 
   it('[MCHK9] sessions.ttlSeconds below 1 is a problem', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.sessions.ttlSeconds = 0; })), ['services.mfa.sessions.ttlSeconds']);
+  });
+
+  it('[MCHK12] allowLoginWhenMethodInactive: true warns; a non-boolean is a problem; false or absent says nothing', function () {
+    const on = withChange((c) => { c.allowLoginWhenMethodInactive = true; });
+    assert.deepStrictEqual(on.problems, []);
+    assert.strictEqual(on.warnings.length, 1, JSON.stringify(on.warnings));
+    assert.match(on.warnings[0], /allowLoginWhenMethodInactive is true.*password only/);
+    assert.deepStrictEqual(paths(withChange((c) => { c.allowLoginWhenMethodInactive = 'yes'; })), ['services.mfa.allowLoginWhenMethodInactive']);
+    assert.deepStrictEqual(withChange((c) => { c.allowLoginWhenMethodInactive = false; }), { problems: [], warnings: [] });
+    assert.deepStrictEqual(withChange((c) => { delete c.allowLoginWhenMethodInactive; }), { problems: [], warnings: [] });
+  });
+});
+
+describe('[MSIE] describeInactiveSmsEnrolments (boot check of SMS enrolments)', function () {
+  const smsOff = () => clone(SHIPPED); // shipped default: MFA on, TOTP only, no legacy mode
+  function counter (n) {
+    const c = async () => { c.calls++; if (n instanceof Error) throw n; return n; };
+    c.calls = 0;
+    return c;
+  }
+
+  it('[MSIE1] no SMS enrolment: no warning', async function () {
+    const count = counter(0);
+    assert.strictEqual(await describeInactiveSmsEnrolments(smsOff(), count), null);
+    assert.strictEqual(count.calls, 1);
+  });
+
+  it('[MSIE2] SMS enrolments while SMS is not active: a warning naming the count and the refusal', async function () {
+    const message = await describeInactiveSmsEnrolments(smsOff(), counter(3));
+    assert.match(message, /^3 account\(s\) on this core are enrolled in SMS MFA/);
+    assert.match(message, /refused \(403 mfa-method-inactive\)/);
+    const allowed = smsOff();
+    allowed.allowLoginWhenMethodInactive = true;
+    assert.match(await describeInactiveSmsEnrolments(allowed, counter(3)), /log in with the password only/);
+  });
+
+  it('[MSIE3] SMS active (new model or legacy mode), MFA off, or no count available: not counted, no warning', async function () {
+    const smsOn = smsOff();
+    smsOn.methods.sms.active = true;
+    const legacy = smsOff();
+    legacy.mode = 'single';
+    const off = smsOff();
+    off.active = false;
+    for (const cfg of [smsOn, legacy, off]) {
+      const count = counter(3);
+      assert.strictEqual(await describeInactiveSmsEnrolments(cfg, count), null, JSON.stringify(cfg));
+      assert.strictEqual(count.calls, 0, 'the storage is not queried');
+    }
+    assert.strictEqual(await describeInactiveSmsEnrolments(smsOff(), null), null);
+  });
+
+  it('[MSIE4] a failing count or an unknown mode never throws: no warning, the error goes to onError', async function () {
+    const errors = [];
+    assert.strictEqual(await describeInactiveSmsEnrolments(smsOff(), counter(new Error('db down')), (e) => errors.push(e.message)), null);
+    assert.deepStrictEqual(errors, ['db down']);
+    assert.strictEqual(await describeInactiveSmsEnrolments({ mode: 'bogus' }, counter(3)), null);
   });
 });

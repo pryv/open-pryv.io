@@ -34,6 +34,7 @@ interface ErrorFactory {
   tooManyResults: (limit: number) => APIErrorT;
   tooManyAttempts: (retryAfterSeconds?: number, options?: { message?: string; data?: unknown }) => APIErrorT;
   invalidStepUp: (message?: string) => APIErrorT;
+  mfaMethodInactive: (method: string) => APIErrorT;
   payloadTooLarge: (message: string, data?: unknown) => APIErrorT;
   unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
   unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
@@ -202,6 +203,16 @@ factory.tooManyAttempts = function (retryAfterSeconds?: number, options?: { mess
 factory.invalidStepUp = function (message?: string) {
   return new APIError(ErrorIds.InvalidStepUp,
     message ?? 'The given password or MFA code does not match; the operation was not performed.',
+    { httpStatus: 403 });
+};
+
+/**
+ * The account's second factor uses a method that is not enabled on this
+ * server: the login is refused rather than completed with the password only.
+ */
+factory.mfaMethodInactive = function (method: string) {
+  return new APIError(ErrorIds.MfaMethodInactive,
+    `This account's second factor (${method}) is not enabled on this server; contact the platform operator.`,
     { httpStatus: 403 });
 };
 

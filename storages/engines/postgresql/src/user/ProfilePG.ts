@@ -22,6 +22,24 @@ class ProfilePG extends BaseStoragePG {
     this.hasDeletedCol = false;
     this.hasHeadIdCol = false;
   }
+
+  /**
+   * Number of accounts on this core with an active SMS MFA enrolment: a
+   * private profile `mfa` whose `method` is `sms` or absent (the legacy shape)
+   * and whose `content` is not empty (what the MFA profile model reads as
+   * active). One query across users, used by a boot-time check.
+   */
+  async countSmsMfaEnrolments (): Promise<number> {
+    const res = await this.db.query(
+      `SELECT count(*)::int AS n FROM profile
+        WHERE id = 'private'
+          AND jsonb_typeof(data->'mfa') = 'object'
+          AND COALESCE(data->'mfa'->>'method', 'sms') = 'sms'
+          AND jsonb_typeof(data->'mfa'->'content') = 'object'
+          AND data->'mfa'->'content' <> '{}'::jsonb`
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  }
 }
 
 export { ProfilePG };

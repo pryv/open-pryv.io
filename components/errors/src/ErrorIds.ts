@@ -53,6 +53,11 @@ const ErrorIds = {
    */
   InvalidStepUp: 'invalid-step-up',
   /**
+   * The account is enrolled in a second-factor method that this server does
+   * not have enabled, so the login cannot be completed.
+   */
+  MfaMethodInactive: 'mfa-method-inactive',
+  /**
    * A per-core resource ceiling is reached, so the request is refused rather
    * than served (not a per-account limiter: see TooManyAttempts for that).
    * The caller retries later, guided by the Retry-After header.

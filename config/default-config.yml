@@ -286,6 +286,18 @@ services:
     # PLATFORM-WIDE: set the same value on every core.
     stepUp:
       required: true
+    # Login of an account enrolled in an MFA method that is not active on this
+    # server (e.g. an SMS enrolment while methods.sms.active is false, which
+    # happens when the legacy `mode` is removed without activating
+    # methods.sms). By default such a login is refused with 403
+    # mfa-method-inactive, and each refusal is logged as a warning. With the
+    # PostgreSQL engine the boot also warns when this core holds SMS
+    # enrolments while SMS is not active.
+    # `true` restores the former behaviour: these accounts log in with the
+    # password only, without a second factor, and a warning is logged at each
+    # such login (and at boot).
+    # PLATFORM-WIDE: set the same value on every core.
+    allowLoginWhenMethodInactive: false
 
   # --- Mail delivery (welcome + reset-password) ---
   # `method` picks the transport:

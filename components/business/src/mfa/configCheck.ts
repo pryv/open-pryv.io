@@ -115,6 +115,14 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
     }
   }
 
+  // Login of an enrolled user whose method is not active: refused unless the
+  // operator opts back into the password-only login.
+  if (isSet(raw.allowLoginWhenMethodInactive) && typeof raw.allowLoginWhenMethodInactive !== 'boolean') {
+    problems.push({ message: `allowLoginWhenMethodInactive must be true or false, got ${JSON.stringify(raw.allowLoginWhenMethodInactive)}.`, path: [...base, 'allowLoginWhenMethodInactive'] });
+  } else if (raw.allowLoginWhenMethodInactive === true) {
+    warnings.push('services.mfa.allowLoginWhenMethodInactive is true: an account enrolled in an MFA method that is not active on this server logs in with the password only, without a second factor. A warning is logged at each such login.');
+  }
+
   // Attempts: never refuse the boot here (an upgraded deployment must keep
   // booting), but say what is ignored or replaced.
   const attempts = obj(raw.attempts);
@@ -147,4 +155,39 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
   return { problems, warnings };
 }
 
-export { describeMfaConfig };
+/**
+ * Boot check that needs the user data: SMS enrolments (a profile `mfa` with
+ * `method: sms` or no method, the legacy shape) while SMS is not an active
+ * method, which happens when the legacy `mode` is removed without activating
+ * `methods.sms`. Those accounts are refused at login (or, with
+ * `allowLoginWhenMethodInactive`, log in with the password only).
+ *
+ * `countSmsEnrolments` is the storage count, or null when the engine cannot
+ * count across users cheaply; it is called only when the configuration makes
+ * SMS enrolments unusable. Returns the warning to log, or null. Never throws:
+ * a failing count goes to `onError` and yields null.
+ */
+async function describeInactiveSmsEnrolments (
+  rawMfa: unknown,
+  countSmsEnrolments: (() => Promise<number>) | null,
+  onError?: (err: unknown) => void
+): Promise<string | null> {
+  try {
+    const cfg = normalizeMfaConfig(obj(rawMfa));
+    if (cfg.active !== true) return null; // MFA off server-wide: nobody is asked for a second factor
+    if (obj(obj(cfg.methods).sms).active === true) return null;
+    if (countSmsEnrolments == null) return null;
+    const count = await countSmsEnrolments();
+    if (!(count > 0)) return null;
+    const what = `${count} account(s) on this core are enrolled in SMS MFA, but SMS is not an active method (services.mfa.methods.sms.active is not true and no legacy services.mfa.mode is set)`;
+    if (cfg.allowLoginWhenMethodInactive) {
+      return `${what}: they log in with the password only, because services.mfa.allowLoginWhenMethodInactive is true. Activate services.mfa.methods.sms with its endpoints to ask them for their second factor again.`;
+    }
+    return `${what}: their logins are refused (403 mfa-method-inactive). Activate services.mfa.methods.sms with its endpoints, or set services.mfa.allowLoginWhenMethodInactive: true to let them log in with the password only.`;
+  } catch (err) {
+    if (onError) onError(err);
+    return null;
+  }
+}
+
+export { describeMfaConfig, describeInactiveSmsEnrolments };

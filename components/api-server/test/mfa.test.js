@@ -276,6 +276,155 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   });
 
   // --------------------------------------------------------------------
+  // An SMS enrolment made under the legacy SMS mode, then the server runs the
+  // shipped multi-method default (TOTP active, SMS not active).
+  describe('[MFIN] login of an account whose MFA method is not active on the server', function () {
+    // An app with no personal access yet, so a login that went through would
+    // have to write both a session and an access.
+    const appId = 'pryv-test-no-cors';
+    let warnings, loggerProto, originalWarn;
+
+    beforeEach(async function () {
+      warnings = [];
+      loggerProto = Object.getPrototypeOf(require('@pryv/boiler').getLogger('methods:auth:mfa'));
+      originalWarn = loggerProto.warn;
+      loggerProto.warn = function (msg, ...rest) {
+        warnings.push(String(msg));
+        return originalWarn.call(this, msg, ...rest);
+      };
+    });
+    afterEach(function () {
+      loggerProto.warn = originalWarn;
+    });
+
+    async function enrolSms (user, token) {
+      const restore = injectTestConfigSnapshot(mfaConfig);
+      try {
+        await _resetMFASingletons();
+        nock(SMS_HOST).post('/challenge').reply(200, {});
+        nock(SMS_HOST).post('/verify').reply(200, {});
+        const act = await coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ phone: '+41000' });
+        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        const confirm = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code: '1234' });
+        assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+      } finally {
+        restore();
+        await _resetMFASingletons();
+      }
+    }
+    function login () {
+      return coreRequest
+        .post(`/${username}/auth/login`)
+        .set('Origin', 'http://test.pryv.local')
+        .send({ username, password, appId });
+    }
+    /** The user's accesses (id + token) and whether a session matches this login. */
+    async function loginFootprint () {
+      const user = await (await getUsersRepository()).getUserByUsername(username);
+      const layer = await storage.getStorageLayer();
+      const accesses = await new Promise((resolve, reject) =>
+        layer.accesses.find(user, {}, null, (err, res) => err ? reject(err) : resolve(res)));
+      const session = await new Promise((resolve, reject) =>
+        layer.sessions.getMatching({ username, appId, userId: user.id }, (err, id) => err ? reject(err) : resolve(id)));
+      return {
+        accesses: accesses.map((a) => ({ id: a.id, token: a.token })).sort((a, b) => a.id.localeCompare(b.id)),
+        session: session ?? null
+      };
+    }
+    const warnedFor = () => warnings.filter((w) => w.includes(`"${username}"`));
+
+    it('[MFIN1] an SMS enrolment while SMS is not active: 403 mfa-method-inactive, no token, no session or access written', async function () {
+      await enrolSms(username, personalToken);
+      const before = await loginFootprint();
+      assert.strictEqual(before.session, null, 'precondition: no session matches this login yet');
+
+      const res = await login();
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'mfa-method-inactive');
+      assert.match(res.body.error.message, /\(sms\)/);
+      assert.strictEqual(res.body.token, undefined);
+      assert.strictEqual(res.body.mfaToken, undefined);
+      assert.strictEqual(res.body.apiEndpoint, undefined);
+
+      assert.deepStrictEqual(await loginFootprint(), before, 'the refused login wrote no session and no access');
+
+      // Logged, at most once per user per window.
+      const again = await login();
+      assert.strictEqual(again.status, 403);
+      const refusals = warnedFor().filter((w) => /Login refused/.test(w));
+      assert.strictEqual(refusals.length, 1, JSON.stringify(warnedFor()));
+      assert.match(refusals[0], /\(sms\)/);
+    });
+
+    it('[MFIN2] allowLoginWhenMethodInactive: true restores the password-only login, with a warning at each one', async function () {
+      await enrolSms(username, personalToken);
+      const restore = injectTestConfigSnapshot({ services: { mfa: { allowLoginWhenMethodInactive: true } } });
+      try {
+        for (let i = 0; i < 2; i++) {
+          const res = await login();
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+          assert.ok(res.body.token != null, 'a token is released');
+          assert.strictEqual(res.body.mfaToken, undefined);
+        }
+      } finally {
+        restore();
+      }
+      assert.strictEqual(warnedFor().filter((w) => /WITHOUT a second factor/.test(w)).length, 2, JSON.stringify(warnedFor()));
+    });
+
+    it('[MFIN3] a TOTP enrolment with TOTP active is still asked for its second factor', async function () {
+      const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ method: 'totp' });
+      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+        .send({ code: await previousStepCodeFor(act.body.secret) });
+      assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+      const res = await login();
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.mfaMethod, 'totp');
+      assert.ok(res.body.mfaToken != null);
+      assert.strictEqual(res.body.token, undefined);
+    });
+
+    it('[MFIN4] with MFA off server-wide, an SMS-enrolled account logs in with the password (unchanged)', async function () {
+      await enrolSms(username, personalToken);
+      const restore = injectTestConfigSnapshot({ services: { mfa: { active: false } } });
+      try {
+        const res = await login();
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.ok(res.body.token != null);
+      } finally {
+        restore();
+      }
+    });
+
+    it('[MFIN5] the boot count of SMS enrolments sees SMS enrolments only (PostgreSQL)', async function () {
+      const profile = (await storage.getStorageLayer()).profile;
+      if (typeof profile.countSmsMfaEnrolments !== 'function') return this.skip(); // not counted on this engine
+      const { describeInactiveSmsEnrolments } = require('business/src/mfa/configCheck.ts');
+      const n0 = await profile.countSmsMfaEnrolments();
+
+      // A TOTP enrolment is not counted.
+      const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ method: 'totp' });
+      const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+        .send({ code: await previousStepCodeFor(act.body.secret) });
+      assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+      assert.strictEqual(await profile.countSmsMfaEnrolments(), n0);
+
+      // An SMS enrolment is.
+      const smsUsername = ('mfa' + cuid.slug()).toLowerCase();
+      const smsToken = cuid();
+      const smsUser = await fixtures.user(smsUsername, { password });
+      await smsUser.access({ type: 'personal', token: smsToken, name: 'pryv-test' });
+      await smsUser.session(smsToken);
+      await enrolSms(smsUsername, smsToken);
+      assert.strictEqual(await profile.countSmsMfaEnrolments(), n0 + 1);
+
+      const message = await describeInactiveSmsEnrolments({ active: true }, () => profile.countSmsMfaEnrolments());
+      assert.match(message, /enrolled in SMS MFA.*refused/);
+    });
+  });
+
+  // --------------------------------------------------------------------
   describe('[MA2] when services.mfa.mode is "challenge-verify"', function () {
     let restoreConfig;
     beforeEach(async function () {

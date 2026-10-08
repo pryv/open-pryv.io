@@ -15,6 +15,12 @@ type MethodContext = BaseMethodContext & {
   [key: string]: unknown;
 };
 type AccessRow = { token?: string; [k: string]: unknown };
+/** What `mfaResolveForLogin` hands over to `mfaCheckIfActive`. */
+type MfaLoginState = {
+  cfg: Record<string, unknown>;
+  profile: unknown;
+  method: { name: string; challenge: (username: string, profile: unknown, clientRequest: Record<string, unknown>) => Promise<unknown> };
+};
 const commonFns = require('api-server/src/methods/helpers/commonFunctions.ts');
 const { ApiEndpoint } = require('utils');
 const errors = require('errors').factory;
@@ -31,6 +37,20 @@ const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile:
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 
 const MFA_PROFILE_ID = 'private';
+
+// Refused logins of an enrolled user whose method is not active are logged at
+// most once per user per window, per process, so a client retrying in a loop
+// cannot flood the log. The map is dropped whole when it grows past its cap.
+const INACTIVE_METHOD_WARN_WINDOW_MS = 10 * 60 * 1000;
+const INACTIVE_METHOD_WARN_MAX_KEYS = 10000;
+const inactiveMethodWarnedAt = new Map<string, number>();
+function shouldWarnInactiveMethod (userId: string, now: number = Date.now()): boolean {
+  const last = inactiveMethodWarnedAt.get(userId);
+  if (last != null && now - last < INACTIVE_METHOD_WARN_WINDOW_MS) return false;
+  if (inactiveMethodWarnedAt.size >= INACTIVE_METHOD_WARN_MAX_KEYS) inactiveMethodWarnedAt.clear();
+  inactiveMethodWarnedAt.set(userId, now);
+  return true;
+}
 
 /**
  * Auth API methods implementations.
@@ -55,6 +75,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.getTrustedAppCheck(getAuth),
     applyPrerequisitesForLogin,
     checkPassword,
+    mfaResolveForLogin,
     openSession,
     updateOrCreatePersonalAccess,
     addApiEndpoint,
@@ -81,6 +102,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   api.register('auth.ssoLogin',
     refuseIfAuthenticated,
     applyPrerequisitesForLogin,
+    mfaResolveForLogin,
     openSession,
     updateOrCreatePersonalAccess,
     addApiEndpoint,
@@ -283,24 +305,21 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   /**
-   * MFA integration. Runs as the final step of auth.login.
+   * MFA resolution. Runs once the identity is proven (password checked, or the
+   * SSO identity resolved) and BEFORE any session or personal access is
+   * written, so a refused login leaves nothing behind.
    *
-   * If the user has MFA active (persistent state at `profile.private.data.mfa`)
-   * AND the server has MFA enabled (`services.mfa.mode !== 'disabled'`):
-   *   1. Call mfaService.challenge() — typically triggers an SMS to the user's phone
-   *   2. Stash the already-issued Pryv access token + apiEndpoint + user in a new
-   *      SessionStore session, keyed by a fresh mfaToken
-   *   3. Delete `token`/`apiEndpoint` from the response and replace with `mfaToken`
+   * If the server has MFA enabled AND the user has an active enrolment
+   * (persistent state at `profile.private.data.mfa`), the enrolment's method is
+   * resolved and kept on the context for `mfaCheckIfActive`. When that method
+   * is not active on this server, the login is refused (403
+   * mfa-method-inactive), unless `services.mfa.allowLoginWhenMethodInactive` is
+   * true, which lets it proceed with the password only and logs a warning.
    *
-   * The caller must then call `mfa.verify` with the mfaToken + SMS code to
-   * receive the real Pryv access token. If they fail / never verify, the session
-   * expires (default 30 min) and the token is simply never released — matching
-   * the original service-mfa proxy behaviour.
-   *
-   * When MFA is disabled server-wide OR the user has no `profile.mfa`, this step
-   * is a no-op and the original login response is returned unchanged.
+   * When MFA is disabled server-wide OR the user has no active enrolment, this
+   * step is a no-op.
    */
-  async function mfaCheckIfActive (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+  async function mfaResolveForLogin (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const mfaCfg = getMfaConfig();
     if (mfaCfg.active !== true) return next(); // MFA disabled server-wide
     try {
@@ -316,14 +335,51 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const method = getMFAMethodForProfile(profile, mfaCfg);
       if (method == null) {
         // The user has confirmed MFA but its method is not active server-side
-        // (e.g. an operator enabled the new model without activating `sms`,
-        // stranding legacy SMS enrolments). Fail OPEN but never silently: this
-        // is a migration hazard the operator must see. See CHANGELOG migration note.
-        mfaLogger.warn(
-          `MFA-enrolled user "${context.user.username}" logged in WITHOUT a second factor: their method is not active in services.mfa. Check the methods.{sms,totp}.active config.`
-        );
-        return next();
+        // (e.g. the legacy `mode` was removed without activating `sms`).
+        const methodName = profile.method || 'sms';
+        if (mfaCfg.allowLoginWhenMethodInactive === true) {
+          mfaLogger.warn(
+            `MFA-enrolled user "${context.user.username}" logged in WITHOUT a second factor: their method (${methodName}) is not active in services.mfa and services.mfa.allowLoginWhenMethodInactive is true.`
+          );
+          return next();
+        }
+        if (shouldWarnInactiveMethod(String(context.user.id ?? context.user.username))) {
+          mfaLogger.warn(
+            `Login refused for MFA-enrolled user "${context.user.username}": their method (${methodName}) is not active in services.mfa. Activate services.mfa.methods.${methodName}, or see services.mfa.allowLoginWhenMethodInactive. (Logged at most once per user every ${INACTIVE_METHOD_WARN_WINDOW_MS / 60000} minutes.)`
+          );
+        }
+        return next(errors.mfaMethodInactive(methodName));
       }
+      context.mfaLogin = { cfg: mfaCfg, profile, method };
+      next();
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * MFA integration. Runs as the final step of auth.login.
+   *
+   * When `mfaResolveForLogin` found an active enrolment with an active method:
+   *   1. Call the method's challenge() (an SMS for the SMS method; nothing to
+   *      send for TOTP)
+   *   2. Stash the already-issued Pryv access token + apiEndpoint + user in a new
+   *      SessionStore session, keyed by a fresh mfaToken
+   *   3. Delete `token`/`apiEndpoint` from the response and replace with `mfaToken`
+   *
+   * The caller must then call `mfa.verify` with the mfaToken + code to
+   * receive the real Pryv access token. If they fail / never verify, the session
+   * expires (default 30 min) and the token is simply never released, matching
+   * the original service-mfa proxy behaviour.
+   *
+   * Otherwise this step is a no-op and the original login response is
+   * returned unchanged.
+   */
+  async function mfaCheckIfActive (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+    const pending = context.mfaLogin as MfaLoginState | undefined;
+    if (pending == null) return next();
+    const { cfg: mfaCfg, profile, method } = pending;
+    try {
       await method.challenge(context.user.username, profile, { headers: {}, body: params });
 
       // Stash the already-issued token in a pending session. Only release on mfa.verify.

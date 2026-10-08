@@ -25,7 +25,7 @@ const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
 
 describe('[MNORM] normalizeMfaConfig', function () {
   // MFA off still carries the step-up rule: mfa.deactivate stays callable.
-  const OFF = { active: false, stepUp: { required: true } };
+  const OFF = { active: false, stepUp: { required: true }, allowLoginWhenMethodInactive: false };
 
   it('[MNORM1] N3: disabled / absent / empty -> MFA off', function () {
     assert.deepStrictEqual(normalizeMfaConfig({ mode: 'disabled' }), OFF);
@@ -99,6 +99,17 @@ describe('[MNORM] normalizeMfaConfig', function () {
     // A typo or a string never lifts it.
     for (const stepUp of [{ required: 'false' }, { required: 0 }, { required: null }, 'off', null, {}]) {
       assert.deepStrictEqual(normalizeMfaConfig({ active: true, stepUp }).stepUp, { required: true }, JSON.stringify(stepUp));
+    }
+  });
+
+  it('[MNORM15] allowLoginWhenMethodInactive is false unless exactly true, on every branch', function () {
+    const sms = { mode: 'single', sms: { endpoints: { single: { url: 'x' } } } };
+    for (const base of [{ active: true }, sms, { active: false }, {}]) {
+      assert.strictEqual(normalizeMfaConfig(base).allowLoginWhenMethodInactive, false, JSON.stringify(base));
+      assert.strictEqual(normalizeMfaConfig({ ...base, allowLoginWhenMethodInactive: true }).allowLoginWhenMethodInactive, true, JSON.stringify(base));
+    }
+    for (const value of ['true', 1, null, {}, false]) {
+      assert.strictEqual(normalizeMfaConfig({ active: true, allowLoginWhenMethodInactive: value }).allowLoginWhenMethodInactive, false, JSON.stringify(value));
     }
   });
 

@@ -321,6 +321,24 @@ if (cluster.isPrimary) {
       }
     }
 
+    // --- MFA: SMS enrolments left without an active method ---
+    // Typically after the legacy services.mfa.mode is removed without
+    // activating methods.sms: those accounts can no longer log in. Counted
+    // where the engine has a cheap cross-user query (PostgreSQL); the SQLite
+    // engine keeps one file per user, so it is not counted there (each refused
+    // login still logs a warning). Never blocks the boot.
+    {
+      const mfaLogger = getLogger('mfa');
+      const { describeInactiveSmsEnrolments } = require('../components/business/src/mfa/configCheck.ts');
+      const profileStorage = require('../storages/index.ts').storageLayer?.profile;
+      const count = (profileStorage != null && typeof profileStorage.countSmsMfaEnrolments === 'function')
+        ? () => profileStorage.countSmsMfaEnrolments()
+        : null;
+      const message = await describeInactiveSmsEnrolments(config.get('services:mfa'), count,
+        (err) => mfaLogger.debug(`SMS enrolment count skipped: ${err && err.message}`));
+      if (message != null) warn(`[mfa] ${message}`);
+    }
+
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)
     const keepAlive = setInterval(() => {}, 60000);
 

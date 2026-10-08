@@ -79,6 +79,12 @@ type NormalizedMfaConfig = {
   sessions?: { ttlSeconds?: number };
   attempts?: AttemptsCfg;
   stepUp: StepUpCfg;
+  /**
+   * When true, an enrolled user whose method is not active on this server
+   * logs in with the password only (former behaviour). Default false: such a
+   * login is refused.
+   */
+  allowLoginWhenMethodInactive: boolean;
 };
 type RawMfaConfig = MFAConfig & {
   active?: boolean;
@@ -87,6 +93,7 @@ type RawMfaConfig = MFAConfig & {
   sms?: { endpoints?: Record<string, unknown> };
   attempts?: Record<string, unknown>;
   stepUp?: { required?: unknown };
+  allowLoginWhenMethodInactive?: unknown;
 };
 
 const BACKOFF_DEFAULTS: BackoffCfg = {
@@ -180,11 +187,13 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
   // Carried on every branch, MFA off included: mfa.deactivate stays callable
   // when MFA is off server-wide, and its step-up rule must not change then.
   const stepUp = normalizeStepUp(cfg.stepUp);
+  // Only an explicit boolean `true` opts in; anything else keeps the refusal.
+  const allowLoginWhenMethodInactive = cfg.allowLoginWhenMethodInactive === true;
 
   // N0 — explicit `active: false` wins. The shipped default is now `true`, so a
   // `false` value can only be deliberate operator intent to disable MFA, even
   // over a leftover legacy `mode`.
-  if (cfg.active === false) return { active: false, stepUp };
+  if (cfg.active === false) return { active: false, stepUp, allowLoginWhenMethodInactive };
 
   // N2 — a legacy non-disabled `mode` takes PRECEDENCE over the new-model
   // default (checked before N1). This is the critical upgrade-safety rule: a
@@ -207,7 +216,8 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
       },
       sessions,
       attempts,
-      stepUp
+      stepUp,
+      allowLoginWhenMethodInactive
     };
   }
 
@@ -227,11 +237,11 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
     // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
     // getMFAMethod() and returns a clean invalid-mfa-method error when it is
     // inactive, which is the only place the default is actually used.
-    return { active: true, defaultMethod, methods: { totp, sms }, sessions, attempts, stepUp };
+    return { active: true, defaultMethod, methods: { totp, sms }, sessions, attempts, stepUp, allowLoginWhenMethodInactive };
   }
 
   // N3 — disabled / absent.
-  if (cfg.mode == null || cfg.mode === 'disabled') return { active: false, stepUp };
+  if (cfg.mode == null || cfg.mode === 'disabled') return { active: false, stepUp, allowLoginWhenMethodInactive };
 
   // Unknown mode keeps today's throw.
   throw new Error(`Unknown MFA mode "${cfg.mode}". Expected one of: disabled, challenge-verify, single`);
