@@ -73,7 +73,7 @@ type NconfStore = {
   defaults (def: unknown): unknown;
   get (key?: string): unknown;
   set (key: string, value: unknown): unknown;
-  stores: Record<string, { type: string; file?: string; get (key: string): unknown }>;
+  stores: Record<string, { type: string; file?: string; get (key?: string): unknown }>;
 };
 type Logger = {
   debug (msg: string, ...rest: unknown[]): void;
@@ -306,17 +306,18 @@ class Config {
    */
   has (key: string) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
-    const value = this.store.get(key);
-    return (typeof value !== 'undefined');
+    // Defined in any scope (no merge needed, see resolve()).
+    return Object.values(this.store.stores).some((s) => typeof s.get(key) !== 'undefined');
   }
 
   /**
    * Retreive value
+   * The returned value is a copy: mutating it does not change the config.
    * @param [key] if no key is provided all the config is returned
    */
   get (key?: string) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
-    const value = this.store.get(key);
+    const value = resolve(this.store, key);
     if (typeof value === 'undefined') this.logger.debug('get: [' + key + '] is undefined');
     return value;
   }
@@ -331,7 +332,7 @@ class Config {
       const value = store.get(key);
       if (typeof value !== 'undefined') {
         const res: { value: unknown; scope: string; info: string } = {
-          value,
+          value: copyValue(value),
           scope: scopeName,
           info: ''
         };
@@ -376,6 +377,56 @@ class Config {
 
 export { Config };
 export type { ExtraDef };
+
+// --- value resolution across scopes ---- //
+
+/**
+ * Same resolution as nconf's `Provider.get()`: scopes are read from the highest
+ * priority down to the first one holding a non-object value; the objects met on
+ * the way are merged, higher scopes over lower ones, with nconf's own merge.
+ *
+ * Not delegated to nconf because its merge assigns the lowest scope's nested
+ * objects BY REFERENCE into the result and then merges the higher scopes into
+ * them: reading an object key wrote the values of a higher scope (e.g. an
+ * injected test scope) into a lower one, where they outlived that scope. Here
+ * each scope's value is copied before the merge, so no scope is ever written to
+ * and the result shares nothing with the stores.
+ */
+function resolve (provider: NconfStore, key?: string): unknown {
+  const objects: Record<string, unknown>[] = [];
+  let found: unknown;
+  for (const scope of Object.values(provider.stores)) {
+    const value = scope.get(key);
+    if (typeof value === 'undefined') continue;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      objects.push(value as Record<string, unknown>);
+      continue;
+    }
+    found = value;
+    break;
+  }
+  if (objects.length === 0) return copyValue(found);
+  const merged = new nconf.Memory();
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const obj = copyValue(objects[i]) as Record<string, unknown>;
+    for (const k of Object.keys(obj)) merged.merge(k, obj[k]);
+  }
+  return merged.store;
+}
+
+/**
+ * Deep copy of plain objects and arrays; any other value (primitives, class
+ * instances, functions) is returned as is.
+ */
+function copyValue (value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(copyValue);
+  if (value === null || typeof value !== 'object') return value;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return value;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(value)) out[k] = copyValue((value as Record<string, unknown>)[k]);
+  return out;
+}
 
 // --- remote and local json ressource loader ---- //
 

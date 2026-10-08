@@ -71,19 +71,6 @@ async function previousStepCodeFor (secretB32) {
   return totpCodeFor(secretB32, -1);
 }
 
-// Reading an object key (e.g. `services:mfa`) merges the scopes into the
-// LOWEST scope's own objects (nconf), so a key injected for one test can stay
-// behind in the shipped defaults after its restore. Where a test injects a key
-// whose shipped value other tests rely on, it puts that value back this way.
-async function putBackShippedValue (shipped) {
-  const undo = injectTestConfigSnapshot(shipped);
-  try {
-    (await getConfig()).get('services:mfa');
-  } finally {
-    undo();
-  }
-}
-
 const mfaConfig = {
   services: {
     mfa: {
@@ -959,9 +946,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     });
 
     it('[MCVP2] without a predicate: an empty 2xx is accepted, a 2xx with a body is refused', async function () {
-      // Explicitly unset: a nested key injected by an earlier test can survive
-      // its restore in the merged config.
-      const mfaToken = await pendingEnrolment(null);
+      const mfaToken = await pendingEnrolment();
       nock(SMS_HOST).post('/verify').reply(200, { status: 'approved' });
       assertInvalidCode(await confirm(mfaToken));
       nock(SMS_HOST).post('/verify').reply(200, '');
@@ -1240,7 +1225,6 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(late.body.token, undefined);
       } finally {
         restoreTtl();
-        await putBackShippedValue({ services: { mfa: { sessions: { ttlSeconds: 1800 } } } });
       }
     });
   });
@@ -1898,9 +1882,8 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         restoreCap = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPending: 2 } } } });
         await _resetMFASingletons();
       });
-      afterEach(async function () {
+      afterEach(function () {
         restoreCap();
-        await putBackShippedValue({ services: { mfa: { sessions: { maxPending: 10000 } } } });
       });
 
       it('[MCAP1] past maxPending sessions a login and an activation answer 429; a completed session frees a place', async function () {
