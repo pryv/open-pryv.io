@@ -27,6 +27,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.deleteHFData.bind(deletion),
     deletion.deleteAttachments.bind(deletion),
     deletion.deleteAuditDataStorage.bind(deletion),
-    deletion.deleteAuditData.bind(deletion),
-    deletion.deleteUser.bind(deletion));
+    // deleteUser opens the user's per-user SQLite files to remove its rows:
+    // after the directory wipe it would create them again, empty. Wipe last.
+    deletion.deleteUser.bind(deletion),
+    deletion.deleteAuditData.bind(deletion));
 };

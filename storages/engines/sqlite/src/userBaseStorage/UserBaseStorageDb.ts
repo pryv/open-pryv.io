@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { fileIdentity } from '../fileIdentity.ts';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -50,13 +51,41 @@ class UserBaseStorageDb {
     dispose (db: UserBaseStorageDb, _key: string) { db.db?.close(); }
   });
 
+  /** Opens in progress, shared by concurrent callers for the same user. */
+  static pendingOpens: Map<string, Promise<UserBaseStorageDb>> = new Map();
+
+  /**
+   * A cached handle is only reused while it still points at the file on
+   * disk (see `fileIdentity`): when the user's directory was wiped (account
+   * deletion, here or in another process) or the file replaced (restore),
+   * the stale handle is closed and the file opened again. Costs one `stat`
+   * per call.
+   */
   static async forUser (userId: string): Promise<UserBaseStorageDb> {
-    let inst = UserBaseStorageDb.cache.get(userId);
-    if (inst) return inst;
+    const cached = UserBaseStorageDb.cache.get(userId);
+    if (cached != null) {
+      if (cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId) return cached;
+      // Another caller may have reopened it while we were checking.
+      if (UserBaseStorageDb.cache.get(userId) === cached) UserBaseStorageDb.cache.delete(userId); // dispose closes the stale handle
+    }
+    const current = UserBaseStorageDb.cache.get(userId);
+    if (current != null) return current;
+    // Open once for all concurrent callers: a second `set` would dispose
+    // (close) the first handle while its caller still uses it.
+    let pending = UserBaseStorageDb.pendingOpens.get(userId);
+    if (pending == null) {
+      pending = UserBaseStorageDb.open(userId).finally(() => { UserBaseStorageDb.pendingOpens.delete(userId); });
+      UserBaseStorageDb.pendingOpens.set(userId, pending);
+    }
+    return await pending;
+  }
+
+  static async open (userId: string): Promise<UserBaseStorageDb> {
     const userDir = await _internals.userLocalDirectory.ensureUserDirectory(userId);
     const dbPath = path.join(userDir, `baseStorage-${VERSION}.sqlite`);
-    inst = new UserBaseStorageDb(dbPath);
+    const inst = new UserBaseStorageDb(dbPath);
     await inst.init();
+    inst.fileId = await fileIdentity(dbPath);
     UserBaseStorageDb.cache.set(userId, inst);
     return inst;
   }
@@ -67,6 +96,7 @@ class UserBaseStorageDb {
 
   db!: SqliteDb;
   dbPath: string;
+  fileId: string | null = null;
   knownTables: Set<string> = new Set();
 
   constructor (dbPath: string) {

@@ -193,7 +193,8 @@ describe('[PGTD] DELETE /users/:username', () => {
       'IH6T',
       '75IW',
       'MPXH',
-      '635G'
+      '635G',
+      'UDRM0'
     ],
     [
       'T21Z',
@@ -206,7 +207,8 @@ describe('[PGTD] DELETE /users/:username', () => {
       'N8TR',
       '7WMG',
       'UWYY',
-      'U004'
+      'U004',
+      'UDRM1'
     ]
   ];
   [0, 1].forEach(function (i) {
@@ -244,6 +246,12 @@ describe('[PGTD] DELETE /users/:username', () => {
         it(`[${testIDs[i][0]}] should respond with 200`, function () {
           assert.strictEqual(res.status, 200);
           assert.strictEqual(res.body.userDeletion.username, username1);
+        });
+        // Checked before the tests below read the deleted user's storage:
+        // opening its per-user SQLite files again creates them, empty.
+        it(`[${testIDs[i][11]}] should leave no user directory behind`, function () {
+          const userDir = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
+          assert.strictEqual(fs.existsSync(userDir), false, fs.existsSync(userDir) ? fs.readdirSync(userDir).join(', ') : '');
         });
         it(`[${testIDs[i][1]}] should delete user entries from impacted collections`, async function () {
           const user = await usersRepository.getUserById(username1);
@@ -288,14 +296,19 @@ describe('[PGTD] DELETE /users/:username', () => {
           // would by itself remove the file. The engine-agnostic
           // auditStorage.deleteUser also runs (BEFORE the dir wipe); this
           // assertion still passes for both code paths on SQLite.
-          const pathToUserAuditData = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
+          // The audit database file itself: the tests above read the deleted
+          // user's events and streams, which creates their (empty) files and
+          // so the user directory again ([UDRM*] checks the directory).
+          const auditStorage = require('storages').auditStorage;
+          const pathToUserAuditData = typeof auditStorage?.existingPathForUser === 'function'
+            ? auditStorage.existingPathForUser(userToDelete.attrs.id)
+            : require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
           const userFileExists = fs.existsSync(pathToUserAuditData);
           assert.strictEqual(userFileExists, false);
           // Engine-agnostic check — every engine that declares
           // auditStorage must have zero rows / events for the deleted
           // user after auth.delete (the gap on PG where the shared
           // audit_events table previously survived erasure).
-          const auditStorage = require('storages').auditStorage;
           if (auditStorage != null) {
             const userDb = await auditStorage.forUser(userToDelete.attrs.id);
             const count = await userDb.countEvents();

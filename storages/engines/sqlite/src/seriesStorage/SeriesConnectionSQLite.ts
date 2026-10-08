@@ -22,6 +22,7 @@
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
+import { fileIdentity } from '../fileIdentity.ts';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 
@@ -335,21 +336,6 @@ function parseInfluxSelect (query: string): { measurement: string, conditions: A
   }
 
   return { measurement, conditions };
-}
-
-/**
- * Identity (device + inode) of the file at `filePath`, or null when it does
- * not exist. A file removed and created again under the same path gets
- * another identity.
- */
-async function fileIdentity (filePath: string): Promise<string | null> {
-  try {
-    const st = await fs.stat(filePath, { bigint: true });
-    return `${st.dev}:${st.ino}`;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
 }
 
 async function getUsersBaseDir (): Promise<string> {
