@@ -106,6 +106,18 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.deepStrictEqual(withChange((c) => { c.attempts.backoff.baseSeconds = 0; c.attempts.backoff.maxSeconds = 0; }).warnings, []);
   });
 
+  it('[MCHK11] stepUp.required: false warns (with or without MFA active); a non-boolean is a problem', function () {
+    const off = withChange((c) => { c.stepUp.required = false; });
+    assert.deepStrictEqual(off.problems, []);
+    assert.strictEqual(off.warnings.length, 1, JSON.stringify(off.warnings));
+    assert.match(off.warnings[0], /stepUp\.required is false.*removed in a later release/);
+    const offWithoutMfa = describeMfaConfig({ active: false, stepUp: { required: false } });
+    assert.match(offWithoutMfa.warnings.join(' '), /stepUp\.required is false/);
+    assert.deepStrictEqual(paths(withChange((c) => { c.stepUp.required = 'false'; })), ['services.mfa.stepUp.required']);
+    assert.deepStrictEqual(paths(withChange((c) => { c.stepUp = 'off'; })), ['services.mfa.stepUp']);
+    assert.deepStrictEqual(withChange((c) => { delete c.stepUp; }), { problems: [], warnings: [] });
+  });
+
   it('[MCHK9] sessions.ttlSeconds below 1 is a problem', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.sessions.ttlSeconds = 0; })), ['services.mfa.sessions.ttlSeconds']);
   });

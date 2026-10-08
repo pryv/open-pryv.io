@@ -69,12 +69,16 @@ type AttemptsCfg = {
   perAccountWindowSeconds: number;
   backoff: BackoffCfg;
 };
+type StepUpCfg = {
+  required: boolean;
+};
 type NormalizedMfaConfig = {
   active: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
   sessions?: { ttlSeconds?: number };
   attempts?: AttemptsCfg;
+  stepUp: StepUpCfg;
 };
 type RawMfaConfig = MFAConfig & {
   active?: boolean;
@@ -82,6 +86,7 @@ type RawMfaConfig = MFAConfig & {
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
   sms?: { endpoints?: Record<string, unknown> };
   attempts?: Record<string, unknown>;
+  stepUp?: { required?: unknown };
 };
 
 const BACKOFF_DEFAULTS: BackoffCfg = {
@@ -140,6 +145,17 @@ function delayForFailures (failures: number, backoff: BackoffCfg): number {
   return Math.min(backoff.baseSeconds * 2 ** exponent, backoff.maxSeconds);
 }
 
+/**
+ * Normalize `services.mfa.stepUp`. Only an explicit boolean `false` turns the
+ * step-up off; anything else (absent, a typo, a string) keeps it required, so
+ * a config mistake can only make turning MFA off or replacing it stricter.
+ * The boot check reports a value that is not a boolean.
+ */
+function normalizeStepUp (raw: RawMfaConfig['stepUp']): StepUpCfg {
+  const src = (raw != null && typeof raw === 'object') ? raw : {};
+  return { required: src.required !== false };
+}
+
 let _warnedLegacyMode = false;
 function mfaLogger (): { warn: (...args: unknown[]) => void } {
   try {
@@ -161,11 +177,14 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
   const cfg = (raw || {}) as RawMfaConfig;
   const sessions = cfg.sessions;
   const attempts = normalizeAttempts(cfg.attempts);
+  // Carried on every branch, MFA off included: mfa.deactivate stays callable
+  // when MFA is off server-wide, and its step-up rule must not change then.
+  const stepUp = normalizeStepUp(cfg.stepUp);
 
   // N0 — explicit `active: false` wins. The shipped default is now `true`, so a
   // `false` value can only be deliberate operator intent to disable MFA, even
   // over a leftover legacy `mode`.
-  if (cfg.active === false) return { active: false };
+  if (cfg.active === false) return { active: false, stepUp };
 
   // N2 — a legacy non-disabled `mode` takes PRECEDENCE over the new-model
   // default (checked before N1). This is the critical upgrade-safety rule: a
@@ -187,7 +206,8 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
         totp: { active: false }
       },
       sessions,
-      attempts
+      attempts,
+      stepUp
     };
   }
 
@@ -207,11 +227,11 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
     // logins on a config typo. `mfa.activate` resolves `defaultMethod` through
     // getMFAMethod() and returns a clean invalid-mfa-method error when it is
     // inactive, which is the only place the default is actually used.
-    return { active: true, defaultMethod, methods: { totp, sms }, sessions, attempts };
+    return { active: true, defaultMethod, methods: { totp, sms }, sessions, attempts, stepUp };
   }
 
   // N3 — disabled / absent.
-  if (cfg.mode == null || cfg.mode === 'disabled') return { active: false };
+  if (cfg.mode == null || cfg.mode === 'disabled') return { active: false, stepUp };
 
   // Unknown mode keeps today's throw.
   throw new Error(`Unknown MFA mode "${cfg.mode}". Expected one of: disabled, challenge-verify, single`);
@@ -346,6 +366,6 @@ async function _resetMFASingletons (): Promise<void> {
   _methodCache = null;
 }
 
-export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
-export type { AttemptsCfg, BackoffCfg };
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons, normalizeMfaConfig, normalizeAttempts, normalizeStepUp, delayForFailures, getMFAMethod, getMFAMethodForProfile, SmsMethod };
+export type { AttemptsCfg, BackoffCfg, StepUpCfg, NormalizedMfaConfig };
 export type { MfaMethod, MfaClientRequest } from './MfaMethod.ts';

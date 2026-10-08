@@ -24,10 +24,13 @@ const { normalizeMfaConfig, delayForFailures } = require('../../src/mfa/index.ts
 const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
 
 describe('[MNORM] normalizeMfaConfig', function () {
+  // MFA off still carries the step-up rule: mfa.deactivate stays callable.
+  const OFF = { active: false, stepUp: { required: true } };
+
   it('[MNORM1] N3: disabled / absent / empty -> MFA off', function () {
-    assert.deepStrictEqual(normalizeMfaConfig({ mode: 'disabled' }), { active: false });
-    assert.deepStrictEqual(normalizeMfaConfig(undefined), { active: false });
-    assert.deepStrictEqual(normalizeMfaConfig({}), { active: false });
+    assert.deepStrictEqual(normalizeMfaConfig({ mode: 'disabled' }), OFF);
+    assert.deepStrictEqual(normalizeMfaConfig(undefined), OFF);
+    assert.deepStrictEqual(normalizeMfaConfig({}), OFF);
   });
 
   it('[MNORM2] N2: legacy mode "single" shims to an active SMS method', function () {
@@ -84,7 +87,19 @@ describe('[MNORM] normalizeMfaConfig', function () {
   });
 
   it('[MNORM9] an explicit active:false wins even over a leftover legacy mode', function () {
-    assert.deepStrictEqual(normalizeMfaConfig({ active: false, mode: 'single' }), { active: false });
+    assert.deepStrictEqual(normalizeMfaConfig({ active: false, mode: 'single' }), OFF);
+  });
+
+  it('[MNORM14] the step-up is required unless stepUp.required is exactly false, on every branch', function () {
+    const sms = { mode: 'single', sms: { endpoints: { single: { url: 'x' } } } };
+    for (const base of [{ active: true }, sms, { active: false }, {}]) {
+      assert.deepStrictEqual(normalizeMfaConfig(base).stepUp, { required: true }, JSON.stringify(base));
+      assert.deepStrictEqual(normalizeMfaConfig({ ...base, stepUp: { required: false } }).stepUp, { required: false }, JSON.stringify(base));
+    }
+    // A typo or a string never lifts it.
+    for (const stepUp of [{ required: 'false' }, { required: 0 }, { required: null }, 'off', null, {}]) {
+      assert.deepStrictEqual(normalizeMfaConfig({ active: true, stepUp }).stepUp, { required: true }, JSON.stringify(stepUp));
+    }
   });
 
   const ATTEMPTS_DEFAULTS = {

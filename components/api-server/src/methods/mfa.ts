@@ -7,10 +7,12 @@
 import { createRequire } from 'node:module';
 import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-import type { AttemptsCfg } from 'business/src/mfa/index.ts';
+import type { AttemptsCfg, NormalizedMfaConfig } from 'business/src/mfa/index.ts';
 
 const require = createRequire(import.meta.url);
+const crypto = require('node:crypto');
 const { fromCallback } = require('utils');
+const { describeMailCapability } = require('business/src/emails/mailCapability.ts');
 
 type MethodContext = BaseMethodContext & {
   [key: string]: unknown;
@@ -43,15 +45,18 @@ type ThrottleState = { failures: number; lastFailureAt: number; notBefore: numbe
  *  (`{ count, windowStartedAt, lockedUntil }`) on an upgraded deployment. */
 type StoredThrottle = Partial<ThrottleState> & { count?: number; windowStartedAt?: number; lockedUntil?: number };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
+/** What the e-mail notice reports. */
+type MfaChange = 'enrolled' | 'replaced' | 'deactivated' | 'recovered';
 const errors = require('errors').factory;
 const APIError = require('errors').APIError;
 const delegation = require('delegation');
 const commonFns = require('./helpers/commonFunctions.ts');
+const mailing = require('./helpers/mailing.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
 const { ready, getLogger } = require('@pryv/boiler');
 const mfaLogger = getLogger('methods:mfa');
-const { normalizeMfaConfig, delayForFailures, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
+const { normalizeMfaConfig, normalizeAttempts, delayForFailures, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 const PROFILE_ID = 'private';
@@ -331,6 +336,128 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfa: mfaValue } }, cb));
   }
 
+  /**
+   * Consume an accepted TOTP step with ONE conditional write: it succeeds only
+   * if the stored enrolment is still `secret` AND its stored step is still
+   * below the accepted one. Atomic across API workers, so of two concurrent
+   * uses of the same code exactly one wins, and a smaller step arriving after
+   * a larger one was consumed is refused. False means the code is no longer
+   * acceptable.
+   */
+  async function consumeTotpStep (user: UserRef, secret: string, acceptedStep: number, stepBefore: number | null | undefined): Promise<boolean> {
+    if (typeof stepBefore !== 'number' || !(acceptedStep > stepBefore)) return false;
+    return !!await fromCallback((cb: Cb<boolean>) =>
+      userProfileStorage.compareAndSetJson(user, { id: PROFILE_ID },
+        [{ path: ['data', 'mfa', 'totp', 'secret'], eq: secret },
+          { path: ['data', 'mfa', 'totp', 'lastUsedStep'], lt: acceptedStep }],
+        [{ path: ['data', 'mfa', 'totp', 'lastUsedStep'], value: acceptedStep }], cb));
+  }
+
+  /**
+   * Identifies one active enrolment (null when there is none). Recovery codes
+   * are minted at every confirmation, so a new enrolment, even of the same
+   * method, never matches an earlier one, while a TOTP use (which only moves
+   * `lastUsedStep`) keeps it unchanged.
+   */
+  function enrolmentFingerprint (profile: MFAProfile): string | null {
+    if (!profile.isActive()) return null;
+    return crypto.createHash('sha256')
+      .update(JSON.stringify([profile.method ?? 'sms', profile.totp?.secret ?? null, profile.recoveryCodes]))
+      .digest('hex');
+  }
+
+  // --------------------------------------------------------------------
+  // Step-up. Turning MFA off, or replacing an active enrolment, weakens the
+  // account's second factor, so a personal token alone is not enough: the
+  // body must also carry the account password or a code of the CURRENT
+  // factor. A wrong step-up is a failed attempt on the per-account tally
+  // above, so it cannot be used to guess either.
+  // --------------------------------------------------------------------
+
+  /** Null when the call may proceed; else the error to surface. */
+  async function checkStepUp (user: UserRef, params: Record<string, unknown>, stored: MFAProfile, cfg: NormalizedMfaConfig): Promise<Error | null> {
+    const hasCode = params.code != null;
+    const hasPassword = params.password != null;
+    if (hasCode === hasPassword) {
+      return errors.invalidParametersFormat(
+        'This operation requires a step-up: send either "password" (the account password) or "code" (a code of the current MFA factor).',
+        { id: 'step-up-required' });
+    }
+    const value = hasCode ? params.code : params.password;
+    if (typeof value !== 'string') {
+      return errors.invalidParametersFormat(`"${hasCode ? 'code' : 'password'}" must be a string.`, { id: 'step-up-required' });
+    }
+    // Counted before it is checked; refused unchecked while a delay runs. With
+    // MFA off server-wide the normalized config has no `attempts`; the
+    // operator's limits still apply to mfa.deactivate then.
+    const attemptsCfg: AttemptsCfg = cfg.attempts ?? normalizeAttempts(config.get('services:mfa:attempts'));
+    const attemptErr = await reserveAccountAttempt(user, attemptsCfg);
+    if (attemptErr) return attemptErr;
+    const ok = hasCode
+      ? await currentFactorCodeMatches(user, stored, value, cfg)
+      : await (await getUsersRepository()).checkUserPassword(user.id, value);
+    if (!ok) return errors.invalidStepUp();
+    await clearThrottleIfAny(user);
+    return null;
+  }
+
+  /**
+   * A code of the stored, active enrolment, consumed so it cannot be used
+   * again (for a step-up or a login). TOTP only: an SMS code exists only
+   * after a challenge, and none is sent for a step-up, so an SMS enrolment
+   * steps up with the password.
+   */
+  async function currentFactorCodeMatches (user: UserRef, stored: MFAProfile, code: string, cfg: NormalizedMfaConfig): Promise<boolean> {
+    if (!stored.isActive() || stored.method !== 'totp' || stored.totp == null) return false;
+    const method = getMFAMethodForProfile(stored, cfg);
+    if (method == null) return false;
+    const stepBefore = stored.totp.lastUsedStep;
+    try {
+      await method.verify(user.username, stored, { headers: {}, body: { code } });
+    } catch (err) {
+      if ((err as { data?: { id?: string } }).data?.id === 'invalid-mfa-code') return false;
+      throw err;
+    }
+    return await consumeTotpStep(user, stored.totp.secret, stored.totp.lastUsedStep, stepBefore);
+  }
+
+  // --------------------------------------------------------------------
+  // E-mail notice of an MFA change, to the account's address. Best-effort
+  // and off the response path: it is sent only when mail is configured, and
+  // a failure is logged (without the address), never surfaced.
+  // --------------------------------------------------------------------
+
+  function notifyMfaChange (user: UserRef, change: MfaChange): void {
+    sendMfaChangeNotice(user, change).catch((err: unknown) => {
+      mfaLogger.warn(`MFA change notice (${change}) for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
+  async function sendMfaChangeNotice (user: UserRef, change: MfaChange): Promise<void> {
+    const emailSettings = config.get('services:email');
+    if (emailSettings == null || !describeMailCapability(config).ok) return;
+    const enabled = emailSettings.enabled;
+    if (enabled != null && typeof enabled === 'object' && enabled.mfaChange === false) return;
+    const account = await (await getUsersRepository()).getUserByUsername(user.username);
+    const email = account?.email;
+    if (typeof email !== 'string' || email === '') return;
+    const flag = (kind: MfaChange) => (change === kind ? 'true' : '');
+    const substitutions = {
+      USERNAME: user.username,
+      MFA_CHANGE: change,
+      MFA_ENROLLED: flag('enrolled'),
+      MFA_REPLACED: flag('replaced'),
+      MFA_DEACTIVATED: flag('deactivated'),
+      MFA_RECOVERED: flag('recovered')
+    };
+    const lang = account.language || emailSettings.defaultLang || 'en';
+    await new Promise<void>((resolve, reject) => {
+      mailing.sendmail(emailSettings, emailSettings.mfaChangeTemplate || 'mfa-change',
+        { email, name: user.username, type: 'to' }, substitutions, lang,
+        (err?: Error | null) => (err != null ? reject(err) : resolve()));
+    });
+  }
+
   // ----------------------------------------------------------------------
   // mfa.activate
   // ----------------------------------------------------------------------
@@ -350,9 +477,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           return next(errors.invalidParametersFormat(
             `Unknown or inactive MFA method: ${methodName}`, { id: 'invalid-mfa-method' }));
         }
+        // Replacing an active enrolment needs a step-up; a first enrolment
+        // does not (there is no factor to protect yet).
+        const user = context.user as UserRef;
+        const stored = await loadMFAProfile(user);
+        if (cfg.stepUp.required && stored.isActive()) {
+          const stepUpErr = await checkStepUp(user, params, stored, cfg);
+          if (stepUpErr) return next(stepUpErr);
+        }
+        // The step-up fields are never enrolment content (SMS content is the
+        // rest of the body, templated into the provider request).
+        const enrolParams = { ...params };
+        delete enrolParams.code;
+        delete enrolParams.password;
         const profile = new Profile();
-        const extra = await method.enroll(context.user.username, profile, params);
-        const token = await sessionStore().create(profile, { user: context.user, kind: 'enroll' });
+        const extra = await method.enroll(context.user.username, profile, enrolParams);
+        // `replaces` pins the enrolment this activation was allowed to
+        // replace (null: none), checked again when it is confirmed.
+        const token = await sessionStore().create(profile, { user: context.user, kind: 'enroll', replaces: enrolmentFingerprint(stored) });
         result.mfaToken = token;
         Object.assign(result, extra);
         next();
@@ -382,6 +524,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const cfg = getMfaConfig();
         const method = getMFAMethodForProfile(profile, cfg);
         if (method == null) return next(errors.apiUnavailable('MFA method not available.'));
+        // The enrolment this confirmation replaces must be the one the
+        // activation was allowed to replace: one enrolled meanwhile (by
+        // another session) was never stepped up for.
+        const replaced = enrolmentFingerprint(await loadMFAProfile(user));
+        if (cfg.stepUp.required && replaced != null && replaced !== session.context.replaces) {
+          await sessionStore().clear(params.mfaToken);
+          return next(errors.invalidOperation('The MFA enrolment of this account changed since this activation started; start again with mfa.activate.'));
+        }
         const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
         if ('error' in slot) return next(slot.error);
         try {
@@ -397,6 +547,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         await clearThrottleIfAny(user);
         await sessionStore().clear(params.mfaToken);
         result.recoveryCodes = profile.getRecoveryCodes();
+        notifyMfaChange(user, replaced != null ? 'replaced' : 'enrolled');
         next();
       } catch (err) {
         next(err);
@@ -479,19 +630,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         } catch (verifyErr) {
           return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }
-        // Consume the accepted step with ONE conditional write, BEFORE releasing
-        // the token (a storage failure fails closed): it succeeds only if the
-        // enrolment is still this session's secret AND the stored step is still
-        // below the accepted one. That is atomic across API workers, so of two
-        // concurrent verifies of the same code exactly one wins, and a smaller
-        // step arriving after a larger one was consumed is refused.
+        // Consume the accepted step BEFORE releasing the token (a storage
+        // failure fails closed), with the conditional write of consumeTotpStep.
         if (isTotp) {
-          const acceptedStep = session.profile.totp.lastUsedStep;
-          const consumed = acceptedStep > stepBefore && await fromCallback((cb: Cb<boolean>) =>
-            userProfileStorage.compareAndSetJson(user, { id: PROFILE_ID },
-              [{ path: ['data', 'mfa', 'totp', 'secret'], eq: session.profile.totp.secret },
-                { path: ['data', 'mfa', 'totp', 'lastUsedStep'], lt: acceptedStep }],
-              [{ path: ['data', 'mfa', 'totp', 'lastUsedStep'], value: acceptedStep }], cb));
+          const consumed = await consumeTotpStep(user, session.profile.totp.secret, session.profile.totp.lastUsedStep, stepBefore);
           if (!consumed) {
             // Lost the race for this step, a drift-window regression, or the
             // enrolment rotated after the check above: this code is no longer
@@ -516,15 +658,25 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   );
 
   // ----------------------------------------------------------------------
-  // mfa.deactivate — personal token; clears the user's MFA profile
+  // mfa.deactivate: personal token plus a step-up; clears the user's MFA profile
   // ----------------------------------------------------------------------
   api.register('mfa.deactivate',
     requirePersonalAccess,
     commonFns.getParamsValidation(methodsSchema.deactivate.params),
     async function deactivate (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       try {
-        await saveMFAProfile(context.user as UserRef, null);
-        await clearThrottleIfAny(context.user as UserRef);
+        const user = context.user as UserRef;
+        const cfg = getMfaConfig();
+        const stored = await loadMFAProfile(user);
+        // Required whether or not an enrolment is active, so the contract
+        // does not depend on (and does not reveal) the account's MFA state.
+        if (cfg.stepUp.required) {
+          const stepUpErr = await checkStepUp(user, params, stored, cfg);
+          if (stepUpErr) return next(stepUpErr);
+        }
+        await saveMFAProfile(user, null);
+        await clearThrottleIfAny(user);
+        if (stored.isActive()) notifyMfaChange(user, 'deactivated');
         result.message = 'MFA deactivated.';
         next();
       } catch (err) {
@@ -570,6 +722,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // Recovery also clears the failure tally, else a backoff would outlive
         // the enrolment it was guarding.
         await clearThrottleIfAny(user);
+        notifyMfaChange(user, 'recovered');
         result.message = 'MFA deactivated.';
         next();
       } catch (err) {

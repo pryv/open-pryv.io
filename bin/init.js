@@ -658,6 +658,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #       # On by default. Needs auth.emailVerificationPageURL (asked by the
 #       # wizard) and a working mail setup; set false to turn it off.
 #       verifyEmail: true
+#       # Notice to the account's address when its MFA is enrolled, replaced,
+#       # turned off or recovered.
+#       mfaChange: true
 #     method: in-process
 #     from:
 #       name: 'My Pryv'

@@ -1,0 +1,10 @@
+if MFA_ENROLLED
+  | Authentification multifacteur activée
+else if MFA_REPLACED
+  | Authentification multifacteur remplacée
+else if MFA_DEACTIVATED
+  | Authentification multifacteur désactivée
+else if MFA_RECOVERED
+  | Authentification multifacteur supprimée avec un code de récupération
+else
+  | Authentification multifacteur modifiée

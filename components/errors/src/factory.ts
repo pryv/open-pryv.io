@@ -33,6 +33,7 @@ interface ErrorFactory {
   missingHeader: (headerName: string, status?: number) => APIErrorT;
   tooManyResults: (limit: number) => APIErrorT;
   tooManyAttempts: (retryAfterSeconds?: number, options?: { message?: string; data?: unknown }) => APIErrorT;
+  invalidStepUp: (message?: string) => APIErrorT;
   payloadTooLarge: (message: string, data?: unknown) => APIErrorT;
   unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
   unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
@@ -191,6 +192,17 @@ factory.tooManyAttempts = function (retryAfterSeconds?: number, options?: { mess
     err.httpHeaders = { 'Retry-After': String(Math.ceil(retryAfterSeconds)) };
   }
   return err;
+};
+
+/**
+ * The step-up given for a sensitive operation (account password, or a code of
+ * the current second factor) does not match. One answer for both kinds, so a
+ * caller cannot tell which of the two it got wrong.
+ */
+factory.invalidStepUp = function (message?: string) {
+  return new APIError(ErrorIds.InvalidStepUp,
+    message ?? 'The given password or MFA code does not match; the operation was not performed.',
+    { httpStatus: 403 });
 };
 
 factory.payloadTooLarge = function (message: string, data?: unknown) {

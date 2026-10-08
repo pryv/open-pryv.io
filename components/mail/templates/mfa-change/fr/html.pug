@@ -1,0 +1,12 @@
+p Bonjour #{USERNAME},
+if MFA_ENROLLED
+  p L'authentification multifacteur a été activée sur votre compte. La connexion demande désormais un code de votre second facteur après votre mot de passe.
+else if MFA_REPLACED
+  p L'authentification multifacteur de votre compte a été remplacée par une nouvelle. L'ancien second facteur et ses codes de récupération ne fonctionnent plus.
+else if MFA_DEACTIVATED
+  p L'authentification multifacteur a été désactivée sur votre compte. La connexion ne demande désormais plus que votre mot de passe.
+else if MFA_RECOVERED
+  p L'authentification multifacteur a été supprimée de votre compte avec un code de récupération. La connexion ne demande désormais plus que votre mot de passe.
+else
+  p Les réglages d'authentification multifacteur de votre compte ont changé.
+p Si vous êtes à l'origine de ce changement, vous pouvez ignorer cet email. Sinon, changez votre mot de passe sans attendre, réactivez l'authentification multifacteur et contactez le support de votre plateforme.

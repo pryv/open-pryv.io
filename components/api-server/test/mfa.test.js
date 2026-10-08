@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
  *   3. auth.login on an MFA-enabled user → returns { mfaToken } instead of token
  *   4. mfa.challenge — re-send SMS during pending login
  *   5. mfa.verify   → releases the stashed access token
- *   6. mfa.deactivate (personal token) → clears profile.mfa
+ *   6. mfa.deactivate (personal token + step-up: password or current code) → clears profile.mfa
  *   7. mfa.recover (unauth: username/password/recoveryCode) → clears profile.mfa
  *   8. Error cases: MFA disabled server-wide, non-personal token on activate,
  *      invalid mfaToken on verify, wrong code on verify.
@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const nock = require('nock');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 const { getConfig } = require('@pryv/boiler');
-const { injectTestConfigSnapshot } = require('test-helpers');
+const { injectTestConfigSnapshot, pollUntil } = require('test-helpers');
 const { _resetMFASingletons, getMFASessionStore } = require('business/src/mfa/index.ts');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -262,8 +262,9 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         .send({ code: await previousStepCodeFor(act.body.secret) });
       assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
 
+      // Even with the right step-up: the delegate is refused before it is read.
       const res = await coreRequest
-        .post(`/${username}/mfa/deactivate`).set('Authorization', delegateToken).send({});
+        .post(`/${username}/mfa/deactivate`).set('Authorization', delegateToken).send({ password });
       assert.strictEqual(res.status, 403, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'delegation-genuine-login-required');
 
@@ -471,7 +472,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const deactivateRes = await coreRequest
           .post(`/${username}/mfa/deactivate`)
           .set('Authorization', personalToken)
-          .send({});
+          .send({ password });
         assert.strictEqual(deactivateRes.status, 200, `mfa.deactivate failed: ${JSON.stringify(deactivateRes.body)}`);
 
         const loginRes = await coreRequest
@@ -482,6 +483,51 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(loginRes.status, 200);
         assert.ok(loginRes.body.token != null);
         assert.ok(loginRes.body.mfaToken == null);
+      });
+
+      it('[MA6B] an SMS enrolment steps up with the password only: a code is refused', async function () {
+        // No SMS is sent for a step-up, so no SMS code can be valid for it.
+        const res = await coreRequest
+          .post(`/${username}/mfa/deactivate`)
+          .set('Authorization', personalToken)
+          .send({ code: '1234' });
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-step-up');
+        nock(SMS_HOST).post('/challenge').reply(200, {});
+        const loginRes = await coreRequest
+          .post(`/${username}/auth/login`)
+          .set('Origin', 'http://test.pryv.local')
+          .send({ username, password, appId: 'pryv-test' });
+        assert.ok(loginRes.body.mfaToken != null, 'MFA is still active');
+      });
+
+      it('[MA6C] replacing an SMS enrolment needs the step-up, which never becomes enrolment content', async function () {
+        const refused = await coreRequest
+          .post(`/${username}/mfa/activate`)
+          .set('Authorization', personalToken)
+          .send({ phone: '+41111' });
+        assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.data.id, 'step-up-required');
+
+        let challengeBody = null;
+        nock(SMS_HOST).post('/challenge').reply(200, function (_uri, body) { challengeBody = body; return {}; });
+        nock(SMS_HOST).post('/verify').reply(200, {});
+        const act = await coreRequest
+          .post(`/${username}/mfa/activate`)
+          .set('Authorization', personalToken)
+          .send({ phone: '+41111', password });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.ok(!JSON.stringify(challengeBody).includes(password), 'the password must not reach the SMS provider');
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: '1234' });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        const user = await (await getUsersRepository()).getUserByUsername(username);
+        const profileStorage = (await storage.getStorageLayer()).profile;
+        const item = await new Promise((resolve, reject) =>
+          profileStorage.findOne(user, { id: 'private' }, null, (err, res) => err ? reject(err) : resolve(res)));
+        assert.deepStrictEqual(item.data.mfa.content, { phone: '+41111' });
       });
     });
 
@@ -807,12 +853,317 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const deactivate = await coreRequest
           .post(`/${username}/mfa/deactivate`)
           .set('Authorization', personalToken)
-          .send({});
+          .send({ password });
         assert.strictEqual(deactivate.status, 200);
 
         const loginRes = await login();
         assert.ok(loginRes.body.token != null);
         assert.ok(loginRes.body.mfaToken == null);
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // Step-up: turning MFA off, or replacing an active enrolment, needs the
+    // account password or a code of the current factor on top of the
+    // personal token.
+    // ------------------------------------------------------------------
+    describe('[MSU] step-up on deactivate and on replacing an enrolment', function () {
+      let secret;
+
+      /** Enrol TOTP, leaving the current step's code unused. */
+      async function enrol () {
+        const act = await activateTotp();
+        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        secret = act.body.secret;
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`)
+          .set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(secret) });
+        assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
+        return confirm.body;
+      }
+      function deactivate (body) {
+        return coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send(body);
+      }
+      function activateWith (body) {
+        return coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ method: 'totp', ...body });
+      }
+      async function assertMfaStillActive () {
+        const loginRes = await login();
+        assert.strictEqual(loginRes.status, 200);
+        assert.strictEqual(loginRes.body.mfaMethod, 'totp', `MFA must still be active: ${JSON.stringify(loginRes.body)}`);
+        const { data } = await storedProfile();
+        return data.mfa;
+      }
+      function assertStepUpMissing (res) {
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+        assert.strictEqual(res.body.error.data.id, 'step-up-required');
+      }
+      function assertWrongStepUp (res) {
+        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-step-up');
+      }
+
+      it('[MSU1] deactivate without a step-up is refused (400) and MFA stays active', async function () {
+        await enrol();
+        assertStepUpMissing(await deactivate({}));
+        await assertMfaStillActive();
+      });
+
+      it('[MSU2] deactivate with a wrong password is refused (403 invalid-step-up) and MFA stays active', async function () {
+        await enrol();
+        assertWrongStepUp(await deactivate({ password: 'not-the-password' }));
+        await assertMfaStillActive();
+      });
+
+      it('[MSU3] deactivate with the account password turns MFA off', async function () {
+        await enrol();
+        const res = await deactivate({ password });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'login is direct again');
+      });
+
+      it('[MSU4] deactivate with a current TOTP code turns MFA off; a wrong code is refused', async function () {
+        await enrol();
+        assertWrongStepUp(await deactivate({ code: '000000' }));
+        await assertMfaStillActive();
+        const res = await deactivate({ code: totpCodeFor(secret, 0) });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'login is direct again');
+      });
+
+      it('[MSU5] a TOTP code used for a step-up is consumed: it cannot step up again, nor log in', async function () {
+        await enrol();
+        const code = totpCodeFor(secret, 0);
+        // Re-activation over the active enrolment, stepped up with the code.
+        const act = await activateWith({ code });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        // The enrolment is unchanged until that activation is confirmed.
+        const mfa = await assertMfaStillActive();
+        assert.ok(mfa.totp.lastUsedStep >= Math.floor(Date.now() / 1000 / 30) - 1, 'the step was consumed');
+        assertWrongStepUp(await deactivate({ code }));
+        const loginRes = await login();
+        const verify = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', loginRes.body.mfaToken).send({ code });
+        assert.strictEqual(verify.status, 400, 'the code cannot be replayed at login either');
+      });
+
+      it('[MSU6] activate over an active enrolment without a step-up, or with a wrong one, leaves it unchanged', async function () {
+        await enrol();
+        const before = (await storedProfile()).data.mfa;
+        const none = await activateWith({});
+        assertStepUpMissing(none);
+        assert.strictEqual(none.body.mfaToken, undefined);
+        assertWrongStepUp(await activateWith({ password: 'not-the-password' }));
+        const after = await assertMfaStillActive();
+        assert.strictEqual(after.totp.secret, before.totp.secret, 'the enrolment is unchanged');
+        assert.deepStrictEqual(after.recoveryCodes, before.recoveryCodes);
+      });
+
+      it('[MSU7] activate over an active enrolment with the password replaces it once confirmed', async function () {
+        await enrol();
+        const oldSecret = secret;
+        const act = await activateWith({ password });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.notStrictEqual(act.body.secret, oldSecret);
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(act.body.secret, 0) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        const loginRes = await login();
+        const oldCode = await coreRequest
+          .post(`/${username}/mfa/verify`).set('Authorization', loginRes.body.mfaToken).send({ code: totpCodeFor(oldSecret, 0) });
+        assert.strictEqual(oldCode.status, 400, 'the replaced factor no longer works');
+      });
+
+      it('[MSU8] a first enrolment needs no step-up', async function () {
+        const act = await activateWith({});
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: totpCodeFor(act.body.secret, 0) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+      });
+
+      it('[MSU9] an activation started with no enrolment cannot be confirmed over one enrolled meanwhile', async function () {
+        // Started while the account had no MFA, so no step-up was asked...
+        const early = await activateWith({});
+        assert.strictEqual(early.status, 302);
+        // ...then an enrolment is made on another session.
+        await enrol();
+        const before = (await storedProfile()).data.mfa;
+        const confirm = await coreRequest
+          .post(`/${username}/mfa/confirm`).set('Authorization', early.body.mfaToken)
+          .send({ code: totpCodeFor(early.body.secret, 0) });
+        assert.strictEqual(confirm.status, 400, JSON.stringify(confirm.body));
+        assert.strictEqual(confirm.body.error.id, 'invalid-operation');
+        const after = await assertMfaStillActive();
+        assert.strictEqual(after.totp.secret, before.totp.secret, 'the enrolment made meanwhile is kept');
+      });
+
+      it('[MSU10] both a password and a code, or a non-string, are refused as malformed', async function () {
+        await enrol();
+        assertStepUpMissing(await deactivate({ password, code: totpCodeFor(secret, 0) }));
+        const notString = await deactivate({ password: 12345 });
+        assert.strictEqual(notString.status, 400, JSON.stringify(notString.body));
+        assertStepUpMissing(await activateWith({ password: { $ne: '' } }));
+        await assertMfaStillActive();
+      });
+
+      it('[MSU11] wrong step-ups count on the account tally: past the free failures the next one is delayed, even when right', async function () {
+        const restore = injectTestConfigSnapshot({
+          services: {
+            mfa: {
+              ...totpTestConfig.services.mfa,
+              attempts: { perAccountWindowSeconds: 3600, backoff: { freeFailures: 3, baseSeconds: 60, maxSeconds: 60 } }
+            }
+          }
+        });
+        try {
+          await enrol();
+          for (let i = 0; i < 4; i++) {
+            assertWrongStepUp(await deactivate({ password: 'not-the-password-' + i }));
+          }
+          const delayed = await deactivate({ password });
+          assert.strictEqual(delayed.status, 429, JSON.stringify(delayed.body));
+          assert.strictEqual(delayed.body.error.id, 'too-many-attempts');
+          const mfa = await assertMfaStillActive();
+          assert.ok(mfa != null, 'not checked during the delay, so nothing changed');
+          const { data } = await storedProfile();
+          assert.strictEqual(data.mfaThrottle.failures, 4, 'each wrong step-up counted, the delayed one did not');
+        } finally {
+          restore();
+        }
+      });
+
+      it('[MSU12] services.mfa.stepUp.required: false lets a personal token alone turn MFA off or replace it', async function () {
+        await enrol();
+        const restore = injectTestConfigSnapshot({
+          services: { mfa: { ...totpTestConfig.services.mfa, stepUp: { required: false } } }
+        });
+        try {
+          const replace = await activateWith({});
+          assert.strictEqual(replace.status, 302, JSON.stringify(replace.body));
+          const res = await deactivate({});
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+          const loginRes = await login();
+          assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'login is direct again');
+        } finally {
+          restore();
+        }
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // E-mail notice of an MFA change. Off in the test configuration
+    // (services.email.enabled.mfaChange: false); switched on here against
+    // the Mandrill double the other mail tests use.
+    // ------------------------------------------------------------------
+    describe('[MSN] e-mail notice of an MFA change', function () {
+      const MANDRILL = 'https://mandrillapp.local';
+      const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
+      let restoreMail;
+      let email;
+
+      beforeEach(async function () {
+        restoreMail = injectTestConfigSnapshot({ services: { email: { enabled: { mfaChange: true } } } });
+        await _resetMFASingletons();
+        // A user of its own, with a known address.
+        username = ('mfn' + cuid.slug()).toLowerCase();
+        email = username + '@notice.example.com';
+        personalToken = cuid();
+        fixtureUser = await fixtures.user(username, { password, email, language: 'en' });
+        await fixtureUser.access({ type: 'personal', token: personalToken, name: 'pryv-test' });
+        await fixtureUser.session(personalToken);
+      });
+      afterEach(function () { restoreMail(); });
+
+      /** Capture every Mandrill send; `status` is what the double answers. */
+      function captureMails (status = 200) {
+        const captured = [];
+        nock(MANDRILL).post(MANDRILL_PATH).times(10)
+          .reply(status, (uri, body) => { captured.push(body); return {}; });
+        return captured;
+      }
+      const vars = (mail) => Object.fromEntries(mail.message.global_merge_vars.map((v) => [v.name, v.content]));
+      async function waitForMails (captured, n) {
+        return await pollUntil(async () => captured.length, (len) => len >= n, { timeoutMs: 3000 });
+      }
+
+      it('[MSN1] enrol, replace, deactivate and recover each send a notice naming the change', async function () {
+        const captured = captureMails();
+        // Enrol.
+        let act = await activateTotp();
+        let confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        await waitForMails(captured, 1);
+        // Replace.
+        act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
+          .send({ method: 'totp', password });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        await waitForMails(captured, 2);
+        // Recover, then enrol again (a 3rd notice) and deactivate.
+        const recover = await coreRequest.post(`/${username}/mfa/recover`)
+          .send({ username, password, recoveryCode: confirm.body.recoveryCodes[0] });
+        assert.strictEqual(recover.status, 200, JSON.stringify(recover.body));
+        await waitForMails(captured, 3);
+        act = await activateTotp();
+        confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        await waitForMails(captured, 4);
+        const off = await coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send({ password });
+        assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+        await waitForMails(captured, 5);
+
+        assert.deepStrictEqual(captured.map((m) => vars(m).MFA_CHANGE), ['enrolled', 'replaced', 'recovered', 'enrolled', 'deactivated']);
+        for (const mail of captured) {
+          assert.strictEqual(mail.template_name, 'mfa-change');
+          assert.deepStrictEqual(mail.message.to.map((t) => t.email), [email]);
+          const v = vars(mail);
+          assert.strictEqual(v.USERNAME, username);
+          // Exactly one flag is set, the one of the change.
+          const flags = ['MFA_ENROLLED', 'MFA_REPLACED', 'MFA_DEACTIVATED', 'MFA_RECOVERED'].filter((k) => v[k] === 'true');
+          assert.deepStrictEqual(flags, ['MFA_' + v.MFA_CHANGE.toUpperCase()]);
+        }
+      });
+
+      it('[MSN2] a mail delivery failure never fails the MFA call', async function () {
+        const captured = captureMails(500);
+        const act = await activateTotp();
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        const off = await coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send({ password });
+        assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+        await waitForMails(captured, 2);
+        assert.strictEqual(captured.length, 2, 'both notices were attempted');
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'MFA is off despite the failed notice');
+      });
+
+      it('[MSN3] no notice when deactivate finds no active enrolment, nor when the class is switched off', async function () {
+        const captured = captureMails();
+        const off = await coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send({ password });
+        assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+        const restore = injectTestConfigSnapshot({ services: { email: { enabled: { mfaChange: false } } } });
+        try {
+          const act = await activateTotp();
+          const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+            .send({ code: await previousStepCodeFor(act.body.secret) });
+          assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        } finally {
+          restore();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.strictEqual(captured.length, 0, JSON.stringify(captured));
       });
     });
 

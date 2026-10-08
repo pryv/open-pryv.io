@@ -20,9 +20,13 @@ const mfaMethods = {
   // mfa.activate — start the MFA setup flow.
   // Personal access token required. Body is the profile content (e.g. { phone: '+41...' }) —
   // arbitrary key-value pairs that get templated into the SMS endpoint URL/headers/body.
+  // Over an active enrolment it also needs a step-up (`password` or `code`, as
+  // for mfa.deactivate); those two keys are never enrolment content.
   activate: {
     params: object({
-      method: string() // optional: 'totp' | 'sms'; defaults to services.mfa.defaultMethod
+      method: string(), // optional: 'totp' | 'sms'; defaults to services.mfa.defaultMethod
+      password: string(),
+      code: string()
     }, {
       additionalProperties: true // SMS template kv pairs (e.g. phone)
     }),
@@ -90,9 +94,15 @@ const mfaMethods = {
     })
   },
 
-  // mfa.deactivate — disable MFA for the calling user. Personal access token required.
+  // mfa.deactivate: disable MFA for the calling user. Personal access token
+  // required, plus a step-up: either `password` (the account password) or
+  // `code` (a code of the current TOTP factor). Which one is present is
+  // checked by the method, since services.mfa.stepUp.required can lift it.
   deactivate: {
-    params: object({}, {
+    params: object({
+      password: string(),
+      code: string()
+    }, {
       additionalProperties: false
     }),
     result: object({

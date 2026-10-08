@@ -51,7 +51,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     setMethodId('mfa.deactivate'),
     loadAccessMiddleware,
     function routeMFADeactivate (req: PryvRequest, res: Response, next: NextFunction) {
-      api.call(req.context, {}, methodCallback(res, next, 200));
+      // The body carries the step-up (password or code).
+      api.call(req.context, req.body || {}, methodCallback(res, next, 200));
     });
 
   // --- mfaToken-bound routes --------------------------------------------

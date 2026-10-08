@@ -102,6 +102,19 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
     }
   }
 
+  // Step-up on turning MFA off or replacing it. Checked whether MFA is active
+  // or not: mfa.deactivate stays callable either way.
+  if (isSet(raw.stepUp) && (typeof raw.stepUp !== 'object' || Array.isArray(raw.stepUp))) {
+    problems.push({ message: `stepUp must be a mapping, got ${JSON.stringify(raw.stepUp)}.`, path: [...base, 'stepUp'] });
+  } else {
+    const stepUp = obj(raw.stepUp);
+    if (isSet(stepUp.required) && typeof stepUp.required !== 'boolean') {
+      problems.push({ message: `stepUp.required must be true or false, got ${JSON.stringify(stepUp.required)}.`, path: [...base, 'stepUp', 'required'] });
+    } else if (stepUp.required === false) {
+      warnings.push('services.mfa.stepUp.required is false: mfa.deactivate, and mfa.activate over an active enrolment, accept a personal token alone, without the account password or a code of the current factor. This opt-out is for one release only and will be removed in a later release; update your clients to send the step-up.');
+    }
+  }
+
   // Attempts: never refuse the boot here (an upgraded deployment must keep
   // booting), but say what is ignored or replaced.
   const attempts = obj(raw.attempts);

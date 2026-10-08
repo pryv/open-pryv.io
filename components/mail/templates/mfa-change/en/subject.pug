@@ -1,0 +1,10 @@
+if MFA_ENROLLED
+  | Multi-factor authentication turned on
+else if MFA_REPLACED
+  | Multi-factor authentication method replaced
+else if MFA_DEACTIVATED
+  | Multi-factor authentication turned off
+else if MFA_RECOVERED
+  | Multi-factor authentication removed with a recovery code
+else
+  | Multi-factor authentication changed

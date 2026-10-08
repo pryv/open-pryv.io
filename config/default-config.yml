@@ -273,6 +273,19 @@ services:
         freeFailures: 3
         baseSeconds: 2
         maxSeconds: 300
+    # Step-up on the operations that weaken an account's second factor:
+    # mfa.deactivate, and mfa.activate when the account already has an active
+    # enrolment (it replaces it). The body must then carry either `password`
+    # (the account password) or `code` (a code of the current TOTP factor); a
+    # wrong one answers 403 invalid-step-up and counts on the per-account
+    # backoff above.
+    # `required: false` restores the former behaviour (a personal token alone)
+    # and logs a warning at every boot. It is a migration opt-out for one
+    # release, for clients not yet sending the step-up, and will be removed in
+    # a later release.
+    # PLATFORM-WIDE: set the same value on every core.
+    stepUp:
+      required: true
 
   # --- Mail delivery (welcome + reset-password) ---
   # `method` picks the transport:
@@ -294,6 +307,10 @@ services:
       # refuse to boot). Setting this key to true EXPLICITLY makes the page URL
       # required at boot. Set false to turn the feature off silently.
       verifyEmail: true
+      # Notice to the account's email when its MFA is enrolled, replaced,
+      # turned off or removed with a recovery code. Best-effort: sent only when
+      # mail is configured, and a delivery failure never fails the MFA call.
+      mfaChange: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -311,12 +328,19 @@ services:
     # Sent by the registration email challenge (see account.emailVerification.
     # requireAtRegistration): carries the copy/paste code, not a link.
     emailChallengeTemplate: email-challenge
+    # Sent when the account's MFA changes (see enabled.mfaChange). The template
+    # gets USERNAME, MFA_CHANGE (enrolled | replaced | deactivated | recovered)
+    # and one flag per change (MFA_ENROLLED, MFA_REPLACED, MFA_DEACTIVATED,
+    # MFA_RECOVERED: 'true' for the change that happened, '' otherwise).
+    mfaChangeTemplate: mfa-change
     defaultLang: en
     # --- in-process mode only ---
     # Pug source directory seeded into PlatformDB on first boot, when PlatformDB
     # holds no templates yet. Leave empty to seed the template set bundled with
     # the mail component (components/mail/templates: welcome-email,
-    # reset-password, verify-email, email-challenge; en + fr). After the first
+    # reset-password, verify-email, email-challenge, mfa-change; en + fr).
+    # A deployment seeded before a template was added to that set does not get
+    # it automatically: add it with `bin/mail.js templates set`. After the first
     # boot, edits go through `bin/mail.js templates set` or the admin API; a
     # later change of this key does not re-seed.
     templatesRootDir: ''

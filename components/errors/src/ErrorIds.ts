@@ -48,6 +48,11 @@ const ErrorIds = {
    */
   TooManyAttempts: 'too-many-attempts',
   /**
+   * A sensitive operation asked for a step-up (the account password or a
+   * code of the current second factor) and the one given did not match.
+   */
+  InvalidStepUp: 'invalid-step-up',
+  /**
    * A per-core resource ceiling is reached, so the request is refused rather
    * than served (not a per-account limiter: see TooManyAttempts for that).
    * The caller retries later, guided by the Retry-After header.

@@ -133,7 +133,8 @@ describe('[MAILFCD] mail façade', () => {
       ['welcome-email', { USERNAME: 'alice-u', EMAIL: 'alice@example.com' }, ['alice-u', 'alice@example.com']],
       ['reset-password', { RESET_TOKEN: 'tok-r', RESET_URL: 'https://app.example/reset', RESET_LINK: 'https://app.example/reset?resetToken=tok-r' }, ['https://app.example/reset?resetToken=tok-r']],
       ['verify-email', { VERIFY_TOKEN: 'tok-v', VERIFY_URL: 'https://app.example/verify-email', VERIFY_LINK: 'https://app.example/verify-email?verifyToken=tok-v', EMAIL: 'a@example.com', USERNAME: 'alice-u' }, ['tok-v', 'https://app.example/verify-email?verifyToken=tok-v']],
-      ['email-challenge', { CODE: 'ABCD-EFGH', EMAIL: 'a@example.com', CODE_MAX_AGE_MINUTES: '10' }, ['ABCD-EFGH', '10 minutes']]
+      ['email-challenge', { CODE: 'ABCD-EFGH', EMAIL: 'a@example.com', CODE_MAX_AGE_MINUTES: '10' }, ['ABCD-EFGH', '10 minutes']],
+      ['mfa-change', mfaChangeSubstitutions('alice-u', 'deactivated'), ['alice-u']]
     ];
     for (const lang of ['en', 'fr']) {
       for (const [type, substitutions, expected] of cases) {
@@ -155,4 +156,49 @@ describe('[MAILFCD] mail façade', () => {
       }
     }
   });
+
+  it('[MFCD7] the MFA change notice says which change happened, in its subject and body', async () => {
+    const rows = await loadBundledRows();
+    await mail.init({
+      getAllMailTemplates: async () => rows,
+      smtp: { jsonTransport: true },
+      from: { name: 'T', address: 't@example.com' },
+      defaultLang: 'en'
+    });
+    // [change, en subject, fr subject]: each change has its own wording.
+    const cases = [
+      ['enrolled', 'turned on', 'activée'],
+      ['replaced', 'replaced', 'remplacée'],
+      ['deactivated', 'turned off', 'désactivée'],
+      ['recovered', 'recovery code', 'code de récupération']
+    ];
+    const subjects = new Set();
+    for (const [change, enSubject, frSubject] of cases) {
+      for (const [lang, expected] of [['en', enSubject], ['fr', frSubject]]) {
+        const res = await mail.send({
+          type: 'mfa-change',
+          lang,
+          recipient: { name: 'x', email: 'x@example.com' },
+          substitutions: mfaChangeSubstitutions('alice-u', change)
+        });
+        const message = JSON.parse(res.result.message);
+        assert.ok(String(message.subject).includes(expected), `${change}/${lang} subject: ${message.subject}`);
+        assert.ok(String(message.html).includes('alice-u'), `${change}/${lang} body names the account`);
+        subjects.add(message.subject);
+      }
+    }
+    assert.strictEqual(subjects.size, cases.length * 2, 'every change and language has its own subject');
+  });
 });
+
+/** The locals the MFA methods pass to the `mfa-change` template. */
+function mfaChangeSubstitutions (username, change) {
+  return {
+    USERNAME: username,
+    MFA_CHANGE: change,
+    MFA_ENROLLED: change === 'enrolled' ? 'true' : '',
+    MFA_REPLACED: change === 'replaced' ? 'true' : '',
+    MFA_DEACTIVATED: change === 'deactivated' ? 'true' : '',
+    MFA_RECOVERED: change === 'recovered' ? 'true' : ''
+  };
+}
