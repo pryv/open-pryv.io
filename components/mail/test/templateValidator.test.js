@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  validateMailTemplate, pugSourceProblems, segmentProblem, isLocalPath
+  validateMailTemplate, pugSourceProblems, segmentProblem, isLocalPath, isPlainStringLiteral
 } = require('../src/templateValidator.ts');
 
 const BUNDLED = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../templates');
@@ -113,6 +113,37 @@ describe('[MTVA] mail template validator', () => {
     }
     assert.strictEqual(segmentProblem('lang', 'pt-br'), null);
   });
+
+  it('[MTVA6] accepts escaped output of one plain string literal', () => {
+    for (const src of ['= `Reset your password`', "= 'Welcome'", '= "Bienvenue"', "p= 'it\\'s'", 'p\n  = `Hello`']) {
+      assert.deepStrictEqual(pugSourceProblems(src), [], src);
+    }
+    for (const lit of ['`Reset your password`', "'Welcome'", '"Bienvenue"', "  'x'  "]) assert.ok(isPlainStringLiteral(lit), lit);
+    assert.strictEqual(require('pug').render('= `Reset <your> password`'), 'Reset &lt;your&gt; password', 'renders as escaped text');
+  });
+
+  const STILL_FORBIDDEN = {
+    'backtick literal with a substitution': '= `Hi ${USERNAME}`', // eslint-disable-line no-template-curly-in-string
+    'escaped substitution in a backtick literal': '= `Hi \\${USERNAME}`', // eslint-disable-line no-template-curly-in-string
+    'literal concatenated with a local': "= 'a' + b",
+    'two literals concatenated': "= 'a' + 'b'",
+    'parenthesised literal': "= ('a')",
+    'literal with a method call': "= 'a'.concat(USERNAME)",
+    'literal holding #{}': "= 'Hi #{USERNAME}'",
+    'literal holding !{}': '= "Hi !{USERNAME}"',
+    'unescaped literal output': "!= 'x'",
+    'unbuffered code': '- var a = 1',
+    'unescaped interpolation': 'p !{x}',
+    'interpolation of a literal': "p #{'x'}",
+    include: 'include x',
+    'markdown filter': ':markdown\n  # x'
+  };
+  for (const [label, src] of Object.entries(STILL_FORBIDDEN)) {
+    it(`[MTVA7] still refuses: ${label}`, () => {
+      const problems = pugSourceProblems(src);
+      assert.ok(problems.length > 0, `${label} must be refused: ${JSON.stringify(src)}`);
+    });
+  }
 
   it('[MTVA5] a local is a dotted identifier path that names no global', () => {
     for (const ok of ['USERNAME', 'user.name', 'CODE_MAX_AGE_MINUTES', 'token']) assert.ok(isLocalPath(ok), ok);

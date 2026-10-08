@@ -19,6 +19,8 @@ import pugParse from 'pug-parser';
  *   - attributes whose value is a string literal, a boolean or a local;
  *   - escaped interpolation `#{LOCAL}` and `= LOCAL`, and `if` / `else if` /
  *     `else` / `unless` on a local;
+ *   - escaped output of one plain string literal: `= 'text'`, `= "text"`,
+ *     `= \`text\``, with no `${`, `#{` or `!{` in it;
  * where a local is a dotted identifier path (`USERNAME`, `user.name`) that
  * names no JavaScript global. Everything else (code lines, `!{}`, `!=`,
  * `include`, `extends`, blocks, mixins, filters, loops, `case`,
@@ -35,6 +37,8 @@ const FORBIDDEN_SEGMENTS = new Set(['constructor', '__proto__', 'prototype']);
 const FORBIDDEN_ROOTS = new Set(['this', 'arguments', 'locals', 'self', 'require', 'module', 'exports',
   'process', 'global', 'globalThis']);
 const STRING_LITERAL = /^(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')$/;
+// A backtick literal; `${` is refused separately, so it has no substitution.
+const TEMPLATE_LITERAL = /^`(?:[^`\\]|\\[\s\S])*`$/;
 const ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;
 // Tags whose content a renderer or a mail client would fetch or execute.
 const FORBIDDEN_TAGS = new Set(['script', 'link', 'iframe', 'frame', 'frameset', 'object', 'embed', 'base', 'meta']);
@@ -78,6 +82,20 @@ export function isLocalPath (expr: unknown): boolean {
   return !segments.some((s) => FORBIDDEN_SEGMENTS.has(s));
 }
 
+/**
+ * True when `expr` (the expression of a buffered code line) is one string
+ * literal and nothing else: `'...'`, `"..."` or a backtick literal, holding
+ * no `${`, `#{` or `!{` (so nothing that reads as interpolation). It
+ * evaluates to its own text: legacy templates write a subject as
+ * `= \`Reset your password\``.
+ */
+export function isPlainStringLiteral (expr: unknown): boolean {
+  if (typeof expr !== 'string') return false;
+  const e = expr.trim();
+  if (e.includes('${') || e.includes('#{') || e.includes('!{')) return false;
+  return STRING_LITERAL.test(e) || TEMPLATE_LITERAL.test(e);
+}
+
 function isConditionOnLocal (expr: unknown): boolean {
   if (typeof expr !== 'string') return false;
   const e = expr.trim();
@@ -115,7 +133,8 @@ function tokenProblem (tok: PugToken): string | null {
     case 'code':
       if (tok.buffer !== true) return 'code lines are not allowed';
       if (tok.mustEscape !== true) return 'unescaped output != is not allowed';
-      return isLocalPath(tok.val) ? null : `output of ${JSON.stringify(tok.val)} is not allowed (only a local)`;
+      if (isLocalPath(tok.val) || isPlainStringLiteral(tok.val)) return null;
+      return `output of ${JSON.stringify(tok.val)} is not allowed (only a local or a plain string literal)`;
     case 'attribute':
       if (typeof tok.name !== 'string' || !ATTRIBUTE_NAME.test(tok.name)) return `attribute name ${JSON.stringify(tok.name)} is not allowed`;
       if (tok.mustEscape !== true) return `unescaped attribute ${tok.name}!= is not allowed`;
