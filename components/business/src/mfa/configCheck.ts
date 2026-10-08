@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { normalizeMfaConfig, normalizeAttempts } from './index.ts';
+import { NON_CONTENT_KEYS } from './smsRequest.ts';
 
 /**
  * Boot-time check of `services.mfa`. The MFA normalizer on the login path
@@ -89,6 +90,26 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
         const missing = needed.filter((e) => !isSet(obj(endpoints[e]).url));
         if (missing.length > 0) {
           problems.push({ message: `SMS mode "${sms.mode}" needs an endpoint url for ${missing.join(' and ')} (services.mfa.methods.sms.endpoints, or the legacy services.mfa.sms.endpoints); every SMS challenge would fail.`, path: [...sPath, 'endpoints'] });
+        }
+      }
+      // The allow-list of enrolment keys besides `phone`, read from the raw
+      // block (the normalizer drops what is invalid).
+      const keyLists: Array<[unknown, string[]]> = [
+        [obj(obj(raw.methods).sms).contentKeys, [...base, 'methods', 'sms', 'contentKeys']],
+        [obj(raw.sms).contentKeys, [...base, 'sms', 'contentKeys']]
+      ];
+      for (const [keys, path] of keyLists) {
+        if (keys == null) continue;
+        if (!Array.isArray(keys) || keys.some((k) => typeof k !== 'string' || k === '')) {
+          problems.push({ message: `contentKeys must be a list of key names, got ${JSON.stringify(keys)}.`, path });
+          continue;
+        }
+        const reserved = keys.filter((k) => NON_CONTENT_KEYS.includes(k));
+        if (reserved.length > 0) {
+          problems.push({ message: `contentKeys cannot name ${reserved.map((k) => `"${k}"`).join(', ')}: ${NON_CONTENT_KEYS.join(', ')} are never enrolment content.`, path });
+        }
+        if (keys.includes('phone')) {
+          warnings.push(`${path.join('.')} lists "phone", which is always accepted; the entry has no effect.`);
         }
       }
     }

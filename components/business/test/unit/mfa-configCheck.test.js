@@ -118,6 +118,23 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.deepStrictEqual(withChange((c) => { delete c.stepUp; }), { problems: [], warnings: [] });
   });
 
+  it('[MCHK13] SMS contentKeys: a list of names; a reserved name is a problem, "phone" a warning', function () {
+    const sms = (fn) => withChange((c) => {
+      c.methods.sms.active = true;
+      c.methods.sms.endpoints = { single: { url: 'https://sms.example/s' } };
+      fn(c);
+    });
+    assert.deepStrictEqual(sms(() => {}), { problems: [], warnings: [] }, 'the shipped empty list');
+    assert.deepStrictEqual(sms((c) => { c.methods.sms.contentKeys = ['language']; }), { problems: [], warnings: [] });
+    for (const bad of ['language', [1], [''], { a: 1 }]) {
+      assert.deepStrictEqual(paths(sms((c) => { c.methods.sms.contentKeys = bad; })), ['services.mfa.methods.sms.contentKeys'], JSON.stringify(bad));
+    }
+    assert.deepStrictEqual(paths(sms((c) => { c.sms.contentKeys = ['code']; })), ['services.mfa.sms.contentKeys']);
+    const phone = sms((c) => { c.methods.sms.contentKeys = ['phone']; });
+    assert.deepStrictEqual(phone.problems, []);
+    assert.match(phone.warnings[0], /"phone".*no effect/);
+  });
+
   it('[MCHK9] sessions.ttlSeconds below 1 is a problem', function () {
     assert.deepStrictEqual(paths(withChange((c) => { c.sessions.ttlSeconds = 0; })), ['services.mfa.sessions.ttlSeconds']);
   });

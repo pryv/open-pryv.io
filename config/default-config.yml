@@ -232,6 +232,15 @@ services:
         mode: single          # single | challenge-verify
         endpoints: {}         # same shape as the legacy `sms.endpoints` below;
                               # falls back to it when empty
+        contentKeys: []       # keys an SMS enrolment (mfa.activate body) may
+                              # carry besides `phone` (always required, E.164),
+                              # e.g. [language]; each a string, 256 bytes in
+                              # total; any other key is refused. Falls back to
+                              # a legacy `sms.contentKeys` when empty.
+                              # Placeholders are encoded for where they land
+                              # (URL, JSON or form body; a header value with a
+                              # control character is refused) and substituted
+                              # once: a value is never expanded again.
     # LEGACY endpoints location, read by the shim (and by methods.sms when its
     # own `endpoints` is empty). SECRET: headers may carry provider API keys.
     sms:

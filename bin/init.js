@@ -701,6 +701,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #             method: POST
 # #             headers: { Authorization: 'Bearer <api-token>' }
 # #             body: '{"to": "{{ phone }}", "text": "code {{ code }}"}'
+# #         contentKeys: []        # enrolment keys accepted besides phone (E.164)
 # #     attempts:                  # failed second-factor limits
 # #       perSession: 5            # wrong codes allowed in one pending MFA session
 # #       perAccountWindowSeconds: 900  # a failure older than this starts the tally afresh

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const { timingSafeEqual } = require('node:crypto');
 const Service = require('./Service.ts').default;
 const generateCode = require('./generateCode.ts').default;
-const errors = require('errors').factory;
+const { isValidCode, invalidCodeError, toValues, renderRequest } = require('./smsRequest.ts');
 
 const CODE_LENGTH = 4;
 const CODE = 'code';
@@ -60,25 +60,17 @@ class SingleService extends Service {
     const code = await generateCode(CODE_LENGTH);
     await this.setCode(username, code);
     // Make the code available alongside profile.content for templating.
-    const replacements = Object.assign({}, profile.content, { [CODE]: code });
-    let url = this.url;
-    let headers = this.headers;
-    let body = this.body;
-    for (const [key, value] of Object.entries(replacements)) {
-      headers = Service.replaceRecursively(headers, key, value);
-      body = Service.replaceAll(body, key, value);
-      url = Service.replaceAll(url, key, value);
-    }
+    const values = { ...toValues(profile.content), [CODE]: code };
+    const { url, headers, body } = renderRequest({ url: this.url, headers: this.headers, body: this.body }, values);
     await this._makeRequest(this.apiMethod, url, headers, body);
   }
 
   async verify (username: string, _profile: Profile, clientRequest: ClientRequest) {
     // Fails closed: no code sent, or none pending for this user, is a refusal.
-    const expected = await this.kv.get(this.namespace + username);
     const supplied = clientRequest.body.code;
-    if (!sameCode(expected, supplied)) {
-      throw errors.invalidParametersFormat('The provided MFA code is invalid.', { id: 'invalid-mfa-code' });
-    }
+    if (!isValidCode(supplied)) throw invalidCodeError();
+    const expected = await this.kv.get(this.namespace + username);
+    if (!sameCode(expected, supplied)) throw invalidCodeError();
     await this.clearCode(username);
   }
 

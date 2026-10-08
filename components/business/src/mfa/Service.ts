@@ -32,9 +32,6 @@ class Service {
   config: MFAConfig;
   logger: Logger;
 
-  static replaceAll: (text: string, key: string, value: unknown) => string;
-  static replaceRecursively: (obj: unknown, key: string, value: unknown) => unknown;
-
   /**
    * @param mfaConfig - the `services.mfa` config block
    */
@@ -89,34 +86,6 @@ class Service {
     }
   }
 }
-
-/**
- * Substitute `{{ key }}` placeholders in a string. Convenience over
- * `String.prototype.replaceAll` so callers can pass a plain key.
- */
-Service.replaceAll = function replaceAll (text, key, value) {
-  if (typeof text !== 'string') return text;
-  return text.split(`{{ ${key} }}`).join(String(value));
-};
-
-/**
- * Walk an object tree and replace `{{ key }}` placeholders inside any string
- * leaves. Returns a deep clone — input is not mutated.
- */
-Service.replaceRecursively = function replaceRecursively (obj, key, value) {
-  if (obj == null) return obj;
-  if (typeof obj === 'string') return Service.replaceAll(obj, key, value);
-  if (Array.isArray(obj)) return obj.map(item => Service.replaceRecursively(item, key, value));
-  if (typeof obj === 'object') {
-    const out: Record<string, unknown> = {};
-    const rec = obj as Record<string, unknown>;
-    for (const k of Object.keys(rec)) {
-      out[k] = Service.replaceRecursively(rec[k], key, value);
-    }
-    return out;
-  }
-  return obj;
-};
 
 export default Service;
 export { Service };

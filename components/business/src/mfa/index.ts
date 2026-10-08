@@ -24,6 +24,7 @@ const ChallengeVerifyService = require('./ChallengeVerifyService.ts').default;
 const SingleService = require('./SingleService.ts').default;
 const SessionStore = require('./SessionStore.ts').default;
 const generateCode = require('./generateCode.ts').default;
+const { smsEnrolmentContent, RESERVED_CONTENT_KEYS } = require('./smsRequest.ts');
 
 type MFAConfig = {
   mode?: 'disabled' | 'challenge-verify' | 'single' | string;
@@ -58,7 +59,7 @@ function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceL
 // left untouched (still used by its own unit test).
 // ----------------------------------------------------------------------
 
-type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; [k: string]: unknown };
+type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, unknown>; contentKeys?: string[]; [k: string]: unknown };
 type BackoffCfg = {
   freeFailures: number;
   baseSeconds: number;
@@ -90,7 +91,7 @@ type RawMfaConfig = MFAConfig & {
   active?: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
-  sms?: { endpoints?: Record<string, unknown> };
+  sms?: { endpoints?: Record<string, unknown>; contentKeys?: unknown };
   attempts?: Record<string, unknown>;
   stepUp?: { required?: unknown };
   allowLoginWhenMethodInactive?: unknown;
@@ -163,6 +164,21 @@ function normalizeStepUp (raw: RawMfaConfig['stepUp']): StepUpCfg {
   return { required: src.required !== false };
 }
 
+/**
+ * Normalize the SMS content-key allow-list: the keys an SMS enrolment may
+ * carry besides `phone`. Read from `methods.sms.contentKeys`, falling back to
+ * the legacy `sms.contentKeys` when that is empty (as for the endpoints).
+ * Only string entries are kept, never a reserved name (`phone`, always
+ * accepted, nor the method and step-up fields); anything that is not an array
+ * means none. The boot check reports invalid values.
+ */
+function normalizeContentKeys (cfg: RawMfaConfig): string[] {
+  const own = cfg.methods?.sms?.contentKeys;
+  const raw = (Array.isArray(own) && own.length > 0) ? own : cfg.sms?.contentKeys;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((k): k is string => typeof k === 'string' && k !== '' && !RESERVED_CONTENT_KEYS.includes(k));
+}
+
 let _warnedLegacyMode = false;
 function mfaLogger (): { warn: (...args: unknown[]) => void } {
   try {
@@ -211,7 +227,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
       active: true,
       defaultMethod: 'sms',
       methods: {
-        sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {} },
+        sms: { active: true, mode: cfg.mode, endpoints: cfg.sms?.endpoints || {}, contentKeys: normalizeContentKeys(cfg) },
         totp: { active: false }
       },
       sessions,
@@ -230,7 +246,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
     const smsEndpoints = (smsIn.endpoints && Object.keys(smsIn.endpoints).length > 0)
       ? smsIn.endpoints
       : (cfg.sms?.endpoints || {}); // fall back to the legacy endpoints location
-    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints };
+    const sms: MethodCfg = { ...smsIn, active: smsIn.active === true, endpoints: smsEndpoints, contentKeys: normalizeContentKeys(cfg) };
     const defaultMethod = cfg.defaultMethod || 'totp';
     // NB: we do NOT throw here if `defaultMethod` names an inactive method.
     // This normalizer runs on the login path too, so throwing would brick all
@@ -255,18 +271,26 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
 class SmsMethod implements MfaMethod {
   readonly name = 'sms';
   service: { challenge: Function; verify: Function };
-  constructor (service: { challenge: Function; verify: Function }) {
+  contentKeys: string[];
+  /**
+   * @param contentKeys - enrolment keys accepted besides `phone`
+   */
+  constructor (service: { challenge: Function; verify: Function }, contentKeys: string[] = []) {
     this.service = service;
+    this.contentKeys = contentKeys;
+  }
+
+  checkEnrolParams (params: Record<string, unknown>): void {
+    smsEnrolmentContent(params, this.contentKeys);
   }
 
   async enroll (username: string, profile: ProfileType, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    // SMS enrolment content = the activate body (phone etc.), minus the
-    // method selector; then send the challenge, exactly as the pre-registry
-    // activate did.
-    const content = { ...params };
-    delete (content as Record<string, unknown>).method;
+    // SMS enrolment content = `phone` plus the allow-listed keys of the
+    // activate body (never the method or step-up fields), validated; then
+    // send the challenge.
+    const content = smsEnrolmentContent(params, this.contentKeys);
     (profile as unknown as { content: Record<string, unknown> }).content = content;
-    await this.service.challenge(username, profile, { headers: {}, body: params });
+    await this.service.challenge(username, profile, { headers: {}, body: {} });
     return {};
   }
 
@@ -291,8 +315,9 @@ function methodCache (): Map<string, MfaMethod> {
 
 function buildSmsMethod (smsCfg: MethodCfg, sessions: NormalizedMfaConfig['sessions']): MfaMethod {
   const legacyShaped = { sms: { endpoints: smsCfg.endpoints || {} }, sessions };
-  if (smsCfg.mode === 'challenge-verify') return new SmsMethod(new ChallengeVerifyService(legacyShaped));
-  if (smsCfg.mode === 'single') return new SmsMethod(new SingleService(legacyShaped));
+  const contentKeys = Array.isArray(smsCfg.contentKeys) ? smsCfg.contentKeys : [];
+  if (smsCfg.mode === 'challenge-verify') return new SmsMethod(new ChallengeVerifyService(legacyShaped), contentKeys);
+  if (smsCfg.mode === 'single') return new SmsMethod(new SingleService(legacyShaped), contentKeys);
   throw new Error(`Unknown SMS MFA mode "${smsCfg.mode}". Expected challenge-verify or single`);
 }
 

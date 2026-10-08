@@ -463,6 +463,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // ----------------------------------------------------------------------
   api.register('mfa.activate',
     requirePersonalAccess,
+    commonFns.getParamsValidation(methodsSchema.activate.params),
     async function activate (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       if (!requireMFAEnabled(next)) return;
       try {
@@ -477,6 +478,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           return next(errors.invalidParametersFormat(
             `Unknown or inactive MFA method: ${methodName}`, { id: 'invalid-mfa-method' }));
         }
+        // The step-up fields are never enrolment content (SMS content is
+        // `phone` plus the operator's allow-listed keys, templated into the
+        // provider request). Checked before the step-up, so a malformed
+        // request spends no attempt and no code.
+        const enrolParams = { ...params };
+        delete enrolParams.code;
+        delete enrolParams.password;
+        method.checkEnrolParams(enrolParams);
         // Replacing an active enrolment needs a step-up; a first enrolment
         // does not (there is no factor to protect yet).
         const user = context.user as UserRef;
@@ -485,11 +494,6 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           const stepUpErr = await checkStepUp(user, params, stored, cfg);
           if (stepUpErr) return next(stepUpErr);
         }
-        // The step-up fields are never enrolment content (SMS content is the
-        // rest of the body, templated into the provider request).
-        const enrolParams = { ...params };
-        delete enrolParams.code;
-        delete enrolParams.password;
         const profile = new Profile();
         const extra = await method.enroll(context.user.username, profile, enrolParams);
         // `replaces` pins the enrolment this activation was allowed to
@@ -535,7 +539,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
         if ('error' in slot) return next(slot.error);
         try {
-          await method.verify(user.username, profile, { headers: {}, body: params });
+          // Only the code is handed over: nothing else of the body reaches a provider.
+          await method.verify(user.username, profile, { headers: {}, body: { code: params.code } });
         } catch (verifyErr) {
           return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }
@@ -626,7 +631,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const slot = await reserveAttempt(params.mfaToken, user, cfg.attempts);
         if ('error' in slot) return next(slot.error);
         try {
-          await method.verify(user.username, session.profile, { headers: {}, body: params });
+          await method.verify(user.username, session.profile, { headers: {}, body: { code: params.code } });
         } catch (verifyErr) {
           return next(await afterFailedAttempt(params.mfaToken, slot.attempts, cfg.attempts, verifyErr as Error));
         }

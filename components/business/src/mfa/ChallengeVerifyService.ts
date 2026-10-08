@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const Service = require('./Service.ts').default;
+const { isValidCode, invalidCodeError, toValues, renderRequest } = require('./smsRequest.ts');
 
 /**
  * Two-step SMS MFA: separate `challenge` and `verify` HTTP endpoints on the
@@ -19,45 +20,28 @@ type ProfileLike = { content: Record<string, unknown> };
 type ClientRequestLike = { body?: Record<string, unknown>; [k: string]: unknown };
 
 class ChallengeVerifyService extends Service {
+  challengeEndpoint: MfaSmsEndpoint;
+  verifyEndpoint: MfaSmsEndpoint;
   constructor (mfaConfig: MfaConfig) {
     super(mfaConfig);
     const eps = mfaConfig.sms.endpoints;
-    this.challengeUrl = eps.challenge.url;
-    this.challengeMethod = eps.challenge.method;
-    this.challengeHeaders = eps.challenge.headers;
-    this.challengeBody = eps.challenge.body;
-    this.verifyUrl = eps.verify.url;
-    this.verifyMethod = eps.verify.method;
-    this.verifyHeaders = eps.verify.headers;
-    this.verifyBody = eps.verify.body;
+    this.challengeEndpoint = eps.challenge;
+    this.verifyEndpoint = eps.verify;
   }
 
   async challenge (_username: string, profile: ProfileLike, _clientRequest: ClientRequestLike) {
-    const replacements = profile.content;
-    let url = this.challengeUrl;
-    let headers = this.challengeHeaders;
-    let body = this.challengeBody;
-    for (const [key, value] of Object.entries(replacements)) {
-      headers = Service.replaceRecursively(headers, key, value);
-      body = Service.replaceAll(body, key, value);
-      url = Service.replaceAll(url, key, value);
-    }
-    await this._makeRequest(this.challengeMethod, url, headers, body);
+    const { url, headers, body } = renderRequest(this.challengeEndpoint, toValues(profile.content));
+    await this._makeRequest(this.challengeEndpoint.method, url, headers, body);
   }
 
   async verify (_username: string, profile: ProfileLike, clientRequest: ClientRequestLike) {
-    // Verify-time replacements include both the persisted profile content and
-    // whatever the client sent in the verify request body (typically `code`).
-    const replacements = Object.assign({}, clientRequest.body, profile.content);
-    let url = this.verifyUrl;
-    let headers = this.verifyHeaders;
-    let body = this.verifyBody;
-    for (const [key, value] of Object.entries(replacements)) {
-      headers = Service.replaceRecursively(headers, key, value);
-      body = Service.replaceAll(body, key, value);
-      url = Service.replaceAll(url, key, value);
-    }
-    await this._makeRequest(this.verifyMethod, url, headers, body);
+    // Only the code is taken from the client request; the rest of the values
+    // are the stored enrolment content.
+    const code = (clientRequest.body || {}).code;
+    if (!isValidCode(code)) throw invalidCodeError();
+    const values = { ...toValues(profile.content), code };
+    const { url, headers, body } = renderRequest(this.verifyEndpoint, values);
+    await this._makeRequest(this.verifyEndpoint.method, url, headers, body);
   }
 }
 

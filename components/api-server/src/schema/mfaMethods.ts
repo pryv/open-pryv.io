@@ -15,20 +15,28 @@ const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 const array = helpers.array;
+const { CODE_PATTERN, PHONE_PATTERN } = require('business/src/mfa/smsRequest.ts');
+
+/** An MFA code: 4 to 10 digits. */
+const mfaCode = string({ pattern: CODE_PATTERN.source });
 
 const mfaMethods = {
   // mfa.activate — start the MFA setup flow.
-  // Personal access token required. Body is the profile content (e.g. { phone: '+41...' }) —
-  // arbitrary key-value pairs that get templated into the SMS endpoint URL/headers/body.
-  // Over an active enrolment it also needs a step-up (`password` or `code`, as
-  // for mfa.deactivate); those two keys are never enrolment content.
+  // Personal access token required. For SMS the body is the enrolment content:
+  // `phone` (E.164), plus the keys the operator allow-lists in
+  // services.mfa.methods.sms.contentKeys, all strings; the method refuses any
+  // other key, and a TOTP enrolment takes none. Over an active enrolment it
+  // also needs a step-up (`password` or `code`, as for mfa.deactivate); those
+  // two keys are never enrolment content, and their type is checked by the
+  // step-up itself.
   activate: {
     params: object({
       method: string(), // optional: 'totp' | 'sms'; defaults to services.mfa.defaultMethod
-      password: string(),
-      code: string()
+      password: {},
+      code: {},
+      phone: string({ pattern: PHONE_PATTERN.source })
     }, {
-      additionalProperties: true // SMS template kv pairs (e.g. phone)
+      additionalProperties: string() // allow-listed SMS content keys, checked by the method
     }),
     result: object({
       mfaToken: string(),
@@ -41,14 +49,14 @@ const mfaMethods = {
     })
   },
 
-  // mfa.confirm — finish activation. Validates the SMS code and persists the MFA profile.
-  // Returns 10 recovery codes.
+  // mfa.confirm: finish activation. Validates the code and persists the MFA profile.
+  // Returns 10 recovery codes. Only `code` is used from the body.
   confirm: {
     params: object({
       mfaToken: string(),
-      code: string()
+      code: mfaCode
     }, {
-      required: ['mfaToken'],
+      required: ['mfaToken', 'code'],
       additionalProperties: true
     }),
     result: object({
@@ -76,13 +84,14 @@ const mfaMethods = {
     })
   },
 
-  // mfa.verify — verify the SMS code; returns the real Pryv access token.
+  // mfa.verify: verify the code; returns the real Pryv access token. Only
+  // `code` is used from the body.
   verify: {
     params: object({
       mfaToken: string(),
-      code: string()
+      code: mfaCode
     }, {
-      required: ['mfaToken'],
+      required: ['mfaToken', 'code'],
       additionalProperties: true
     }),
     result: object({

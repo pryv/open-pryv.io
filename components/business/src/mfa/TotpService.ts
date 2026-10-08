@@ -12,6 +12,7 @@ import type { Profile as ProfileType } from './Profile.ts';
 import { base32Encode, base32Decode, totpVerify } from './totp.ts';
 import { encrypt, decrypt } from '../acme/AtRestEncryption.ts';
 import { resolveTotpKey } from './totpKeys.ts';
+import { checkNoEnrolmentContent } from './smsRequest.ts';
 
 /**
  * Server-side TOTP (RFC 6238) as an in-process `MfaMethod`. The secret is
@@ -67,6 +68,11 @@ class TotpService implements MfaMethod {
       if (typeof domain === 'string' && domain.length > 0) return domain;
     } catch { /* fall through */ }
     return 'Pryv.io';
+  }
+
+  /** A TOTP enrolment takes no content: only the method and step-up fields. */
+  checkEnrolParams (params: Record<string, unknown>): void {
+    checkNoEnrolmentContent(params);
   }
 
   async enroll (username: string, profile: ProfileType, _params: Record<string, unknown>): Promise<Record<string, unknown>> {

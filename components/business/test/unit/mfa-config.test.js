@@ -113,6 +113,17 @@ describe('[MNORM] normalizeMfaConfig', function () {
     }
   });
 
+  it('[MNORM16] the SMS contentKeys allow-list: own list, else the legacy one; junk and reserved names dropped', function () {
+    const smsOn = (sms, legacy) => normalizeMfaConfig({ active: true, methods: { sms: { active: true, mode: 'single', ...sms } }, sms: legacy }).methods.sms.contentKeys;
+    assert.deepStrictEqual(smsOn({}), []);
+    assert.deepStrictEqual(smsOn({ contentKeys: ['language'] }, { contentKeys: ['other'] }), ['language']);
+    assert.deepStrictEqual(smsOn({ contentKeys: [] }, { contentKeys: ['other'] }), ['other'], 'falls back when empty');
+    assert.deepStrictEqual(smsOn({ contentKeys: 'language' }), []);
+    assert.deepStrictEqual(smsOn({ contentKeys: ['language', 3, '', 'phone', 'code', 'password', 'method'] }), ['language']);
+    const legacy = normalizeMfaConfig({ mode: 'single', sms: { endpoints: { single: { url: 'x' } }, contentKeys: ['language'] } });
+    assert.deepStrictEqual(legacy.methods.sms.contentKeys, ['language'], 'the legacy mode reads it too');
+  });
+
   const ATTEMPTS_DEFAULTS = {
     perSession: 5,
     perAccountWindowSeconds: 900,
