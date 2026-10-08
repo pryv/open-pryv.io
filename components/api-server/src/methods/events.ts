@@ -13,6 +13,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
+const emailsStatus = require('business/src/emails/status.ts');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const fs = require('fs');
 const { isDeepStrictEqual } = require('node:util');
@@ -180,6 +181,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const mall = await getMall();
   const platform = await getPlatform();
   const storageLayer = await getStorageLayer();
+  // `:system:email` reads also return the read-only `verification/email` event
+  emailsStatus.registerVerificationEvent();
 
   // Compose a mall-with-accesses for the CMC modules' deps (adapter over
   // storageLayer.accesses + token-auth cache invalidation). Shared by every

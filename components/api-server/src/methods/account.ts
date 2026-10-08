@@ -459,6 +459,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           return next(errors.invalidAccessToken('The verification token is invalid or expired.'));
         }
         result.email = value;
+        // the primary's `verification/email` event may have flipped
+        pubsub.notifications.emit(context.userBusiness!.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
@@ -534,6 +536,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         : UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
       await usersRepository.updateOne(context.user, params.update, accessId);
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+      // account fields are events too (and a new primary changes its `verification/email`)
+      pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     } catch (err) {
       return next(err);
     }
@@ -632,6 +636,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           // Keep the loaded user coherent so the result reflects the new primary.
           (context.user as Record<string, unknown>).email = ops.setPrimary;
           pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+          pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
         }
       }
       if (Array.isArray(ops.remove) && ops.remove.length > 0) {

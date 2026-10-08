@@ -375,6 +375,87 @@ describe('[ACDS] Account DataStore adapter', () => {
       assert.strictEqual((await accountStore.events.get(userId, { fromTime: 900, toTime: 1100 }, {})).length, 1);
     });
   });
+
+  describe('[SIB2A] Derived events', () => {
+    const AccountUserEvents = require('storages/datastores/account/AccountUserEvents.ts');
+    let events;
+    const calls = [];
+
+    before(() => {
+      const derivedFields = new Map([['emailVerification', {
+        baseField: 'email',
+        type: 'verification/email',
+        provider: async (uid, base) => {
+          calls.push(base.content);
+          return { content: { verified: true, method: 'email-link', verifiedAt: 1500 }, modified: 2500 };
+        }
+      }]]);
+      events = AccountUserEvents.create(buildFieldStreamMap(structuredClone(mockStreamTree)), async () => mockStorage, derivedFields);
+    });
+
+    it('[SIB20] get() returns derived events only when the query asks for them', async () => {
+      await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
+      await mockStorage.setAccountField(userId, 'language', 'en', 'test', 1200);
+      const plain = await events.get(userId, {}, {});
+      assert.deepStrictEqual(plain.map((e) => e.id).sort(), ['email', 'language']);
+      const withDerived = await events.get(userId, { includeDerived: true }, { sortAscending: false });
+      const ids = withDerived.map((e) => e.id);
+      assert.ok(ids.indexOf('emailVerification') === ids.indexOf('email') + 1, 'derived right after its base: ' + ids);
+      const derived = withDerived.find((e) => e.id === 'emailVerification');
+      assert.deepStrictEqual(derived.streamIds, [':system:email']);
+      assert.strictEqual(derived.type, 'verification/email');
+      assert.strictEqual(derived.time, 1000, 'the base event time');
+      assert.strictEqual(derived.modified, 2500, 'the latest of the two changes');
+      assert.deepStrictEqual(calls.at(-1), 'a@b.com');
+      // filters apply to derived events too
+      const onlyType = await events.get(userId, { includeDerived: true, types: ['verification/email'] }, {});
+      assert.deepStrictEqual(onlyType.map((e) => e.id), ['emailVerification']);
+      // and a derived event the query cannot return is not computed
+      const before = calls.length;
+      await events.get(userId, { includeDerived: true, types: ['email/string'] }, {});
+      await events.get(userId, { includeDerived: true, streams: [{ any: [':_system:language'] }] }, {});
+      assert.strictEqual(calls.length, before, 'provider not called');
+    });
+
+    it('[SIB23] a real field of the same name wins over a derived one', async () => {
+      const tree = structuredClone(mockStreamTree);
+      tree[0].children.push({ id: ':system:emailVerification', name: 'Op field', type: 'note/txt', parentId: ':_system:account', children: [] });
+      const shadowed = AccountUserEvents.create(buildFieldStreamMap(tree), async () => mockStorage, new Map([['emailVerification', {
+        baseField: 'email', type: 'verification/email', provider: async () => ({ content: { verified: true } })
+      }]]));
+      await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
+      await mockStorage.setAccountField(userId, 'emailVerification', 'operator value', 'test', 1100);
+      const all = await shadowed.get(userId, { includeDerived: true }, {});
+      const same = all.filter((e) => e.id === 'emailVerification');
+      assert.strictEqual(same.length, 1);
+      assert.strictEqual(same[0].type, 'note/txt');
+      assert.strictEqual((await shadowed.getOne(userId, 'emailVerification')).content, 'operator value');
+    });
+
+    it('[SIB21] getOne() resolves the derived id; it has no history', async () => {
+      await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
+      const one = await events.getOne(userId, ':system:emailVerification');
+      assert.strictEqual(one.id, 'emailVerification');
+      assert.strictEqual(one.content.verified, true);
+      assert.deepStrictEqual(await events.getHistory(userId, ':system:emailVerification'), []);
+    });
+
+    it('[SIB16] no base value, no derived event', async () => {
+      await mockStorage.setAccountField(userId, 'language', 'en', 'test', 1000);
+      const all = await events.get(userId, { includeDerived: true }, {});
+      assert.deepStrictEqual(all.map((e) => e.id), ['language']);
+      assert.strictEqual(await events.getOne(userId, ':system:emailVerification'), null);
+    });
+
+    it('[SIB15] a derived event cannot be written', async () => {
+      await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
+      await assert.rejects(
+        () => events.update(userId, { id: 'emailVerification', content: { verified: false } }),
+        (err) => { assert.strictEqual(err.id, 'api-unavailable'); return true; }
+      );
+      assert.ok(!('emailVerification' in await mockStorage.getAccountFields(userId)));
+    });
+  });
 });
 
 // Helper — same as index.js buildFieldStreamMap

@@ -2,11 +2,40 @@
 
 ## Unreleased
 
+### Account email: verification state readable by apps
+
+- An access that can read `:system:email` (an app granted "Read Email", or a personal token) now
+  also gets, **in the same stream**, a read-only event of type `verification/email`, id
+  `:system:emailVerification`, content `{ verified, method, verifiedAt }`:
+  - `verified` is true only when ownership of the primary address was **proved**: `method` is
+    `email-link` (the holder clicked a mailed link), `email-code` (pasted a mailed code at
+    registration) or `operator`. `registration` (the founding address, not proved) and `legacy`
+    (set without proof) read as `verified: false`.
+  - It is derived at read time, never stored, and cannot be created, updated or deleted. It has no
+    history. Its `time` is the address event's (the address stays first in time-sorted results);
+    its `modified` moves when the address or its proof changes.
+  - **Read the address with `types: ['email/string']`** and the state with
+    `types: ['verification/email']` rather than relying on position: a client that took the first
+    (or only) event of `:system:email` as the address keeps working in the default sort, but the
+    type filter is the robust way.
+- **Disclosure.** Apps granted "Read Email" before this release also learn the proof state of the
+  address (the method and date, never the other addresses of the account), without new consent.
+  Operators who want the consent text to say so can rename the email field's `name` in
+  `custom.systemStreams`.
+- Proving an address (`account.verifyEmail`), changing the primary (`account.update` with
+  `emails.setPrimary`) and any account-field update now also notify `eventsChanged` (socket.io), so
+  an app watching events sees the change.
+- The new types `verification/email` and `email/string` are in the event-types dictionary.
+
 ### Events
+
+- **Fix.** `skip` and `limit` were ignored by `events.get` when every requested stream is an account
+  field stream (for example `streams=[":system:email"]&limit=1`).
 
 - **Fix.** Account events (`:_system:language`, `:system:email` and the other account fields) now
   carry the time their value was set: `time` and `modified` are the time of the current value,
-  `created` the time of the field's first value. They used to report the time of the read, so
+  `created` the time of the field's first value (`createdBy` and `modifiedBy` both name the author
+  of the current value). They used to report the time of the read, so
   `modifiedSince`, `fromTime` and `toTime` always matched them (an incremental sync fetched them on
   every call) and their `integrity` changed on every read. Their `integrity` is now stable across
   reads (it changes once, with this upgrade).

@@ -123,7 +123,8 @@ describe('[EVNT] events', function () {
             // lets separate core events from all other events and validate them separatelly
             const separatedEvents = validation.separateAccountStreamsAndOtherEvents(response.body.events);
             response.body.events = separatedEvents.events;
-            accountStreamsEvents = separatedEvents.accountStreamsEvents;
+            // the account fields and their derived events take part of the page of 20
+            accountStreamsEvents = separatedEvents.accountStreamsEvents.concat(separatedEvents.derivedAccountEvents);
             stepDone();
           },
           function checkResponse (stepDone) {

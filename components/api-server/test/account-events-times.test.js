@@ -69,6 +69,7 @@ describe('[ATMS] account events times', function () {
     assert.strictEqual(first.content, 'fr');
     assert.strictEqual(second.time, first.time);
     assert.strictEqual(second.modified, first.modified);
+    assert.strictEqual(typeof first.integrity, 'string', 'integrity is on in the test config');
     assert.strictEqual(second.integrity, first.integrity);
     assert.ok(first.time >= before - 1 && first.time <= after + 1, 'time is when the field was set');
 

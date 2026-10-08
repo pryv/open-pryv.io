@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## Derived account events (`verification/email`)
+
+- `storages/datastores/account`: `registerDerivedField(name, { baseField, type, provider })`
+  registers a read-only event computed at read time from a base field's event and returned in the
+  base field's stream, right after it. `AccountUserEvents.get` adds them only when the store query
+  carries `includeDerived` (internal readers such as `getUserById` / `User`, `getOnePropertyValue`
+  and `updateOne` map account events to fields by stream and must never see them); `getOne`
+  resolves a derived id directly; `getHistory` returns `[]`; `update` refuses it.
+- The mall copies `includeDerived` through `getStoreQueryFromParams` (its store-query whitelist);
+  `eventsGetUtils.findEventsFromStore` sets it on the account-store params only (`events.get`, so
+  socket.io and batch calls too). The account event id rule in `convertEventFromStore` is now the
+  first stream id's prefix + the field name (identical for real fields).
+- `business/src/emails/status.ts`: `isAddressProved` (now used by the SSO email matching, same
+  semantics) and `primaryVerification`; `registerVerificationEvent()` is called from the events
+  methods' init. Tests [SIBS] (API) and [SIB2A] (adapter).
+
 ## Account events read their times from the field history
 
 - `UserAccountStorage.getAccountFieldsWithMeta(userId)` (PostgreSQL: `DISTINCT ON (field)` with a
