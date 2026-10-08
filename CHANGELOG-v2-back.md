@@ -1,5 +1,64 @@
 # Changelog - Internal (no API impact)
 
+## boiler: `Config.get` returns copies and never writes into lower scopes
+
+- nconf's merge assigned the lowest scope's nested objects by reference into the result and then
+  merged the higher scopes into them, so reading an object key wrote, for example, an injected
+  scope's values into the defaults, where they outlived that scope. `Config.get()` now resolves the
+  scopes itself (`resolve()`, nconf's stop rule and merge, on copies); `has()` checks the scopes
+  without merging; `getScopeAndValue()` returns a copy. The two MFA test workarounds this required
+  are gone. Tests in `components/boiler/test/config.test.js`.
+
+## Test harness: every suite and tool test honours the storage engine
+
+- The hfs-server suite applies `STORAGE_ENGINE` like the other suites (it ran on PostgreSQL under
+  `--sqlite`); `[HFSE1]` asserts the loaded base and series engines.
+- `components/test-helpers/src/testStorageEngines.ts`: `applyTestStorageEngine()` and
+  `childStorageEngineEnv()`; every test that spawns a `bin/` tool passes the parent's engines to the
+  child.
+
+## SQLite: cached handles follow the file on disk
+
+- `storages/engines/sqlite/src/fileIdentity.ts`: `fileIdentity(path)` (device + inode). The series
+  connection (`SeriesConnectionSQLite`), the per-user audit / events databases (`userSQLite/Storage`)
+  and the per-user base storage file (`UserBaseStorageDb`) reuse a cached handle only while the path
+  still points at the same file, and reopen it otherwise. Concurrent first opens share one handle;
+  `deleteUser` unlinks the database and its `-wal` / `-shm` without opening it. Tests
+  `stale-handle.test.js`, `series.test.js`.
+- `auth.delete` runs `deleteAuditData` (the user directory wipe) after `deleteUser`, which reopened
+  the per-user files.
+- `AccessesSQLite` / `BaseStorageSQLite`: the uniqueness check and the insert run in one immediate
+  transaction (`accesses-insert-unique.test.js`).
+
+## Webhooks call path
+
+- `business/src/webhooks/destination.ts`: URL rules (`MAX_URL_LENGTH` 2048, scheme, credentials),
+  the address classification (IPv4 and IPv6 ranges, also in IPv4-mapped, NAT64 and 6to4 forms), the
+  `webhooks.allowedPrivateHosts` allow-list (`describeWebhooksConfig`, used by the boot validator)
+  and the call itself, on `node:http` / `node:https` with a checked `lookup` (the addresses the
+  socket connects to are the ones checked), no redirect, `webhooks.requestTimeoutMs`, the answer
+  body discarded. `Webhook.ts` sends through it (`postWebhook`) and logs a refused destination once,
+  not on every retry. Tests `webhookDestination.test.js`, `Webhook.test.js` and `webhooks.test.js`.
+- `schema/webhook.ts`: a dedicated create schema (`url`, `scopes`, `additionalProperties: false`).
+
+## MFA internals
+
+- `business/src/mfa/smsRequest.ts`: one-pass template rendering with per-context encoding, the
+  `phone` / code patterns used by the API schema, and the challenge-verify success predicate.
+- `business/src/mfa/smsSendLimits.ts`: `SmsSendLimiter` (per session, per user, per destination
+  hash).
+- `SessionStore`: `setSmsCode` (hashed code with its own lifetime), `takeEnrolSlot` (one pending
+  enrolment per user), `reserveAttempt` / `releaseAttempt`, the `maxPending` cap and an absolute
+  expiry; `generateCode` uses `crypto.randomInt`.
+- `Profile.enrolmentFingerprint` binds a login session to the enrolment it was opened against.
+- `api-server/src/methods/helpers/mfaChange.ts`: `notifyMfaChange` (the `mfa-change` notice) and
+  `auditMfaChange` (`mfa.recovered`, `mfa.deactivatedByAdmin` rows through `audit.eventForUser`).
+- The MFA resolution in `auth.login` / `auth.ssoLogin` runs before the session and personal access
+  are written; the login and `mfa.challenge` no longer forward the client params to the method.
+- `bin/master.js` boot warning on SMS enrolments without an active SMS method
+  (`describeInactiveSmsEnrolments`, PostgreSQL `countSmsMfaEnrolments`).
+- The bundled mail template set holds 20 rows (`mfa-change` added).
+
 ## Release CI: encryption-at-rest variant built for arm64 too
 
 - `Dockerfile.encrypted` copies the payload from `pryvio/container-encrypted-volume:v0.1.2`, the first
