@@ -9,6 +9,30 @@
   mail itself and sends the plain welcome mail if it fails. Tests [WELC] (API, Mandrill nock) and
   [WEL05] (template rendering).
 
+## Boot validation: `platform.piiHmacKey` is required when PII is hashed
+
+- **Operators:** a core whose `platform.piiMode` is `hashed` (the default since 2.0.0-rc.3) now
+  refuses to start when `platform.piiHmacKey` is missing, empty or a `REPLACE` placeholder. Before,
+  it started and then failed every registration (and any other PlatformDB PII operation) with
+  `unexpected-error`. Configs made by the install wizard already carry the key; a hand-written
+  config without it must add one (the same value on every core, see INSTALL.md "PlatformDB PII
+  hashing (default since 2.0.0-rc.3)"; the minimal production config and the hand-written joiner
+  config in SINGLE-TO-MULTIPLE.md now show it). A core that logs `piiMode=hashed requested but
+  piiHmacKey is missing` today is the one affected. `platform.piiMode: cleartext` needs no key.
+- **Operators:** with `NODE_ENV=production`, the pepper published for development and tests (in
+  `config/development-config.yml` and the test harness) is refused like a placeholder secret;
+  `bin/check-config.js` warns about it. `components/business/src/secretValues.ts` keeps the list of
+  such public values; `platform:piiHmacKey` joins the validator's secret paths.
+- `config/plugins/config-validation.js` `REQUIRED_WHEN` entry, gated like `Platform`'s own
+  resolution (unset `piiMode` = cleartext), with a hint on how to generate the key;
+  `bin/check-config.js` reports the same problem (resolving `piiMode` from the file, then the base
+  layer, then the `hashed` default). CLI tools that do not run the boot validator keep Platform's
+  deferred error.
+- `config/development-config.yml` carries a public development key (the test harness value), so a
+  stock `NODE_ENV=development` checkout can register users.
+- Tests `[CVPK1]`-`[CVPK4]`, `[CKPK1]`-`[CKPK4]`, `[CVLY1]` extended; the check-config CLI tests'
+  base config carries a key.
+
 ## Derived account events (`verification/email`)
 
 - `storages/datastores/account`: `registerDerivedField(name, { baseField, type, provider })`

@@ -224,6 +224,8 @@ describe('[CVLY] production base layer is deployment-neutral', function () {
     assert.ok(has(/^auth:filesReadTokenSecret /), JSON.stringify(problems, null, 2));
     assert.ok(has(/^auth:passwordResetPageURL /), JSON.stringify(problems, null, 2));
     assert.ok(has(/^auth:trustedApps .*missing or empty/), JSON.stringify(problems, null, 2));
+    // PII is hashed by default, so the shipped chain requires the pepper.
+    assert.ok(has(/^platform:piiHmacKey .*missing or unset/), JSON.stringify(problems, null, 2));
     // Verification mail is on by default: its missing page URL is reported at boot.
     assert.ok(warnings.some((w) => /auth\.emailVerificationPageURL' is not set/.test(w)), JSON.stringify(warnings, null, 2));
     assert.deepStrictEqual(values, {

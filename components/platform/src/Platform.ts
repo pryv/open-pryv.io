@@ -79,6 +79,8 @@ class Platform {
   // (hashFor / piiModeIsHashed-true call site). Init must stay successful
   // so CLI tools and tests that never touch PII paths can boot — same
   // failure surface for actual hashed operations, no surprise behaviour.
+  // Servers never get this far without a key: the boot validator
+  // (config/plugins/config-validation.js) refuses to start them.
   #piiInitError: Error | null = null;
 
   // Lazy HMAC(username) → cleartext-username map for THIS core's local
