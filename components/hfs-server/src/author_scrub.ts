@@ -14,6 +14,25 @@
 export type ScrubAccess = { id: string; type?: string; live: boolean; token: string };
 
 /**
+ * Every row a keyset page reader returns, one page in memory at a time.
+ * `fetchPage(afterId, limit)` returns up to `limit` rows whose id sorts after
+ * `afterId` (null for the first page), in id order; a short page ends it.
+ */
+export async function * pagedRows<T extends { id: string }> (
+  fetchPage: (afterId: string | null, limit: number) => Promise<T[]>,
+  pageSize: number
+): AsyncGenerator<T> {
+  if (!Number.isInteger(pageSize) || pageSize < 1) throw new Error('page size must be a positive integer');
+  let afterId: string | null = null;
+  for (;;) {
+    const page = await fetchPage(afterId, pageSize);
+    for (const row of page) yield row;
+    if (page.length < pageSize) return;
+    afterId = page[page.length - 1].id;
+  }
+}
+
+/**
  * The access-id form of `modifiedBy` when it holds a known token ("<token>",
  * "<token> <callerId>", optionally prefixed by the DPoP scheme), else null.
  * A value that already is an access id is left alone.

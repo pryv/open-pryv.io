@@ -229,6 +229,20 @@ const userEvents = ds.createUserEvents({
     });
   },
 
+  /**
+   * One page of the user's event rows in any state (trashed and deleted
+   * included, version rows excluded), in id order, after `afterId` (keyset):
+   * lets a maintenance tool visit every row with bounded memory. Rewriting a
+   * returned row does not move it, since its id does not change.
+   */
+  async _getAllStatesPage (this: Store, userId: string, afterId: string | null, limit: number): Promise<EventLike[]> {
+    const res = await this.db.query(
+      'SELECT * FROM events WHERE user_id = $1 AND head_id IS NULL AND id > $2 ORDER BY id ASC LIMIT $3',
+      [userId, afterId ?? '', limit]
+    );
+    return res.rows.map(rowToEvent).filter((e): e is EventLike => e !== null);
+  },
+
   async create (this: Store, userId: string, event: EventLike, transaction: Transaction): Promise<EventLike> {
     try {
       const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);

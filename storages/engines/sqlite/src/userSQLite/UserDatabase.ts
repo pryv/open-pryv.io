@@ -301,7 +301,18 @@ UserDatabase.prototype.getEventHistory = function (this: UserDatabaseInstance, e
   return this.eventQueries.getHistory.all(eventId).map(eventsSchema.fromDBHistory);
 };
 
-UserDatabase.prototype.minimizeEventHistory = async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
+/**
+ * Up to `limit` event rows in any state (trashed and deleted included, version
+ * rows excluded) whose id sorts after `afterId`, in id order (keyset paging).
+ * Read with `.all()`, so no statement stays open between pages.
+ */
+UserDatabase.prototype.getAllStatesPage = function (this: UserDatabaseInstance, afterId: string | null, limit: number): DomainEvent[] {
+  return this.db.prepare('SELECT * FROM events WHERE headId IS NULL AND eventid > ? ORDER BY eventid ASC LIMIT ?')
+    .all(afterId ?? '', limit)
+    .map(eventsSchema.fromDB);
+};
+
+UserDatabase.prototype.minimizeEventHistory =async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
   const minimizeHistoryStatement = `UPDATE events SET ${fieldsToRemove.map(field => `${field} = ${field === 'streamIds' ? '\'' + eventsSchema.ALL_EVENTS_TAG + '\'' : 'NULL'}`).join(', ')} WHERE headId = ?`;
   this.logger.debug(`(async) Minimize event history: ${minimizeHistoryStatement}`);
   await concurrentSafeWrite.execute(() => {

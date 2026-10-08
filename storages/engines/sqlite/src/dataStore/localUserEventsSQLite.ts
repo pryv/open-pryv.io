@@ -44,6 +44,7 @@ type UserDbLike = {
   getEventsStreamed: (params: { query: unknown[]; options: unknown }) => ReadableType;
   getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
   getEventHistory: (eventId: string) => EventLike[];
+  getAllStatesPage: (afterId: string | null, limit: number) => EventLike[];
   createEvent: (event: EventLike) => Promise<void>;
   updateEvent: (eventId: string, eventData: EventLike, onlyIfNotTrashed?: boolean) => Promise<EventLike | null>;
   updateEventAtomic: (eventId: string, fn: (stored: EventLike) => { next: EventLike, versionItem?: EventLike } | null) => Promise<EventLike | null | false>;
@@ -124,6 +125,17 @@ const userEvents = ds.createUserEvents({
   async getHistory (this: Store, userId: string, eventId: string): Promise<EventLike[]> {
     const db = await this.storage.forUser(userId);
     return db.getEventHistory(eventId);
+  },
+
+  /**
+   * One page of the user's event rows in any state (trashed and deleted
+   * included, version rows excluded), in id order, after `afterId` (keyset):
+   * lets a maintenance tool visit every row with bounded memory. Rewriting a
+   * returned row does not move it, since its id does not change.
+   */
+  async _getAllStatesPage (this: Store, userId: string, afterId: string | null, limit: number): Promise<EventLike[]> {
+    const db = await this.storage.forUser(userId);
+    return db.getAllStatesPage(afterId, limit);
   },
 
   async create (this: Store, userId: string, event: EventLike, _transaction: unknown): Promise<EventLike> {

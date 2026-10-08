@@ -18,8 +18,13 @@
 // What it does. For each local user, it maps every access token of the user
 // (live and deleted accesses) to its access id, then rewrites each event whose
 // `modifiedBy` starts with such a token to the access id, keeping a caller-id
-// suffix when there is one. Writes pass `skipVersioning` and go through the
-// mall, which recomputes the event's integrity.
+// suffix when there is one. Trashed events and deleted events are included: a
+// deletion keeps `modifiedBy` in the remaining row under the `keep-authors`
+// and `keep-everything` deletion modes (`keep-nothing`, the default, clears
+// it). Events are read a page at a time (keyset on the event id,
+// `--page-size`), so memory does not grow with the account. Writes pass
+// `skipVersioning` and go through the mall, which recomputes the event's
+// integrity.
 //
 // With `--revoke`, every still-live access found that way is deleted the way
 // `accesses.delete` deletes it (webhooks of the access, the access, its alias
@@ -39,6 +44,7 @@
 //   node bin/hfs-author-scrub.js                        # rewrite
 //   node bin/hfs-author-scrub.js --revoke               # rewrite + revoke the accesses concerned
 //   node bin/hfs-author-scrub.js --user <username>      # one account only
+//   node bin/hfs-author-scrub.js --page-size <n>        # events read per query (default 1000)
 //   node bin/hfs-author-scrub.js --config config/host-config.yml   # multi-core joiner
 //
 // Run once per core. Safe to re-run.
@@ -85,9 +91,10 @@ require('@pryv/boiler').init({
 
     await require('storages').init(config);
     const { getUsersLocalIndex, getStorageLayer } = require('storage');
-    const { getMall } = require('mall');
+    const { getMall, storeDataUtils } = require('mall');
+    const { convertEventFromStore } = require('mall/src/helpers/eventsUtils.ts');
     const { fromCallback } = require('utils');
-    const { authorFor } = require('hfs-server/src/author_scrub.ts');
+    const { authorFor, pagedRows } = require('hfs-server/src/author_scrub.ts');
     const WebhooksRepository = require('business').webhooks.Repository;
     const { getUsersRepository } = require('business/src/users/index.ts');
     const { getPlatform } = require('platform');
@@ -95,6 +102,13 @@ require('@pryv/boiler').init({
     const timestamp = require('unix-timestamp');
 
     const mall = await getMall();
+    // Every row of the local store, trashed and deleted ones included, a page
+    // at a time (keyset on the event id).
+    const localStoreId = storeDataUtils.LocalStoreId;
+    const localEvents = mall.events.eventsStores.get(localStoreId);
+    if (typeof localEvents?._getAllStatesPage !== 'function') {
+      throw new Error('the local events store of this core cannot list events in all states');
+    }
     const usersIndex = await getUsersLocalIndex();
     const storageLayer = await getStorageLayer();
     const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
@@ -155,9 +169,10 @@ require('@pryv/boiler').init({
       }
       if (byToken.size === 0) continue;
 
-      const events = await mall.events.get(userId, { state: 'all', limit: 1_000_000 });
       const hitAccesses = new Map();
-      for (const event of (events || [])) {
+      const rows = pagedRows((afterId, limit) => localEvents._getAllStatesPage(userId, afterId, limit), args.pageSize);
+      for await (const storeEvent of rows) {
+        const event = convertEventFromStore(localStoreId, storeEvent);
         const rewritten = authorFor(event?.modifiedBy, byToken, ids);
         if (rewritten == null) continue;
         hitAccesses.set(rewritten.access.id, rewritten.access);
@@ -218,12 +233,19 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, revoke: false, user: null };
+  const args = { dryRun: false, revoke: false, user: null, pageSize: 1000 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--revoke') args.revoke = true;
-    else if (a === '--user') { i++; args.user = argv[i]; } else if (a === '--config') { i++; /* consumed by boiler at init */ } else {
+    else if (a === '--user') { i++; args.user = argv[i]; } else if (a === '--page-size') {
+      i++;
+      args.pageSize = /^[1-9][0-9]*$/.test(argv[i] ?? '') ? Number(argv[i]) : NaN;
+      if (!Number.isSafeInteger(args.pageSize)) {
+        console.error('--page-size needs a positive integer');
+        process.exit(1);
+      }
+    } else if (a === '--config') { i++; /* consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
     }
@@ -245,6 +267,9 @@ function printUsage (stream) {
     '  node bin/hfs-author-scrub.js                      # rewrite',
     '  node bin/hfs-author-scrub.js --revoke             # rewrite and revoke (then restart the core)',
     '  node bin/hfs-author-scrub.js --user <username>    # one account only',
+    '  node bin/hfs-author-scrub.js --page-size <n>      # events read per query (default 1000)',
+    '',
+    'Trashed and deleted events are scanned and rewritten too.',
     '',
     'On a multi-core joiner that layers a host-config file on top, pass it through:',
     '  node bin/hfs-author-scrub.js --config config/host-config.yml',
