@@ -633,6 +633,60 @@ describe('[CVWS] config-validation weak secrets', () => {
     }
   });
 
+  it('[CVPK1] hashed PII without a piiHmacKey (absent, empty or placeholder) refuses the boot', () => {
+    for (const value of [undefined, '', 'REPLACE ME', 0]) {
+      const problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, 'platform:piiMode': 'hashed', 'platform:piiHmacKey': value }), problems);
+      const p = problems.find((p) => p.payload && p.payload.path === 'platform:piiHmacKey');
+      assert.ok(p, 'expected a problem for piiHmacKey=' + JSON.stringify(value));
+      assert.match(p.message, /randomBytes\(32\)/, 'the problem says how to generate the key');
+    }
+  });
+
+  it('[CVPK2] hashed PII with a key, or cleartext / unset piiMode without one, boots', () => {
+    const cases = [
+      { 'platform:piiMode': 'hashed', 'platform:piiHmacKey': 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=' },
+      { 'platform:piiMode': 'cleartext' },
+      {} // Platform resolves an unset piiMode to cleartext
+    ];
+    for (const extra of cases) {
+      const problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, ...extra }), problems);
+      assert.strictEqual(problems.length, 0, JSON.stringify({ extra, problems }));
+    }
+  });
+
+  it('[CVPK4] in production, the public development/test pepper is refused; a key of your own boots', () => {
+    const publicKey = 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=';
+    const ownKey = require('node:crypto').randomBytes(32).toString('base64');
+    const run = (key) => {
+      const problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, 'platform:piiMode': 'hashed', 'platform:piiHmacKey': key }), problems);
+      return problems.find((p) => p.payload && p.payload.path === 'platform:piiHmacKey');
+    };
+    assert.strictEqual(run(publicKey), undefined, 'accepted outside production (tests use it)');
+    const saved = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const p = run(publicKey);
+      assert.ok(p && p.payload.weakSecret, 'refused in production');
+      assert.match(p.message, /public development\/test value/);
+      assert.match(p.message, /randomBytes\(32\)/, 'the hint fits a pepper, not a hex secret');
+      assert.strictEqual(run(ownKey), undefined);
+    } finally {
+      process.env.NODE_ENV = saved;
+    }
+  });
+
+  it('[CVPK3] development-config.yml carries a usable key for the hashed default', () => {
+    const yaml = require('js-yaml');
+    const fs = require('node:fs');
+    const read = (f) => yaml.load(fs.readFileSync(new URL('../../../config/' + f, import.meta.url), 'utf8'));
+    assert.strictEqual(read('default-config.yml').platform.piiMode, 'hashed');
+    const key = read('development-config.yml').platform.piiHmacKey;
+    assert.strictEqual(Buffer.from(key, 'base64').length, 32);
+  });
+
   it('[CVWS3] outside production, a short (non-placeholder) secret is accepted', () => {
     const { weakSecretReason } = require('../../../config/plugins/config-validation.js');
     assert.strictEqual(weakSecretReason('short-key'), null);

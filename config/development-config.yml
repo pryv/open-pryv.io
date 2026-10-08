@@ -18,6 +18,13 @@ auth:
   # Never use these values outside local development.
   filesReadTokenSecret: dev-only-files-read-token-secret
   trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@https://*.backloop.dev*, *@http://127.0.0.1*"
+platform:
+  # Public value so a stock checkout can register users under
+  # NODE_ENV=development (PII is hashed by default and the key is required at
+  # boot). Same value as the test harness (scripts/components-run), so dev and
+  # test runs sharing a local PlatformDB hash alike. Never use it outside local
+  # development.
+  piiHmacKey: 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0='
 serviceInfoUrl: file://test/service-info.json
 services:
   email:
