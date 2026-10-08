@@ -35,10 +35,14 @@
 - **Fix.** Account events (`:_system:language`, `:system:email` and the other account fields) now
   carry the time their value was set: `time` and `modified` are the time of the current value,
   `created` the time of the field's first value (`createdBy` and `modifiedBy` both name the author
-  of the current value). They used to report the time of the read, so
-  `modifiedSince`, `fromTime` and `toTime` always matched them (an incremental sync fetched them on
-  every call) and their `integrity` changed on every read. Their `integrity` is now stable across
-  reads (it changes once, with this upgrade).
+  of the current value). They used to report the time of the read, so `modifiedSince` always
+  matched them (an incremental sync fetched them on every call), a `fromTime` / `toTime` window
+  ending before the read never did, and their `integrity` changed on every read. Their `integrity`
+  is now stable across reads (it changes once, with this upgrade).
+  - Consequence for exports by time window, such as `@pryv/account-backup`'s initial run (one
+    request per month, up to the run's start): they now include the account events. Before, the
+    account fields that exist only as events (operator-declared fields) were missing from a backup
+    that never ran incrementally (`account.json` still carried the language and email).
 
 ## 2.0.0-rc.43 - 2026-10-07
 
