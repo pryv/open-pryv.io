@@ -81,8 +81,10 @@ describe('[HFDR] hfs-duration-repair tool', function () {
     await appendPoints(ids.B, [0, 1e8]);
     await user.event({ id: ids.G, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 1e9 });
     await appendPoints(ids.G, [0, 1e9, 3e9]);
-    await user.event({ id: ids.F, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 3 * 86400 });
-    await appendPoints(ids.F, [0, 3 * 86400 * 1e9]);
+    // F ends three days from now (not from T, which is fixed): a candidate whatever the date of the run.
+    const durationF = Math.ceil(Date.now() / 1000 - T) + 3 * 86400;
+    await user.event({ id: ids.F, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: durationF });
+    await appendPoints(ids.F, [0, durationF * 1e9]);
     await user.event({ id: ids.U, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 1e9 });
     // C: a client-set duration ending in the future, with data beyond the candidate extent but none at it.
     await user.event({ id: ids.C, type: 'series:mass/kg', streamIds: [streamId], time: T, duration: 10 * 365 * 86400 });
