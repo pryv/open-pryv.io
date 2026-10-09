@@ -473,7 +473,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // does not (there is no factor to protect yet).
         const user = context.user as UserRef;
         const stored = await loadMFAProfile(user);
-        if (cfg.stepUp.required && stored.isActive()) {
+        if (stored.isActive()) {
           const stepUpErr = await checkStepUp(user, params, stored, cfg);
           if (stepUpErr) return next(stepUpErr);
         }
@@ -534,7 +534,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // activation was allowed to replace: one enrolled meanwhile (by
         // another session) was never stepped up for.
         const replaced = enrolmentFingerprint(await loadMFAProfile(user));
-        if (cfg.stepUp.required && replaced != null && replaced !== session.context.replaces) {
+        if (replaced != null && replaced !== session.context.replaces) {
           await sessionStore().clear(params.mfaToken);
           return next(errors.invalidOperation('The MFA enrolment of this account changed since this activation started; start again with mfa.activate.'));
         }
@@ -691,10 +691,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const stored = await loadMFAProfile(user);
         // Required whether or not an enrolment is active, so the contract
         // does not depend on (and does not reveal) the account's MFA state.
-        if (cfg.stepUp.required) {
-          const stepUpErr = await checkStepUp(user, params, stored, cfg);
-          if (stepUpErr) return next(stepUpErr);
-        }
+        const stepUpErr = await checkStepUp(user, params, stored, cfg);
+        if (stepUpErr) return next(stepUpErr);
         await saveMFAProfile(user, null);
         await clearThrottleIfAny(user);
         if (stored.isActive()) notifyMfaChange(user, 'deactivated');

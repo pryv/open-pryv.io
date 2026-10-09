@@ -106,16 +106,17 @@ describe('[MCHK] describeMfaConfig', function () {
     assert.deepStrictEqual(withChange((c) => { c.attempts.backoff.baseSeconds = 0; c.attempts.backoff.maxSeconds = 0; }).warnings, []);
   });
 
-  it('[MCHK11] stepUp.required: false warns (with or without MFA active); a non-boolean is a problem', function () {
-    const off = withChange((c) => { c.stepUp.required = false; });
-    assert.deepStrictEqual(off.problems, []);
-    assert.strictEqual(off.warnings.length, 1, JSON.stringify(off.warnings));
-    assert.match(off.warnings[0], /stepUp\.required is false.*removed in a later release/);
-    const offWithoutMfa = describeMfaConfig({ active: false, stepUp: { required: false } });
-    assert.match(offWithoutMfa.warnings.join(' '), /stepUp\.required is false/);
-    assert.deepStrictEqual(paths(withChange((c) => { c.stepUp.required = 'false'; })), ['services.mfa.stepUp.required']);
-    assert.deepStrictEqual(paths(withChange((c) => { c.stepUp = 'off'; })), ['services.mfa.stepUp']);
-    assert.deepStrictEqual(withChange((c) => { delete c.stepUp; }), { problems: [], warnings: [] });
+  it('[MCHK11] any stepUp setting (with or without MFA active) gives exactly the removal warning and no problem', function () {
+    assert.ok(!('stepUp' in SHIPPED), 'the shipped default no longer carries stepUp');
+    for (const stepUp of [{ required: false }, { required: true }, { required: 'false' }, 'off', [], null, {}]) {
+      const label = JSON.stringify(stepUp);
+      const withMfa = withChange((c) => { c.stepUp = stepUp; });
+      assert.deepStrictEqual(withMfa.problems, [], label);
+      assert.strictEqual(withMfa.warnings.length, 1, label + ' ' + JSON.stringify(withMfa.warnings));
+      assert.match(withMfa.warnings[0], /^services\.mfa\.stepUp was removed and is ignored: .*always require a step-up/, label);
+      const withoutMfa = describeMfaConfig({ active: false, stepUp });
+      assert.deepStrictEqual(withoutMfa, { problems: [], warnings: withMfa.warnings }, label);
+    }
   });
 
   it('[MCHK13] SMS contentKeys: a list of names; a reserved name is a problem, "phone" a warning', function () {

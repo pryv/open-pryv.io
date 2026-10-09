@@ -135,17 +135,11 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
     }
   }
 
-  // Step-up on turning MFA off or replacing it. Checked whether MFA is active
-  // or not: mfa.deactivate stays callable either way.
-  if (isSet(raw.stepUp) && (typeof raw.stepUp !== 'object' || Array.isArray(raw.stepUp))) {
-    problems.push({ message: `stepUp must be a mapping, got ${JSON.stringify(raw.stepUp)}.`, path: [...base, 'stepUp'] });
-  } else {
-    const stepUp = obj(raw.stepUp);
-    if (isSet(stepUp.required) && typeof stepUp.required !== 'boolean') {
-      problems.push({ message: `stepUp.required must be true or false, got ${JSON.stringify(stepUp.required)}.`, path: [...base, 'stepUp', 'required'] });
-    } else if (stepUp.required === false) {
-      warnings.push('services.mfa.stepUp.required is false: mfa.deactivate, and mfa.activate over an active enrolment, accept a personal token alone, without the account password or a code of the current factor. This opt-out is for one release only and will be removed in a later release; update your clients to send the step-up.');
-    }
+  // The step-up on turning MFA off or replacing it is always required; the
+  // former opt-out is ignored, whatever its value, and never refuses the boot.
+  // Checked whether MFA is active or not: mfa.deactivate stays callable either way.
+  if (raw.stepUp !== undefined) {
+    warnings.push('services.mfa.stepUp was removed and is ignored: mfa.deactivate, and mfa.activate over an active enrolment, always require a step-up (the account password or a code of the current factor). Remove the setting from your configuration.');
   }
 
   // Login of an enrolled user whose method is not active: refused unless the

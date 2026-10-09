@@ -314,19 +314,6 @@ services:
         freeFailures: 3
         baseSeconds: 2
         maxSeconds: 300
-    # Step-up on the operations that weaken an account's second factor:
-    # mfa.deactivate, and mfa.activate when the account already has an active
-    # enrolment (it replaces it). The body must then carry either `password`
-    # (the account password) or `code` (a code of the current TOTP factor); a
-    # wrong one answers 403 invalid-step-up and counts on the per-account
-    # backoff above.
-    # `required: false` restores the former behaviour (a personal token alone)
-    # and logs a warning at every boot. It is a migration opt-out for one
-    # release, for clients not yet sending the step-up, and will be removed in
-    # a later release.
-    # PLATFORM-WIDE: set the same value on every core.
-    stepUp:
-      required: true
     # Login of an account enrolled in an MFA method that is not active on this
     # server (e.g. an SMS enrolment while methods.sms.active is false, which
     # happens when the legacy `mode` is removed without activating

@@ -1750,18 +1750,20 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         }
       });
 
-      it('[MSU12] services.mfa.stepUp.required: false lets a personal token alone turn MFA off or replace it', async function () {
+      it('[MSU12] a leftover services.mfa.stepUp.required: false is ignored: a personal token alone can neither replace nor turn off MFA', async function () {
         await enrol();
+        const before = (await storedProfile()).data.mfa;
         const restore = injectTestConfigSnapshot({
           services: { mfa: { ...totpTestConfig.services.mfa, stepUp: { required: false } } }
         });
         try {
           const replace = await activateWith({});
-          assert.strictEqual(replace.status, 302, JSON.stringify(replace.body));
-          const res = await deactivate({});
-          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-          const loginRes = await login();
-          assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'login is direct again');
+          assertStepUpMissing(replace);
+          assert.strictEqual(replace.body.mfaToken, undefined, 'no enrolment session is opened');
+          assertStepUpMissing(await deactivate({}));
+          const after = await assertMfaStillActive();
+          assert.strictEqual(after.totp.secret, before.totp.secret, 'the enrolment is unchanged');
+          assert.deepStrictEqual(after.recoveryCodes, before.recoveryCodes);
         } finally {
           restore();
         }

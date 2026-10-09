@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## MFA config: no step-up switch
+
+- `normalizeMfaConfig` no longer carries `stepUp` (the `StepUpCfg` type and `normalizeStepUp` are
+  gone); `mfa.activate`, `mfa.confirm` and `mfa.deactivate` check the step-up unconditionally.
+  `describeMfaConfig` warns, without refusing the boot, when `services.mfa.stepUp` is still set.
+  Tests `[MNORM14]`, `[MCHK11]`, `[MSU12]`.
+
 ## boiler: `Config.get` returns copies and never writes into lower scopes
 
 - nconf's merge assigned the lowest scope's nested objects by reference into the result and then

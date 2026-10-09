@@ -1,5 +1,19 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### MFA (BREAKING)
+
+- **Security.** MFA: the step-up is always required. `mfa.deactivate`, and `mfa.activate` when the
+  account already has an active enrolment, need the account password or a code of the current
+  factor in the body, `{ password }` or `{ code }`; without it: `400`, `data.id:
+  'step-up-required'`. The one-release opt-out `services.mfa.stepUp.required` is removed: the key
+  is no longer in the default configuration, and a configuration that still sets
+  `services.mfa.stepUp` (any value) boots with a warning saying the setting is ignored. Clients
+  that relied on it must now send the password or a current-factor code to `mfa.deactivate` and
+  to `mfa.activate` over an active enrolment. A confirmation (`mfa.confirm`) is now always refused
+  when the account's enrolment changed after its `mfa.activate`.
+
 ## 2.0.0-rc.44 - 2026-10-08
 
 **Upgrade promptly: this release carries security fixes, and some change the MFA and API contract.**

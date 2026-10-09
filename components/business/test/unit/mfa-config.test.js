@@ -24,8 +24,7 @@ const { normalizeMfaConfig, delayForFailures } = require('../../src/mfa/index.ts
 const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
 
 describe('[MNORM] normalizeMfaConfig', function () {
-  // MFA off still carries the step-up rule: mfa.deactivate stays callable.
-  const OFF = { active: false, stepUp: { required: true }, allowLoginWhenMethodInactive: false };
+  const OFF = { active: false, allowLoginWhenMethodInactive: false };
 
   it('[MNORM1] N3: disabled / absent / empty -> MFA off', function () {
     assert.deepStrictEqual(normalizeMfaConfig({ mode: 'disabled' }), OFF);
@@ -90,15 +89,14 @@ describe('[MNORM] normalizeMfaConfig', function () {
     assert.deepStrictEqual(normalizeMfaConfig({ active: false, mode: 'single' }), OFF);
   });
 
-  it('[MNORM14] the step-up is required unless stepUp.required is exactly false, on every branch', function () {
+  it('[MNORM14] a leftover stepUp setting is ignored: the normalised config carries no step-up switch, on every branch', function () {
     const sms = { mode: 'single', sms: { endpoints: { single: { url: 'x' } } } };
     for (const base of [{ active: true }, sms, { active: false }, {}]) {
-      assert.deepStrictEqual(normalizeMfaConfig(base).stepUp, { required: true }, JSON.stringify(base));
-      assert.deepStrictEqual(normalizeMfaConfig({ ...base, stepUp: { required: false } }).stepUp, { required: false }, JSON.stringify(base));
-    }
-    // A typo or a string never lifts it.
-    for (const stepUp of [{ required: 'false' }, { required: 0 }, { required: null }, 'off', null, {}]) {
-      assert.deepStrictEqual(normalizeMfaConfig({ active: true, stepUp }).stepUp, { required: true }, JSON.stringify(stepUp));
+      const without = normalizeMfaConfig(base);
+      assert.ok(!('stepUp' in without), JSON.stringify(base));
+      for (const stepUp of [{ required: false }, { required: true }, { required: 'false' }, 'off', null, {}]) {
+        assert.deepStrictEqual(normalizeMfaConfig({ ...base, stepUp }), without, JSON.stringify({ base, stepUp }));
+      }
     }
   });
 

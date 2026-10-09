@@ -106,7 +106,8 @@ const mfaMethods = {
   // mfa.deactivate: disable MFA for the calling user. Personal access token
   // required, plus a step-up: either `password` (the account password) or
   // `code` (a code of the current TOTP factor). Which one is present is
-  // checked by the method, since services.mfa.stepUp.required can lift it.
+  // checked by the method, which refuses neither or both (step-up-required)
+  // and counts a wrong one on the per-account tally.
   deactivate: {
     params: object({
       password: string(),
