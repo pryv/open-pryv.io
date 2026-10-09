@@ -163,18 +163,17 @@ describe('[CVSD] config-validation series engine dependency', () => {
   });
 
   it('[CVSD3] validate() runs the check', async () => {
+    // A read-only view over the real config: config.set() would leave its
+    // values (even restored ones) above the scopes later tests inject.
     const config = await require('@pryv/boiler').getConfig();
-    const base = config.get('storages:base:engine');
-    const series = config.get('storages:series:engine');
-    try {
-      config.set('storages:base:engine', 'sqlite');
-      config.set('storages:series:engine', 'postgresql');
-      const problems = await validate(config);
-      assert.ok(problems.some((p) => p.path.join(':') === 'storages:series:engine'), JSON.stringify(problems, null, 2));
-    } finally {
-      config.set('storages:base:engine', base);
-      config.set('storages:series:engine', series);
+    function view (overrides) {
+      return {
+        get: (key) => (key != null && Object.hasOwn(overrides, key)) ? overrides[key] : config.get(key),
+        getScopeAndValue: (key) => config.getScopeAndValue(key)
+      };
     }
+    const problems = await validate(view({ 'storages:base:engine': 'sqlite', 'storages:series:engine': 'postgresql' }));
+    assert.ok(problems.some((p) => p.path.join(':') === 'storages:series:engine'), JSON.stringify(problems, null, 2));
   });
 });
 
