@@ -328,15 +328,31 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         if (claim === 'claimed') await platform.releaseInvitationToken(invitationToken, username);
       };
 
+      // The unique-field rows this request wrote, released (owner-guarded)
+      // when a later reservation is refused or fails, as the public
+      // registration does: otherwise they would block those values for
+      // everyone until cleaned up by hand.
+      const reservedHere: Array<[string, string]> = [];
+      const releaseReserved = async () => {
+        for (const [field, value] of reservedHere) {
+          await platform.releaseUserUniqueValue(username, field, value);
+        }
+      };
+
       try {
         // 4. Reserve unique fields via Platform (hashing applied internally).
         uniqueFields.username = username;
         for (const [field, value] of Object.entries(uniqueFields)) {
+          // A row this username already held (an earlier pre-registration of
+          // the same name) is not this request's to release.
+          const heldBefore = (await platform.getUsersUniqueField(field, value)) != null;
           const reserved = await platform.setUserUniqueFieldIfNotExists(username, field, value as string);
           if (!reserved) {
+            await releaseReserved();
             await releaseClaim();
             return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { [field]: value } } });
           }
+          if (!heldBefore) reservedHere.push([field, value as string]);
         }
 
         // 5. Set user-to-core mapping if provided (plaintext input, hashed internally).
@@ -344,6 +360,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
           await platform.setUserCore(username, req.body.core);
         }
       } catch (err) {
+        try {
+          await releaseReserved();
+        } catch (releaseErr) {
+          logger.error('users/validate: releasing the reserved unique fields failed: ' + errMessage(releaseErr));
+        }
         await releaseClaim();
         throw err;
       }

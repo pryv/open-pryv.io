@@ -319,6 +319,53 @@ describe('[RGLG] Legacy register routes + invitations', () => {
       assert.strictEqual(res.body.error.id, 'item-already-exists');
       assert.strictEqual(await isValid(token), true, 'the token is still usable');
     });
+
+    /**
+     * Runs a pre-registration whose reservation of `failingField` is refused
+     * (a concurrent claim passing the read-only check) or throws; the other
+     * reservations go through. Answers the response and the platform rows
+     * left for every field afterwards.
+     */
+    async function validateWithFailingField (failingField, how) {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      const token = await newToken();
+      const body = registration(token);
+      const fields = { email: body.email, insurancenumber: body.insurancenumber, username: body.username };
+      platform.setUserUniqueFieldIfNotExists = async function (username, field, value) {
+        if (field === failingField) {
+          if (how === 'throws') throw new Error('platform unavailable');
+          return false;
+        }
+        return await Object.getPrototypeOf(platform).setUserUniqueFieldIfNotExists.call(platform, username, field, value);
+      };
+      let res;
+      try {
+        res = await validate({ username: body.username, invitationToken: token, uniqueFields: { email: body.email, insurancenumber: body.insurancenumber } });
+      } finally {
+        delete platform.setUserUniqueFieldIfNotExists;
+      }
+      const rows = {};
+      for (const [field, value] of Object.entries(fields)) rows[field] = await platform.getUsersUniqueField(field, value);
+      return { res, rows, token, body };
+    }
+
+    it('[LGV4] an admin pre-registration refused on a later field releases the fields it reserved before and keeps the token', async () => {
+      // The username is reserved last: email and insurancenumber are written first.
+      const { res, rows, token, body } = await validateWithFailingField('username', 'refused');
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'item-already-exists');
+      assert.deepStrictEqual(res.body.error.data, { username: body.username });
+      assert.deepStrictEqual(rows, { email: null, insurancenumber: null, username: null }, 'no reservation row is left behind');
+      assert.strictEqual(await isValid(token), true, 'the token is still usable');
+    });
+
+    it('[LGV5] an admin pre-registration whose reservation fails releases the fields it reserved before and keeps the token', async () => {
+      const { res, rows, token } = await validateWithFailingField('insurancenumber', 'throws');
+      assert.strictEqual(res.status, 500, JSON.stringify(res.body));
+      assert.deepStrictEqual(rows, { email: null, insurancenumber: null, username: null }, 'no reservation row is left behind');
+      assert.strictEqual(await isValid(token), true, 'the token is still usable');
+    });
   });
 
   describe('POST /access/invitationtoken/check', () => {
