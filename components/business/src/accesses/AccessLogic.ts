@@ -29,7 +29,13 @@ function addAuditStreams () {
 
 // Permission levels ordered by ascending level (for permission
 // assessment) — from the permission-lexicon single point.
-const { PermissionLevels } = require('./permissionSet.ts');
+const { PermissionLevels, INHERITED_RESTRICTION_FEATURES } = require('./permissionSet.ts');
+
+/**
+ * Refusal message of webhooks.create / update / test for an access carrying
+ * `{ feature: 'webhooks', setting: 'forbidden' }`.
+ */
+const WEBHOOKS_FORBIDDEN_MESSAGE = 'Webhooks are not allowed with this access: it carries the feature permission "webhooks: forbidden".';
 
 /**
  * Reserved namespace holding one-time shared secrets, one substream per creating
@@ -276,7 +282,11 @@ class AccessLogic {
 
   /** ---------- GENERIC --------------- */
 
-  can (methodId: string) {
+  /**
+   * Method-level gate. Returns true when allowed, false for a generic refusal,
+   * or the refusal message itself when a specific one applies.
+   */
+  can (methodId: string): boolean | string {
     switch (methodId) {
       // -- Account
       case 'account.get':
@@ -302,7 +312,11 @@ class AccessLogic {
 
       // -- Webhooks
       case 'webhooks.create':
-        return !this.isPersonal();
+        if (this.isPersonal()) return false;
+        return this.canUseWebhooks() || WEBHOOKS_FORBIDDEN_MESSAGE;
+      case 'webhooks.update':
+      case 'webhooks.test':
+        return this.canUseWebhooks() || WEBHOOKS_FORBIDDEN_MESSAGE;
 
       default:
         throw (new Error('Unknown method.id: ' + methodId));
@@ -373,12 +387,16 @@ class AccessLogic {
    * restriction: the parent would just mint an unrestricted child and use that.
    */
   inheritRestrictions (candidate: { permissions?: Permission[] }) {
-    if (this.canCreateSharedSecrets()) return candidate;
-    if (!Array.isArray(candidate.permissions)) candidate.permissions = [];
-    const already = candidate.permissions.some(
-      (p) => 'feature' in p && p.feature === 'secretSharing');
-    if (!already) {
-      candidate.permissions.push({ feature: 'secretSharing', setting: 'forbidden' } as Permission);
+    for (const feature of INHERITED_RESTRICTION_FEATURES as readonly string[]) {
+      if (this._featureAllowed(feature)) continue;
+      if (!Array.isArray(candidate.permissions)) candidate.permissions = [];
+      // An entry the child already asks for (any setting) is kept as is: an
+      // `allowed` one is refused by _canCreateAccessWithFeaturePermission.
+      const already = candidate.permissions.some(
+        (p) => 'feature' in p && p.feature === feature);
+      if (!already) {
+        candidate.permissions.push({ feature, setting: 'forbidden' } as Permission);
+      }
     }
     return candidate;
   }
@@ -646,6 +664,11 @@ class AccessLogic {
       return this.canCreateSharedSecrets() ||
         featurePermission.setting === this.featurePermissionsMap.secretSharing?.setting;
     }
+    if (featurePermission.feature === 'webhooks') {
+      // Same rule as secretSharing.
+      return this.canUseWebhooks() ||
+        featurePermission.setting === this.featurePermissionsMap.webhooks?.setting;
+    }
     if (featurePermission.feature === 'selfAudit') {
       // true if this acces has no setting for selfAudit or if requested setting is identical to this access
       return this.featurePermissionsMap.selfAudit == null || featurePermission.setting === this.featurePermissionsMap.selfAudit.setting;
@@ -668,15 +691,30 @@ class AccessLogic {
    * this exists for — they should not be able to mint redeemable credentials.
    */
   canCreateSharedSecrets () {
+    return this._featureAllowed('secretSharing');
+  }
+
+  /**
+   * Whether this access may create, update or test webhooks.
+   *
+   * Default allow, like secretSharing: only an explicit `webhooks: forbidden`
+   * bars it. Meant for tokens handed out publicly, which should not be able to
+   * make the server call URLs of their choosing.
+   */
+  canUseWebhooks () {
+    return this._featureAllowed('webhooks');
+  }
+
+  /** @private Default allow: false only for an explicit `forbidden` setting. */
+  _featureAllowed (name: string) {
     // The map is absent on accesses built without a permission set (personal
     // tokens in some paths), which means nothing was forbidden.
-    if (this.featurePermissionsMap?.secretSharing == null) return true; // default allow
-    return this.featurePermissionsMap.secretSharing.setting !== 'forbidden';
+    return this.featurePermissionsMap?.[name]?.setting !== 'forbidden';
   }
 }
 
 export default AccessLogic;
-export { AccessLogic };
+export { AccessLogic, WEBHOOKS_FORBIDDEN_MESSAGE };
 AccessLogic.PERMISSION_LEVEL_CONTRIBUTE = 'contribute';
 AccessLogic.PERMISSION_LEVEL_MANAGE = 'manage';
 AccessLogic.PERMISSION_LEVEL_READ = 'read';

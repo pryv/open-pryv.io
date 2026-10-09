@@ -191,6 +191,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
 
   api.register(
     'webhooks.update',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
     commonFns.catchForbiddenUpdate(webhookSchema('update'), false, logger),
     applyPrerequisitesForUpdate,
@@ -285,6 +286,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
 
   api.register(
     'webhooks.test',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.test.params),
     testWebhook
   );

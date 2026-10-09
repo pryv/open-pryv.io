@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## Accesses: inherited feature restrictions generalised
+
+- `AccessLogic.inheritRestrictions` loops over `INHERITED_RESTRICTION_FEATURES`
+  (`permissionSet.ts`, `secretSharing` and `webhooks`) instead of handling `secretSharing` alone;
+  `canCreateSharedSecrets()` and the new `canUseWebhooks()` wrap one `_featureAllowed(name)`.
+  `AccessLogic.can()` returns `true`, `false` or a refusal message, which
+  `basicAccessAuthorizationCheck` uses as the `forbidden` message; it now also answers
+  `webhooks.update` and `webhooks.test`, whose chains start with that check. Pure helper
+  `isFeatureForbidden(permissions, feature)` in `permissionSet.ts`, used by the webhooks
+  repository's `accessIsUsable`. Tests `[WHFP1]`..`[WHFPE]`, `[WCADF6]`, `[FPWH1]`.
+
 ## rqlite: Raft TLS required on a multi-core node
 
 - `storages/engines/rqlite/src/rqliteProcess.ts`: `raftTlsProblem({ coreIp, tls, external,

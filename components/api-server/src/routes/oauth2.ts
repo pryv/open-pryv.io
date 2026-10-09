@@ -77,6 +77,8 @@ const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
  * whose authorization code dies unexchanged. Any inherited `selfRevoke` entry
  * is replaced with an explicit allow; all other permissions pass through
  * verbatim. The data-grant keeps the offer's feature permissions untouched.
+ * Other feature entries (e.g. `webhooks: forbidden`) bind the session
+ * credential too, on purpose: only `selfRevoke` is overridden here.
  */
 function withSessionSelfRevoke (permissions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return permissions

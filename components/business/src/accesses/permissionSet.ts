@@ -60,6 +60,26 @@ const PERMISSION_LEVEL_VALUES: readonly PermissionLevel[] =
  */
 const FEATURE_SETTING_VALUES: readonly string[] = Object.freeze(['forbidden', 'allowed']);
 
+/**
+ * Feature permissions an access hands down to every access it creates when
+ * it carries them as `forbidden` (see `AccessLogic.inheritRestrictions`).
+ */
+const INHERITED_RESTRICTION_FEATURES: readonly string[] = Object.freeze(['secretSharing', 'webhooks']);
+
+/**
+ * Whether a raw permission array carries `{ feature, setting: 'forbidden' }`.
+ * Pure: works on a stored access row as well as on an `AccessLogic`
+ * (both expose `.permissions`). Anything that is not an array forbids nothing.
+ */
+function isFeatureForbidden (permissions: unknown, feature: string): boolean {
+  if (!Array.isArray(permissions)) return false;
+  return permissions.some((p: unknown) => {
+    if (p == null || typeof p !== 'object') return false;
+    const c = p as Record<string, unknown>;
+    return c.feature === feature && c.setting === 'forbidden';
+  });
+}
+
 function isStreamPermission (p: unknown): p is StreamPermission {
   if (p == null || typeof p !== 'object') return false;
   const c = p as Record<string, unknown>;
@@ -310,6 +330,8 @@ export {
   PermissionLevels,
   PERMISSION_LEVEL_VALUES,
   FEATURE_SETTING_VALUES,
+  INHERITED_RESTRICTION_FEATURES,
+  isFeatureForbidden,
   isStreamPermission,
   isFeaturePermission,
   normalizePermissions,

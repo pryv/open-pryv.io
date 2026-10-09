@@ -341,4 +341,20 @@ describe('[PSET] accesses permissionSet', () => {
       assert.deepEqual(ps.levelCapabilityExcess('read', 'create-only'), ['read']);
     });
   });
+
+  describe('[PSET-F] feature restrictions', () => {
+    it('[FPWH1] isFeatureForbidden is true only for a matching "forbidden" entry in an array', () => {
+      const perms = [{ streamId: 'health', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }];
+      assert.equal(ps.isFeatureForbidden(perms, 'webhooks'), true);
+      assert.equal(ps.isFeatureForbidden([{ feature: 'webhooks', setting: 'allowed' }], 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden([{ feature: 'selfRevoke', setting: 'forbidden' }], 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden(perms, 'secretSharing'), false);
+      assert.equal(ps.isFeatureForbidden([], 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden(undefined, 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden(null, 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden({ feature: 'webhooks', setting: 'forbidden' }, 'webhooks'), false);
+      assert.equal(ps.isFeatureForbidden([null, 'webhooks'], 'webhooks'), false);
+      assert.deepEqual([...ps.INHERITED_RESTRICTION_FEATURES], ['secretSharing', 'webhooks']);
+    });
+  });
 });

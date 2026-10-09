@@ -26,6 +26,15 @@
   `SINGLE-TO-MULTIPLE.md`). A single-core node does not need `core.ip`: remove it. Unchanged:
   single-core nodes, `storages.engines.rqlite.external: true` and the PostgreSQL platform engine.
 
+### Webhooks
+
+- **Accesses: `webhooks` feature permission.** An app or shared access carrying
+  `{ feature: 'webhooks', setting: 'forbidden' }` cannot create, update or test webhooks
+  (`403 forbidden`); it can still list and delete the ones it owns, and a webhook it owns no
+  longer fires. Every access it creates carries the same entry (a child asking for `allowed` is
+  refused). Without the entry nothing changes. Meant for tokens handed out publicly (shared
+  links, public apps); the consent screen of the account web app shows the entry.
+
 ## 2.0.0-rc.44 - 2026-10-08
 
 **Upgrade promptly: this release carries security fixes, and some change the MFA and API contract.**

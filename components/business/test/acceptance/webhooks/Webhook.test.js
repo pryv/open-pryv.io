@@ -632,6 +632,27 @@ describe('[WHBK] Webhook', () => {
       }
     });
 
+    it('[WCADF7] an access carrying the feature permission "webhooks: forbidden" does not fire; other settings and features do', async () => {
+      const live = (permissions) => {
+        const id = cuid();
+        const row = { id, type: 'app', deleted: null, expires: null };
+        if (permissions !== undefined) row.permissions = permissions;
+        return { accesses: { [id]: row }, id };
+      };
+      const forbidden = live([{ streamId: '*', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }]);
+      const res = await firesWith(forbidden.accesses, forbidden.id);
+      assert.deepStrictEqual(res, { fired: false, state: 'inactive' });
+      for (const permissions of [
+        [{ feature: 'webhooks', setting: 'allowed' }],
+        undefined,
+        [{ feature: 'selfRevoke', setting: 'forbidden' }]
+      ]) {
+        const c = live(permissions);
+        const ok = await firesWith(c.accesses, c.id);
+        assert.deepStrictEqual(ok, { fired: true, state: 'active' }, JSON.stringify(permissions));
+      }
+    });
+
     it('[WCADF3] when access is live, fires normally', async () => {
       const fakeAccessesStorage = {
         findOne: (_u, q, _opts, cb) => cb(null, { id: q.id, deleted: null })

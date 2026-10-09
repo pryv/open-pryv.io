@@ -12,6 +12,7 @@ const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const cache = require('cache').default;
 const { managingAccessBase } = require('../accesses/refs.ts');
+const { isFeatureForbidden } = require('../accesses/permissionSet.ts');
 const { deepMerge } = require('utils');
 const Webhook = require('./Webhook.ts').default;
 const { getUsersRepository } = require('business/src/users/index.ts');
@@ -131,12 +132,15 @@ class Repository {
    * Whether a webhook may still fire for this access: it exists, is not
    * deleted, has not expired and, for a shared access without expiry, its
    * managing app access has not expired (the rule applied at authentication).
+   * An access carrying `webhooks: forbidden` (possibly added after its
+   * webhooks were created) is not usable either; only its own entries count.
    * Defensive: true when no accessesStorage was wired (never deactivate by mistake).
    */
   async accessIsUsable (user: User, accessId: string): Promise<boolean> {
     if (this.accessesStorage == null) return true;
     const access = await this._findAccess(user, accessId);
     if (access == null || access.deleted != null) return false;
+    if (isFeatureForbidden(access.permissions, 'webhooks')) return false;
     const now = timestamp.now();
     if (access.expires != null) return now <= access.expires;
     if (access.type !== 'shared' || typeof access.createdBy !== 'string' || access.createdBy === 'system') return true;
@@ -151,7 +155,7 @@ class Repository {
   }
 
   /** @private An access from the access cache, else from storage. */
-  async _findAccess (user: User, accessId: string): Promise<{ deleted?: unknown; expires?: number | null; type?: string; createdBy?: unknown } | null> {
+  async _findAccess (user: User, accessId: string): Promise<{ deleted?: unknown; expires?: number | null; type?: string; createdBy?: unknown; permissions?: unknown } | null> {
     const cached = cache.getAccessLogicForId(user.id, accessId);
     if (cached != null) return cached;
     return await fromCallback((cb: NodeCallback) =>
