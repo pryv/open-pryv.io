@@ -222,17 +222,17 @@ describe('[RQOU] rqlited output and stop do not depend on the master', function 
     assert.match(errors[0], /rqlited did not stop within 0\.5s, killed: its snapshot may be incomplete/);
   });
 
-  it('[RQTW4] start() of a multi-core node without Raft TLS logs the warning and keeps the HTTP API on loopback', async () => {
+  it('[RQTW4] start() refuses a multi-core node without Raft TLS and spawns nothing', async () => {
     const rp = require(SRC);
-    const fake = writeFake(dir, 'fake-warn', 'snapshot');
+    const fake = writeFake(dir, 'fake-refused', 'snapshot');
     fakes.push(fake);
     const httpPort = await freePort();
-    const warnings = [];
+    const dataDir = path.join(dir, 'data-tw4');
     const logged = [];
-    await rp.start({
+    await assert.rejects(rp.start({
       coreId: 'rqtw4',
       binPath: fake.bin,
-      dataDir: path.join(dir, 'data-tw4'),
+      dataDir,
       httpPort,
       raftPort: httpPort + 1,
       coreIp: '127.0.0.1',
@@ -240,11 +240,36 @@ describe('[RQOU] rqlited output and stop do not depend on the master', function 
       readyTimeoutMs: 10000,
       logFile: path.join(dir, 'rqtw4.log'),
       log: (msg) => logged.push(msg),
-      warn: (msg) => warnings.push(msg)
+      warn: (msg) => logged.push(msg)
+    }), /multi-core node \(core\.ip is set\) without Raft TLS.*refuses to start.*init-ca-holder/);
+    assert.equal(rp.isRunning(), false);
+    assert.equal(fs.existsSync(fake.pidFile), false, 'the rqlited binary was never run');
+    assert.equal(fs.existsSync(dataDir), false, 'the data dir was not created');
+    assert.ok(!logged.some((l) => l.startsWith('Starting rqlited')), JSON.stringify(logged));
+  });
+
+  it('[RQTW5] start() of a multi-core node with Raft TLS runs, with the HTTP API on loopback', async () => {
+    const rp = require(SRC);
+    const fake = writeFake(dir, 'fake-tls', 'snapshot');
+    fakes.push(fake);
+    const httpPort = await freePort();
+    const logged = [];
+    await rp.start({
+      coreId: 'rqtw5',
+      binPath: fake.bin,
+      dataDir: path.join(dir, 'data-tw5'),
+      httpPort,
+      raftPort: httpPort + 1,
+      coreIp: '127.0.0.1',
+      tls: { caFile: '/tls/ca.crt', certFile: '/tls/node.crt', keyFile: '/tls/node.key' },
+      readyTimeoutMs: 10000,
+      logFile: path.join(dir, 'rqtw5.log'),
+      log: (msg) => logged.push(msg)
     });
     try {
-      assert.equal(warnings.filter((w) => /without Raft TLS/.test(w)).length, 1, JSON.stringify(warnings));
+      assert.equal(rp.isRunning(), true);
       assert.ok(logged.some((l) => l.includes(`-http-addr 127.0.0.1:${httpPort}`)), JSON.stringify(logged));
+      assert.ok(logged.some((l) => l.includes('-node-ca-cert /tls/ca.crt')), JSON.stringify(logged));
     } finally {
       await rp.stop(() => {});
     }

@@ -264,3 +264,39 @@ describe('[CKRQ] bin/check-config.js rqlite url', function () {
     }
   });
 });
+
+describe('[CKRF] bin/check-config.js Raft TLS on a multi-core node', function () {
+  this.timeout(60000);
+
+  const MULTI_CORE = BASE + 'core:\n  ip: 203.0.113.7\n';
+  function withRqlite (yamlBody, block) {
+    return yamlBody.replace('    engine: sqlite\n', '    engine: sqlite\n  engines:\n    rqlite:\n' + block);
+  }
+  const REFUSAL = /multi-core node \(core\.ip is set\) without Raft TLS.*refuses to start.*init-ca-holder/;
+
+  it('[CKRF1] core.ip without storages.engines.rqlite.tls is a problem (exit 1)', () => {
+    const res = runCheck(MULTI_CORE);
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /problem\(s\):/);
+    assert.match(res.stderr, REFUSAL);
+  });
+
+  it('[CKRF2] single-core, tls set, an external rqlite or the PostgreSQL platform engine pass', () => {
+    const tlsBlock = '      tls:\n        caFile: /tls/ca.crt\n        certFile: /tls/node.crt\n        keyFile: /tls/node.key\n';
+    for (const body of [
+      BASE,
+      withRqlite(MULTI_CORE, tlsBlock),
+      withRqlite(MULTI_CORE, '      external: true\n')
+    ]) {
+      const res = runCheck(body);
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.doesNotMatch(res.stdout + res.stderr, /Raft TLS/);
+    }
+    // The PostgreSQL platform engine runs no rqlited (it has other requirements: full PG mode).
+    const pgPlatform = MULTI_CORE.replace('  base:\n    engine: sqlite\n  series:\n    engine: sqlite\n',
+      '  base:\n    engine: postgresql\n  series:\n    engine: postgresql\n  platform:\n    engine: postgresql\n');
+    assert.notStrictEqual(pgPlatform, MULTI_CORE);
+    const res = runCheck(pgPlatform);
+    assert.doesNotMatch(res.stdout + res.stderr, /Raft TLS/);
+  });
+});

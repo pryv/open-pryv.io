@@ -439,6 +439,25 @@ function checkCoreIdentity (config, problems) {
   if (problem != null) problems.push({ message: problem + '.', path: ['core', 'url'], payload: { coreUrl } });
 }
 
+// A multi-core node (core.ip set) that spawns its own rqlited needs Raft TLS:
+// its Raft port listens on all interfaces. Same rule as rqliteProcess.start(),
+// checked here too so the boot fails at config time, naming the config path.
+function checkRaftTls (config, problems) {
+  const { raftTlsProblem } = require('../../storages/engines/rqlite/src/rqliteProcess.ts');
+  const problem = raftTlsProblem({
+    coreIp: config.get('core:ip'),
+    tls: config.get('storages:engines:rqlite:tls'),
+    external: config.get('storages:engines:rqlite:external'),
+    platformEngine: config.get('storages:platform:engine')
+  });
+  if (problem == null) return;
+  problems.push({
+    message: problem,
+    path: ['storages', 'engines', 'rqlite', 'tls'],
+    payload: { 'core.ip': config.get('core:ip') }
+  });
+}
+
 // Inside the published image (PRYV_IMAGE_TAG is baked into it), refuse to boot
 // when the user data root (per-user databases, attachments, SQLite audit and
 // series) would sit on the container's own filesystem or on a tmpfs: it would
@@ -521,6 +540,7 @@ async function validate (config) {
   checkWebhooks(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
+  checkRaftTls(config, problems);
 
   return problems;
 }
@@ -666,6 +686,7 @@ module.exports = {
   checkTrustedProxies,
   checkUserDataRootPersistence,
   checkCoreIdentity,
+  checkRaftTls,
   isMissingOrSentinel,
   weakSecretReason,
   MIN_SECRET_LENGTH,

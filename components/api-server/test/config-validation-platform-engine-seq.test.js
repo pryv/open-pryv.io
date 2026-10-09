@@ -177,3 +177,69 @@ describe('[CVSD] config-validation series engine dependency', () => {
     }
   });
 });
+
+/**
+ * [CVRT] A multi-core node (core.ip set) that spawns its own rqlited listens
+ * for Raft on all interfaces: without storages.engines.rqlite.tls it must
+ * refuse the boot at config time.
+ */
+describe('[CVRT] config-validation Raft TLS on a multi-core node', () => {
+  let checkRaftTls, validate;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    ({ checkRaftTls, validate } = require('../../../config/plugins/config-validation.js'));
+  });
+
+  function fakeConfig (map) {
+    return { get: (key) => map[key] };
+  }
+  const tls = { caFile: '/tls/ca.crt', certFile: '/tls/node.crt', keyFile: '/tls/node.key' };
+
+  it('[CVRT1] core.ip set without rqlite tls → one problem at storages:engines:rqlite:tls with the fix', () => {
+    const problems = [];
+    checkRaftTls(fakeConfig({ 'core:ip': '203.0.113.7', 'storages:engines:rqlite:tls': null }), problems);
+    assert.strictEqual(problems.length, 1, JSON.stringify(problems, null, 2));
+    assert.deepStrictEqual(problems[0].path, ['storages', 'engines', 'rqlite', 'tls']);
+    assert.match(problems[0].message, /multi-core node \(core\.ip is set\) without Raft TLS/);
+    assert.match(problems[0].message, /refuses to start/);
+    assert.match(problems[0].message, /node bin\/bootstrap\.js init-ca-holder/);
+    assert.match(problems[0].message, /SINGLE-TO-MULTIPLE\.md/);
+  });
+
+  it('[CVRT2] single-core, an external rqlite, the PostgreSQL platform engine or tls set → no problem', () => {
+    for (const map of [
+      { 'core:ip': null },
+      { 'core:ip': '203.0.113.7', 'storages:engines:rqlite:external': true },
+      { 'core:ip': '203.0.113.7', 'storages:platform:engine': 'postgresql' },
+      { 'core:ip': '203.0.113.7', 'storages:platform:engine': 'rqlite', 'storages:engines:rqlite:tls': tls }
+    ]) {
+      const problems = [];
+      checkRaftTls(fakeConfig(map), problems);
+      assert.strictEqual(problems.length, 0, JSON.stringify(map) + ' ' + JSON.stringify(problems));
+    }
+  });
+
+  it('[CVRT3] validate() runs the check', async () => {
+    // A read-only view over the real config: config.set() would leave its
+    // values (even a restored null) above the scopes later tests inject.
+    const config = await require('@pryv/boiler').getConfig();
+    function view (overrides) {
+      return {
+        get: (key) => (key != null && Object.hasOwn(overrides, key)) ? overrides[key] : config.get(key),
+        getScopeAndValue: (key) => config.getScopeAndValue(key)
+      };
+    }
+    const multiCore = {
+      'storages:platform:engine': 'rqlite',
+      'storages:engines:rqlite:external': false,
+      'core:ip': '203.0.113.7',
+      'storages:engines:rqlite:tls': null
+    };
+    const problems = await validate(view(multiCore));
+    assert.ok(problems.some((p) => p.path.join(':') === 'storages:engines:rqlite:tls'), JSON.stringify(problems, null, 2));
+    const withTls = await validate(view({ ...multiCore, 'storages:engines:rqlite:tls': tls }));
+    assert.ok(!withTls.some((p) => p.path.join(':') === 'storages:engines:rqlite:tls'), JSON.stringify(withTls, null, 2));
+  });
+});

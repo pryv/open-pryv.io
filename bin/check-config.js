@@ -422,7 +422,8 @@ if (get('http.trustedProxies') != null) {
 
 // core.id grammar and, on a multi-core config (dnsLess off), core.url as a
 // peer URL (mirrors checkCoreIdentity in config/plugins/config-validation.js).
-// Raft TLS is reported as a warning when core.ip is set (multi-core).
+// A multi-core node (core.ip set) that spawns its own rqlited without Raft TLS
+// is a problem: the node refuses to start (same rule as the boot validation).
 {
   const { coreIdProblem, peerUrlProblem } = require('../components/platform/src/coreIdentity.ts');
   if (get('core.id') != null) {
@@ -433,10 +434,14 @@ if (get('http.trustedProxies') != null) {
     const p = peerUrlProblem(get('core.url'), { allowInsecure: get('cluster.allowInsecurePeerUrl') === true });
     if (p != null) problems.push(p);
   }
-  if (get('core.ip') && get('storages.engines.rqlite.external') !== true && get('storages.engines.rqlite.tls') == null) {
-    warnings.push('core.ip is set (multi-core) but storages.engines.rqlite.tls is not: the Raft channel is not authenticated; ' +
-      'a later release will refuse to start a multi-core node without it (see SINGLE-TO-MULTIPLE.md).');
-  }
+  const { raftTlsProblem } = require('../storages/engines/rqlite/src/rqliteProcess.ts');
+  const raftProblem = raftTlsProblem({
+    coreIp: get('core.ip'),
+    tls: get('storages.engines.rqlite.tls'),
+    external: get('storages.engines.rqlite.external'),
+    platformEngine: get('storages.platform.engine')
+  });
+  if (raftProblem != null) problems.push(raftProblem);
 }
 
 // storages.engines.rqlite.url: the spawned rqlited's HTTP API listens on

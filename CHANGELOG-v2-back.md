@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## rqlite: Raft TLS required on a multi-core node
+
+- `storages/engines/rqlite/src/rqliteProcess.ts`: `raftTlsProblem({ coreIp, tls, external,
+  platformEngine })`, pure, returns the refusal message or null. `start()` throws it before creating
+  the data dir or spawning rqlited; `bootWarnings()` keeps only the HTTP-bind warning.
+  `config/plugins/config-validation.js` (`checkRaftTls`, at `storages:engines:rqlite:tls`) and
+  `bin/check-config.js` (a problem, was a warning) call the same function, so the three share one
+  rule. Tests `[RQTW3]`, `[RQTW4]`, `[RQTW5]`, `[RQRT]`, `[CVRT]`, `[CKRF]`.
+
 ## MFA config: no step-up switch
 
 - `normalizeMfaConfig` no longer carries `stepUp` (the `StepUpCfg` type and `normalizeStepUp` are

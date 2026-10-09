@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { buildArgs, bootWarnings } = require('../src/rqliteProcess.ts');
+const { buildArgs, bootWarnings, raftTlsProblem } = require('../src/rqliteProcess.ts');
 
 describe('[RQARGS] rqliteProcess.buildArgs', () => {
   const baseOpts = {
@@ -239,11 +239,34 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       assert.deepEqual(bootWarnings({}), [], 'single-core default');
     });
 
-    it('[RQTW3] warns when a multi-core node runs without Raft TLS', () => {
-      const warnings = bootWarnings({ coreIp: '10.0.0.5', tls: null });
-      assert.equal(warnings.length, 1, JSON.stringify(warnings));
-      assert.match(warnings[0], /multi-core.*without Raft TLS.*refuse to start/);
-      assert.deepEqual(bootWarnings({ coreIp: null, tls: null }), [], 'single-core without TLS is fine');
+    it('[RQTW3] a multi-core node without Raft TLS is no longer a warning (it is refused, see raftTlsProblem)', () => {
+      assert.deepEqual(bootWarnings({ coreIp: '10.0.0.5', tls: null }), []);
+    });
+  });
+
+  describe('raftTlsProblem', () => {
+    const tls = { caFile: '/tls/ca.crt', certFile: '/tls/node.crt', keyFile: '/tls/node.key' };
+
+    it('[RQRT1] refuses a multi-core node that spawns its own rqlited without Raft TLS', () => {
+      for (const t of [null, undefined]) {
+        const problem = raftTlsProblem({ coreIp: '10.0.0.5', tls: t });
+        assert.equal(typeof problem, 'string', String(t));
+        assert.match(problem, /multi-core node \(core\.ip is set\) without Raft TLS/);
+        assert.match(problem, /refuses to start/);
+        assert.match(problem, /node bin\/bootstrap\.js init-ca-holder/);
+        assert.match(problem, /SINGLE-TO-MULTIPLE\.md/);
+        assert.match(problem, /storages\.engines\.rqlite\.tls/);
+      }
+      assert.equal(typeof raftTlsProblem({ coreIp: '10.0.0.5', tls: null, external: false, platformEngine: 'rqlite' }), 'string');
+    });
+
+    it('[RQRT2] accepts single-core, an external rqlited, a PostgreSQL platform engine and a node with TLS', () => {
+      for (const coreIp of [null, undefined, '']) {
+        assert.equal(raftTlsProblem({ coreIp, tls: null }), null, 'single-core: ' + String(coreIp));
+      }
+      assert.equal(raftTlsProblem({ coreIp: '10.0.0.5', tls: null, external: true }), null, 'external');
+      assert.equal(raftTlsProblem({ coreIp: '10.0.0.5', tls: null, platformEngine: 'postgresql' }), null, 'postgresql platform');
+      assert.equal(raftTlsProblem({ coreIp: '10.0.0.5', tls }), null, 'tls set');
     });
   });
 

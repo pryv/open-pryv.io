@@ -14,6 +14,18 @@
   to `mfa.activate` over an active enrolment. A confirmation (`mfa.confirm`) is now always refused
   when the account's enrolment changed after its `mfa.activate`.
 
+### Multi-core (BREAKING)
+
+- **Security.** A multi-core node (`core.ip` set) that runs its own rqlited and has
+  `storages.engines.rqlite.tls` unset now refuses to start; it was a boot warning. Its Raft port
+  listens on all interfaces, so without TLS any host that reaches it could join or address the
+  cluster. The boot validation reports it at `storages:engines:rqlite:tls` and
+  `bin/check-config.js` reports it as a problem. To fix: on the CA-holder core run
+  `node bin/bootstrap.js init-ca-holder`, which issues its node certificate and sets
+  `storages.engines.rqlite.tls`; cores that joined with a bootstrap bundle already have it (see
+  `SINGLE-TO-MULTIPLE.md`). A single-core node does not need `core.ip`: remove it. Unchanged:
+  single-core nodes, `storages.engines.rqlite.external: true` and the PostgreSQL platform engine.
+
 ## 2.0.0-rc.44 - 2026-10-08
 
 **Upgrade promptly: this release carries security fixes, and some change the MFA and API contract.**

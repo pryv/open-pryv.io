@@ -132,10 +132,11 @@ storages:
                                       # A path (relative to service-core root) = rqlited appends its output
                                       # there instead (rotate with copytruncate). Never piped through the
                                       # master: rqlited must keep logging while it closes, after the master.
-      # tls: null = plain TCP for Raft (single-core / VPN-protected multi-core).
-      # To enable mutually-authenticated TLS on the Raft channel, set all of
-      # caFile / certFile / keyFile to PEM files on disk. See
-      # `bin/bootstrap.js` for the CLI that issues these automatically.
+      # tls: null = plain TCP for Raft, single-core only (Raft on loopback).
+      # A multi-core node (core.ip set) refuses to start without it: set all of
+      # caFile / certFile / keyFile to PEM files on disk for mutually-authenticated
+      # TLS on the Raft channel. `node bin/bootstrap.js init-ca-holder` (and the
+      # bootstrap bundle of every joining core) issues and sets them.
       tls: null
       # tls:
       #   caFile:   /etc/pryv/tls/ca.crt

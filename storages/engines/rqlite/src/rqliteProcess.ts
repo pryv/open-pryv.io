@@ -203,26 +203,50 @@ function isLoopbackHost (addr: string): boolean {
 /**
  * Warnings to log when rqlited starts with `opts`. Pure; exported for tests.
  * - the HTTP API bound to a non-loopback address (unauthenticated read/write
- *   access to the platform database for whoever reaches it);
- * - a multi-core node (`core.ip` set) whose Raft channel is not TLS: any host
- *   that reaches the Raft port can join or address the cluster. A later
- *   release refuses to start in that case.
+ *   access to the platform database for whoever reaches it).
+ * A multi-core node without Raft TLS is not a warning but a refusal, see
+ * `raftTlsProblem`.
  */
-function bootWarnings (opts: Pick<RqliteOpts, 'httpBindAddr' | 'coreIp' | 'tls' | 'httpPort'>): string[] {
+function bootWarnings (opts: Pick<RqliteOpts, 'httpBindAddr' | 'httpPort'>): string[] {
   const warnings: string[] = [];
-  const { httpBindAddr = null, coreIp = null, tls = null, httpPort = 4001 } = opts;
+  const { httpBindAddr = null, httpPort = 4001 } = opts;
   if (httpBindAddr != null && !isLoopbackHost(httpBindAddr)) {
     warnings.push(`rqlite HTTP API listens on ${httpBindAddr}:${httpPort} (storages.engines.rqlite.httpBindAddr). ` +
       'It is unauthenticated and gives full read and write access to the platform database: ' +
       'make sure no host outside this machine can reach that port, or remove the setting to listen on loopback only.');
   }
-  if (coreIp != null && tls == null) {
-    warnings.push('multi-core node (core.ip is set) without Raft TLS (storages.engines.rqlite.tls is null): ' +
-      'any host that reaches the Raft port can join or address the cluster. Issue node certificates ' +
-      '(`node bin/bootstrap.js init-ca-holder`, see SINGLE-TO-MULTIPLE.md) and set storages.engines.rqlite.tls; ' +
-      'a later release will refuse to start a multi-core node without it.');
-  }
   return warnings;
+}
+
+interface RaftTlsInput {
+  /** `core.ip`: set on a multi-core node, whose Raft port listens on all interfaces. */
+  coreIp?: string | null;
+  /** `storages.engines.rqlite.tls` */
+  tls?: TlsConfig | null;
+  /** `storages.engines.rqlite.external`: this node spawns no rqlited of its own. */
+  external?: boolean | null;
+  /** `storages.platform.engine` (absent means rqlite). */
+  platformEngine?: string | null;
+}
+
+/**
+ * Why this node must not start, or null. Pure; shared by `start()`, the boot
+ * config validation and `bin/check-config.js` so the three never disagree.
+ *
+ * A multi-core node (`core.ip` set) that runs its own rqlited binds the Raft
+ * port on all interfaces; without TLS any host that reaches that port can join
+ * or address the cluster, and with it read and write the platform database.
+ */
+function raftTlsProblem (opts: RaftTlsInput): string | null {
+  const { coreIp = null, tls = null, external = null, platformEngine = null } = opts;
+  if ((platformEngine ?? 'rqlite') !== 'rqlite') return null;
+  if (!coreIp) return null;
+  if (external === true) return null;
+  if (tls != null) return null;
+  return 'multi-core node (core.ip is set) without Raft TLS (storages.engines.rqlite.tls is not set): ' +
+    'any host that reaches the Raft port could join or address the cluster, so the node refuses to start. ' +
+    'Issue node certificates with `node bin/bootstrap.js init-ca-holder` (see SINGLE-TO-MULTIPLE.md), which sets ' +
+    'storages.engines.rqlite.tls; a single-core node does not need core.ip (remove it).';
 }
 
 /**
@@ -248,6 +272,10 @@ async function start (opts: RqliteOpts): Promise<void> {
     log = console.log,
     warn = log
   } = opts;
+
+  // Refused before anything touches the disk or spawns a process.
+  const refusal = raftTlsProblem({ coreIp: opts.coreIp, tls });
+  if (refusal != null) throw new Error(refusal);
 
   const absDataDir = path.isAbsolute(dataDir) ? dataDir : path.resolve(process.cwd(), dataDir);
   const absBinPath = path.isAbsolute(binPath) ? binPath : path.resolve(process.cwd(), binPath as string);
@@ -453,4 +481,4 @@ async function waitForExternal (url: string, timeoutMs: number | undefined, log:
   log(`External rqlited HTTP API ready in ${formatSeconds(elapsedMs)}`);
 }
 
-export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, bootWarnings, DEFAULT_READY_TIMEOUT_MS, STOP_KILL_TIMEOUT_MS };
+export { start, stop, isRunning, waitForExternal, waitForReady, resolveReadyTimeoutMs, buildArgs, bootWarnings, raftTlsProblem, DEFAULT_READY_TIMEOUT_MS, STOP_KILL_TIMEOUT_MS };
