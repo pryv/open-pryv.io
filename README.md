@@ -185,7 +185,11 @@ Open Pryv.io development is supported by:
 
 The [Health Data Safe Foundation](https://www.healthdatasafe.org) empowers individuals to securely collect, manage, control, and share their health data on their own terms.
 
-Want to support the project? [Become a sponsor](https://pryv.github.io/www/).
+<a href="https://www.exoscale.com"><img src="readme/exoscale-logo.svg" alt="Exoscale" width="240"></a>
+
+[Exoscale](https://www.exoscale.com), the Swiss cloud provider, supports the project with cloud infrastructure for its test instances and the [Exoscale Marketplace template](https://pryv.github.io/ops-image-exoscale-open-pryv.io/).
+
+Want to support the project? [Become a sponsor](https://pryv.github.io/www/about-pryv/).
 
 # License
 
