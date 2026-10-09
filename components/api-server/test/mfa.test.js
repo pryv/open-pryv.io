@@ -1524,6 +1524,33 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const { data } = await storedProfile();
         assert.strictEqual(data.mfa.totp.lastUsedStep, laterStep, 'the consumed later step stays stored');
       });
+
+      it('[MLOR1] a login whose MFA session ends before the token is handed to it fails and leaves no usable session', async function () {
+        const before = await loginFootprintOf(username, FRESH_APP_ID);
+        assert.strictEqual(before.session, null, 'precondition: no session matches this login yet');
+        const store = getMFASessionStore(totpTestConfig.services.mfa);
+        // The MFA session ended between its opening and the token hand-over.
+        store.addToContext = async () => false;
+        let res;
+        try {
+          res = await loginToApp(username, FRESH_APP_ID);
+        } finally {
+          delete store.addToContext;
+        }
+        assert.strictEqual(res.status, 500, JSON.stringify(res.body));
+        assert.strictEqual(res.body.token, undefined);
+        assert.strictEqual(res.body.mfaToken, undefined);
+        const after = await loginFootprintOf(username, FRESH_APP_ID);
+        assert.strictEqual(after.session, null, 'the failed login left no session behind');
+        // Whatever access row the login wrote for the app authenticates nothing.
+        for (const access of after.accesses.filter((a) => !before.accesses.some((b) => b.id === a.id))) {
+          const who = await coreRequest.get(`/${username}/access-info`).set('Authorization', access.token);
+          assert.strictEqual(who.status, 403, `the token of access ${access.id} still works: ${JSON.stringify(who.body)}`);
+        }
+        // The account's other tokens are untouched.
+        const who = await coreRequest.get(`/${username}/access-info`).set('Authorization', personalToken);
+        assert.strictEqual(who.status, 200, JSON.stringify(who.body));
+      });
     });
 
     describe('[MA13] deactivate', function () {
@@ -1932,6 +1959,35 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const row = (await auditRows()).find((e) => e.content?.action === 'mfa.deactivatedByAdmin');
         assert.ok(row != null, 'no mfa.deactivatedByAdmin row');
         assert.deepStrictEqual(row.content.record, { enrolled: true, method: 'totp' });
+        const loginRes = await login();
+        assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'MFA is off');
+      });
+
+      it('[MAUD4] system.deactivateMfa addressed by an alias of the account sends the notice naming the account username', async function () {
+        const captured = captureMails();
+        await enrolTotp();
+        await waitForMails(captured, 1);
+        const usersRepository = await getUsersRepository();
+        const userId = await usersRepository.getUserIdForUsername(username);
+        const alias = username + '-old';
+        assert.strictEqual(await usersRepository.reserveSpecificAlias(username, userId, alias), true);
+        let res;
+        try {
+          const app = global.app;
+          await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+          const adminKey = (await getConfig()).get('auth:adminAccessKey');
+          res = await coreRequest.delete(`/system/users/${alias}/mfa`).set('Authorization', adminKey);
+          assert.strictEqual(res.status, 204, JSON.stringify(res.body));
+          await waitForMails(captured, 2);
+        } finally {
+          await usersRepository.releaseAlias(alias, userId);
+        }
+        assert.strictEqual(captured.length, 2, 'the reset sent its notice');
+        const v = vars(captured[1]);
+        assert.strictEqual(v.MFA_CHANGE, 'deactivatedByAdmin');
+        assert.strictEqual(v.USERNAME, username, 'the notice names the account, not the alias of the path');
+        assert.deepStrictEqual(captured[1].message.to.map((t) => t.email), [email]);
+        assert.ok(!JSON.stringify(captured[1]).includes(alias), 'the alias appears nowhere in the notice');
         const loginRes = await login();
         assert.ok(loginRes.body.token != null && loginRes.body.mfaToken == null, 'MFA is off');
       });

@@ -316,7 +316,17 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     // owner a notice when a second factor was actually removed.
     await auditMfaChange(config, user.id, 'mfa.deactivatedByAdmin',
       wasEnrolled != null ? { enrolled: true, method: wasEnrolled.method } : { enrolled: false });
-    if (wasEnrolled != null) notifyMfaChange(config, user, 'deactivatedByAdmin');
+    if (wasEnrolled != null) {
+      // The path may name an alias of the account: the notice names the
+      // account by its own username, as the account's own MFA changes do.
+      let username = user.username;
+      try {
+        username = (await usersRepository.getUsernameForUserId(user.id)) ?? username;
+      } catch (err) {
+        logger.warn('system.deactivateMfa: the account username could not be resolved for the notice: ' + (err instanceof Error ? err.message : String(err)));
+      }
+      notifyMfaChange(config, { id: user.id, username }, 'deactivatedByAdmin');
+    }
     next();
   }
 

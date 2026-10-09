@@ -177,6 +177,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
           // below, we may safely destroy this orphan session (it is ours alone,
           // never a session reused/shared through getMatching).
           context.sessionGenerated = true;
+          context.generatedSessionToken = sessionId;
           next();
         });
       }
@@ -438,8 +439,35 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       result.mfaMethod = method.name;
       next();
     } catch (err) {
+      // The token is never released: end the session this login opened for
+      // it, so no usable session outlives the refused login, and give the
+      // MFA session's place back.
+      await endUnreleasedLogin(context, result, mfaCfg, mfaToken);
       next(err);
     }
+  }
+
+  /**
+   * Cleanup of a login refused after its session was written. The session is
+   * ended only when this login generated it and still holds its token (a
+   * session reused through getMatching, or a concurrent login's token adopted
+   * in its place, belongs to another login). The personal access then carries
+   * a token without a session, which authenticates nothing; the next login of
+   * the app rotates it. Best-effort: a failure here is logged, never surfaced
+   * in place of the refusal.
+   */
+  async function endUnreleasedLogin (context: MethodContext, result: ResultBag, mfaCfg: Record<string, unknown>, mfaToken: string) {
+    const token = result.token;
+    if (typeof token === 'string' && token === context.generatedSessionToken) {
+      try {
+        await new Promise<void>((resolve, reject) => sessionsStorage.destroy(token, (err: Error | null) => err != null ? reject(err) : resolve()));
+      } catch (err) {
+        mfaLogger.error(`Refused login of "${context.user.username}": its session could not be ended: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    try {
+      await getMFASessionStore(mfaCfg).clear(mfaToken);
+    } catch (_err) { /* the MFA session expires on its own */ }
   }
 
   // LOGOUT
