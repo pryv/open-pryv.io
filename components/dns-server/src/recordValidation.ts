@@ -22,6 +22,15 @@ export const MAX_CHARACTER_STRING = 255;
 /** Upper bound on a single TXT value before it is split into character-strings. */
 export const MAX_TXT_BYTES = 2048;
 
+/**
+ * Upper bounds on the number of values a stored entry may carry: per key
+ * (`a`, `aaaa`, `txt`) and for all keys of one subdomain together. The wire
+ * encoder's cost grows faster than linearly with the record count of an
+ * answer, and a UDP answer truncates long before these numbers anyway.
+ */
+export const MAX_VALUES_PER_KEY = 32;
+export const MAX_VALUES_PER_SUBDOMAIN = 64;
+
 /** A DNS name label is at most 63 octets; the whole name at most 253 presentation octets. */
 const MAX_LABEL = 63;
 const MAX_NAME = 253;
@@ -100,13 +109,31 @@ export function validateDnsRecord (subdomain: unknown, records: unknown): string
     errors.push(`no recognised record data (expected one of: ${KNOWN_KEYS.join(', ')})`);
   }
 
+  // Count first: an oversized list is refused as a whole, without a problem
+  // per value.
+  let total = rec.cname != null ? 1 : 0;
+  const tooMany = new Set<string>();
+  for (const key of ['a', 'aaaa', 'txt']) {
+    const v = rec[key];
+    if (v == null || !isStringOrStringArray(v)) continue;
+    const count = asArray(v as string | string[]).length;
+    total += count;
+    if (count > MAX_VALUES_PER_KEY) {
+      tooMany.add(key);
+      errors.push(`${key} may hold at most ${MAX_VALUES_PER_KEY} values (got ${count})`);
+    }
+  }
+  if (total > MAX_VALUES_PER_SUBDOMAIN) {
+    errors.push(`a subdomain may hold at most ${MAX_VALUES_PER_SUBDOMAIN} values in all (got ${total})`);
+  }
+
   if (rec.a != null) {
     if (!isStringOrStringArray(rec.a)) errors.push('a must be a string or array of strings');
-    else for (const v of asArray(rec.a as string | string[])) if (!isIPv4(v)) errors.push(`a: '${v}' is not an IPv4 address`);
+    else if (!tooMany.has('a')) for (const v of asArray(rec.a as string | string[])) if (!isIPv4(v)) errors.push(`a: '${v}' is not an IPv4 address`);
   }
   if (rec.aaaa != null) {
     if (!isStringOrStringArray(rec.aaaa)) errors.push('aaaa must be a string or array of strings');
-    else for (const v of asArray(rec.aaaa as string | string[])) if (!isIPv6(v)) errors.push(`aaaa: '${v}' is not an IPv6 address`);
+    else if (!tooMany.has('aaaa')) for (const v of asArray(rec.aaaa as string | string[])) if (!isIPv6(v)) errors.push(`aaaa: '${v}' is not an IPv6 address`);
   }
   if (rec.cname != null) {
     if (typeof rec.cname !== 'string' || !isValidName(rec.cname)) errors.push('cname must be a valid host name');
@@ -114,7 +141,7 @@ export function validateDnsRecord (subdomain: unknown, records: unknown): string
   if (rec.txt != null) {
     if (!isStringOrStringArray(rec.txt)) {
       errors.push('txt must be a string or array of strings');
-    } else {
+    } else if (!tooMany.has('txt')) {
       for (const v of asArray(rec.txt as string | string[])) {
         if (Buffer.byteLength(v, 'utf8') > MAX_TXT_BYTES) errors.push(`txt value exceeds ${MAX_TXT_BYTES} bytes`);
       }
