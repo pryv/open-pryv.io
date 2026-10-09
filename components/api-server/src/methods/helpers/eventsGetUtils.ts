@@ -381,14 +381,21 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
       // its verified/pending status must never leak into a "give me everything"
       // sweep. Personal tokens read it by naming :_emails: directly.
       pushUnique(streamQuery.not, [EMAILS_NS_ROOT]);
-      // Hidden plugin-internal subtrees never answer a wildcard read. A `*`
-      // survives here for a personal token (or any token granted `*` read), and
-      // the account-scoped exclusions below do NOT cover these plugin roots — so
-      // without this a "give me everything" read would sweep up the delegation
-      // A-side mirror (a bearer onto another account) and CMC internal state.
-      // The plugins reach their own subtrees via the data-access layer, so this
-      // narrows only the client-facing `*` expansion. Named/direct reads are
-      // closed by the per-plugin internal read guards.
+    }
+    // Hidden plugin-internal subtrees never answer a client read, whatever the
+    // query names: `*`, a parent such as `:_delegation:` / `:_cmc:` (whose
+    // expansion would otherwise include the internal child), or the internal
+    // root with the do-not-expand marker. The per-plugin read guards only drop
+    // ids that are themselves internal, so the exclusion sits here, for every
+    // local-store query and every token class. As a `not` entry the root is
+    // pruned (with its subtree) from the inclusion expansion AND becomes a NOT
+    // clause on the store query. An explicit grant on a stream INSIDE the
+    // subtree (a CMC capability access reading its offer stream) keeps
+    // working: the `not` expansion leaves out the ids named by `any`. The
+    // plugins reach their own subtrees via the data-access layer, so this
+    // narrows only client-facing reads.
+    if (streamQuery.storeId === storeDataUtils.LocalStoreId) {
+      if (streamQuery.not == null) { streamQuery.not = []; }
       pushUnique(streamQuery.not, [DELEGATION_INTERNAL_NS_ROOT, CMC_INTERNAL_NS_ROOT]);
     }
 

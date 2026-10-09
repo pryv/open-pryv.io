@@ -565,5 +565,149 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.ok(!flat.some((s) => String(s).startsWith(C.NS_INTERNAL)),
         'streams.get must not expose :_cmc:_internal');
     });
+
+    describe('[CMCNS-PARENT] naming the namespace root never reaches the internal subtree', function () {
+      // `:_cmc:` is a readable stream whose subtree contains the internal area
+      // (retry queue, capability offers and responses). Reading the root, or the
+      // internal root with the do-not-expand marker, must return the root's own
+      // events and none of the internal ones, for every token class that can
+      // read `*`. The capability access, whose only read grant is its own offer
+      // stream inside the internal area, must still read its offer.
+      let tokens; // { personal, app, shared }
+      let hiddenIds;
+      let visibleId;
+      let capabilityToken;
+      let offerEventId;
+
+      before(async function () {
+        const mall = await getMall();
+        const appScope = C.NS_APPS + ':parent-test';
+        const sRes = await coreRequest.post('/' + iv.username + '/streams')
+          .set('Authorization', iv.token)
+          .send({ id: appScope, parentId: C.NS_APPS, name: 'Parent test app' });
+        assert.strictEqual(sRes.status, 201, JSON.stringify(sRes.body));
+        const reqRes = await coreRequest.post('/' + iv.username + '/events')
+          .set('Authorization', iv.token)
+          .send({
+            streamIds: [appScope],
+            type: 'consent/request-cmc',
+            content: {
+              to: null,
+              capabilityRequested: true,
+              request: {
+                title: { en: 'Example consent' },
+                description: { en: 'Share data for the study.' },
+                consent: { en: 'I agree.' },
+                permissions: [{ streamId: 'fertility', level: 'read' }],
+              },
+            },
+          });
+        assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+        const capabilityUrl = reqRes.body.event.content.capabilityUrl;
+        assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0, JSON.stringify(reqRes.body.event.content));
+        capabilityToken = decodeURIComponent(new URL(capabilityUrl).username);
+        assert.ok(capabilityToken.length > 0, 'capability token in the capability URL');
+
+        const visible = await mall.events.create(iv.username, {
+          streamIds: [C.NS], type: 'note/txt', content: 'namespace root event',
+        });
+        visibleId = visible.id;
+        const onInternalRoot = await mall.events.create(iv.username, {
+          streamIds: [C.NS_INTERNAL], type: 'note/txt', content: 'internal root event ' + CANARY,
+        });
+        const internalTree = await mall.streams.get(iv.username, { id: C.NS_INTERNAL, storeId: 'local', childrenDepth: -1, includeTrashed: true });
+        const internalStreamIds = [];
+        (function walk (nodes) { for (const n of (nodes || [])) { internalStreamIds.push(n.id); walk(n.children); } })(internalTree);
+        const internalEvents = await mall.events.get(iv.username, { streams: [{ any: internalStreamIds }], limit: 1000 });
+        const offer = internalEvents.find((e) => (e.streamIds || []).some((s) => String(s).startsWith(C.NS_INTERNAL + ':offer:')));
+        assert.ok(offer != null, 'the capability offer event exists');
+        offerEventId = offer.id;
+        assert.ok(internalEvents.some((e) => JSON.stringify(e.content ?? '').includes(CANARY) && e.type === C.ET_RETRY), 'the retry row exists');
+        hiddenIds = [onInternalRoot.id, ...internalEvents.map((e) => e.id)];
+
+        tokens = { personal: iv.token };
+        for (const type of ['app', 'shared']) {
+          const res = await coreRequest.post('/' + iv.username + '/accesses')
+            .set('Authorization', iv.token)
+            .send({ type, name: 'star-read-' + type + '-' + cuid().slice(-6), permissions: [{ streamId: '*', level: 'read' }] });
+          assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+          tokens[type] = res.body.access.token;
+        }
+      });
+
+      function assertNoInternal (events, label, expectVisible) {
+        const arr = events || [];
+        const ids = arr.map((e) => e.id);
+        for (const id of hiddenIds) assert.ok(!ids.includes(id), label + ': internal event ' + id + ' returned');
+        assert.strictEqual(leaks(arr).length, 0, label + ': internal event returned');
+        if (expectVisible) assert.ok(ids.includes(visibleId), label + ': the namespace root event is missing');
+      }
+
+      const SHAPES = [
+        { name: 'single value', streams: C.NS, visible: true },
+        { name: 'array', streams: [C.NS], visible: true },
+        { name: 'JSON any', streams: JSON.stringify([{ any: [C.NS] }]), visible: true },
+        { name: 'JSON any + all', streams: JSON.stringify([{ any: [C.NS], all: [C.NS] }]), visible: true },
+        { name: 'do-not-expand internal root', streams: C.NS_INTERNAL + '!', visible: false },
+      ];
+
+      async function checkGet (tokenClass) {
+        for (const shape of SHAPES) {
+          const res = await coreRequest.get('/' + iv.username + '/events')
+            .set('Authorization', tokens[tokenClass])
+            .query({ streams: shape.streams, limit: 1000 });
+          assert.strictEqual(res.status, 200, shape.name + ': ' + JSON.stringify(res.body));
+          assertNoInternal(res.body.events, tokenClass + ' / ' + shape.name, shape.visible);
+        }
+      }
+
+      async function checkBatch (tokenClass) {
+        const calls = SHAPES.map((shape) => ({
+          method: 'events.get',
+          params: { streams: typeof shape.streams === 'string' && shape.streams.startsWith('[') ? JSON.parse(shape.streams) : shape.streams, limit: 1000 },
+        }));
+        const res = await coreRequest.post('/' + iv.username)
+          .set('Authorization', tokens[tokenClass])
+          .send(calls);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.results.length, SHAPES.length);
+        SHAPES.forEach((shape, i) => {
+          const r = res.body.results[i];
+          assert.ok(r.error == null, shape.name + ': ' + JSON.stringify(r.error));
+          assertNoInternal(r.events, 'batch ' + tokenClass + ' / ' + shape.name, shape.visible);
+        });
+      }
+
+      it('[CIP1] events.get by a personal token: root query shapes return no internal event', async function () {
+        await checkGet('personal');
+      });
+      it('[CIP2] events.get by an app token with `*` read: root query shapes return no internal event', async function () {
+        await checkGet('app');
+      });
+      it('[CIP3] events.get by a shared token with `*` read: root query shapes return no internal event', async function () {
+        await checkGet('shared');
+      });
+      it('[CIP4] batch events.get by a personal token: root query shapes return no internal event', async function () {
+        await checkBatch('personal');
+      });
+      it('[CIP5] batch events.get by an app token with `*` read: root query shapes return no internal event', async function () {
+        await checkBatch('app');
+      });
+      it('[CIP6] batch events.get by a shared token with `*` read: root query shapes return no internal event', async function () {
+        await checkBatch('shared');
+      });
+
+      it('[CIP7] the capability access still reads its offer event, and nothing else of the internal area', async function () {
+        const res = await coreRequest.get('/' + iv.username + '/events')
+          .set('Authorization', capabilityToken)
+          .query({ limit: 1000 });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const ids = (res.body.events || []).map((e) => e.id);
+        assert.ok(ids.includes(offerEventId), 'the offer event is returned to the capability access: ' + JSON.stringify(res.body.events));
+        for (const id of hiddenIds) {
+          if (id !== offerEventId) assert.ok(!ids.includes(id), 'internal event ' + id + ' returned to the capability access');
+        }
+      });
+    });
   });
 });

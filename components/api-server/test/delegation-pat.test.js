@@ -260,4 +260,105 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     assert.strictEqual(l.internal.length, 0, 'explicit `*` returns no :_delegation:_internal event');
     assert.strictEqual(l.bearer.length, 0, 'explicit `*` leaks no controlApiEndpoint bearer');
   });
+
+  describe('[DPAT-PARENT] naming the namespace root never reaches the internal subtree', function () {
+    // The namespace root `:_delegation:` is an ordinary readable stream whose
+    // subtree contains the internal area. Reading the root (or the internal
+    // root with the do-not-expand marker) must return the root's own events and
+    // none of the internal ones, for every token class that can read `*`.
+    const ROOT = ':_delegation:';
+    const INTERNAL_ROOT = ':_delegation:_internal';
+    let tokens; // { personal, app, shared }
+    let hiddenIds; // ids of events in the internal subtree
+    let visibleId; // id of an event filed on the namespace root itself
+
+    before(async function () {
+      const { getMall } = require('mall');
+      const mall = await getMall();
+      const visible = await mall.events.create(alice.username, {
+        streamIds: [ROOT], type: 'note/txt', content: 'namespace root event',
+      });
+      visibleId = visible.id;
+      const onInternalRoot = await mall.events.create(alice.username, {
+        streamIds: [INTERNAL_ROOT], type: 'note/txt', content: 'internal root event',
+      });
+      const internal = await mall.events.get(alice.username, { streams: [{ any: [INTERNAL_ROOT + ':controlled'] }], limit: 1000 });
+      assert.ok(internal.some((e) => e.type === 'delegation/controlled'), 'the mirror exists on A');
+      hiddenIds = [onInternalRoot.id, ...internal.map((e) => e.id)];
+
+      tokens = { personal: alice.token };
+      for (const type of ['app', 'shared']) {
+        const res = await coreRequest.post(alice.accessesPath)
+          .set('Authorization', alice.token)
+          .send({ type, name: 'star-read-' + type + '-' + cuid().slice(-6), permissions: [{ streamId: '*', level: 'read' }] });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        tokens[type] = res.body.access.token;
+      }
+    });
+
+    function assertNoInternal (events, label, expectVisible) {
+      const arr = events || [];
+      const ids = arr.map((e) => e.id);
+      for (const id of hiddenIds) assert.ok(!ids.includes(id), label + ': internal event ' + id + ' returned');
+      assert.strictEqual(arr.filter((e) => (e.streamIds || []).some((s) => String(s).startsWith(INTERNAL_ROOT))).length, 0,
+        label + ': event of the internal subtree returned');
+      assert.strictEqual(arr.filter((e) => e.content != null && typeof e.content === 'object' && e.content.controlApiEndpoint != null).length, 0,
+        label + ': control endpoint returned');
+      if (expectVisible) assert.ok(ids.includes(visibleId), label + ': the namespace root event is missing');
+    }
+
+    const SHAPES = [
+      { name: 'single value', streams: ROOT, visible: true },
+      { name: 'array', streams: [ROOT], visible: true },
+      { name: 'JSON any', streams: JSON.stringify([{ any: [ROOT] }]), visible: true },
+      { name: 'JSON any + all', streams: JSON.stringify([{ any: [ROOT], all: [ROOT] }]), visible: true },
+      { name: 'do-not-expand internal root', streams: INTERNAL_ROOT + '!', visible: false },
+    ];
+
+    async function checkGet (tokenClass) {
+      for (const shape of SHAPES) {
+        const res = await coreRequest.get(alice.eventsPath)
+          .set('Authorization', tokens[tokenClass])
+          .query({ streams: shape.streams, limit: 1000 });
+        assert.strictEqual(res.status, 200, shape.name + ': ' + JSON.stringify(res.body));
+        assertNoInternal(res.body.events, tokenClass + ' / ' + shape.name, shape.visible);
+      }
+    }
+
+    async function checkBatch (tokenClass) {
+      const calls = SHAPES.map((shape) => ({
+        method: 'events.get',
+        params: { streams: typeof shape.streams === 'string' && shape.streams.startsWith('[') ? JSON.parse(shape.streams) : shape.streams, limit: 1000 },
+      }));
+      const res = await coreRequest.post('/' + alice.username)
+        .set('Authorization', tokens[tokenClass])
+        .send(calls);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.results.length, SHAPES.length);
+      SHAPES.forEach((shape, i) => {
+        const r = res.body.results[i];
+        assert.ok(r.error == null, shape.name + ': ' + JSON.stringify(r.error));
+        assertNoInternal(r.events, 'batch ' + tokenClass + ' / ' + shape.name, shape.visible);
+      });
+    }
+
+    it('[DPAT-09] events.get by a personal token: root query shapes return no internal event', async function () {
+      await checkGet('personal');
+    });
+    it('[DPAT-10] events.get by an app token with `*` read: root query shapes return no internal event', async function () {
+      await checkGet('app');
+    });
+    it('[DPAT-11] events.get by a shared token with `*` read: root query shapes return no internal event', async function () {
+      await checkGet('shared');
+    });
+    it('[DPAT-12] batch events.get by a personal token: root query shapes return no internal event', async function () {
+      await checkBatch('personal');
+    });
+    it('[DPAT-13] batch events.get by an app token with `*` read: root query shapes return no internal event', async function () {
+      await checkBatch('app');
+    });
+    it('[DPAT-14] batch events.get by a shared token with `*` read: root query shapes return no internal event', async function () {
+      await checkBatch('shared');
+    });
+  });
 });
