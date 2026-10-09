@@ -1,6 +1,11 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.45 - 2026-10-09
+
+**Upgrade promptly: this release carries security fixes, and two changes can stop a core or a client.**
+Before restarting each core on the new code, run `node bin/check-config.js` with your `--config`
+override: a node with `core.ip` set and no `storages.engines.rqlite.tls` now refuses to start (see
+"Multi-core"). Clients that turn MFA off or replace an enrolment must send the step-up (see "MFA").
 
 ### MFA (BREAKING)
 
