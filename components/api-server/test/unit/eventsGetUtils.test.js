@@ -53,7 +53,8 @@ describe('[EGDU] eventsGetUtils forced / forbidden stream merge', () => {
   it('[EGD3] does not duplicate a forbidden id the caller already supplied', async () => {
     const params = makeParams(null, ['f2']);
     await run(makeContext(null, ['f1', 'f2']), params);
-    assert.deepStrictEqual(params.arrayOfStreamQueriesWithStoreId[0].not, ['f2', 'f1']);
+    // The internal plugin roots are excluded from every local query.
+    assert.deepStrictEqual(params.arrayOfStreamQueriesWithStoreId[0].not, ['f2', ':_delegation:_internal', ':_cmc:_internal', 'f1']);
   });
 
   it('[EGD4] initializes all / not when absent', async () => {
@@ -61,7 +62,7 @@ describe('[EGDU] eventsGetUtils forced / forbidden stream merge', () => {
     await run(makeContext(['s1'], ['f1']), params);
     const q = params.arrayOfStreamQueriesWithStoreId[0];
     assert.deepStrictEqual(q.all, ['s1']);
-    assert.deepStrictEqual(q.not, ['f1']);
+    assert.deepStrictEqual(q.not, [':_delegation:_internal', ':_cmc:_internal', 'f1']);
   });
 
   it('[EGD5] a wildcard query from a non-personal token carries each exclusion once', async () => {
