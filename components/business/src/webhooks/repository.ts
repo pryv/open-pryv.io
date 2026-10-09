@@ -19,7 +19,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 
 type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
 type User = { id: string; username: string };
-type AccessLike = { id: string; isApp: () => boolean };
+type AccessLike = { id: string; isApp: () => boolean; isPersonal: () => boolean };
 
 /**
  * Repository of all Webhooks in this Pryv.io instance.
@@ -61,12 +61,13 @@ class Repository {
   /**
    * Return webhooks for a given User and Access.
    * Personal access: returns all webhooks
-   * App access: all those created by the access
+   * App or shared access: those created by the access (as getOne / update /
+   * delete allow)
    */
   async get (user: User, access: AccessLike) {
     const query: Record<string, unknown> = {};
     const options: Record<string, unknown> = {};
-    if (access.isApp()) {
+    if (!access.isPersonal()) {
       query.accessId = { $eq: access.id };
     }
     const webhooks: unknown[] = await fromCallback((cb: NodeCallback<unknown[]>) => this.storage.find(user, query, options, cb));

@@ -67,13 +67,15 @@ describe('[WH01] webhooks', () => {
           type: 'app',
           token: appAccessToken2
         });
+        sharedAccessId = cuid();
         user.access({
-          type: 'shared', token: sharedAccessToken
+          id: sharedAccessId, type: 'shared', token: sharedAccessToken
         });
 
         user.session(personalAccessToken);
         user.webhook({}, appAccessId1);
         user.webhook({}, appAccessId2);
+        user.webhook({}, sharedAccessId);
       });
     });
 
@@ -156,6 +158,10 @@ describe('[WH01] webhooks', () => {
           schema: methodsSchema.get.result,
           status: 200
         });
+      });
+      it('[WHSL1] should list only the webhooks created by the shared access', () => {
+        const accessIds = response.body.webhooks.map((w) => w.accessId);
+        assert.deepStrictEqual(accessIds, [sharedAccessId]);
       });
     });
   });

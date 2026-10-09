@@ -345,7 +345,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         for (const [field, value] of Object.entries(uniqueFields)) {
           // A row this username already held (an earlier pre-registration of
           // the same name) is not this request's to release.
-          const heldBefore = (await platform.getUsersUniqueField(field, value)) != null;
+          const heldBefore = (await platform.getUsersUniqueField(field, value)) === platform.hashFor('username', username);
           const reserved = await platform.setUserUniqueFieldIfNotExists(username, field, value as string);
           if (!reserved) {
             await releaseReserved();

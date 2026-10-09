@@ -461,6 +461,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    * a token without a session, which authenticates nothing; the next login of
    * the app rotates it. Best-effort: a failure here is logged, never surfaced
    * in place of the refusal.
+   * Accepted residual: a concurrent login of the same app that matched this
+   * freshly generated session through getMatching (between its creation and
+   * this cleanup) loses it too, as in the adopt path of the access update.
    */
   async function endUnreleasedLogin (context: MethodContext, result: ResultBag, mfaCfg: Record<string, unknown>, mfaToken: string) {
     const token = result.token;

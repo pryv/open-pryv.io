@@ -38,6 +38,9 @@
   longer fires. Every access it creates carries the same entry (a child asking for `allowed` is
   refused). Without the entry nothing changes. Meant for tokens handed out publicly (shared
   links, public apps); the consent screen of the account web app shows the entry.
+- **Security.** `webhooks.get` with a shared access lists only the webhooks that access created, as
+  app accesses already did (and as `webhooks.getOne`, `update` and `delete` already required); it
+  listed every webhook of the account.
 
 ### Login
 
