@@ -124,6 +124,15 @@ class SqliteStorage {
     }
   }
 
+  /**
+   * Close this process's cached handle on the user's database, keeping the
+   * file: the next `forUser` opens it again.
+   */
+  closeUser (userId: string): void {
+    this.checkInitialized();
+    this.userDBsCache.delete(userId); // dispose closes the local handle
+  }
+
   close (): void {
     this.checkInitialized();
     this.userDBsCache.clear();

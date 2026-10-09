@@ -88,9 +88,28 @@ function getPathForUser (userId: string, extraPath = ''): string {
  * Delete user data folder
  *
  * @param userId -- user id
+ * @param [keep] -- names of entries directly in the user folder to retain:
+ *   everything else in it is removed. When none of them exists, the folder
+ *   itself is removed, as without `keep`.
  */
-async function deleteUserDirectory (userId: string): Promise<void> {
+async function deleteUserDirectory (userId: string, keep: string[] = []): Promise<void> {
   const userFolder = getPathForUser(userId);
+  if (keep.length > 0) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(userFolder);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+    if (entries.some((name) => keep.includes(name))) {
+      for (const name of entries) {
+        if (keep.includes(name)) continue;
+        await fs.rm(path.join(userFolder, name), { recursive: true, force: true });
+      }
+      return;
+    }
+  }
   await fs.rm(userFolder, { recursive: true, force: true });
 }
 

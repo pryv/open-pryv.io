@@ -149,10 +149,37 @@ class Deletion {
     }
   }
 
+  // Wipes the user directory. Under `audit:onUserDelete: keep` with a
+  // file-backed audit storage (SQLite), the per-user audit database lives in
+  // that directory: its files (with the WAL companions) stay at their path,
+  // still opened by user id, as PostgreSQL keeps the audit rows keyed by user
+  // id. The file is never unlinked nor replaced, so the handles other
+  // processes hold on it stay valid.
   async deleteAuditData (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
-    const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
-    await deleteUserDirectory(context.user.id);
+    try {
+      const userLocalDirectory = require('storage').userLocalDirectory;
+      const keep: string[] = [];
+      if (this.onUserDeleteMode() === 'keep') {
+        const auditStorage = require('storages').auditStorage;
+        if (typeof auditStorage?.existingPathForUser === 'function') {
+          const auditPath: string = auditStorage.existingPathForUser(context.user.id);
+          if (path.dirname(auditPath) === userLocalDirectory.getPathForUser(context.user.id)) {
+            auditStorage.closeUser?.(context.user.id);
+            const name = path.basename(auditPath);
+            keep.push(name, name + '-wal', name + '-shm');
+          }
+        }
+      }
+      await userLocalDirectory.deleteUserDirectory(context.user.id, keep);
+    } catch (err: unknown) {
+      this.logger.error(err, err);
+      return next(errors.unexpectedError(err));
+    }
     next();
+  }
+
+  onUserDeleteMode (): string {
+    return (this.config.get('audit:onUserDelete') as string) || 'erase';
   }
 
   // Engine-agnostic audit erasure. The filesystem wipe in deleteAuditData
@@ -164,13 +191,14 @@ class Deletion {
   //
   // Behaviour gated by `audit:onUserDelete` operator setting.
   //   erase (default) — wipe via auditStorage.deleteUser.
-  //   keep            — skip the wipe (HIPAA / MDR long-retention regimes).
+  //   keep            — skip the wipe (HIPAA / MDR long-retention regimes);
+  //                     deleteAuditData then keeps the SQLite audit files.
   //   pseudonymise    — refused at boot by config-validation (depends on the
   //                     not-yet-shipped ALIASES primitive). If somehow seen here
   //                     (override during runtime), fall back to 'erase' + warn-log.
   async deleteAuditDataStorage (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     try {
-      const mode: string = (this.config.get('audit:onUserDelete') as string) || 'erase';
+      const mode = this.onUserDeleteMode();
       if (mode === 'keep') {
         this.logger.info(
           `audit:onUserDelete=keep — skipping audit erasure for user ${context.user.id} (operator policy)`

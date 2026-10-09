@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Audit
+
+- `audit.onUserDelete: keep` now keeps the per-user audit on the SQLite audit engine too: it was
+  erased with the account's directory, so `keep` behaved like `erase` there. On account deletion
+  the audit database file stays at its path in the user directory, readable by user id, and
+  everything else in the directory is removed (the PostgreSQL audit engine already kept the rows).
+  `erase` (default) is unchanged. Reported in open-pryv.io#154.
+
 ## 2.0.0-rc.45 - 2026-10-09
 
 **Upgrade promptly: this release carries security fixes, and two changes can stop a core or a client.**

@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Account deletion: `audit.onUserDelete: keep` on the SQLite audit engine
+
+- `business/src/auth/deletion.ts` `deleteAuditData`: under `keep`, when the audit storage is
+  file-backed (`existingPathForUser`), closes this process's cached audit handle
+  (`SqliteStorage.closeUser`, new) and wipes the user directory except the audit database and its
+  `-wal` / `-shm` companions. The file is neither unlinked nor replaced, so handles other
+  processes hold stay valid (the device + inode check keeps reusing them). Erase / pseudonymise
+  and PostgreSQL audit are unchanged (whole directory removed).
+- `storage/src/userLocalDirectory.ts` `deleteUserDirectory(userId, keep?)`: optional names of
+  entries to retain; the directory is still removed when none of them exists, so no empty
+  directory is left. Tests `[DKP1]`-`[DKP3]` (api-server, both engines), `[ULK1]`-`[ULK3]`.
+  Closes the caveat noted under "operator setting `audit.onUserDelete`" below.
+
 ## Login: a login losing the personal-access creation race drops its session
 
 - `methods/auth/login.ts`: when the personal access insert reports a duplicate (a concurrent login
