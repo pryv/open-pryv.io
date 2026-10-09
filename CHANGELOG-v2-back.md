@@ -1,5 +1,36 @@
 # Changelog - Internal (no API impact)
 
+## Embedded DNS server: own sockets, RFC 1035 request validation, bounded resources
+
+- `components/dns-server/src/DnsServer.ts` now owns its UDP (`dgram`) and TCP (`net`) listeners;
+  dns2 is used only to ENCODE responses, its decoder never sees request bytes. Every request is
+  classified on the raw buffer by `components/dns-server/src/wire.ts` before anything decodes it:
+  a message under 12 or over 1232 octets, a response (QR=1) or a source port 0 is dropped; a
+  non-QUERY opcode answers NOTIMP and a bad `qdcount` / `arcount` or unparsable question answers
+  FORMERR (header-only); a class other than IN or a dot inside a label answers REFUSED. Name
+  parsing enforces the 63-octet label, 255-octet name and reserved label-type limits, and follows
+  compression pointers only strictly backwards with a 16-hop cap, so it always terminates.
+- Responses are built by splicing the single validated question's raw bytes between the dns2-encoded
+  header and sections. Encoding runs inside a try with a SERVFAIL fallback; a UDP answer over 512
+  octets is sent truncated (TC=1, no records, no EDNS), a TCP answer is capped at 65535 with a
+  SERVFAIL fallback, and QTYPE ANY returns a single RRset (RFC 8482). Each request handler and send
+  is guarded; failures are coalesced into one rate-limited warning with the qname JSON-escaped.
+- TCP reads exactly one length-prefixed message per connection (the socket is destroyed when the
+  length is below the header size, above the 16-bit ceiling, or extra bytes follow), answers once
+  then ends, and carries an idle timeout plus an absolute per-connection deadline;
+  `net.Server.maxConnections` comes from the new `dns.tcpMaxConnections` config key (default 64).
+- `components/dns-server/src/recordValidation.ts` validates stored records (lowercase LDH +
+  underscore subdomains; `a` IPv4, `aaaa` IPv6, `cname` host name, `txt` strings up to 2048 bytes
+  split into 255-octet character-strings). Used by the `/reg/records` route (400 on an invalid
+  record), `Platform.setDnsRecord` (throws), `bin/dns-records.js load` (validates every entry
+  before writing), `updateStaticEntry`, and `refreshFromPlatform` (invalid stored rows skipped
+  with a warning); each built record is re-checked at serve time and skipped if invalid. The static
+  entries map is a `Map`, and `buildAAAA` expands the address to eight hex groups so dns2 encodes
+  the `::ffff:a.b.c.d` form correctly.
+- Tests: `components/dns-server/test/wire.test.js` (validation unit), `dns-robustness.test.js`
+  (a forked child per invalid-request class, so a non-terminating parse is a timeout and a thrown
+  error is the child exiting), and `components/api-server/test/reg-records.test.js` `[RR08]`.
+
 ## Attachments: upload descriptors on the method context
 
 - `routes/events.ts`: the multipart routes put multer's `req.files` on

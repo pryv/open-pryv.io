@@ -132,6 +132,21 @@ describe('[DNSCLI] bin/dns-records.js CLI', () => {
     assert.match(res.stderr, /No record for subdomain/);
   });
 
+  it('[DC06] load validates every record before writing any', async () => {
+    const subOk = '_dnscli-ok-' + cuid();
+    const yamlPath = path.join(tmpDir, 'dc06.yaml');
+    fs.writeFileSync(yamlPath, yaml.dump({
+      records: [
+        { subdomain: subOk, records: { txt: ['fine'] } },
+        { subdomain: '_dnscli-bad-' + cuid(), records: { a: ['not-an-ip'] } }
+      ]
+    }));
+    const res = runCli(['load', yamlPath]);
+    assert.notStrictEqual(res.status, 0);
+    assert.match(res.stderr, /IPv4/);
+    assert.strictEqual(await platform.getDnsRecord(subOk), null, 'the valid entry was not written either');
+  });
+
   it('[DC05] load rejects malformed file', () => {
     const yamlPath = path.join(tmpDir, 'dc05.yaml');
     fs.writeFileSync(yamlPath, 'not: a valid records list\n');

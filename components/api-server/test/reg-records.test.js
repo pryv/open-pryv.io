@@ -87,6 +87,16 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.ok(!JSON.stringify(warning.args).includes(nearMiss), 'never the key sent');
     });
 
+    it('[RR08] must reject a record with an invalid shape', async () => {
+      const sub = '_acme-invalid-' + cuid();
+      const res = await coreRequest.post('/reg/records')
+        .set('Authorization', adminAccessKey)
+        .send({ subdomain: sub, records: { a: ['not-an-ip'] } });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.strictEqual(await platform.getDnsRecord(sub), null);
+    });
+
     it('[RR04] must reject request with missing subdomain', async () => {
       const res = await coreRequest.post('/reg/records')
         .set('Authorization', adminAccessKey)

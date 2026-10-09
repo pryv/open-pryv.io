@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
  */
 
 const { getPlatform } = require('platform');
+const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { clientIp } = require('middleware/src/clientIp.ts');
@@ -62,6 +63,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     if (!records || typeof records !== 'object') {
       return res.status(400).json({
         error: { id: 'invalid-parameters', message: 'Missing or invalid records' }
+      });
+    }
+    const problems = validateDnsRecord(subdomain, records);
+    if (problems.length > 0) {
+      return res.status(400).json({
+        error: { id: 'invalid-parameters', message: 'Invalid DNS record: ' + problems[0] }
       });
     }
 

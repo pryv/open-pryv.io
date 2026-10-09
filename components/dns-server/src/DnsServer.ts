@@ -8,12 +8,27 @@
 
 /**
  * Optional DNS server for resolving {username}.{domain} to core IPs.
- * Uses dns2 for wire protocol handling. Runs in-process in master.js.
+ *
+ * The server owns its own UDP (dgram) and TCP (net) listeners and validates
+ * every incoming message on the raw buffer (see `wire.ts`) before anything
+ * decodes it. dns2 is used only to ENCODE the response records; its decoder
+ * never sees request bytes. Each request is handled in isolation: a failure is
+ * caught, logged through one rate-limited aggregated warning, and answered with
+ * SERVFAIL where a reply is owed, so one bad request cannot affect the server.
+ * Runs in-process in master.js.
  */
 
 import { createRequire } from 'node:module';
+import { createSocket } from 'node:dgram';
+import { createServer } from 'node:net';
+import type { Socket as DgramSocket, RemoteInfo } from 'node:dgram';
+import type { Server as NetServer, Socket as NetSocket } from 'node:net';
 import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
+import { validateRequest, isIgnorableUdpSource } from './wire.ts';
+import type { WireResult, WireHeader } from './wire.ts';
+import { validateDnsRecord, isEncodableAnswer } from './recordValidation.ts';
+import type { EncodableAnswer } from './recordValidation.ts';
 const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
@@ -48,29 +63,38 @@ const RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa'];
  */
 const TCP_IDLE_TIMEOUT_MS = 10000;
 
+/**
+ * Absolute per-connection deadline: a TCP connection is closed after this long
+ * regardless of activity, so a slow-drip client cannot hold one open by
+ * resetting the idle timer.
+ */
+const TCP_ABSOLUTE_DEADLINE_MS = 20000;
+
+/** Default cap on simultaneous TCP connections (config `dns.tcpMaxConnections`). */
+const DEFAULT_TCP_MAX_CONNECTIONS = 64;
+
+/** A UDP answer larger than this is sent truncated (TC=1, no records); no EDNS. */
+const UDP_MAX_RESPONSE = 512;
+
+/** A DNS message carries a 16-bit length prefix over TCP, so 65535 is the ceiling. */
+const TCP_MAX_MESSAGE = 65535;
+
+/** Window over which per-request failures are aggregated into one warning. */
+const WARN_WINDOW_MS = 10000;
+
 /** DNS response codes used here (RFC 1035 section 4.1.1). */
+const RCODE_NOERROR = 0;
 const RCODE_NXDOMAIN = 3;
 const RCODE_REFUSED = 5;
 const RCODE_SERVFAIL = 2;
 
-type DnsAnswer = Record<string, unknown>;
-type DnsQuestion = { name: string; type: number };
-type DnsHeader = { rcode: number; aa: number; ra: number; z: number; tc: number };
-type DnsRequest = { questions: DnsQuestion[] };
-type DnsResponse = { header: DnsHeader; questions: DnsQuestion[]; answers: DnsAnswer[]; authorities: DnsAnswer[] };
-type DnsSendFn = (resp: DnsResponse) => void;
-type Dns2EventHandler = (...args: unknown[]) => void;
-type SocketAddress = { address: string; port: number };
-/** The part of a dgram.Socket / net.Server (dns2 UDP and TCP servers extend them) used here. */
-interface Dns2Listener {
-  on: (event: string, handler: Dns2EventHandler) => unknown;
-  once: (event: string, handler: Dns2EventHandler) => unknown;
-  removeListener: (event: string, handler: Dns2EventHandler) => unknown;
-  listen: (...args: unknown[]) => unknown;
-  close: () => unknown;
-  address: () => SocketAddress | string | null;
-}
+type DnsAnswer = EncodableAnswer & { name: string };
+type ResponseHeader = { id: number; qr: number; opcode: number; aa: number; tc: number; rd: number; ra: number; z: number; rcode: number };
+type BuiltResponse = { header: ResponseHeader; answers: DnsAnswer[]; authorities: DnsAnswer[] };
+type SendFn = (buf: Buffer) => void;
+type Transport = 'udp' | 'tcp';
 type ListenerKind = 'udp' | 'tcp' | 'udp6' | 'tcp6';
+type SocketAddress = { address: string; port: number };
 type SoaRecord = { primary: string; admin: string; serial: number; refresh: number; retry: number; expiration: number; minimum: number };
 
 type DnsRecordEntry = {
@@ -93,19 +117,26 @@ class DnsServer {
   #config: BoilerConfig;
   #platform: PlatformLike;
   #logger: Logger;
-  #listeners: Map<ListenerKind, Dns2Listener> = new Map();
+  #udpSockets: Map<ListenerKind, DgramSocket> = new Map();
+  #tcpServers: Map<ListenerKind, NetServer> = new Map();
+  #tcpClients: Set<NetSocket> = new Set();
   #domain: string;
   #ttl: number;
   #rootRecords: Record<string, unknown>;
-  #staticEntries: Record<string, DnsRecordEntry>;       // working map: config entries + runtime entries
+  #staticEntries: Map<string, DnsRecordEntry> = new Map();   // working map: config entries + runtime entries
   #configKeys: Set<string>;          // Set of subdomain keys that came from YAML config (immutable)
   #platformRefreshTimer: NodeJS.Timeout | null = null;
   #platformRefreshIntervalMs: number;
   #tcpIdleTimeoutMs: number;
+  #tcpMaxConnections: number;
   #localSites: Set<string>;          // hosted-site names from this core's config
   #advertisedSites: Set<string> = new Set(); // hosted-site names advertised by any core-info row (refreshed)
   #coreId: string;
   #coreIds: Set<string> = new Set(); // ids of every core-info row (refreshed), plus this core's
+  // Rate-limited aggregated per-request warning.
+  #warnPending = 0;
+  #warnSample: string | null = null;
+  #warnTimer: NodeJS.Timeout | null = null;
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -113,8 +144,9 @@ class DnsServer {
    * @param opts.logger - logger with .info/.warn/.error
    * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
    * @param [opts.tcpIdleTimeoutMs] - override the TCP idle timeout (tests)
+   * @param [opts.tcpMaxConnections] - override the TCP connection cap (tests)
    */
-  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number }) {
+  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number }) {
     this.#config = config;
     this.#platform = platform;
     this.#logger = logger;
@@ -123,10 +155,11 @@ class DnsServer {
     this.#rootRecords = (config.get('dns:records:root') as Record<string, unknown>) || {};
     // Deep-copy static entries from config so runtime updates don't mutate config
     const configEntries = (config.get('dns:staticEntries') as Record<string, DnsRecordEntry>) || {};
-    this.#staticEntries = Object.assign({}, configEntries);
+    for (const [k, v] of Object.entries(configEntries)) this.#staticEntries.set(k, v);
     this.#configKeys = new Set(Object.keys(configEntries));
     this.#platformRefreshIntervalMs = platformRefreshIntervalMs ?? DEFAULT_PLATFORM_REFRESH_INTERVAL_MS;
     this.#tcpIdleTimeoutMs = tcpIdleTimeoutMs ?? TCP_IDLE_TIMEOUT_MS;
+    this.#tcpMaxConnections = tcpMaxConnections ?? (config.get('dns:tcpMaxConnections') as number) ?? DEFAULT_TCP_MAX_CONNECTIONS;
     this.#localSites = new Set(hostedSiteNames(config));
     this.#coreId = (config.get('core:id') as string) || 'single';
     this.#coreIds = new Set([this.#coreId]);
@@ -147,15 +180,14 @@ class DnsServer {
         '(RFC 2308), and resolvers such as Unbound 1.18+ discard them');
     }
     try {
-      await this.#listen('udp', dns2.createUDPServer({ type: 'udp4' }), (s) => s.listen(port, ip), `${ip}:${port}`);
-      await this.#listen('tcp', dns2.createTCPServer(), (s) => s.listen(port, ip), `${ip}:${port}`);
+      await this.#bindUdp('udp', 'udp4', port, ip, false, `${ip}:${port}`);
+      await this.#bindTcp('tcp', port, ip, false, `${ip}:${port}`);
       this.#logger.info(`DNS server listening on ${ip}:${port} udp+tcp (domain: ${this.#domain})`);
       if (ip6) {
         // ipv6Only on both: a dual-stack '::' listener would collide with the
-        // IPv4 one (EADDRINUSE on Linux). dns2 passes `type` to dgram.Socket
-        // as is, which also takes the socket options object.
-        await this.#listen('udp6', dns2.createUDPServer({ type: { type: 'udp6', ipv6Only: true } }), (s) => s.listen(port, ip6), `[${ip6}]:${port}`);
-        await this.#listen('tcp6', dns2.createTCPServer(), (s) => s.listen({ port, host: ip6, ipv6Only: true }), `[${ip6}]:${port}`);
+        // IPv4 one (EADDRINUSE on Linux).
+        await this.#bindUdp('udp6', 'udp6', port, ip6, true, `[${ip6}]:${port}`);
+        await this.#bindTcp('tcp6', port, ip6, true, `[${ip6}]:${port}`);
         this.#logger.info(`DNS server listening on [${ip6}]:${port} udp+tcp (IPv6)`);
       }
     } catch (err) {
@@ -183,7 +215,8 @@ class DnsServer {
   /**
    * Reload runtime DNS records from PlatformDB. Config entries are authoritative —
    * they are NOT overwritten. Runtime entries that no longer exist in PlatformDB
-   * are removed from the in-memory map.
+   * are removed from the in-memory map. A stored row of an invalid shape is
+   * skipped (never served) with a rate-limited warning.
    *
    * No-op if the platform instance doesn't expose `getAllDnsRecords` (allows the
    * DnsServer to be used with a minimal platform mock in tests).
@@ -210,14 +243,19 @@ class DnsServer {
         );
         continue;
       }
-      this.#staticEntries[subdomain] = records;
+      const errs = validateDnsRecord(subdomain, records);
+      if (errs.length > 0) {
+        this.#warnAgg('stored-record', `skipped invalid record ${JSON.stringify(subdomain)}: ${errs[0]}`);
+        continue;
+      }
+      this.#staticEntries.set(subdomain, records);
       seenSubdomains.add(subdomain);
     }
     // Prune in-memory runtime entries that were deleted from PlatformDB
-    for (const key of Object.keys(this.#staticEntries)) {
+    for (const key of [...this.#staticEntries.keys()]) {
       if (this.#configKeys.has(key)) continue;
       if (!seenSubdomains.has(key)) {
-        delete this.#staticEntries[key];
+        this.#staticEntries.delete(key);
       }
     }
   }
@@ -227,8 +265,11 @@ class DnsServer {
    */
   _getAddresses () {
     const addresses: Partial<Record<ListenerKind, SocketAddress>> = {};
-    for (const [kind, listener] of this.#listeners) {
-      addresses[kind] = listener.address() as SocketAddress;
+    for (const [kind, socket] of this.#udpSockets) {
+      addresses[kind] = socket.address() as SocketAddress;
+    }
+    for (const [kind, server] of this.#tcpServers) {
+      addresses[kind] = server.address() as SocketAddress;
     }
     return addresses;
   }
@@ -241,68 +282,255 @@ class DnsServer {
       clearInterval(this.#platformRefreshTimer);
       this.#platformRefreshTimer = null;
     }
-    if (this.#listeners.size > 0) {
+    if (this.#warnTimer) {
+      clearTimeout(this.#warnTimer);
+      this.#warnTimer = null;
+      this.#flushWarn();
+    }
+    if (this.#udpSockets.size > 0 || this.#tcpServers.size > 0) {
       await this.#closeListeners();
       this.#logger.info('DNS server stopped');
     }
   }
 
   /**
-   * Bind one dns2 UDP or TCP server and wire it to the request handler.
-   * dns2's own `listen()` resolves on 'listening' and never rejects, so a bind
-   * error would leave the caller waiting forever: race 'listening' against
-   * 'error' instead.
+   * Bind one UDP (dgram) listener and wire it to the request handler. dgram's
+   * own bind resolves on 'listening' and never rejects, so race 'listening'
+   * against 'error' to surface a bind failure.
    */
-  async #listen (kind: ListenerKind, listener: Dns2Listener, doListen: (l: Dns2Listener) => unknown, where: string) {
-    listener.on('request', (...args: unknown[]) => {
-      const [request, send, rinfo] = args as [DnsRequest, DnsSendFn, unknown];
-      this.#handleRequest(request, send, rinfo);
-    });
-    listener.on('requestError', (...args: unknown[]) => {
-      this.#logger.warn(`DNS ${kind} request parse error: ${(args[0] as Error).message}`);
-    });
-    if (kind === 'tcp' || kind === 'tcp6') {
-      listener.on('connection', (...args: unknown[]) => {
-        const client = args[0] as { setTimeout: (ms: number, cb: () => void) => void; destroy: () => void };
-        client.setTimeout(this.#tcpIdleTimeoutMs, () => client.destroy());
-      });
-    }
+  async #bindUdp (kind: ListenerKind, type: 'udp4' | 'udp6', port: number, address: string, ipv6Only: boolean, where: string) {
+    const socket = ipv6Only ? createSocket({ type, ipv6Only: true }) : createSocket({ type });
+    socket.on('message', (msg: Buffer, rinfo: RemoteInfo) => { this.#onUdpMessage(socket, msg, rinfo); });
     await new Promise<void>((resolve, reject) => {
-      const onError = (...args: unknown[]) => {
-        listener.removeListener('listening', onListening);
-        reject(new Error(`DNS server failed to bind ${kind} ${where}: ${(args[0] as Error).message}`));
+      const onError = (err: Error) => {
+        socket.removeListener('listening', onListening);
+        reject(new Error(`DNS server failed to bind ${kind} ${where}: ${err.message}`));
       };
       const onListening = () => {
-        listener.removeListener('error', onError);
+        socket.removeListener('error', onError);
         resolve();
       };
-      listener.once('error', onError);
-      listener.once('listening', onListening);
-      this.#listeners.set(kind, listener);
-      doListen(listener);
+      socket.once('error', onError);
+      socket.once('listening', onListening);
+      this.#udpSockets.set(kind, socket);
+      socket.bind({ port, address });
     });
-    listener.on('error', (...args: unknown[]) => {
-      this.#logger.error(`DNS ${kind} server error: ${(args[0] as Error).message}`);
-    });
+    socket.on('error', (err: Error) => this.#logger.error(`DNS ${kind} socket error: ${err.message}`));
   }
 
   /**
-   * Close every bound socket; tolerate sockets that never finished binding.
+   * Bind one TCP (net) listener with a bounded reader and connection cap.
+   */
+  async #bindTcp (kind: ListenerKind, port: number, host: string, ipv6Only: boolean, where: string) {
+    const server = createServer();
+    server.maxConnections = this.#tcpMaxConnections;
+    server.on('connection', (client: NetSocket) => this.#onTcpConnection(client));
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => {
+        server.removeListener('listening', onListening);
+        reject(new Error(`DNS server failed to bind ${kind} ${where}: ${err.message}`));
+      };
+      const onListening = () => {
+        server.removeListener('error', onError);
+        resolve();
+      };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      this.#tcpServers.set(kind, server);
+      if (ipv6Only) server.listen({ port, host, ipv6Only: true });
+      else server.listen(port, host);
+    });
+    server.on('error', (err: Error) => this.#logger.error(`DNS ${kind} server error: ${err.message}`));
+  }
+
+  /**
+   * Close every bound socket and server; destroy any open TCP connection so a
+   * lingering client cannot hold the close open.
    */
   async #closeListeners () {
-    const closing = [];
-    for (const listener of this.#listeners.values()) {
+    const closing: Array<Promise<void>> = [];
+    for (const client of this.#tcpClients) {
+      try { client.destroy(); } catch { /* already gone */ }
+    }
+    this.#tcpClients.clear();
+    for (const socket of this.#udpSockets.values()) {
       closing.push(new Promise<void>((resolve) => {
-        listener.once('close', () => resolve());
         try {
-          listener.close();
+          socket.close(() => resolve());
         } catch {
           resolve();
         }
       }));
     }
-    this.#listeners.clear();
+    for (const server of this.#tcpServers.values()) {
+      closing.push(new Promise<void>((resolve) => {
+        try {
+          server.close(() => resolve());
+        } catch {
+          resolve();
+        }
+      }));
+    }
+    this.#udpSockets.clear();
+    this.#tcpServers.clear();
     await Promise.all(closing);
+  }
+
+  /**
+   * Handle one inbound UDP datagram: drop a source port of 0, classify on the
+   * raw buffer, dispatch. Every path is guarded so one datagram cannot throw
+   * out of the socket callback.
+   */
+  #onUdpMessage (socket: DgramSocket, msg: Buffer, rinfo: RemoteInfo) {
+    try {
+      if (isIgnorableUdpSource(rinfo.port)) {
+        this.#warnAgg('ignored', 'source port 0');
+        return;
+      }
+      const result = validateRequest(msg);
+      const send: SendFn = (buf) => {
+        socket.send(buf, rinfo.port, rinfo.address, (err) => { if (err) this.#warnAgg('udp-send', err.message); });
+      };
+      this.#dispatchResult(result, send, 'udp')
+        .catch((err: Error) => this.#warnAgg('udp-handler', err.message));
+    } catch (err) {
+      this.#warnAgg('udp', (err as Error).message);
+    }
+  }
+
+  /**
+   * Read exactly one length-prefixed message from a TCP connection, answer it,
+   * and end the connection. The reader is bounded: it destroys the socket when
+   * the declared length is below the header size, above the 16-bit ceiling, or
+   * when extra bytes follow a complete message. An idle timeout and an absolute
+   * deadline both close a stalled connection.
+   */
+  #onTcpConnection (client: NetSocket) {
+    this.#tcpClients.add(client);
+    client.setTimeout(this.#tcpIdleTimeoutMs, () => client.destroy());
+    const deadline = setTimeout(() => client.destroy(), TCP_ABSOLUTE_DEADLINE_MS);
+    if (typeof deadline.unref === 'function') deadline.unref();
+
+    let buffered = Buffer.alloc(0);
+    let answered = false;
+
+    const cleanup = () => {
+      clearTimeout(deadline);
+      this.#tcpClients.delete(client);
+    };
+    client.on('error', () => { /* per-connection error: nothing to do but let it close */ });
+    client.on('close', cleanup);
+
+    client.on('data', (chunk: Buffer) => {
+      if (answered) { client.destroy(); return; }
+      buffered = Buffer.concat([buffered, chunk]);
+      if (buffered.length > 2 + TCP_MAX_MESSAGE) { client.destroy(); return; }
+      if (buffered.length < 2) return;
+      const msgLen = buffered.readUInt16BE(0);
+      if (msgLen < 12 || msgLen > TCP_MAX_MESSAGE) { client.destroy(); return; }
+      if (buffered.length < 2 + msgLen) return; // wait for the rest
+      if (buffered.length > 2 + msgLen) { client.destroy(); return; } // extra bytes follow one message
+      answered = true;
+      const msg = buffered.subarray(2, 2 + msgLen);
+      const result = validateRequest(msg);
+      let replied = false;
+      const send: SendFn = (buf) => { replied = true; this.#tcpSend(client, buf); };
+      this.#dispatchResult(result, send, 'tcp')
+        .then(() => { if (!replied) { try { client.destroy(); } catch { /* gone */ } } })
+        .catch((err: Error) => { this.#warnAgg('tcp-handler', err.message); try { client.destroy(); } catch { /* gone */ } });
+    });
+  }
+
+  #tcpSend (client: NetSocket, buf: Buffer) {
+    const len = Buffer.alloc(2);
+    len.writeUInt16BE(buf.length);
+    client.end(Buffer.concat([len, buf]));
+  }
+
+  /**
+   * Map a wire classification to a reply (or no reply) and send it.
+   */
+  async #dispatchResult (result: WireResult, send: SendFn, transport: Transport): Promise<void> {
+    switch (result.kind) {
+      case 'ignore':
+        this.#warnAgg('ignored', result.reason);
+        return;
+      case 'error':
+        this.#safeSend(() => send(this.#encodeHeaderOnly(result.header, result.rcode)));
+        return;
+      case 'refused': {
+        const header = this.#responseHeader(result.header, { aa: 0, rcode: RCODE_REFUSED });
+        this.#safeSend(() => send(this.#encodeResponse(header, result.rawQuestion, [], [])));
+        return;
+      }
+      case 'ok':
+        await this.#answerOk(result, send, transport);
+    }
+  }
+
+  /**
+   * Build and send the answer for a conformant query. Encoding is inside the
+   * try with a SERVFAIL fallback; an over-size UDP answer is truncated (TC=1,
+   * no records) and an over-cap TCP answer falls back to SERVFAIL.
+   */
+  async #answerOk (result: Extract<WireResult, { kind: 'ok' }>, send: SendFn, transport: Transport) {
+    const base = this.#responseHeader(result.header, { aa: 1, rcode: RCODE_NOERROR });
+    try {
+      const built = await this.#buildAnswer(result.name, result.type, base);
+      let buf = this.#encodeResponse(built.header, result.rawQuestion, built.answers, built.authorities);
+      if (transport === 'udp' && buf.length > UDP_MAX_RESPONSE) {
+        buf = this.#encodeResponse({ ...built.header, tc: 1 }, result.rawQuestion, [], []);
+      } else if (transport === 'tcp' && buf.length > TCP_MAX_MESSAGE) {
+        buf = this.#encodeResponse({ ...built.header, aa: 0, tc: 0, rcode: RCODE_SERVFAIL }, result.rawQuestion, [], []);
+      }
+      send(buf);
+    } catch (err) {
+      this.#warnAgg('answer', `${JSON.stringify(result.name)}: ${(err as Error).message}`);
+      this.#safeSend(() => {
+        const header = this.#responseHeader(result.header, { aa: 0, rcode: RCODE_SERVFAIL });
+        send(this.#encodeResponse(header, result.rawQuestion, [], []));
+      });
+    }
+  }
+
+  #responseHeader (wire: WireHeader, over: { aa: number; rcode: number }): ResponseHeader {
+    return { id: wire.id, qr: 1, opcode: wire.opcode, aa: over.aa, tc: 0, rd: wire.rd, ra: 0, z: 0, rcode: over.rcode };
+  }
+
+  #safeSend (fn: () => void) {
+    try { fn(); } catch (err) { this.#warnAgg('send', (err as Error).message); }
+  }
+
+  /**
+   * Encode a response as header + the raw question bytes (spliced verbatim) +
+   * dns2-encoded answers and authorities. The question is echoed byte-for-byte
+   * so no re-encoding can alter it; answers are encoded without compression.
+   */
+  #encodeResponse (header: ResponseHeader, rawQuestion: Buffer, answers: DnsAnswer[], authorities: DnsAnswer[]): Buffer {
+    const h = new Packet.Header({
+      id: header.id, qr: 1, opcode: header.opcode, aa: header.aa, tc: header.tc,
+      rd: header.rd, ra: 0, z: 0, rcode: header.rcode,
+      qdcount: 1, ancount: answers.length, nscount: authorities.length, arcount: 0
+    });
+    const headerBuf: Buffer = h.toBuffer();
+    let bodyBuf = Buffer.alloc(0);
+    if (answers.length + authorities.length > 0) {
+      const writer = new Packet.Writer();
+      for (const a of answers) Packet.Resource.encode(a, writer);
+      for (const a of authorities) Packet.Resource.encode(a, writer);
+      bodyBuf = writer.toBuffer();
+    }
+    return Buffer.concat([headerBuf, rawQuestion, bodyBuf]);
+  }
+
+  /** Encode a header-only reply (qdcount 0): NOTIMP / FORMERR. */
+  #encodeHeaderOnly (wire: WireHeader, rcode: number): Buffer {
+    const h = new Packet.Header({
+      id: wire.id, qr: 1, opcode: wire.opcode, aa: 0, tc: 0,
+      rd: wire.rd, ra: 0, z: 0, rcode,
+      qdcount: 0, ancount: 0, nscount: 0, arcount: 0
+    });
+    return h.toBuffer();
   }
 
   /**
@@ -310,7 +538,7 @@ class DnsServer {
    * Persists the record to PlatformDB when the platform exposes `setDnsRecord`,
    * so it survives restart and replicates to other cores.
    * Config-sourced static entries are authoritative and cannot be shadowed —
-   * an attempt to update one throws an error.
+   * an attempt to update one throws an error. An invalid record is rejected.
    *
    * @param subdomain - e.g. '_acme-challenge'
    * @param records - e.g. { txt: ['validation-token'] } or { cname: 'target.example.com' }
@@ -321,10 +549,16 @@ class DnsServer {
       this.#logger.warn(msg);
       throw new Error(msg);
     }
+    const errs = validateDnsRecord(subdomain, records);
+    if (errs.length > 0) {
+      const msg = `DNS runtime update rejected for '${subdomain}': ${errs[0]}`;
+      this.#logger.warn(msg);
+      throw new Error(msg);
+    }
     if (this.#platform && typeof this.#platform.setDnsRecord === 'function') {
       await this.#platform.setDnsRecord(subdomain, records);
     }
-    this.#staticEntries[subdomain] = records;
+    this.#staticEntries.set(subdomain, records);
     this.#logger.info(`DNS runtime entry updated: ${subdomain}`);
   }
 
@@ -340,33 +574,18 @@ class DnsServer {
     if (this.#platform && typeof this.#platform.deleteDnsRecord === 'function') {
       await this.#platform.deleteDnsRecord(subdomain);
     }
-    delete this.#staticEntries[subdomain];
+    this.#staticEntries.delete(subdomain);
     this.#logger.info(`DNS runtime entry deleted: ${subdomain}`);
   }
 
   /**
-   * Handle an incoming DNS request.
+   * Build the answer for a conformant in-zone or out-of-zone query. Returns the
+   * response header plus answer / authority records (each validated so a stray
+   * record is skipped rather than throwing at encode time).
    */
-  async #handleRequest (request: DnsRequest, send: DnsSendFn, _rinfo: unknown) {
-    // dns2 builds the response in place from the request object: it echoes the
-    // request header (including the Z/AD/CD bits) and any records the query
-    // carried. Reset what an authoritative-only server must set itself.
-    const response: DnsResponse = Packet.createResponseFromRequest(request);
-    response.header.aa = 1;
-    response.header.ra = 0;
-    response.header.z = 0;
-    response.header.tc = 0;
-    response.header.rcode = 0;
-    response.answers = [];
-    response.authorities = [];
-    const question = request.questions[0];
-    if (!question) {
-      send(response);
-      return;
-    }
-
-    const qname = question.name.toLowerCase();
-    const qtype = question.type;
+  async #buildAnswer (qnameRaw: string, qtype: number, base: ResponseHeader): Promise<BuiltResponse> {
+    const response: BuiltResponse = { header: { ...base }, answers: [], authorities: [] };
+    const qname = qnameRaw.toLowerCase();
     const domain = (this.#domain || '').toLowerCase();
 
     if (!domain || !(qname === domain || qname.endsWith('.' + domain))) {
@@ -374,8 +593,7 @@ class DnsServer {
       // NXDOMAIN would be a claim about someone else's zone).
       response.header.aa = 0;
       response.header.rcode = RCODE_REFUSED;
-      send(response);
-      return;
+      return response;
     }
 
     try {
@@ -398,10 +616,10 @@ class DnsServer {
         // cores that advertise it. Ahead of staticEntries, which may not
         // reuse the name (config check), and of the username lookup.
         await this.#answerHostedSite(response, qname, qtype, prefix);
-      } else if (this.#staticEntries[prefix]) {
+      } else if (this.#staticEntries.has(prefix)) {
         // Static subdomain (www, sw, reg, _acme-challenge, etc.). Operator
         // overrides win over PlatformDB-derived core entries below.
-        this.#answerStatic(response, qname, qtype, this.#staticEntries[prefix]);
+        this.#answerStatic(response, qname, qtype, this.#staticEntries.get(prefix)!);
       } else if (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) {
         // Was a `<coreId>.<domain>` query — answered from PlatformDB.
       } else {
@@ -409,13 +627,17 @@ class DnsServer {
         await this.#answerUsername(response, qname, qtype, prefix);
       }
     } catch (err: unknown) {
-      this.#logger.warn(`DNS error for ${qname}: ${(err as Error).message}`);
+      this.#warnAgg('answer', `${JSON.stringify(qname)}: ${(err as Error).message}`);
       // An internal failure is not a statement that the name does not exist:
       // SERVFAIL is not cached as a negative answer and makes resolvers try
       // the other nameservers (RFC 2308 section 7.1).
       response.answers = [];
       response.header.rcode = RCODE_SERVFAIL;
     }
+
+    // RFC 8482 section 4.1: a QTYPE ANY query is answered with a single RRset
+    // rather than every record for the name.
+    if (qtype === Packet.TYPE.ANY) this.#reduceToSingleRRset(response);
 
     // RFC 2308 section 3: NXDOMAIN and NODATA answers carry the zone SOA in
     // the AUTHORITY section so resolvers can cache the negative answer.
@@ -424,7 +646,26 @@ class DnsServer {
       this.#addNegativeSoa(response, domain);
     }
 
-    send(response);
+    // Defence in depth: drop any built record whose shape would throw at encode.
+    response.answers = this.#keepEncodable(response.answers, 'answer');
+    response.authorities = this.#keepEncodable(response.authorities, 'authority');
+    return response;
+  }
+
+  #keepEncodable (list: DnsAnswer[], label: string): DnsAnswer[] {
+    const out: DnsAnswer[] = [];
+    for (const a of list) {
+      if (isEncodableAnswer(a)) out.push(a);
+      else this.#warnAgg('record', `skipped malformed ${label} record for ${JSON.stringify(a.name)}`);
+    }
+    return out;
+  }
+
+  /** Keep only the first RRset (records sharing the first answer's type). */
+  #reduceToSingleRRset (response: BuiltResponse) {
+    if (response.answers.length <= 1) return;
+    const firstType = response.answers[0].type;
+    response.answers = response.answers.filter((a) => a.type === firstType);
   }
 
   /**
@@ -439,7 +680,7 @@ class DnsServer {
    * Put the apex SOA in AUTHORITY with the negative-caching TTL
    * min(SOA ttl, SOA minimum) (RFC 2308 section 5). No-op without a SOA.
    */
-  #addNegativeSoa (response: DnsResponse, apex: string) {
+  #addNegativeSoa (response: BuiltResponse, apex: string) {
     const soa = this.#getSoa();
     if (soa == null) return;
     const minimum = Number(soa.minimum);
@@ -450,7 +691,7 @@ class DnsServer {
   /**
    * Answer root domain queries with configured records.
    */
-  #answerRoot (response: DnsResponse, qname: string, qtype: number) {
+  #answerRoot (response: BuiltResponse, qname: string, qtype: number) {
     const root = this.#rootRecords as Record<string, unknown> & {
       a?: string[]; aaaa?: string[]; ns?: string[]; mx?: Array<{ exchange: string; priority?: number }>; txt?: string[]; caa?: Array<{ flags?: number; tag: string; value: string }>; soa?: Record<string, unknown>;
     };
@@ -496,7 +737,7 @@ class DnsServer {
   /**
    * Answer lsc.{domain} — return all core IPs for rqlite cluster discovery.
    */
-  async #answerClusterDiscovery (response: DnsResponse, qname: string, qtype: number) {
+  async #answerClusterDiscovery (response: BuiltResponse, qname: string, qtype: number) {
     const cores = await this.#platform.getAllCoreInfos();
     const ttl = this.#ttl;
 
@@ -543,7 +784,7 @@ class DnsServer {
    * site (read fresh). A name configured here that no row advertises yet (this
    * core's registration not replicated) answers with this core's own row.
    */
-  async #answerHostedSite (response: DnsResponse, qname: string, qtype: number, name: string) {
+  async #answerHostedSite (response: BuiltResponse, qname: string, qtype: number, name: string) {
     const cores = await this.#platform.getAllCoreInfos();
     let serving = cores.filter((core) => Array.isArray(core.sites) && core.sites.includes(name));
     if (serving.length === 0 && this.#localSites.has(name)) {
@@ -563,7 +804,7 @@ class DnsServer {
   /**
    * Answer a static subdomain entry.
    */
-  #answerStatic (response: DnsResponse, qname: string, qtype: number, entry: DnsRecordEntry) {
+  #answerStatic (response: BuiltResponse, qname: string, qtype: number, entry: DnsRecordEntry) {
     const ttl = this.#ttl;
 
     // RFC 1034 §3.6.2: a name that has a CNAME has no other data, and the
@@ -599,7 +840,7 @@ class DnsServer {
   /**
    * Answer {username}.{domain} — look up user's core, return its IP or CNAME.
    */
-  async #answerUsername (response: DnsResponse, qname: string, qtype: number, username: string) {
+  async #answerUsername (response: BuiltResponse, qname: string, qtype: number, username: string) {
     const coreId = await this.#platform.getUserCore(username);
     if (coreId == null) {
       this.#setNxdomain(response);
@@ -625,7 +866,7 @@ class DnsServer {
    * — and used for inter-core HTTP routing in multi-core — is unreachable
    * via the embedded DNS unless the operator pre-populates `dns.staticEntries`.
    */
-  async #tryAnswerCoreInfo (response: DnsResponse, qname: string, qtype: number, prefix: string) {
+  async #tryAnswerCoreInfo (response: BuiltResponse, qname: string, qtype: number, prefix: string) {
     const coreInfo = await this.#platform.getCoreInfo(prefix);
     if (coreInfo == null) return false;
     this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
@@ -635,7 +876,7 @@ class DnsServer {
   /**
    * Emit A / AAAA / CNAME from a coreInfo row.
    */
-  #emitCoreInfoRecords (response: DnsResponse, qname: string, qtype: number, coreInfo: CoreInfo) {
+  #emitCoreInfoRecords (response: BuiltResponse, qname: string, qtype: number, coreInfo: CoreInfo) {
     const ttl = this.#ttl;
 
     if (coreInfo.ip && (qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
@@ -657,13 +898,38 @@ class DnsServer {
   #setNxdomain (response: { header: { rcode: number } }) {
     response.header.rcode = 3; // NXDOMAIN
   }
+
+  /**
+   * Record a per-request failure. Failures are coalesced into one warning per
+   * window so a flood of bad requests cannot flood the log; the qname in a
+   * sample is JSON-escaped by the caller.
+   */
+  #warnAgg (category: string, detail?: string) {
+    this.#warnPending++;
+    if (this.#warnSample == null) this.#warnSample = detail ? `${category}: ${detail}` : category;
+    if (this.#warnTimer == null) {
+      this.#warnTimer = setTimeout(() => this.#flushWarn(), WARN_WINDOW_MS);
+      if (typeof this.#warnTimer.unref === 'function') this.#warnTimer.unref();
+    }
+  }
+
+  #flushWarn () {
+    const n = this.#warnPending;
+    const sample = this.#warnSample;
+    this.#warnPending = 0;
+    this.#warnSample = null;
+    this.#warnTimer = null;
+    if (n > 0) {
+      this.#logger.warn(`DNS: ${n} request(s) failed validation or handling in the last ${WARN_WINDOW_MS / 1000}s (sample: ${sample})`);
+    }
+  }
 }
 
 /**
  * Factory function.
  */
-function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number }) {
-  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs });
+function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number }) {
+  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections });
 }
 
 export { DnsServer, createDnsServer };

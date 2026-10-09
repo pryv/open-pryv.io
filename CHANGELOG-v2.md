@@ -8,6 +8,9 @@
   `POST /events/{id}`). `events.create` and `events.update` called through a batch call or
   socket.io refuse a `files` parameter: `400`, `invalid-parameters-format`. The `events.update`
   parameters accept only `id` and `update`.
+- Embedded DNS server: requests are validated per RFC 1035 before decoding, responses are
+  size-limited (TC over UDP), TCP connections are bounded (`dns.tcpMaxConnections`), and stored DNS
+  records are validated; a request that fails never affects the server.
 
 ## 2.0.0-rc.45 - 2026-10-09
 

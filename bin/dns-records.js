@@ -29,6 +29,7 @@
 const path = require('path');
 const fs = require('fs');
 const yaml = require('js-yaml');
+const { validateDnsRecord } = require('../components/dns-server/src/recordValidation.ts');
 
 // Handle --help before boiler init (boiler's yargs swallows --help otherwise).
 if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
@@ -130,6 +131,10 @@ async function runLoad (platform, args) {
     }
     if (!entry.records || typeof entry.records !== 'object') {
       throw new Error(`records[${i}]: 'records' is required and must be an object`);
+    }
+    const problems = validateDnsRecord(entry.subdomain, entry.records);
+    if (problems.length > 0) {
+      throw new Error(`records[${i}] ('${entry.subdomain}'): ${problems[0]}`);
     }
     incoming.set(entry.subdomain, entry.records);
   }

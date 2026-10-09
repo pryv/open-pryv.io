@@ -35,6 +35,7 @@ const reservedWords = new Set(require('./reserved-words.json').list);
 const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
 const { hostedSiteNames } = require('business/src/hostedSites.ts');
 const { coreIdProblem, isValidCoreId, peerUrlProblem, insecurePeerUrlAllowed } = require('./coreIdentity.ts');
+const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
 
 /**
  * Field name used when hashing a username as a key (i.e. when the
@@ -901,6 +902,10 @@ class Platform {
    * through this persistent-record store.)
    */
   async setDnsRecord (subdomain: string, records: DnsRecord) {
+    const problems = validateDnsRecord(subdomain, records);
+    if (problems.length > 0) {
+      throw new Error(`Invalid DNS record for '${subdomain}': ${problems[0]}`);
+    }
     await this.#db.setDnsRecord(subdomain, records);
   }
 

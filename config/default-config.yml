@@ -590,6 +590,7 @@ dns:
                          # Unset + dns.active=true logs FATAL and skips ACME start
                          # (avoids burning the LE rate limit on a guaranteed fail).
   defaultTTL: 300        # TTL in seconds
+  tcpMaxConnections: 64  # cap on simultaneous TCP (RFC 7766) connections the embedded DNS accepts
   staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
   # Notes on staticEntries:
   #  - `reg`, `access`, `mfa` are reserved by the distribution — every core
