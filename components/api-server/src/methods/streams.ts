@@ -295,8 +295,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!(await context.access.canUpdateStream(stream.id))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
-    // check parent (even if null for root )
-    if (!(await context.access.canCreateChildOnStream(params.update!.parentId))) {
+    // A move needs `manage` on the target parent (the root when null); a
+    // rename, or an update repeating the current parentId, does not.
+    const parentChanges = params.update!.parentId !== undefined &&
+      (params.update!.parentId ?? null) !== (stream.parentId ?? null);
+    if (parentChanges && !(await context.access.canCreateChildOnStream(params.update!.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
     // check target parent if needed

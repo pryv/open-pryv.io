@@ -552,6 +552,66 @@ describe('[STRP] streams (Pattern C)', function () {
     });
   });
 
+  // An access managing a subtree (no `*` grant) renames streams inside it;
+  // moving a stream still needs `manage` on the target parent.
+  describe('[STRN] PUT /<id> by an access managing a subtree', function () {
+    let fixtureUser, rnUsername;
+
+    before(async function () {
+      const fixtures = getNewFixture();
+      rnUsername = cuid();
+      fixtureUser = await fixtures.user(rnUsername);
+    });
+
+    // P (root) > S > X, Q (root); the app token manages S only.
+    async function setupTree () {
+      const suffix = cuid().slice(-8);
+      const ids = { P: 'rn-p-' + suffix, S: 'rn-s-' + suffix, X: 'rn-x-' + suffix, Q: 'rn-q-' + suffix };
+      await fixtureUser.stream({ id: ids.P, name: 'P ' + suffix });
+      await fixtureUser.stream({ id: ids.S, name: 'S ' + suffix, parentId: ids.P });
+      await fixtureUser.stream({ id: ids.X, name: 'X ' + suffix, parentId: ids.S });
+      await fixtureUser.stream({ id: ids.Q, name: 'Q ' + suffix });
+      const appToken = cuid();
+      await fixtureUser.access({ token: appToken, type: 'app', name: 'rn app ' + suffix, permissions: [{ streamId: ids.S, level: 'manage' }] });
+      return { ids, appToken };
+    }
+
+    function update (id, appToken, body) {
+      return coreRequest.put('/' + rnUsername + '/streams/' + id).set('Authorization', appToken).send(body);
+    }
+
+    it('[STRN1] must let the access rename a child of the stream it manages', async function () {
+      const { ids, appToken } = await setupTree();
+      const res = await update(ids.X, appToken, { name: 'X renamed ' + ids.X });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.stream.name, 'X renamed ' + ids.X);
+      assert.strictEqual(res.body.stream.parentId, ids.S);
+    });
+
+    it('[STRN2] must let the access rename the stream it manages, with or without its unchanged parentId', async function () {
+      const { ids, appToken } = await setupTree();
+      let res = await update(ids.S, appToken, { name: 'S renamed ' + ids.S });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.stream.name, 'S renamed ' + ids.S);
+      res = await update(ids.S, appToken, { name: 'S again ' + ids.S, parentId: ids.P });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.stream.parentId, ids.P);
+    });
+
+    it('[STRN3] must still forbid moving a stream under a parent the access does not manage, or to the root', async function () {
+      const { ids, appToken } = await setupTree();
+      let res = await update(ids.X, appToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+      res = await update(ids.X, appToken, { parentId: null });
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+      res = await update(ids.S, appToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+    });
+  });
+
   describe('[STP05] Sibling name conflicts', function () {
     let parentStreamId, childName;
 
