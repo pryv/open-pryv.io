@@ -84,7 +84,11 @@ require('@pryv/boiler').init({
     // streams, which an access's permissions can name (`:_audit:...`), and
     // checking such an access reads them from the audit storage. This tool
     // writes no audit record.
-    if (config.get('audit:active')) await require('audit').default.init();
+    if (config.get('audit:active')) {
+      const audit = require('audit').default;
+      await audit.init();
+      onlyExistingAuditStores(audit.storage);
+    }
     const { getUsersLocalIndex, getStorageLayer } = require('storage');
     const { fromCallback } = require('utils');
     const { auditAccessScope } = require('business/src/accesses/scopeAudit.ts');
@@ -145,6 +149,23 @@ require('@pryv/boiler').init({
     process.exit(1);
   }
 })();
+
+// A per-user SQLite audit store is a file, and opening it creates it. This
+// tool only reads: an account without an audit store is answered as an empty
+// one (no accesses, no actions, no events) instead of getting a file created.
+// Storages that are not file-backed are left as they are.
+function onlyExistingAuditStores (storage) {
+  if (storage == null || typeof storage.existingPathForUser !== 'function') return;
+  const fs = require('fs');
+  const { Readable } = require('stream');
+  const forUser = storage.forUser.bind(storage);
+  const empty = {
+    getAllAccesses: () => [],
+    getAllActions: () => [],
+    getEventsStreamed: () => Readable.from([])
+  };
+  storage.forUser = async (userId) => fs.existsSync(storage.existingPathForUser(userId)) ? await forUser(userId) : empty;
+}
 
 function parseArgs (argv) {
   const args = { user: null };

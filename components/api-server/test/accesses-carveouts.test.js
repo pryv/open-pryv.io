@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const path = require('node:path');
+const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { getConfig } = require('@pryv/boiler');
 const storage = require('storage');
@@ -260,6 +261,56 @@ describe('[ACCV] accesses: creator carve-outs carried into child accesses', func
       assert.ok(!out.includes(okChild.id), 'the compliant child is not listed');
       const after = await fromCallback((cb) => accessStorage.findOne(user, { id: overId }, null, cb));
       assert.deepStrictEqual(after, before);
+    });
+
+    it('[ASAF] creates no audit database for an account that has none (SQLite audit storage)', async function () {
+      const config = await getConfig();
+      if (config.get('storages:audit:engine') !== 'sqlite') this.skip();
+      const audit = require('audit').default;
+      // An account of its own, written straight to storage: no API call has
+      // opened its audit database.
+      const other = cuid();
+      const otherFixture = await getNewFixture().user(other);
+      const otherUser = { id: other, username: other };
+      const s = { A: 'a' + cuid(), B: 'b' + cuid() };
+      const a = await otherFixture.stream({ id: s.A, name: s.A });
+      await a.stream({ id: s.B, name: s.B });
+      const appId = cuid();
+      await otherFixture.access({
+        id: appId,
+        token: cuid(),
+        name: 'app ' + appId,
+        type: 'app',
+        permissions: [
+          { streamId: s.A, level: 'read' },
+          { streamId: s.B, level: 'none' },
+          { streamId: ':_audit:accesses', level: 'read' },
+          { streamId: ':_audit:actions', level: 'read' }
+        ]
+      });
+      const overId = cuid();
+      await otherFixture.access({
+        id: overId,
+        token: cuid(),
+        name: 'over ' + overId,
+        type: 'shared',
+        permissions: [{ streamId: s.A, level: 'read' }],
+        createdBy: appId,
+        modifiedBy: appId
+      });
+      // A fixture account's id is its username.
+      const planted = await fromCallback((cb) => accessStorage.findOne(otherUser, { id: overId }, null, cb));
+      assert.ok(planted != null, 'precondition: the planted access is stored under the account id');
+      const auditDbPath = audit.storage.existingPathForUser(other);
+      assert.strictEqual(fs.existsSync(auditDbPath), false, 'precondition: the account has no audit database');
+
+      const out = execFileSync(process.execPath, ['bin/access-scope-audit.js', '--user', other], {
+        cwd: repoRoot,
+        env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test', ...childStorageEngineEnv() },
+        encoding: 'utf8'
+      });
+      assert.ok(out.includes('access ' + overId + ' (shared, created by ' + appId + '): reaches a carve-out (1 missing entry)'), out);
+      assert.strictEqual(fs.existsSync(auditDbPath), false, 'the tool created an audit database for the account');
     });
 
     it('[ACCV10B] --help prints the usage and exits 0', function () {
