@@ -322,13 +322,15 @@ describe('[SHS] shared secrets', function () {
       const updated = await coreRequest
         .put(accessesPath + '/' + created.body.access.id)
         .set('Authorization', restricted.token)
-        .send({ update: { permissions: [{ streamId: '*', level: 'read' }] } });
-
-      if (updated.status === 200) {
-        assert.ok(updated.body.access.permissions.some(
-          (p) => p.feature === 'secretSharing' && p.setting === 'forbidden'),
+        .send({ permissions: [{ streamId: '*', level: 'read' }] });
+      assert.strictEqual(updated.status, 200, JSON.stringify(updated.body));
+      const keepsRestriction = (permissions) => permissions.some(
+        (p) => p.feature === 'secretSharing' && p.setting === 'forbidden');
+      assert.ok(keepsRestriction(updated.body.access.permissions),
         'update must not strip the inherited restriction');
-      }
+      const stored = await coreRequest.get('/' + username + '/access-info').set('Authorization', created.body.access.token);
+      assert.strictEqual(stored.status, 200, JSON.stringify(stored.body));
+      assert.ok(keepsRestriction(stored.body.permissions), 'the stored child keeps the inherited restriction');
       const child = await create(created.body.access.token, validBody());
       assert.strictEqual(child.status, 403,
         'the child must still be barred after an update attempt');
