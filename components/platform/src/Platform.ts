@@ -1113,31 +1113,51 @@ class Platform {
    * when nothing is to be consumed (no check, or a static config token).
    */
   async #checkInvitationToken (invitationToken: string): Promise<string | null> {
+    const resolved = await this.#resolveInvitationToken(invitationToken);
+    if (!resolved.valid) {
+      throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
+    }
+    return resolved.key;
+  }
+
+  /** Non-throwing form of `#checkInvitationToken`. */
+  async #resolveInvitationToken (invitationToken: string): Promise<{ valid: true; key: string | null } | { valid: false }> {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
     if (allTokens.length === 0) {
       const configTokens = this.#config.get('invitationTokens');
       // null/undefined config → allow all registrations
-      if (configTokens == null) return null;
+      if (configTokens == null) return { valid: true, key: null };
       // empty array → block all
-      if (Array.isArray(configTokens) && configTokens.length === 0) {
-        throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
-      }
+      if (Array.isArray(configTokens) && configTokens.length === 0) return { valid: false };
       // check token against static config list
-      if (!Array.isArray(configTokens) || !configTokens.includes(invitationToken)) {
-        throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
-      }
-      return null;
+      if (!Array.isArray(configTokens) || !configTokens.includes(invitationToken)) return { valid: false };
+      return { valid: true, key: null };
     }
 
     // PlatformDB has tokens — check against them (keyed by the token's hash).
     const key = this.#hashInvitationToken(invitationToken);
     const tokenInfo = await this.#db.getInvitationToken(key);
-    if (tokenInfo == null || tokenInfo.consumedBy != null) {
-      throw errors.invalidOperation(ErrorMessages[ErrorIds.InvalidInvitationToken]);
-    }
-    return key;
+    if (tokenInfo == null || tokenInfo.consumedBy != null) return { valid: false };
+    return { valid: true, key };
+  }
+
+  /**
+   * Check an invitation token and consume it atomically for `username`, as a
+   * registration does (used by the admin pre-registration). Answers:
+   * - 'claimed': a PlatformDB token was consumed; give it back with
+   *   `releaseInvitationToken` if the registration then fails,
+   * - 'not-consumable': valid but nothing to consume (no check configured, or
+   *   a static config token),
+   * - 'invalid': unknown, or already consumed (also by a concurrent claim).
+   */
+  async claimInvitationToken (token: string, username: string): Promise<'claimed' | 'not-consumable' | 'invalid'> {
+    const resolved = await this.#resolveInvitationToken(token);
+    if (!resolved.valid) return 'invalid';
+    if (resolved.key == null) return 'not-consumable';
+    const claimed = await this.#db.claimInvitationToken(resolved.key, username, Date.now());
+    return claimed ? 'claimed' : 'invalid';
   }
 
   /** Best-effort release of a claim; a failure leaves the token consumed. */

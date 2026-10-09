@@ -262,6 +262,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.post(Paths.System + '/users/validate', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { username, invitationToken, uniqueFields = {} } = req.body;
+      // The username keys the reservation and the invitation claim below.
+      if (typeof username !== 'string' || username === '') {
+        return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: 'username is required' } });
+      }
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
 
@@ -280,6 +284,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         if (problem != null) {
           return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: problem } });
         }
+      }
+
+      // Reserved names are refused as on the public registration path
+      // (hosted-site names re-read first: another core may advertise a new one).
+      await platform.refreshHostedSiteNames();
+      if (platform.isUsernameReserved(username)) {
+        return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
       }
 
       // 2. Check username uniqueness PLATFORM-WIDE. The local index holds only
@@ -305,18 +316,36 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: conflicts } });
       }
 
-      // 4. Reserve unique fields via Platform (hashing applied internally).
-      uniqueFields.username = username;
-      for (const [field, value] of Object.entries(uniqueFields)) {
-        const reserved = await platform.setUserUniqueFieldIfNotExists(username, field, value as string);
-        if (!reserved) {
-          return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { [field]: value } } });
-        }
+      // Consume the invitation token atomically, as the public registration
+      // does: of concurrent pre-registrations presenting the same token, only
+      // one goes on. Claimed only once every check passed, and given back if
+      // the reservation below fails, so a refused request never burns it.
+      const claim = await platform.claimInvitationToken(invitationToken, username);
+      if (claim === 'invalid') {
+        return res.status(400).json({ reservation: false, error: { id: 'invitationToken-invalid' } });
       }
+      const releaseClaim = async () => {
+        if (claim === 'claimed') await platform.releaseInvitationToken(invitationToken, username);
+      };
 
-      // 5. Set user-to-core mapping if provided (plaintext input, hashed internally).
-      if (req.body.core && !platform.isSingleCore) {
-        await platform.setUserCore(username, req.body.core);
+      try {
+        // 4. Reserve unique fields via Platform (hashing applied internally).
+        uniqueFields.username = username;
+        for (const [field, value] of Object.entries(uniqueFields)) {
+          const reserved = await platform.setUserUniqueFieldIfNotExists(username, field, value as string);
+          if (!reserved) {
+            await releaseClaim();
+            return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { [field]: value } } });
+          }
+        }
+
+        // 5. Set user-to-core mapping if provided (plaintext input, hashed internally).
+        if (req.body.core && !platform.isSingleCore) {
+          await platform.setUserCore(username, req.body.core);
+        }
+      } catch (err) {
+        await releaseClaim();
+        throw err;
       }
 
       res.status(200).json({ reservation: true });

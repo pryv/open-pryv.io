@@ -268,6 +268,57 @@ describe('[RGLG] Legacy register routes + invitations', () => {
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
       assert.strictEqual(await isValid(token), false);
     });
+
+    function validate (body) {
+      return coreRequest.post('/system/users/validate').set('Authorization', adminAccessKey).send(body);
+    }
+
+    async function dropReservation (username) {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      await platform.deleteUser(username);
+    }
+
+    it('[LGV1] a token used by an admin pre-registration cannot be used again', async () => {
+      const token = await newToken();
+      const first = registration(token);
+      const second = registration(token);
+      try {
+        let res = await validate({ username: first.username, invitationToken: token, uniqueFields: { email: first.email } });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.reservation, true);
+        assert.strictEqual(await isValid(token), false, 'the token is consumed');
+
+        res = await validate({ username: second.username, invitationToken: token, uniqueFields: { email: second.email } });
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.reservation, false);
+        assert.strictEqual(res.body.error.id, 'invitationToken-invalid');
+
+        res = await coreRequest.post('/users').send(second);
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-operation');
+      } finally {
+        await dropReservation(first.username);
+      }
+    });
+
+    it('[LGV2] an admin pre-registration refuses a reserved name and keeps the token', async () => {
+      const token = await newToken();
+      const res = await validate({ username: 'pryv' + Math.random().toString(36).slice(2, 10), invitationToken: token, uniqueFields: {} });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.reservation, false);
+      assert.strictEqual(res.body.error.id, 'item-already-exists');
+      assert.ok(res.body.error.data.username != null, 'flags the username');
+      assert.strictEqual(await isValid(token), true, 'a refused pre-registration does not consume the token');
+    });
+
+    it('[LGV3] an admin pre-registration refused on a taken email keeps the token', async () => {
+      const token = await newToken();
+      const res = await validate({ username: registration(token).username, invitationToken: token, uniqueFields: { email: testEmail } });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'item-already-exists');
+      assert.strictEqual(await isValid(token), true, 'the token is still usable');
+    });
   });
 
   describe('POST /access/invitationtoken/check', () => {
