@@ -201,9 +201,15 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
             if (err.isDuplicate) {
               findAccess(context, (err: Error | null, access: AccessRow | null) => {
                 if (err || access == null) { return next(errors.unexpectedError(err)); }
+                const orphanToken = result.token as string | undefined;
                 result.token = access.token;
                 accessData.token = access.token;
-                updatePersonalAccess(accessData, access, context, next);
+                const proceed = () => updatePersonalAccess(accessData, access, context, next);
+                // The session this login generated backs no access now: drop it.
+                if (context.sessionGenerated === true && orphanToken != null && orphanToken !== access.token) {
+                  return sessionsStorage.destroy(orphanToken, () => proceed());
+                }
+                proceed();
               });
             } else {
               // Any other error

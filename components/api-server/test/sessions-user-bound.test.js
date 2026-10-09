@@ -78,6 +78,43 @@ describe('[SUBD] login sessions are bound to the account', function () {
     assert.strictEqual(info.body.error.id, 'invalid-access-token');
   });
 
+  it('[SUBD5] a login losing the personal-access creation race to a concurrent login drops the session it generated', async function () {
+    const appId = 'subd-race';
+    const userId = await (await storage.getUsersLocalIndex()).getUserId(username);
+    // The concurrent login's live session (not matched by this login's lookup).
+    const winner = await generateSession({ username, appId: 'subd-race-winner', userId });
+    const generated = [];
+    const sessions = storageLayer.sessions;
+    const accesses = storageLayer.accesses;
+    const origGenerate = sessions.generate;
+    const origInsertOne = accesses.insertOne;
+    sessions.generate = function (data, options, cb) {
+      return origGenerate.call(this, data, options, (err, id) => { if (id != null) generated.push(id); cb(err, id); });
+    };
+    // The concurrent login inserts the same personal access first.
+    accesses.insertOne = function (user, access, cb) {
+      accesses.insertOne = origInsertOne;
+      origInsertOne.call(this, user, { ...access, id: cuid(), token: winner }, (err) => {
+        if (err != null) return cb(err);
+        const dup = new Error('duplicate'); dup.isDuplicate = true;
+        cb(dup);
+      });
+    };
+    let res;
+    try {
+      res = await login(appId);
+    } finally {
+      sessions.generate = origGenerate;
+      accesses.insertOne = origInsertOne;
+    }
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.token, winner, 'the login adopts the access created by the concurrent login');
+    assert.strictEqual(generated.length, 1, 'this login generated its own session');
+    assert.notStrictEqual(generated[0], winner);
+    const left = await fromCallback((cb) => sessions.get(generated[0], cb));
+    assert.strictEqual(left ?? null, null, 'the session this login generated is gone');
+  });
+
   it('[SUBD3] a login session records the account id and is reused by that account', async function () {
     const first = await login('subd-own');
     const second = await login('subd-own');

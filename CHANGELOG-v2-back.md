@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## Login: a login losing the personal-access creation race drops its session
+
+- `methods/auth/login.ts`: when the personal access insert reports a duplicate (a concurrent login
+  of the same app created it first), the login adopts that access's token as before and now
+  destroys the session it had generated, which no access carries. Test `[SUBD5]`.
+
 ## Admin pre-registration: rows released on a refused or failed reservation
 
 - `routes/system.ts` `POST /system/users/validate` records each unique-field row it writes (not a
