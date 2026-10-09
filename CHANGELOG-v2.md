@@ -42,6 +42,9 @@
   removed (it still answers `410`). The `auth.ssoCookieDomain` and `auth.ssoCookieSignSecret`
   settings are ignored: a configuration that still sets them boots unchanged. Unrelated to the
   OpenID Connect sign-in (`sso.*`).
+- A login of an MFA-enrolled account that fails after its session was opened (its MFA session
+  ended before the login completed) now ends that session; the access token was never returned,
+  and it no longer stays valid until the session expires.
 
 ### Registration
 
@@ -51,6 +54,17 @@
   consumed token answers `400`, `invitationToken-invalid`. A reserved name answers `400`, `item-already-exists`, with
   `data.username`, as a taken name does. A request without a `username` answers `400`,
   `invalid-parameters-format`.
+- Admin pre-registration (`POST /system/users/validate`): when the reservation of one unique field
+  is refused (taken in between by a concurrent request) or fails, the fields the request had
+  already reserved are released; they stayed reserved and blocked those values for every other
+  registration.
+
+### Admin API and tools
+
+- `DELETE /system/users/<name>/mfa` addressed by an alias of the account: the e-mail notice now
+  names the account by its username; it named the alias.
+- `bin/access-scope-audit.js` with the SQLite audit storage no longer creates an empty audit
+  database for an account that had none; such an account is read as having no audit records.
 
 ### Streams
 

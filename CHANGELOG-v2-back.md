@@ -1,5 +1,43 @@
 # Changelog - Internal (no API impact)
 
+## Admin pre-registration: rows released on a refused or failed reservation
+
+- `routes/system.ts` `POST /system/users/validate` records each unique-field row it writes (not a
+  row the same username already held) and releases them with `Platform.releaseUserUniqueValue`
+  (owner-guarded) when a later reservation is refused or throws, before giving the invitation token
+  back. Tests `[LGV4]`, `[LGV5]` (the reservation of one field is stubbed to refuse or throw).
+
+## Login: cleanup of a login failing after its session was written
+
+- `methods/auth/login.ts`: `openSession` records the session it generated
+  (`context.generatedSessionToken`); when `mfaCheckIfActive` fails (the MFA session ended before
+  the token was stashed), `endUnreleasedLogin` destroys that session if the login still holds its
+  token (never a reused or adopted one) and clears the MFA session. The refusals of the MFA layer
+  (session cap, SMS send limits, provider error, inactive method) already ran before any write and
+  are unchanged. Test `[MLOR1]`.
+
+## system.deactivateMfa: canonical username in the notice
+
+- `methods/system.ts` resolves the account username from the user id
+  (`getUsernameForUserId`) before `notifyMfaChange`. Test `[MAUD4]`.
+
+## bin/access-scope-audit.js: existing audit stores only
+
+- With a file-backed audit storage (SQLite, `existingPathForUser`), the tool wraps
+  `audit.storage.forUser` so an account without an audit file gets an empty read-only view instead
+  of a newly created database. Test `[ASAF]` (SQLite audit engine only).
+
+## Removed `components/api-server/bin/migrate`
+
+- The script required the missing `bin/_ts-register` shim and called
+  `storageLayer.versions.migrateIfNeeded()`, which no longer exists; nothing referenced it.
+  Schema migrations run from `bin/master.js` at boot or with `node bin/migrate.js`.
+
+## Tests: `[CVSD3]` without `config.set`
+
+- `[CVSD3]` passes a read-only view over the real config to `validate()`, as `[CVRT3]` does, so
+  no explicit value is left above the test-injected scopes for the later tests of the process.
+
 ## Login routes: legacy `sso` cookie removed
 
 - `components/api-server/src/routes/auth/login.ts` no longer mounts `cookie-parser` on
