@@ -1,5 +1,36 @@
 # Changelog - Internal (no API impact)
 
+## events.get: internal plugin subtrees excluded from every local query
+
+- `methods/helpers/eventsGetUtils.ts` `streamQueryAddForcedAndForbiddenStreams` adds the
+  delegation and CMC internal roots to `not` for every local-store stream query and every token
+  class, not only for a `*` query. The root is pruned with its subtree from the `any` / `all`
+  expansion and becomes a NOT clause, so naming a parent (`:_delegation:`, `:_cmc:`) or the
+  internal root with the `!` marker returns nothing from the internal area. A grant on a stream
+  inside the subtree (the CMC capability access on its offer stream) still reads it: the `not`
+  expansion leaves out the ids named by `any`.
+- Tests: `components/api-server/test/delegation-pat.test.js` `[DPAT-09]`..`[DPAT-14]` and
+  `cmc-ns.test.js` `[CIP1]`..`[CIP7]` (personal, app and shared `*`-read tokens; single, array and
+  JSON queries, the `!` form, batch; capability access still reads its offer).
+
+## socket.io: the reply function is checked, handler rejections are caught
+
+- `socket-io/Manager.ts`: the reply is the packet's third element only when it is a function
+  (socketio-wildcard never passes one to the `'*'` listener), otherwise a no-op; the unreachable
+  `invalid data` reply branch is removed. The `'*'` and `disconnect` listeners and the namespace
+  `connect` listener (`socket-io/index.ts`) catch and log their promise's rejection. No
+  process-level `unhandledRejection` handler is added.
+- Tests: `components/api-server/test/sockets.test.js` `[SRA1]`..`[SRA4]` (42, null, {}, 'x' as
+  the reply argument on an unknown method, `events.get`, `subscribe`, `getSubscriptions`; a
+  following call must answer and the spawned server must still run).
+
+## Embedded DNS server: number of values per stored record capped
+
+- `components/dns-server/src/recordValidation.ts`: `validateDnsRecord` refuses more than
+  `MAX_VALUES_PER_KEY` (32) values for `a`, `aaaa` or `txt`, and more than
+  `MAX_VALUES_PER_SUBDOMAIN` (64) values in all; an oversized list yields one problem, the
+  per-value checks are skipped for it. Test: `components/dns-server/test/record-validation.test.js`.
+
 ## Embedded DNS server: own sockets, RFC 1035 request validation, bounded resources
 
 - `components/dns-server/src/DnsServer.ts` now owns its UDP (`dgram`) and TCP (`net`) listeners;

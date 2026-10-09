@@ -11,6 +11,11 @@
 - Embedded DNS server: requests are validated per RFC 1035 before decoding, responses are
   size-limited (TC over UDP), TCP connections are bounded (`dns.tcpMaxConnections`), and stored DNS
   records are validated; a request that fails never affects the server.
+- Stored DNS records hold at most 32 values per key (`a`, `aaaa`, `txt`) and 64 values per
+  subdomain; a larger record is refused like any other invalid record (`/reg/records`: `400`).
+- `events.get` never returns events of internal plugin streams, whatever stream ids are queried.
+- socket.io: a call whose reply argument is not a function is answered without affecting the
+  server.
 
 ## 2.0.0-rc.45 - 2026-10-09
 
