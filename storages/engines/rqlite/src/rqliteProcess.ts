@@ -246,7 +246,8 @@ function raftTlsProblem (opts: RaftTlsInput): string | null {
   return 'multi-core node (core.ip is set) without Raft TLS (storages.engines.rqlite.tls is not set): ' +
     'any host that reaches the Raft port could join or address the cluster, so the node refuses to start. ' +
     'Issue node certificates with `node bin/bootstrap.js init-ca-holder` (see SINGLE-TO-MULTIPLE.md), which sets ' +
-    'storages.engines.rqlite.tls; a single-core node does not need core.ip (remove it).';
+    'storages.engines.rqlite.tls; a single-core node does not need core.ip: remove it (a dns-active ' +
+    'single-core node sets dns.publicIp instead, which its A record falls back to).';
 }
 
 /**
