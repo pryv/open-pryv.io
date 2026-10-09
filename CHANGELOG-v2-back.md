@@ -4,9 +4,8 @@
 
 - `methods/helpers/eventsGetUtils.ts` `streamQueryAddForcedAndForbiddenStreams` adds the
   delegation and CMC internal roots to `not` for every local-store stream query and every token
-  class, not only for a `*` query. The root is pruned with its subtree from the `any` / `all`
-  expansion and becomes a NOT clause, so naming a parent (`:_delegation:`, `:_cmc:`) or the
-  internal root with the `!` marker returns nothing from the internal area. A grant on a stream
+  class. The root is pruned with its subtree from the `any` / `all` expansion and becomes a NOT
+  clause. A grant on a stream
   inside the subtree (the CMC capability access on its offer stream) still reads it: the `not`
   expansion leaves out the ids named by `any`.
 - Tests: `components/api-server/test/delegation-pat.test.js` `[DPAT-09]`..`[DPAT-14]` and
@@ -33,14 +32,12 @@
 
 ## Embedded DNS server: own sockets, RFC 1035 request validation, bounded resources
 
-- `components/dns-server/src/DnsServer.ts` now owns its UDP (`dgram`) and TCP (`net`) listeners;
-  dns2 is used only to ENCODE responses, its decoder never sees request bytes. Every request is
-  classified on the raw buffer by `components/dns-server/src/wire.ts` before anything decodes it:
-  a message under 12 or over 1232 octets, a response (QR=1) or a source port 0 is dropped; a
-  non-QUERY opcode answers NOTIMP and a bad `qdcount` / `arcount` or unparsable question answers
-  FORMERR (header-only); a class other than IN or a dot inside a label answers REFUSED. Name
-  parsing enforces the 63-octet label, 255-octet name and reserved label-type limits, and follows
-  compression pointers only strictly backwards with a 16-hop cap, so it always terminates.
+- `components/dns-server/src/DnsServer.ts` now owns its UDP (`dgram`) and TCP (`net`) listeners
+  and uses dns2 to encode responses. Every request is classified on the raw buffer by
+  `components/dns-server/src/wire.ts` (RFC 1035 checks): out-of-range sizes and responses (QR=1)
+  are dropped; a non-QUERY opcode answers NOTIMP, a bad `qdcount` / `arcount` or unparsable
+  question FORMERR (header-only), a class other than IN REFUSED; name parsing enforces the
+  label, name and label-type limits.
 - Responses are built by splicing the single validated question's raw bytes between the dns2-encoded
   header and sections. Encoding runs inside a try with a SERVFAIL fallback; a UDP answer over 512
   octets is sent truncated (TC=1, no records, no EDNS), a TCP answer is capped at 65535 with a

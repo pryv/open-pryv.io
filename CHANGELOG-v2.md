@@ -4,13 +4,11 @@
 
 ### Security
 
-- Attachments are accepted only from multipart uploads on the REST routes (`POST /events`,
-  `POST /events/{id}`). `events.create` and `events.update` called through a batch call or
-  socket.io refuse a `files` parameter: `400`, `invalid-parameters-format`. The `events.update`
-  parameters accept only `id` and `update`.
-- Embedded DNS server: requests are validated per RFC 1035 before decoding, responses are
-  size-limited (TC over UDP), TCP connections are bounded (`dns.tcpMaxConnections`), and stored DNS
-  records are validated; a request that fails never affects the server.
+- Attachments: stricter parameter validation for `events.create` and `events.update`
+  (attachments come from multipart uploads on the REST routes; the `events.update` parameters
+  accept only `id` and `update`).
+- Embedded DNS server: stricter request validation, size-limited responses (TC over UDP), bounded
+  TCP connections (`dns.tcpMaxConnections`, default 64) and validated stored DNS records.
 - Stored DNS records hold at most 32 values per key (`a`, `aaaa`, `txt`) and 64 values per
   subdomain; a larger record is refused like any other invalid record (`/reg/records`: `400`).
 - `events.get` never returns events of internal plugin streams, whatever stream ids are queried.
