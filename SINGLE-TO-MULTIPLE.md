@@ -89,7 +89,7 @@ With `core.ip` set, the Raft port listens on all interfaces (the HTTP API stays 
 node bin/bootstrap.js init-ca-holder
 ```
 
-`node bin/check-config.js <your-config>` reports a multi-core config without `tls` as a problem.
+`node bin/check-config.js <your-config>` reports a config with `core.ip` set and no `tls` as a problem (exit 1). The rule applies to any node with `core.ip` set: a single-core node does not need `core.ip` (its DNS A record falls back to `dns.publicIp`).
 
 Restart the existing core. It will now identify itself as `core-a` and be reachable at `https://core-a.mc.example.com/`, with mutual TLS required on its Raft port. The embedded rqlited continues to run as a single-node cluster — until the first new core joins.
 

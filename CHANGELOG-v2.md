@@ -23,8 +23,12 @@
   `bin/check-config.js` reports it as a problem. To fix: on the CA-holder core run
   `node bin/bootstrap.js init-ca-holder`, which issues its node certificate and sets
   `storages.engines.rqlite.tls`; cores that joined with a bootstrap bundle already have it (see
-  `SINGLE-TO-MULTIPLE.md`). A single-core node does not need `core.ip`: remove it. Unchanged:
-  single-core nodes, `storages.engines.rqlite.external: true` and the PostgreSQL platform engine.
+  `SINGLE-TO-MULTIPLE.md`). **The rule applies to any node with `core.ip` set, single-core
+  included:** a single-core dns-active node that set `core.ip` for its A record must remove it and
+  set `dns.publicIp` instead (the core's A record falls back to it). Run `node bin/check-config.js`
+  with your configuration on every core before restarting on this version (it exits 1 on this
+  problem). Unchanged: nodes without `core.ip`, `storages.engines.rqlite.external: true` and the
+  PostgreSQL platform engine.
 
 ### Webhooks
 

@@ -60,7 +60,7 @@
   `basicAccessAuthorizationCheck` uses as the `forbidden` message; it now also answers
   `webhooks.update` and `webhooks.test`, whose chains start with that check. Pure helper
   `isFeatureForbidden(permissions, feature)` in `permissionSet.ts`, used by the webhooks
-  repository's `accessIsUsable`. Tests `[WHFP1]`..`[WHFPE]`, `[WCADF6]`, `[FPWH1]`.
+  repository's `accessIsUsable`. Tests `[WHFP1]`..`[WHFPE]`, `[WCADF7]`, `[FPWH1]`.
 
 ## rqlite: Raft TLS required on a multi-core node
 
