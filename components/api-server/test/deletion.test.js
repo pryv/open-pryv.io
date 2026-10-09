@@ -387,6 +387,75 @@ describe('[PGTD] DELETE /users/:username', () => {
       });
     });
   });
+  describe('[DKEP] audit.onUserDelete', function () {
+    let auditStorage;
+    let userLocalDirectory;
+    before(function () {
+      if (!isAuditActive) this.skip();
+      auditStorage = require('storages').auditStorage;
+      userLocalDirectory = require('storage').userLocalDirectory;
+    });
+
+    // Fixtures use the username as user id: a fresh name per test, so a
+    // retained audit file never meets another test's account.
+    async function createUserWithAudit () {
+      const username = 'testdelk' + cuid.slug().toLowerCase();
+      const user = await initiateUserWithData(username);
+      const userId = user.attrs.id;
+      const auditCount = await (await auditStorage.forUser(userId)).countEvents();
+      assert.ok(auditCount > 0, 'the account has audit entries before its deletion');
+      return { username, userId, auditCount };
+    }
+
+    async function deleteWithMode (mode, username) {
+      await withInjectedConfig({ audit: { onUserDelete: mode } }, async () => {
+        res = await request
+          .delete(`/users/${username}`)
+          .set('Authorization', authKey);
+      });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'the account is gone');
+    }
+
+    it('[DKP1] keep: the audit survives the account deletion, readable by user id, and nothing else stays', async function () {
+      const { username, userId, auditCount } = await createUserWithAudit();
+      const userDir = userLocalDirectory.getPathForUser(userId);
+      const fileBacked = typeof auditStorage.existingPathForUser === 'function';
+      const auditName = fileBacked ? path.basename(auditStorage.existingPathForUser(userId)) : null;
+      const isAuditFile = (name) => auditName != null && (name === auditName || name === auditName + '-wal' || name === auditName + '-shm');
+      const otherEntriesBefore = fs.readdirSync(userDir).filter((name) => !isAuditFile(name));
+      assert.ok(otherEntriesBefore.length > 0, 'the user directory holds more than the audit before the deletion');
+      try {
+        await deleteWithMode('keep', username);
+        if (fileBacked) {
+          // Checked before any read: opening the audit again would create the file.
+          assert.ok(fs.existsSync(path.join(userDir, auditName)), 'the audit database file is kept at its path');
+          const leftOver = fs.readdirSync(userDir).filter((name) => !isAuditFile(name));
+          assert.deepStrictEqual(leftOver, [], 'only the audit files stay in the user directory');
+        } else {
+          assert.strictEqual(fs.existsSync(userDir), false, 'the user directory is removed (the audit is not file-backed)');
+        }
+        const kept = await (await auditStorage.forUser(userId)).countEvents();
+        assert.ok(kept >= auditCount, `audit entries kept: ${kept}, before the deletion: ${auditCount}`);
+      } finally {
+        await auditStorage.deleteUser(userId);
+        await userLocalDirectory.deleteUserDirectory(userId);
+      }
+    });
+
+    for (const [code, mode] of [['DKP2', 'erase'], ['DKP3', 'pseudonymise']]) {
+      it(`[${code}] ${mode}: the audit and the user directory are removed`, async function () {
+        const { username, userId } = await createUserWithAudit();
+        await deleteWithMode(mode, username);
+        const userDir = userLocalDirectory.getPathForUser(userId);
+        assert.strictEqual(fs.existsSync(userDir), false, fs.existsSync(userDir) ? fs.readdirSync(userDir).join(', ') : '');
+        const count = await (await auditStorage.forUser(userId)).countEvents();
+        assert.strictEqual(count, 0, 'no audit entry left for the deleted account');
+        await auditStorage.deleteUser(userId);
+        await userLocalDirectory.deleteUserDirectory(userId);
+      });
+    }
+  });
   describe('[DL03] User - Create - Delete - Create - Login', function () {
     // Use cuid for unique username to avoid parallel test conflicts
     const usernamex = 'testdelx' + cuid.slug().toLowerCase();
