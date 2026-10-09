@@ -35,6 +35,29 @@
   refused). Without the entry nothing changes. Meant for tokens handed out publicly (shared
   links, public apps); the consent screen of the account web app shows the entry.
 
+### Login
+
+- `POST /<user>/auth/login` no longer sets the legacy signed `sso` cookie, and
+  `POST /<user>/auth/logout` no longer clears it. Nothing read it since `GET /auth/who-am-i` was
+  removed (it still answers `410`). The `auth.ssoCookieDomain` and `auth.ssoCookieSignSecret`
+  settings are ignored: a configuration that still sets them boots unchanged. Unrelated to the
+  OpenID Connect sign-in (`sso.*`).
+
+### Registration
+
+- Admin pre-registration (`POST /system/users/validate`) now consumes invitation tokens and refuses
+  reserved names. The token is consumed atomically once every check has passed (a refused request
+  leaves it usable), so it can no longer be used again, here or on `POST /users`; here an already
+  consumed token answers `400`, `invitationToken-invalid`. A reserved name answers `400`, `item-already-exists`, with
+  `data.username`, as a taken name does. A request without a `username` answers `400`,
+  `invalid-parameters-format`.
+
+### Streams
+
+- `streams.update`: an access holding `manage` on a stream, without a `*` grant, can rename that
+  stream and the streams below it; it got `403 forbidden`. Moving a stream (a `parentId` different
+  from the current one) still needs `manage` on the target parent, or on `*` to move it to the root.
+
 ## 2.0.0-rc.44 - 2026-10-08
 
 **Upgrade promptly: this release carries security fixes, and some change the MFA and API contract.**
