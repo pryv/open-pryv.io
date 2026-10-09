@@ -57,6 +57,12 @@ describe('[AUTH] auth', function () {
     await testData.cleanup();
   });
 
+  // Neither login nor logout may set (or clear) the legacy `sso` cookie.
+  function checkNoSsoCookie (res) {
+    const setCookies = res.headers['set-cookie'] || [];
+    assert.deepStrictEqual(setCookies.filter((c) => c.startsWith('sso=')), []);
+  }
+
   const user = structuredClone(testData.users[0]);
   const trustedOrigin = 'http://test.pryv.local';
   const authData = {
@@ -90,7 +96,7 @@ describe('[AUTH] auth', function () {
               assert.ok(res.body.token != null);
               assert.ok(res.body.apiEndpoint != null);
               assert.ok(res.body.apiEndpoint.includes(res.body.token));
-              checkNoUnwantedCookie(res);
+              checkNoSsoCookie(res);
               assert.ok(res.body.preferredLanguage != null);
               assert.strictEqual(res.body.preferredLanguage, user.language);
               stepDone();
@@ -317,7 +323,7 @@ describe('[AUTH] auth', function () {
           assert.ok(err == null);
           assert.strictEqual(res.statusCode, 200);
           assert.ok(res.body.token != null);
-          checkNoUnwantedCookie(res);
+          checkNoSsoCookie(res);
           assert.ok(res.body.preferredLanguage != null);
           assert.strictEqual(res.body.preferredLanguage, user.language);
           assert.ok(res.body._private == null);
@@ -432,16 +438,6 @@ describe('[AUTH] auth', function () {
       });
     });
 
-    function checkNoUnwantedCookie (res) {
-      if (!res.headers['set-cookie']) {
-        return;
-      }
-      assert.deepStrictEqual(res.headers['set-cookie']
-        .filter(function (cookieString) {
-          return cookieString.indexOf('sso=') !== 0; // we only want the SSO cookie
-        }), []);
-    }
-
     describe('[WPRA] When password rules are enabled', function () {
       const settings = _.merge(structuredClone(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
       const maxAge = helpers.passwordRules.settingsOverride.auth.passwordAgeMaxDays;
@@ -531,6 +527,7 @@ describe('[AUTH] auth', function () {
             .end(function (err, res) {
               assert.ok(err == null);
               assert.strictEqual(res.statusCode, 200);
+              checkNoSsoCookie(res);
               stepDone();
             });
         },

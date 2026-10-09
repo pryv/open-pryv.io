@@ -155,7 +155,7 @@ eventFiles:
 invitationTokens: null  # null = allow all, [] = block all, ['token1'] = check list
 
 # === MIXED: per-core secrets + platform-wide policy ===
-# - `filesReadTokenSecret`, `ssoCookieSignSecret`: PER-CORE secrets (must be identical across cores for cross-core validation).
+# - `filesReadTokenSecret`: PER-CORE secret (must be identical across cores for cross-core validation).
 # - `passwordComplexity*`, `passwordAge*`, `passwordPreventReuseHistoryLength`: PLATFORM-WIDE policy (documented as YAML-only in v2, targeted for post-v2 move to PlatformDB).
 # - `adminAccessKey`: BOOTSTRAP, operator-sync responsibility (see CONFIG-SEPARATION.md open question).
 auth:
@@ -168,8 +168,7 @@ auth:
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
 # Inert unless a provider is configured: no routes mount and no network calls
-# are made. NOTE: distinct from the legacy `auth.ssoCookie*` trusted-app cookie
-# keys — same three letters, unrelated feature.
+# are made.
 sso:
   enabled: false                 # master kill-switch (opt-in)
   landingPageURL: ''             # auth-app page that receives the one-time

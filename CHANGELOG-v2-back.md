@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## Login routes: legacy `sso` cookie removed
+
+- `components/api-server/src/routes/auth/login.ts` no longer mounts `cookie-parser` on
+  `/<user>/auth/*` nor sets / clears the `sso` cookie; the `cookie-parser` dependency is dropped
+  from the root `package.json`. The `/who-am-i` route keeps answering `410`. The login tests assert
+  that neither login nor logout sends an `sso=` `Set-Cookie` header (`[2CV5]`, `[9WHP]`, `[6W5M]`).
+
 ## Accesses: inherited feature restrictions generalised
 
 - `AccessLogic.inheritRestrictions` loops over `INHERITED_RESTRICTION_FEATURES`

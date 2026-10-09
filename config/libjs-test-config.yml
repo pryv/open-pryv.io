@@ -25,7 +25,6 @@ access:
 auth:
   adminAccessKey: 'libjs-test-admin-key'
   filesReadTokenSecret: 'libjs-test-files-secret'
-  ssoCookieSignSecret: 'libjs-test-sso-secret'
   # Email verification is on by default, so the servers this overlay configures
   # need the page URL; without it they would boot with a warning and the
   # feature off, which is harmless for these tests but noisy.

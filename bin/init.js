@@ -723,7 +723,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # Single-core / dnsLess only in this version. clientSecret is a per-core
 # # secret — keep it YAML-only. At each IdP register the callback served by
 # # THIS core's API host: <callbackBaseURL or public API URL>/auth/sso/<id>/
-# # callback (NOT the landingPageURL host). Unrelated to legacy auth.ssoCookie*.
+# # callback (NOT the landingPageURL host).
 # # sso:
 # #   enabled: true
 # #   landingPageURL: ${authUiUrl}/sso-signin
