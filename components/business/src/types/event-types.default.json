@@ -1,5 +1,5 @@
 {
-  "version": "1.1.3",
+  "version": "1.2.1",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -2720,6 +2720,46 @@
           "description": "The payload handed over on redemption — any JSON value. Present only while `status` is `pending`: it is removed as soon as the item is consumed or discarded, so a spent secret stops living in backups and exports."
         }
       }
+    },
+    "email/string": {
+      "description": "An email address as a plain string, e.g. the account email address. Whether ownership of the account address was proved is given by the accompanying `verification/email` event, returned when requested by type.",
+      "type": "string"
+    },
+    "verification/email": {
+      "description": "The verification state of the account email address. It accompanies the account email event (same stream, type `email/string`) and is returned when requested by type (`verification/email` or `verification/*`): a read of that stream without types returns the email event only. `verified` describes the address currently in that email event and is the answer to rely on; `method` and `verifiedAt` say how and when, and the list of methods may grow without changing what `verified` means.",
+      "type": "object",
+      "properties": {
+        "verified": {
+          "type": "boolean",
+          "description": "`true` only when ownership of the address was proved: the holder clicked a one-time link mailed to it (`email-link`), pasted a one-time code mailed to it at registration (`email-code`), or the platform operator marked it verified (`operator`). `false` in every other case, including an address given at registration without proof (`registration`) and an address set without proof by an earlier version of the platform (`legacy`)."
+        },
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "email-link",
+            "email-code",
+            "operator",
+            "registration",
+            "legacy",
+            null
+          ],
+          "description": "How the current state was reached. `email-link`, `email-code` and `operator` come with `verified: true`; `registration` (the founding address, not proved) and `legacy` (set without proof) come with `verified: false`. `null` when no method is recorded."
+        },
+        "verifiedAt": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "When ownership was proved, Unix timestamp (seconds). `null` when the address is not proved or the time is unknown."
+        }
+      },
+      "required": [
+        "verified"
+      ],
+      "additionalProperties": false
     }
   },
   "extras": {
@@ -4901,6 +4941,12 @@
     },
     "shared-secret": {
       "description": "A secret held on an account for one-time hand-off to a third party, addressed by a random key rather than embedded in a URL. Written and consumed exclusively by the server through the shared-secrets endpoints (open-pryv.io `components/shared-secrets`); the events API refuses to create, modify or move events of this class, so a client never authors one directly. Retained after use as a record of the hand-off, with the payload removed."
+    },
+    "email": {
+      "description": "To record an email address."
+    },
+    "verification": {
+      "description": "To record whether a piece of account data has been verified, and how. Verification events are read-only and derived by the server: they accompany the data they qualify and cannot be created or updated by apps."
     }
   },
   "sets": {
