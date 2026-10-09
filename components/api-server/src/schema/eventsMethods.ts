@@ -77,7 +77,8 @@ const __ex_update = {
       update: event(Action.UPDATE)
     }, {
       id: 'events.update',
-      required: ['id', 'update']
+      required: ['id', 'update'],
+      additionalProperties: false
     }),
     result: object({
       event: event(Action.READ)

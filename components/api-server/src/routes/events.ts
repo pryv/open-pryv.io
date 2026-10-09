@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
+import type { UploadedFile } from 'business/src/MethodContext.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 
 const require = createRequire(import.meta.url);
@@ -97,10 +98,11 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
   // Create an event.
   expressApp.post(Paths.Events + '/', setMethodId('events.create'), loadAccessMiddleware, hasFileUpload, function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = req.body;
+    // Uploads travel on the method context, never in the params; a `files`
+    // key in the body is not an upload and is dropped.
+    delete params.files;
     if (req.files) {
-      params.files = req.files;
-    } else {
-      delete params.files;
+      req.context!.uploadedFiles = req.files as UploadedFile[];
     }
     api.call(req.context, params, methodCallback(res, next, 201));
   });
@@ -115,14 +117,13 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
   });
   // Update an event
   expressApp.post(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, hasFileUpload, function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params: { id: string | undefined; update: Record<string, unknown>; files?: unknown } = {
+    const params: { id: string | undefined; update: Record<string, unknown> } = {
       id: req.params.id as string,
       update: {}
     };
+    // Uploads travel on the method context, never in the params.
     if (req.files) {
-      params.files = req.files;
-    } else {
-      delete params.files; // close possible hole
+      req.context!.uploadedFiles = req.files as UploadedFile[];
     }
     api.call(req.context, params, methodCallback(res, next, 200));
   });

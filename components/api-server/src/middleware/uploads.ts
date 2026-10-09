@@ -23,7 +23,10 @@ const MulterDiskStorage = integrity.attachments.isActive
 // Parse multipart file data into request.files:
 const storage = MulterDiskStorage({
   filename: null,
-  destination: null // operating system's default directory for temporary files is used.
+  // The operating system's default directory for temporary files is used, with
+  // a random 32-hex name per file. The events methods only open uploads found
+  // there (methods/helpers/uploadedFiles.ts): keep both in sync.
+  destination: null
 });
 
 interface MulterUploadFactory {

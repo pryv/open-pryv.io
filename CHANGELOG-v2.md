@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Security
+
+- Attachments are accepted only from multipart uploads on the REST routes (`POST /events`,
+  `POST /events/{id}`). `events.create` and `events.update` called through a batch call or
+  socket.io refuse a `files` parameter: `400`, `invalid-parameters-format`. The `events.update`
+  parameters accept only `id` and `update`.
+
 ## 2.0.0-rc.45 - 2026-10-09
 
 **Upgrade promptly: this release carries security fixes, and two changes can stop a core or a client.**

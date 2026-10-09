@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Attachments: upload descriptors on the method context
+
+- `routes/events.ts`: the multipart routes put multer's `req.files` on
+  `context.uploadedFiles` (typed on `MethodContext`) instead of the method params; the create
+  route still drops a `files` key from a JSON body.
+- `methods/events.ts`: `createEvent` / `updateEvent` delete `params.files`, read uploads from the
+  context only and clear them after use. Every file is opened before anything is stored through
+  `methods/helpers/uploadedFiles.ts`, which accepts only a regular file with a 32-hex name directly
+  inside the upload temp directory (`os.tmpdir()`, where `middleware/uploads.ts` has multer write),
+  opened without following symlinks; the stored `size` is the size on disk, the integrity is the
+  one the upload storage computed.
+- Schemas: `files` removed from the events.create params; the events.update params object is
+  closed (`additionalProperties: false`).
+- Tests `[EUPD]`, `[EUPC]`, `[SKUD]` (sockets.test.js), `[UPFC]` (unit).
+
 ## Login: a login losing the personal-access creation race drops its session
 
 - `methods/auth/login.ts`: when the personal access insert reports a duplicate (a concurrent login

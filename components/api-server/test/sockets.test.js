@@ -330,6 +330,60 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    describe('[SKUD] upload descriptors', function () {
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const path = require('node:path');
+      let sentinelDir, sentinelPath;
+      const sentinelContent = 'skud-sentinel-' + charlatan.Lorem.characters(12);
+
+      before(function () {
+        sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skud-'));
+        sentinelPath = path.join(sentinelDir, 'sentinel.txt');
+        fs.writeFileSync(sentinelPath, sentinelContent);
+      });
+      after(function () {
+        if (sentinelDir != null) fs.rmSync(sentinelDir, { recursive: true, force: true });
+      });
+
+      function descriptor () {
+        return { fieldname: 'file', originalname: 'sentinel.txt', mimetype: 'text/plain', path: sentinelPath, size: sentinelContent.length };
+      }
+      function emit (conn, method, params) {
+        return new Promise((resolve) => conn.emit(method, params, (err, result) => resolve({ err, result })));
+      }
+
+      it('[SKUD1] a socket.io events.create cannot carry upload descriptors', async function () {
+        ioCons.con = connect(namespace, { auth: token });
+        const marker = 'skud1-' + charlatan.Lorem.characters(10);
+        const streamId = testData.streams[0].id;
+        const { err, result } = await emit(ioCons.con, 'events.create',
+          { streamIds: [streamId], type: 'note/txt', content: marker, files: [descriptor()] });
+        assert.ok(err != null, 'expected an error, got ' + JSON.stringify(result));
+        assert.strictEqual(err.error.id, ErrorIds.InvalidParametersFormat);
+        const read = await emit(ioCons.con, 'events.get', { streams: [streamId], state: 'all', limit: 1000 });
+        assert.ok(read.err == null, JSON.stringify(read.err));
+        const stored = read.result.events.filter((e) => e.content === marker);
+        assert.strictEqual(stored.length, 0, 'no event may be created');
+      });
+
+      it('[SKUD2] a socket.io events.update cannot carry upload descriptors', async function () {
+        ioCons.con = connect(namespace, { auth: token });
+        const streamId = testData.streams[0].id;
+        const created = await emit(ioCons.con, 'events.create', { streamIds: [streamId], type: 'note/txt', content: 'skud2' });
+        assert.ok(created.err == null, JSON.stringify(created.err));
+        const eventId = created.result.event.id;
+        const { err } = await emit(ioCons.con, 'events.update',
+          { id: eventId, update: { description: 'skud2-updated' }, files: [descriptor()] });
+        assert.ok(err != null, 'expected an error');
+        assert.strictEqual(err.error.id, ErrorIds.InvalidParametersFormat);
+        const read = await emit(ioCons.con, 'events.getOne', { id: eventId });
+        assert.ok(read.err == null, JSON.stringify(read.err));
+        assert.strictEqual((read.result.event.attachments || []).length, 0, 'no attachment may be stored');
+        assert.notStrictEqual(read.result.event.description, 'skud2-updated', 'the update must not be applied');
+      });
+    });
+
     it('[744Z] must notify other sockets for the same user about events changes', () => {
       ioCons.con1 = connect(namespace, { auth: token }); // personal access
       ioCons.con2 = connect(namespace, { auth: testData.accesses[2].token }); // "read all" access

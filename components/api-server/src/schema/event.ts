@@ -55,9 +55,8 @@ export default function (action: string) {
     // `\:` escape z-schema used to tolerate. Plain `:` works in both worlds.
     // Every alternative is anchored at both ends: the id must be ONLY that.
     schema.properties.id.pattern = '(^:[a-z0-9-]+:[a-z0-9A-Z-]{1,256}$)|(^c[a-z0-9-]{24}$)|(^[a-z][a-z0-9]{23}$)';
-    // only allow "files" (raw file data) on create; no further checks as it's
-    // created internally
-    schema.properties.files = array(object({}));
+    // No `files` key: uploads are carried on the method context by the REST
+    // multipart route, never in the params.
   }
 
   // forbid attachments except on read and update (ignored for the latter)

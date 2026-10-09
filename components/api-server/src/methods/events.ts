@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
+import { openUploadedFile } from './helpers/uploadedFiles.ts';
 const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
@@ -15,7 +16,6 @@ const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const emailsStatus = require('business/src/emails/status.ts');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
-const fs = require('fs');
 const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
@@ -48,7 +48,7 @@ const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream.ts'
 const { integrity } = require('business');
 
 import type { MethodNext } from './_types.ts';
-import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
 import type { ReadStream } from 'node:fs';
 /** System-stream config entry from accountStreams.accountMap. */
 type SystemStreamConfig = { isEditable?: boolean; isIndexed?: boolean; isUnique?: boolean; [k: string]: unknown };
@@ -99,8 +99,8 @@ type EventsGetOneParams = { id: string; includeHistory?: boolean };
 type EventsGetOneResult = { event?: WireEvent; history?: WireEvent[] };
 type EventsCreateParams = Partial<WireEvent>;
 type EventsCreateResult = { event?: WireEvent };
-// `files` is the multer upload bag attached by the route layer; consumed
-// (and deleted) by updateEvent before the update reaches the mall.
+// `files` is refused by the params schema and deleted by updateEvent; uploads
+// travel on the method context (`uploadedFiles`), never in the params.
 type EventsUpdateParams = { id: string; update: Partial<WireEvent>; files?: unknown };
 type EventsUpdateResult = { event?: WireEvent };
 type EventsDeleteParams = { id: string };
@@ -805,27 +805,24 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     next();
   }
   async function createEvent (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
-    let newEvent: Record<string, unknown> | null = null;
-    // if event has attachments
-    const files = sanitizeRequestFiles(params.files);
+    // Upload descriptors come from the method context only (landed by the
+    // REST multipart route); a `files` key in the params is never used.
     delete params.files;
-    if (files != null && files.length > 0) {
-      // Pre-storage attachment descriptors consumed by mall.events.createWithAttachments.
-      type AttachmentItem = { fileName: string; type: string; size: number; integrity?: string; attachmentData: ReadStream };
-      const attachmentItems: AttachmentItem[] = [];
-      for (const file of files) {
-        attachmentItems.push({
-          fileName: file.originalname,
-          type: file.mimetype,
-          size: file.size,
-          integrity: file.integrity,
-          attachmentData: fs.createReadStream(file.path) // simulate full pass-thru of attachement until implemented
-        });
+    const files = takeUploadedFiles(context);
+    let newEvent: Record<string, unknown> | null = null;
+    if (files.length > 0) {
+      let attachmentItems: AttachmentItem[];
+      try {
+        attachmentItems = await openAttachmentItems(files);
+      } catch (err) {
+        if (err instanceof APIError) { return next(err); }
+        return next(errors.unexpectedError(err));
       }
       try {
         newEvent = await mall.events.createWithAttachments(context.user.id, context.newEvent, attachmentItems);
         newEvent!.attachments = setFileReadToken(context.access, (newEvent as { attachments?: Array<{ id: string; readToken?: string }> }).attachments);
       } catch (err) {
+        closeAttachmentItems(attachmentItems);
         if (err instanceof APIError) { return next(err); }
         return next(errors.unexpectedError(err));
       }
@@ -963,24 +960,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   async function updateEvent (context: MethodContext, params: EventsUpdateParams, result: EventsUpdateResult, next: MethodNext) {
+    // Upload descriptors come from the method context only (landed by the
+    // REST multipart route); a `files` key in the params is never used.
+    delete params.files;
+    const files = takeUploadedFiles(context);
+    let attachmentItems: AttachmentItem[] = [];
     try {
-      // deals with attachments if any
-      const files = sanitizeRequestFiles(params.files);
-      delete params.files;
       // Invariant: applyPrerequisitesForUpdate landed the merged event.
       const newEvent = context.newEvent!;
-      if (files != null && files.length > 0) {
-        let eventWithUpdatedAttachments: Record<string, unknown> | null = null;
-        for (const file of files) {
-          const attachmentItem = {
-            fileName: file.originalname,
-            type: file.mimetype,
-            size: file.size,
-            integrity: file.integrity,
-            attachmentData: fs.createReadStream(file.path) // simulate full pass-thru of attachement until implemented
-          };
+      if (files.length > 0) {
+        attachmentItems = await openAttachmentItems(files);
+        for (const attachmentItem of attachmentItems) {
           // the engine writes the attachments column; the merge below reads it back
-          eventWithUpdatedAttachments = await mall.events.addAttachment(context.user.id, newEvent.id!, attachmentItem);
+          await mall.events.addAttachment(context.user.id, newEvent.id!, attachmentItem);
         }
       }
       // -- write the update onto the event as stored now (a server stamp
@@ -995,6 +987,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       result.event = updatedEvent;
       next();
     } catch (e) {
+      closeAttachmentItems(attachmentItems);
       next(e);
     }
   }
@@ -1309,6 +1302,50 @@ function sanitizeRequestFiles (files: any) {
   });
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Pre-storage attachment descriptor consumed by mall.events.createWithAttachments / addAttachment. */
+type AttachmentItem = { fileName: string; type: string; size: number; integrity?: string; attachmentData: ReadStream };
+
+/**
+ * Returns the upload descriptors landed on the context by the REST multipart
+ * route (an empty array when none) and clears them, so a context reused for
+ * further calls cannot hand them on.
+ */
+function takeUploadedFiles (context: BaseMethodContext): UploadedFile[] {
+  const files = sanitizeRequestFiles(context.uploadedFiles);
+  delete context.uploadedFiles;
+  return Array.isArray(files) ? files : [];
+}
+
+/**
+ * Opens every uploaded file before anything is stored. The size is the size on
+ * disk; the integrity is the one the upload storage computed while writing.
+ * A file that is not an upload written by the parser refuses the whole call.
+ */
+async function openAttachmentItems (files: UploadedFile[]): Promise<AttachmentItem[]> {
+  const items: AttachmentItem[] = [];
+  try {
+    for (const file of files) {
+      const { stream, size } = await openUploadedFile(file);
+      items.push({
+        fileName: file.originalname,
+        type: file.mimetype,
+        size,
+        integrity: file.integrity,
+        attachmentData: stream
+      });
+    }
+  } catch (err) {
+    closeAttachmentItems(items);
+    throw err;
+  }
+  return items;
+}
+
+/** Releases the file handles of attachment items a failed call did not consume. */
+function closeAttachmentItems (items: AttachmentItem[]) {
+  for (const item of items) item.attachmentData.destroy();
+}
 
 /** `clientData` key-map update: a null value removes the key, others are set. */
 function mergeClientDataMap (clientData: Record<string, unknown> | null | undefined, update: Record<string, unknown>): Record<string, unknown> {

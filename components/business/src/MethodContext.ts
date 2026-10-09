@@ -68,6 +68,10 @@ class MethodContext {
   /** Raw Authorization header value, landed by the auth.delete route and
    *  checked against auth.adminAccessKey by the deletion chain. */
   authorizationHeader?: string;
+  /** Files of a multipart upload, as written by the upload parser. Landed only
+   *  by the REST events.create / events.update routes and consumed (then
+   *  cleared) by those methods. Method params never carry upload descriptors. */
+  uploadedFiles?: UploadedFile[];
   _tracing: unknown;
   /**
    * Used in events.get
@@ -607,7 +611,15 @@ class MethodContext {
 }
 export default MethodContext;
 export { MethodContext };
-export type { CustomAuthFunction, CustomAuthFunctionCallback, StorageLike };
+export type { CustomAuthFunction, CustomAuthFunctionCallback, StorageLike, UploadedFile };
+/** One multipart upload as described by the upload parser (multer). */
+type UploadedFile = {
+  path: string;
+  originalname: string;
+  mimetype: string;
+  size?: number;
+  integrity?: string;
+};
 type CustomAuthFunctionCallback = (err: Error | null | undefined) => void;
 type CustomAuthFunction = (ctx: MethodContext, cb: CustomAuthFunctionCallback) => void;
 type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
