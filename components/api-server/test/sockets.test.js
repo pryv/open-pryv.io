@@ -303,6 +303,73 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    describe('[SRA] a reply argument that is not a function', function () {
+      // A client may put any JSON value where the acknowledgement function
+      // would be. The server must answer the call (or drop the answer) without
+      // the process going down, and the connection must keep working.
+      const NON_FUNCTION_VALUES = [42, null, {}, 'x'];
+
+      function connected (con) {
+        if (con.connected) return Promise.resolve();
+        return new Promise((resolve, reject) => {
+          con.once('connect', resolve);
+          con.once('connect_error', (err) => reject(err || new Error('Connection failed.')));
+        });
+      }
+
+      // Emits a well-formed call and resolves with its answer; rejects when the
+      // connection drops or no answer comes within the delay.
+      function answered (con, method, params) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            con.off('disconnect', onDisconnect);
+            reject(new Error(method + ' got no answer'));
+          }, 5000);
+          function onDisconnect (reason) {
+            clearTimeout(timer);
+            reject(new Error('connection dropped before ' + method + ' answered: ' + reason));
+          }
+          con.once('disconnect', onDisconnect);
+          con.emit(method, params, function (err, res) {
+            clearTimeout(timer);
+            con.off('disconnect', onDisconnect);
+            resolve({ err, res });
+          });
+        });
+      }
+
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+      async function checkServerStaysUp (method, params) {
+        const con = connect(namespace, { auth: token });
+        await connected(con);
+        for (const value of NON_FUNCTION_VALUES) {
+          con.emit(method, params, value);
+          await settle();
+          const { err, res } = await answered(con, 'events.get', { limit: 1 });
+          assert.ok(err == null, 'well-formed call after ' + method + ' with ' + JSON.stringify(value) + ': ' + JSON.stringify(err));
+          assert.ok(Array.isArray(res.events));
+          assert.strictEqual(server.crashed(), false, 'server process after ' + method + ' with ' + JSON.stringify(value));
+        }
+      }
+
+      it('[SRA1] an unknown method is handled and the next call answers', async function () {
+        await checkServerStaysUp('badTarget.get', {});
+      });
+
+      it('[SRA2] a successful method call is handled and the next call answers', async function () {
+        await checkServerStaysUp('events.get', { limit: 1 });
+      });
+
+      it('[SRA3] subscribe is handled and the next call answers', async function () {
+        await checkServerStaysUp('subscribe', { key: 'sra', kind: 'events', query: { streams: [testData.streams[0].id] } });
+      });
+
+      it('[SRA4] getSubscriptions is handled and the next call answers', async function () {
+        await checkServerStaysUp('getSubscriptions', null);
+      });
+    });
+
     it('[ACA3] must fail if the called target does not exist', function (done) {
       ioCons.con = connect(namespace, { auth: token });
       ioCons.con.emit('badTarget.get', {}, function (err) {

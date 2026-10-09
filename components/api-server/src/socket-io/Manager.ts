@@ -195,7 +195,11 @@ class NamespaceContext {
     const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname, this.storageLayer);
     // Permanently store the connection in this namespace.
     this.storeConnection(connection);
-    socket.once('disconnect', () => this.onDisconnect(connection));
+    socket.once('disconnect', () => {
+      this.onDisconnect(connection).catch((err: unknown) => {
+        this.logger.error('socket.io: disconnect handling failed', err);
+      });
+    });
     connection.init();
   }
 
@@ -442,22 +446,30 @@ class Connection {
   }
 
   init () {
-    this.socket.on('*', (callData: unknown, callback: unknown) => this.onMethodCall(callData as CallData, callback as SocketCallback));
+    // socketio-wildcard hands the '*' listener the packet only; the reply
+    // function, when the client asked for one, is the packet's last element.
+    // The listener's promise is caught here: a failure while handling one
+    // message costs that client its answer, never the process.
+    this.socket.on('*', (callData: unknown) => {
+      this.onMethodCall(callData as CallData).catch((err: unknown) => {
+        this.logger.error('socket.io: handling a call failed', err);
+      });
+    });
   }
 
   // ------------------------------------------------------------ event handlers
   // Called when the socket wants to call a Pryv IO method.
   //
-  async onMethodCall (callData: CallData, callback: SocketCallback) {
+  async onMethodCall (callData: CallData) {
     if (!callData || !callData.data || callData.data.length !== 3) {
-      if (callback) {
-        callback(new Error('invalid data'));
-      }
       return;
     }
     const apiMethod = callData.data[0];
     const params = callData.data[1];
-    callback = callback || callData.data[2];
+    // The third element comes from the client: it is a function only when the
+    // client requested an acknowledgement; any other value gets no reply.
+    const ack: unknown = callData.data[2];
+    const callback: SocketCallback = typeof ack === 'function' ? ack as SocketCallback : noReply;
     // Scoped-subscription protocol messages are handled inline, not dispatched
     // to the API (the wildcard '*' handler catches every emitted event).
     if (SUBSCRIPTION_OPS.has(apiMethod)) {
@@ -573,6 +585,8 @@ type Api = {
 };
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
 type SocketCallback = (err: Error | null | undefined, result?: unknown) => void;
-type CallData = { data: [string, unknown, SocketCallback?] };
+type CallData = { data: [string, unknown, unknown?] };
+/** Reply used when the client sent no acknowledgement function. */
+function noReply (): void {}
 type PubsubPayload = { type?: string; [key: string]: unknown } | string | null;
 type PubsubRemover = () => void;

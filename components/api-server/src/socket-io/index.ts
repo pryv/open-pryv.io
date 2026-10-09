@@ -40,6 +40,7 @@ type SocketLike = {
     address?: string;
   };
   methodContext?: unknown;
+  disconnect?: (close?: boolean) => unknown;
 };
 // Initializes the SocketIO subsystem.
 //
@@ -84,9 +85,15 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
   revokeSweep.unref(); // must not keep the worker alive
   // dynamicNamspaces allow to "auto" create namespaces
   // when connected pass the socket to Manager
-  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket: SocketLike) => {
-    const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
-    nameSpaceContext.onConnect(socket);
+  const dynamicNamespace = io.of(/^\/.+$/).on('connect', (socket: SocketLike) => {
+    (async () => {
+      const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
+      nameSpaceContext.onConnect(socket);
+    })().catch((err: unknown) => {
+      logger.error('socket.io: connection setup failed', err);
+      // A socket without handlers would stay open answering nothing.
+      try { socket.disconnect?.(true); } catch { /* already gone */ }
+    });
   });
     // add a middelware for authentication
     // add middelware for authentication
