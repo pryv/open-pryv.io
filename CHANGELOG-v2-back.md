@@ -1,5 +1,28 @@
 # Changelog - Internal (no API impact)
 
+## events.get: exclusions expanded with trashed streams
+
+- `methods/helpers/streamsQueryUtils.ts`: the `not` part of a stream query is expanded with
+  `{ includeTrashed: true }` (new optional argument of the expand callback, forwarded by
+  `expandSet`); the `any` / `all` expansions keep the query's state. `eventsGetUtils.ts`
+  `expandStreamInContext` honours the option, otherwise derives it from `state` as before. Before,
+  a trashed excluded stream expanded to nothing with the default state and its NOT clause was
+  dropped.
+- Tests: `components/api-server/test/permissions-forcedStreams.test.js` `[TRX1]`..`[TRX5]`
+  (`none` on a trashed stream and on a stream with a trashed descendant, `create-only` on a trashed
+  stream; default state, `state=all`, `state=trashed`, with and without `streams`).
+
+## streams.get: closed parameter schema, store derived from the stream id
+
+- `schema/streamsMethods.ts`: `streams.get` params get `additionalProperties: false` and declare
+  `auth` (query-string token). `methods/streams.ts`: `checkAuthorization`, `findAccessibleStreams`
+  and `includeDeletionsIfRequested` read `parentId` only and always derive the store from its
+  prefix; the `params.id`, `params.storeId` and `params.includeTrashed` branches are removed (an
+  array `id` threw a 500).
+- Tests: `components/api-server/test/streams.test.js` `[SGU1]`..`[SGU6]`; `streams-patternc.test.js`
+  `[PG5F]` and `components/audit/test/acceptance/audit-store.test.js` `[7SGO]` moved off the `id`
+  parameter.
+
 ## events.get: internal plugin subtrees excluded from every local query
 
 - `methods/helpers/eventsGetUtils.ts` `streamQueryAddForcedAndForbiddenStreams` adds the

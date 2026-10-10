@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Security
+
+- `events.get`: an access's excluded streams (`none` / `create-only` permissions) stay excluded when
+  they, or one of their descendants, are trashed. An event filed in both a readable stream and a
+  trashed excluded stream is no longer returned, whatever the `state` parameter.
+- `streams.get` refuses undeclared parameters (`400`, `invalid-parameters-format`). The accepted
+  parameters are the documented `parentId`, `state` and `includeDeletionsSince` (plus `auth`, the
+  access token in the query string). The undocumented `id`, `storeId` and `includeTrashed` are no
+  longer accepted: use `parentId` and `state: 'all'`.
+
 ## 2.0.0-rc.46 - 2026-10-10
 
 **Security release: upgrade promptly.** Before restarting a dns-active core, check its stored DNS
