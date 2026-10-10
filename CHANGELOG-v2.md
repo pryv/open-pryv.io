@@ -8,6 +8,10 @@
   database leader: the erasure read the platform's access index one row per request, and a
   follower forwards each read to the leader (about 4 minutes for 2000 rows across regions). It now
   reads the index in one query; the result is unchanged.
+- dns-active core with the default `core.id: single`: requests to the core's own host
+  (`https://single.<domain>/`, the URL the register gives for its users) were read as a username,
+  so root routes such as account deletion answered 404 there. The core id is now always left alone
+  by the username-in-host rewrite.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

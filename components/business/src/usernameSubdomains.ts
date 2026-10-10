@@ -26,8 +26,10 @@ function usernameInHost (config: ConfigReader): boolean {
  * (reg, access, mfa), operator `dns.staticEntries` names, and hosted-site names.
  */
 function ignoredUsernameSubdomains (config: ConfigReader): string[] {
+  // The default id `single` included: a DNS-style core without an explicit id
+  // is `single.<domain>` (a reserved word, so no account owns that host).
   const coreId = config.get('core:id') as string | undefined;
-  const ignored: string[] = coreId && coreId !== 'single' ? [coreId] : [];
+  const ignored: string[] = coreId ? [coreId] : [];
   for (const name of ['reg', 'access', 'mfa']) {
     if (!ignored.includes(name)) ignored.push(name);
   }
