@@ -1,6 +1,15 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.47 - 2026-10-10
+
+**Security release: upgrade promptly.** It contains 2.0.0-rc.46 (read its notes if you have not
+deployed it). Client-visible refusals: the credential methods (`auth.login`, `mfa.recover`, ...)
+answer `400` inside a batch call or over socket.io, a batch holds at most 1000 calls, `events.get`
+refuses a `limit` / `skip` outside 0..100000, and `streams.get` refuses undeclared parameters.
+Operator steps: new per-address limits count the client address through `http.trustedProxies`
+only (behind a reverse proxy, list it there); once after the upgrade, remove the 32-hex upload
+temp files earlier versions left in the OS temp dir; `bin/emails-unproved-report.js` (read-only)
+lists the pending email claims that still hold an address from before this release.
 
 ### Security
 
