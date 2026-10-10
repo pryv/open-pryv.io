@@ -29,6 +29,7 @@ const storage = require('../src/storage.ts');
 function fakePlatform () {
   const stateStore = new Map(); // access-state (with ttl)
   const kvStore = new Map(); // generic kv (indefinite)
+  const kvReads = { get: 0, list: 0 }; // per-row gets are leader round trips on a follower
   return {
     async setAccessState (key, value, expiresAt) {
       stateStore.set(key, { value, expiresAt });
@@ -50,7 +51,7 @@ function fakePlatform () {
       return e;
     },
     async setPlatformKv (key, value) { kvStore.set(key, value); },
-    async getPlatformKv (key) { return kvStore.has(key) ? kvStore.get(key) : null; },
+    async getPlatformKv (key) { kvReads.get++; return kvStore.has(key) ? kvStore.get(key) : null; },
     async deletePlatformKv (key) { kvStore.delete(key); },
     async listPlatformKvKeys (prefix) {
       // Engines keep both families in one table, access-state rows under an
@@ -60,6 +61,12 @@ function fakePlatform () {
       const all = [...kvStore.keys(), ...Array.from(stateStore.keys()).map((k) => 'access-state/' + k)];
       return all.filter((k) => k.startsWith(prefix));
     },
+    async listPlatformKvEntries (prefix) {
+      if (prefix.includes('_') || prefix.includes('%')) throw new Error('listPlatformKvEntries: wildcard in prefix');
+      kvReads.list++;
+      return [...kvStore.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value }));
+    },
+    _kvReads: kvReads,
     _internalStateStore: stateStore,
     _internalKvStore: kvStore,
   };
@@ -453,6 +460,30 @@ describe('[OAUTH-STORE] storage layer', () => {
       assert.equal((await platform.listPlatformKvKeys('dpop-jti/')).length, 0);
       assert.equal((await platform.listPlatformKvKeys('dpop-jkt-revoked/')).length, 1);
       assert.equal((await storage.listRevokedDpopKeys(platform)).length, 1);
+    });
+
+    it('[RJKT01i] every tombstone / inventory scan reads its prefix in one query, never one read per row', async () => {
+      const platform = fakePlatform();
+      const jkt = (i) => String(i).padStart(43, 'k');
+      for (let i = 0; i < 200; i++) {
+        platform._internalKvStore.set('dpop-jkt-revoked/' + jkt(i), JSON.stringify({ revokedAt: Date.now() }));
+        platform._internalKvStore.set('oauth-client-revoked/c' + i, JSON.stringify({ revokedAt: Date.now() }));
+        platform._internalKvStore.set('dpop-jkt-seen/app' + i + '/' + jkt(i), JSON.stringify({ firstSeenAt: 1, lastSeenAt: Date.now() }));
+      }
+      const scans = [
+        ['listRevokedDpopKeys', () => storage.listRevokedDpopKeys(platform), (r) => r.length === 200],
+        ['pruneRevokedDpopKeys', () => storage.pruneRevokedDpopKeys(platform, 60_000), (r) => r === 0],
+        ['listRevokedClients', () => storage.listRevokedClients(platform), (r) => r.length === 200],
+        ['pruneRevokedClients', () => storage.pruneRevokedClients(platform, 60_000), (r) => r === 0],
+        ['listDpopKeysSeen', () => storage.listDpopKeysSeen(platform), (r) => r.length === 200],
+        ['pruneDpopKeysSeen', () => storage.pruneDpopKeysSeen(platform, 60_000), (r) => r === 0]
+      ];
+      for (const [name, scan, ok] of scans) {
+        platform._kvReads.get = 0;
+        platform._kvReads.list = 0;
+        assert.ok(ok(await scan()), name + ' result');
+        assert.deepEqual(platform._kvReads, { get: 0, list: 1 }, name + ': one read');
+      }
     });
   });
 

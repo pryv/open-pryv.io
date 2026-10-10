@@ -19,6 +19,7 @@ function fakePlatform () {
     async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
     async deletePlatformKv (k) { kv.delete(k); },
     async listPlatformKvKeys (p) { return Array.from(kv.keys()).filter((k) => k.startsWith(p)); },
+    async listPlatformKvEntries (p) { return Array.from(kv.entries()).filter(([k]) => k.startsWith(p)).map(([key, value]) => ({ key, value })); },
     _kv: kv,
   };
 }
@@ -91,8 +92,8 @@ describe('[OAUTH-CLIENT-REVOKE] operator client revoke', () => {
     it('[OCR11] serves from cache within the TTL (no re-read) then refreshes after it', async () => {
       const p = fakePlatform();
       let reads = 0;
-      const orig = p.listPlatformKvKeys.bind(p);
-      p.listPlatformKvKeys = async (pre) => { reads++; return orig(pre); };
+      const orig = p.listPlatformKvEntries.bind(p);
+      p.listPlatformKvEntries = async (pre) => { reads++; return orig(pre); };
 
       await cache.getRevokedAt(p, 'x', 30, 1000); // cold load (read #1)
       await storage.deleteClient(p, 'x'); // revoke AFTER the load
@@ -108,6 +109,7 @@ describe('[OAUTH-CLIENT-REVOKE] operator client revoke', () => {
       const p = fakePlatform();
       await storage.deleteClient(p, 'known');
       await cache.getRevokedAt(p, 'known', 30, 1000); // warm: {known}
+      p.listPlatformKvEntries = async () => { throw new Error('platform down'); };
       p.listPlatformKvKeys = async () => { throw new Error('platform down'); };
       // Past TTL → refresh throws internally, but the call resolves (fail-open).
       assert.ok((await cache.getRevokedAt(p, 'known', 30, 40000)) > 0);

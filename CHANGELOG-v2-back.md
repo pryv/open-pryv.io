@@ -14,6 +14,13 @@
   node-local state).
 - Tests: `components/platform/test/unit/accessIndex.test.js` `[ACCIDX-11]` (1000 rows, one read for
   delete and tombstone), conformance `[PLKV10]` / `[PLKV11]` on both engines.
+- `oauth2/src/storage.ts`: `listRevokedClients` and `listRevokedDpopKeys` (loaded by the per-core
+  revoked-clients and revoked-keys caches on every refresh), `pruneRevokedClients`, `pruneRevokedDpopKeys`,
+  `listDpopKeysSeen` and `pruneDpopKeysSeen` read their prefix with `listPlatformKvEntries`
+  instead of one `getPlatformKv` per row; parsing and the fail-closed handling of corrupt DPoP
+  tombstones are unchanged. `bin/platform-pii-migrate.js` reads `access-index/` the same way and
+  skips `null` rows. Test `components/oauth2/test/storage.test.js` `[RJKT01i]` (one read per
+  scan); the oauth2 test fakes implement `listPlatformKvEntries`.
 
 ## events.get: internal plugin subtrees excluded from every local query
 

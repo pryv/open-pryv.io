@@ -48,6 +48,7 @@ function fakePlatform (clients = {}) {
     async getPlatformKv (k) { return store.has(k) ? store.get(k) : null; },
     async deletePlatformKv (k) { store.delete(k); },
     async listPlatformKvKeys (p) { return Array.from(store.keys()).filter((k) => k.startsWith(p)); },
+    async listPlatformKvEntries (p) { return Array.from(store.entries()).filter(([k]) => k.startsWith(p)).map(([key, value]) => ({ key, value })); },
   };
 }
 
