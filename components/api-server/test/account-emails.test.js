@@ -21,7 +21,8 @@ const require = createRequire(import.meta.url);
 
 const container = require('business/src/emails/container.ts');
 const operations = require('business/src/emails/operations.ts');
-const { getUsersRepository } = require('business/src/users/index.ts');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
+const { ErrorIds } = require('errors/src/index.ts');
 const { getPlatform } = require('platform');
 const errors = require('errors').factory;
 
@@ -398,8 +399,62 @@ describe('[EMLS] account emails (multiple)', function () {
         assert.strictEqual(await rowOwner(loserEmail), null, 'the failed attempt releases its own address');
         assert.strictEqual(await rowOwner(winnerEmail), await usernameToken(username), 'the winner keeps its address');
         assert.notStrictEqual(await platform.getUserCore(username), null, 'the winner keeps its name claim');
+        assert.strictEqual(await platform.getUserIndexedField(username, 'language'), 'en', 'the winner keeps its indexed fields');
       } finally {
         await usersRepository.deleteOne(await usersRepository.getUserIdForUsername(username), username);
+      }
+    });
+
+    async function registerWinner (email) {
+      const username = 'reg' + cuid().toLowerCase().slice(1, 12);
+      const regRes = await coreRequest.post('/users').send({
+        appId: 'test-emails',
+        username,
+        password: 'testpassw0rd',
+        email,
+        insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+        language: 'en'
+      });
+      assert.strictEqual(regRes.status, 201, JSON.stringify(regRes.body));
+      return username;
+    }
+
+    it('[EML85] a failed double submit of the same registration keeps the winner\'s own address', async function () {
+      const email = cuid() + '@rb-double.example.com';
+      const username = await registerWinner(email);
+      const usersRepository = await getUsersRepository();
+      try {
+        await usersRepository.compensateFailedInsert({ id: cuid(), username, email, language: 'en' });
+        assert.strictEqual(await rowOwner(email), await usernameToken(username), 'the winner keeps its address');
+      } finally {
+        await usersRepository.deleteOne(await usersRepository.getUserIdForUsername(username), username);
+      }
+    });
+
+    it('[EML86] a user insert refused because its name is taken gives back only its own reserved address', async function () {
+      const winnerEmail = cuid() + '@rb-taken-winner.example.com';
+      const loserEmail = cuid() + '@rb-taken-loser.example.com';
+      const username = await registerWinner(winnerEmail);
+      const usersRepository = await getUsersRepository();
+      const platform = await getPlatform();
+      const winnerId = await usersRepository.getUserIdForUsername(username);
+      try {
+        assert.strictEqual(await platform.reserveUserUniqueValue(username, 'email', loserEmail), true);
+        const loser = new User({ id: cuid(), username, password: 'testpassw0rd', email: loserEmail, insurancenumber: '12345', language: 'en' });
+        await assert.rejects(() => usersRepository.insertOne(loser), (err) => err.id === ErrorIds.ItemAlreadyExists);
+        assert.strictEqual(await rowOwner(loserEmail), null, 'the refused attempt gives its address back');
+        assert.strictEqual(await rowOwner(winnerEmail), await usernameToken(username), 'the winner keeps its address');
+
+        // Same refusal for an insert that carries the winner's own id and values: nothing is undone.
+        const replay = new User({ id: winnerId, username, password: 'testpassw0rd', email: winnerEmail, insurancenumber: '12345', language: 'en' });
+        await assert.rejects(() => usersRepository.insertOne(replay), (err) => err.id === ErrorIds.ItemAlreadyExists);
+        assert.strictEqual(await usersRepository.getUserIdForUsername(username), winnerId, 'the account is left intact');
+        assert.strictEqual(await rowOwner(winnerEmail), await usernameToken(username));
+        const login = await coreRequest.post('/' + username + '/auth/login').set('Origin', 'http://test.pryv.local')
+          .send({ username, password: 'testpassw0rd', appId: 'pryv-test' });
+        assert.strictEqual(login.status, 200, JSON.stringify(login.body));
+      } finally {
+        await usersRepository.deleteOne(winnerId, username);
       }
     });
 

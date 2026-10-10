@@ -68,7 +68,7 @@ function warnStoreUnavailable (err: unknown): void {
 function getStore (): ThrottleStore {
   const db = storages.platformDB as ThrottleStore | undefined;
   if (db == null || typeof db.setAccessStateIfAbsent !== 'function') {
-    throw errors.unexpectedError(new Error('password address budget: PlatformDB is not initialised'));
+    throw new Error('PlatformDB is not initialised');
   }
   return db;
 }

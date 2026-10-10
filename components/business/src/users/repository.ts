@@ -401,6 +401,14 @@ class UsersRepository {
       const eventualPlatformUniquenessErrors = await this.platform.checkUpdateOperationUniqueness(user.username, operations);
       const uniquenessError = errors.itemAlreadyExists('user', eventualPlatformUniquenessErrors);
       uniquenessError.data.username = user.username;
+      // Registration reserved this attempt's values before the name was
+      // found taken here: give them back. Nothing else was written, so
+      // nothing else is undone (the winner's rows are kept).
+      try {
+        await this.releaseAttemptUniqueValues(user, await this.usersIndex.getUserId(user.username));
+      } catch (cleanupErr) {
+        logger.warn(`user creation refused: unique values cleanup failed for "${user.username}"`, cleanupErr);
+      }
       throw uniquenessError;
     }
     // A user id is never shared between accounts (not every engine enforces it
@@ -498,6 +506,22 @@ class UsersRepository {
   }
 
   /**
+   * @private — release the unique values a failed registration attempt
+   * reserved under its name, while another account (`winnerId`) holds that
+   * name: rows under the name's token are then partly the winner's, so a
+   * value the winner holds itself (a double-submitted registration) is kept.
+   * With no winner, every value of the attempt is released.
+   */
+  async releaseAttemptUniqueValues (user: UserData, winnerId: string | null | undefined) {
+    for (const field of accountStreams.uniqueFieldNames) {
+      const value = (user as unknown as Record<string, unknown>)[field];
+      if (value == null) continue;
+      if (winnerId != null && String(await this.getOnePropertyValue(winnerId, field)) === String(value)) continue;
+      await this.platform.releaseUserUniqueValue(user.username, field, String(value));
+    }
+  }
+
+  /**
    * @private — best-effort removal of everything insertOne may have
    * persisted before failing (mirrors deleteOne's order). Cleanup errors
    * are logged, not thrown: the original failure must surface.
@@ -518,15 +542,12 @@ class UsersRepository {
       // When a concurrent registration of the same name reached the local
       // index (single-core recycles names, so both can get here), the rows
       // under this name's token are partly the winner's: release only the
-      // unique values this attempt carried, and leave the indexed fields.
+      // unique values this attempt carried that the winner does not hold
+      // itself (a double-submitted registration carries the winner's own
+      // values), and leave the indexed fields.
       ['platform', async () => {
-        if (await this.usersIndex.usernameExists(user.username)) {
-          for (const field of accountStreams.uniqueFieldNames) {
-            const value = (user as unknown as Record<string, unknown>)[field];
-            if (value != null) await this.platform.releaseUserUniqueValue(user.username, field, String(value));
-          }
-          return;
-        }
+        const winnerId = await this.usersIndex.getUserId(user.username);
+        if (winnerId != null) return await this.releaseAttemptUniqueValues(user, winnerId);
         await this.platform.deleteUser(user.username, user);
       }],
       // Free the name→core claim validateRegistration made for this name, but

@@ -48,8 +48,10 @@
   `auth.passwordAttempts.freeFailures` failures (default 5) within `windowSeconds` (900), the next
   attempt answers `429` `too-many-attempts` with `Retry-After` and `data.retryAfterSeconds`,
   without checking the password, for `baseSeconds` (2) doubling up to `maxSeconds` (300; `0`
-  disables). A success clears the tally. A wrong step-up password no longer counts on the
-  second-factor tally (`services.mfa.attempts`), a wrong step-up code still does.
+  disables). A success clears the tally. The tally is server-managed, like the MFA one:
+  `profile.update` on the private profile refuses the `passwordThrottle` key and `profile.get`
+  never shows it. A wrong step-up password no longer counts on the second-factor tally
+  (`services.mfa.attempts`), a wrong step-up code still does.
 - **Visible to clients:** the same failed passwords also count per client address (an IPv4
   address, or an IPv6 /64), whatever the account and across all cores: past
   `auth.passwordAttempts.perIp.maxFailures` failures (new setting, default 30) within a window of
