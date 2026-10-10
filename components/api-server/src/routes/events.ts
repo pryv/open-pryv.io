@@ -15,6 +15,7 @@ const methodCallback = require('./methodCallback.ts').default;
 
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
+const APIError = require('errors').APIError;
 const Paths = require('./Paths.ts');
 const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 const middleware = require('middleware');
@@ -92,7 +93,9 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
         context.readTokenAuthenticated = true;
         next();
       })
-      .catch((err: Error) => next(errors.unexpectedError(err)));
+      // An unknown or expired access is the client's error (its own status),
+      // not an unexpected one.
+      .catch((err: Error) => next(err instanceof APIError ? err : errors.unexpectedError(err)));
     // The promise chain above calls next on all branches.
   }
   // Create an event.

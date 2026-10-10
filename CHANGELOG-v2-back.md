@@ -1,5 +1,44 @@
 # Changelog - Internal (no API impact)
 
+## Access permissions loaded once, published in one step
+
+- `business/src/accesses/AccessLogic.ts`: `loadPermissions()` memoizes one load per object
+  (`_permissionsLoad`, reset only when the load fails) and `_buildPermissionMaps()` fills the
+  feature, stream and forced-stream maps in locals, then assigns them together with a fresh
+  `_streamPermissionLevelCache`. Before, every expansion of a cached access reset the shared maps
+  to `{}` and refilled them across awaits; a reader resumed meanwhile saw default-allow features
+  and missing carve-outs, and a stream level computed then stayed memoized on the shared object.
+  Concurrent loads also duplicated the forced-stream entries. `MethodContext.retrieveExpandedAccess`
+  keeps calling it, now a no-op after the first load.
+- Tests: new `components/business/test/unit/accesses-permissionsLoad.test.js` `[APLD1]`..`[APLD3]`;
+  new `components/api-server/test/access-permissions-batched-socket.test.js` `[APBS1]`, `[APBS2]`
+  (raw Engine.IO polling payloads batching a namespace handshake with calls; `[APBS2]` failed
+  before on the SQLite engine, events were created in read-only streams).
+
+## Access cache keyed by Map; reserved token names
+
+- `cache/src/index.ts`: a user's cached accesses are kept in `Map`s (`tokens`, `ids`) instead of
+  plain objects, so a token or access id named like an `Object.prototype` member is an ordinary
+  key (no inherited hit, no prototype swap on insert).
+- `api-server/src/methods/helpers/string.ts` `isReservedToken()` (reserved ids, `prototype` and
+  the own property names of `Object.prototype`), used by `accesses.create` for a chosen token.
+- `api-server/src/routes/events.ts` `retrieveAccessFromReadToken`: an `APIError` from the access
+  lookup is passed on as is instead of being wrapped as an unexpected error.
+- Tests: new `components/cache/test/unit/access-logic-keys.test.js` `[CAKY1]`, `[CAKY2]`; new
+  `components/api-server/test/access-token-reserved-names.test.js` `[ATRN1]`..`[ATRN3]`.
+
+## Previews tied to their source attachment
+
+- `previews-server/src/routes/event-previews.ts`: the local copy `0.jpg` and every rendered size
+  carry the `user.pryv.sourceAttachment` extended attribute (attachment id, size, integrity). A
+  mismatch fetches the attachment again (written to a temp file, then renamed) and removes the
+  rendered sizes; a rendered size is reused only when both the event's `modified` and the source
+  match. An event without an attachment, of another type, deleted or unknown has its previews
+  directory removed. Previews cached by an earlier version carry no source attribute and are
+  rendered again once.
+- `previews-server/src/cache.ts`: `Cache.SourceAttachmentXattrKey`.
+- Tests: `components/previews-server/test/event-previews.test.js` `[PVRS1]`..`[PVRS3]`.
+
 ## Credentials out of the logs: access-request key, Basic-auth user
 
 - `utils/src/redactUrl.ts`: also hides the `readToken`, `key` and `poll` query values, and the

@@ -345,6 +345,93 @@ describe('[EP01] event previews', function () {
     });
   });
 
+  describe('[PVRS] previews follow the attachment they are made from', function () {
+    const created = [];
+    let tmpDir, redPath, bluePath;
+
+    before(async function () {
+      tmpDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'previews-pvrs-'));
+      redPath = nodePath.join(tmpDir, 'red.png');
+      bluePath = nodePath.join(tmpDir, 'blue.png');
+      await sharp({ create: { width: 320, height: 160, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toFile(redPath);
+      await sharp({ create: { width: 160, height: 320, channels: 3, background: { r: 0, g: 0, b: 255 } } }).png().toFile(bluePath);
+    });
+
+    after(async function () {
+      for (const ev of created) {
+        try { await mall.events.delete(user.id, ev); } catch (_e) { /* best-effort */ }
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function attachmentItem (file, fileName) {
+      return { fileName, type: 'image/png', size: fs.statSync(file).size, attachmentData: fs.createReadStream(file) };
+    }
+    async function createPicture (file) {
+      const now = timestamp.now();
+      const ev = await mall.events.createWithAttachments(user.id,
+        { streamIds: [testData.streams[0].id], type: 'picture/attached', time: now, created: now, createdBy: 'test', modified: now, modifiedBy: 'test' },
+        [attachmentItem(file, nodePath.basename(file))]);
+      created.push(ev);
+      return ev;
+    }
+    function getPreview (id, query = {}) {
+      return superagent.get(server.url + path(id)).query(query).set('Authorization', token).ok(() => true);
+    }
+    /** 'red' or 'blue', from the preview's dominant colour. */
+    async function colourOf (res) {
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const { dominant } = await sharp(res.body).stats();
+      if (dominant.r > 200 && dominant.b < 60) return 'red';
+      if (dominant.b > 200 && dominant.r < 60) return 'blue';
+      return JSON.stringify(dominant);
+    }
+    function cachedFiles (eventId) {
+      const dir = nodePath.dirname(attachmentManagement.getPreviewPath(user, eventId, 0));
+      return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    }
+
+    it('[PVRS1] a replaced attachment is previewed from the new file, at a size already cached and at a new one', async function () {
+      const ev = await createPicture(redPath);
+      assert.strictEqual(await colourOf(await getPreview(ev.id)), 'red');
+      assert.strictEqual(await colourOf(await getPreview(ev.id, { h: 280 })), 'red');
+
+      await mall.events.deleteAttachment(user.id, ev.id, ev.attachments[0].id);
+      await mall.events.addAttachment(user.id, ev.id, attachmentItem(bluePath, 'blue.png'));
+
+      assert.strictEqual(await colourOf(await getPreview(ev.id)), 'blue', 'size already cached');
+      assert.strictEqual(await colourOf(await getPreview(ev.id, { h: 280 })), 'blue', 'second size already cached');
+      assert.strictEqual(await colourOf(await getPreview(ev.id, { w: 800 })), 'blue', 'size never rendered');
+    });
+
+    it('[PVRS2] a removed attachment is no longer previewed and its cached copies are dropped', async function () {
+      const ev = await createPicture(redPath);
+      assert.strictEqual(await colourOf(await getPreview(ev.id)), 'red');
+      assert.ok(cachedFiles(ev.id).length > 0, 'previews are cached');
+
+      await mall.events.deleteAttachment(user.id, ev.id, ev.attachments[0].id);
+
+      const res = await getPreview(ev.id);
+      assert.notStrictEqual(res.status, 200, 'no preview without an attachment');
+      assert.notStrictEqual(res.header['content-type'], 'image/jpeg');
+      assert.deepStrictEqual(cachedFiles(ev.id), [], 'cached copies of the removed attachment are dropped');
+    });
+
+    it('[PVRS3] the previews of a deleted event are dropped on the next request', async function () {
+      const ev = await createPicture(redPath);
+      assert.strictEqual(await colourOf(await getPreview(ev.id)), 'red');
+      assert.ok(cachedFiles(ev.id).length > 0, 'previews are cached');
+
+      await mall.events.delete(user.id, ev);
+      created.splice(created.indexOf(ev), 1);
+
+      const res = await getPreview(ev.id);
+      assert.notStrictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.notStrictEqual(res.header['content-type'], 'image/jpeg');
+      assert.deepStrictEqual(cachedFiles(ev.id), [], 'cached copies of a deleted event are dropped');
+    });
+  });
+
   describe('[EP03] POST /clean-up-cache', function () {
     const basePath = '/' + user.username + '/clean-up-cache';
     const adminKey = helpers.dependencies.settings.auth.adminAccessKey;

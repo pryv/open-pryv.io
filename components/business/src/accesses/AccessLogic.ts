@@ -79,6 +79,8 @@ class AccessLogic {
   // In-store stream ids forced into events.get queries, keyed by store id.
   _streamByStoreForced!: Record<string, string[]>; // initialized in loadPermissions()
   featurePermissionsMap!: Record<string, FeaturePermission>;
+  // The one load of the maps above; shared by every caller of loadPermissions().
+  _permissionsLoad: Promise<void> | null;
   // mirrored from `access` via deepMerge() in constructor — definite-assign:
   id!: string;
   type!: AccessType;
@@ -93,6 +95,7 @@ class AccessLogic {
     this._access = access;
     this._userId = userId;
     this._streamPermissionLevelCache = {};
+    this._permissionsLoad = null;
     deepMerge(this, access);
 
     if (this.isPersonal()) return;
@@ -144,37 +147,62 @@ class AccessLogic {
   /** ---------- PERMISSION & STREAMSID LISTS --------------- */
 
   /**
-   * Loads permissions from `this.permissions`.
+   * Loads permissions from `this.permissions`, once per object.
+   *
+   * The object may be the one held in the access cache, shared by every
+   * request using the token, and its permissions never change after
+   * construction (an update replaces the cached object). Concurrent and later
+   * callers therefore share the first load, and the maps are built aside and
+   * published in one synchronous step: no reader ever sees them empty or
+   * half-filled, which would read as "allowed" for feature permissions and
+   * drop `none` entries and forced streams.
    */
-  async loadPermissions () {
+  loadPermissions (): Promise<void> {
+    if (this._permissionsLoad == null) {
+      const load = this._buildPermissionMaps();
+      this._permissionsLoad = load;
+      // A failed load (e.g. the mall not ready) is retried by the next caller.
+      load.catch(() => { if (this._permissionsLoad === load) this._permissionsLoad = null; });
+    }
+    return this._permissionsLoad;
+  }
+
+  async _buildPermissionMaps () {
     if (!this.permissions) {
       return;
     }
 
-    this.featurePermissionsMap = {};
-    this._streamByStorePermissionsMap = {};
-    this._streamByStoreForced = {};
+    const featurePermissionsMap: Record<string, FeaturePermission> = {};
+    const streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>> = {};
+    const streamByStoreForced: Record<string, string[]> = {};
 
     for (const perm of this.permissions) {
       if ('streamId' in perm && perm.streamId != null) {
-        await this._loadStreamPermission(perm);
+        await this._loadStreamPermission(perm, streamByStorePermissionsMap);
       } else if ('feature' in perm && perm.feature != null) {
-        this._loadFeaturePermission(perm);
+        this._loadFeaturePermission(perm, featurePermissionsMap, streamByStoreForced);
       }
     }
+
+    // Publish together, with a fresh level cache: a level is only ever
+    // computed from complete maps.
+    this.featurePermissionsMap = featurePermissionsMap;
+    this._streamByStorePermissionsMap = streamByStorePermissionsMap;
+    this._streamByStoreForced = streamByStoreForced;
+    this._streamPermissionLevelCache = {};
   }
 
-  async _loadStreamPermission (perm: StreamPermission) {
+  async _loadStreamPermission (perm: StreamPermission, streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>>) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
-    if (this._streamByStorePermissionsMap[storeId] == null) this._streamByStorePermissionsMap[storeId] = {};
-    this._streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
+    if (streamByStorePermissionsMap[storeId] == null) streamByStorePermissionsMap[storeId] = {};
+    streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
 
     if (perm.streamId === '*') { // add mall stores to permissions
       const mall = await getMall();
       const mallStoreIds = mall.includedInStarPermissions;
       for (const mallStoreId of mallStoreIds) {
-        if (this._streamByStorePermissionsMap[mallStoreId] == null) this._streamByStorePermissionsMap[mallStoreId] = {};
-        this._streamByStorePermissionsMap[mallStoreId]['*'] = { streamId: '*', level: perm.level };
+        if (streamByStorePermissionsMap[mallStoreId] == null) streamByStorePermissionsMap[mallStoreId] = {};
+        streamByStorePermissionsMap[mallStoreId]['*'] = { streamId: '*', level: perm.level };
       }
     }
   }
@@ -259,13 +287,9 @@ class AccessLogic {
     return this._streamByStoreForced[storeId];
   }
 
-  _loadFeaturePermission (perm: FeaturePermission) {
+  _loadFeaturePermission (perm: FeaturePermission, featurePermissionsMap: Record<string, FeaturePermission>, streamByStoreForced: Record<string, string[]>) {
     // here we might want to check if permission is higher
-    this._registerFeaturePermission(perm);
-  }
-
-  _registerFeaturePermission (perm: FeaturePermission) {
-    this.featurePermissionsMap[perm.feature] = perm;
+    featurePermissionsMap[perm.feature] = perm;
     if (perm.feature === 'forcedStreams') { // load them by store
       const forced = perm as FeaturePermission & { streams?: string[] };
       // Mirror getForbiddenGetEventsStreamIds(): group each stream by its
@@ -274,8 +298,8 @@ class AccessLogic {
       // array where a stream id string was expected and would have thrown.
       for (const streamId of forced.streams ?? []) {
         const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
-        if (this._streamByStoreForced[storeId] == null) this._streamByStoreForced[storeId] = [];
-        this._streamByStoreForced[storeId].push(storeStreamId);
+        if (streamByStoreForced[storeId] == null) streamByStoreForced[storeId] = [];
+        streamByStoreForced[storeId].push(storeStreamId);
       }
     }
   }

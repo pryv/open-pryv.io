@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = require('path').dirname(__filename);
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const Cache = require('../cache.ts').default;
@@ -64,13 +65,15 @@ type ResponseLike = {
   [k: string]: unknown;
 };
 type NextFn = (err?: unknown) => void;
-type EventLike = { type: string; modified: number; streamIds: string[]; attachments?: Array<{ id: string; width?: number; height?: number }>; [k: string]: unknown };
+type SourceAttachment = { id: string; width?: number; height?: number; size?: number; integrity?: string };
+type EventLike = { type: string; modified: number; streamIds: string[]; deleted?: number | null; attachments?: SourceAttachment[]; [k: string]: unknown };
 type ImageError = Error & { message: string };
 type Size = { width: number; height: number };
 type Logging = unknown;
 
 export default async function (expressApp: ExpressApp, initContextMiddleware: unknown, loadAccessMiddleware: unknown, _logging: Logging) {
   const mall = await getMall();
+  const previewsLogger = getLogger('previews');
   const previewsCacheCleanUpCronTime = (await getConfig()).get('eventFiles:previewsCacheCleanUpCronTime') || '00 00 2 * * *';
   // CACHE CLEAN-UP: a maintenance call taking the raw admin key only
   // (`Authorization: <auth.adminAccessKey>`), answered "unknown resource"
@@ -92,23 +95,31 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
     try {
       // Check Event
       const event = await mall.events.getOne(user.id, id);
-      if (event == null) {
-        return next(errors.unknownResource('event', id));
+      if (event == null || event.deleted != null) {
+        // Whatever was cached for a deleted event goes with it.
+        await dropEventPreviews(user, id);
+        if (event == null) return next(errors.unknownResource('event', id));
       }
       // same exclusions as events.get
       if (!(await canReadEvent(context.access, event))) { return next(errors.forbidden()); }
       if (!canHavePreview(event)) {
+        await dropEventPreviews(user, id);
         return res.sendStatus(204);
       }
 
       const attachment = getSourceAttachment(event);
       if (attachment == null) {
+        // The attachment was removed: so are its cached copies.
+        await dropEventPreviews(user, id);
         throw errors.corruptedData('Corrupt event data: expected an attachment.');
       }
+      // The local copy of the attachment is tied to the attachment it was made
+      // from: a replaced attachment is fetched again and the previews rendered
+      // from the old one are dropped.
+      const source = sourceAttachmentKey(attachment);
       const attachmentPath = await attachmentManagement.ensurePreviewPath(req.context.user, req.params.id, 0);
-      if (!fs.existsSync(attachmentPath)) { // load file
-        const attachmentStream = await mall.events.getAttachment(context.user.id, { id }, attachment.id);
-        await fs.promises.writeFile(attachmentPath, attachmentStream);
+      if (await readXattr(attachmentPath, Cache.SourceAttachmentXattrKey) !== source) {
+        await refreshSourceCopy(user.id, id, attachment.id, source, attachmentPath);
       }
       await xattr.set(attachmentPath, Cache.LastAccessedXattrKey, timestamp.now().toString());
       // Get aspect ratio
@@ -133,7 +144,8 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
       previewPath = await attachmentManagement.ensurePreviewPath(req.context.user, req.params.id, Math.max(targetSize.width, targetSize.height));
       try {
         const cacheModified = await xattr.get(previewPath, Cache.EventModifiedXattrKey);
-        cached = cacheModified.toString() === event.modified.toString();
+        const cacheSource = await xattr.get(previewPath, Cache.SourceAttachmentXattrKey);
+        cached = cacheModified.toString() === event.modified.toString() && cacheSource.toString() === source;
       } catch (err) {
         // assume no cache (don't throw any error)
       }
@@ -147,6 +159,7 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
           return next(adjustImageError(err));
         }
         await xattr.set(previewPath, Cache.EventModifiedXattrKey, event.modified.toString());
+        await xattr.set(previewPath, Cache.SourceAttachmentXattrKey, source);
       }
       res.sendFile(previewPath);
       // update last accessed time (don't check result)
@@ -161,6 +174,50 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
   function getSourceAttachment (event: EventLike) {
     // for now: just return the first attachment
     return event.attachments?.[0];
+  }
+  /** Identifies an attachment's content: a replaced file gets a new id. */
+  function sourceAttachmentKey (attachment: SourceAttachment): string {
+    return JSON.stringify([attachment.id, attachment.size ?? null, attachment.integrity ?? null]);
+  }
+  /** An extended attribute's value, or null when the file or the attribute is missing. */
+  async function readXattr (filePath: string, key: string): Promise<string | null> {
+    try {
+      return (await xattr.get(filePath, key)).toString();
+    } catch (err) {
+      return null;
+    }
+  }
+  /**
+   * Replaces the local copy of the attachment (written aside, then renamed, so
+   * a concurrent render reads a whole file) and drops the previews rendered
+   * from the previous one.
+   */
+  async function refreshSourceCopy (userId: string, eventId: string, attachmentId: string, source: string, attachmentPath: string): Promise<void> {
+    const dirPath = path.dirname(attachmentPath);
+    for (const name of await fs.promises.readdir(dirPath)) {
+      if (/^\d+\.jpg$/.test(name) && name !== path.basename(attachmentPath)) {
+        await fs.promises.rm(path.join(dirPath, name), { force: true });
+      }
+    }
+    const tmpPath = attachmentPath + '.' + process.pid + '-' + crypto.randomBytes(6).toString('hex') + '.tmp';
+    try {
+      const attachmentStream = await mall.events.getAttachment(userId, { id: eventId }, attachmentId);
+      await fs.promises.writeFile(tmpPath, attachmentStream);
+      await xattr.set(tmpPath, Cache.SourceAttachmentXattrKey, source);
+      await fs.promises.rename(tmpPath, attachmentPath);
+    } catch (err) {
+      await fs.promises.rm(tmpPath, { force: true });
+      throw err;
+    }
+  }
+  /** Removes every cached file of an event; failures are logged, never thrown. */
+  async function dropEventPreviews (user: { id: string }, eventId: string): Promise<void> {
+    try {
+      const dirPath = path.dirname(attachmentManagement.getPreviewPath(user, eventId, 0));
+      await fs.promises.rm(dirPath, { recursive: true, force: true });
+    } catch (err) {
+      previewsLogger.warn('Could not drop the cached previews of an event', { eventId, error: (err as Error).message });
+    }
   }
   function adjustImageError (err: unknown) {
     const e = err as ImageError;

@@ -358,7 +358,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // accesses.update as well as create.)
     if (params.token != null) {
       params.token = slugify(params.token);
-      if (string.isReservedId(params.token)) {
+      if (string.isReservedToken(params.token)) {
         return next(errors.invalidItemId('The specified token is not allowed.'));
       }
     } else {

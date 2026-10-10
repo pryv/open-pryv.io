@@ -252,17 +252,27 @@ function _peekAccessLogicEpoch (userId: string): number {
 function _bumpAccessLogicEpoch (userId: string): void {
   accessLogicEpochByUserId.set(userId, ++accessLogicEpochCounter);
 }
+// A user's cached accesses, by token and by id. Both keys come from requests
+// (Authorization header, read tokens), so they are Map keys: a plain object
+// would answer `constructor` / `__proto__` with its prototype's members, and
+// would turn an insert under `__proto__` into a prototype swap that `delete`
+// never undoes.
+type CachedAccessLogic = { id: string; token: string };
+type AccessLogicsOfUser = { tokens: Map<string, CachedAccessLogic>; ids: Map<string, CachedAccessLogic> };
+function getAccessLogicsOfUser (userId: string): AccessLogicsOfUser | null {
+  return (get(NS.ACCESS_LOGICS_FOR_USERID, userId) as AccessLogicsOfUser | undefined) ?? null;
+}
 function getAccessLogicForToken (userId: string, token: string) {
   if (!isActive) { return null; }
-  const accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
+  const accessLogics = getAccessLogicsOfUser(userId);
   if (accessLogics == null) { return null; }
-  return accessLogics.tokens[token];
+  return accessLogics.tokens.get(token) ?? null;
 }
 function getAccessLogicForId (userId: string, accessId: string) {
   if (!isActive) { return null; }
-  const accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
+  const accessLogics = getAccessLogicsOfUser(userId);
   if (accessLogics == null) { return null; }
-  return accessLogics.ids[accessId];
+  return accessLogics.ids.get(accessId) ?? null;
 }
 function unsetAccessLogic (userId: string, accessLogic: { id: string; token: string }, notifyOtherProcesses = true) {
   if (!isActive) { return; }
@@ -273,10 +283,10 @@ function unsetAccessLogic (userId: string, accessLogic: { id: string; token: str
   // notify others to unsed
   if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetAccessLogic(userId, accessLogic); }
   // perform unset
-  const accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
+  const accessLogics = getAccessLogicsOfUser(userId);
   if (accessLogics == null) { return; }
-  delete accessLogics.tokens[accessLogic.token];
-  delete accessLogics.ids[accessLogic.id];
+  accessLogics.tokens.delete(accessLogic.token);
+  accessLogics.ids.delete(accessLogic.id);
 }
 function _clearAccessLogics (userId: string) {
   _bumpAccessLogicEpoch(userId);
@@ -289,16 +299,16 @@ function setAccessLogic (userId: string, accessLogic: { id: string; token: strin
   if (expectedEpoch != null && expectedEpoch !== _peekAccessLogicEpoch(userId)) { return; }
   if (!isTrusted) { return; }
   _followUser(userId);
-  let accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
+  let accessLogics = getAccessLogicsOfUser(userId);
   if (accessLogics == null) {
     accessLogics = {
-      tokens: {},
-      ids: {}
+      tokens: new Map(),
+      ids: new Map()
     };
     set(NS.ACCESS_LOGICS_FOR_USERID, userId, accessLogics);
   }
-  accessLogics.tokens[accessLogic.token] = accessLogic;
-  accessLogics.ids[accessLogic.id] = accessLogic;
+  accessLogics.tokens.set(accessLogic.token, accessLogic);
+  accessLogics.ids.set(accessLogic.id, accessLogic);
 }
 // ---------------
 const NS = {

@@ -50,6 +50,22 @@
 - The API error handler answers a plain `500` when the error answer itself cannot be built,
   instead of leaving the request unanswered and ending the worker; a series route that fails with
   a value that is not an error answers `500` as well.
+- An access's permissions are loaded once per access and published as a whole: concurrent
+  requests and socket.io calls of the same token never see its restrictions missing (feature
+  permissions such as `webhooks: forbidden`, `none` / `create-only` entries, forced streams).
+  Before, with the SQLite storage engine, a socket.io client batching a namespace connection with
+  calls on an open namespace of the same token could, for example, create events in a stream it
+  may only read.
+- **Visible to clients:** `accesses.create` refuses a chosen `token` that is the name of a built-in
+  object property (`__proto__`, `constructor`, `prototype`, `toString`, ...) with `400`
+  `invalid-item-id`, like the already reserved `null`, `undefined` and `*`. A request
+  authenticated with such a name answers `403` `invalid-access-token` (it could answer `500`).
+- Attachment read tokens (`?readToken=`) naming an unknown access answer `403`
+  `invalid-access-token` instead of `500`.
+- Previews follow the event's attachment: after an attachment is replaced, every preview size is
+  rendered from the new file; after it is removed, or the event deleted, the previews and the
+  cached copy of the file are dropped on the next preview request (the request answers as before:
+  `422` without an attachment).
 
 ## 2.0.0-rc.46 - 2026-10-10
 

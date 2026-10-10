@@ -21,8 +21,17 @@ function isReservedId (s: string) {
   }
 }
 
+/**
+ * Whether a client-chosen access token is refused: the reserved ids, plus the
+ * names of built-in object properties (`__proto__`, `constructor`,
+ * `toString`, ...) and `prototype`, which must never become lookup keys.
+ */
+function isReservedToken (s: string) {
+  return isReservedId(s) || s === 'prototype' || Object.prototype.hasOwnProperty.call(Object.prototype, s);
+}
+
 function sanitizeFieldKey (s: string) {
   return (s[0] === '$' ? '_' + s.substr(1) : s).replace('.', ':');
 }
 
-export { isReservedId, sanitizeFieldKey };
+export { isReservedId, isReservedToken, sanitizeFieldKey };

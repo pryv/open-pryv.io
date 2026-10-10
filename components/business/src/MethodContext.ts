@@ -245,7 +245,8 @@ class MethodContext {
       const customAuthStep = this.customAuthStepFn;
       if (customAuthStep != null) { await this.performCustomAuthStep(customAuthStep); }
       // those 2 last are executed in callbatch for each call.
-      // Load the streams we can access.
+      // Load the streams we can access (once per access object: a cached
+      // access shares its first load with every later request).
       if (!access.isPersonal()) { await access.loadPermissions(); }
       this.failedAccessId = null;
     } catch (err) {

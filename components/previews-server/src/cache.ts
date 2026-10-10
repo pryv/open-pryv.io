@@ -37,6 +37,11 @@ class Cache {
    * @default 'user.pryv.lastAccessed'
    */
   static LastAccessedXattrKey = 'user.pryv.lastAccessed';
+  /** @static
+   * Identifies the attachment a cached file was made from.
+   * @default 'user.pryv.sourceAttachment'
+   */
+  static SourceAttachmentXattrKey = 'user.pryv.sourceAttachment';
   constructor (settings: CacheSettings) {
     this.settings = settings;
     this.cleanUpInProgress = false;
