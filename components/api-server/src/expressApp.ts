@@ -13,6 +13,7 @@ const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
 const { usernameInHost, ignoredUsernameSubdomains } = require('business/src/usernameSubdomains.ts');
 const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
+const { effectiveMaxSizeMb } = require('./middleware/uploads.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -71,9 +72,10 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
 
     app.use(middleware.subdomainToPath(ignorePaths, ignoredSubdomains));
   }
-  // Parse JSON bodies:
+  // Parse JSON bodies (same size default as multipart uploads when the
+  // setting is absent):
   app.use(express.json({
-    limit: config.get('uploads:maxSizeMb') + 'mb'
+    limit: effectiveMaxSizeMb(config.get('uploads:maxSizeMb')) + 'mb'
   }));
   // This object will contain key-value pairs, where the value can be a string
   // or array (when extended is false), or any type (when extended is true).

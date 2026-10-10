@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## Multipart uploads: parser limits and temp-file removal
+
+- `middleware/uploads.ts`: `buildUploadLimits` gives multer `fields: 1`, `files` from the new
+  `uploads.maxFiles` setting (default 10, `config/default-config.yml`), `parts = files + fields`,
+  and `fileSize` / `fieldSize` from `uploads.maxSizeMb`, defaulting to 50 MB when the setting is
+  absent or invalid (before, no limit at all was passed then). Count overruns
+  (`LIMIT_FIELD_COUNT`, `LIMIT_FILE_COUNT`, `LIMIT_PART_COUNT`) map to the existing `400`
+  `invalid-request-structure` branch.
+- `expressApp.ts` (via the exported `effectiveMaxSizeMb`) and `hfs-server/src/server.ts` give
+  `express.json` the same 50 MB default: an absent `uploads.maxSizeMb` produced the limit string
+  `undefinedmb`, which `express.json` rejects, so the worker did not start.
+- `hasFileUpload` captures the paths of `req.files` as soon as multer completes and deletes them
+  on the response's `finish` / `close` (or at once when the response already ended), through the
+  new `removeUploadedFile` in `methods/helpers/uploadedFiles.ts`: same containment check as
+  `openUploadedFile` (resolved path directly in the temp directory, 32-hex name), ENOENT ignored.
+  multer still removes the files itself when it aborts on an error.
+- Tests: `components/api-server/test/attachments-multipart-limits.test.js` `[MPLM1]`..`[MPLM8]`,
+  `[MPLD1]`; `test/unit/middleware/uploads.test.js` `[UP02A]`, `[UP02B]`;
+  `attachments-size-limit.test.js` `[UPSZ4]` now oversizes the single JSON part (a second non-file
+  part is refused by the count limit first).
+
 ## events.get: exclusions expanded with trashed streams
 
 - `methods/helpers/streamsQueryUtils.ts`: the `not` part of a stream query is expanded with

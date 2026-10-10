@@ -44,4 +44,27 @@ describe('[UPLD] uploads middleware', function () {
       });
     });
   });
+  describe('[UP02] buildUploadLimits', function () {
+    it('[UP02A] must apply the configured size and file count', function () {
+      const { limits } = uploads.buildUploadLimits(2, 4);
+      assert.deepStrictEqual(limits, {
+        fileSize: 2 * 1024 * 1024,
+        fieldSize: 2 * 1024 * 1024,
+        fields: 1,
+        files: 4,
+        parts: 5
+      });
+    });
+    it('[UP02B] must apply defaults when the settings are absent or invalid', function () {
+      for (const [size, files] of [[undefined, undefined], [null, null], ['abc', 'abc'], [0, 0], [-1, 2.5]]) {
+        const { maxSizeMb, maxFiles, limits } = uploads.buildUploadLimits(size, files);
+        assert.strictEqual(maxSizeMb, 50);
+        assert.strictEqual(maxFiles, 10);
+        assert.strictEqual(limits.fileSize, 50 * 1024 * 1024);
+        assert.strictEqual(limits.fields, 1);
+        assert.strictEqual(limits.files, 10);
+        assert.strictEqual(limits.parts, 11);
+      }
+    });
+  });
 });

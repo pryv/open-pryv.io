@@ -11,6 +11,13 @@
   parameters are the documented `parentId`, `state` and `includeDeletionsSince` (plus `auth`, the
   access token in the query string). The undocumented `id`, `storeId` and `includeTrashed` are no
   longer accepted: use `parentId` and `state: 'all'`.
+- Attachment uploads (multipart `events.create` / `events.update`): a request carries at most one
+  non-file part (the event JSON) and `uploads.maxFiles` files (new setting, default 10); more is
+  refused with `400` `invalid-request-structure` while the request is parsed. The size limit
+  (`uploads.maxSizeMb`) now applies with its default of 50 MB when the setting is absent (before,
+  an absent setting stopped the API and HFS workers at start).
+- The temp files written for an upload are deleted once the request is over, whether it succeeded
+  or was refused.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

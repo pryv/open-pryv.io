@@ -535,7 +535,13 @@ logs:
 
 # === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
 uploads:
+  # Maximum size of a JSON request body, of each attachment file and of the
+  # JSON part of a multipart (attachment) request. Multipart requests apply 50
+  # when it is absent.
   maxSizeMb: 50
+  # Maximum number of attachment files in one multipart request (which may
+  # carry only one non-file part, the JSON body). 10 when absent.
+  maxFiles: 10
 
 # === PER-CORE: local tracing toggle ===
 trace:

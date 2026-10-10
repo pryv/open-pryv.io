@@ -109,8 +109,8 @@ describe('[UPSZ] attachment upload size limit (uploads.maxSizeMb)', function () 
 
   it('[UPSZ4] must reject an oversized multipart JSON part with 413', function (finalDone) {
     request.post(basePath)
-      .field('event', JSON.stringify({ type: 'test/test', streamIds: [streamId] }))
-      .field('padding', 'x'.repeat(2 * 1024 * 1024)) // > 1 MB field value
+      // a single JSON part over the 1 MB limit
+      .field('event', JSON.stringify({ type: 'test/test', streamIds: [streamId], description: 'x'.repeat(2 * 1024 * 1024) }))
       .end(function (res) {
         try {
           assert.strictEqual(res.statusCode, 413);

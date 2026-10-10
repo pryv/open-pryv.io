@@ -74,7 +74,7 @@ You should submit multiple data points in a single API call to Pryv as follows (
 
 Records a new event. It is recommended that events recorded this way are completed events, i.e. either period events with a known duration or mark events. To start a running period event, use [Start period](http://pryv.github.io/reference/#methods-events-events-start) instead.
 
-In addition to JSON, this request accepts standard multipart/form-data content to support the creation of event with attached files in a single request. When sending a multipart request, one content part must hold the JSON (application/json) for the new event and all other content parts must be the attached files.
+In addition to JSON, this request accepts standard multipart/form-data content to support the creation of event with attached files in a single request. When sending a multipart request, one content part must hold the JSON (application/json) for the new event and all other content parts must be the attached files. A request may carry at most `uploads.maxFiles` files (10 by default); more files, or more than one non-file part, is refused with 400 `"invalid-request-structure"`.
 
 To create an event that can hold high frequency series data, you will need to specify a `type` field that starts with the string "series:" and that ends with any valid Pryv data type, e.g: `"series:mass/kg"`. Leave the `content` field empty to create such a series - it will automatically be populated with meta data on the series.
 
@@ -97,6 +97,7 @@ The new event's data: see [Event](http://pryv.github.io/reference/#data-structur
 | ------ | --------------------- | ------------------------------------------------------------ |
 | 400    | `"invalid-operation"` | The referenced stream is in the trash, and we prevent the recording of new events into trashed streams. |
 | 400    | `"periods-overlap"`   | Only in `singleActivity` streams: the new event overlaps existing period events. The overlapped events' ids are listed as an array in the error's `data.overlappedIds`. |
+| 400    | `"invalid-request-structure"` | A multipart request carries more than one non-file part or more than `uploads.maxFiles` files. |
 | 413    | `"payload-too-large"` | An uploaded attachment (or the multipart JSON part) exceeds the configured maximum size (`uploads.maxSizeMb`). The limit in megabytes is returned in the error's `data.limitMb`. |
 
 ## High Frequency Series

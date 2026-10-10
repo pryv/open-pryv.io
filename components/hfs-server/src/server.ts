@@ -120,7 +120,10 @@ class Server {
     app.use(middleware.noSniff);
     app.use(hostToPath(config));
     app.use(middleware.requestTrace(express, logger));
-    app.use(express.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));
+    // 50 MB when the setting is absent or not a positive number (an invalid
+    // limit string would make express.json throw).
+    const maxSizeMb = Number(config.get('uploads:maxSizeMb'));
+    app.use(express.json({ limit: (Number.isFinite(maxSizeMb) && maxSizeMb > 0 ? maxSizeMb : 50) + 'mb' }));
     app.use(middleware.override);
     app.use(await middleware.commonHeaders());
     app.all('/*', getAuth);
