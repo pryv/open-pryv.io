@@ -35,7 +35,7 @@ const QCLASS_IN = 1;
 const MIN_MESSAGE = 12;
 const MAX_MESSAGE = 1232;
 
-/** Label and name limits (RFC 1035 section 2.3.4 / 3.1). */
+/** Label and name limits (RFC 1035 section 2.3.4 / 3.1); the name limit is in wire octets, terminator included. */
 const MAX_LABEL = 63;
 const MAX_NAME = 255;
 
@@ -100,7 +100,8 @@ export function parseName (buf: Buffer, start: number): ParsedName {
       const to = from + len;
       if (to > buf.length) return { ok: false };
       nameOctets += len + 1;
-      if (nameOctets > MAX_NAME) return { ok: false };
+      // The 255-octet bound counts the terminating zero octet (RFC 1035 section 3.1).
+      if (nameOctets + 1 > MAX_NAME) return { ok: false };
       const label = buf.subarray(from, to);
       if (label.includes(DOT)) dotInLabel = true;
       labels.push(label.toString('latin1'));

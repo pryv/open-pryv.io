@@ -110,9 +110,10 @@ function buildSOA (name: string, { primary, admin, serial, refresh, retry, expir
   };
 }
 
-function buildTXT (name: string, data: string, ttl: number): BaseRecord & { data: string[] } {
+function buildTXT (name: string, data: string, ttl: number): BaseRecord & { data: Buffer[] } {
   // Split into <= 255-octet character-strings: dns2 writes each element's
   // length in a single octet, so a value over 255 bytes would corrupt the wire.
+  // The chunks are Buffers (dns2's TXT encoder writes them as-is).
   return { name, type: Packet.TYPE.TXT, class: Packet.CLASS.IN, ttl, data: toCharacterStrings(data) };
 }
 

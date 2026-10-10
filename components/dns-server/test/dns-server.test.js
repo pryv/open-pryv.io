@@ -875,6 +875,64 @@ describe('[DNP] DNS Server — PlatformDB persistence', function () {
       await server.stop();
     }
   });
+
+  it('[DNP08] a stored row with an uppercase name or a trailing-dot target is normalised and served', async () => {
+    mockPersistedRecords.set('Legacy', { cname: 'Target.Example.com.' });
+    mockPersistedRecords.set('dotted.', { a: ['10.9.8.7'] });
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform: createPersistentPlatform(),
+      logger: createMockLogger(),
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    const port = server._getAddresses().udp.port;
+    try {
+      const cname = await rawQuery(port, `legacy.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(cname.answers.length, 1);
+      assert.strictEqual(cname.answers[0].type, Packet.TYPE.CNAME);
+      assert.strictEqual(cname.answers[0].domain, 'target.example.com');
+      const a = await rawQuery(port, `dotted.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(a.answers.length, 1);
+      assert.strictEqual(a.answers[0].address, '10.9.8.7');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNP09] a stored row still invalid after normalisation is skipped with one warning naming it', async () => {
+    mockPersistedRecords.set('broken', { a: ['not-an-ip'] });
+    mockPersistedRecords.set('bad"name', { a: ['10.0.0.1'] });
+    mockPersistedRecords.set('fine', { a: ['10.0.0.2'] });
+    const warnings = [];
+    const logger = { ...createMockLogger(), warn (msg) { warnings.push(msg); } };
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform: createPersistentPlatform(),
+      logger,
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    const port = server._getAddresses().udp.port;
+    try {
+      // A second refresh does not repeat the warning for an unchanged row.
+      await server.refreshFromPlatform();
+      const broken = warnings.filter((w) => w.includes('"broken"'));
+      assert.strictEqual(broken.length, 1, JSON.stringify(warnings));
+      assert.match(broken[0], /not served/);
+      assert.match(broken[0], /IPv4/);
+      // The name is JSON-escaped in the line.
+      const quoted = warnings.filter((w) => w.includes(JSON.stringify('bad"name')));
+      assert.strictEqual(quoted.length, 1, JSON.stringify(warnings));
+
+      const res = await rawQuery(port, `broken.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(res.answers.length, 0, 'the invalid row is not served');
+      const ok = await rawQuery(port, `fine.${TEST_DOMAIN}`, 'A');
+      assert.strictEqual(ok.answers.length, 1, 'a valid row is served');
+    } finally {
+      await server.stop();
+    }
+  });
 });
 
 // =============================================================================

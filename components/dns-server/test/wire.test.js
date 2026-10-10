@@ -116,6 +116,17 @@ describe('[DNW] DNS request validation (wire)', function () {
     assert.strictEqual(res.rcode, RCODE_FORMERR);
   });
 
+  it('[DNW18] the 255-octet name limit counts the terminating zero octet', () => {
+    const l63 = 'a'.repeat(63);
+    // 3 x (1 + 63) + (1 + 61) label octets + the zero octet = 255 on the wire: accepted.
+    const atLimit = validateRequest(message({}, question([l63, l63, l63, 'b'.repeat(61)])));
+    assert.strictEqual(atLimit.kind, 'ok');
+    // One more label octet makes 256 on the wire: refused.
+    const overLimit = validateRequest(message({}, question([l63, l63, l63, 'b'.repeat(62)])));
+    assert.strictEqual(overLimit.kind, 'error');
+    assert.strictEqual(overLimit.rcode, RCODE_FORMERR);
+  });
+
   it('[DNW10] a self-targeting compression pointer returns FORMERR and parses promptly', () => {
     const t0 = Date.now();
     const qbuf = Buffer.concat([Buffer.from([0xc0, 0x0c]), Buffer.alloc(4)]);

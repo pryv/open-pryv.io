@@ -9,7 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const assert = require('assert');
-const { validateDnsRecord } = require('../src/recordValidation.ts');
+const { validateDnsRecord, normalizeStoredRecord, isEncodableAnswer } = require('../src/recordValidation.ts');
+const { buildTXT } = require('../src/records.ts');
+const { Packet } = require('dns2');
 
 function ipv4List (n) {
   const out = [];
@@ -60,5 +62,69 @@ describe('[DNRV] DNS stored record validation: number of values', function () {
     assert.deepStrictEqual(validateDnsRecord('www', { a: '10.0.0.1' }), []);
     assert.deepStrictEqual(validateDnsRecord('www', { txt: 'hello' }), []);
     assert.deepStrictEqual(validateDnsRecord('www', { cname: 'core1.example.com' }), []);
+  });
+});
+
+// Walk the RDATA of an encoded TXT record: a 16-bit length, then
+// length-prefixed character-strings.
+function txtCharacterStrings (rdata) {
+  const rdlength = rdata.readUInt16BE(0);
+  assert.strictEqual(rdata.length, 2 + rdlength, 'RDATA length matches its prefix');
+  const strings = [];
+  let offset = 2;
+  while (offset < rdata.length) {
+    const len = rdata[offset];
+    strings.push(rdata.subarray(offset + 1, offset + 1 + len));
+    offset += 1 + len;
+  }
+  assert.strictEqual(offset, rdata.length, 'character-strings end exactly at the end of the RDATA');
+  return strings;
+}
+
+describe('[DNTX] DNS TXT values over 255 bytes', function () {
+  it('[DNTX1] a multibyte character at the 255-byte boundary: every character-string is <= 255 bytes and the bytes round-trip', () => {
+    // 254 ASCII bytes, then a 2-byte character straddling the boundary, then more.
+    const value = 'a'.repeat(254) + 'é' + 'b'.repeat(300) + '€'.repeat(100);
+    const expected = Buffer.from(value, 'utf8');
+    assert.deepStrictEqual(validateDnsRecord('long', { txt: [value] }), []);
+
+    const answer = buildTXT('long.test.pryv.me', value, 60);
+    assert.strictEqual(isEncodableAnswer(answer), true);
+    for (const chunk of answer.data) assert.ok(chunk.length <= 255, 'chunk of ' + chunk.length + ' bytes');
+
+    const strings = txtCharacterStrings(Packet.Resource.TXT.encode(answer));
+    assert.ok(strings.length >= 2);
+    for (const s of strings) assert.ok(s.length <= 255, 'encoded character-string of ' + s.length + ' bytes');
+    assert.ok(Buffer.concat(strings).equals(expected), 'the encoded bytes are the value bytes');
+  });
+
+  it('[DNTX2] a short value is one character-string with the value bytes', () => {
+    const answer = buildTXT('short.test.pryv.me', 'v=spf1 ~all', 60);
+    const strings = txtCharacterStrings(Packet.Resource.TXT.encode(answer));
+    assert.strictEqual(strings.length, 1);
+    assert.strictEqual(strings[0].toString('utf8'), 'v=spf1 ~all');
+  });
+
+  it('[DNTX3] a TXT answer holding a character-string over 255 bytes is not encodable', () => {
+    assert.strictEqual(isEncodableAnswer({ type: Packet.TYPE.TXT, data: ['x'.repeat(256)] }), false);
+    assert.strictEqual(isEncodableAnswer({ type: Packet.TYPE.TXT, data: [Buffer.alloc(256)] }), false);
+    assert.strictEqual(isEncodableAnswer({ type: Packet.TYPE.TXT, data: [Buffer.alloc(255), 'ok'] }), true);
+  });
+});
+
+describe('[DNNM] DNS stored record normalisation', function () {
+  it('[DNNM1] the subdomain and CNAME target are lowercased and lose one trailing dot', () => {
+    const out = normalizeStoredRecord('Www.', { cname: 'Host.Example.com.' });
+    assert.deepStrictEqual(out, { subdomain: 'www', records: { cname: 'host.example.com' } });
+    assert.deepStrictEqual(validateDnsRecord(out.subdomain, out.records), []);
+  });
+
+  it('[DNNM2] other values and non-string input are left unchanged', () => {
+    const records = { a: ['10.0.0.1'], txt: ['Mixed Case.'] };
+    assert.deepStrictEqual(normalizeStoredRecord('api', records), { subdomain: 'api', records });
+    assert.deepStrictEqual(normalizeStoredRecord(42, null), { subdomain: 42, records: null });
+    // Only one trailing dot is stripped; the result is still refused.
+    const twoDots = normalizeStoredRecord('www..', { a: ['10.0.0.1'] });
+    assert.ok(validateDnsRecord(twoDots.subdomain, twoDots.records).length > 0);
   });
 });

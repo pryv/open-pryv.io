@@ -27,7 +27,7 @@ import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 import { validateRequest, isIgnorableUdpSource } from './wire.ts';
 import type { WireResult, WireHeader } from './wire.ts';
-import { validateDnsRecord, isEncodableAnswer } from './recordValidation.ts';
+import { validateDnsRecord, isEncodableAnswer, normalizeStoredRecord } from './recordValidation.ts';
 import type { EncodableAnswer } from './recordValidation.ts';
 const require = createRequire(import.meta.url);
 
@@ -137,6 +137,9 @@ class DnsServer {
   #warnPending = 0;
   #warnSample: string | null = null;
   #warnTimer: NodeJS.Timeout | null = null;
+  // Stored rows refused at the last refresh (JSON name -> JSON reason), so each
+  // is warned about once rather than at every refresh.
+  #refusedRows: Map<string, string> = new Map();
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -215,8 +218,10 @@ class DnsServer {
   /**
    * Reload runtime DNS records from PlatformDB. Config entries are authoritative —
    * they are NOT overwritten. Runtime entries that no longer exist in PlatformDB
-   * are removed from the in-memory map. A stored row of an invalid shape is
-   * skipped (never served) with a rate-limited warning.
+   * are removed from the in-memory map. A stored row is normalised first
+   * (lowercase, one trailing dot stripped from the name and the CNAME target);
+   * a row still invalid after that is skipped (never served) with a warning
+   * naming it, logged once while it stays refused.
    *
    * No-op if the platform instance doesn't expose `getAllDnsRecords` (allows the
    * DnsServer to be used with a minimal platform mock in tests).
@@ -229,7 +234,23 @@ class DnsServer {
     }
     const persisted = await this.#platform.getAllDnsRecords!();
     const seenSubdomains = new Set<string>();
-    for (const { subdomain, records } of persisted) {
+    const refusedNow = new Map<string, string>();
+    for (const row of persisted) {
+      const normalized = normalizeStoredRecord(row.subdomain, row.records);
+      const errs = validateDnsRecord(normalized.subdomain, normalized.records);
+      if (errs.length > 0) {
+        // Each refused row is reported on its own (not through the per-request
+        // aggregator), once while it stays refused for the same reason.
+        const name = JSON.stringify(row.subdomain);
+        const reason = JSON.stringify(errs.join('; '));
+        refusedNow.set(name, reason);
+        if (this.#refusedRows.get(name) !== reason) {
+          this.#logger.warn(`DNS: stored record ${name} is not served: ${reason}`);
+        }
+        continue;
+      }
+      const subdomain = normalized.subdomain as string;
+      const records = normalized.records as DnsRecordEntry;
       if (this.#isHostedSite(subdomain)) {
         // Kept in memory (it answers again if the site goes away), never served meanwhile
         this.#logger.warn(
@@ -243,14 +264,10 @@ class DnsServer {
         );
         continue;
       }
-      const errs = validateDnsRecord(subdomain, records);
-      if (errs.length > 0) {
-        this.#warnAgg('stored-record', `skipped invalid record ${JSON.stringify(subdomain)}: ${errs[0]}`);
-        continue;
-      }
       this.#staticEntries.set(subdomain, records);
       seenSubdomains.add(subdomain);
     }
+    this.#refusedRows = refusedNow;
     // Prune in-memory runtime entries that were deleted from PlatformDB
     for (const key of [...this.#staticEntries.keys()]) {
       if (this.#configKeys.has(key)) continue;

@@ -507,7 +507,16 @@ if (cluster.isPrimary) {
         const bootstrapPlatform = await getPlatform();
         const existingCore = await bootstrapPlatform.getDnsRecord('core');
         if (existingCore == null) {
-          await bootstrapPlatform.setDnsRecord('core', { a: [publicIp] });
+          try {
+            await bootstrapPlatform.setDnsRecord('core', { a: [publicIp] });
+          } catch (err) {
+            // A configuration error, not a crash: stop with a FATAL line and no stack.
+            const fatal = new Error(
+              `dns.publicIp (${JSON.stringify(publicIp)}) cannot be published as A core.${dnsDomain}: ${err.message}. ` +
+              'Set dns.publicIp to this host\'s public IPv4 address and restart.');
+            fatal.bootFatal = true;
+            throw fatal;
+          }
           log(`[dns-bootstrap] published A core.${dnsDomain} -> ${publicIp}`);
         } else {
           log(`[dns-bootstrap] A core.${dnsDomain} already set in PlatformDB; not overwriting`);
@@ -864,7 +873,12 @@ if (cluster.isPrimary) {
 
     log('Master process ready');
   })().catch(async err => {
-    console.error('Master startup failed:', err);
+    if (err && err.bootFatal) {
+      console.error('[master] FATAL: ' + err.message);
+      try { require('@pryv/boiler').getLogger('master').error('FATAL: ' + err.message); } catch { /* logger not ready */ }
+    } else {
+      console.error('Master startup failed:', err);
+    }
     // Let an rqlited started by this boot finish its snapshot-on-close first.
     try {
       const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess.ts');

@@ -44,7 +44,7 @@ export type EncodableAnswer = {
   name?: string;
   address?: string;
   domain?: string;
-  data?: string | string[];
+  data?: string | Array<string | Buffer>;
   ns?: string;
   exchange?: string;
   priority?: number;
@@ -157,16 +157,47 @@ function isStringOrStringArray (v: unknown): boolean {
 
 /**
  * Split a TXT value into <= 255-octet character-strings (RFC 1035 section
- * 3.3.14). A short string returns a single-element array.
+ * 3.3.14). The split is on the UTF-8 bytes and each chunk stays a Buffer:
+ * re-decoding a chunk to a string would turn a multibyte character cut at the
+ * boundary into replacement characters and grow the chunk past 255 octets.
+ * A character-string is binary data, so the concatenated chunks are exactly
+ * the value's bytes.
  */
-export function toCharacterStrings (value: string): string[] {
+export function toCharacterStrings (value: string): Buffer[] {
   const buf = Buffer.from(value, 'utf8');
-  if (buf.length <= MAX_CHARACTER_STRING) return [value];
-  const chunks: string[] = [];
+  const chunks: Buffer[] = [];
   for (let i = 0; i < buf.length; i += MAX_CHARACTER_STRING) {
-    chunks.push(buf.subarray(i, i + MAX_CHARACTER_STRING).toString('utf8'));
+    chunks.push(buf.subarray(i, i + MAX_CHARACTER_STRING));
   }
+  if (chunks.length === 0) chunks.push(buf); // empty value: one empty character-string
   return chunks;
+}
+
+/**
+ * Normalise a stored DNS row before it is validated: lowercase the subdomain
+ * and the CNAME target, and strip one trailing dot from each (the zone-file
+ * form of an absolute name). Both forms are valid DNS and were accepted by
+ * earlier versions, so a row written that way keeps resolving. Anything that
+ * is not a string is returned unchanged for the validator to refuse.
+ */
+export function normalizeStoredRecord (subdomain: unknown, records: unknown): { subdomain: unknown; records: unknown } {
+  const normName = (n: string): string => {
+    const lower = n.toLowerCase();
+    return lower.endsWith('.') ? lower.slice(0, -1) : lower;
+  };
+  const sub = typeof subdomain === 'string' ? normName(subdomain) : subdomain;
+  let rec = records;
+  if (records != null && typeof records === 'object' && !Array.isArray(records)) {
+    const cname = (records as Record<string, unknown>).cname;
+    if (typeof cname === 'string') rec = { ...(records as Record<string, unknown>), cname: normName(cname) };
+  }
+  return { subdomain: sub, records: rec };
+}
+
+/** One TXT character-string as the wire encoder takes it: a string or Buffer of at most 255 octets. */
+function isCharacterString (s: unknown): boolean {
+  if (Buffer.isBuffer(s)) return s.length <= MAX_CHARACTER_STRING;
+  return typeof s === 'string' && Buffer.byteLength(s, 'utf8') <= MAX_CHARACTER_STRING;
 }
 
 /**
@@ -185,8 +216,8 @@ export function isEncodableAnswer (answer: EncodableAnswer): boolean {
     case 0x05: // CNAME
       return typeof answer.domain === 'string' && answer.domain.length > 0;
     case 0x10: // TXT
-      return typeof answer.data === 'string' ||
-        (Array.isArray(answer.data) && answer.data.every((s) => typeof s === 'string'));
+      return (typeof answer.data === 'string' && Buffer.byteLength(answer.data, 'utf8') <= MAX_CHARACTER_STRING) ||
+        (Array.isArray(answer.data) && answer.data.every(isCharacterString));
     case 0x02: // NS
       return typeof answer.ns === 'string' && answer.ns.length > 0;
     case 0x0f: // MX
