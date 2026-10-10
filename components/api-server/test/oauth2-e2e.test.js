@@ -576,6 +576,25 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(acceptRes.status, 401);
     });
 
+    it('[OE29] a state signature with a non-ASCII character → 400 on /accept and /refuse, and the server keeps answering', async function () {
+      // 43 characters (the length of a real signature), 44 bytes once UTF-8 encoded.
+      const state = 'x.' + 'é' + 'a'.repeat(42);
+      const acceptRes = await coreRequest
+        .post('/oauth2/authorize/accept')
+        .timeout(10000)
+        .send({ state, username, userToken: 'x', grantedPermissions: [] });
+      assert.equal(acceptRes.status, 400, describeRes(acceptRes));
+      assert.match(acceptRes.body.error_description, /bad_signature/);
+      const refuseRes = await coreRequest
+        .post('/oauth2/authorize/refuse')
+        .timeout(10000)
+        .send({ state });
+      assert.equal(refuseRes.status, 400, describeRes(refuseRes));
+      assert.match(refuseRes.body.error_description, /bad_signature/);
+      const infoRes = await coreRequest.get('/' + username + '/service/info').timeout(10000);
+      assert.equal(infoRes.status, 200, describeRes(infoRes));
+    });
+
     it('[OE13] /authorize with unknown client_id → HTML 400 (no redirect)', async function () {
       const { challenge } = pkce();
       const res = await coreRequest

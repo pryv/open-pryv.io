@@ -91,6 +91,16 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
     assert.match(res.body.error_description, /bad_signature/);
   });
 
+  it('[ORF-S4] signature with a non-ASCII character → 400 bad_signature, the handler resolves', async () => {
+    const handler = handleRefuse({ config: fakeConfig() });
+    const res = fakeRes();
+    const [body] = signState(ADMIN_KEY, SAMPLE_PAYLOAD).split('.');
+    await handler({ body: { state: body + '.' + 'é' + 'a'.repeat(42) } }, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.error, 'invalid_request');
+    assert.match(res.body.error_description, /bad_signature/);
+  });
+
   it('[ORF-S3] expired state → 400 invalid_request expired', async () => {
     const handler = handleRefuse({ config: fakeConfig() });
     const res = fakeRes();

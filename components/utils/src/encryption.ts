@@ -13,20 +13,25 @@ const require = createRequire(import.meta.url);
 
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const salt = bcrypt.genSaltSync(process.env.NODE_ENV === 'development' ? 1 : 10);
+/**
+ * bcrypt cost factor. Passed as a NUMBER on every call, so bcrypt generates a
+ * fresh salt for each hash (a salt string would be reused verbatim). The
+ * development value is bcrypt's minimum cost.
+ */
+const COST = process.env.NODE_ENV === 'development' ? 4 : 10;
 
 /**
  * @param value The value to be hashed.
  */
 async function hash (value: string): Promise<string> {
-  return await bcrypt.hash(value, salt);
+  return await bcrypt.hash(value, COST);
 }
 
 /**
  * For tests only.
  */
 function hashSync (value: string): string {
-  return bcrypt.hashSync(value, salt);
+  return bcrypt.hashSync(value, COST);
 }
 
 /**

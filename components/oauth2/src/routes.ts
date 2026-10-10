@@ -23,6 +23,7 @@ const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from './grants/authorization_code.ts';
+import type { NextFunction, Request, Response } from 'express';
 
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
@@ -32,6 +33,40 @@ const { handleRefuse } = require('./routes/refuse.ts');
 const { handleToken } = require('./routes/token.ts');
 const { corsMiddleware } = require('./cors.ts');
 const { issuerFromConfig } = require('./issuer.ts');
+const { logServerError } = require('./serverLog.ts');
+
+type RouteHandler = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
+
+/**
+ * Wrap an async route handler so a rejection answers an error response.
+ *
+ * Express 4 discards the promise a handler returns: a rejection never reaches
+ * an error handler and surfaces as an unhandled rejection, which ends the
+ * worker process. The wrapped handler never rejects: the error is recorded on
+ * the server trail and the client gets a generic `server_error` (500), or, if
+ * the response was already started, the response is ended as it stands.
+ */
+export function guardRoute (handler: RouteHandler): (req: Request, res: Response, next: NextFunction) => Promise<void> {
+  return async function guardedRoute (req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await handler(req, res, next);
+    } catch (err: unknown) {
+      logServerError('OAuth2 route failed: ' + (req?.method ?? '') + ' ' + (req?.path ?? ''), err);
+      try {
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify({ error: 'server_error', error_description: 'internal error' }));
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      } catch (sendErr: unknown) {
+        logServerError('OAuth2 route: could not send the error response', sendErr);
+      }
+    }
+  };
+}
 
 export type Deps = {
   config: { get (key: string): unknown };
@@ -153,25 +188,26 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     return;
   }
 
+  // Every async handler goes through `guardRoute` (see there).
   app.get!('/oauth2/authorize',
-    handleAuthorize({ config: deps.config, platform: deps.platform }));
+    guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform })));
 
   app.post!('/oauth2/authorize/accept',
-    handleAccept({
+    guardRoute(handleAccept({
       config: deps.config,
       platform: deps.platform,
       resolveUser: deps.resolveUser,
       createAccess: deps.createAccess,
-    }));
+    })));
 
   app.post!('/oauth2/authorize/refuse',
-    handleRefuse({ config: deps.config }));
+    guardRoute(handleRefuse({ config: deps.config })));
 
   if (typeof app.options === 'function') {
     app.options!('/oauth2/token', corsMiddleware);
   }
   app.post!('/oauth2/token', corsMiddleware,
-    handleToken({
+    guardRoute(handleToken({
       config: deps.config,
       platform: deps.platform,
       mintRefreshedAccess: deps.mintRefreshedAccess,
@@ -182,7 +218,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       resolveAccess: deps.resolveAccess,
       revokeAccessLocal: deps.revokeAccessLocal,
       resolveUsername: deps.resolveUsername,
-    }));
+    })));
 }
 
 /**

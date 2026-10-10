@@ -98,6 +98,20 @@ describe('[OAUTH-SIGSTATE] signed URL-parameter state', () => {
       assert.equal(result.ok, false);
       assert.equal(result.reason, 'bad_signature');
     });
+    it('[OSS-T8] signature of the right character length with a non-ASCII character → bad_signature, no throw', () => {
+      const [body] = signState(KEY_A, SAMPLE).split('.');
+      // 43 characters, but 44 bytes once UTF-8 encoded.
+      const result = verifyState(KEY_A, body + '.' + 'é' + 'a'.repeat(42));
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'bad_signature');
+    });
+    it('[OSS-T9] signature of the right character length with a surrogate pair → bad_signature, no throw', () => {
+      const [body] = signState(KEY_A, SAMPLE).split('.');
+      // The emoji is 2 UTF-16 code units (43 in total) and 4 UTF-8 bytes.
+      const result = verifyState(KEY_A, body + '.' + '😀' + 'a'.repeat(41));
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'bad_signature');
+    });
   });
 
   describe('[OAUTH-SIGSTATE-TIME] clock window', () => {

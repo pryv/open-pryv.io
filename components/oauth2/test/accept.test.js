@@ -224,6 +224,15 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(res.statusCode, 400);
       assert.match(res.body.error_description, /bad_signature/);
     });
+    it('[OAC-S5] signature with a non-ASCII character → 400 bad_signature, the handler resolves', async () => {
+      const handler = mkHandler();
+      const res = fakeRes();
+      const [body] = signState(ADMIN_KEY, SAMPLE_PAYLOAD).split('.');
+      await handler({ body: validBody({ state: body + '.' + 'é' + 'a'.repeat(42) }) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_request');
+      assert.match(res.body.error_description, /bad_signature/);
+    });
     it('[OAC-S3] expired state → 400 (signed state past its ttl)', async () => {
       const handler = mkHandler();
       const res = fakeRes();

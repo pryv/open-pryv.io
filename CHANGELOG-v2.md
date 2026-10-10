@@ -18,6 +18,20 @@
   an absent setting stopped the API and HFS workers at start).
 - The temp files written for an upload are deleted once the request is over, whether it succeeded
   or was refused.
+- OAuth2 `POST /oauth2/authorize/accept` and `/refuse` (and the third-party sign-in callback): a
+  signed `state` whose signature contains a non-ASCII character is refused with `400`
+  (`signed state bad_signature`); it could end the API worker process before, with no credential
+  needed. An unexpected failure on an `/oauth2/*` route now answers `500` `server_error` instead of
+  leaving the request unanswered.
+- Passwords are hashed with a fresh salt for every hash (bcrypt, cost 10 unchanged). Before, every
+  password set by one worker process during its lifetime shared one salt. Existing hashes stay
+  valid and get a fresh salt on the next password change.
+- `bin/backup.js --restore` refuses a backup that is not encrypted when a decryption secret was
+  supplied (`--decrypt-passphrase`, `--private-key` or `PRYV_BACKUP_PASSPHRASE`), instead of
+  restoring it as plaintext; `--allow-plaintext` restores it anyway, `--require-encrypted` refuses
+  a plaintext backup even without a secret. Note that hybrid (`--recipient-pubkey`) encryption
+  provides confidentiality, not authenticity: whoever holds the public key and can write to the
+  backup destination can produce a backup that restores.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

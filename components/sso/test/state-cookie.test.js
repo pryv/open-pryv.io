@@ -155,6 +155,17 @@ describe('[SSOSC] SSO state cookie', () => {
     assert.equal(ok.payload.returnState, atLimit);
   });
 
+  it('[SSOSC12] a signature of the right character length with non-ASCII characters is rejected, no throw', () => {
+    const now = 1_000_000;
+    const [body] = signStateCookie(ADMIN, payload, now).split('.');
+    // Each candidate is 43 UTF-16 code units but longer once UTF-8 encoded.
+    for (const mac of ['é' + 'a'.repeat(42), '😀' + 'a'.repeat(41)]) {
+      const res = verifyStateCookie(ADMIN, body + '.' + mac, now + 5);
+      assert.equal(res.ok, false);
+      assert.equal(res.reason, 'bad_signature');
+    }
+  });
+
   it('[SSOSC8] cookie attributes are HttpOnly + Secure + SameSite=Lax + path-scoped', () => {
     const opts = cookieOptions();
     assert.equal(opts.httpOnly, true);

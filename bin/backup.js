@@ -27,6 +27,7 @@
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --delete-on-success
 //   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem
 //   node bin/backup.js --restore /path/to/backup --decrypt-passphrase 's3cret'
+//   node bin/backup.js --restore /path/to/backup --require-encrypted --private-key recipient.key.pem
 
 const path = require('path');
 const fs = require('fs');
@@ -57,6 +58,9 @@ require('@pryv/boiler').init({
       printUsage();
       process.exit(0);
     }
+
+    // Refuse an unexpected plaintext backup before touching any storage.
+    if (args.restore) checkRestoreEncryption(args);
 
     // Initialize storage subsystems
     await initStorage();
@@ -172,6 +176,26 @@ async function runBackup (args) {
 // ---------------------------------------------------------------------------
 // Restore
 // ---------------------------------------------------------------------------
+
+/**
+ * A plaintext backup (no `encryption.json`) is not read as such when the operator
+ * supplied a decryption secret, or asked for an encrypted backup: whoever can
+ * write to the backup destination could otherwise replace an encrypted backup by
+ * plaintext files and have them restored silently. `--allow-plaintext` lifts
+ * the refusal explicitly.
+ */
+function checkRestoreEncryption (args) {
+  if (args.allowPlaintext) return;
+  if (fs.existsSync(path.join(args.restore, 'encryption.json'))) return;
+  const secretSupplied = !!(args.decryptPassphrase || args.encryptPassphrase ||
+    process.env.PRYV_BACKUP_PASSPHRASE || args.privateKey);
+  if (!secretSupplied && !args.requireEncrypted) return;
+  const reason = args.requireEncrypted ? '--require-encrypted was given' : 'a decryption secret was supplied';
+  throw new Error(
+    `${reason} but the backup at ${args.restore} is not encrypted (no encryption.json). ` +
+    'Refusing to restore it as plaintext; pass --allow-plaintext to restore it anyway.'
+  );
+}
 
 async function runRestore (args) {
   const { createFilesystemBackupReader, createBackupDecryptor } = require('storages/interfaces/backup/index.ts');
@@ -404,6 +428,8 @@ function parseArgs (argv) {
     decryptPassphrase: null,
     privateKey: null,
     privateKeyPassphrase: null,
+    allowPlaintext: false,
+    requireEncrypted: false,
     help: false
   };
 
@@ -465,6 +491,12 @@ function parseArgs (argv) {
       case '--private-key-passphrase':
         args.privateKeyPassphrase = argv[++i];
         break;
+      case '--allow-plaintext':
+        args.allowPlaintext = true;
+        break;
+      case '--require-encrypted':
+        args.requireEncrypted = true;
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -482,6 +514,10 @@ function parseArgs (argv) {
   }
   if (args.recipientPubkey && args.encryptPassphrase) {
     console.error('Error: --recipient-pubkey and --encrypt-passphrase are mutually exclusive (pick one key model)');
+    process.exit(1);
+  }
+  if (args.allowPlaintext && args.requireEncrypted) {
+    console.error('Error: --allow-plaintext and --require-encrypted are mutually exclusive');
     process.exit(1);
   }
 
@@ -525,6 +561,9 @@ Restore:
   --private-key-passphrase <s>  Passphrase protecting the private key (if any)
   --decrypt-passphrase <s>  Passphrase to decrypt a symmetric-encrypted backup
                             (also read from PRYV_BACKUP_PASSPHRASE)
+  --require-encrypted       Refuse a backup that is not encrypted
+  --allow-plaintext         Restore a plaintext backup even though a decryption
+                            secret was supplied (refused by default)
 
 General:
   --help, -h                Show this help

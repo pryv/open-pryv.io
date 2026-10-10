@@ -1,5 +1,43 @@
 # Changelog - Internal (no API impact)
 
+## Signed-state verification: byte-length comparison; OAuth2 route guard
+
+- `oauth2/src/signedState.ts` `verifyState` and `sso/src/stateCookie.ts` `verifyStateCookie`
+  build the two UTF-8 buffers first and compare their byte lengths before
+  `crypto.timingSafeEqual`. The previous check compared string lengths (UTF-16 code units), so a
+  MAC of 43 characters with a non-ASCII one reached `timingSafeEqual` with buffers of different
+  lengths, which throws `ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH`. In the oauth2 handlers the throw
+  became an unhandled rejection (Express 4 ignores the promise a handler returns) and ended the
+  worker; in the SSO callback it was caught and cost a redirect.
+- `oauth2/src/routes.ts`: new exported `guardRoute(handler)` wraps the four async handlers mounted
+  by `registerRoutes` (`/oauth2/authorize`, `/accept`, `/refuse`, `/token`). A rejection is logged
+  through `logServerError` and answers `500` `{ error: 'server_error' }`, or ends the response when
+  it was already started; the wrapped handler never rejects.
+- Tests: `components/oauth2/test/signedState.test.js` `[OSS-T8]`, `[OSS-T9]`; `refuse.test.js`
+  `[ORF-S4]`; `accept.test.js` `[OAC-S5]`; new `routes-guard.test.js` `[ORG-1]`..`[ORG-3]`;
+  `components/sso/test/state-cookie.test.js` `[SSOSC12]`; `components/api-server/test/oauth2-e2e.test.js`
+  `[OE29]` (in-process server keeps answering after the malformed state).
+
+## Password hashing: one salt per hash
+
+- `utils/src/encryption.ts`: the module-level `bcrypt.genSaltSync` result is gone; `hash` and
+  `hashSync` pass the cost (`10`, or bcrypt's minimum `4` under `NODE_ENV=development`, the value
+  the former `1` was clamped to) so bcrypt generates a salt per call. `compare` reads the salt
+  from each stored hash, so existing hashes and the password-history check are unaffected. No
+  rehash on login in this change.
+- Tests: new `components/utils/test/encryption.test.js` `[ENCR1]`..`[ENCR5]`; new
+  `components/api-server/test/password-hash-salt.test.js` `[PWSL1]`.
+
+## Backup restore: no silent plaintext fallback
+
+- `bin/backup.js`: `checkRestoreEncryption(args)` runs before storage init on `--restore`. With
+  no `encryption.json` in the backup and a decryption secret supplied (`--decrypt-passphrase`,
+  `--encrypt-passphrase`, `PRYV_BACKUP_PASSPHRASE`, `--private-key`) or `--require-encrypted`, it
+  exits 1 with an error naming `--allow-plaintext`. New flags `--allow-plaintext` and
+  `--require-encrypted` (mutually exclusive). A plaintext restore without any secret is unchanged.
+  Frame binding (path AAD, final-frame flag) and a signed manifest are not part of this change.
+- Tests: new `components/api-server/test/backup-restore-encryption-cli.test.js` `[BKRE1]`..`[BKRE7]`.
+
 ## Multipart uploads: parser limits and temp-file removal
 
 - `middleware/uploads.ts`: `buildUploadLimits` gives multer `fields: 1`, `files` from the new

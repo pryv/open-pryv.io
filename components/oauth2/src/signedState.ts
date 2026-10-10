@@ -140,8 +140,12 @@ export function verifyState (
   } catch {
     return { ok: false, reason: 'malformed' };
   }
-  if (macPresented.length !== macExpected.length) return { ok: false, reason: 'bad_signature' };
-  if (!crypto.timingSafeEqual(Buffer.from(macPresented), Buffer.from(macExpected))) {
+  // Compare BYTE lengths: a presented MAC with the right number of characters
+  // but a non-ASCII one encodes to more bytes, and `timingSafeEqual` throws on
+  // buffers of different lengths.
+  const presented = Buffer.from(macPresented, 'utf8');
+  const expected = Buffer.from(macExpected, 'utf8');
+  if (presented.length !== expected.length || !crypto.timingSafeEqual(presented, expected)) {
     return { ok: false, reason: 'bad_signature' };
   }
   let payload: SignedStatePayload;
