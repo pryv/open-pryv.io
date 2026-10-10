@@ -235,6 +235,8 @@ export interface PlatformDB {
   getPlatformKv (key: string): Promise<string | null>;
   deletePlatformKv (key: string): Promise<void>;
   listPlatformKvKeys (prefix: string): Promise<string[]>;
+  /** Keys AND values under a prefix, in one read (same prefix rules as listPlatformKvKeys). */
+  listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>>;
 
   // --- Invitation tokens ------------------------------------------
   createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
@@ -378,6 +380,8 @@ const PlatformDB: PlatformDB = {
   async deletePlatformKv (key: string): Promise<void> { throw new Error('Not implemented'); },
 
   async listPlatformKvKeys (prefix: string): Promise<string[]> { throw new Error('Not implemented'); },
+
+  async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> { throw new Error('Not implemented'); },
 
   // --- Invitation tokens --- //
 

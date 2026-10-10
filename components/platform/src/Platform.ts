@@ -868,6 +868,10 @@ class Platform {
     return await this.#db.listPlatformKvKeys(prefix);
   }
 
+  async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> {
+    return await this.#db.listPlatformKvEntries(prefix);
+  }
+
   /**
    * Get all user-to-core mappings.
    */

@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- Account deletion (`DELETE /users/:username`) took minutes on a core that is not the platform
+  database leader: the erasure read the platform's access index one row per request, and a
+  follower forwards each read to the leader (about 4 minutes for 2000 rows across regions). It now
+  reads the index in one query; the result is unchanged.
+
 ## 2.0.0-rc.46 - 2026-10-10
 
 **Security release: upgrade promptly.** Before restarting a dns-active core, check its stored DNS

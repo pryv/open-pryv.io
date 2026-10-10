@@ -521,14 +521,26 @@ class DBpostgresql {
   }
 
   async listPlatformKvKeys (prefix: string): Promise<string[]> {
-    if (typeof prefix !== 'string' || prefix.length === 0) {
-      throw new Error('listPlatformKvKeys: prefix must be a non-empty string');
-    }
-    if (prefix.includes('%') || prefix.includes('_')) {
-      throw new Error('listPlatformKvKeys: prefix must not contain SQL LIKE wildcards');
-    }
+    checkKvPrefix('listPlatformKvKeys', prefix);
     const rows = await this.#getWithPrefix(prefix);
     return rows.map((r) => r.key);
+  }
+
+  async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> {
+    checkKvPrefix('listPlatformKvEntries', prefix);
+    const rows = await this.#getWithPrefix(prefix);
+    return rows.map((r) => ({ key: r.key, value: r.value }));
+  }
+}
+
+// `_` and `%` are SQL LIKE wildcards: rejected in the caller's prefix (same
+// rule as the rqlite engine).
+function checkKvPrefix (method: string, prefix: string): void {
+  if (typeof prefix !== 'string' || prefix.length === 0) {
+    throw new Error(`${method}: prefix must be a non-empty string`);
+  }
+  if (prefix.includes('%') || prefix.includes('_')) {
+    throw new Error(`${method}: prefix must not contain SQL LIKE wildcards`);
   }
 }
 

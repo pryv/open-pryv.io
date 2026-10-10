@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Platform KV: `listPlatformKvEntries`, access-index erasure in one read
+
+- `PlatformDB.listPlatformKvEntries(prefix)`: keys and values under a prefix in one query (rqlite
+  `keyValue`, PostgreSQL `platform_kv`; same prefix rules as `listPlatformKvKeys`, now checked by a
+  shared `checkKvPrefix` in each engine). `Platform` passes it through; `PlatformIndexHandle`
+  requires it.
+- `platform/src/accessIndex.ts` `deleteAccessIndexForUser` / `tombstoneAccessIndexForUser` read the
+  `access-index/` prefix once and filter in memory (`entriesOwnedBy`); unparseable or `null` rows
+  are skipped. Before, one `getPlatformKv` per row: on an rqlite follower each default-level read
+  is forwarded to the leader.
+- `DBrqlite.query` JSDoc: the default `weak` level is served by the leader (only `none` reads
+  node-local state).
+- Tests: `components/platform/test/unit/accessIndex.test.js` `[ACCIDX-11]` (1000 rows, one read for
+  delete and tombstone), conformance `[PLKV10]` / `[PLKV11]` on both engines.
+
 ## events.get: internal plugin subtrees excluded from every local query
 
 - `methods/helpers/eventsGetUtils.ts` `streamQueryAddForcedAndForbiddenStreams` adds the

@@ -929,6 +929,21 @@ export default function conformanceTests (getDB) {
         await assert.rejects(() => db.listPlatformKvKeys(''));
       });
 
+      it('[PLKV10] listPlatformKvEntries returns the keys and values of the prefix only', async () => {
+        const ns = 'plkv-entries-' + cuid() + '/';
+        await db.setPlatformKv(ns + 'alpha', '1');
+        await db.setPlatformKv(ns + 'beta', '{"b":2}');
+        await db.setPlatformKv('other-' + cuid(), 'x');
+        const entries = (await db.listPlatformKvEntries(ns)).sort((a, b) => a.key.localeCompare(b.key));
+        assert.deepStrictEqual(entries, [{ key: ns + 'alpha', value: '1' }, { key: ns + 'beta', value: '{"b":2}' }]);
+      });
+
+      it('[PLKV11] listPlatformKvEntries rejects SQL LIKE wildcards and an empty prefix', async () => {
+        await assert.rejects(() => db.listPlatformKvEntries('foo%'), /wildcard/);
+        await assert.rejects(() => db.listPlatformKvEntries('foo_'), /wildcard/);
+        await assert.rejects(() => db.listPlatformKvEntries(''));
+      });
+
       it('[PLKV09] platform-kv keyspace isolated from access-state / user-core', async () => {
         const suffix = cuid();
         const kvKey = 'iso-plkv/' + suffix;

@@ -60,6 +60,7 @@ export interface PlatformIndexHandle {
   getPlatformKv (key: string): Promise<string | null>;
   deletePlatformKv (key: string): Promise<void>;
   listPlatformKvKeys (prefix: string): Promise<string[]>;
+  listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>>;
 }
 
 /**
@@ -169,25 +170,28 @@ export async function listAccessIndexKeys (platform: PlatformIndexHandle): Promi
 
 /**
  * Delete every index row owned by a user — the Art.17 default when a user is
- * erased. The key is the accessId, so this is a prefix scan reading each row
- * and matching the stored username token (a one-time cost paid at deletion).
- * Returns the number of rows removed.
+ * erased. The key is the accessId, so this is a prefix scan matching the stored
+ * username token, read in ONE query: a read per row would cost one network
+ * round trip each on a core that is not the PlatformDB leader (minutes for a
+ * few thousand rows). Returns the number of rows removed.
  */
 export async function deleteAccessIndexForUser (platform: PlatformIndexHandle, username: string): Promise<number> {
+  const owned = await entriesOwnedBy(platform, username);
+  for (const { key } of owned) await platform.deletePlatformKv(key);
+  return owned.length;
+}
+
+/** The index rows of one user, from a single prefix read. */
+async function entriesOwnedBy (platform: PlatformIndexHandle, username: string): Promise<Array<{ key: string, entry: AccessIndexEntry }>> {
   const target = platform.hashFor(USERNAME_FIELD, username);
-  const keys = await platform.listPlatformKvKeys(PREFIX);
-  let removed = 0;
-  for (const key of keys) {
-    const raw = await platform.getPlatformKv(key);
-    if (raw == null) continue;
+  const owned: Array<{ key: string, entry: AccessIndexEntry }> = [];
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX)) {
     let entry: AccessIndexEntry;
-    try { entry = JSON.parse(raw) as AccessIndexEntry; } catch { continue; }
-    if (readStoredUser(entry) === target) {
-      await platform.deletePlatformKv(key);
-      removed++;
-    }
+    try { entry = JSON.parse(value) as AccessIndexEntry; } catch { continue; }
+    if (entry == null || typeof entry !== 'object') continue;
+    if (readStoredUser(entry) === target) owned.push({ key, entry });
   }
-  return removed;
+  return owned;
 }
 
 /**
@@ -199,23 +203,15 @@ export async function deleteAccessIndexForUser (platform: PlatformIndexHandle, u
  * No plaintext or token username survives cluster-wide. Returns the count.
  */
 export async function tombstoneAccessIndexForUser (platform: PlatformIndexHandle, username: string, ts: number = timestamp.now()): Promise<number> {
-  const target = platform.hashFor(USERNAME_FIELD, username);
-  const keys = await platform.listPlatformKvKeys(PREFIX);
-  let tombstoned = 0;
-  for (const key of keys) {
-    const raw = await platform.getPlatformKv(key);
-    if (raw == null) continue;
-    let entry: AccessIndexEntry;
-    try { entry = JSON.parse(raw) as AccessIndexEntry; } catch { continue; }
-    if (readStoredUser(entry) !== target) continue;
+  const owned = await entriesOwnedBy(platform, username);
+  for (const { key, entry } of owned) {
     delete entry.username;
     delete entry.usernameToken;
     entry.userDeleted = true;
     entry.lastModified = ts;
     await platform.setPlatformKv(key, JSON.stringify(entry));
-    tombstoned++;
   }
-  return tombstoned;
+  return owned.length;
 }
 
 // --- Non-fatal wrappers for the mutation hooks (R4) --- //
