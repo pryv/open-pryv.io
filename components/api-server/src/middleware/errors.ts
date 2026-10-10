@@ -50,27 +50,54 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => L
       }
       // req.context.tracing.finishSpan('express1');
     }
-    errorHandling.logError(error, req, logger);
-    // A streamed response can fail after its headers (and some body) are on the
-    // wire. The status can no longer change, and writing one throws inside this
-    // async handler, i.e. an unhandled rejection that takes the worker down,
-    // while the client waits forever for the bytes its Content-Length promised.
-    // The error is audited and logged above; cutting the connection is the only
-    // honest answer left.
-    if (res.headersSent) {
-      if (!res.writableEnded) res.destroy();
-      return;
+    // Express ignores the promise this async handler returns: anything thrown
+    // from here on (a logger fault, an error whose data cannot be serialized,
+    // an invalid header value) would be an unhandled rejection that ends the
+    // worker and leaves the client waiting. Answer a plain 500 instead.
+    try {
+      errorHandling.logError(error, req, logger);
+      // A streamed response can fail after its headers (and some body) are on the
+      // wire. The status can no longer change, and writing one throws inside this
+      // async handler, i.e. an unhandled rejection that takes the worker down,
+      // while the client waits forever for the bytes its Content-Length promised.
+      // The error is audited and logged above; cutting the connection is the only
+      // honest answer left.
+      if (res.headersSent) {
+        if (!res.writableEnded) res.destroy();
+        return;
+      }
+      // Error-scoped response headers (e.g. WWW-Authenticate challenges
+      // for auth-scheme failures) ride on the error object itself.
+      const errorHeaders = (error as { httpHeaders?: Record<string, string> }).httpHeaders;
+      if (errorHeaders != null) {
+        for (const [name, value] of Object.entries(errorHeaders)) res.setHeader(name, value);
+      }
+      res
+        .status(error.httpStatus || 500)
+        .json(commonMeta.setCommonMeta({
+          error: errorHandling.getPublicErrorData(error)
+        }));
+    } catch (answerError) {
+      answerPlainServerError(res, answerError);
     }
-    // Error-scoped response headers (e.g. WWW-Authenticate challenges
-    // for auth-scheme failures) ride on the error object itself.
-    const errorHeaders = (error as { httpHeaders?: Record<string, string> }).httpHeaders;
-    if (errorHeaders != null) {
-      for (const [name, value] of Object.entries(errorHeaders)) res.setHeader(name, value);
-    }
-    res
-      .status(error.httpStatus || 500)
-      .json(commonMeta.setCommonMeta({
-        error: errorHandling.getPublicErrorData(error)
-      }));
   };
+
+  function answerPlainServerError (res: Response, answerError: unknown) {
+    try {
+      logger.error('Could not answer an API error', answerError);
+    } catch {
+      // nothing left to report through
+    }
+    try {
+      if (res.headersSent) {
+        if (!res.writableEnded) res.destroy();
+        return;
+      }
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ error: { id: errors.ErrorIds.UnexpectedError, message: 'Unexpected error' } }));
+    } catch {
+      res.destroy();
+    }
+  }
 }

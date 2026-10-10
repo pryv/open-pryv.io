@@ -24,15 +24,19 @@ function catchAndNext (handler: ExpressHandler): ExpressHandler {
     try {
       return await handler(req, res, next);
     } catch (err) {
+      // Express ignores the promise this handler returns: nothing below may
+      // throw, whatever was rejected (an operation can reject with null or
+      // a non-Error value).
       storeErrorInTrace(err);
-      const e = err as Error & { constructor: { name: string } };
-      if (e.constructor.name === 'ServiceNotAvailableError') {
+      const e = err as (Error & { constructor?: { name?: string } }) | null | undefined;
+      if (e?.constructor?.name === 'ServiceNotAvailableError') {
         return next(errors.apiUnavailable(e.message));
       }
       if (err instanceof business.types.errors.InputTypeError) {
-        return next(errors.invalidRequestStructure(e.message));
+        return next(errors.invalidRequestStructure((err as Error).message));
       }
-      next(err);
+      // `next()` without an error would fall through to a 404.
+      next(err != null ? err : new Error('series operation rejected without an error'));
     }
   };
 }

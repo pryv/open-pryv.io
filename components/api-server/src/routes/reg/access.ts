@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 import * as sharedSecrets from 'shared-secrets';
@@ -28,6 +29,15 @@ const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:access');
+
+/**
+ * How a log line names an access request: the key alone fetches the granted
+ * token, so it is never logged; this short digest still ties the lines of one
+ * request together.
+ */
+function keyRef (key: string | string[]): string {
+  return 'ref ' + createHash('sha256').update(String(key)).digest('hex').slice(0, 8);
+}
 
 /** Operator- and developer-facing wording for each grant refusal. The
  * reason id in `data.reason` is the machine-readable form; this is what a
@@ -692,7 +702,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           // Could not perform the check. Never a pass (that would be a
           // consent bypass) and never an opaque 500: the operator is
           // told which of the three it was, in the log and in the body.
-          logger.error('consent check unavailable on access request ' + req.params.key +
+          logger.error('consent check unavailable on access request ' + keyRef(req.params.key) +
             ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
           return res.status(503).json({
             error: {
@@ -744,9 +754,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes };
         } else {
           // Fall back to inline delivery: never worse than today. Log the
-          // reason class and the request key, never the token.
+          // reason class and a reference to the request, never the token nor
+          // the key (which fetches it).
           logger.warn('credential hand-off fell back to inline for access request ' +
-            req.params.key + ' (' + result.fallback + ')');
+            keyRef(req.params.key) + ' (' + result.fallback + ')');
         }
       }
 

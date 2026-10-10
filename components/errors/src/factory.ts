@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 
+import { randomBytes } from 'node:crypto';
 import type { APIError as APIErrorT } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
@@ -228,21 +229,22 @@ factory.unexpectedError = function (sourceError: unknown, message?: string) {
   if (message != null) { return produceError(message); }
   // Sometimes people throw strings
   if (typeof sourceError === 'string') { return produceError(sourceError); }
-  // Maybe this looks like an Error?
+  // An Error: its message (file paths, driver or database text) is not for the
+  // client, nor for the audit trail the user can read. The public text carries
+  // a short reference instead; the source error stays as `innerError`, which
+  // `errorHandling.logError` writes (stack included) on the same log line as
+  // that reference.
   const error = sourceError;
-  if (error != null && error instanceof Error && error.message != null) {
-    // NOTE Could not get this path covered with type information. It looks sound...
-    return produceError(error.message, error);
+  if (error != null && error instanceof Error) {
+    const ref = randomBytes(4).toString('hex');
+    return new APIError(ErrorIds.UnexpectedError, `${ErrorMessages[ErrorIds.UnexpectedError]} (ref ${ref})`,
+      { httpStatus: 500, innerError: error });
   }
   // Give up:
   return produceError('(no message given)');
-  function produceError (msg: string, error?: Error) {
-    const opts = {
-      httpStatus: 500,
-      innerError: error
-    };
+  function produceError (msg: string) {
     const text = `${ErrorMessages[ErrorIds.UnexpectedError]}: ${msg}`;
-    return new APIError(ErrorIds.UnexpectedError, text, opts);
+    return new APIError(ErrorIds.UnexpectedError, text, { httpStatus: 500 });
   }
 };
 

@@ -32,6 +32,24 @@
   a plaintext backup even without a secret. Note that hybrid (`--recipient-pubkey`) encryption
   provides confidentiality, not authenticity: whoever holds the public key and can write to the
   backup destination can produce a backup that restores.
+- **Visible to clients:** an `unexpected-error` (`500`) caused by a server-side fault no longer
+  carries the fault's own text (file paths, database or driver messages). Its `message` is now
+  `Unexpected error (ref <8 hex characters>)`; the same reference is on the server's error log
+  line, next to the detail and the stack. This applies to HTTP answers, socket.io answers, batch
+  call results and the audit record of the failed call. Do not parse the `message` of an
+  `unexpected-error`; the `id` is unchanged. Errors raised with an explicit operator-facing message
+  (for example a missing mail setup) keep their text.
+- High-frequency series (`/:user/events/:id/series`, `/:user/series/batch`): a server-side fault
+  answers the same `unexpected-error` (`500`) as the API. Before, the body carried
+  `{ error: { id: "Error: <message>" } }`.
+- Access-request keys are no longer written to the server logs: the request trace shows
+  `/reg/access/***`, the hand-off fallback and consent-check failure lines name the request by a
+  short digest, and logged URLs hide the `key`, `poll` and `readToken` query values. The request
+  trace no longer prints the Basic-auth user name (an access token in
+  `https://<token>@<user>.<domain>/` URLs); the field is always `-`.
+- The API error handler answers a plain `500` when the error answer itself cannot be built,
+  instead of leaving the request unanswered and ending the worker; a series route that fails with
+  a value that is not an error answers `500` as well.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

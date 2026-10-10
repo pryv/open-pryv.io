@@ -63,4 +63,43 @@ describe('[RDLG] access tokens kept out of request logs', function () {
     const hidden = JSON.stringify(inspectAndHide({ msg: 'GET /u/ev?auth=zq8x4k2b7c9d0e1f2g3h4i5j', resetToken: 'r', oldPassword: 'o' }));
     assert.ok(!hidden.includes('zq8x4k2b7c9d0e1f2g3h4i5j') && !hidden.includes('"r"') && !hidden.includes('"o"'), hidden);
   });
+
+  // The access-request key alone fetches the granted token: it is a credential
+  // wherever it appears in a URL (poll path, auth page query).
+  it('[RDL5] the request trace hides the access-request key in the poll path', function () {
+    require('../../src/requestTrace.ts');
+    const morgan = require('morgan');
+    assert.strictEqual(morgan['redacted-url']({ originalUrl: '/reg/access/k1k2k3k4k5k6k7k8?x=1' }), '/reg/access/***?x=1');
+    // reg.<domain>/access/<key>: the path the poll URL has behind the register host
+    assert.strictEqual(morgan['redacted-url']({ originalUrl: '/access/k1k2k3k4k5k6k7k8' }), '/access/***');
+    // the routes that are not keyed stay readable
+    assert.strictEqual(morgan['redacted-url']({ originalUrl: '/reg/access' }), '/reg/access');
+    assert.strictEqual(morgan['redacted-url']({ originalUrl: '/reg/access/invitationtoken/check' }), '/reg/access/invitationtoken/check');
+    assert.strictEqual(morgan['redacted-url']({ originalUrl: '/alice/accesses/acc1' }), '/alice/accesses/acc1');
+  });
+
+  it('[RDL6] URLs hide the key, poll and readToken query values', function () {
+    const { redactUrl } = require('utils/src/redactUrl.ts');
+    const shown = redactUrl('/auth?key=K1rdl6xx&poll=https%3A%2F%2Fc%2Freg%2Faccess%2FK1rdl6xx&lang=en');
+    assert.ok(!shown.includes('K1rdl6xx'), shown);
+    assert.ok(shown.includes('lang=en'), shown);
+    const attachment = redactUrl('/alice/events/ev1/f1/a.png?readToken=rt-rdl6&w=1');
+    assert.ok(!attachment.includes('rt-rdl6'), attachment);
+  });
+
+  it('[RDL7] the request trace never prints a Basic-auth user name (a token in Pryv)', function () {
+    const { COMBINED_REDACTED } = require('../../src/requestTrace.ts');
+    const morgan = require('morgan');
+    const line = morgan.compile(COMBINED_REDACTED)(morgan, {
+      ip: '10.0.0.1',
+      method: 'GET',
+      url: '/alice/',
+      originalUrl: '/alice/',
+      httpVersionMajor: 1,
+      httpVersionMinor: 1,
+      headers: { authorization: 'Basic ' + Buffer.from('tok-rdl7:').toString('base64') }
+    }, { headersSent: false });
+    assert.ok(!line.includes('tok-rdl7'), line);
+    assert.ok(line.startsWith('10.0.0.1 - - ['), line);
+  });
 });

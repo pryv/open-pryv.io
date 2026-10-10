@@ -1,5 +1,55 @@
 # Changelog - Internal (no API impact)
 
+## Credentials out of the logs: access-request key, Basic-auth user
+
+- `utils/src/redactUrl.ts`: also hides the `readToken`, `key` and `poll` query values, and the
+  segment after `/access/` in the path (`/reg/access/<key>`, `/access/<key>` behind the register
+  host; `/access/invitationtoken/...` is kept). Every caller benefits: request trace,
+  `errorHandling.logError`, hosted-sites and worker ingress lines, admin-route warnings.
+- `middleware/src/requestTrace.ts`: the format (now exported as `COMBINED_REDACTED`) prints `-`
+  in place of morgan's `:remote-user`, which decoded a Basic-auth token on requests answered
+  before `getAuth` (root index, wrong-core 421, misrouted paths, HFS / previews body-parser
+  errors).
+- `api-server/src/routes/reg/access.ts`: the hand-off fallback (`warn`) and consent-check failure
+  (`error`) lines log `ref <first 8 hex of sha256(key)>` instead of the key.
+- Tests: `components/middleware/test/unit/redactedLogs.test.js` `[RDL5]`..`[RDL7]`; new
+  `components/api-server/test/log-redaction.test.js` `[RAL1]`..`[RAL4]` (logger capture over a
+  poll / refuse cycle, the inline fallback, a failing consent check and Basic-auth requests);
+  new `components/hfs-server/test/unit/request-trace.test.js` `[HFRT1]`.
+
+## Unexpected errors: generic public message with a reference
+
+- `errors/src/factory.ts` `unexpectedError(err)`: for an `Error` source the message is
+  `Unexpected error (ref <random 8 hex>)` and the source stays `innerError`, which
+  `errorHandling.logError` already logs (stack included) at `error` level on the line that carries
+  the message, hence the reference. The explicit-message and string branches are unchanged. The
+  audit record (`Audit.errorApiCall` stores `error.message`) gets the generic text.
+- `hfs-server/src/middleware/errors.ts`: a non-API, non-parser error goes through
+  `unexpectedError` (non-`Error` values are wrapped first) instead of `new APIError(err.toString())`,
+  which used the message as the error id, answered it to the client and logged it at `info`
+  without the stack.
+- Tests: new `components/errors/test/unit/unexpectedError.test.js` `[UNX1]`..`[UNX4]` (first test
+  directory of the `errors` component); new `components/hfs-server/test/unit/errors-middleware.test.js`
+  `[HFE1]`, `[HFE2]`; new `components/api-server/test/unexpected-error-response.test.js` `[UNXR1]`
+  (500 body, error log line and audit record of a failing `profile.get`).
+
+## Async Express handlers: no escaping rejections
+
+- Inventory of the async handlers mounted directly on the api-server, HFS and previews Express
+  apps (outside the API method chain): all of them catch every await (try/catch ending in
+  `next(err)` or an answer) or are wrapped (`oauth2` `guardRoute`, HFS `catchAndNext`). Two tails
+  could still reject and were hardened:
+  - `api-server/src/middleware/errors.ts`: the part after the audit call (log, error headers,
+    `res.json`) runs in a try/catch; on failure it logs and answers a plain `500`
+    `unexpected-error` (or destroys a response already started). Before, an error whose `data`
+    could not be serialized left the request unanswered and the rejection ended the worker.
+  - `hfs-server/src/web/controller.ts` `catchAndNext`: the catch no longer reads
+    `err.constructor.name` unguarded (a rejection with `null` threw inside the catch) and never
+    calls `next()` without an error (which fell through to a 404).
+- Tests: `components/api-server/test/unexpected-error-response.test.js` `[ERMG1]`; new
+  `components/hfs-server/test/unit/series-route-guard.test.js` `[HFGD1]` (each answers `500`,
+  then serves the next request).
+
 ## Signed-state verification: byte-length comparison; OAuth2 route guard
 
 - `oauth2/src/signedState.ts` `verifyState` and `sso/src/stateCookie.ts` `verifyStateCookie`

@@ -28,8 +28,9 @@ export default function produceErrorHandlingMiddleware (logger: unknown) {
       // client's fault, answered like the API server does.
       safeError = errorsFactory.invalidRequestStructure((error as Error).message);
     } else {
-      // Assume that we can toString the mystery object
-      safeError = new APIError((error as { toString(): string }).toString());
+      // A server-side fault: answered like the API server does (generic
+      // message with a reference; the detail and stack go to the error log).
+      safeError = errorsFactory.unexpectedError(error instanceof Error ? error : new Error(String(error)));
     }
 
     errorHandling.logError(safeError, req, logger);
