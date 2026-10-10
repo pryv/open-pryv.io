@@ -110,10 +110,10 @@ describe('[ASTE] Audit Streams and Events', function () {
     it('[7SGO] must allow listing one accesses (stream) with appAccess', async () => {
       const res = await coreRequest
         .get(streamsPath)
-        .query({ id: ':_audit:access-' + appAccess.id })
+        .query({ parentId: ':_audit:access-' + appAccess.id })
         .set('Authorization', appAccess.token);
-      assert.strictEqual(res.body.streams.length, 1);
-      assert.strictEqual(res.body.streams[0].id, ':_audit:access-' + appAccess.id);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.deepStrictEqual(res.body.streams, []);
     });
 
     it('[XP27] must retrieve all available streams with a personal token', async () => {

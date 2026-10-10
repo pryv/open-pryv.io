@@ -142,6 +142,42 @@ describe('[STRE] streams', function () {
       });
     });
 
+    describe('[SGUP] undeclared parameters', function () {
+      async function getStreams (query) {
+        return await request.get(basePath).query(query);
+      }
+
+      it('[SGU1] must refuse "storeId" and "id" (400)', async function () {
+        validation.checkErrorInvalidParams(await getStreams({ storeId: '_audit', id: 'accesses' }));
+        validation.checkErrorInvalidParams(await getStreams({ storeId: '_audit', parentId: 'accesses' }));
+        validation.checkErrorInvalidParams(await getStreams({ id: initialRootStreamId }));
+      });
+
+      it('[SGU2] must refuse "includeTrashed" (400)', async function () {
+        validation.checkErrorInvalidParams(await getStreams({ includeTrashed: 'false' }));
+      });
+
+      it('[SGU3] must refuse an array "id" with a 400, not a server error', async function () {
+        validation.checkErrorInvalidParams(await getStreams({ id: ['a', 'b'] }));
+      });
+
+      it('[SGU4] must refuse an unknown "storeId" with deletions requested with a 400, not a server error', async function () {
+        validation.checkErrorInvalidParams(await getStreams({ storeId: 'nope', includeDeletionsSince: 0 }));
+      });
+
+      it('[SGU5] must still accept the access token in the "auth" query parameter', async function () {
+        const res = await request.get(basePath).unset('Authorization').query({ auth: request.token, state: 'all' });
+        assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+        assert.ok(Array.isArray(res.body.streams));
+      });
+
+      it('[SGU6] must still accept the documented parameters together', async function () {
+        const res = await getStreams({ parentId: initialRootStreamId, state: 'all', includeDeletionsSince: 0 });
+        validation.check(res, { status: 200, schema: methodsSchema.get.result });
+        assert.ok(res.body.streamDeletions != null);
+      });
+    });
+
     // [AJZL] Duplicate of streams-patternc.test.js - removed
     // [G5F2] Duplicate of streams-patternc.test.js - removed
   });

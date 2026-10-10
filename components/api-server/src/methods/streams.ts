@@ -57,7 +57,7 @@ type StreamLike = {
   deleted?: number;
   [k: string]: unknown;
 };
-type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; storeId?: string; includeTrashed?: boolean; update?: Partial<StreamLike>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
+type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; update?: Partial<StreamLike>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
 type StreamsResult = { streams?: StreamLike[]; stream?: StreamLike; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown, isArray?: boolean) => void; [k: string]: unknown };
 
 /**
@@ -90,11 +90,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     params.includeDeletionsSince ??= null;
     next();
   }
+  // The store is always derived from the stream id's prefix (never taken from
+  // the client), so the permission check and the read address the same store.
   async function checkAuthorization (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
-    if (params.parentId && params.id) {
-      throw errors.invalidRequestStructure('Do not mix "parentId" and "id" parameter in request');
-    }
-    const streamId = params.id || params.parentId || null;
+    const streamId = params.parentId || null;
     if (!streamId) { return next(); } // "*" is authorized for everyone
     if (!(await context.access.canListStream(streamId))) {
       return next(errors.forbidden('Insufficient permissions or non-existant stream [' + streamId + ']'));
@@ -102,16 +101,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     return next();
   }
   async function findAccessibleStreams (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
-    let streamId = params.id || params.parentId || '*';
-    let storeId = params.storeId; // might me null
-    if (storeId == null) {
-      [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
-    }
+    const [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.parentId || '*');
     let streams = await mall.streams.get(context.user.id, {
       id: streamId,
       storeId,
       childrenDepth: -1,
-      includeTrashed: params.includeTrashed || params.state === 'all',
+      includeTrashed: params.state === 'all',
       excludedIds: context.access.getCannotListStreamsStreamIds(storeId)
     });
     // excludedIds comes from stored permissions, which cannot express "your own
@@ -121,7 +116,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const fullStreamId = storeDataUtils.getFullItemId(storeId, streamId);
       const inResult = treeUtils.findById(streams, fullStreamId);
       if (!inResult) {
-        return next(errors.unknownReferencedResource('unknown Stream:', params.parentId ? 'parentId' : 'id', fullStreamId, null));
+        return next(errors.unknownReferencedResource('unknown Stream:', 'parentId', fullStreamId, null));
       }
     } else if (!(await context.access.canListStream('*'))) {
       // request is "*" and not personal access
@@ -148,7 +143,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
               id: listable.streamId,
               storeId: listable.storeId,
               childrenDepth: -1,
-              includeTrashed: params.includeTrashed || params.state === 'all',
+              includeTrashed: params.state === 'all',
               excludedIds: context.access.getCannotListStreamsStreamIds(listable.storeId)
             });
             filteredStreams.push(...listableStreamAndChilds);
@@ -175,11 +170,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (params.includeDeletionsSince == null) {
       return next();
     }
-    let streamId = params.id || params.parentId || '*';
-    let storeId = params.storeId; // might me null
-    if (storeId == null) {
-      [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
-    }
+    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(params.parentId || '*');
     try {
       const deletedStreams = await mall.streams.getDeletions(context.user.id, params.includeDeletionsSince, [storeId]);
       result.streamDeletions = deletedStreams;

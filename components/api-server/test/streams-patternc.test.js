@@ -100,14 +100,14 @@ describe('[STRP] streams (Pattern C)', function () {
       assert.strictEqual(res.body.error.id, ErrorIds.UnknownReferencedResource);
     });
 
-    it('[PG5F] must return a correct error if the stream is unknown', async function () {
+    it('[PG5F] must refuse "id", which is not a declared parameter', async function () {
       const res = await coreRequest
         .get(basePath)
         .set('Authorization', token)
         .query({ id: 'unknownStreamId' });
 
       assert.strictEqual(res.status, 400);
-      assert.strictEqual(res.body.error.id, ErrorIds.UnknownReferencedResource);
+      assert.strictEqual(res.body.error.id, ErrorIds.InvalidParametersFormat);
     });
   });
 

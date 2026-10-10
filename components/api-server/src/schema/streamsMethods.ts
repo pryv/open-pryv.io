@@ -33,8 +33,10 @@ const __ex_get = {
     params: object({
       parentId: string(),
       state: string({ enum: ['default', 'all'] }),
-      includeDeletionsSince: number()
-    }),
+      includeDeletionsSince: number(),
+      // access token in the query string (HTTP GET)
+      auth: string()
+    }, { additionalProperties: false }),
     result: object({
       streams: array({ $ref: '#/definitions/stream' }),
       eventDeletions: array(itemDeletion)
