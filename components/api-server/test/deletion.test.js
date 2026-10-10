@@ -402,7 +402,13 @@ describe('[PGTD] DELETE /users/:username', () => {
       const username = 'testdelk' + cuid.slug().toLowerCase();
       const user = await initiateUserWithData(username);
       const userId = user.attrs.id;
-      const auditCount = await (await auditStorage.forUser(userId)).countEvents();
+      // The audit entry of the fixture's read may be written just after its
+      // response: wait for it (bounded) before asserting.
+      let auditCount = 0;
+      for (let i = 0; i < 50 && auditCount === 0; i++) {
+        auditCount = await (await auditStorage.forUser(userId)).countEvents();
+        if (auditCount === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       assert.ok(auditCount > 0, 'the account has audit entries before its deletion');
       return { username, userId, auditCount };
     }
