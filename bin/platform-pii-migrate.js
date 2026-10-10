@@ -169,12 +169,11 @@ async function buildPlan ({ platformDB }) {
   // a plaintext username cluster-wide AND Art.17 erasure (which matches by
   // hashFor token after the flip) silently misses them. Rows already carrying a
   // token (or tombstoned, carrying neither) are skipped — idempotent.
-  const accessIndexKeys = await platformDB.listPlatformKvKeys('access-index/');
-  for (const key of accessIndexKeys) {
-    const raw = await platformDB.getPlatformKv(key);
-    if (raw == null) continue;
+  // One read for the whole prefix (a read per row is a leader round trip each on a follower).
+  for (const { key, value } of await platformDB.listPlatformKvEntries('access-index/')) {
     let entry;
-    try { entry = JSON.parse(raw); } catch { continue; }
+    try { entry = JSON.parse(value); } catch { continue; }
+    if (entry == null || typeof entry !== 'object') continue;
     if (typeof entry.username !== 'string') { plan.alreadyHashed.accessIndex++; continue; }
     plan.accessIndex.push({ key, entry });
   }

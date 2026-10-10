@@ -393,6 +393,28 @@
   `[PG5F]` and `components/audit/test/acceptance/audit-store.test.js` `[7SGO]` moved off the `id`
   parameter.
 
+## Platform KV: `listPlatformKvEntries`, access-index erasure in one read
+
+- `PlatformDB.listPlatformKvEntries(prefix)`: keys and values under a prefix in one query (rqlite
+  `keyValue`, PostgreSQL `platform_kv`; same prefix rules as `listPlatformKvKeys`, now checked by a
+  shared `checkKvPrefix` in each engine). `Platform` passes it through; `PlatformIndexHandle`
+  requires it.
+- `platform/src/accessIndex.ts` `deleteAccessIndexForUser` / `tombstoneAccessIndexForUser` read the
+  `access-index/` prefix once and filter in memory (`entriesOwnedBy`); unparseable or `null` rows
+  are skipped. Before, one `getPlatformKv` per row: on an rqlite follower each default-level read
+  is forwarded to the leader.
+- `DBrqlite.query` JSDoc: the default `weak` level is served by the leader (only `none` reads
+  node-local state).
+- Tests: `components/platform/test/unit/accessIndex.test.js` `[ACCIDX-11]` (1000 rows, one read for
+  delete and tombstone), conformance `[PLKV10]` / `[PLKV11]` on both engines.
+- `oauth2/src/storage.ts`: `listRevokedClients` and `listRevokedDpopKeys` (loaded by the per-core
+  revoked-clients and revoked-keys caches on every refresh), `pruneRevokedClients`, `pruneRevokedDpopKeys`,
+  `listDpopKeysSeen` and `pruneDpopKeysSeen` read their prefix with `listPlatformKvEntries`
+  instead of one `getPlatformKv` per row; parsing and the fail-closed handling of corrupt DPoP
+  tombstones are unchanged. `bin/platform-pii-migrate.js` reads `access-index/` the same way and
+  skips `null` rows. Test `components/oauth2/test/storage.test.js` `[RJKT01i]` (one read per
+  scan); the oauth2 test fakes implement `listPlatformKvEntries`.
+
 ## events.get: internal plugin subtrees excluded from every local query
 
 - `methods/helpers/eventsGetUtils.ts` `streamQueryAddForcedAndForbiddenStreams` adds the

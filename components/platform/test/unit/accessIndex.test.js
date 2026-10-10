@@ -33,13 +33,21 @@ const PEPPER_B64 = crypto.randomBytes(PEPPER_BYTES).toString('base64');
 /** Minimal in-memory PlatformDB providing the generic KV surface accessIndex uses. */
 function makeFakePlatformDB () {
   const kv = new Map();
+  // Every read is a round trip to the leader on a follower core: count them.
+  const reads = { get: 0, list: 0 };
   return {
     _kv: kv,
+    _reads: reads,
     async setPlatformKv (key, value) { kv.set(key, value); },
-    async getPlatformKv (key) { return kv.has(key) ? kv.get(key) : null; },
+    async getPlatformKv (key) { reads.get++; return kv.has(key) ? kv.get(key) : null; },
     async deletePlatformKv (key) { kv.delete(key); },
     async listPlatformKvKeys (prefix) {
+      reads.list++;
       return [...kv.keys()].filter((k) => k.startsWith(prefix));
+    },
+    async listPlatformKvEntries (prefix) {
+      reads.list++;
+      return [...kv.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value }));
     }
   };
 }
@@ -192,6 +200,29 @@ for (const hashed of [false, true]) {
       const b1 = await accessIndex.getAccessIndex(platform, 'b1');
       assert.ok(('username' in b1) || ('usernameToken' in b1));
       assert.ok(!b1.userDeleted);
+    });
+
+    it('[ACCIDX-11] erasure reads the index in one query, whatever its size (delete and tombstone)', async () => {
+      for (const erase of ['delete', 'tombstone']) {
+        const { platform, db } = makePlatform({ hashed });
+        for (let i = 0; i < 1000; i++) {
+          await accessIndex.putAccessIndex(platform, 'u' + (i % 50), accessRow({ id: 'x' + i }));
+        }
+        for (const id of ['a1', 'a2', 'a3']) await accessIndex.putAccessIndex(platform, 'alice', accessRow({ id }));
+        // Unreadable rows are skipped, never abort the erasure.
+        db._kv.set('access-index/null-row', 'null');
+        db._kv.set('access-index/bad-row', '{not json');
+        db._reads.get = 0;
+        db._reads.list = 0;
+
+        const n = erase === 'delete'
+          ? await accessIndex.deleteAccessIndexForUser(platform, 'alice')
+          : await accessIndex.tombstoneAccessIndexForUser(platform, 'alice', 1700009999);
+
+        assert.strictEqual(n, 3);
+        assert.deepStrictEqual(db._reads, { get: 0, list: 1 }, `${erase}: one read, not one per row`);
+        assert.strictEqual(db._kv.size, erase === 'delete' ? 1002 : 1005);
+      }
     });
 
     it('[ACCIDX-10] safeIndexAccessMutation never rejects on a PlatformDB failure', async () => {

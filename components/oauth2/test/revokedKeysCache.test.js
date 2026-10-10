@@ -20,7 +20,7 @@ const cache = require('../src/revokedKeysCache.ts');
 const JKT = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
 const JKT2 = 'ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210_-abcdef';
 
-// Minimal PlatformDB the cache loader (listRevokedDpopKeys) needs: the two kv
+// Minimal PlatformDB the cache loader (listRevokedDpopKeys) needs: the kv
 // read primitives, plus a call counter and a throw toggle to exercise
 // caching + fail-open.
 function fakePlatform () {
@@ -30,10 +30,10 @@ function fakePlatform () {
     listCalls: 0,
     revoke (jkt) { kv.set('dpop-jkt-revoked/' + jkt, JSON.stringify({ revokedAt: Date.now() })); },
     unrevoke (jkt) { kv.delete('dpop-jkt-revoked/' + jkt); },
-    async listPlatformKvKeys (prefix) {
+    async listPlatformKvEntries (prefix) {
       p.listCalls++;
       if (p.throwOnList) throw new Error('platform down');
-      return Array.from(kv.keys()).filter((k) => k.startsWith(prefix));
+      return Array.from(kv.entries()).filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value }));
     },
     async getPlatformKv (key) { return kv.has(key) ? kv.get(key) : null; },
   };

@@ -72,8 +72,9 @@ class DBrqlite {
    * Execute a read query (SELECT).
    * @param [params]
    * @param [level] rqlite read-consistency level. Omitted → rqlite's
-   *   default (`weak`), which reads node-local applied state and can
-   *   serve stale/empty rows during a leader election. Routing- and
+   *   default (`weak`), served by the leader (a follower forwards it, one
+   *   network round trip per query; only `none` reads node-local state),
+   *   which can serve stale/empty rows during a leader election. Routing- and
    *   uniqueness-critical reads pass `'strong'` so the read is confirmed
    *   through Raft and waits for a committed leader instead of
    *   mis-resolving (or reporting "unknown") during an election window.
@@ -661,20 +662,36 @@ class DBrqlite {
   }
 
   async listPlatformKvKeys (prefix: string): Promise<string[]> {
-    if (typeof prefix !== 'string' || prefix.length === 0) {
-      throw new Error('listPlatformKvKeys: prefix must be a non-empty string');
-    }
-    // SQL LIKE pattern escape — ` `_` and `%` are wildcards; defend at the
-    // boundary by rejecting them in the caller's prefix (callers own their
-    // namespace convention, e.g. 'oauth-client/').
-    if (prefix.includes('%') || prefix.includes('_')) {
-      throw new Error('listPlatformKvKeys: prefix must not contain SQL LIKE wildcards');
-    }
+    checkKvPrefix('listPlatformKvKeys', prefix);
     const rows = await this.query(
       "SELECT key FROM keyValue WHERE key LIKE ?",
       [prefix + '%']
     );
     return rows.map((r) => r.key);
+  }
+
+  // One read for a whole prefix: on a follower every default-level read is
+  // forwarded to the leader, so a per-key loop costs one network round trip
+  // per row.
+  async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> {
+    checkKvPrefix('listPlatformKvEntries', prefix);
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key LIKE ?",
+      [prefix + '%']
+    );
+    return rows.map((r) => ({ key: r.key, value: r.value }));
+  }
+}
+
+// SQL LIKE pattern escape — `_` and `%` are wildcards; defend at the boundary
+// by rejecting them in the caller's prefix (callers own their namespace
+// convention, e.g. 'oauth-client/').
+function checkKvPrefix (method: string, prefix: string): void {
+  if (typeof prefix !== 'string' || prefix.length === 0) {
+    throw new Error(`${method}: prefix must be a non-empty string`);
+  }
+  if (prefix.includes('%') || prefix.includes('_')) {
+    throw new Error(`${method}: prefix must not contain SQL LIKE wildcards`);
   }
 }
 

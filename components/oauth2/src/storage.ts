@@ -16,8 +16,9 @@
  *     (authorization codes, refresh tokens). Lazy-expire built-in.
  *
  *   - `setPlatformKv` / `getPlatformKv` / `deletePlatformKv` /
- *     `listPlatformKvKeys` — for indefinite cluster-wide kv
- *     (client metadata). No TTL.
+ *     `listPlatformKvKeys` / `listPlatformKvEntries` — for indefinite
+ *     cluster-wide kv (client metadata). No TTL. Scans that need the
+ *     values read them with `listPlatformKvEntries` (one query).
  *
  * Key prefixes are owned here, not the engine:
  *   - oauth-client/<clientId>             — indefinite
@@ -360,13 +361,11 @@ export async function isClientRevoked (platform: PlatformDB, clientId: string): 
 
 /** All tombstoned clients with their revoke epochs (the per-core cache loads this). */
 export async function listRevokedClients (platform: PlatformDB): Promise<Array<{ clientId: string; revokedAt: number }>> {
-  const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
   const out: Array<{ clientId: string; revokedAt: number }> = [];
-  for (const key of keys) {
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_CLIENT_REVOKED)) {
     const clientId = key.slice(PREFIX_CLIENT_REVOKED.length);
-    const raw = await platform.getPlatformKv(key);
     let revokedAt = 0;
-    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    try { revokedAt = Number(JSON.parse(value).revokedAt) || 0; } catch { revokedAt = 0; }
     out.push({ clientId, revokedAt });
   }
   return out;
@@ -384,12 +383,10 @@ export async function listRevokedClientIds (platform: PlatformDB): Promise<strin
  * set is tiny, so this is not required for correctness. Returns the count pruned.
  */
 export async function pruneRevokedClients (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
-  const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
   let pruned = 0;
-  for (const key of keys) {
-    const raw = await platform.getPlatformKv(key);
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_CLIENT_REVOKED)) {
     let revokedAt = 0;
-    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    try { revokedAt = Number(JSON.parse(value).revokedAt) || 0; } catch { revokedAt = 0; }
     if (now - revokedAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
   }
   return pruned;
@@ -571,13 +568,11 @@ export async function isDpopKeyRevoked (platform: PlatformDB, jkt: string): Prom
 
 /** All tombstoned key thumbprints with their revoke epochs (the per-core cache loads this). */
 export async function listRevokedDpopKeys (platform: PlatformDB): Promise<Array<{ jkt: string; revokedAt: number }>> {
-  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_REVOKED);
   const out: Array<{ jkt: string; revokedAt: number }> = [];
-  for (const key of keys) {
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_DPOP_JKT_REVOKED)) {
     const jkt = key.slice(PREFIX_DPOP_JKT_REVOKED.length);
-    const raw = await platform.getPlatformKv(key);
     let revokedAt = 0;
-    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    try { revokedAt = Number(JSON.parse(value).revokedAt) || 0; } catch { revokedAt = 0; }
     out.push({ jkt, revokedAt });
   }
   return out;
@@ -589,12 +584,10 @@ export async function listRevokedDpopKeys (platform: PlatformDB): Promise<Array<
  * job is done. Optional housekeeping; the set is tiny. Returns the count pruned.
  */
 export async function pruneRevokedDpopKeys (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
-  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_REVOKED);
   let pruned = 0;
-  for (const key of keys) {
-    const raw = await platform.getPlatformKv(key);
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_DPOP_JKT_REVOKED)) {
     let revokedAt = NaN;
-    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt); } catch { revokedAt = NaN; }
+    try { revokedAt = Number(JSON.parse(value).revokedAt); } catch { revokedAt = NaN; }
     // A corrupt/unparseable tombstone is ENFORCED as revoked (fail-closed:
     // getDpopKeyRevokedAt → 0, still non-null). Keep it here too — only prune
     // rows with a real, aged epoch. Parsing a bad value to 0 would make
@@ -640,16 +633,14 @@ export async function listDpopKeysSeen (
   const scan = clientId != null && clientId.length > 0
     ? PREFIX_DPOP_JKT_SEEN + clientId + '/'
     : PREFIX_DPOP_JKT_SEEN;
-  const keys = await platform.listPlatformKvKeys(scan);
   const out: Array<{ clientId: string; jkt: string; firstSeenAt: number; lastSeenAt: number }> = [];
-  for (const key of keys) {
+  for (const { key, value } of await platform.listPlatformKvEntries(scan)) {
     const rest = key.slice(PREFIX_DPOP_JKT_SEEN.length); // <clientId>/<jkt>
     if (rest.length < 45) continue; // at least 1-char clientId + '/' + 43-char jkt
     const jkt = rest.slice(-43);
     const cid = rest.slice(0, -44); // drop the '/' + 43-char jkt
-    const raw = await platform.getPlatformKv(key);
     let firstSeenAt = 0; let lastSeenAt = 0;
-    try { const o = JSON.parse(raw ?? '{}'); firstSeenAt = Number(o.firstSeenAt) || 0; lastSeenAt = Number(o.lastSeenAt) || 0; } catch { /* zeros */ }
+    try { const o = JSON.parse(value); firstSeenAt = Number(o.firstSeenAt) || 0; lastSeenAt = Number(o.lastSeenAt) || 0; } catch { /* zeros */ }
     out.push({ clientId: cid, jkt, firstSeenAt, lastSeenAt });
   }
   return out;
@@ -662,12 +653,10 @@ export async function listDpopKeysSeen (
  * Returns the count pruned.
  */
 export async function pruneDpopKeysSeen (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
-  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_SEEN);
   let pruned = 0;
-  for (const key of keys) {
-    const raw = await platform.getPlatformKv(key);
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_DPOP_JKT_SEEN)) {
     let lastSeenAt = 0;
-    try { lastSeenAt = Number(JSON.parse(raw ?? '{}').lastSeenAt) || 0; } catch { lastSeenAt = 0; }
+    try { lastSeenAt = Number(JSON.parse(value).lastSeenAt) || 0; } catch { lastSeenAt = 0; }
     if (now - lastSeenAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
   }
   return pruned;
