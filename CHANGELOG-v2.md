@@ -1,6 +1,10 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.46 - 2026-10-10
+
+**Security release: upgrade promptly.** Before restarting a dns-active core, check its stored DNS
+records with `node bin/dns-records.js list` (see "Security" below). If you have not deployed
+2.0.0-rc.45 yet, read its notes too: this release contains it.
 
 ### Security
 
