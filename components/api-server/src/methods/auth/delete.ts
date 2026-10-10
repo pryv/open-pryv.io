@@ -23,6 +23,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.checkIfAuthorized.bind(deletion),
     deletion.validateUserExists.bind(deletion),
     deletion.validateUserFilepaths.bind(deletion),
+    // Before anything is erased: the plugins read this account's records to
+    // reach the accounts it has relationships with.
+    deletion.runTeardownSteps.bind(deletion),
     deletion.deleteUserFiles.bind(deletion),
     deletion.deleteHFData.bind(deletion),
     deletion.deleteAttachments.bind(deletion),

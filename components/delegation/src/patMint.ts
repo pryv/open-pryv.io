@@ -54,6 +54,12 @@ type IssueTokenDeps = {
    * storage-layer imports. The returned id becomes the PAT token.
    */
   mintSession: (username: string, appId: string, userId: string) => Promise<string>;
+  /**
+   * True when the anchor's delegate account no longer exists: its name is
+   * free, or held by an account other than the recorded one. A lookup failure
+   * must throw, never answer true. Absent → no check.
+   */
+  delegateGone?: (delegate: AnchorContent['delegate']) => Promise<boolean>;
 };
 
 type PeerResult = { ok: boolean; status: number; body: unknown };
@@ -96,6 +102,9 @@ async function handleIssueToken (deps: IssueTokenDeps, params: {
    * cross-core path; A's own identity on the same-core path). Verified against
    * the anchor when provided. */
   expectDelegateUsername?: string;
+  /** The delegate account id the caller acts for (same-core path). Verified
+   * against the anchor when both are known. */
+  expectDelegateUserId?: string;
 }): Promise<{ token: string; apiEndpoint: string }> {
   const { mall, now } = deps;
 
@@ -118,6 +127,21 @@ async function handleIssueToken (deps: IssueTokenDeps, params: {
       delegate?.username?.toLowerCase() !== params.expectDelegateUsername.toLowerCase()) {
     throw delegationError(DelegationErrorIds.DELEGATE_MISMATCH,
       'The delegate identity does not match this delegation relationship', 403);
+  }
+  if (delegate?.userId != null && params.expectDelegateUserId != null &&
+      delegate.userId !== params.expectDelegateUserId) {
+    throw delegationError(DelegationErrorIds.DELEGATE_MISMATCH,
+      'The delegate identity does not match this delegation relationship', 403);
+  }
+
+  // The control credential outlives nothing it was issued for: when the
+  // delegate account is gone (deleted, its name free or taken by another
+  // account) no token is issued and the anchor turns stale, which tells the
+  // owner. The owner's detach then removes what the delegate granted.
+  if (deps.delegateGone != null && await deps.delegateGone(delegate)) {
+    await store.updateAnchorContent(mall, params.bUserId, anchor, { status: C.STATUS.STALE });
+    throw delegationError(DelegationErrorIds.NOT_ACTIVE,
+      'The delegate account of this delegation relationship no longer exists', 410);
   }
 
   const appId = delegateAppId(delegate);

@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { accountSeriesNamespaces } = require('business/src/series/namespace.ts');
+const { runDeletionTeardownSteps } = require('business/src/auth/deletionTeardown.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
@@ -109,6 +110,14 @@ class Deletion {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));
     }
+    next();
+  }
+
+  // Relationships that live on other accounts (delegations, consent grants):
+  // the plugins owning them tear them down while this account's records still
+  // name the counterparties. Best-effort, never fails the deletion.
+  async runTeardownSteps (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    await runDeletionTeardownSteps({ id: context.user.id, username: context.user.username }, this.logger);
     next();
   }
 

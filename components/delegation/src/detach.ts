@@ -144,7 +144,7 @@ async function detachDelegate (deps: DetachDeps, params: {
   delegateUsername: string;
   keepAccessIds?: unknown;
 }): Promise<{ revokedChildAccesses?: number; revokedConsentGrants?: number; keptConsentGrants?: number }> {
-  const { mall, now, self } = deps;
+  const { mall } = deps;
   const delegateUsername = String(params.delegateUsername || '').trim();
   if (delegateUsername.length === 0) {
     throw delegationError(DelegationErrorIds.UNKNOWN_USERNAME, 'A delegate username is required', 400);
@@ -172,6 +172,31 @@ async function detachDelegate (deps: DetachDeps, params: {
       }
     }
   }
+
+  return await teardownAnchor(deps, {
+    bUserId: params.bUserId, bUsername: params.bUsername, delegateUsername, anchor, keepIds,
+  });
+}
+
+type TeardownOutcome = { revokedChildAccesses?: number; revokedConsentGrants?: number; keptConsentGrants?: number };
+
+/**
+ * The teardown itself, once the relationship is identified and the keep list
+ * validated (see detachDelegate for the steps and their order). Shared by the
+ * owner's detach and by the release that follows the delegate account's
+ * deletion.
+ */
+async function teardownAnchor (deps: DetachDeps, params: {
+  bUserId: string;
+  bUsername: string;
+  delegateUsername: string;
+  anchor: store.EventLike;
+  keepIds: Set<string>;
+}): Promise<TeardownOutcome> {
+  const { mall, now, self } = deps;
+  const { anchor, keepIds, delegateUsername } = params;
+  const content = anchor.content as AnchorContent;
+  const relId = content.relId;
 
   // -------- pending invite → cancel ----------------------------------------
   if (content.status === C.STATUS.INVITE) {
@@ -263,6 +288,44 @@ async function detachDelegate (deps: DetachDeps, params: {
     try { await deps.notifyDetach(notifyEndpoint, relId); } catch (_e) { /* lazy reconciliation on A */ }
   }
   return { revokedChildAccesses: children.length - kept, revokedConsentGrants: consentGrants.length, keptConsentGrants: kept };
+}
+
+/**
+ * releaseRelationship — end ONE relationship, named by its relId, from the
+ * delegate's side: the delegate account is being deleted. Runs on the
+ * controlled account's core, either called directly (same core) or by the
+ * delegate's core through the control access of that very relationship.
+ *
+ * The teardown is the owner's detach with an empty keep list: what the
+ * delegate granted through the relationship is revoked with it, consent
+ * grants included (their requesters are told). Nothing else of the
+ * controlled account is touched, other delegates' relationships included.
+ *
+ * The named delegate must be the anchor's (username, and account id when both
+ * are known), so a relId alone cannot end someone else's relationship.
+ * Already gone → `{ released: false }`, not an error.
+ */
+async function releaseRelationship (deps: DetachDeps, params: {
+  bUserId: string;
+  bUsername: string;
+  relId: string;
+  delegateUsername: string;
+  delegateUserId?: string;
+}): Promise<{ released: boolean } & TeardownOutcome> {
+  const anchor = await store.findAnchorByRelId(deps.mall, params.bUserId, params.relId);
+  if (anchor == null) return { released: false };
+  const delegate = (anchor.content as AnchorContent).delegate;
+  const sameName = delegate?.username != null &&
+    delegate.username.toLowerCase() === String(params.delegateUsername ?? '').toLowerCase();
+  const sameId = delegate?.userId == null || params.delegateUserId == null || delegate.userId === params.delegateUserId;
+  if (!sameName || !sameId) {
+    throw delegationError(DelegationErrorIds.DELEGATE_MISMATCH,
+      'The delegate identity does not match this delegation relationship', 403);
+  }
+  const outcome = await teardownAnchor(deps, {
+    bUserId: params.bUserId, bUsername: params.bUsername, delegateUsername: delegate.username, anchor, keepIds: new Set(),
+  });
+  return { released: true, ...outcome };
 }
 
 /**
@@ -358,7 +421,8 @@ async function dismissControlledMirror (mall: MallLike, aUserId: string, control
 export {
   isGenuineLoginAccess,
   detachDelegate,
+  releaseRelationship,
   handleDetachNotify,
   dismissControlledMirror,
 };
-export type { DetachDeps, NotifyDeps, GateAccessLike };
+export type { DetachDeps, NotifyDeps, GateAccessLike, TeardownOutcome };

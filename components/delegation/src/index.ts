@@ -46,6 +46,7 @@ export const {
 export const {
   isGenuineLoginAccess,
   detachDelegate,
+  releaseRelationship,
   handleDetachNotify,
   dismissControlledMirror,
 } = detach;

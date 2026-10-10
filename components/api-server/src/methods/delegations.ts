@@ -33,6 +33,7 @@ const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildSystemCreateAccountDeps } = require('./helpers/delegationAccounts.ts');
+const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
@@ -210,6 +211,28 @@ export default async function produceDelegationsApiMethods (api: { register (...
 
   function safeHost (url: string): string | null {
     try { return new URL(url).host; } catch (_e) { return null; }
+  }
+
+  /**
+   * True when an anchor's delegate account no longer exists: its name is free
+   * on the platform, or (when the account lives on this core and the anchor
+   * recorded its id) held by another account. An account on another core can
+   * only be checked by name. A lookup failure throws: it must never read as
+   * "gone".
+   */
+  async function delegateGone (delegate: { username?: string; userId?: string } | null | undefined): Promise<boolean> {
+    const name = String(delegate?.username ?? '');
+    if (name.length === 0) return false;
+    let onThisCore = platform.isSingleCore === true;
+    if (!onThisCore) {
+      const coreId = await platform.getUserCore(name);
+      if (coreId == null) return true;
+      onThisCore = thisCoreId != null && coreId === thisCoreId;
+    }
+    if (!onThisCore) return false;
+    const id = await usersRepository.getUserIdForUsername(name);
+    if (id == null) return true;
+    return delegate?.userId != null && id !== delegate.userId;
   }
 
   // ---- cross-core delivery ------------------------------------------------
@@ -410,14 +433,20 @@ export default async function produceDelegationsApiMethods (api: { register (...
    * relId taken from A's mirror + A's own identity); cross-core posts to the
    * controlled account's core via the control bearer endpoint.
    */
-  function makeCallControl (controlledUsername: string, aUsername: string) {
+  function makeCallControl (controlledUsername: string, aUsername: string, aUserId: string) {
     return async function callControl (controlApiEndpoint: string, relId: string) {
       const target = await resolveTarget(controlledUsername);
       if (target.isSelf && target.userId != null) {
         try {
           const res = await delegation.handleIssueToken(
-            { mall, now: nowSeconds, mintSession },
-            { bUserId: target.userId, bUsername: controlledUsername, relId, expectDelegateUsername: aUsername });
+            { mall, now: nowSeconds, mintSession, delegateGone },
+            {
+              bUserId: target.userId,
+              bUsername: controlledUsername,
+              relId,
+              expectDelegateUsername: aUsername,
+              expectDelegateUserId: aUserId,
+            });
           // Same-core issuance skips the audited method wrapper the cross-core
           // path goes through; record the issuance on B so both paths leave one
           // issuance audit record attributed to the delegate.
@@ -578,7 +607,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const controlledUsername = String(params.username || '');
         const deps = {
           mall, now: nowSeconds,
-          callControl: makeCallControl(controlledUsername, context.user.username),
+          callControl: makeCallControl(controlledUsername, context.user.username, String(context.user.id)),
         };
         const res = await delegation.getToken(deps, { aUserId: context.user.id, controlledUsername });
         Object.assign(result, res);
@@ -665,13 +694,17 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // issueToken — A's core → B's core (bearer = control access). Mints/refreshes
   // the delegate PAT on B (session-backed personal access). Also reachable as a
   // direct public call by a control bearer — that is fine, it IS the credential.
+  // The delegate identity compared here is the control marker's, stamped from
+  // the anchor: it cannot tell whether the delegate account still exists, so
+  // the delegateGone check does (a bearer kept past the delegate account's
+  // deletion mints nothing).
   api.register('delegations.issueToken',
     requireMarker('control'),
     async function (context: MethodContext, _params: unknown, result: Record<string, unknown>, next: MethodNext) {
       try {
         const marker = context.access?.clientData?.delegation;
         const res = await delegation.handleIssueToken(
-          { mall, now: nowSeconds, mintSession },
+          { mall, now: nowSeconds, mintSession, delegateGone },
           {
             bUserId: context.user.id,
             bUsername: context.user.username,
@@ -743,6 +776,134 @@ export default async function produceDelegationsApiMethods (api: { register (...
         next();
       } catch (err) { next(toApiError(err)); }
     });
+
+  // releaseControl — A's core → B's core (bearer = control access), sent when
+  // the delegate account is deleted: ends THIS relationship on B (the marker's
+  // relId, nothing else) exactly as B's own detach would with nothing kept.
+  // The control bearer can already issue an owner-equivalent token, so ending
+  // its own relationship adds no power.
+  api.register('delegations.releaseControl',
+    requireMarker('control'),
+    async function (context: MethodContext, _params: unknown, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        const marker = context.access?.clientData?.delegation;
+        const delegateUsername = String(marker?.delegate?.username ?? '');
+        const deps = {
+          mall, now: nowSeconds,
+          self: await selfIdentity(context.user.username),
+          destroySession,
+          resolveTarget,
+          deliverInvite: makeDeliverInvite(),
+          notifyDetach: makeNotifyDetach(delegateUsername),
+          notifyConsentGrantsRevoked,
+          logger,
+        };
+        const outcome = await delegation.releaseRelationship(deps, {
+          bUserId: context.user.id, bUsername: context.user.username,
+          relId: String(marker?.relId), delegateUsername,
+        });
+        result.released = outcome.released;
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // ======================================================= account deletion
+
+  // What a deleted account's relationships left on OTHER accounts. As a
+  // delegate it holds, on each controlled account, a control access, a
+  // personal token and what it granted: on this core they are removed here,
+  // on another core the release is sent through the relationship's control
+  // access. As a controlled account it tells each delegate the relationship is
+  // gone. Best-effort: a failure is logged, the deletion goes on, and a
+  // delivery to another core is sent without being awaited.
+  function sendWithoutWaiting (what: string, delivery: Promise<{ ok: boolean; status?: number }>): void {
+    delivery
+      .then((r) => { if (!r.ok) logger.warn('account deletion: ' + what + ' not delivered', { status: r.status }); })
+      .catch((err: unknown) => { logger.warn('account deletion: ' + what + ' failed', { error: String((err as Error)?.message ?? err) }); });
+  }
+
+  // Nothing is sent back to the account being deleted: its records are erased next.
+  const noDelivery = async () => ({ ok: true, status: 200, body: null });
+
+  async function releaseAsDeletedDelegate (account: { id: string; username: string }, mirror: { relId: string; status?: string; controlled?: { username?: string }; controlApiEndpoint?: string; capabilityUrl?: string }): Promise<void> {
+    const controlledUsername = String(mirror.controlled?.username ?? '');
+    let target: Awaited<ReturnType<typeof resolveTarget>> | null = null;
+    try { target = await resolveTarget(controlledUsername); } catch (_e) { /* not resolvable here: the endpoint path below */ }
+    if (target != null && !target.found) return;
+    if (target != null && target.isSelf && target.userId != null) {
+      const deps = {
+        mall, now: nowSeconds,
+        self: await selfIdentity(controlledUsername),
+        destroySession,
+        resolveTarget,
+        deliverInvite: noDelivery,
+        notifyDetach: noDelivery,
+        notifyConsentGrantsRevoked,
+        logger,
+      };
+      const outcome = await delegation.releaseRelationship(deps, {
+        bUserId: target.userId, bUsername: controlledUsername, relId: mirror.relId,
+        delegateUsername: account.username, delegateUserId: account.id,
+      });
+      if (outcome.released) logger.info('account deletion: delegation released on a controlled account of this core', { relId: mirror.relId });
+      return;
+    }
+    const outbound = { fetch, logger: getLogger('delegations:outbound') };
+    if (mirror.status === delegation.STATUS.ACTIVE && mirror.controlApiEndpoint != null) {
+      sendWithoutWaiting('delegation release', postToPeer({
+        apiEndpoint: mirror.controlApiEndpoint, path: 'delegations/controlled-side/release', body: {}, deps: outbound,
+      }));
+    } else if (mirror.status === delegation.STATUS.INVITE && mirror.capabilityUrl != null) {
+      sendWithoutWaiting('delegation invite refusal', postToPeer({
+        apiEndpoint: mirror.capabilityUrl, path: 'delegations/controlled-side/refuse-response', body: { relId: mirror.relId }, deps: outbound,
+      }));
+    }
+  }
+
+  async function notifyDelegateOfDeletedAccount (account: { id: string; username: string }, anchor: { relId: string; status?: string; delegate?: { username?: string }; notifyApiEndpoint?: string }): Promise<void> {
+    const delegateUsername = String(anchor.delegate?.username ?? '');
+    const target = await resolveTarget(delegateUsername);
+    if (!target.found) return;
+    let delivery: Promise<{ ok: boolean; status?: number }>;
+    if (anchor.status === delegation.STATUS.INVITE) {
+      delivery = makeDeliverInvite()(target, {
+        action: 'cancel',
+        relId: anchor.relId,
+        controlled: { username: account.username, hostSlug: (await selfIdentity(account.username)).hostSlug },
+        delegateUsername,
+      });
+    } else if (anchor.notifyApiEndpoint != null) {
+      delivery = makeNotifyDetach(delegateUsername)(anchor.notifyApiEndpoint, anchor.relId);
+    } else {
+      return;
+    }
+    if (target.isSelf) {
+      await delivery;
+    } else {
+      sendWithoutWaiting('delegation detach notice', delivery);
+    }
+  }
+
+  setDeletionTeardownStep('delegation', async function teardownDelegationsOfDeletedAccount (account: { id: string; username: string }) {
+    for (const mirror of await delegation.store.listMirrors(mall, account.id)) {
+      try {
+        await releaseAsDeletedDelegate(account, mirror.content);
+      } catch (err) {
+        logger.warn('account deletion: delegation release failed (deletion continues)', {
+          relId: mirror.content?.relId, error: String((err as Error)?.message ?? err),
+        });
+      }
+    }
+    for (const anchor of await delegation.store.listAnchors(mall, account.id)) {
+      try {
+        await notifyDelegateOfDeletedAccount(account, anchor.content);
+      } catch (err) {
+        logger.warn('account deletion: delegation detach notice failed (deletion continues)', {
+          relId: anchor.content?.relId, error: String((err as Error)?.message ?? err),
+        });
+      }
+    }
+  });
 
   logger.debug('delegations.* methods registered');
 }

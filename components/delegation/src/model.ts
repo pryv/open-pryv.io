@@ -22,6 +22,15 @@ type DelegationStatus = 'invite' | 'active' | 'stale';
 type DelegateRef = {
   username: string;
   hostSlug: string;
+  /**
+   * The delegate account's id, recorded on the anchor when it is known (the
+   * delegate's core reports it at accept or account creation; a same-core
+   * request knows it from the start). A username can be freed and taken
+   * again: the id is what tells the account the relationship was opened with
+   * from a later one of the same name. Absent on anchors written before it was
+   * recorded, and never stamped into a marker access.
+   */
+  userId?: string;
 };
 
 /** Reference to a controlled account, from the controlled side's view. */

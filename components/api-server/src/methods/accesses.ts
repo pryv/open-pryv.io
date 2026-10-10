@@ -54,6 +54,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { getUsersRepository } = require('business/src/users/index.ts');
 
@@ -921,6 +922,32 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-delete-hook'),
+  });
+
+  // Account deletion: the account's CMC relationship accesses are erased with
+  // it, without passing through accesses.delete, so the hook above would never
+  // tell the counterparties. The same revocation is sent for each of them
+  // (the peer then deletes the access it holds for this account: the data
+  // grant given to it, or its back-channel to it). Built WITHOUT the mall: the
+  // local bookkeeping writes the account's own events, which are being erased.
+  // Sent, not awaited: a slow peer never holds the deletion.
+  const cmcAccountDeletionNotice = cmc.createAccessesDeletePostHook({
+    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    timeoutMs: 15_000,
+    logger: getLogger('cmc:account-deletion'),
+  });
+  setDeletionTeardownStep('cmc', async function revokeCmcRelationshipsOfDeletedAccount (account: { id: string }) {
+    const all = (await mallForCmc.accesses.get(account.id, {})) as AccessLike[];
+    const relationships = (all || []).filter((a) => a?.deleted == null &&
+      (a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role === 'counterparty');
+    if (relationships.length === 0) return;
+    Promise.resolve()
+      .then(() => cmcAccountDeletionNotice(account.id, relationships))
+      .catch((err: unknown) => {
+        getLogger('cmc:account-deletion').warn('cmc: revocation notices of a deleted account failed', {
+          error: String((err as Error)?.message ?? err),
+        });
+      });
   });
 
   api.register(

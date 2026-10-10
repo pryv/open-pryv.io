@@ -161,7 +161,9 @@ async function requestAttach (deps: RequestAttachDeps, params: {
   }
 
   // Duplicate rejection — an existing invite OR active relationship to the same
-  // delegate blocks a second request.
+  // delegate blocks a second request. So does a stale one (its delegate
+  // account is gone): one anchor per delegate name, and the stale one still
+  // holds what the delegate granted, for the owner to review at detach.
   const existing = await store.findAnchorByDelegate(mall, params.bUserId, delegateUsername);
   if (existing != null) {
     const status = (existing.content as AnchorContent).status;
@@ -169,15 +171,24 @@ async function requestAttach (deps: RequestAttachDeps, params: {
       throw delegationError(DelegationErrorIds.ALREADY_EXISTS,
         'A delegation relationship to "' + delegateUsername + '" already exists', 409);
     }
+    if (status === C.STATUS.STALE) {
+      throw delegationError(DelegationErrorIds.ALREADY_EXISTS,
+        'The delegation relationship to "' + delegateUsername + '" is stale (its delegate account is gone); remove it first', 409,
+        { status });
+    }
   }
 
   const relId = idGen();
   const requestedAt = now();
   const expiresAt = requestedAt + deps.inviteTtlSeconds;
 
+  // Same core: the delegate's account id is known now. Cross-core it arrives
+  // with the accept.
+  const delegateRef: AnchorContent['delegate'] = { username: delegateUsername, hostSlug: target.hostSlug };
+  if (target.isSelf && typeof target.userId === 'string' && target.userId.length > 0) delegateRef.userId = target.userId;
   const anchorContent: AnchorContent = {
     relId,
-    delegate: { username: delegateUsername, hostSlug: target.hostSlug },
+    delegate: delegateRef,
     status: C.STATUS.INVITE,
     requestedAt,
   };
@@ -323,7 +334,7 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
   try {
     peer = await deps.callControlledSide(capabilityUrl, 'accept-response', {
       relId: content.relId,
-      delegate: { username: params.aUsername, hostSlug: self.hostSlug },
+      delegate: { username: params.aUsername, hostSlug: self.hostSlug, userId: params.aUserId },
       notifyApiEndpoint,
     });
   } catch (err) {
@@ -395,7 +406,7 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
 async function handleAcceptResponse (deps: ControlledSideDeps, params: {
   bUserId: string;
   relId: string;
-  delegate: { username: string; hostSlug: string };
+  delegate: { username: string; hostSlug: string; userId?: string };
   notifyApiEndpoint?: string;
 }): Promise<{ controlApiEndpoint: string; relId: string; activatedAt: number }> {
   const { mall, now } = deps;
@@ -416,6 +427,23 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
     throw delegationError(DelegationErrorIds.DELEGATE_MISMATCH,
       'The delegate identity does not match this delegation relationship', 403);
   }
+  // The account id too, when both sides know it: a later account holding the
+  // invited name is not the invited delegate.
+  const claimedUserId = typeof params.delegate?.userId === 'string' && params.delegate.userId.length > 0
+    ? params.delegate.userId
+    : null;
+  if (anchorDelegate.userId != null && claimedUserId != null && anchorDelegate.userId !== claimedUserId) {
+    throw delegationError(DelegationErrorIds.DELEGATE_MISMATCH,
+      'The delegate identity does not match this delegation relationship', 403);
+  }
+  // A stale relationship (its delegate account is gone) is never revived.
+  if (content.status === C.STATUS.STALE) {
+    throw delegationError(DelegationErrorIds.NOT_ACTIVE, 'This delegation relationship is no longer active', 410);
+  }
+  // Learnt now (a cross-core invite): recorded with the activation below.
+  const delegateIdPatch: Partial<AnchorContent> = (anchorDelegate.userId == null && claimedUserId != null)
+    ? { delegate: { ...anchorDelegate, userId: claimedUserId } }
+    : {};
 
   // D2 — idempotency keyed on the control access. If one already exists (a
   // completed accept, or a crash between mint and anchor-flip), heal the anchor
@@ -425,7 +453,7 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
     if (existingControl.apiEndpoint == null) {
       throw delegationError(DelegationErrorIds.CREATION_FAILED, 'The control access has no reachable endpoint', 502);
     }
-    const activatedAt = await healAnchorToActive(deps, params, anchor, existingControl.id);
+    const activatedAt = await healAnchorToActive(deps, params, anchor, existingControl.id, delegateIdPatch);
     return { controlApiEndpoint: existingControl.apiEndpoint, relId: params.relId, activatedAt };
   }
 
@@ -458,7 +486,7 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
     if (isDuplicateErr(err)) {
       const dup = await store.findMarkerAccess(mall, params.bUserId, params.relId, C.CLIENTDATA_KIND.CONTROL);
       if (dup?.apiEndpoint != null) {
-        const activatedAt = await healAnchorToActive(deps, params, anchor, dup.id);
+        const activatedAt = await healAnchorToActive(deps, params, anchor, dup.id, delegateIdPatch);
         return { controlApiEndpoint: dup.apiEndpoint, relId: params.relId, activatedAt };
       }
     }
@@ -479,6 +507,7 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
       activatedAt,
       notifyApiEndpoint: params.notifyApiEndpoint,
       controlAccessId: control.id,
+      ...delegateIdPatch,
     });
   } catch (err) {
     await store.deleteAccessById(mall, params.bUserId, control.id);
@@ -499,7 +528,7 @@ async function healAnchorToActive (deps: ControlledSideDeps, params: {
   bUserId: string;
   relId: string;
   notifyApiEndpoint?: string;
-}, anchor: store.EventLike, controlAccessId: string): Promise<number> {
+}, anchor: store.EventLike, controlAccessId: string, delegateIdPatch: Partial<AnchorContent> = {}): Promise<number> {
   const { mall, now } = deps;
   const content = anchor.content as AnchorContent;
   const activatedAt = content.activatedAt ?? now();
@@ -509,7 +538,10 @@ async function healAnchorToActive (deps: ControlledSideDeps, params: {
       activatedAt,
       notifyApiEndpoint: content.notifyApiEndpoint ?? params.notifyApiEndpoint,
       controlAccessId: content.controlAccessId ?? controlAccessId,
+      ...delegateIdPatch,
     });
+  } else if (delegateIdPatch.delegate != null) {
+    await store.updateAnchorContent(mall, params.bUserId, anchor, delegateIdPatch);
   }
   return activatedAt;
 }

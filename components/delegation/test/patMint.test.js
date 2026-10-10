@@ -260,6 +260,59 @@ describe('delegation PAT mint (issueToken)', function () {
     const res = await patMint.handleIssueToken(issueDeps(mall, mintSession), { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', expectDelegateUsername: NAME_A.toUpperCase() });
     assert.ok(res.token);
   });
+
+  describe('[DPGN] the delegate account is gone', function () {
+    async function seedAnchorWithId (mall) {
+      return store.createAnchor(mall, USER_B, {
+        relId: 'rel-1',
+        delegate: { username: NAME_A, hostSlug: HOST_SLUG, userId: USER_A },
+        status: C.STATUS.ACTIVE,
+        requestedAt: nowSeconds(),
+        activatedAt: nowSeconds(),
+      }, nowSeconds);
+    }
+    function pats (mall) {
+      return (mall._accesses.get(USER_B) || []).filter((a) => a.clientData?.delegation?.kind === C.CLIENTDATA_KIND.DELEGATE_PAT);
+    }
+
+    it('[DPGN1] no token is issued and the anchor turns stale', async function () {
+      const mall = makeFakeMall();
+      await seedAnchorWithId(mall);
+      const asked = [];
+      const deps = { ...issueDeps(mall, makeSessionMint()), delegateGone: async (d) => { asked.push(d); return true; } };
+      await assert.rejects(
+        patMint.handleIssueToken(deps, { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', expectDelegateUsername: NAME_A }),
+        (e) => e.id === 'delegation-not-active' && e.httpStatus === 410);
+      assert.deepEqual(asked, [{ username: NAME_A, hostSlug: HOST_SLUG, userId: USER_A }], 'the check gets the anchor\'s delegate, id included');
+      assert.equal(pats(mall).length, 0, 'no PAT minted');
+      const anchor = await store.findAnchorByRelId(mall, USER_B, 'rel-1');
+      assert.equal(anchor.content.status, C.STATUS.STALE);
+      // And it stays refused, without asking again.
+      await assert.rejects(
+        patMint.handleIssueToken({ ...deps, delegateGone: async () => false }, { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1' }),
+        (e) => e.id === 'delegation-not-active');
+    });
+
+    it('[DPGN2] a live delegate is issued its token', async function () {
+      const mall = makeFakeMall();
+      await seedAnchorWithId(mall);
+      const deps = { ...issueDeps(mall, makeSessionMint()), delegateGone: async () => false };
+      const res = await patMint.handleIssueToken(deps, { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', expectDelegateUserId: USER_A });
+      assert.ok(res.token);
+      assert.equal(pats(mall)[0].clientData.delegation.delegate.userId, undefined, 'the account id is not stamped into the PAT marker');
+    });
+
+    it('[DPGN3] a caller acting for another account of the same name is refused', async function () {
+      const mall = makeFakeMall();
+      await seedAnchorWithId(mall);
+      await assert.rejects(
+        patMint.handleIssueToken(issueDeps(mall, makeSessionMint()), {
+          bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', expectDelegateUsername: NAME_A, expectDelegateUserId: 'another-account-id',
+        }),
+        (e) => e.id === 'delegation-delegate-mismatch');
+      assert.equal(pats(mall).length, 0, 'no PAT minted');
+    });
+  });
 });
 
 describe('delegation PAT wrapper (getToken)', function () {

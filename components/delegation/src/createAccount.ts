@@ -114,7 +114,7 @@ type CreateAccountPayload = {
   email?: string;
   password?: string;
   language?: string;
-  delegate: { username: string; hostSlug: string };
+  delegate: { username: string; hostSlug: string; userId?: string };
   notifyApiEndpoint?: string;
 };
 
@@ -179,7 +179,7 @@ async function createAccount (deps: CreateAccountDeps, params: {
     email: params.email,
     password: params.password,
     language: params.language,
-    delegate: { username: params.aUsername, hostSlug: self.hostSlug },
+    delegate: { username: params.aUsername, hostSlug: self.hostSlug, userId: params.aUserId },
     notifyApiEndpoint,
   };
 
@@ -299,9 +299,13 @@ async function handleSystemCreateAccount (deps: SystemCreateAccountDeps, payload
     }
 
     const activatedAt = now();
+    // The delegate's account id, when its core reports it (an older core does
+    // not): recorded on the anchor only, never in the control marker.
+    const anchorDelegate: AnchorContent['delegate'] = { username: delegate.username, hostSlug: delegate.hostSlug };
+    if (typeof delegate.userId === 'string' && delegate.userId.length > 0) anchorDelegate.userId = delegate.userId;
     const anchorContent: AnchorContent = {
       relId,
-      delegate: { username: delegate.username, hostSlug: delegate.hostSlug },
+      delegate: anchorDelegate,
       status: C.STATUS.ACTIVE,
       requestedAt: activatedAt,
       activatedAt,

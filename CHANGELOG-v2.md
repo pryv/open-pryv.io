@@ -4,6 +4,31 @@
 
 ### Security
 
+- **Visible to clients:** deleting an account (`DELETE /users/<username>`) now ends the
+  relationships it had with other accounts, best-effort and without ever failing or holding the
+  deletion. As a delegate: on each account it controlled, its personal token (and that token's
+  session), its control access and what it granted through the delegation (consent grants
+  included, their requesters notified) are removed and the relationship disappears from
+  `delegations.listDelegates`, so the name can be invited again; a pending invite it received is
+  withdrawn. As a controlled account: each delegate's `delegations.listControlled` drops it. CMC
+  relationships: each counterparty receives the `consent/revoke-cmc` a consent withdrawal sends
+  and deletes the access it held for the deleted account. Before, all of these stayed live, and a
+  delegate personal token kept full access to the controlled account after the delegate's
+  erasure. For an account on another core the notice is sent, not awaited; the release of a
+  delegation there needs that core to run this version.
+- New controlled-side route `POST /<username>/delegations/controlled-side/release`
+  (`delegations.releaseControl`), authenticated by a delegation control access only: ends that one
+  relationship as the owner's detach would, keeping nothing (`{ released }`). The delegate's core
+  sends it when the delegate account is deleted.
+- **Visible to clients:** a delegation records the delegate account's id and checks it: an
+  account that later holds the delegate's name is not the delegate (the controlled side refuses
+  its accept and its token issuance with `delegation-delegate-mismatch`). Token issuance through a
+  control access (`delegations.issueToken`) answers `410` `delegation-not-active` once the
+  delegate account no longer exists (name free, or held by another account on this core), and
+  the relationship turns `stale` in `delegations.listDelegates`. A `stale` relationship is never
+  re-activated; `delegations.requestAttach` to its name answers `409`
+  `delegation-already-exists` (`data.status: 'stale'`) until the owner removes it with
+  `delegations.detachDelegate`.
 - **Visible to clients:** the methods that take credentials instead of an access token are served
   over their own HTTP routes only: `auth.login`, `auth.register`, `auth.emailChallenge`,
   `auth.emailChallengeVerify`, `account.requestPasswordReset`, `account.resetPassword`,

@@ -606,3 +606,65 @@ describe('[DSM] delegation store: a patch lands on the event as stored at write 
     assert.equal(stored.content.status, C.STATUS.ACTIVE);
   });
 });
+
+// ================================================= release (delegate deleted)
+
+describe('[DREL] release of one relationship when its delegate account is deleted', function () {
+  async function seedSecondDelegate (mall) {
+    await store.createAnchor(mall, USER_B, {
+      relId: 'rel-2', delegate: { username: 'carol', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, requestedAt: nowSeconds(),
+    }, nowSeconds);
+    await store.mintMarkerAccess(mall, USER_B, {
+      name: '__deleg-ctl-rel-2', clientDataDelegation: { kind: C.CLIENTDATA_KIND.CONTROL, relId: 'rel-2', delegate: { username: 'carol', hostSlug: HOST_SLUG } },
+    });
+  }
+
+  it('[DREL1] removes the token, its session, the control access, what was granted and the anchor of THAT relationship only', async function () {
+    const mall = makeFakeMall();
+    await seedActiveRelationship(mall, { patToken: 'sess-pat-rel', withCapability: true });
+    await seedSecondDelegate(mall);
+    const granted = await mall.accesses.create(USER_B, {
+      type: 'app',
+      name: 'app-by-delegate',
+      clientData: { delegation: { kind: C.CLIENTDATA_KIND.DELEGATED_CHILD, relId: 'rel-1', delegate: { username: NAME_A, hostSlug: HOST_SLUG }, viaAccessId: 'pat' } },
+    });
+    const spies = {};
+
+    const outcome = await detach.releaseRelationship(makeDeps(mall, spies), {
+      bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', delegateUsername: NAME_A, delegateUserId: USER_A,
+    });
+
+    assert.equal(outcome.released, true);
+    assert.equal(outcome.revokedChildAccesses, 1);
+    assert.deepEqual(spies.destroyed, ['sess-pat-rel'], 'the token\'s session is destroyed');
+    const left = await mall.accesses.get(USER_B);
+    assert.equal(left.some((a) => a.id === granted.id), false, 'what the delegate granted is revoked');
+    assert.deepEqual(left.map((a) => a.clientData?.delegation?.relId), ['rel-2'], 'only the other delegate\'s control access remains');
+    assert.equal(await store.findAnchorByRelId(mall, USER_B, 'rel-1'), null, 'the anchor is gone');
+    assert.ok(await store.findAnchorByRelId(mall, USER_B, 'rel-2'), 'the other relationship stands');
+  });
+
+  it('[DREL2] a delegate name or account id that is not the anchor\'s is refused and nothing changes', async function () {
+    const mall = makeFakeMall();
+    await seedActiveRelationship(mall);
+    const anchor = await store.findAnchorByRelId(mall, USER_B, 'rel-1');
+    await store.updateAnchorContent(mall, USER_B, anchor, { delegate: { username: NAME_A, hostSlug: HOST_SLUG, userId: USER_A } });
+    const before = markersOf(mall, USER_B).sort();
+
+    await assert.rejects(
+      detach.releaseRelationship(makeDeps(mall), { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', delegateUsername: 'mallory' }),
+      (e) => e.id === 'delegation-delegate-mismatch');
+    await assert.rejects(
+      detach.releaseRelationship(makeDeps(mall), { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-1', delegateUsername: NAME_A, delegateUserId: 'another-account-id' }),
+      (e) => e.id === 'delegation-delegate-mismatch');
+
+    assert.deepEqual(markersOf(mall, USER_B).sort(), before);
+    assert.ok(await store.findAnchorByRelId(mall, USER_B, 'rel-1'));
+  });
+
+  it('[DREL3] a relationship already gone is reported, not thrown', async function () {
+    const mall = makeFakeMall();
+    const outcome = await detach.releaseRelationship(makeDeps(mall), { bUserId: USER_B, bUsername: NAME_B, relId: 'rel-x', delegateUsername: NAME_A });
+    assert.deepEqual(outcome, { released: false });
+  });
+});

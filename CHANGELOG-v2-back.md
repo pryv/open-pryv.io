@@ -1,5 +1,37 @@
 # Changelog - Internal (no API impact)
 
+## Account deletion: teardown of delegation and CMC relationships
+
+- New `business/src/auth/deletionTeardown.ts`: `setDeletionTeardownStep(name, step)` /
+  `runDeletionTeardownSteps(account, logger)`, steps keyed by name (a re-registration replaces),
+  each failure logged and skipped. `auth.delete` runs them in the new `Deletion.runTeardownSteps`,
+  right after `validateUserFilepaths`, before anything is erased.
+- `api-server/src/methods/delegations.ts` registers the `delegation` step: for each mirror of the
+  deleted account, a controlled account on this core gets `delegation.releaseRelationship`
+  directly (awaited, nothing sent back to the deleted account); on another core, an active mirror
+  posts `controlled-side/release` with its control access and an invite mirror posts
+  `controlled-side/refuse-response` with its capability (both sent, not awaited). For each anchor,
+  the delegate gets the detach notice (active) or the invite cancel (pending), awaited on this
+  core only. New method `delegations.releaseControl` (declared in `audit/src/ApiMethods.ts`).
+- `api-server/src/methods/accesses.ts` registers the `cmc` step: the account's
+  `clientData.cmc.role === 'counterparty'` accesses go through the accesses-delete post-hook built
+  without the mall (its bookkeeping writes the erased account's own events), fire and forget.
+- `delegation/src/detach.ts`: the teardown body of `detachDelegate` moved to `teardownAnchor`;
+  new `releaseRelationship(deps, { bUserId, bUsername, relId, delegateUsername, delegateUserId? })`
+  checks the anchor's delegate (name, and id when both are known) and tears down with an empty
+  keep list; `{ released: false }` when the anchor is gone.
+- `delegation/src/model.ts`: `DelegateRef.userId?` (anchor only, never in a marker). Recorded at
+  `requestAttach` on the same core, from `acceptAttach`'s claim otherwise (`delegate.userId` is
+  now sent), and from `createAccount`'s payload. `handleAcceptResponse` refuses a different id and
+  a `stale` anchor. `requestAttach` refuses while a `stale` anchor holds the name.
+- `delegation/src/patMint.ts` `handleIssueToken`: new `expectDelegateUserId` param (same-core
+  path) and optional `delegateGone` dep; when it answers true the anchor is flipped `stale` and
+  nothing is issued. The api-server's `delegateGone` checks the name through the platform, and the
+  id through the local users index when the account is on this core; lookup errors propagate.
+- Tests: new `components/api-server/test/delegation-account-deletion.test.js` `[DADL01]`..
+  `[DADL07]`; `cmc-handshake.test.js` `[CN82]`, `[CN83]`; delegation unit `[DREL1]`..`[DREL3]`,
+  `[DPGN1]`..`[DPGN3]`, `[DAID1]`..`[DAID3]`.
+
 ## Email uniqueness rows: claimed at proof; unique-field writes claimed atomically
 
 - `business/src/emails/operations.ts`: `addEmails` creates the pending entry without a platform

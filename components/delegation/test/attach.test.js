@@ -447,3 +447,62 @@ describe('delegation attach handshake', function () {
     assert.ok(await markerOf(mall, USER_B, req.relId, C.CLIENTDATA_KIND.CONTROL), 'control access untouched');
   });
 });
+
+describe('[DAID] the delegate account id on the anchor', function () {
+  beforeEach(function () { seq = 0; });
+
+  it('[DAID1] a same-core request records it, and an accept for another account of the name is refused', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const anchor = await anchorFor(mall, NAME_A);
+    assert.equal(anchor.content.delegate.userId, USER_A, 'the delegate account id is recorded at request');
+
+    await assert.rejects(
+      attach.handleAcceptResponse({ mall, now: nowSeconds }, {
+        bUserId: USER_B, relId: req.relId, delegate: { username: NAME_A, hostSlug: HOST_SLUG, userId: 'later-account-of-that-name' },
+      }),
+      (e) => e.id === 'delegation-delegate-mismatch');
+    assert.equal(await markerOf(mall, USER_B, req.relId, C.CLIENTDATA_KIND.CONTROL), null, 'no control minted');
+    assert.equal((await anchorFor(mall, NAME_A)).content.status, C.STATUS.INVITE, 'the invite is still pending');
+
+    // The invited account itself is accepted (its core sends its id).
+    const acc = await attach.acceptAttach(acceptDeps(mall), { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B });
+    assert.equal(acc.status, C.STATUS.ACTIVE);
+    const control = await markerOf(mall, USER_B, req.relId, C.CLIENTDATA_KIND.CONTROL);
+    assert.equal(control.clientData.delegation.delegate.userId, undefined, 'the id stays on the anchor, out of the control marker');
+  });
+
+  it('[DAID2] a cross-core request learns it with the accept', async function () {
+    const mall = makeFakeMall();
+    const deps = {
+      ...requestDeps(mall),
+      resolveTarget: async () => ({ found: true, isSelf: false, hostSlug: 'peer-example-com', host: 'peer.example.com' }),
+    };
+    await attach.requestAttach(deps, { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    assert.equal((await anchorFor(mall, NAME_A)).content.delegate.userId, undefined, 'unknown before the accept');
+
+    await attach.acceptAttach(acceptDeps(mall), { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B });
+    const anchor = await anchorFor(mall, NAME_A);
+    assert.equal(anchor.content.status, C.STATUS.ACTIVE);
+    assert.equal(anchor.content.delegate.userId, USER_A, 'recorded from the accept');
+    assert.equal(anchor.content.delegate.hostSlug, 'peer-example-com', 'the rest of the delegate record is kept');
+  });
+
+  it('[DAID3] a stale relationship blocks a new request to that name and is never revived', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    await attach.acceptAttach(acceptDeps(mall), { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B });
+    const anchor = await anchorFor(mall, NAME_A);
+    await store.updateAnchorContent(mall, USER_B, anchor, { status: C.STATUS.STALE });
+
+    await assert.rejects(
+      attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A }),
+      (e) => e.id === 'delegation-already-exists' && e.data?.status === C.STATUS.STALE);
+    await assert.rejects(
+      attach.handleAcceptResponse({ mall, now: nowSeconds }, {
+        bUserId: USER_B, relId: req.relId, delegate: { username: NAME_A, hostSlug: HOST_SLUG, userId: USER_A },
+      }),
+      (e) => e.id === 'delegation-not-active');
+    assert.equal((await anchorFor(mall, NAME_A)).content.status, C.STATUS.STALE, 'still stale');
+  });
+});

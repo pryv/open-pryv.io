@@ -2908,4 +2908,64 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(withdrawal.accessId, access.id);
     });
   });
+
+  // Defined last: it deletes accounts. Each test hands the shared helpers two
+  // fresh accounts in place of alice and bob, and puts them back after.
+  describe('[CMCHS-DEL] deleting an account revokes its relationships on the counterparty', function () {
+    let savedAlice, savedBob, adminKey;
+
+    before(async function () {
+      savedAlice = alice;
+      savedBob = bob;
+      await require('api-server/src/methods/auth/delete.ts').default(global.app.api);
+      adminKey = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+    });
+    afterEach(function () {
+      alice = savedAlice;
+      bob = savedBob;
+    });
+
+    async function freshPair () {
+      alice = await makeActor('alice-' + cuid().slice(-8));
+      bob = await makeActor('bob-' + cuid().slice(-8));
+    }
+    async function deleteAccount (actor) {
+      const res = await coreRequest.delete('/users/' + actor.username).set('Authorization', adminKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    }
+    async function relationshipAccessWith (owner, peerUsername) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      return (res.body?.accesses || []).find((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+        a.clientData.cmc.counterparty?.username === peerUsername) ?? null;
+    }
+    async function pollGone (owner, accessId) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+        if (!(res.body?.accesses || []).some((a) => a.id === accessId)) return true;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      return false;
+    }
+
+    it('[CN82] the requester is deleted: the data grant the accepter gave it is deleted', async function () {
+      await freshPair();
+      const h = await runFreshHandshake('study-del-a', 'del-app-a');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const accepter = bob;
+      await deleteAccount(alice);
+      assert.ok(await pollGone(accepter, dataGrant.id), 'the data grant held by the deleted account is deleted');
+    });
+
+    it('[CN83] the accepter is deleted: the requester\'s back-channel to it is deleted', async function () {
+      await freshPair();
+      const h = await runFreshHandshake('study-del-b', 'del-app-b');
+      await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const backChannel = await relationshipAccessWith(alice, bob.username);
+      assert.ok(backChannel != null, 'the requester holds a relationship access for the accepter');
+      const requester = alice;
+      await deleteAccount(bob);
+      assert.ok(await pollGone(requester, backChannel.id), 'the back-channel held by the deleted account is deleted');
+    });
+  });
 });
