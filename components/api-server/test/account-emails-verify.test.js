@@ -93,7 +93,7 @@ describe('[VEML] account email verification', function () {
       const email = cuid() + '@to-verify.example.com';
       const token = await addPending(u, email);
 
-      const value = await operations.verifyToken(u.userId, token);
+      const value = await operations.verifyToken(u.userId, token, u.username);
       assert.strictEqual(value, email);
 
       const raw = await container.findRawByValue(u.userId, email);
@@ -113,7 +113,7 @@ describe('[VEML] account email verification', function () {
       const email = cuid() + '@wrong.example.com';
       await addPending(u, email);
 
-      const value = await operations.verifyToken(u.userId, 'not-the-real-token');
+      const value = await operations.verifyToken(u.userId, 'not-the-real-token', u.username);
       assert.strictEqual(value, null);
       const raw = await container.findRawByValue(u.userId, email);
       assert.strictEqual(raw.content.status, 'pending');
@@ -127,7 +127,7 @@ describe('[VEML] account email verification', function () {
       const ev = await container.findRawByValue(u.userId, email);
       await container.setContent(u.userId, ev, { verificationTokenExpires: timestamp.now(-10) });
 
-      const value = await operations.verifyToken(u.userId, token);
+      const value = await operations.verifyToken(u.userId, token, u.username);
       assert.strictEqual(value, null);
       const raw = await container.findRawByValue(u.userId, email);
       assert.strictEqual(raw.content.status, 'pending');
@@ -137,7 +137,7 @@ describe('[VEML] account email verification', function () {
       const u = await makeUser(cuid() + '@pr.example.com');
       const linked = cuid() + '@proved.example.com';
       const token = await addPending(u, linked);
-      await operations.verifyToken(u.userId, token);
+      await operations.verifyToken(u.userId, token, u.username);
       const linkedEv = await container.findRawByValue(u.userId, linked);
       assert.strictEqual(linkedEv.content.verificationMethod, 'email-link');
       assert.strictEqual(constants.isProvedOwnership(linkedEv.content), true);
@@ -162,7 +162,7 @@ describe('[VEML] account email verification', function () {
       await operations.removeEmails(deps, ctx, [email]);
       await operations.addEmails(deps, ctx, [email]); // fresh event, fresh token
 
-      const value = await operations.verifyToken(u.userId, oldToken);
+      const value = await operations.verifyToken(u.userId, oldToken, u.username);
       assert.strictEqual(value, null, 'the stale token must not verify the re-added address');
       const raw = await container.findRawByValue(u.userId, email);
       assert.strictEqual(raw.content.status, 'pending');
@@ -195,8 +195,8 @@ describe('[VEML] account email verification', function () {
         const { token: newToken } = await operations.resendVerification(deps, ctx, email);
         assert.notStrictEqual(newToken, oldToken);
 
-        assert.strictEqual(await operations.verifyToken(u.userId, oldToken), null, 'old token rotated out');
-        assert.strictEqual(await operations.verifyToken(u.userId, newToken), email);
+        assert.strictEqual(await operations.verifyToken(u.userId, oldToken, u.username), null, 'old token rotated out');
+        assert.strictEqual(await operations.verifyToken(u.userId, newToken, u.username), email);
       } finally {
         config.set('account:emailVerification:resendCooldownMs', saved);
       }
@@ -221,7 +221,7 @@ describe('[VEML] account email verification', function () {
       const u = await makeUser(cuid() + '@rv.example.com');
       const email = cuid() + '@already.example.com';
       const token = await addPending(u, email);
-      await operations.verifyToken(u.userId, token);
+      await operations.verifyToken(u.userId, token, u.username);
       const { deps, ctx } = await opsCtx(u);
       try {
         await operations.resendVerification(deps, ctx, email);
@@ -289,7 +289,7 @@ describe('[VEML] account email verification', function () {
           .send({ emails: { resend: [email] } });
         assert.strictEqual(res.status, 200, JSON.stringify(res.body));
         // The old token no longer verifies (rotated out by the resend).
-        assert.strictEqual(await operations.verifyToken(u.userId, oldToken), null);
+        assert.strictEqual(await operations.verifyToken(u.userId, oldToken, u.username), null);
         const raw = await container.findRawByValue(u.userId, email);
         assert.strictEqual(raw.content.status, 'pending');
       } finally {
@@ -327,7 +327,7 @@ describe('[VEML] account email verification', function () {
         assert.ok(raw.content.verificationTokenHash != null);
 
         // verifying the token upgrades provenance: still verified, now proved.
-        const value = await operations.verifyToken(u.userId, token);
+        const value = await operations.verifyToken(u.userId, token, u.username);
         assert.strictEqual(value, founding);
         raw = await container.findRawByValue(u.userId, founding);
         assert.strictEqual(raw.content.status, 'verified');
@@ -359,7 +359,7 @@ describe('[VEML] account email verification', function () {
         const { deps, ctx } = await opsCtx(u);
         ctx.legacyEmail = legacy; // the primary is now the legacy address
         const { token } = await operations.resendVerification(deps, ctx, legacy);
-        assert.strictEqual(await operations.verifyToken(u.userId, token), legacy);
+        assert.strictEqual(await operations.verifyToken(u.userId, token, u.username), legacy);
 
         raw = await container.findRawByValue(u.userId, legacy);
         assert.strictEqual(raw.content.status, 'verified');
@@ -374,7 +374,7 @@ describe('[VEML] account email verification', function () {
       const u = await makeUser(cuid() + '@pv.example.com');
       const email = cuid() + '@proved2.example.com';
       const token = await addPending(u, email);
-      assert.strictEqual(await operations.verifyToken(u.userId, token), email);
+      assert.strictEqual(await operations.verifyToken(u.userId, token, u.username), email);
       let raw = await container.findRawByValue(u.userId, email);
       assert.strictEqual(raw.content.verificationMethod, 'email-link');
       const provedAt = raw.content.verifiedAt;
@@ -386,7 +386,7 @@ describe('[VEML] account email verification', function () {
       const ev = await container.findRawByValue(u.userId, email);
       await container.stampVerification(u.userId, ev, hash, timestamp.now(3600), timestamp.now());
 
-      assert.strictEqual(await operations.verifyToken(u.userId, lingering), null);
+      assert.strictEqual(await operations.verifyToken(u.userId, lingering, u.username), null);
       raw = await container.findRawByValue(u.userId, email);
       assert.strictEqual(raw.content.verificationMethod, 'email-link');
       assert.strictEqual(raw.content.verifiedAt, provedAt);
@@ -396,7 +396,7 @@ describe('[VEML] account email verification', function () {
       const u = await makeUser(cuid() + '@pv2.example.com');
       const email = cuid() + '@proved3.example.com';
       const token = await addPending(u, email);
-      await operations.verifyToken(u.userId, token);
+      await operations.verifyToken(u.userId, token, u.username);
       const { deps, ctx } = await opsCtx(u);
       try {
         await operations.resendVerification(deps, ctx, email);

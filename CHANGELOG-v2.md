@@ -121,6 +121,28 @@
   deletion those of the username and of every alias. Before, a reset token requested under a
   former name stayed valid for its hour and, once that name was registered again, reset the
   password of the new account.
+- **Visible to clients:** an address added with `account.update` `emails.add` (status `pending`)
+  no longer reserves the address on the platform until it is verified. Another account may
+  register with it, request a registration code for it (`auth.emailChallenge` answers `200`, no
+  longer `409`) or add it too. The first verification takes the address; a verification link for
+  an address another account now holds answers like any invalid link (`401`
+  `invalid-access-token`) and leaves the entry `pending`. Adding an address another account
+  registered or verified still answers `409` `item-already-exists`. Before, any account could hold
+  up to `account.maxEmails` addresses it never proved, with no expiry, and lock their owners out
+  of registration.
+- **Visible to clients:** when `account.emailVerification.requireAtRegistration` is `true`,
+  `account.update` with `email` (the legacy primary field) only accepts an address already
+  verified on the account, otherwise it answers `400` `invalid-operation`. To change the primary
+  address: add it (`emails.add`), verify it, then set it with `emails.setPrimary` (or the legacy
+  `email` field). Sending the current address unchanged is still accepted. With the setting off
+  (default), the legacy field behaves as before.
+- Two accounts setting the same email address (or another unique account field) at the same time
+  can no longer both succeed: one gets `409` `item-already-exists` and keeps its previous address.
+  Before, the later write replaced the earlier one, leaving two accounts on one address and the
+  loser without a reservation for its previous one.
+- A registration that fails after its checks passed (for example because its address was taken in
+  the meantime) releases the username and the values it had reserved; on a multi-core platform the
+  username stayed reserved, so the same name could not be registered again.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

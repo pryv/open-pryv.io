@@ -546,6 +546,60 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(await platform.getUserCore(name), CORE_B,
         'apply never overwrites another core\'s claim');
     });
+
+    it('[MCUC8] a registration whose user insert fails after validation leaves no name claim behind', async function () {
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const uname = 'mcucleak' + cuid.slug().toLowerCase();
+      const email = 'mcucleak-' + cuid.slug().toLowerCase() + '@example.com';
+      const intruder = 'mcucintruder' + cuid.slug().toLowerCase();
+      // Keep the registration on self (no forward to CORE_B).
+      await seedCore(CORE_B, { hosting: 'us-east-1', available: false });
+      const realUpdateUser = platform.updateUser;
+      let intruded = false;
+      try {
+        // Another account takes the address after validation reserved it and
+        // before the user insert writes it, so the insert's platform write fails.
+        platform.updateUser = async function (username, operations) {
+          if (username === uname && !intruded) {
+            intruded = true;
+            await platform.setUserUniqueField(intruder, 'email', email);
+          }
+          return realUpdateUser.call(this, username, operations);
+        };
+        const res = await request.post('/users').send({
+          appId: 'test-app',
+          username: uname,
+          email,
+          password: 'testpassword',
+          hosting: 'us-east-1',
+          insurancenumber: charlatan.Number.number(3)
+        });
+        assert.strictEqual(intruded, true, 'the user insert ran after validation');
+        assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+        delete platform.updateUser;
+
+        assert.strictEqual(await platform.getUserCore(uname), null, 'the name claim is released');
+        assert.strictEqual(await platform.getUsersUniqueField('email', email), platform.hashFor('username', intruder),
+          'the other account keeps its address');
+
+        const retry = await request.post('/users').send({
+          appId: 'test-app',
+          username: uname,
+          email: 'mcucretry-' + cuid.slug().toLowerCase() + '@example.com',
+          password: 'testpassword',
+          hosting: 'us-east-1',
+          insurancenumber: charlatan.Number.number(3)
+        });
+        assert.strictEqual(retry.status, 201, 'the name is free to register again: ' + JSON.stringify(retry.body));
+        createdUsers.push({ id: await usersRepository.getUserIdForUsername(uname), username: uname });
+        assert.strictEqual(await platform.getUserCore(uname), CORE_A);
+      } finally {
+        delete platform.updateUser;
+        await platform.deleteUserUniqueField('email', email);
+        await seedCore(CORE_B, { hosting: 'us-east-1' });
+      }
+    });
   });
 
   // ----------------------------------------------------------------

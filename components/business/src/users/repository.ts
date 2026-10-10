@@ -409,7 +409,16 @@ class UsersRepository {
       throw errors.itemAlreadyExists('user', { id: user.id });
     }
     // could throw uniqueness errors
-    await this.platform.updateUser(user.username, operations);
+    try {
+      await this.platform.updateUser(user.username, operations);
+    } catch (err) {
+      // Nothing local exists yet, but registration already claimed this
+      // name's `user-core/` row and its unique fields, and the platform write
+      // may have landed some rows before failing: take them back so the name
+      // and its values are free to retry (a multi-core claim never overwrites).
+      await this.compensateFailedInsert(user);
+      throw err;
+    }
     try {
       await this.createLocalUserData(user, withSession);
     } catch (err) {

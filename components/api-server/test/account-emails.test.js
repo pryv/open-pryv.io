@@ -20,7 +20,10 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, config */
 
 const container = require('business/src/emails/container.ts');
+const operations = require('business/src/emails/operations.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { getPlatform } = require('platform');
+const errors = require('errors').factory;
 
 const CONTAINER = ':_emails:';
 
@@ -52,6 +55,25 @@ describe('[EMLS] account emails (multiple)', function () {
 
   function accountPath (username) { return '/' + username + '/account'; }
   function eventsPath (username) { return '/' + username + '/events'; }
+
+  // Add pending emails through the business layer (the mail transport is off
+  // in tests) and return the minted { value, token } pairs.
+  async function addPending (u, values) {
+    const usersRepository = await getUsersRepository();
+    const legacyEmail = await usersRepository.getOnePropertyValue(u.userId, 'email');
+    return await operations.addEmails({ errors, usersRepository },
+      { userId: u.userId, username: u.username, user: null, accessId: 'system', legacyEmail }, values);
+  }
+
+  async function rowOwner (value) {
+    const platform = await getPlatform();
+    return await platform.getUsersUniqueField('email', value);
+  }
+
+  async function usernameToken (username) {
+    const platform = await getPlatform();
+    return platform.hashFor('username', username);
+  }
 
   async function getAccount (u) {
     const res = await coreRequest.get(accountPath(u.username)).set('Authorization', u.token);
@@ -101,13 +123,26 @@ describe('[EMLS] account emails (multiple)', function () {
       assert.ok(res.body.account.emails.some((e) => e.primary === true && e.status === 'verified'));
     });
 
-    it('[EML22] rejects an email already owned by another user with item-already-exists', async function () {
+    it('[EML22] rejects an email another account registered or proved, accepts one merely pending there', async function () {
       const taken = cuid() + '@taken.example.com';
-      await makeUser(taken); // user B owns `taken`
+      await makeUser(taken); // user B registered `taken`
       const u = await makeUser(cuid() + '@adder.example.com');
       const res = await updateAccount(u, { emails: { add: [taken] } });
       assert.strictEqual(res.status, 409, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'item-already-exists');
+
+      const proved = cuid() + '@proved.example.com';
+      const prover = await makeUser(cuid() + '@prover.example.com');
+      const [{ token }] = await addPending(prover, [proved]);
+      assert.strictEqual(await operations.verifyToken(prover.userId, token, prover.username), proved);
+      const provedRes = await updateAccount(u, { emails: { add: [proved] } });
+      assert.strictEqual(provedRes.status, 409, JSON.stringify(provedRes.body));
+      assert.strictEqual(provedRes.body.error.id, 'item-already-exists');
+
+      const pending = cuid() + '@pending-elsewhere.example.com';
+      await addPending(prover, [pending]);
+      const pendingRes = await updateAccount(u, { emails: { add: [pending] } });
+      assert.strictEqual(pendingRes.status, 200, JSON.stringify(pendingRes.body));
     });
 
     it('[EML23] enforces the maxEmails cap', async function () {
@@ -266,6 +301,103 @@ describe('[EMLS] account emails (multiple)', function () {
       } finally {
         if (savedIntegrity != null) process.env.DISABLE_INTEGRITY_CHECK = savedIntegrity;
         else delete process.env.DISABLE_INTEGRITY_CHECK;
+      }
+    });
+  });
+
+  describe('[EML8] a pending email claims no address', function () {
+    it('[EML81] an address pending on one account stays open to registration; its link then fails', async function () {
+      const savedIntegrity = process.env.DISABLE_INTEGRITY_CHECK;
+      process.env.DISABLE_INTEGRITY_CHECK = '1';
+      try {
+        const a = await makeUser(cuid() + '@pend-a.example.com');
+        const x = cuid() + '@pend-claimed.example.com';
+        const [{ token }] = await addPending(a, [x]);
+        assert.strictEqual(await rowOwner(x), null, 'a pending address holds no row');
+
+        const username = 'reg' + cuid().toLowerCase().slice(1, 12);
+        const regRes = await coreRequest.post('/users').send({
+          appId: 'test-emails',
+          username,
+          password: 'testpassw0rd',
+          email: x,
+          insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+          language: 'en'
+        });
+        assert.strictEqual(regRes.status, 201, JSON.stringify(regRes.body));
+        assert.strictEqual(await rowOwner(x), await usernameToken(username));
+
+        const pendingEntry = await container.findRawByValue(a.userId, x);
+        assert.strictEqual(pendingEntry.content.status, 'pending');
+        assert.strictEqual(await operations.verifyToken(a.userId, token, a.username), null,
+          'the link of an address another account now holds fails uniformly');
+        assert.strictEqual((await container.findRawByValue(a.userId, x)).content.status, 'pending');
+        assert.strictEqual(await rowOwner(x), await usernameToken(username), 'the registrant keeps the row');
+
+        const usersRepository = await getUsersRepository();
+        await usersRepository.deleteOne(await usersRepository.getUserIdForUsername(username), username);
+      } finally {
+        if (savedIntegrity != null) process.env.DISABLE_INTEGRITY_CHECK = savedIntegrity;
+        else delete process.env.DISABLE_INTEGRITY_CHECK;
+      }
+    });
+
+    it('[EML82] two accounts pending on one address: the first proof takes the row, the second fails', async function () {
+      const a = await makeUser(cuid() + '@race-a.example.com');
+      const b = await makeUser(cuid() + '@race-b.example.com');
+      const x = cuid() + '@race-shared.example.com';
+      const [{ token: tokenA }] = await addPending(a, [x]);
+      const [{ token: tokenB }] = await addPending(b, [x]);
+
+      assert.strictEqual(await operations.verifyToken(a.userId, tokenA, a.username), x);
+      assert.strictEqual(await rowOwner(x), await usernameToken(a.username));
+
+      assert.strictEqual(await operations.verifyToken(b.userId, tokenB, b.username), null);
+      assert.strictEqual(await rowOwner(x), await usernameToken(a.username), 'the row stays with the first prover');
+      const entryB = await container.findRawByValue(b.userId, x);
+      assert.strictEqual(entryB.content.status, 'pending', 'the second account is not verified');
+      assert.strictEqual(entryB.content.verificationMethod, null);
+    });
+
+    it('[EML83] removing a pending address never touches the row another account holds', async function () {
+      const a = await makeUser(cuid() + '@rm-pend-a.example.com');
+      const b = await makeUser(cuid() + '@rm-pend-b.example.com');
+      const x = cuid() + '@rm-pend-shared.example.com';
+      await addPending(b, [x]);
+      const [{ token }] = await addPending(a, [x]);
+      assert.strictEqual(await operations.verifyToken(a.userId, token, a.username), x);
+
+      const res = await updateAccount(b, { emails: { remove: [x] } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(!res.body.account.emails.some((e) => e.value === x));
+      assert.strictEqual(await rowOwner(x), await usernameToken(a.username), 'the holder keeps its row');
+    });
+  });
+
+  describe('[EML9] concurrent legacy email updates', function () {
+    it('[EML91] two accounts updating to the same address at once: one wins, the other keeps its address', async function () {
+      this.timeout(180000);
+      const usersRepository = await getUsersRepository();
+      const users = [];
+      for (const tag of ['ra', 'rb']) {
+        const email = cuid() + `@race-${tag}.example.com`;
+        const u = await makeUser(email);
+        u.email = email;
+        users.push(u);
+      }
+      for (let i = 0; i < 50; i++) {
+        const x = cuid() + `.${i}@race-legacy.example.com`;
+        const results = await Promise.all(users.map((u) => updateAccount(u, { email: x })));
+        const statuses = results.map((r) => r.status);
+        assert.deepStrictEqual([...statuses].sort(), [200, 409], `iteration ${i}: ${JSON.stringify(results.map((r) => r.body))}`);
+        const winner = users[statuses.indexOf(200)];
+        const loser = users[statuses.indexOf(409)];
+        assert.strictEqual(await rowOwner(x), await usernameToken(winner.username), `iteration ${i}: row owner`);
+        assert.strictEqual(await usersRepository.getOnePropertyValue(loser.userId, 'email'), loser.email,
+          `iteration ${i}: the refused account keeps its email`);
+        assert.strictEqual(await rowOwner(loser.email), await usernameToken(loser.username),
+          `iteration ${i}: the refused account keeps its row`);
+        winner.email = x;
       }
     });
   });

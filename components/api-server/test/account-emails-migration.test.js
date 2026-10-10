@@ -134,7 +134,10 @@ describe('[EMLM] account emails — migration / compat', function () {
       const { deps, ctx } = await opsCtx(u);
       const s1 = cuid() + '@rev-s1.example.com';
       const s2 = cuid() + '@rev-s2.example.com';
-      await operations.addEmails(deps, ctx, [s1, s2]);
+      // Proved addresses hold a row (a pending one holds none).
+      for (const { token } of await operations.addEmails(deps, ctx, [s1, s2])) {
+        assert.ok(await operations.verifyToken(u.userId, token, u.username));
+      }
       // Drop s2's platform row directly, leaving its container event orphaned;
       // s1 remains as the leftover that triggers the container fetch.
       assert.strictEqual(await container.releaseRow(u.username, s2), true);
@@ -145,6 +148,17 @@ describe('[EMLM] account emails — migration / compat', function () {
       } finally {
         await container.reserveRow(u.username, s2); // restore consistency
       }
+    });
+
+    it('[EMLM14] a pending email, which holds no row, is not flagged', async function () {
+      const u = await makeUser(cuid() + '@rev-pend.example.com');
+      const { deps, ctx } = await opsCtx(u);
+      const proved = cuid() + '@rev-pend-proved.example.com';
+      const pending = cuid() + '@rev-pend-pending.example.com';
+      const [{ token }] = await operations.addEmails(deps, ctx, [proved, pending]);
+      // the proved address leaves a row beyond the primary, so the container is read
+      assert.ok(await operations.verifyToken(u.userId, token, u.username));
+      assert.deepStrictEqual(await integrityErrorsFor(u.username), []);
     });
   });
 });

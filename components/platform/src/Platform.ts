@@ -266,6 +266,22 @@ class Platform {
   }
 
   /**
+   * Atomically claim a unique (field, value) row for `usernameToken`: the row
+   * is written only when absent, so of two concurrent claims exactly one wins
+   * and an existing owner is never overwritten. A row the same user already
+   * owns counts as claimed (idempotent: registration reserves before the
+   * user insert re-applies its fields). Returns the stored value token.
+   */
+  async #claimUniqueValue (usernameToken: string, field: string, value: unknown): Promise<string> {
+    const valueToken = this.hashFor(field, value as string);
+    const claimed = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+    if (!claimed) {
+      throw (errors.itemAlreadyExists('user', { [field]: value }));
+    }
+    return valueToken;
+  }
+
+  /**
    * Apply operations to PlatformDB.
    *
    * In hashed mode: the `username` argument (still plaintext as received
@@ -287,12 +303,7 @@ class Platform {
         case 'create':
           if (op.isUnique) {
             if (!op.isActive) break;
-            const valueToken = this.hashFor(op.key, op.value);
-            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, valueToken);
-            if (potentialCollisionUsername !== null && potentialCollisionUsername !== usernameToken) {
-              throw (errors.itemAlreadyExists('user', { [op.key]: op.value }));
-            }
-            await this.#db.setUserUniqueField(usernameToken, op.key, valueToken);
+            await this.#claimUniqueValue(usernameToken, op.key, op.value);
           } else {
             await this.#db.setUserIndexedField(usernameToken, op.key, op.value);
           }
@@ -301,19 +312,16 @@ class Platform {
         case 'update':
           if (!op.isActive) break;
           if (op.isUnique) {
-            const previousValue = op.previousValue ?? '';
-            const previousToken = this.hashFor(op.key, previousValue);
-            const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, previousToken);
-            if (existingUsernameValue !== null && existingUsernameValue === usernameToken) {
-              await this.#db.deleteUserUniqueField(op.key, previousToken);
+            // Claim the new value first: a refused claim leaves the previous
+            // value's row in place, so the account keeps its current address.
+            const valueToken = await this.#claimUniqueValue(usernameToken, op.key, op.value);
+            const previousToken = this.hashFor(op.key, op.previousValue ?? '');
+            if (previousToken !== valueToken) {
+              const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, previousToken);
+              if (existingUsernameValue !== null && existingUsernameValue === usernameToken) {
+                await this.#db.deleteUserUniqueField(op.key, previousToken);
+              }
             }
-
-            const valueToken = this.hashFor(op.key, op.value);
-            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, valueToken);
-            if (potentialCollisionUsername !== null && potentialCollisionUsername !== usernameToken) {
-              throw (errors.itemAlreadyExists('user', { [op.key]: op.value }));
-            }
-            await this.#db.setUserUniqueField(usernameToken, op.key, valueToken);
           } else {
             await this.#db.setUserIndexedField(usernameToken, op.key, op.value);
           }

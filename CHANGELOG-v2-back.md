@@ -1,5 +1,40 @@
 # Changelog - Internal (no API impact)
 
+## Email uniqueness rows: claimed at proof; unique-field writes claimed atomically
+
+- `business/src/emails/operations.ts`: `addEmails` creates the pending entry without a platform
+  row (it only checks with the new `container.isRowFreeFor` that no other account holds the
+  address); `verifyToken(userId, token, username)` (new required `username`) claims the row with
+  `container.reserveRow` before `markVerified` and returns `null` when another account holds it,
+  leaving the entry pending. `removeEmails` is unchanged (its release is owner-guarded).
+- `api-server/src/methods/account.ts`: `refuseUnprovedLegacyEmail` step in `account.update`,
+  before `updateDataOnPlatform`: with `account.emailVerification.requireAtRegistration`, a new
+  value of `email` must pass `emails/status.ts` `isAddressProved` for the caller.
+- `platform/src/Platform.ts` `#applyOperations`: `create` and `update` of a unique field claim the
+  value with `setUserUniqueFieldIfNotExists` (`#claimUniqueValue`; an own row counts as claimed,
+  another owner throws `item-already-exists`) instead of a read followed by `setUserUniqueField`
+  (`INSERT OR REPLACE`). `update` releases the previous value's row only after the claim, and not
+  when the value is unchanged. `setUserUniqueField` stays for imports, the PII tools and the
+  `/system` admin user update.
+- `business/src/users/repository.ts` `insertOne`: a failure of the platform write runs
+  `compensateFailedInsert` (it ran only for a local failure), which releases the rows the
+  registration reserved and its `user-core/` claim.
+- `platform/src/platformCheckIntegrity.ts`: the reverse email cross-check (container entry without
+  a row) skips `pending` entries, which hold no row by design.
+- New read-only operator tool `bin/emails-unproved-report.js` (`--values`, `--config`): per account
+  on the core, the unproved container entries (pending, and verified with method `registration`,
+  `legacy` or none; the legacy field for accounts without a container), whether each holds a
+  platform row, and the account's email rows that match no entry. Counts and usernames by default.
+  Pending entries created before this release still hold their row; the tool lists them, and
+  removing the entry (`emails.remove`) releases it.
+- Tests: new `components/platform/test/unit/Platform-unique-claims.test.js` `[PLUC1]`..`[PLUC5]`;
+  `components/api-server/test/account-emails.test.js` `[EML22]` (rewritten), `[EML81]`..`[EML83]`,
+  `[EML91]`; `components/api-server/test/registration-email-gate.test.js` `[EMCR13]`, `[EMCR14]`;
+  `components/api-server/test/reg-multicore.test.js` `[MCUC8]`;
+  `components/api-server/test/account-emails-migration.test.js` `[EMLM13]` (now on verified
+  addresses), `[EMLM14]`; new `components/api-server/test/emails-unproved-report-cli.test.js`
+  `[EURP1]`..`[EURP3]`.
+
 ## Credential methods on the generic dispatchers, batch bounds
 
 - `business/src/MethodContext.ts`: `genericDispatch?: 'batch' | 'socket.io'`, set by

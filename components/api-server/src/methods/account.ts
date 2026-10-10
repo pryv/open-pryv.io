@@ -61,6 +61,8 @@ const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require(
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
+const registrationPolicy = require('business/src/emails/registrationPolicy.ts');
+const { isAddressProved } = require('business/src/emails/status.ts');
 const { buildVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
@@ -129,6 +131,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.getParamsValidation(methodsSchema.update.params),
     splitEmailsOperations,
     validateThatAllFieldsAreEditable,
+    refuseUnprovedLegacyEmail,
     updateDataOnPlatform,
     updateAccount,
     syncLegacyEmailToContainer,
@@ -154,14 +157,34 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    */
   function validateThatAllFieldsAreEditable (_context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
     const accountMap = accountStreams.accountMap;
-    Object.keys(params.update).forEach((streamId: string) => {
+    for (const streamId of Object.keys(params.update)) {
       const streamIdWithPrefix = accountStreams.toStreamId(streamId);
       if (!accountMap[streamIdWithPrefix]?.isEditable) {
         // if user tries to add new streamId from non editable streamsIds
         return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenToEditNoneditableAccountFields], { field: streamId }));
       }
-    });
+    }
     next();
+  }
+
+  // When registration requires a proved email, the legacy `update.email` field
+  // must not install an unproved address as the primary (it would take the
+  // address's uniqueness row with no proof). The address must first be proved
+  // on the account: add it, verify it, then make it primary.
+  async function refuseUnprovedLegacyEmail (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    if (!Object.prototype.hasOwnProperty.call(params.update, 'email')) return next();
+    try {
+      if (!(await registrationPolicy.isRegistrationVerificationRequired())) return next();
+      const value = params.update.email as string;
+      const current = await usersRepository.getOnePropertyValue(context.user.id, 'email');
+      if (value === current) return next();
+      if (await isAddressProved(context.user.id, value)) return next();
+      return next(errors.invalidOperation(
+        'This platform requires a verified email address: add the address with `emails.add`, ' +
+        'verify it, then make it primary with `emails.setPrimary`.', { email: value }));
+    } catch (err) {
+      return next(err);
+    }
   }
 
   // CHANGE PASSWORD
@@ -462,7 +485,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // Invariant: addUserBusinessToContext ran earlier — userBusiness.id is
         // the path user's id. verifyToken is scoped to this user's own pending
         // events, so a token minted for another account cannot match here.
-        const value = await emailsOperations.verifyToken(context.userBusiness!.id, params.token);
+        const value = await emailsOperations.verifyToken(context.userBusiness!.id, params.token, context.userBusiness!.username);
         if (value == null) {
           // One uniform failure for unknown / expired / already-verified — no
           // oracle on which case occurred.

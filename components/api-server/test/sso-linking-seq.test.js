@@ -138,7 +138,7 @@ describe('[SSOLI] SSO linking over the real platform', function () {
     const usersRepository = await getUsersRepository();
     const octx = { userId: u.userId, username: u.username, user: null, accessId: 'system', legacyEmail: null };
     const { token } = await operations.resendVerification({ errors, usersRepository }, octx, email);
-    assert.strictEqual(await operations.verifyToken(u.userId, token), email);
+    assert.strictEqual(await operations.verifyToken(u.userId, token, u.username), email);
     const proved = await container.findRawByValue(u.userId, email);
     assert.strictEqual(C.isProvedOwnership(proved.content), true);
 

@@ -77,6 +77,7 @@ export default async function platformCheckIntegrity (
   // container is fetched only for users who actually hold extra email rows.
   const emailsContainer = require('business/src/emails/container.ts');
   const EMAIL_FIELD = require('business/src/emails/constants.ts').UNIQUE_FIELD;
+  const EMAIL_STATUS_PENDING = require('business/src/emails/constants.ts').STATUS_PENDING;
   // Once the container store proves unreachable for one user, stop trying for
   // the rest of the run: a lazy re-init on every user could hang (and is a
   // heavyweight side effect). `emailCrossCheckSkipped` surfaces the degradation
@@ -93,7 +94,7 @@ export default async function platformCheckIntegrity (
     leftoverRows: Array<{ value: unknown }>, primaryToken: unknown
   ): Promise<void> {
     if (crossCheckUnavailable) { emailCrossCheckSkipped++; return; }
-    let rawEvents: Array<{ content?: { value?: unknown } }>;
+    let rawEvents: Array<{ content?: { value?: unknown; status?: unknown } }>;
     try {
       rawEvents = await emailsContainer.getRawEvents(userId);
     } catch (_err) {
@@ -118,9 +119,13 @@ export default async function platformCheckIntegrity (
     // container email must own a platform row. A container email whose row was
     // lost while NO other leftover row exists is not caught here (the container
     // is never fetched for a single-row user); full reverse coverage would cost
-    // a mall read per user and is intentionally deferred.
+    // a mall read per user and is intentionally deferred. A pending (not yet
+    // proved) email holds no row by design: its row is claimed at proof time.
     const allRowTokens = new Set([String(primaryToken), ...leftoverRows.map((r) => String(r.value))]);
-    for (const token of containerTokens) {
+    const rowHoldingTokens = new Set(rawEvents
+      .filter((ev) => ev.content?.status !== EMAIL_STATUS_PENDING)
+      .map((ev) => tokenFor(EMAIL_FIELD, String(ev.content?.value))));
+    for (const token of rowHoldingTokens) {
       if (!allRowTokens.has(token)) {
         errors.push(`Account of "${username}" holds an email with no matching row in the platform db (token "${token}")`);
       }

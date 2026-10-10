@@ -131,11 +131,17 @@ async function legacyEmailSwap (deps: Deps, ctx: UserContext, oldValue: string |
 }
 
 /**
- * add: reserve a row + create a pending, non-primary event per value, and stamp
- * a fresh verification token on each. Returns the minted `{ value, token }`
- * pairs so the caller can email them — the plaintext token is never persisted,
- * only its hash. Mailing is the caller's job (the mail transport lives in the
- * api-server layer); a mail failure must NOT roll the add back (resend recovers).
+ * add: create a pending, non-primary event per value, and stamp a fresh
+ * verification token on each. Returns the minted `{ value, token }` pairs so
+ * the caller can email them; the plaintext token is never persisted, only its
+ * hash. Mailing is the caller's job (the mail transport lives in the api-server
+ * layer); a mail failure must NOT roll the add back (resend recovers).
+ *
+ * A pending address holds NO platform uniqueness row: an unproved claim must
+ * not lock the address away from its real owner (registration, the
+ * registration challenge, another account's add). The row is claimed when the
+ * address is proved ({@link verifyToken}); here we only refuse an address that
+ * another account already holds.
  */
 async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promise<MintedVerification[]> {
   const errors = deps.errors;
@@ -143,7 +149,6 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
   const max = await container.getMaxEmails();
   let count = (await container.getRawEvents(ctx.userId)).length;
 
-  const reservedThisCall: string[] = [];
   const createdThisCall: string[] = [];
   const minted: MintedVerification[] = [];
   try {
@@ -156,11 +161,9 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
       if (count >= max) {
         throw errors.invalidOperation(`Maximum number of emails (${max}) reached.`, { maxEmails: max });
       }
-      const reserved = await container.reserveRow(ctx.username, value);
-      if (!reserved) {
+      if (!(await container.isRowFreeFor(ctx.username, value))) {
         throw errors.itemAlreadyExists('email', { email: value });
       }
-      reservedThisCall.push(value);
       const event = await container.createEmailEvent(ctx.userId, {
         value,
         primary: false,
@@ -177,13 +180,10 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
       count++;
     }
   } catch (err) {
-    // Roll back only what this call reserved/created.
+    // Roll back only what this call created.
     for (const value of createdThisCall) {
       const ev = await container.findRawByValue(ctx.userId, value);
       if (ev != null) await container.deleteEmailEvent(ctx.userId, ev);
-    }
-    for (const value of reservedThisCall) {
-      await container.releaseRow(ctx.username, value);
     }
     throw err;
   }
@@ -252,10 +252,16 @@ async function setPrimary (deps: Deps, ctx: UserContext, value: string): Promise
  * so an existing account can prove its founding address). Already-proved
  * entries are skipped (their token was cleared at proof time anyway).
  *
+ * The proof is where the address's platform uniqueness row is claimed
+ * (atomically; a pending address holds none, see {@link addEmails}). When
+ * another account claimed the address first, the entry stays pending and the
+ * call fails like any other.
+ *
  * Returns the verified address, or null for every failure mode (unknown token,
- * expired, no candidate) so the caller can answer with ONE uniform error.
+ * expired, no candidate, address taken) so the caller can answer with ONE
+ * uniform error.
  */
-async function verifyToken (userId: string, token: string): Promise<string | null> {
+async function verifyToken (userId: string, token: string, username: string): Promise<string | null> {
   if (typeof token !== 'string' || token.length === 0) return null;
   const presented = hashToken(token);
   const now = timestamp.now();
@@ -267,6 +273,7 @@ async function verifyToken (userId: string, token: string): Promise<string | nul
     if (!hashEquals(hash, presented)) continue;
     const expires = ev.content.verificationTokenExpires;
     if (expires != null && now >= expires) return null; // matched but expired
+    if (!(await container.reserveRow(username, ev.content.value))) return null; // held by another account
     await container.markVerified(userId, ev.content.value, C.METHOD_EMAIL_LINK);
     return ev.content.value;
   }

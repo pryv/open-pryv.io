@@ -306,6 +306,77 @@ describe('[EMCR] registration email gate', function () {
     }
   });
 
+  /** Register an account through the gate; returns { username, email, token, userId }. */
+  async function registerProved () {
+    const email = newEmail();
+    const { proof } = await proveEmail(email);
+    const body = generateRegisterBody({ email, emailProof: proof });
+    const res = await request.post('/users').send(body);
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    const token = res.body.apiEndpoint.split('//')[1].split('@')[0];
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const userId = await (await getUsersRepository()).getUserIdForUsername(body.username);
+    return { username: body.username, email, token, userId };
+  }
+
+  function updateAccount (u, update) {
+    return request.put('/' + u.username + '/account').set('authorization', u.token).send(update);
+  }
+
+  it('[EMCR13] an address pending on another account stays open to the challenge and to registration', async function () {
+    const a = await registerProved();
+    const x = newEmail();
+    const added = await updateAccount(a, { emails: { add: [x] } });
+    assert.strictEqual(added.status, 200, JSON.stringify(added.body));
+    assert.strictEqual(added.body.account.emails.find((e) => e.value === x).status, 'pending');
+
+    captured = [];
+    nock.cleanAll();
+    const { proof } = await proveEmail(x); // the challenge answers 200, not 409
+    const body = generateRegisterBody({ email: x, emailProof: proof });
+    const res = await request.post('/users').send(body);
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+    const token = res.body.apiEndpoint.split('//')[1].split('@')[0];
+    const accountRes = await request.get('/' + body.username + '/account').set('authorization', token);
+    assert.strictEqual(accountRes.status, 200, JSON.stringify(accountRes.body));
+    assert.strictEqual(accountRes.body.account.emails[0].value, x);
+    assert.strictEqual(accountRes.body.account.emails[0].verificationMethod, 'email-code');
+  });
+
+  it('[EMCR14] the legacy email field only takes an address proved on the account', async function () {
+    const operations = require('business/src/emails/operations.ts');
+    const errorsFactory = require('errors').factory;
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    const a = await registerProved();
+
+    const unknown = newEmail();
+    const refused = await updateAccount(a, { email: unknown });
+    assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+    assert.strictEqual(refused.body.error.id, 'invalid-operation');
+    assert.strictEqual(await usersRepository.getOnePropertyValue(a.userId, 'email'), a.email, 'primary unchanged');
+
+    const ctx = { userId: a.userId, username: a.username, user: null, accessId: 'system', legacyEmail: a.email };
+    const y1 = newEmail();
+    const y2 = newEmail();
+    const minted = await operations.addEmails({ errors: errorsFactory, usersRepository }, ctx, [y1, y2]);
+
+    const pendingRefused = await updateAccount(a, { email: y1 });
+    assert.strictEqual(pendingRefused.status, 400, JSON.stringify(pendingRefused.body));
+    assert.strictEqual(pendingRefused.body.error.id, 'invalid-operation');
+
+    for (const { token } of minted) {
+      assert.ok(await operations.verifyToken(a.userId, token, a.username));
+    }
+    const legacyOk = await updateAccount(a, { email: y1 });
+    assert.strictEqual(legacyOk.status, 200, JSON.stringify(legacyOk.body));
+    assert.strictEqual(legacyOk.body.account.email, y1);
+    const primaryOk = await updateAccount(a, { emails: { setPrimary: y2 } });
+    assert.strictEqual(primaryOk.status, 200, JSON.stringify(primaryOk.body));
+    assert.strictEqual(primaryOk.body.account.email, y2);
+  });
+
   it('[EMCR12] leaves the admin create-user path outside the gate', async function () {
     const config = await getConfig();
     const username = 'emcrsys' + cuid.slug().toLowerCase();
