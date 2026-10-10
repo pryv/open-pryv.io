@@ -136,10 +136,12 @@ class SeriesConnectionSQLite {
   }
 
   /**
-   * Drop one measurement (eventId) from the user's file.
+   * Drop one measurement (eventId) from the user's file. A namespace that has
+   * no series file has nothing to drop: it is not created.
    */
   async dropMeasurement (measurement: string, dbName: string): Promise<void> {
     this.logger.debug(`dropMeasurement: ${measurement} on ${dbName}`);
+    if (await fileIdentity(this.existingPathForUser(dbName)) == null) return;
     const db = await this.forUser(dbName);
     await db.dropEvent(measurement);
   }

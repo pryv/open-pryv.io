@@ -66,6 +66,18 @@
   rendered from the new file; after it is removed, or the event deleted, the previews and the
   cached copy of the file are dropped on the next preview request (the request answers as before:
   `422` without an attachment).
+- Account deletion erases the high-frequency series stored under every name of the account: its
+  current username and each alias, former usernames included (a username change keeps the former
+  name as an alias, and the series written before the change stay under it). Before, only the
+  series of the name the deletion was addressed by were erased: a deletion addressed by an alias
+  or a former username left all of them, and a deletion after a username change left those
+  written before it; a later account registered under that name could reach them.
+- `events.delete` of a series event erases its points under every name of the account, so the
+  points written before a username change go as well.
+- A username change destroys the pending password-reset requests of the former name, and account
+  deletion those of the username and of every alias. Before, a reset token requested under a
+  former name stayed valid for its hour and, once that name was registered again, reset the
+  password of the new account.
 
 ## 2.0.0-rc.46 - 2026-10-10
 

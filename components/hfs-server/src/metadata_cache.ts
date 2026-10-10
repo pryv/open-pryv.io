@@ -18,7 +18,7 @@ const storage = require('storage');
 const MethodContext = require('business').MethodContext;
 const errors = require('errors').factory;
 const { SeriesRowType } = require('business').types;
-const { seriesNamespace } = require('business/src/series/namespace.ts');
+const { seriesNamespace, accountSeriesNamespaces } = require('business/src/series/namespace.ts');
 const { pubsub } = require('messages');
 const { getMall } = require('mall');
 // A single HFS server will keep at maximum this many credentials in cache.
@@ -75,8 +75,23 @@ class MetadataCache {
   }
 
   // transport messages
-  dropSeries (usernameEvent: UsernameEvent) {
-    return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, seriesNamespace(usernameEvent.username));
+  // Points written before a username change stay under the former name, an
+  // alias of the account: drop the measurement under every name it holds.
+  async dropSeries (usernameEvent: UsernameEvent) {
+    const measurement = 'event.' + usernameEvent.event.id;
+    try {
+      let namespaces = [seriesNamespace(usernameEvent.username)];
+      const usersIndex = await storage.getUsersLocalIndex();
+      const userId = await usersIndex.getUserId(usernameEvent.username);
+      if (userId != null) {
+        namespaces = await accountSeriesNamespaces(usersIndex, userId, usernameEvent.username);
+      }
+      for (const namespace of namespaces) {
+        await this.series.connection.dropMeasurement(measurement, namespace);
+      }
+    } catch (err: unknown) {
+      logger.error('Could not drop the series of a deleted event', err);
+    }
   }
 
   invalidateEvent (usernameEvent: UsernameEvent) {

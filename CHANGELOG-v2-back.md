@@ -1,5 +1,56 @@
 # Changelog - Internal (no API impact)
 
+## Series and reset requests of every name of an account
+
+- `business/src/series/namespace.ts` `accountSeriesNamespaces(aliasIndex, userId, username)`:
+  the series namespaces of the username and of each alias of the account.
+- `business/src/auth/deletion.ts` `deleteHFData`: drops the namespaces of the canonical username
+  (resolved by `validateUserExists`, whatever name addressed the deletion) and of every alias,
+  read before `deleteUser` removes the alias index. Before, it dropped
+  `seriesNamespace(params.username)`, the name as addressed.
+- `hfs-server/src/metadata_cache.ts` `dropSeries` (the `events.delete` series notification): drops
+  the measurement under every namespace of the account; a failure is logged instead of being an
+  unhandled rejection.
+- `business/src/users/repository.ts`: `changeUsername` destroys the reset requests of the former
+  name after the index rename; `deleteOne` destroys those of the username and of every alias
+  (`#destroyResetRequests`).
+- Series engines: `dropMeasurement` on a namespace that does not exist is a no-op. SQLite no
+  longer creates the namespace file and directory to drop nothing; InfluxDB ignores the
+  `database not found` answer.
+- Series stay keyed by username: a username change still leaves the earlier points under the
+  former name, unreachable by the owner until the account is deleted. Moving them at rename time,
+  or keying series by user id, needs a data migration and is not part of this change.
+- **Existing data:** cores may hold series left by earlier deletions or username changes:
+  namespaces that match no account, and namespaces reachable only through an alias (points
+  written before a username change). Read-only check on a PostgreSQL series engine:
+
+  ```sql
+  -- namespaces held by no account
+  SELECT s.user_id AS namespace, count(*) AS points, min(s.point_time) AS first_point
+  FROM series_data s
+  LEFT JOIN users_index u ON s.user_id = 'user.' || u.username
+  LEFT JOIN alias_index a ON s.user_id = 'user.' || a.alias
+  WHERE u.username IS NULL AND a.alias IS NULL
+  GROUP BY 1 ORDER BY 2 DESC;
+
+  -- namespaces reachable only through an alias
+  SELECT s.user_id AS namespace, a.user_id AS owner_id, count(*) AS points
+  FROM series_data s
+  JOIN alias_index a ON s.user_id = 'user.' || a.alias
+  GROUP BY 1, 2;
+  ```
+
+  On a SQLite series engine, list the `user.*` directories under the users base directory
+  (`find <base> -maxdepth 4 -type d -name 'user.*'`) and compare each name with the users and
+  alias index. Rows of the second query belong to a live account (its pre-change points) and are
+  to be re-attached to it, not dropped.
+- Tests: `components/api-server/test/deletion.test.js` `[DLNS]` `[DLN1]`..`[DLN4]`;
+  `components/api-server/test/account-reset-lifecycle.test.js` `[RPLC12]`..`[RPLC14]`;
+  `components/hfs-server/test/acceptance/store_data.test.js` `[SDRN]` `[SD4D]`;
+  `storages/engines/sqlite/test/series.test.js` `[SQDM]`;
+  `storages/engines/influxdb/test/conformance/InfluxConnection.test.js` `[IC10]`. All of them
+  failed before the change, on PostgreSQL and SQLite (`[IC10]` not run: needs InfluxDB).
+
 ## Access permissions loaded once, published in one step
 
 - `business/src/accesses/AccessLogic.ts`: `loadPermissions()` memoizes one load per object

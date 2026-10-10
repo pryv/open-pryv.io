@@ -137,6 +137,16 @@ describe('[SQSR] SQLite series', function () {
     assert.ok(!fs.existsSync(neverDir), 'dropping a namespace that never had series must not create its directory');
   });
 
+  // A measurement is dropped under every name an account holds, most of which
+  // never had series: that must not create a namespace directory for them.
+  it('[SQDM] dropMeasurement creates nothing for an unknown namespace', async function () {
+    const fs = require('node:fs');
+    const never = 'user.sqsrnodrop' + cuid.slug();
+    await conn.dropMeasurement('event.none', never);
+    const neverDir = require('storage/src/userLocalDirectory.ts').getPathForUser(never);
+    assert.ok(!fs.existsSync(neverDir), 'dropping a measurement in a namespace that never had series must not create its directory');
+  });
+
   // API and HFS workers are separate processes, each with its own handle
   // cache: a drop in one (account deletion, restore) must not leave the
   // others reading the erased file or writing into it. Two connections stand

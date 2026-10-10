@@ -12,7 +12,7 @@ const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
-const { seriesNamespace } = require('business/src/series/namespace.ts');
+const { accountSeriesNamespaces } = require('business/src/series/namespace.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
@@ -122,10 +122,18 @@ class Deletion {
     next();
   }
 
-  async deleteHFData (_context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
+  // Series are keyed by a name of the account, not by its id. Drops the
+  // namespace of the canonical username (resolved by validateUserExists,
+  // whatever name addressed the deletion) and of every alias, former usernames
+  // included. Runs before deleteUser, while the alias index still lists them.
+  async deleteHFData (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const conn = require('storages').seriesConnection;
     if (conn) {
-      await conn.dropDatabase(seriesNamespace(params.username));
+      const usersRepository = await getUsersRepository();
+      const namespaces = await accountSeriesNamespaces(usersRepository.usersIndex, context.user.id, context.user.username);
+      for (const namespace of namespaces) {
+        await conn.dropDatabase(namespace);
+      }
     }
     next();
   }

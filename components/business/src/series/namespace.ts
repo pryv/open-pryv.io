@@ -13,4 +13,17 @@ function seriesNamespace (username: string): string {
   return `user.${username}`;
 }
 
-export { seriesNamespace };
+type AliasIndexLike = { getAliasesForId (userId: string): Promise<string[]> };
+
+/**
+ * The namespaces of every name the account holds: its username and each of
+ * its aliases. A username change demotes the former name to an alias and
+ * leaves the series written before it under that name, so erasing the
+ * account's series (or one measurement of it) must cover all of them.
+ */
+async function accountSeriesNamespaces (aliasIndex: AliasIndexLike, userId: string, username: string): Promise<string[]> {
+  const aliases = await aliasIndex.getAliasesForId(userId);
+  return [...new Set([username, ...aliases])].map(seriesNamespace);
+}
+
+export { seriesNamespace, accountSeriesNamespaces };

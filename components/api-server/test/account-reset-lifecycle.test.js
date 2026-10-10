@@ -245,6 +245,77 @@ describe('[RPLC] password reset lifecycle', function () {
     assert.strictEqual(rows.length, 0);
   });
 
+  function changeUsername (user, personalToken, newUsername) {
+    return coreRequest.post(`/${user.username}/account/change-username`).set('Authorization', personalToken)
+      .send({ newUsername });
+  }
+
+  function requestsFor (username) {
+    return fromCallback((cb) => storageLayer.passwordResetRequests.exportAll(cb))
+      .then((rows) => rows.filter((r) => r.username === username));
+  }
+
+  function freshUsername () {
+    return 'rplc' + cuid().toLowerCase().slice(1, 12);
+  }
+
+  it('[RPLC12] a username change removes the reset requests of the former name', async function () {
+    const user = await newUser();
+    const personal = await login(user, 'rplc-a');
+    const token = await generateToken(user.username);
+    const res = await changeUsername(user, personal, freshUsername());
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(await getRequest(token, user.username), null);
+    assert.deepStrictEqual(await requestsFor(user.username), []);
+  });
+
+  it('[RPLC13] deleting the account removes the reset requests of its current name and of every alias', async function () {
+    const user = await newUser();
+    const personal = await login(user, 'rplc-a');
+    const currentName = freshUsername();
+    const res = await changeUsername(user, personal, currentName);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const usersRepository = await getUsersRepository();
+    const minted = await usersRepository.mintAlias(currentName, user.userId);
+    // Requests stored under each name the account holds.
+    for (const name of [currentName, user.username, minted]) await generateToken(name);
+    await usersRepository.deleteOne(user.userId, currentName);
+    for (const name of [currentName, user.username, minted]) {
+      assert.deepStrictEqual(await requestsFor(name), [], `no request left for ${name}`);
+    }
+  });
+
+  it('[RPLC14] a reset token issued under a former name is refused once that name is registered again', async function () {
+    const user = await newUser();
+    const personal = await login(user, 'rplc-a');
+    const token = await requestResetToken(user);
+    const currentName = freshUsername();
+    const renamed = await changeUsername(user, personal, currentName);
+    assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+    const usersRepository = await getUsersRepository();
+    await usersRepository.deleteOne(user.userId, currentName);
+
+    // Someone else registers the former name.
+    const password = 'rplc-other-passw0rd';
+    const registered = await coreRequest.post('/users').send({
+      appId: 'rplc-app',
+      username: user.username,
+      password,
+      email: user.username + '-2@rplc.example.com',
+      insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+      language: 'en'
+    });
+    assert.ok(registered.status === 201 || registered.status === 200, JSON.stringify(registered.body));
+    const holder = { username: user.username, password };
+    const holderToken = await login(holder, 'rplc-a');
+
+    const res = await reset(holder, token, 'rplc-taken-passw0rd');
+    assert.strictEqual(res.status, 401, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error.id, ErrorIds.InvalidAccessToken);
+    assert.strictEqual(await accessInfoStatus(holder, holderToken), 200, 'the holder\'s session is intact');
+    await login(holder, 'rplc-b'); // the holder's password is unchanged
+  });
+
   it('[RPLC11] any new request removes the expired requests of every account', async function () {
     const ghost = 'rplc-expired-' + cuid().toLowerCase().slice(1, 12);
     const live = 'rplc-live-' + cuid().toLowerCase().slice(1, 12);

@@ -202,7 +202,8 @@ class UsersRepository {
    *     aliases) under the new username (their stored owner is the old-username
    *     token, otherwise future self-updates would mis-detect collisions);
    *  3. name→core map for the new name (multi-core);
-   *  4. local users index rename (aliases untouched);
+   *  4. local users index rename (aliases untouched), then the former name's
+   *     password reset requests destroyed;
    *  5. System-Streams `username` account event;
    *  6. demote the old username to a routable alias;
    *  7. bump the change counter.
@@ -232,6 +233,10 @@ class UsersRepository {
 
     // 3. local index rename (leaves the alias index intact)
     await this.usersIndex.renameUser(oldUsername, newUsername);
+
+    // Reset requests are keyed by username and the former name can no longer
+    // consume them: drop them, so none survives to a later holder of the name.
+    await this.#destroyResetRequests([oldUsername]);
 
     // 4. System-Streams username account field (mirrors registration's write;
     //    `username` is not in the editable-field map used by updateOne).
@@ -593,18 +598,24 @@ class UsersRepository {
       const keepMode = ((await getConfig()).get('audit:onUserDelete') as string) === 'keep';
       await cleanupUserAccessIndexNonFatal(this.platform, username, keepMode);
       // Reset requests are keyed by username: a token issued before the
-      // deletion must not apply to a later account of the same name.
-      const resets = this.storageLayer.passwordResetRequests;
-      if (resets != null) {
-        const name = username;
-        await fromCallback((cb: (err: Error | null) => void) => resets.destroyAllForUser(name, cb));
-      }
+      // deletion must not apply to a later account of the same name, nor of
+      // one of its aliases (a former username is released here too).
+      await this.#destroyResetRequests([username, ...aliases]);
     }
     await this.mall.deleteUser(userId);
     // Keyed by id and sent whatever names this process knows: every process
     // drops the account's cached accesses, streams and name mappings (the
     // index is gone, so they cannot be refilled).
     cache.unsetUserById(userId);
+  }
+
+  /** Destroys the password reset requests stored under each of `usernames`. */
+  async #destroyResetRequests (usernames: string[]): Promise<void> {
+    const resets = this.storageLayer.passwordResetRequests;
+    if (resets == null) return;
+    for (const name of new Set(usernames)) {
+      await fromCallback((cb: (err: Error | null) => void) => resets.destroyAllForUser(name, cb));
+    }
   }
 
   async count () {

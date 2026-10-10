@@ -343,6 +343,63 @@ describe('[SDHF] Storing data in a HF series', function () {
       assert.strictEqual(rows2.length, 0);
     });
   });
+  // Series are stored under a namespace derived from the username: after a
+  // username change, points written before it stay under the former name,
+  // which the account still holds as an alias.
+  describe('[SDRN] DELETE of a series event after a username change', function () {
+    this.timeout(10000);
+    let hfServer;
+    let apiServer;
+    let userId, formerName, currentName, parentStreamId, accessToken;
+    before(async () => {
+      hfServer = await spawnContext.spawn();
+      apiServer = await apiServerContext.spawn();
+      userId = 'sdren' + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+      formerName = userId;
+      currentName = 'sdrenb' + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+      parentStreamId = cuid();
+      accessToken = cuid();
+      await pryv.user(userId, {}, function (user) {
+        user.stream({ id: parentStreamId }, function () { });
+        user.access({ token: accessToken, type: 'personal' });
+        user.session(accessToken);
+      });
+    });
+    after(async () => {
+      hfServer.stop();
+      apiServer.stop();
+      await pryv.clean();
+    });
+    it('[SD4D] deleting the event drops its points stored under the former name', async function () {
+      const event = await mall.events.create(userId, {
+        streamIds: [parentStreamId], time: timestamp.now(), type: 'series:angular-speed/rad-s'
+      });
+      const stored = await hfServer.request()
+        .post(`/${formerName}/events/${event.id}/series`)
+        .set('authorization', accessToken)
+        .send({ format: 'flatJSON', fields: ['deltaTime', 'value'], points: [[1, 1], [2, 2], [3, 3]] });
+      assert.strictEqual(stored.status, 200, JSON.stringify(stored.body));
+      const query = `select * from "event.${event.id}"`;
+      assert.strictEqual((await seriesConn.query(query, { database: `user.${formerName}` })).length, 3);
+
+      const usersRepository = await getUsersRepository();
+      await usersRepository.changeUsername(userId, formerName, currentName, 'system');
+
+      for (let i = 0; i < 2; i++) { // trash, then delete
+        const res = await apiServer.request()
+          .delete(`/${currentName}/events/${event.id}`)
+          .set('authorization', accessToken);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      }
+      let left = -1;
+      for (let i = 0; i < 20 && left !== 0; i++) {
+        await awaiting.delay(100);
+        left = (await seriesConn.query(query, { database: `user.${formerName}` })).length;
+      }
+      assert.strictEqual(left, 0, 'no point left under the former name');
+    });
+  });
+
   describe('[SD03] POST /events/EVENT_ID/series', function () {
     let server;
     describe('[SD31] bypassing authentication', () => {

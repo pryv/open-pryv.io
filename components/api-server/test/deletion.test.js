@@ -462,6 +462,90 @@ describe('[PGTD] DELETE /users/:username', () => {
       });
     }
   });
+  // HF series are stored under a namespace derived from a name of the account
+  // (`user.<name>`). An account holds its current username plus aliases (minted
+  // ones and former usernames), any of which addresses it: the deletion must
+  // leave no series under any of them, whatever name it was addressed by.
+  describe('[DLNS] series under every name of the account', function () {
+    function freshName (prefix) {
+      return prefix + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    async function writeSeries (name) {
+      const series = await seriesRepository.get(`user.${name}`, `event.${cuid()}`);
+      await series.append(new DataMatrix(['deltaTime', 'value'], [[0, 1], [1, 2]]));
+    }
+
+    // Names whose series namespace is still stored after the deletion.
+    async function namesWithSeries (names) {
+      const databases = await seriesConn.getDatabases();
+      const left = names.filter((name) => databases.includes(`user.${name}`));
+      if (typeof seriesConn.existingPathForUser === 'function') {
+        for (const name of names) {
+          const dir = path.dirname(seriesConn.existingPathForUser(`user.${name}`));
+          if (fs.existsSync(dir) && !left.includes(name)) left.push(name);
+        }
+      }
+      return left;
+    }
+
+    async function deleteAs (addressedName, authorization) {
+      return await request.delete(`/users/${addressedName}`).set('Authorization', authorization);
+    }
+
+    it('[DLN1] a deletion addressed by an alias, with the admin key, leaves no series under any name', async function () {
+      const username = freshName('testdelna');
+      await initiateUserWithData(username);
+      const alias = await usersRepository.mintAlias(username, username);
+      await writeSeries(alias);
+      res = await deleteAs(alias, authKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.userDeletion.username, username, 'the canonical name is reported');
+      assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'the account is gone');
+      assert.deepStrictEqual(await namesWithSeries([username, alias]), []);
+    });
+
+    it('[DLN2] a deletion addressed by an alias, with the personal token, leaves no series under any name', async function () {
+      const username = freshName('testdelnb');
+      const user = await initiateUserWithData(username);
+      const personalToken = cuid();
+      await user.access({ type: 'personal', token: personalToken });
+      await user.session(personalToken);
+      const alias = await usersRepository.mintAlias(username, username);
+      await withInjectedConfig({ 'user-account': { delete: ['personalToken'] } }, async () => {
+        res = await deleteAs(alias, personalToken);
+      });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'the account is gone');
+      assert.deepStrictEqual(await namesWithSeries([username, alias]), []);
+    });
+
+    it('[DLN3] a username change then a deletion by the current name leaves no series under the former name', async function () {
+      const formerName = freshName('testdelnc');
+      const currentName = freshName('testdelnd');
+      await initiateUserWithData(formerName);
+      await usersRepository.changeUsername(formerName, formerName, currentName, 'system');
+      await writeSeries(currentName);
+      res = await deleteAs(currentName, authKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(await usersRepository.getUserIdForUsername(formerName) == null, 'the former name is released');
+      assert.deepStrictEqual(await namesWithSeries([formerName, currentName]), []);
+    });
+
+    it('[DLN4] a username change then a deletion by the former name leaves no series under any name', async function () {
+      const formerName = freshName('testdelne');
+      const currentName = freshName('testdelnf');
+      await initiateUserWithData(formerName);
+      await usersRepository.changeUsername(formerName, formerName, currentName, 'system');
+      await writeSeries(currentName);
+      res = await deleteAs(formerName, authKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.userDeletion.username, currentName, 'the canonical name is reported');
+      assert.ok(await usersRepository.getUserIdForUsername(currentName) == null, 'the account is gone');
+      assert.deepStrictEqual(await namesWithSeries([formerName, currentName]), []);
+    });
+  });
+
   describe('[DL03] User - Create - Delete - Create - Login', function () {
     // Use cuid for unique username to avoid parallel test conflicts
     const usernamex = 'testdelx' + cuid.slug().toLowerCase();

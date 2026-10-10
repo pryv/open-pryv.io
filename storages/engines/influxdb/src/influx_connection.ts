@@ -73,9 +73,15 @@ class InfluxConnection {
     return this.conn.writeMeasurement(name, points, options);
   }
 
-  dropMeasurement (name: string, dbName: string): Promise<void> {
+  /** A database that does not exist has nothing to drop: no error. */
+  async dropMeasurement (name: string, dbName: string): Promise<void> {
     this.logger.debug(`Drop -> measurement: ${name} on dbName ${dbName}`, this.logger);
-    return this.conn.dropMeasurement(name, dbName);
+    try {
+      await this.conn.dropMeasurement(name, dbName);
+    } catch (err: unknown) {
+      if (/database not found/i.test(String((err as Error)?.message))) return;
+      throw err;
+    }
   }
 
   writePoints (points: InfluxPoint[], options?: InfluxWriteOptions): Promise<void> {

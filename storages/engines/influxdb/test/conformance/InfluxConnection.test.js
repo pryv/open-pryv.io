@@ -81,6 +81,12 @@ export default function conformanceTests (getConnection) {
       assert.ok(!names.includes('memory'), 'measurement must be removed');
     });
 
+    it('[IC10] dropMeasurement() in a database that does not exist is a no-op', async () => {
+      await conn.dropMeasurement('memory', testDbName + '_never');
+      const dbs = await conn.getDatabases();
+      assert.ok(!dbs.includes(testDbName + '_never'), 'no database is created');
+    });
+
     it('[IC07] exportDatabase() must return measurements and points', async () => {
       const data = await conn.exportDatabase(testDbName);
       assert.ok(data.measurements);
