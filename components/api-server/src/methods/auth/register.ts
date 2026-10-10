@@ -63,6 +63,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   const platform: Platform = await getPlatform();
 
   api.register('auth.register',
+    commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.register.params),
     stripServerOwnedFields,
@@ -146,6 +147,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // exchange a correct code for a short-lived proof that `auth.register`
   // requires. Both are public and inert unless the operator turned the gate on.
   api.register('auth.emailChallenge',
+    commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.emailChallenge.params),
     requireGateOn,
@@ -153,6 +155,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     createAndMailChallenge);
 
   api.register('auth.emailChallengeVerify',
+    commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.emailChallengeVerify.params),
     requireGateOn,

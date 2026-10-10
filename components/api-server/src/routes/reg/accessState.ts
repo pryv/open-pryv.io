@@ -33,10 +33,14 @@ const require = createRequire(import.meta.url);
  */
 
 const crypto = require('node:crypto');
+const { isIP } = require('node:net');
 
 const KEY_LENGTH = 16;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
 const NAMESPACE = 'access-request/';
+/** Per-address lists of live requests. Not under NAMESPACE, so they never
+ * count toward the core-wide ceiling. */
+const IP_NAMESPACE = 'access-request-ip/';
 /** Terminal states: the outcome is decided, only delivery is left. */
 const TERMINAL_STATUSES = Object.freeze(['ACCEPTED', 'REFUSED', 'ERROR']);
 
@@ -107,17 +111,26 @@ type AccessState = {
   authUrl?: string;
   /** First time a poll read the terminal state (ms epoch). */
   deliveredAt?: number;
+  /** First time a poll read the pending state (ms epoch): from then on the
+   * request lives its full lifetime, counted from creation. */
+  openedAt?: number;
+  /** The creator's address bucket, hashed (see `ipRefOf`), when the request
+   * counts toward a per-address budget. Never part of a poll body. */
+  ipRef?: string;
   [k: string]: unknown;
 };
 
 type KvClient = {
   get: (key: string) => Promise<unknown>;
   /** Resolves true when it wrote, false when `ifUnderPrefix` refused (the
-   * namespace is full). A guarded write that answers anything else is not
-   * trusted to have honoured the ceiling. */
-  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifUnderPrefix?: { prefix: string; max: number } }) => Promise<boolean>;
+   * namespace is full) or `ifEquals` did not match. A guarded write that
+   * answers anything else is not trusted to have honoured the guard. */
+  set: (key: string, value: unknown, opts?: { ttlMs?: number; ifUnderPrefix?: { prefix: string; max: number }; ifEquals?: unknown }) => Promise<boolean>;
   delete: (key: string) => Promise<void>;
 };
+
+/** One live request in a per-address list: its key and when it expires. */
+type IpPlace = { k: string; e: number };
 
 let kvClient: KvClient | null = null;
 
@@ -138,6 +151,7 @@ function _setKvClientForTests (client: KvClient | null): void {
  * would grow with every request. */
 const TRACK_KEYS = process.env.NODE_ENV === 'test';
 const knownKeys = new Set<string>();
+const knownIpRefs = new Set<string>();
 
 async function write (key: string, state: AccessState, expiresAt: number, maxLive?: number): Promise<boolean> {
   // cluster_kv treats a non-positive TTL as "never expires": clamp to 1 ms
@@ -171,11 +185,15 @@ function generateKey (): string {
  * round-trip we'd otherwise need to add the URLs after the initial save.
  *
  */
-function buildState (params: BuildStateParams): { key: string; state: AccessState; expiresAt: number } {
+function buildState (params: BuildStateParams, opts: { unopenedTtlMs?: number } = {}): { key: string; state: AccessState; expiresAt: number } {
   const key = generateKey();
-  // The request always lives DEFAULT_TTL_MS. `expireAfter` is the lifetime
-  // of the ACCESS (seconds), carried to the auth page below.
-  const expiresAt = Date.now() + DEFAULT_TTL_MS;
+  // A request lives DEFAULT_TTL_MS, but only `unopenedTtlMs` (when shorter)
+  // until a poll first reads it (`markOpened`): a request nobody ever reads
+  // holds its place briefly. `expireAfter` is the lifetime of the ACCESS
+  // (seconds), carried to the auth page below.
+  const unopened = opts.unopenedTtlMs;
+  const lifetime = (typeof unopened === 'number' && unopened > 0) ? Math.min(unopened, DEFAULT_TTL_MS) : DEFAULT_TTL_MS;
+  const expiresAt = Date.now() + lifetime;
   const state: AccessState = {
     status: 'NEED_SIGNIN',
     code: 201,
@@ -282,6 +300,119 @@ async function markDelivered (key: string, state: AccessState, retentionMs: numb
 }
 
 /**
+ * Record that a poll has read a pending state for the first time, and give
+ * the request its full lifetime, counted from its creation (it was created
+ * with the shorter unopened lifetime). Both the auth page (when the user
+ * lands on it) and the app (polling for the outcome) read the request right
+ * away, so any first read counts. A state already opened, or not pending, is
+ * left as is.
+ */
+async function markOpened (key: string, state: AccessState): Promise<void> {
+  if (state.status !== 'NEED_SIGNIN' || state.openedAt != null) return;
+  const now = Date.now();
+  const createdAt = typeof state.createdAt === 'number' ? state.createdAt : now;
+  const expiresAt = Math.max(state.expiresAt, createdAt + DEFAULT_TTL_MS);
+  const next: AccessState = { ...state, openedAt: now, expiresAt };
+  // Compare-and-set on the state as read: an outcome posted since then (or
+  // another poll that opened it first) is never overwritten.
+  const written = await getKv().set(NAMESPACE + key, next, { ttlMs: Math.max(1, expiresAt - now), ifEquals: state });
+  if (written !== true) return;
+  if (next.ipRef != null && expiresAt !== state.expiresAt) await moveIpPlace(next.ipRef, key, expiresAt);
+}
+
+// ----------------------------------------------------------------------
+// Per-address budget.
+//
+// Creating a request takes no credentials, so one caller could otherwise fill
+// the core-wide ceiling alone and refuse every other app's sign-in. Each
+// address bucket (an IPv4 address, or the /64 of an IPv6 one) keeps the list
+// of the live requests it created, in its own key, updated with a
+// compare-and-set so concurrent creations cannot pass the budget together. A
+// request leaves the list when it is decided, removed, or expires.
+// ----------------------------------------------------------------------
+
+/** The /64 prefix of an IPv6 address, e.g. `2001:db8:1:2::/64`. */
+function ipv6Prefix64 (ip: string): string {
+  const address = ip.split('%')[0]; // drop a zone id
+  const [head, tail] = address.split('::');
+  const groupsOf = (part: string | undefined): string[] => (part == null || part === '') ? [] : part.split(':');
+  const headGroups = groupsOf(head);
+  const tailGroups = groupsOf(tail);
+  // An embedded IPv4 address at the end stands for two groups.
+  const size = (groups: string[]) => groups.reduce((n, g) => n + (g.includes('.') ? 2 : 1), 0);
+  const fill = tail !== undefined ? Math.max(0, 8 - size(headGroups) - size(tailGroups)) : 0;
+  const groups = [...headGroups, ...new Array(fill).fill('0'), ...tailGroups];
+  return groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':') + '::/64';
+}
+
+/**
+ * The hashed address bucket a request counts toward, or null when the
+ * transport carries no address. IPv6 addresses are grouped by /64 (one
+ * subscriber's allocation); hashed so no client address lands in the store.
+ */
+function ipRefOf (ip: string | null | undefined): string | null {
+  if (ip == null || ip === '') return null;
+  const bucket = isIP(ip) === 6 ? ipv6Prefix64(ip) : ip;
+  return crypto.createHash('sha256').update(bucket).digest('hex').slice(0, 32);
+}
+
+function asIpPlaces (value: unknown): IpPlace[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((p): p is IpPlace => p != null && typeof p === 'object' && typeof p.k === 'string' && typeof p.e === 'number');
+}
+
+/**
+ * Rewrite a per-address list with a compare-and-set on what was read.
+ * `change` returns the new list, or null to leave it (and stop). Answers the
+ * outcome of the last call to `change` (true when written), false when the
+ * write kept losing.
+ */
+async function updateIpPlaces (ipRef: string, change: (places: IpPlace[], now: number) => IpPlace[] | null): Promise<boolean> {
+  const key = IP_NAMESPACE + ipRef;
+  for (let tries = 0; tries < 20; tries++) {
+    const previous = await getKv().get(key);
+    const now = Date.now();
+    const next = change(asIpPlaces(previous).filter((p) => p.e > now), now);
+    if (next == null) return false;
+    const ttlMs = Math.max(1, ...next.map((p) => p.e - now));
+    if (await getKv().set(key, next, { ttlMs, ifEquals: previous ?? null })) {
+      if (TRACK_KEYS) knownIpRefs.add(ipRef);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Take a place for request `key` in the address's budget of `max` live
+ * requests. Answers false when the budget is full (or the list kept
+ * changing under concurrent creations: refused, never let through
+ * uncounted).
+ */
+async function reserveIpPlace (ipRef: string, key: string, expiresAt: number, max: number): Promise<boolean> {
+  return await updateIpPlaces(ipRef, (places) => {
+    if (places.length >= max) return null;
+    return [...places, { k: key, e: expiresAt }];
+  });
+}
+
+/** Give the place of request `key` back. Best effort. */
+async function releaseIpPlace (ipRef: string, key: string): Promise<void> {
+  await updateIpPlaces(ipRef, (places) => {
+    if (!places.some((p) => p.k === key)) return null;
+    return places.filter((p) => p.k !== key);
+  });
+}
+
+/** Follow a request whose expiry moved. Best effort. */
+async function moveIpPlace (ipRef: string, key: string, expiresAt: number): Promise<void> {
+  await updateIpPlaces(ipRef, (places) => {
+    if (!places.some((p) => p.k === key)) return null;
+    return places.map((p) => p.k === key ? { k: key, e: expiresAt } : p);
+  });
+}
+
+/**
  * The ONLY fields an update may write.
  *
  * Whoever posts the outcome of the flow is exactly the party whose grant
@@ -363,6 +494,8 @@ async function update (key: string, update: Partial<AccessState>, opts: { maxByt
   // the write leaves the stored request exactly as it was.
   assertWithinSize(state, opts.maxBytes);
   await write(key, state, state.expiresAt);
+  // A decided request no longer counts toward its creator's budget.
+  if (state.ipRef != null && TERMINAL_STATUSES.includes(state.status)) await releaseIpPlace(state.ipRef, key);
   return state;
 }
 
@@ -382,18 +515,25 @@ function assertWithinSize (state: AccessState, maxBytes?: number): void {
  * Delete an access request.
  */
 async function remove (key: string): Promise<void> {
+  const state = await get(key);
   await getKv().delete(NAMESPACE + key);
   knownKeys.delete(key);
+  if (state?.ipRef != null) await releaseIpPlace(state.ipRef, key);
 }
 
 /**
  * Drop every request created through this module in this process (used by
- * tests). Entries created by other processes, and unrelated `cluster_kv`
- * entries such as MFA sessions, are left alone.
+ * tests), and the per-address lists it wrote. Entries created by other
+ * processes, and unrelated `cluster_kv` entries such as MFA sessions, are
+ * left alone.
  */
 async function clear (): Promise<void> {
   for (const key of [...knownKeys]) await remove(key);
+  for (const ipRef of [...knownIpRefs]) {
+    await getKv().delete(IP_NAMESPACE + ipRef);
+    knownIpRefs.delete(ipRef);
+  }
 }
 
-export { buildState, persist, persistNew, create, get, markDelivered, update, remove, clear, TERMINAL_STATUSES, _setKvClientForTests };
+export { buildState, persist, persistNew, create, get, markDelivered, markOpened, update, remove, clear, ipRefOf, reserveIpPlace, releaseIpPlace, TERMINAL_STATUSES, _setKvClientForTests };
 export type { AccessState };

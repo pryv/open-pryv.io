@@ -1751,7 +1751,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         await assertMfaStillActive();
       });
 
-      it('[MSU11] wrong step-ups count on the account tally: past the free failures the next one is delayed, even when right', async function () {
+      it('[MSU11] wrong step-up codes count on the account MFA tally: past the free failures the next one is delayed, even when right', async function () {
         const restore = injectTestConfigSnapshot({
           services: {
             mfa: {
@@ -1763,15 +1763,39 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         try {
           await enrol();
           for (let i = 0; i < 4; i++) {
-            assertWrongStepUp(await deactivate({ password: 'not-the-password-' + i }));
+            assertWrongStepUp(await deactivate({ code: '00000' + i }));
           }
-          const delayed = await deactivate({ password });
+          const delayed = await deactivate({ code: totpCodeFor(secret, 0) });
           assert.strictEqual(delayed.status, 429, JSON.stringify(delayed.body));
           assert.strictEqual(delayed.body.error.id, 'too-many-attempts');
           const mfa = await assertMfaStillActive();
           assert.ok(mfa != null, 'not checked during the delay, so nothing changed');
           const { data } = await storedProfile();
           assert.strictEqual(data.mfaThrottle.failures, 4, 'each wrong step-up counted, the delayed one did not');
+          assert.strictEqual(data.passwordThrottle, undefined, 'codes do not count on the password tally');
+        } finally {
+          restore();
+        }
+      });
+
+      it('[MSU14] wrong step-up passwords count on the account password tally, not on the MFA tally', async function () {
+        const restore = injectTestConfigSnapshot({
+          auth: { passwordAttempts: { freeFailures: 3, baseSeconds: 60, maxSeconds: 60, windowSeconds: 3600 } }
+        });
+        try {
+          await enrol();
+          for (let i = 0; i < 4; i++) {
+            assertWrongStepUp(await deactivate({ password: 'not-the-password-' + i }));
+          }
+          const delayed = await deactivate({ password });
+          assert.strictEqual(delayed.status, 429, JSON.stringify(delayed.body));
+          assert.strictEqual(delayed.body.error.id, 'too-many-attempts');
+          const { data } = await storedProfile();
+          assert.strictEqual(data.passwordThrottle.failures, 4, 'each wrong step-up password counted, the delayed one did not');
+          assert.strictEqual(data.mfaThrottle, undefined, 'passwords do not count on the MFA tally');
+          // A code step-up is not delayed by the password tally.
+          const res = await deactivate({ code: totpCodeFor(secret, 0) });
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
         } finally {
           restore();
         }
@@ -2062,6 +2086,105 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     });
 
     // ------------------------------------------------------------------
+    // One account cannot hold more than its share of pending login sessions:
+    // past it, its oldest pending login session is ended.
+    // ------------------------------------------------------------------
+    describe('[MCPU] per-account cap on pending MFA login sessions', function () {
+      let restoreCap;
+      afterEach(function () {
+        if (restoreCap) restoreCap();
+        restoreCap = null;
+      });
+
+      async function useCaps (sessions) {
+        restoreCap = injectTestConfigSnapshot({ services: { mfa: { sessions } } });
+        await _resetMFASingletons();
+      }
+
+      /** Enrol TOTP for `user` with its personal token; answers the secret. */
+      async function enrolFor (user, token) {
+        const act = await coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ method: 'totp' });
+        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        const confirm = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+          .send({ code: await previousStepCodeFor(act.body.secret) });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+        return act.body.secret;
+      }
+
+      function loginOf (user) {
+        return coreRequest.post(`/${user}/auth/login`).set('Origin', 'http://test.pryv.local')
+          .send({ username: user, password, appId: 'pryv-test' });
+      }
+
+      async function newEnrolledUser () {
+        const user = ('mfb' + cuid.slug()).toLowerCase();
+        const token = cuid();
+        const fixture = await fixtures.user(user, { password });
+        await fixture.access({ type: 'personal', token, name: 'pryv-test' });
+        await fixture.session(token);
+        return { user, token, secret: await enrolFor(user, token) };
+      }
+
+      function verify (user, mfaToken, secret) {
+        return coreRequest.post(`/${user}/mfa/verify`).set('Authorization', mfaToken).send({ code: totpCodeFor(secret, 0) });
+      }
+
+      it('[MCPU1] a third pending login of an account ends its oldest one; other accounts and activations are not affected', async function () {
+        await useCaps({ maxPending: 100, maxPendingPerUser: 2 });
+        const secret = await enrolFor(username, personalToken);
+        const tokens = [];
+        for (let i = 0; i < 3; i++) {
+          const res = await loginOf(username);
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+          assert.ok(res.body.mfaToken != null, JSON.stringify(res.body));
+          tokens.push(res.body.mfaToken);
+        }
+        const evicted = await verify(username, tokens[0], secret);
+        assert.strictEqual(evicted.status, 401, JSON.stringify(evicted.body));
+        assert.strictEqual(evicted.body.error.id, 'invalid-access-token');
+        const kept = await verify(username, tokens[2], secret);
+        assert.strictEqual(kept.status, 200, JSON.stringify(kept.body));
+        assert.ok(kept.body.token != null);
+        // Another account logs in as usual.
+        const other = await newEnrolledUser();
+        const otherLogin = await loginOf(other.user);
+        assert.ok(otherLogin.body.mfaToken != null, JSON.stringify(otherLogin.body));
+        // An activation of the first account does not count as a login session.
+        const replace = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
+          .send({ method: 'totp', password });
+        assert.strictEqual(replace.status, 302, JSON.stringify(replace.body));
+        const stillPending = await verify(username, tokens[1], secret);
+        assert.notStrictEqual(stillPending.body.error?.id, 'invalid-access-token', 'the second login session was not evicted by the activation');
+      });
+
+      it('[MCPU2] the per-account cap acts before the core-wide one', async function () {
+        await useCaps({ maxPending: 3, maxPendingPerUser: 2 });
+        await enrolFor(username, personalToken);
+        const other = await newEnrolledUser();
+        assert.ok((await loginOf(username)).body.mfaToken != null);
+        assert.ok((await loginOf(username)).body.mfaToken != null);
+        assert.ok((await loginOf(other.user)).body.mfaToken != null);
+        // The core is full; the account at its cap makes room for itself.
+        const third = await loginOf(username);
+        assert.strictEqual(third.status, 200, JSON.stringify(third.body));
+        assert.ok(third.body.mfaToken != null, JSON.stringify(third.body));
+        // The other account is under its own cap but the core is full.
+        const refused = await loginOf(other.user);
+        assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+      });
+
+      it('[MCPU3] 0 disables the per-account cap', async function () {
+        await useCaps({ maxPending: 100, maxPendingPerUser: 0 });
+        const secret = await enrolFor(username, personalToken);
+        const first = await loginOf(username);
+        for (let i = 0; i < 6; i++) assert.ok((await loginOf(username)).body.mfaToken != null);
+        const res = await verify(username, first.body.mfaToken, secret);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      });
+    });
+
+    // ------------------------------------------------------------------
     // An MFA session acts only under the path of its own account.
     // ------------------------------------------------------------------
     describe('[MPUS] the MFA session belongs to the account of the request path', function () {
@@ -2340,13 +2463,20 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MA12J] concurrent wrong guesses each count', async function () {
         await setUp({}, { freeFailures: 100, maxSeconds: 60 });
         const N = 8;
-        const tokens = [];
-        for (let i = 0; i < N; i++) tokens.push((await login()).body.mfaToken);
-        const results = await Promise.all(tokens.map((t) =>
-          coreRequest.post(`/${username}/mfa/verify`).set('Authorization', t).send({ code: '000000' })));
-        assert.deepStrictEqual(results.map((r) => r.status), Array(N).fill(400));
-        const { data } = await storedProfile();
-        assert.strictEqual(data.mfaThrottle.failures, N, 'no failure may be lost to a concurrent one');
+        // N pending logins of one account: above the default per-account cap.
+        const restoreCap = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPendingPerUser: N } } } });
+        try {
+          await _resetMFASingletons();
+          const tokens = [];
+          for (let i = 0; i < N; i++) tokens.push((await login()).body.mfaToken);
+          const results = await Promise.all(tokens.map((t) =>
+            coreRequest.post(`/${username}/mfa/verify`).set('Authorization', t).send({ code: '000000' })));
+          assert.deepStrictEqual(results.map((r) => r.status), Array(N).fill(400));
+          const { data } = await storedProfile();
+          assert.strictEqual(data.mfaThrottle.failures, N, 'no failure may be lost to a concurrent one');
+        } finally {
+          restoreCap();
+        }
       });
 
       it('[MA12K] a tally stored by the former lockout counts, and its lock is not honoured', async function () {

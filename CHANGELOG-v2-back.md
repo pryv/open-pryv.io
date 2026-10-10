@@ -1,5 +1,87 @@
 # Changelog - Internal (no API impact)
 
+## Credential methods on the generic dispatchers, batch bounds
+
+- `business/src/MethodContext.ts`: `genericDispatch?: 'batch' | 'socket.io'`, set by
+  `methods/utility.ts` (`callBatch`, for its inner calls; the outer value is restored) and
+  `socket-io/Manager.ts` (`onMethodCall`); `resultArrayLimit?: number`, a per-call drain ceiling
+  below the API-wide one, honoured by `API.call`.
+- `methods/helpers/commonFunctions.ts` `refuseGenericDispatch`: first step of `auth.login`,
+  `auth.register`, `auth.emailChallenge`, `auth.emailChallengeVerify`,
+  `account.requestPasswordReset`, `account.resetPassword`, `account.verifyEmail`, `mfa.recover`,
+  `sharedSecrets.retrieve`. A new method that takes credentials instead of a token must start
+  with it.
+- `schema/generalMethods.ts`: `callBatch` params `maxItems` `BATCH_MAX_CALLS` (1000, the lib-js
+  chunk size). `methods/utility.ts`: `refuseNestedBatch`; a shared budget of
+  `limits.batch.maxTotalItems` items across the inner calls (each drains at most what is left;
+  over it the batch fails with `too-many-results`). `API.ts` exports
+  `RESULT_TO_OBJECT_MAX_ARRAY_SIZE`.
+- Tests: `components/api-server/test/credential-entry-dispatch.test.js` `[CEDB1]`..`[CEDB6]`;
+  `components/api-server/test/socket-io-namespaces.test.js` `[SION5]`.
+
+## Per-account password backoff
+
+- `methods/helpers/accountAttemptThrottle.ts` `createAccountAttemptThrottle({ profileStorage,
+  field, label, attemptNoun, logger })`: the per-account tally formerly inline in
+  `methods/mfa.ts` (`reserve` before the check, `backoffError`, `clearIfAny`, `busyError`),
+  parameterised by the private-profile field. `mfa.ts` uses it for `data.mfaThrottle` (unchanged
+  behaviour and messages) and `data.passwordThrottle`; `auth/login.ts` (`checkPassword`) and
+  `account.ts` (`verifyOldPassword`) for `data.passwordThrottle`.
+- `business/src/auth/passwordAttempts.ts` `normalizePasswordAttempts`: `auth.passwordAttempts`
+  defaults (5 free failures, 2 s doubling to 300 s, 900 s window); invalid values keep the
+  default.
+- Every sign-in now reads the private profile item once more and writes the tally (then clears it
+  on success): one profile read and up to two profile writes per password check.
+- Tests: `credential-entry-dispatch.test.js` `[CEPB1]`..`[CEPB6]`; `mfa.test.js` `[MSU11]`
+  (now on step-up codes) and `[MSU14]`.
+
+## Per-account cap on pending MFA login sessions
+
+- `business/src/mfa/SessionStore.ts`: `create(profile, context, { userKey })` keeps a per-user
+  list of pending sessions in cluster_kv (`mfa-session-user/<userId>`, outside the session
+  namespace so it does not count toward `maxPending`), compare-and-set; past
+  `maxPendingPerUser` the oldest live session is cleared before the new one is written. A session
+  evicted by a concurrent login before it was written is cleared and the login answers `429`
+  `too-many-attempts` (retry in 1 s).
+- `business/src/mfa/index.ts` `normalizeSessions` returns `maxPendingPerUser`;
+  `configCheck.ts` validates it. `auth/login.ts` passes the user id as `userKey`.
+- Tests: `business/test/unit/mfa/SessionStore.test.js` `[MT11A]`..`[MT11D]`;
+  `mfa-config.test.js` `[MNORM18]`; `mfa.test.js` `[MCPU1]`..`[MCPU3]`.
+
+## Access requests: per-address budget, unopened lifetime
+
+- `routes/reg/accessState.ts`: per-address lists under `access-request-ip/<hash>` (sha256 of the
+  IPv4 address or the IPv6 /64, never the address itself), compare-and-set
+  (`reserveIpPlace` / `releaseIpPlace`); the state records `ipRef` (never in a poll body). A
+  terminal `update` and `remove` give the place back; `buildState(params, { unopenedTtlMs })`
+  and `markOpened` (compare-and-set on the state read by the poll) implement the unopened
+  lifetime. `clear()` (tests) also drops the per-address lists.
+- `routes/reg/access.ts`: the address is `clientIp(req)` (`http.trustedProxies`).
+- Tests: `reg-access.test.js` `[RAI1]`..`[RAI5]`, `[RAU1]`, `[RAU2]`.
+
+## socket.io namespaces
+
+- `socket-io/index.ts`: the socket.io server is built inside `setupSocketIO` (was at module
+  load), with `cleanupEmptyChildNamespaces: true` and `maxHttpBufferSize` from
+  `socketIO.maxMessageBytes`; the dynamic parent namespace is a function
+  (`isUserNamespaceName`) instead of `/^\/.+$/`. `setupSocketIO` answers `{ io, manager }`.
+- `socket-io/Manager.ts`: contexts are keyed by namespace name (they were keyed by username and
+  bound to the first namespace seen, so `/alice` and `/alice/alice` open together shared one,
+  and only the first got notifications), dropped when their last connection leaves, and rebound
+  to the live namespace object.
+- Tests: `socket-io-namespaces.test.js` `[SION1]`..`[SION4]`.
+
+## PostgreSQL events read through a cursor
+
+- `storages/engines/postgresql/src/dataStore/localUserEventsPG.ts`: `getStreamed` and
+  `getDeletionsStreamed` stream through `DatabasePG.queryIterable` (batches of 1000). The
+  readable owns a pooled client until it ends or is destroyed, so a slow reader now holds a
+  client for the duration of its response (as the audit streams already did); a query error now
+  surfaces as a stream error rather than at the `getStreamed` call.
+- `schema/eventsMethods.ts`: `limit` / `skip` are integers from 0 to `EVENTS_GET_MAX_PAGING`
+  (100000).
+- Tests: `events-get-limits.test.js` `[EGLV]`, `[EGLC1]`, `[EGLC2]`.
+
 ## Series and reset requests of every name of an account
 
 - `business/src/series/namespace.ts` `accountSeriesNamespaces(aliasIndex, userId, username)`:

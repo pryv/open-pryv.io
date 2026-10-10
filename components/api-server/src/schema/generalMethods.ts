@@ -31,6 +31,13 @@ const __ex_getAccessInfo = {
     })
   };
 export { __ex_getAccessInfo as getAccessInfo };
+/**
+ * Most calls in one batch. Matches the chunk size of the JavaScript client
+ * library (`Connection.api()` sends at most this many calls per batch), so no
+ * client of the library is refused.
+ */
+const BATCH_MAX_CALLS = 1000;
+export { BATCH_MAX_CALLS };
 const __ex_callBatch = {
     params: array(object({
       method: string(),
@@ -39,7 +46,7 @@ const __ex_callBatch = {
       }
     }, {
       required: ['method', 'params']
-    })),
+    }), { maxItems: BATCH_MAX_CALLS }),
     result: object({
       results: array(object({}))
     })

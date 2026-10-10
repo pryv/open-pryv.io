@@ -176,6 +176,109 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('[RAIP] POST /reg/access per-address budget (access:maxLiveRequestsPerIp)', () => {
+    const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
+    beforeEach(async () => { await accessState.clear(); });
+
+    function createFrom (address) {
+      const req = coreRequest.post('/reg/access');
+      if (address != null) req.set('X-Forwarded-For', address);
+      return req.send({ requestingAppId: 'ip-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }] });
+    }
+
+    it('[RAI1] past the budget an address is refused with 429; another address is not', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxLiveRequestsPerIp: 2 } }, async () => {
+        assert.strictEqual((await createFrom('203.0.113.10')).status, 201);
+        assert.strictEqual((await createFrom('203.0.113.10')).status, 201);
+        const refused = await createFrom('203.0.113.10');
+        assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.id, 'too-many-requests');
+        assert.ok(refused.headers['retry-after'] != null, 'a Retry-After header is set');
+        assert.strictEqual((await createFrom('203.0.113.11')).status, 201);
+      });
+    });
+
+    it('[RAI2] a decided or removed request frees its place in the budget', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxLiveRequestsPerIp: 1 } }, async () => {
+        const first = await createFrom('203.0.113.20');
+        assert.strictEqual(first.status, 201);
+        assert.strictEqual((await createFrom('203.0.113.20')).status, 429);
+        const decided = await coreRequest.post('/reg/access/' + first.body.key).send({ status: 'REFUSED', reasonId: 'test' });
+        assert.strictEqual(decided.status, 403, JSON.stringify(decided.body));
+        const second = await createFrom('203.0.113.20');
+        assert.strictEqual(second.status, 201, 'the decided request no longer counts');
+        assert.strictEqual((await createFrom('203.0.113.20')).status, 429);
+        await accessState.remove(second.body.key);
+        assert.strictEqual((await createFrom('203.0.113.20')).status, 201, 'the removed request no longer counts');
+      });
+    });
+
+    it('[RAI3] X-Forwarded-For is believed only from a trusted proxy', async () => {
+      const previous = currentTrustedProxies();
+      configureTrustedProxies([]);
+      try {
+        await withInjectedConfig({ access: { maxLiveRequests: 0, maxLiveRequestsPerIp: 2 } }, async () => {
+          assert.strictEqual((await createFrom('203.0.113.30')).status, 201);
+          assert.strictEqual((await createFrom('203.0.113.31')).status, 201);
+          // Every forged header still comes from the same peer address.
+          assert.strictEqual((await createFrom('203.0.113.32')).status, 429);
+        });
+      } finally {
+        configureTrustedProxies(previous);
+      }
+    });
+
+    it('[RAI4] 0 disables the per-address budget', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxLiveRequestsPerIp: 0 } }, async () => {
+        for (let i = 0; i < 4; i++) assert.strictEqual((await createFrom('203.0.113.40')).status, 201);
+      });
+    });
+
+    it('[RAI5] IPv6 addresses of one /64 share a budget', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, maxLiveRequestsPerIp: 1 } }, async () => {
+        assert.strictEqual((await createFrom('2001:db8:1:2::10')).status, 201);
+        assert.strictEqual((await createFrom('2001:db8:1:2:abcd::99')).status, 429);
+        assert.strictEqual((await createFrom('2001:db8:1:3::10')).status, 201);
+      });
+    });
+  });
+
+  describe('[RAUT] life of an unopened access request (access:unopenedRequestTtl)', () => {
+    beforeEach(async () => { await accessState.clear(); });
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function createRequest () {
+      return coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'ttl-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }] });
+    }
+
+    it('[RAU1] a request nobody reads expires after the short lifetime and frees its slot', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 1, unopenedRequestTtl: 1 } }, async () => {
+        const first = await createRequest();
+        assert.strictEqual(first.status, 201);
+        assert.strictEqual((await createRequest()).status, 429);
+        await sleep(1200);
+        assert.strictEqual((await createRequest()).status, 201, 'the unopened request expired');
+        const gone = await coreRequest.get('/reg/access/' + first.body.key);
+        assert.strictEqual(gone.status, 400);
+        assert.strictEqual(gone.body.error.id, 'unknown-access-key');
+      });
+    });
+
+    it('[RAU2] a request read once keeps the full request lifetime', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, unopenedRequestTtl: 1 } }, async () => {
+        const created = await createRequest();
+        assert.strictEqual(created.status, 201);
+        const opened = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(opened.status, 201);
+        await sleep(1200);
+        const later = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(later.status, 201, JSON.stringify(later.body));
+        assert.strictEqual(later.body.status, 'NEED_SIGNIN');
+      });
+    });
+  });
+
   describe('POST /reg/access with client-supplied authUrl (access:trustedAuthUrls)', () => {
     // Config mutation goes through withInjectedConfig (snapshot + restore) —
     // raw config.set() in matrix mode poisons later injectTestConfig resets.

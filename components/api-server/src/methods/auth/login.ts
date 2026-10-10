@@ -37,6 +37,8 @@ const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile:
 // Breach-scope reverse-index: personal accesses are created here at login (a
 // distinct site from accesses.create), so index them too. Non-fatal.
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
+const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { createAccountAttemptThrottle } = require('../helpers/accountAttemptThrottle.ts') as typeof import('../helpers/accountAttemptThrottle.ts');
 
 const MFA_PROFILE_ID = 'private';
 
@@ -71,8 +73,19 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   const getAuth = () => config.get('auth');
   const getMfaConfig = () => normalizeMfaConfig(config.get('services:mfa'));
   const passwordRules = await getPasswordRules();
+  // Failed passwords are delayed per account (never locked out); the tally is
+  // shared with the password change, the MFA step-up and MFA recovery.
+  const passwordTally = createAccountAttemptThrottle({
+    profileStorage: userProfileStorage,
+    field: 'passwordThrottle',
+    label: 'password',
+    attemptNoun: 'password',
+    logger: getLogger('methods:auth')
+  });
+  const passwordAttemptsCfg = () => normalizePasswordAttempts(config.get('auth:passwordAttempts'));
 
   api.register('auth.login',
+    commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.login.params),
     commonFns.getTrustedAppCheck(getAuth),
     applyPrerequisitesForLogin,
@@ -136,10 +149,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   async function checkPassword (context: MethodContext, params: { password: string }, result: ResultBag, next: Next) {
     try {
+      // Counted on the account before the password is checked; refused,
+      // unchecked, while a delay from earlier failures runs.
+      const user = { id: context.user.id as string, username: context.user.username };
+      const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+      if (attemptErr) return next(attemptErr);
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
       if (!isValid) {
         return next(errors.invalidCredentials());
       }
+      await passwordTally.clearIfAny(user);
       const expirationAndChangeTimes = await passwordRules.getPasswordExpirationAndChangeTimes(context.user.id);
       if (expirationAndChangeTimes.passwordExpires <= timestamp.now()) {
         const formattedExpDate = timestamp.toDate(expirationAndChangeTimes.passwordExpires).toISOString();
@@ -391,6 +410,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // The enrolment this session is opened against: mfa.challenge and
         // mfa.verify refuse the session once the stored one differs.
         enrolment: enrolmentFingerprint(profile)
+      }, {
+        // Counted toward this account's share of pending sessions: past it,
+        // the account's oldest pending login is ended.
+        userKey: String(context.user.id)
       });
       // None of the login parameters is passed: the password never reaches
       // the MFA method layer. A failed challenge leaves no pending session.

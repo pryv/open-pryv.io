@@ -14,26 +14,46 @@ const require = createRequire(import.meta.url);
  */
 const cluster = require('node:cluster');
 const { clientIp } = require('middleware/src/clientIp.ts');
-const socketIO = require('socket.io')({
-  cors: {
-    origin: true,
-    methods: 'GET,POST',
-    credentials: true
-  },
-  allowEIO3: true, // for compatibility with v2 clients
-  // Force WebSocket transport when running in cluster mode.
-  // HTTP long-polling breaks with cluster round-robin scheduling because
-  // successive requests land on different workers that don't share session state.
-  // WebSocket connections are long-lived and stay on the same worker.
-  ...(cluster.isWorker ? { transports: ['websocket'] } : {})
-});
+const createSocketIOServer = require('socket.io');
 const MethodContext = require('business').MethodContext;
 const Manager = require('./Manager.ts').default;
 const Paths = require('../routes/Paths.ts');
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, getConfigSync } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
+const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
+
+/** Longest namespace name considered: `/<username>/<username>` fits. */
+const MAX_NAMESPACE_LENGTH = 128;
+/** Default of `socketIO.maxMessageBytes`: engine.io's own default, stated. */
+const DEFAULT_MAX_MESSAGE_BYTES = 1e6;
+const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+
+/**
+ * Whether `name` is a namespace a user may connect to: `/<username>`, or
+ * `/<username>/<username>` (the path a client builds from a DNS-less API
+ * endpoint, `https://host/<username>/`, plus the username), at most
+ * MAX_NAMESPACE_LENGTH characters. Checked BEFORE socket.io creates the
+ * namespace: a refused name costs an error packet and retains nothing, so
+ * unauthenticated clients cannot grow the worker's namespace table.
+ */
+function isUserNamespaceName (name: unknown): boolean {
+  if (typeof name !== 'string' || name.length > MAX_NAMESPACE_LENGTH || !name.startsWith('/')) return false;
+  const segments = name.slice(1).split('/');
+  if (segments.length > 2) return false;
+  // Lower-cased like Manager.extractUsername (retro-compatibility).
+  return segments.every((segment) => USERNAME_RE.test(segment.toLowerCase()));
+}
+
+/** `socketIO.maxMessageBytes`, read when the server is set up. */
+function maxMessageBytes (): number {
+  try {
+    const value = getConfigSync().get('socketIO:maxMessageBytes');
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+  } catch { /* config not ready: keep the default */ }
+  return DEFAULT_MAX_MESSAGE_BYTES;
+}
 type SocketLike = {
-  nsp: { name: string };
+  nsp: { name: string; emit (event: string, ...args: unknown[]): unknown };
   handshake: {
     query: Record<string, string | undefined>;
     headers: HttpHeaders;
@@ -47,7 +67,25 @@ type SocketLike = {
 async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown[]) => unknown }, customAuthStepFn: CustomAuthFunction) {
   const logger = getLogger('socketIO');
   const storageLayer = await getStorageLayer();
-  const io = socketIO.listen(server, {
+  const io = createSocketIOServer({
+    cors: {
+      origin: true,
+      methods: 'GET,POST',
+      credentials: true
+    },
+    allowEIO3: true, // for compatibility with v2 clients
+    // Force WebSocket transport when running in cluster mode.
+    // HTTP long-polling breaks with cluster round-robin scheduling because
+    // successive requests land on different workers that don't share session state.
+    // WebSocket connections are long-lived and stay on the same worker.
+    ...(cluster.isWorker ? { transports: ['websocket'] } : {}),
+    // A namespace is released once its last socket leaves, including a
+    // socket refused at the handshake, so namespaces do not accumulate.
+    cleanupEmptyChildNamespaces: true,
+    // Largest message (and polling payload) accepted; past it the
+    // connection is closed.
+    maxHttpBufferSize: maxMessageBytes()
+  }).listen(server, {
     path: Paths.SocketIO
   });
   // Engine.IO answers its HTTP requests itself, ahead of the express app, so
@@ -83,11 +121,13 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
     }
   }, Math.max(5, revokeSweepSeconds) * 1000);
   revokeSweep.unref(); // must not keep the worker alive
-  // dynamicNamspaces allow to "auto" create namespaces
-  // when connected pass the socket to Manager
-  const dynamicNamespace = io.of(/^\/.+$/).on('connect', (socket: SocketLike) => {
+  // Dynamic namespaces are created on demand, only for user namespace names;
+  // when connected the socket is passed to the Manager.
+  const dynamicNamespace = io.of((name: string, _auth: unknown, next: (err: Error | null, allow: boolean) => void) => {
+    next(null, isUserNamespaceName(name));
+  }).on('connect', (socket: SocketLike) => {
     (async () => {
-      const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
+      const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp);
       nameSpaceContext.onConnect(socket);
     })().catch((err: unknown) => {
       logger.error('socket.io: connection setup failed', err);
@@ -124,6 +164,7 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
   });
   // register wildcard to all namespaces
   dynamicNamespace.use(require('socketio-wildcard')());
+  return { io, manager };
 }
 export default setupSocketIO;
-export { setupSocketIO };
+export { setupSocketIO, isUserNamespaceName };

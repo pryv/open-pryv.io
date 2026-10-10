@@ -4,6 +4,49 @@
 
 ### Security
 
+- **Visible to clients:** the methods that take credentials instead of an access token are served
+  over their own HTTP routes only: `auth.login`, `auth.register`, `auth.emailChallenge`,
+  `auth.emailChallengeVerify`, `account.requestPasswordReset`, `account.resetPassword`,
+  `account.verifyEmail`, `mfa.recover` and `sharedSecrets.retrieve` answer `400`
+  `invalid-operation` inside a batch call (`POST /<username>/`) or over socket.io, before any
+  check or side effect (same rule as `auth.ssoLogin` already followed). Before, any token of an
+  account could drive many password guesses in one batch request. `account.changePassword`,
+  `mfa.activate`, `mfa.confirm` and the other methods stay batchable.
+- **Visible to clients:** a batch call holds at most 1000 calls (`400`
+  `invalid-parameters-format` past it; the JavaScript library sends batches of at most 1000), a
+  `callBatch` inside a batch is refused in its slot (`invalid-operation`), and the results of all
+  the calls of one batch are bounded together by `limits.batch.maxTotalItems` (new setting,
+  default 100000): past it the whole batch answers `413` `too-many-results`.
+- **Visible to clients:** failed passwords are delayed per account, never locked out. Sign-in,
+  `account.changePassword` (old password), the MFA step-up by password (`mfa.activate` over an
+  enrolment, `mfa.deactivate`) and `mfa.recover` count on one tally; after
+  `auth.passwordAttempts.freeFailures` failures (default 5) within `windowSeconds` (900), the next
+  attempt answers `429` `too-many-attempts` with `Retry-After` and `data.retryAfterSeconds`,
+  without checking the password, for `baseSeconds` (2) doubling up to `maxSeconds` (300; `0`
+  disables). A success clears the tally. A wrong step-up password no longer counts on the
+  second-factor tally (`services.mfa.attempts`), a wrong step-up code still does.
+- MFA: one account holds at most `services.mfa.sessions.maxPendingPerUser` pending login
+  sessions (new setting, default 5, `0` disables); a further login ends the oldest, whose
+  `mfaToken` then answers `invalid-access-token`. One account can no longer fill
+  `sessions.maxPending` and refuse every other account's MFA sign-in.
+- `POST /reg/access`: one address (an IPv4 address, or an IPv6 /64) holds at most
+  `access.maxLiveRequestsPerIp` live requests on a core (new setting, default 50, `0` disables;
+  `429` `too-many-requests` with `Retry-After` past it). A request stops counting once decided,
+  removed or expired. The address honours `http.trustedProxies` only: behind a reverse proxy,
+  list the proxy there, or every client shares its budget. A request no poll has read yet lives
+  `access.unopenedRequestTtl` seconds (new setting, default 600); the first `GET` of the request
+  (by the auth page or the app) gives it the full hour, as before.
+- **Visible to clients:** `events.get` refuses a `limit` or `skip` that is not an integer from 0
+  to 100000 with `400` `invalid-parameters-format` (a negative or fractional value answered `500`
+  with the PostgreSQL engine). A time range without `limit` still returns every matching event.
+- socket.io: a namespace exists only for `/<username>` or `/<username>/<username>` (at most 128
+  characters); any other name is refused before anything is created or authenticated, and a
+  namespace is released when its last socket leaves (including a socket refused at the
+  handshake). Messages are bounded by `socketIO.maxMessageBytes` (new setting, default 1000000,
+  the former implicit value); a larger websocket message closes the connection.
+- `events.get` and the deletions of `events.get` with `includeDeletions` read PostgreSQL rows
+  through a server-side cursor, a batch at a time, instead of loading the whole result before
+  the first byte is sent.
 - `events.get`: an access's excluded streams (`none` / `create-only` permissions) stay excluded when
   they, or one of their descendants, are trashed. An event filed in both a readable stream and a
   trashed excluded stream is no longer returned, whatever the `state` parameter.

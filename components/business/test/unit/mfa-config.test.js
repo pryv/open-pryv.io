@@ -143,11 +143,11 @@ describe('[MNORM] normalizeMfaConfig', function () {
     backoff: { freeFailures: 3, baseSeconds: 2, maxSeconds: 300 }
   };
 
-  it('[MNORM18] sessions: ttlSeconds and maxPending defaults, explicit values kept, invalid values default, on both branches', function () {
-    assert.deepStrictEqual(normalizeMfaConfig({ active: true }).sessions, { ttlSeconds: 1800, maxPending: 10000 });
-    assert.deepStrictEqual(normalizeMfaConfig({ active: true, sessions: { ttlSeconds: 60, maxPending: 0 } }).sessions, { ttlSeconds: 60, maxPending: 0 });
-    assert.deepStrictEqual(normalizeMfaConfig({ active: true, sessions: { ttlSeconds: -5, maxPending: 2.5 } }).sessions, { ttlSeconds: 1800, maxPending: 10000 });
-    assert.deepStrictEqual(normalizeMfaConfig({ mode: 'single', sessions: { maxPending: '7' } }).sessions, { ttlSeconds: 1800, maxPending: 7 });
+  it('[MNORM18] sessions: ttlSeconds, maxPending and maxPendingPerUser defaults, explicit values kept, invalid values default, on both branches', function () {
+    assert.deepStrictEqual(normalizeMfaConfig({ active: true }).sessions, { ttlSeconds: 1800, maxPending: 10000, maxPendingPerUser: 5 });
+    assert.deepStrictEqual(normalizeMfaConfig({ active: true, sessions: { ttlSeconds: 60, maxPending: 0, maxPendingPerUser: 0 } }).sessions, { ttlSeconds: 60, maxPending: 0, maxPendingPerUser: 0 });
+    assert.deepStrictEqual(normalizeMfaConfig({ active: true, sessions: { ttlSeconds: -5, maxPending: 2.5, maxPendingPerUser: -1 } }).sessions, { ttlSeconds: 1800, maxPending: 10000, maxPendingPerUser: 5 });
+    assert.deepStrictEqual(normalizeMfaConfig({ mode: 'single', sessions: { maxPending: '7', maxPendingPerUser: '3' } }).sessions, { ttlSeconds: 1800, maxPending: 7, maxPendingPerUser: 3 });
   });
 
   it('[MNORM10] N1: the attempts block gets its defaults when absent', function () {

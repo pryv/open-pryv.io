@@ -26,6 +26,7 @@ import timestamp from 'unix-timestamp';
 import { createId as cuid } from '@paralleldrive/cuid2';
 
 import * as S from 'shared-secrets';
+import { refuseGenericDispatch } from './helpers/commonFunctions.ts';
 
 import type {
   CreateParams, OnConsumed, ItemSignature, ItemContent
@@ -152,6 +153,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
   // ---------------------------------------------------------------- retrieve
 
   api.register('sharedSecrets.retrieve',
+    refuseGenericDispatch,
     checkEnabled,
     async function retrieve (context: Context, params: { key?: unknown; signature?: unknown }, result: Result, next: MethodNext) {
       const parsed = S.key.parse(params.key);

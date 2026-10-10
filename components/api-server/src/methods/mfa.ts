@@ -37,12 +37,6 @@ type MFAProfile = {
 type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: TotpState };
 
 type UserRef = { id: string; username: string };
-/** Per-user failure tally, counted when an attempt is reserved. Times in ms;
- *  `lastFailureAt` is the last reserved attempt; `notBefore` is 0 when no delay applies. */
-type ThrottleState = { failures: number; lastFailureAt: number; notBefore: number };
-/** What may be stored: the current shape, or the former lockout shape
- *  (`{ count, windowStartedAt, lockedUntil }`) on an upgraded deployment. */
-type StoredThrottle = Partial<ThrottleState> & { count?: number; windowStartedAt?: number; lockedUntil?: number };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 const errors = require('errors').factory;
 const APIError = require('errors').APIError;
@@ -53,8 +47,10 @@ const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
 const { ready, getLogger } = require('@pryv/boiler');
 const mfaLogger = getLogger('methods:mfa');
-const { normalizeMfaConfig, normalizeAttempts, delayForFailures, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile, enrolmentFingerprint } = require('business/src/mfa/index.ts');
+const { normalizeMfaConfig, normalizeAttempts, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile, enrolmentFingerprint } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
 
 const PROFILE_ID = 'private';
 
@@ -89,86 +85,46 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   //
   // The per-session ceiling alone is not a limit: a caller holding the
   // password can re-authenticate and get a fresh budget, so the second factor
-  // stays brute-forceable. The tally below therefore accrues on the USER,
-  // across logins. Past `backoff.freeFailures` failures each further one
-  // imposes a delay before the next attempt (doubling, capped). Every attempt
-  // is counted BEFORE its code is checked (and the count cleared on success),
-  // so attempts sent in parallel cannot all pass the check. It is a delay,
-  // never a lockout: a caller holding the password must not be able to lock
-  // the real user out of their second factor, so the real user waits at most
-  // `backoff.maxSeconds`, and a success clears the tally.
+  // stays brute-forceable. The tally therefore accrues on the USER, across
+  // logins (see helpers/accountAttemptThrottle.ts: counted before the code is
+  // checked, cleared on success, a delay and never a lockout).
   //
-  // It lives at `data.mfaThrottle`, a SIBLING of `data.mfa`, not inside it.
-  // Two reasons: the profile store only expands one level of dot-notation
-  // (a deeper path is not portable across storage engines), and keeping it
-  // outside the enrolment blob means a routine enrolment write cannot reset
-  // an attacker's accrued count as a side effect. Every clear is explicit.
-  //
-  // The counter is per-core, and that is complete rather than a compromise: a
-  // user is pinned to one home core, so every login and every verify for that
-  // user lands here and this profile sees all of their failed attempts. No
-  // cross-core state is needed, and none is introduced.
+  // It lives at `data.mfaThrottle`, a SIBLING of `data.mfa`, not inside it,
+  // so a routine enrolment write cannot reset an attacker's accrued count as
+  // a side effect. Every clear is explicit. Failed PASSWORDS (the step-up by
+  // password, recovery) count on the account's password tally instead
+  // (`data.passwordThrottle`, shared with sign-in), so one kind of failure
+  // never delays the other.
   // --------------------------------------------------------------------
-
-  /** The private profile item, or null when the user has none yet. */
-  async function readPrivateProfile (user: UserRef): Promise<{ data?: { mfa?: StoredMfa; mfaThrottle?: StoredThrottle } } | null> {
-    return await fromCallback((cb: Cb<unknown>) =>
-      userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb)) as { data?: { mfa?: StoredMfa; mfaThrottle?: StoredThrottle } } | null;
+  const mfaTally = createAccountAttemptThrottle({
+    profileStorage: userProfileStorage,
+    field: 'mfaThrottle',
+    label: 'MFA',
+    attemptNoun: 'second-factor',
+    logger: mfaLogger
+  });
+  const passwordTally = createAccountAttemptThrottle({
+    profileStorage: userProfileStorage,
+    field: 'passwordThrottle',
+    label: 'password',
+    attemptNoun: 'password',
+    logger: mfaLogger
+  });
+  function passwordAttemptsCfg () {
+    return normalizePasswordAttempts(config.get('auth:passwordAttempts'));
   }
-
-  /**
-   * Read a stored tally as the current shape. The former lockout shape reads as
-   * a tally, and its `lockedUntil` is deliberately NOT honoured: that lockout
-   * is what the backoff replaces.
-   */
-  function asThrottleState (stored: StoredThrottle | null | undefined): ThrottleState | null {
-    if (stored == null || typeof stored !== 'object') return null;
-    if (typeof stored.failures === 'number') {
-      return { failures: stored.failures, lastFailureAt: stored.lastFailureAt ?? 0, notBefore: stored.notBefore ?? 0 };
-    }
-    if (typeof stored.count === 'number') {
-      return { failures: stored.count, lastFailureAt: stored.windowStartedAt ?? 0, notBefore: 0 };
-    }
-    return null;
+  /** The MFA attempts block as the shared tally reads it. */
+  function tallyCfg (attemptsCfg: AttemptsCfg) {
+    return { windowSeconds: attemptsCfg.perAccountWindowSeconds, backoff: attemptsCfg.backoff };
   }
-
-  /** A tally whose last attempt is older than the window counts as none. */
-  function liveThrottle (state: ThrottleState | null, now: number, attemptsCfg: AttemptsCfg): ThrottleState | null {
-    if (state == null) return null;
-    if (now - state.lastFailureAt > attemptsCfg.perAccountWindowSeconds * 1000) return null;
-    return state;
+  function mfaBackoffError (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
+    return mfaTally.backoffError(user, tallyCfg(attemptsCfg));
   }
-
-  /** Clear the tally, but only when there is one (avoids a write per login). */
-  async function clearThrottleIfAny (user: UserRef) {
-    const item = await readPrivateProfile(user);
-    if (item?.data?.mfaThrottle == null) return;
-    await fromCallback((cb: Cb<unknown>) =>
-      userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfaThrottle: null } }, cb));
+  function reserveAccountAttempt (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
+    return mfaTally.reserve(user, tallyCfg(attemptsCfg));
   }
-
-  /**
-   * Refuse the second-factor step while a backoff delay runs. Returns the error
-   * to surface, or null to proceed.
-   *
-   * Deliberately returns BEFORE any verify attempt and without writing: a code
-   * sent during the delay is neither checked nor counted, so the caller learns
-   * nothing from it and cannot drive storage writes by continuing to guess.
-   */
-  async function mfaBackoffError (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
-    if (attemptsCfg.backoff.maxSeconds === 0) return null;
-    const now = Date.now();
-    const state = liveThrottle(asThrottleState((await readPrivateProfile(user))?.data?.mfaThrottle), now, attemptsCfg);
-    if (state == null || state.notBefore <= now) return null;
-    return backoffErrorFor(state.notBefore, now);
-  }
-
-  function backoffErrorFor (notBefore: number, now: number): Error {
-    const retryAfterSeconds = Math.ceil((notBefore - now) / 1000);
-    return errors.tooManyAttempts(retryAfterSeconds, {
-      message: `Too many failed MFA attempts for this account; retry in ${retryAfterSeconds} s.`,
-      data: { retryAfterSeconds }
-    });
+  function clearThrottleIfAny (user: UserRef): Promise<void> {
+    return mfaTally.clearIfAny(user);
   }
 
   function sessionCeilingError (): Error {
@@ -224,70 +180,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   function busyError (): Error {
-    return errors.tooManyAttempts(1, {
-      message: 'Too many concurrent MFA attempts for this account; retry in 1 s.',
-      data: { retryAfterSeconds: 1 }
-    });
-  }
-
-  /**
-   * Count one second-factor attempt against the account before it is checked,
-   * atomically across API workers: a compare-and-set on the stored tally, so N
-   * attempts in flight take N slots. Refused while the delay set by the
-   * PREVIOUS attempt runs, so a burst reaches the method at most
-   * `freeFailures + 1` times. A success clears the tally afterwards. A race is
-   * only ever lost to another reservation that succeeded; one that keeps
-   * losing is refused (fail closed), never let through uncounted.
-   */
-  async function reserveAccountAttempt (user: UserRef, attemptsCfg: AttemptsCfg): Promise<Error | null> {
-    if (attemptsCfg.backoff.maxSeconds === 0) return null; // per-account backoff disabled
-    const T = ['data', 'mfaThrottle'];
-    for (let tries = 0; tries < 10; tries++) {
-      const now = Date.now();
-      const item = await readPrivateProfile(user);
-      const stored = item?.data?.mfaThrottle;
-      const previous = liveThrottle(asThrottleState(stored), now, attemptsCfg);
-      if (previous != null && previous.notBefore > now) return backoffErrorFor(previous.notBefore, now);
-      const failures = (previous?.failures ?? 0) + 1;
-      const delaySeconds = delayForFailures(failures, attemptsCfg.backoff);
-      const next: ThrottleState = { failures, lastFailureAt: now, notBefore: delaySeconds > 0 ? now + delaySeconds * 1000 : 0 };
-
-      if (item == null) {
-        // No private profile yet: create it. A concurrent creator wins the
-        // primary key; loop and accrue on top of its row.
-        try {
-          await fromCallback((cb: Cb<unknown>) =>
-            userProfileStorage.insertOne(user, { id: PROFILE_ID, data: { mfaThrottle: next } }, cb));
-        } catch (err) {
-          if ((err as { isDuplicate?: boolean }).isDuplicate) continue;
-          throw err;
-        }
-      } else if (stored != null && typeof stored.failures !== 'number' && typeof stored.count !== 'number') {
-        // An unreadable leftover offers nothing to guard on: replace it outright.
-        await fromCallback((cb: Cb<unknown>) =>
-          userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfaThrottle: next } }, cb));
-      } else {
-        // Guard on exactly what was read: nothing, or the same stored count.
-        const guard = stored == null
-          ? { path: T, absent: true as const }
-          : typeof stored.failures === 'number'
-            ? { path: [...T, 'failures'], eq: stored.failures }
-            : { path: [...T, 'count'], eq: stored.count as number };
-        const written = await fromCallback((cb: Cb<boolean>) =>
-          userProfileStorage.compareAndSetJson(user, { id: PROFILE_ID }, [guard], [{ path: T, value: next }], cb));
-        if (!written) continue;
-      }
-      // Logged when a delay first reaches the cap, never per failed guess:
-      // under an attack the per-guess line would itself be the amplification.
-      if (delaySeconds === attemptsCfg.backoff.maxSeconds && delayForFailures(failures - 1, attemptsCfg.backoff) < delaySeconds) {
-        mfaLogger.warn(
-          `MFA failures for user "${user.username}" reached the maximum backoff: ${delaySeconds}s between second-factor attempts until one succeeds or the window lapses.`
-        );
-      }
-      return null;
-    }
-    mfaLogger.warn(`MFA attempt for user "${user.username}" refused: lost the race to concurrent attempts 10 times in a row.`);
-    return busyError();
+    return mfaTally.busyError();
   }
 
   /**
@@ -371,17 +264,23 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     if (typeof value !== 'string') {
       return errors.invalidParametersFormat(`"${hasCode ? 'code' : 'password'}" must be a string.`, { id: 'step-up-required' });
     }
-    // Counted before it is checked; refused unchecked while a delay runs. With
-    // MFA off server-wide the normalized config has no `attempts`; the
-    // operator's limits still apply to mfa.deactivate then.
-    const attemptsCfg: AttemptsCfg = cfg.attempts ?? normalizeAttempts(config.get('services:mfa:attempts'));
-    const attemptErr = await reserveAccountAttempt(user, attemptsCfg);
+    // Counted before it is checked; refused unchecked while a delay runs. A
+    // code counts on the account's MFA tally, a password on its password
+    // tally (shared with sign-in). With MFA off server-wide the normalized
+    // config has no `attempts`; the operator's limits still apply to
+    // mfa.deactivate then.
+    if (hasCode) {
+      const attemptsCfg: AttemptsCfg = cfg.attempts ?? normalizeAttempts(config.get('services:mfa:attempts'));
+      const attemptErr = await reserveAccountAttempt(user, attemptsCfg);
+      if (attemptErr) return attemptErr;
+      if (!await currentFactorCodeMatches(user, stored, value, cfg)) return errors.invalidStepUp();
+      await clearThrottleIfAny(user);
+      return null;
+    }
+    const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
     if (attemptErr) return attemptErr;
-    const ok = hasCode
-      ? await currentFactorCodeMatches(user, stored, value, cfg)
-      : await (await getUsersRepository()).checkUserPassword(user.id, value);
-    if (!ok) return errors.invalidStepUp();
-    await clearThrottleIfAny(user);
+    if (!await (await getUsersRepository()).checkUserPassword(user.id, value)) return errors.invalidStepUp();
+    await passwordTally.clearIfAny(user);
     return null;
   }
 
@@ -707,21 +606,20 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // ----------------------------------------------------------------------
   // mfa.recover — no auth; validates user/password/recoveryCode then clears MFA
   //
-  // Deliberately NOT subject to the per-account attempt limiter, in either of
-  // its steps. This is the last-resort path, so a limiter here would be a net
-  // loss:
-  //   - the recovery codes are 122-bit random values, so guessing them is not
-  //     a realistic threat and a ceiling buys no security;
-  //   - the password check is the same one auth.login performs unthrottled, so
-  //     throttling it here removes no capability from an attacker (they would
-  //     simply use login) while handing anyone, with no credentials at all, a
-  //     way to lock a known user out of their own recovery by submitting wrong
-  //     passwords.
-  // It therefore never reads or writes the throttle on failure and never
-  // returns too-many-attempts. A SUCCESSFUL recovery does clear the throttle,
-  // below, since the enrolment it guarded is being removed.
+  // NOT subject to the second-factor limiter, in either of its steps: this is
+  // the last-resort path, and the recovery codes are 122-bit random values, so
+  // guessing them is not a realistic threat and a ceiling buys no security. An
+  // account in second-factor backoff can still recover.
+  //
+  // Its password step counts on the account's PASSWORD tally, like sign-in:
+  // otherwise it would be a password oracle beside a throttled login. That
+  // tally only ever delays (at most auth.passwordAttempts.maxSeconds), so
+  // wrong passwords sent by someone without credentials slow the owner's
+  // recovery down but cannot lock them out of it. A successful recovery clears
+  // both tallies, since the enrolment the MFA tally guarded is being removed.
   // ----------------------------------------------------------------------
   api.register('mfa.recover',
+    commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.recover.params),
     async function recover (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       try {
@@ -732,8 +630,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // so the call and its audit rows concern one account.
         const pathUserId = (context.user as Partial<UserRef> | undefined)?.id;
         if (pathUserId != null && pathUserId !== user.id) return next(errors.invalidCredentials());
+        const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+        if (attemptErr) return next(attemptErr);
         const isValid = await usersRepository.checkUserPassword(user.id, params.password);
         if (!isValid) return next(errors.invalidCredentials());
+        await passwordTally.clearIfAny(user);
         const profile = await loadMFAProfile(user);
         if (!profile.isActive()) {
           return next(errors.invalidOperation('MFA is not active for this user.'));

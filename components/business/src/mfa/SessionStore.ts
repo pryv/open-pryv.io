@@ -40,9 +40,19 @@ interface SessionStoreOpts {
   namespace?: string;
   /** Most live sessions at once (0: no cap). Default 10000. */
   maxPending?: number;
+  /** Most live sessions one user holds when created with a `userKey` (0: no
+   * cap); past it the user's oldest is ended. Default 5. */
+  maxPendingPerUser?: number;
 }
 
 const DEFAULT_MAX_PENDING = 10000;
+const DEFAULT_MAX_PENDING_PER_USER = 5;
+
+/** One entry of a user's list of pending sessions, oldest first. */
+interface UserSessionRef {
+  id: string;
+  expiresAt: number;
+}
 /** Retry-After of a refusal at the cap: the drain rate is unknown (sessions
  * leave as users complete them, or on expiry), so a flat minute. */
 const CAP_RETRY_AFTER_SECONDS = 60;
@@ -89,7 +99,10 @@ class SessionStore {
   namespace: string;
   /** Key prefix of the per-user pending-enrolment slot. */
   enrolSlotNamespace: string;
+  /** Key prefix of the per-user list of pending (login) sessions. */
+  userSessionsNamespace: string;
   maxPending: number;
+  maxPendingPerUser: number;
 
   constructor (ttlSeconds = 1800, opts: SessionStoreOpts = {}) {
     this.ttlMilliseconds = ttlSeconds * 1000;
@@ -99,9 +112,14 @@ class SessionStore {
     // Not under `namespace` (`mfa-session-enrol-slot/` does not start with
     // `mfa-session/`), so the slots never count toward the session cap.
     this.enrolSlotNamespace = this.namespace.replace(/\/$/, '') + '-enrol-slot/';
+    // Not under `namespace` either, for the same reason.
+    this.userSessionsNamespace = this.namespace.replace(/\/$/, '') + '-user/';
     this.maxPending = (typeof opts.maxPending === 'number' && Number.isInteger(opts.maxPending) && opts.maxPending >= 0)
       ? opts.maxPending
       : DEFAULT_MAX_PENDING;
+    this.maxPendingPerUser = (typeof opts.maxPendingPerUser === 'number' && Number.isInteger(opts.maxPendingPerUser) && opts.maxPendingPerUser >= 0)
+      ? opts.maxPendingPerUser
+      : DEFAULT_MAX_PENDING_PER_USER;
   }
 
   /**
@@ -110,11 +128,41 @@ class SessionStore {
    * sessions: counted and written in one cluster_kv step, so concurrent
    * creations cannot pass the cap together.
    *
+   * With `opts.userKey` (a login), the session also counts toward that user's
+   * share, `maxPendingPerUser`: when the user already holds that many, the
+   * oldest is ended first. One account therefore cannot fill the core-wide
+   * ceiling and refuse every other account's MFA sign-in, and a user at the
+   * cap always makes room for itself (the per-user cap acts before the
+   * core-wide one).
+   *
    * @param profile - the MFA profile (with content + recoveryCodes)
    * @param context - opaque per-flow context (e.g. the resolved user, login params)
+   * @param [opts.userKey] - the user the session counts for (login sessions)
    */
-  async create (profile: ProfileLike | null | undefined, context: unknown): Promise<string> {
+  async create (profile: ProfileLike | null | undefined, context: unknown, opts: { userKey?: string } = {}): Promise<string> {
     const id = uuidv4();
+    const userKey = (this.maxPendingPerUser > 0 && typeof opts.userKey === 'string' && opts.userKey !== '') ? opts.userKey : null;
+    if (userKey != null) await this._takeUserPlace(userKey, id);
+    try {
+      await this._write(id, profile, context);
+    } catch (err) {
+      if (userKey != null) await this._leaveUserPlace(userKey, id);
+      throw err;
+    }
+    if (userKey != null && !(await this._holdsUserPlace(userKey, id))) {
+      // A concurrent login of the same user ended this session as the oldest
+      // before it was written: it must not outlive its eviction uncounted.
+      await this.clear(id);
+      throw errors.tooManyAttempts(1, {
+        message: 'Too many concurrent MFA logins for this account; retry in 1 s.',
+        data: { retryAfterSeconds: 1 }
+      });
+    }
+    return id;
+  }
+
+  /** The first write of a session, under the core-wide ceiling. */
+  async _write (id: string, profile: ProfileLike | null | undefined, context: unknown): Promise<void> {
     // Profile is stored as a plain shape so it survives JSON round-trips
     // through the IPC channel; `get()` rehydrates the Profile class.
     const stored: StoredSession = {
@@ -134,7 +182,64 @@ class SessionStore {
     const written = await this.kv.set(this.namespace + id, stored, opts);
     // A guarded write must say it wrote; anything else counts as refused.
     if (opts.ifUnderPrefix != null && written !== true) throw capacityError();
-    return id;
+  }
+
+  /**
+   * Put `id` in the user's list of pending sessions, ending the oldest ones
+   * the list holds past `maxPendingPerUser`. Entries past their lifetime are
+   * dropped first; then, oldest first, entries whose session has already ended
+   * (completed or cleared) are dropped without evicting anything. Compare-and-
+   * set on the list, so concurrent logins of one user each see the others.
+   */
+  async _takeUserPlace (userKey: string, id: string): Promise<void> {
+    const key = this.userSessionsNamespace + userKey;
+    for (let tries = 0; tries < 20; tries++) {
+      const previous = await this.kv.get(key);
+      const now = Date.now();
+      let kept = asUserSessionRefs(previous).filter((ref) => ref.expiresAt > now);
+      if (kept.length >= this.maxPendingPerUser) {
+        // Only when full: drop the sessions already ended before evicting
+        // a live one (at most maxPendingPerUser reads).
+        const live: UserSessionRef[] = [];
+        for (const ref of kept) if (await this._read(ref.id) != null) live.push(ref);
+        kept = live;
+      }
+      const evicted: string[] = [];
+      while (kept.length >= this.maxPendingPerUser) {
+        evicted.push(kept[0].id);
+        kept = kept.slice(1);
+      }
+      const expiresAt = now + this.ttlMilliseconds;
+      const next = [...kept, { id, expiresAt }];
+      if (await this.kv.set(key, next, { ttlMs: this.ttlMilliseconds, ifEquals: previous ?? null })) {
+        for (const evictedId of evicted) await this.clear(evictedId);
+        return;
+      }
+    }
+    throw errors.tooManyAttempts(1, {
+      message: 'Too many concurrent MFA logins for this account; retry in 1 s.',
+      data: { retryAfterSeconds: 1 }
+    });
+  }
+
+  /** Whether `id` is still in the user's list (not evicted meanwhile). */
+  async _holdsUserPlace (userKey: string, id: string): Promise<boolean> {
+    return asUserSessionRefs(await this.kv.get(this.userSessionsNamespace + userKey)).some((ref) => ref.id === id);
+  }
+
+  /** Take `id` out of the user's list (a creation refused after its place
+   * was taken). Best effort: a list that keeps changing keeps the entry, which
+   * then only counts until the session would have expired. */
+  async _leaveUserPlace (userKey: string, id: string): Promise<void> {
+    const key = this.userSessionsNamespace + userKey;
+    for (let tries = 0; tries < 20; tries++) {
+      const previous = await this.kv.get(key);
+      const refs = asUserSessionRefs(previous);
+      if (!refs.some((ref) => ref.id === id)) return;
+      const next = refs.filter((ref) => ref.id !== id);
+      const remaining = Math.max(...next.map((ref) => ref.expiresAt - Date.now()), 1);
+      if (await this.kv.set(key, next, { ttlMs: remaining, ifEquals: previous ?? null })) return;
+    }
   }
 
   /**
@@ -322,6 +427,13 @@ class SessionStore {
   async clearAll () {
     await this.kv.clear();
   }
+}
+
+/** A stored per-user list as entries; anything unreadable counts as empty. */
+function asUserSessionRefs (value: unknown): UserSessionRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((ref): ref is UserSessionRef =>
+    ref != null && typeof ref === 'object' && typeof ref.id === 'string' && typeof ref.expiresAt === 'number');
 }
 
 /**

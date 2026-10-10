@@ -10,6 +10,8 @@ import type { MethodNext } from './_types.ts';
 const require = createRequire(import.meta.url);
 const commonFns = require('./helpers/commonFunctions.ts');
 const errorHandling = require('errors').errorHandling;
+const errors = require('errors').factory;
+const ErrorIds = require('errors').ErrorIds;
 const methodsSchema = require('../schema/generalMethods.ts');
 const { fromCallback } = require('utils');
 const { getLogger, ready } = require('@pryv/boiler');
@@ -21,6 +23,22 @@ type AuditModule = {
   errorApiCall: (ctx: unknown, err: unknown) => Promise<void>;
 };
 type ResultBag = Record<string, unknown> & { user?: Record<string, unknown>; results?: unknown[] };
+
+const { RESULT_TO_OBJECT_MAX_ARRAY_SIZE } = require('../API.ts');
+
+/** Default of `limits.batch.maxTotalItems`: the per-call drain ceiling, applied
+ * to the sum of a batch's results. */
+const DEFAULT_BATCH_MAX_TOTAL_ITEMS: number = RESULT_TO_OBJECT_MAX_ARRAY_SIZE;
+
+/** Items a drained call result holds: the length of each list it carries. */
+function countItems (obj: unknown): number {
+  if (obj == null || typeof obj !== 'object') return 0;
+  let n = 0;
+  for (const value of Object.values(obj as Record<string, unknown>)) {
+    if (Array.isArray(value)) n += value.length;
+  }
+  return n;
+}
 
 /**
  * Utility API methods implementations.
@@ -104,7 +122,23 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
     }
     next();
   }
-  api.register('callBatch', commonFns.getParamsValidation(methodsSchema.callBatch.params), callBatchApiFn, updateAccessUsage);
+  api.register('callBatch', refuseNestedBatch, commonFns.getParamsValidation(methodsSchema.callBatch.params), callBatchApiFn, updateAccessUsage);
+
+  // A batch inside a batch would multiply the call count past the schema's
+  // bound and nest result envelopes; no client needs it.
+  function refuseNestedBatch (context: MethodContext, _params: unknown, _result: ResultBag, next: MethodNext) {
+    if (context.genericDispatch === 'batch') {
+      return next(errors.invalidOperation('callBatch cannot be called inside a batch call.'));
+    }
+    next();
+  }
+
+  /** Most result items all the calls of one batch may return together. */
+  function maxTotalItems (): number {
+    const value = config.get('limits:batch:maxTotalItems');
+    return (typeof value === 'number' && Number.isInteger(value) && value > 0) ? value : DEFAULT_BATCH_MAX_TOTAL_ITEMS;
+  }
+
   async function callBatchApiFn (context: MethodContext & { accessUsageStats?: Record<string, number>; methodId?: string; acceptStreamsQueryNonStringified?: boolean; disableAccessUsageStats?: boolean }, calls: ApiCall[], result: ResultBag, next: MethodNext) {
     // allow non stringified stream queries in batch calls
     context.acceptStreamsQueryNonStringified = true;
@@ -115,9 +149,27 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       if (context.accessUsageStats![methodId] == null) { context.accessUsageStats![methodId] = 0; }
       context.accessUsageStats![methodId]++;
     }
+    // Every result of the batch is held until the envelope is written, so the
+    // per-call ceiling alone does not bound it: the calls share one budget.
+    // Each call may drain at most what is left of it; past it the whole batch
+    // fails rather than answering a truncated envelope.
+    const totalBudget = maxTotalItems();
+    let itemsUsed = 0;
+    let overBudget = false;
+    // The inner calls run as generically dispatched calls (methods that take
+    // credentials refuse them); the dispatcher this batch came through, if
+    // any, is restored afterwards.
+    const outerDispatch = context.genericDispatch;
+    context.genericDispatch = 'batch';
     result.results = [];
-    for (const call of calls) {
-      result.results.push(await executeCall(call));
+    try {
+      for (const call of calls) {
+        result.results.push(await executeCall(call));
+        if (overBudget) break;
+      }
+    } finally {
+      context.genericDispatch = outerDispatch;
+      context.resultArrayLimit = undefined;
     }
     // The OUTER callBatch result is written to HTTP, so its onEnd (API.ts) fires
     // `validApiCall` once more for the batch envelope. After the loop `context`
@@ -132,8 +184,13 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
     context.auditScopedStreamIds = undefined;
     context.auditScopedStreamCount = undefined;
     context.disableAccessUsageStats = false; // to allow tracking functions
+    if (overBudget) {
+      result.results = undefined;
+      return next(errors.tooManyResults(totalBudget));
+    }
     next();
     async function executeCall (call: ApiCall) {
+      const remaining = Math.max(totalBudget - itemsUsed, 1);
       try {
         countCall(call.method);
         // update methodId to match the call todo
@@ -145,14 +202,22 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
         context.auditRecordCountIncomplete = undefined;
         context.auditScopedStreamIds = undefined;
         context.auditScopedStreamCount = undefined;
+        context.resultArrayLimit = remaining;
         // Perform API call
         const result = await fromCallback((cb: (err: unknown, res: unknown) => void) => api.call(context, call.params, cb)) as { toObject: (cb: (err: unknown, res: unknown) => void) => void };
         // Drain the result FIRST so streamed reads finish counting, THEN audit —
         // otherwise a batched events.get audits a false recordCount: 0.
         const obj = await fromCallback((cb: (err: unknown, res: unknown) => void) => result.toObject(cb));
+        itemsUsed += countItems(obj);
+        if (itemsUsed > totalBudget) overBudget = true;
         if (isAuditActive && audit) { await audit.validApiCall(context, result); }
         return obj;
       } catch (err) {
+        // A drain refused by the shared budget (not by the API-wide per-call
+        // ceiling) is the batch going over its total.
+        if ((err as { id?: string } | null)?.id === ErrorIds.TooManyResults && remaining < RESULT_TO_OBJECT_MAX_ARRAY_SIZE) {
+          overBudget = true;
+        }
         // Batchcalls have specific error handling hence the custom request context
         const reqContext = {
           method: call.method + ' (within batch)',

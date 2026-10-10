@@ -27,6 +27,7 @@ const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.
 const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
+const { clientIp } = require('middleware/src/clientIp.ts');
 
 const logger = getLogger('routes:reg:access');
 
@@ -184,6 +185,20 @@ const DEFAULT_MAX_LIVE_REQUESTS = 10000;
  * A request carrying permissions and a consent form is a few KB, so this
  * leaves a wide margin; operators who annotate heavily can raise it. */
 const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024;
+/** Default ceiling on the live access requests created from one address (an
+ * IPv4 address, or one /64 of IPv6) on this core.
+ *
+ * Without it, one caller fills the core-wide ceiling alone, at a few requests
+ * per second, and every app's sign-in on the core is refused. A request
+ * leaves its creator's budget once decided, removed or expired, so the
+ * budget bounds sign-ins IN PROGRESS from one address. 50 leaves room for
+ * many users behind one NAT. Behind a reverse proxy, the proxy must be listed
+ * in `http.trustedProxies`, else every client shares the proxy's budget. */
+const DEFAULT_MAX_LIVE_REQUESTS_PER_IP = 50;
+/** Default life, in seconds, of a request no poll has read yet. Apps and the
+ * auth page read a request right away; one nobody reads holds its place for
+ * this long rather than the full request lifetime. */
+const DEFAULT_UNOPENED_REQUEST_TTL_S = 600;
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   // Read per request, so a config change (or a test override) applies.
@@ -205,6 +220,20 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   function maxRequestBytes (): number {
     const value = app.config.get('access:maxRequestBytes');
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_REQUEST_BYTES;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 disables the
+  // per-address budget; a negative value falls back to the default.
+  function maxLiveRequestsPerIp (): number {
+    const value = app.config.get('access:maxLiveRequestsPerIp');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_MAX_LIVE_REQUESTS_PER_IP;
+  }
+
+  // Read per request, same reason as terminalRetentionMs. 0 disables the
+  // shorter life: an unread request then lives the full request lifetime.
+  function unopenedRequestTtlSeconds (): number {
+    const value = app.config.get('access:unopenedRequestTtl');
+    return typeof value === 'number' && value >= 0 ? value : DEFAULT_UNOPENED_REQUEST_TTL_S;
   }
 
   // Read per request, same reason as terminalRetentionMs.
@@ -336,7 +365,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         actAsManagedOnly,
         credentialHandoff,
         cmcInvites
-      });
+      }, { unopenedTtlMs: unopenedRequestTtlSeconds() * 1000 });
+      // The creator's address bucket, when a per-address budget applies. The
+      // address honours `http.trustedProxies` only, so a forged
+      // X-Forwarded-For from anyone else does not buy a fresh budget.
+      const perIpMax = maxLiveRequestsPerIp();
+      const ipRef: string | null = perIpMax > 0 ? accessState.ipRefOf(clientIp(req)) : null;
+      if (ipRef != null) state.ipRef = ipRef;
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
       // per core (core-local store, never replicated), so every poll GET
@@ -418,14 +453,28 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // (what an app sends is stored as sent, under a body limit of
       // megabytes). An unauthenticated caller must not be able to fill the
       // core's memory with pending requests, by number or by size.
+      // The per-address budget is taken first and given back if the core
+      // refuses the request, so one caller cannot fill the core-wide ceiling
+      // alone and refuse every other app's sign-in.
+      if (ipRef != null && !(await accessState.reserveIpPlace(ipRef, key, expiresAt, perIpMax))) {
+        res.set('Retry-After', '60');
+        return res.status(429).json({
+          error: {
+            id: ErrorIds.TooManyRequests,
+            message: 'Too many access requests are pending from this address. Please retry later.'
+          }
+        });
+      }
       let stored: boolean;
       try {
         stored = await accessState.persistNew(key, state, expiresAt, maxLiveRequests(), maxRequestBytes());
       } catch (err) {
+        if (ipRef != null) await accessState.releaseIpPlace(ipRef, key);
         const refusal = refusalOf(err);
         if (refusal != null) return respondRefusal(res, refusal, err as Error);
         throw err;
       }
+      if (!stored && ipRef != null) await accessState.releaseIpPlace(ipRef, key);
       if (!stored) {
         // Says neither the ceiling nor how close the caller got. The drain
         // rate is unknown (requests leave as users decide them, or on
@@ -534,6 +583,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // credential stays readable briefly (clients poll it more than once),
       // then the key is gone, instead of lingering for the full request TTL.
       await accessState.markDelivered(req.params.key, state, terminalRetentionMs());
+      // First read of a pending request gives it its full lifetime.
+      await accessState.markOpened(req.params.key, state);
 
       res.status(state.code).json(response);
     } catch (err) { next(err); }

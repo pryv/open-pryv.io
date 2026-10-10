@@ -283,4 +283,52 @@ describe('[MFAT] mfa/SessionStore', () => {
     await store.clear(token);
     assert.isFalse(await store.addToContext(token, { token: 't' }));
   });
+
+  it('[MT11A] past maxPendingPerUser, a login session of a user ends that user\'s oldest one; other users are not affected', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 100, maxPendingPerUser: 2 });
+    const a1 = await store.create(new Profile({ x: 1 }), { kind: 'login' }, { userKey: 'u1' });
+    const a2 = await store.create(new Profile({ x: 2 }), { kind: 'login' }, { userKey: 'u1' });
+    const b1 = await store.create(new Profile({ x: 3 }), { kind: 'login' }, { userKey: 'u2' });
+    const a3 = await store.create(new Profile({ x: 4 }), { kind: 'login' }, { userKey: 'u1' });
+    assert.isFalse(await store.has(a1), 'the oldest session of u1 was ended');
+    assert.isTrue(await store.has(a2));
+    assert.isTrue(await store.has(a3));
+    assert.isTrue(await store.has(b1), 'u2 is not affected');
+  });
+
+  it('[MT11B] a session already ended does not count toward the user\'s cap', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 100, maxPendingPerUser: 2 });
+    const a1 = await store.create(new Profile({ x: 1 }), { kind: 'login' }, { userKey: 'u1' });
+    const a2 = await store.create(new Profile({ x: 2 }), { kind: 'login' }, { userKey: 'u1' });
+    await store.clear(a1);
+    const a3 = await store.create(new Profile({ x: 3 }), { kind: 'login' }, { userKey: 'u1' });
+    assert.isTrue(await store.has(a2), 'a live session is kept while an ended one makes room');
+    assert.isTrue(await store.has(a3));
+  });
+
+  it('[MT11C] concurrent creations for one user leave at most maxPendingPerUser live sessions', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 100, maxPendingPerUser: 3 });
+    const settled = await Promise.allSettled(Array.from({ length: 10 }, (_, i) =>
+      store.create(new Profile({ i }), { kind: 'login' }, { userKey: 'u1' })));
+    const ids = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
+    for (const s of settled) {
+      if (s.status === 'rejected') assert.equal(s.reason.httpStatus, 429, String(s.reason));
+    }
+    let live = 0;
+    for (const id of ids) if (await store.has(id)) live++;
+    assert.isAtMost(live, 3);
+    assert.isAtLeast(live, 1);
+  });
+
+  it('[MT11D] sessions created without a user key (enrolments) are not counted; 0 disables the per-user cap', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient, maxPending: 100, maxPendingPerUser: 1 });
+    const e1 = await store.create(new Profile({ x: 1 }), { kind: 'enroll' });
+    const l1 = await store.create(new Profile({ x: 2 }), { kind: 'login' }, { userKey: 'u1' });
+    assert.isTrue(await store.has(e1));
+    assert.isTrue(await store.has(l1));
+    const open = new SessionStore(1800, { kvClient: harness.kvClient, namespace: 'mfa-open/', maxPending: 100, maxPendingPerUser: 0 });
+    const ids = [];
+    for (let i = 0; i < 4; i++) ids.push(await open.create(new Profile({ i }), { kind: 'login' }, { userKey: 'u1' }));
+    for (const id of ids) assert.isTrue(await open.has(id));
+  });
 });

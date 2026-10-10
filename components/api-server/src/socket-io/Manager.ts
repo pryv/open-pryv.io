@@ -45,12 +45,13 @@ function getSocketAudit () {
   }
   return socketAuditPromise;
 }
-// Manages contexts for socket-io. NamespaceContext's are created when the first
-// client connects to a namespace and are then kept forever.
+// Manages contexts for socket-io. A NamespaceContext is created when the first
+// client connects to a namespace and dropped when its last client leaves.
+// Keyed by namespace name.
 //
 
 class Manager {
-  contexts: Map<string | null, NamespaceContext>;
+  contexts: Map<string, NamespaceContext>;
 
   logger: Logger;
 
@@ -113,14 +114,28 @@ class Manager {
     }
   }
 
-  async ensureInitNamespace (namespaceName: string): Promise<NamespaceContext> {
+  // The context of the namespace `socketNs` a socket just connected to.
+  //
+  // Contexts are keyed by namespace NAME (`/alice` and `/alice/alice` are two
+  // namespaces of one user, each needing its own notifications), and dropped
+  // when their last connection leaves: socket.io then deletes the namespace
+  // itself, and the next connection gets a new namespace object. Should a
+  // context outlive its namespace anyway, it is rebound to the live one here,
+  // so notifications never go to a deleted namespace.
+  //
+  // Everything after the first await runs without yielding to I/O, so a
+  // disconnect cannot interleave between the lookup and the caller's
+  // `onConnect`.
+  async ensureInitNamespace (socketNs: SocketNamespace): Promise<NamespaceContext> {
     await initAsyncProps.call(this);
-    const username = this.extractUsername(namespaceName);
-    let context = this.contexts.get(username);
-    // Value is not missing, return it.
+    const namespaceName = socketNs.name;
+    let context = this.contexts.get(namespaceName);
     if (typeof context === 'undefined') {
-      context = new NamespaceContext(username, this.io.of(namespaceName), this.api, this.logger, this.apiVersion, this.hostname, this.storageLayer);
-      this.contexts.set(username, context);
+      const username = this.extractUsername(namespaceName);
+      context = new NamespaceContext(username, socketNs, this.api, this.logger, this.apiVersion, this.hostname, this.storageLayer, this);
+      this.contexts.set(namespaceName, context);
+    } else if (context.socketNs !== socketNs) {
+      context.socketNs = socketNs;
     }
     await context.open();
     return context;
@@ -146,6 +161,13 @@ class Manager {
       context.revalidateConnections();
     }
   }
+
+  // Forget the context of a namespace whose last connection left (only if it
+  // is still the one registered under that name).
+  dropContext (context: NamespaceContext): void {
+    const name = context.socketNs.name;
+    if (this.contexts.get(name) === context) this.contexts.delete(name);
+  }
 }
 
 class NamespaceContext {
@@ -166,7 +188,9 @@ class NamespaceContext {
   pubsubRemover: PubsubRemover | null;
 
   storageLayer: unknown;
-  constructor (username: string | null, socketNs: SocketNamespace, api: Api, logger: Logger, apiVersion: string | null, hostname: string, storageLayer: unknown) {
+
+  manager: Manager | null;
+  constructor (username: string | null, socketNs: SocketNamespace, api: Api, logger: Logger, apiVersion: string | null, hostname: string, storageLayer: unknown, manager: Manager | null = null) {
     this.username = username;
     this.socketNs = socketNs;
     this.api = api;
@@ -176,6 +200,7 @@ class NamespaceContext {
     this.apiVersion = apiVersion;
     this.hostname = hostname;
     this.storageLayer = storageLayer;
+    this.manager = manager;
   }
 
   // D10: an access change (narrow / revoke / delete) may invalidate live
@@ -302,8 +327,11 @@ class NamespaceContext {
     if (remaining > 0) { return; }
     // assert: We're the last connected socket in this namespace.
     logger.info(`Namespace ${namespace.name} closing down, cleaning up resources`);
-    // Namespace doesn't have any connections left, stop notifying. We'll reopen
-    // this when the next socket connects.
+    // socket.io deletes the namespace once its last socket leaves; forget this
+    // context too, before anything else yields, so the next connection builds
+    // a context bound to the new namespace.
+    this.manager?.dropContext(this);
+    // Namespace doesn't have any connections left, stop notifying.
     await this.close();
   }
 }
@@ -484,6 +512,9 @@ class Connection {
     const api = this.api;
     const logger = this.logger;
     methodContext.methodId = apiMethod;
+    // The method id comes from the client: methods that take credentials
+    // instead of a token refuse to run on this transport.
+    methodContext.genericDispatch = 'socket.io';
 
     const userName = methodContext.user.username;
     // Accept streamQueries in JSON format for socket.io

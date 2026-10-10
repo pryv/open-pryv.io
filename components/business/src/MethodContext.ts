@@ -109,6 +109,20 @@ class MethodContext {
    */
   bypassAccessCache?: boolean;
 
+  /**
+   * Set by the generic dispatchers while they run a call whose method id came
+   * from the client: 'batch' for an inner call of callBatch, 'socket.io' for a
+   * socket message. Absent on a call reached through its own HTTP route.
+   * Methods that take credentials instead of a token refuse to run when set.
+   */
+  genericDispatch?: 'batch' | 'socket.io';
+
+  /**
+   * Most items one result stream may drain into memory for this call, below
+   * the API-wide ceiling. Set by callBatch to what remains of its total budget.
+   */
+  resultArrayLimit?: number;
+
   constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: HttpHeaders, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
     this.user = { id: null, username };

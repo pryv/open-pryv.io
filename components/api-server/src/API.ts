@@ -16,7 +16,7 @@ const logger = getLogger('api');
 
 
 type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
-type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; [k: string]: unknown };
+type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; resultArrayLimit?: number; [k: string]: unknown };
 
 let audit: AuditModule, throwIfMethodIsNotDeclared: (id: string) => void, isAuditActive: boolean;
 
@@ -204,8 +204,14 @@ class API {
     // allow-list rule. Revisit deliberately if span attributes are ever revived.
     tracing.startSpan(apiSpanName);
 
+    // A caller may lower the ceiling for this call (callBatch passes what is
+    // left of its total budget), never raise it.
+    const requestedLimit = context.resultArrayLimit;
+    const arrayLimit = (typeof requestedLimit === 'number' && requestedLimit > 0)
+      ? Math.min(requestedLimit, RESULT_TO_OBJECT_MAX_ARRAY_SIZE)
+      : RESULT_TO_OBJECT_MAX_ARRAY_SIZE;
     const result = new Result({
-      arrayLimit: RESULT_TO_OBJECT_MAX_ARRAY_SIZE,
+      arrayLimit,
       tracing
     });
 
@@ -284,7 +290,7 @@ class API {
 }
 
 export default API;
-export { API };
+export { API, RESULT_TO_OBJECT_MAX_ARRAY_SIZE };
 function matches (idFilter: string, id: string): boolean {
   // i.e. check whether the given id starts with the given filter without the
   // wildcard

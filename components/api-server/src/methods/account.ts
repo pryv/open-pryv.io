@@ -63,6 +63,8 @@ const emailsContainer = require('business/src/emails/container.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
 const { buildVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
+const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
 const cache = require('cache').default;
 const timestamp = require('unix-timestamp');
 const { tombstoneAccessesNonFatal } = require('platform/src/accessIndex.ts');
@@ -87,6 +89,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   const requireTrustedAppFn = commonFns.getTrustedAppCheck(getAuth);
 
   const usersRepository = await getUsersRepository();
+  const passwordTally = createAccountAttemptThrottle({
+    profileStorage: storageLayer.profile,
+    field: 'passwordThrottle',
+    label: 'password',
+    attemptNoun: 'password',
+    logger
+  });
+  const passwordAttemptsCfg = () => normalizePasswordAttempts(config.get('auth:passwordAttempts'));
 
   // RETRIEVAL
 
@@ -182,10 +192,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   async function verifyOldPassword (context: MethodContext, params: { oldPassword: string }, _result: ResultBag, next: Next) {
     try {
+      // The old password counts on the account's password tally, like a
+      // sign-in: a stolen token must not make it a password oracle.
+      const user = { id: context.user.id as string, username: context.user.username };
+      const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+      if (attemptErr) return next(attemptErr);
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.oldPassword);
       if (!isValid) {
         return next(errors.invalidOperation('The given password does not match.'));
       }
+      await passwordTally.clearIfAny(user);
       next();
     } catch (err) {
       // handles unexpected errors
@@ -308,6 +324,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   api.register(
     'account.requestPasswordReset',
+    commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.requestPasswordReset.params),
     requireTrustedAppFn,
     throttlePasswordResetRequest,
@@ -436,6 +453,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   api.register(
     'account.verifyEmail',
+    commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.verifyEmail.params),
     requireTrustedAppFn,
     addUserBusinessToContext,
@@ -465,6 +483,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   api.register(
     'account.resetPassword',
+    commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.resetPassword.params),
     consumeResetToken,
     requireTrustedAppFn,

@@ -19,6 +19,11 @@ const array = helpers.array;
 const string = helpers.string;
 const number = helpers.number;
 const boolean = helpers.boolean;
+/** Largest explicit `limit` / `skip` of events.get: the most items one call
+ * may drain into memory when its result is not streamed (batch, socket.io). */
+const EVENTS_GET_MAX_PAGING = 100000;
+const paging = () => helpers.getBaseSchema('integer', { minimum: 0, maximum: EVENTS_GET_MAX_PAGING });
+export { EVENTS_GET_MAX_PAGING };
 const __ex_get = {
     params: object({
       streams: {},
@@ -30,8 +35,8 @@ const __ex_get = {
       fromTime: number(),
       toTime: number(),
       sortAscending: boolean(),
-      skip: number(),
-      limit: number(),
+      skip: paging(),
+      limit: paging(),
       state: string({ enum: ['default', 'trashed', 'all'] }),
       modifiedSince: number(),
       includeDeletions: boolean(),

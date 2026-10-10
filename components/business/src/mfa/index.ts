@@ -30,7 +30,7 @@ const { DEFAULT_CODE_LENGTH, DEFAULT_CODE_TTL_SECONDS } = require('./SingleServi
 const { SmsSendLimiter, SEND_LIMIT_DEFAULTS, smsDestination } = require('./smsSendLimits.ts');
 const { smsEnrolmentContent, RESERVED_CONTENT_KEYS } = require('./smsRequest.ts');
 
-type SessionsCfg = { ttlSeconds?: number; maxPending?: number };
+type SessionsCfg = { ttlSeconds?: number; maxPending?: number; maxPendingPerUser?: number };
 type MFAConfig = {
   mode?: 'disabled' | 'challenge-verify' | 'single' | string;
   sessions?: SessionsCfg;
@@ -90,7 +90,7 @@ type NormalizedMfaConfig = {
   active: boolean;
   defaultMethod?: string;
   methods?: { totp?: MethodCfg; sms?: MethodCfg };
-  sessions?: { ttlSeconds: number; maxPending: number };
+  sessions?: NormalizedSessionsCfg;
   attempts?: AttemptsCfg;
   /**
    * When true, an enrolled user whose method is not active on this server
@@ -166,21 +166,29 @@ function delayForFailures (failures: number, backoff: BackoffCfg): number {
 
 const SESSIONS_DEFAULTS = {
   ttlSeconds: 1800,
-  maxPending: 10000
+  maxPending: 10000,
+  maxPendingPerUser: 5
 };
 
+type NormalizedSessionsCfg = { ttlSeconds: number; maxPending: number; maxPendingPerUser: number };
+
 /**
- * Normalize `services.mfa.sessions`: `ttlSeconds` (a positive number) and
- * `maxPending` (a non-negative integer, 0 disables the cap). An invalid or
- * unset value keeps the default; the boot check refuses an invalid one.
+ * Normalize `services.mfa.sessions`: `ttlSeconds` (a positive number),
+ * `maxPending` and `maxPendingPerUser` (non-negative integers, 0 disables the
+ * cap). An invalid or unset value keeps the default; the boot check refuses an
+ * invalid one.
  */
-function normalizeSessions (raw: unknown): { ttlSeconds: number; maxPending: number } {
+function normalizeSessions (raw: unknown): NormalizedSessionsCfg {
   const src = (raw != null && typeof raw === 'object') ? raw as Record<string, unknown> : {};
   const ttl = Number(src.ttlSeconds);
-  const max = Number(src.maxPending);
+  const count = (key: 'maxPending' | 'maxPendingPerUser'): number => {
+    const n = Number(src[key]);
+    return (src[key] != null && src[key] !== '' && Number.isInteger(n) && n >= 0) ? n : SESSIONS_DEFAULTS[key];
+  };
   return {
     ttlSeconds: (src.ttlSeconds != null && src.ttlSeconds !== '' && Number.isFinite(ttl) && ttl > 0) ? ttl : SESSIONS_DEFAULTS.ttlSeconds,
-    maxPending: (src.maxPending != null && src.maxPending !== '' && Number.isInteger(max) && max >= 0) ? max : SESSIONS_DEFAULTS.maxPending
+    maxPending: count('maxPending'),
+    maxPendingPerUser: count('maxPendingPerUser')
   };
 }
 
@@ -457,7 +465,7 @@ function getMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceLike
 function getMFASessionStore (mfaConfig: MFAConfig | null | undefined): MFASessionStoreLike {
   if (_sessionStore === null) {
     const sessions = normalizeSessions(mfaConfig?.sessions);
-    _sessionStore = new SessionStore(sessions.ttlSeconds, { maxPending: sessions.maxPending });
+    _sessionStore = new SessionStore(sessions.ttlSeconds, { maxPending: sessions.maxPending, maxPendingPerUser: sessions.maxPendingPerUser });
   }
   return _sessionStore!;
 }

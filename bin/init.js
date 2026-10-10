@@ -711,6 +711,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #         # challenge-verify mode: how the provider confirms a code; without
 # #         # it only an empty 2xx answer (e.g. 204) is a success.
 # #         # endpoints.verify.success: { jsonPath: status, equals: approved }
+# #     sessions:
+# #       maxPending: 10000        # pending MFA sessions this core holds (429 past it)
+# #       maxPendingPerUser: 5     # pending MFA logins per account; a further one ends the oldest
 # #     attempts:                  # failed second-factor limits
 # #       perSession: 5            # wrong codes allowed in one pending MFA session
 # #       perAccountWindowSeconds: 900  # a failure older than this starts the tally afresh
@@ -821,6 +824,11 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # credentials, so together they bound the memory a flood of POST
 # # /reg/access can take. Put a rate limit in the reverse proxy as well.
 # # 0 = no ceiling. Defaults 10000 and 16384 (a real request stays under 4 KB).
+# # access.maxLiveRequestsPerIp: live requests one address (IPv4, or an IPv6
+# # /64) may hold on this core (429 past it; default 50, 0 = off). It honours
+# # http.trustedProxies only: behind a proxy, list the proxy there.
+# # access.unopenedRequestTtl: seconds a request lives until a poll first reads
+# # it (default 600; the first read gives it the full hour).
 # # access:
 # #   trustedAuthUrls:
 # #     - https://auth.example.com/my-auth/
@@ -828,6 +836,8 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   handoffTtl: 600
 # #   maxLiveRequests: 10000
 # #   maxRequestBytes: 16384
+# #   maxLiveRequestsPerIp: 50
+# #   unopenedRequestTtl: 600
 
 # # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
 # # username lookups (default 60). Bounds how long a worker that missed an

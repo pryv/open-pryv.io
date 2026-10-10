@@ -45,8 +45,13 @@ type QueryFn = (sql: string, params: unknown[]) => Promise<QueryResult>;
 type Transaction = { query: QueryFn } | null | undefined;
 interface DbLike {
   query: QueryFn;
+  /** Rows through a server-side cursor, a batch at a time (DatabasePG). */
+  queryIterable (sql: string, params?: unknown[], batchSize?: number): AsyncGenerator<Record<string, unknown>>;
   withTransaction<T> (fn: (client: { query: QueryFn }) => Promise<T>): Promise<T>;
 }
+
+/** Rows read per cursor round trip by the streamed reads. */
+const STREAM_BATCH_SIZE = 1000;
 interface EventsFileStorageLike {
   removeAllForEvent: (userId: string, eventId: string) => Promise<void>;
   removeAllForUser: (userId: string) => Promise<void>;
@@ -196,12 +201,15 @@ const userEvents = ds.createUserEvents({
     return res.rows.map(rowToEvent).filter((e): e is EventLike => e !== null);
   },
 
+  // The streamed reads go through a server-side cursor: rows arrive a batch
+  // at a time as the consumer reads, so a large result is never held whole
+  // in the worker. The readable owns the cursor's pooled client until it ends
+  // or is destroyed (an aborted response reaches it through `pipeThrough`).
   async getStreamed (this: Store, userId: string, query: unknown, options: unknown): Promise<ReadableType> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
-    const res = await this.db.query(sql, params);
-    return readableStreamFromRows(res.rows);
+    return readableStreamFromCursor(this.db, sql, params);
   },
 
   async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, options: { sortAscending?: boolean; limit?: number; skip?: number } | null): Promise<ReadableType> {
@@ -212,8 +220,7 @@ const userEvents = ds.createUserEvents({
     sql += ` ORDER BY deleted ${options?.sortAscending ? 'ASC' : 'DESC'}`;
     if (options?.limit != null) { sql += ` LIMIT $${idx}`; params.push(options.limit); idx++; }
     if (options?.skip != null) { sql += ` OFFSET $${idx}`; params.push(options.skip); }
-    const res = await this.db.query(sql, params);
-    return readableStreamFromRows(res.rows);
+    return readableStreamFromCursor(this.db, sql, params);
   },
 
   async getHistory (this: Store, userId: string, eventId: string): Promise<EventLike[]> {
@@ -767,18 +774,17 @@ function convertStreamsQuery (streamQueriesArray: StreamFilterItem[][], idx: num
   return { condition, nextIdx: idx };
 }
 
-function readableStreamFromRows (rows: Array<Record<string, unknown>>): ReadableType {
-  let index = 0;
-  const readable = new Readable({
-    objectMode: true,
-    highWaterMark: 4000,
-    read (this: ReadableType) {
-      while (index < rows.length) {
-        const event = rowToEvent(rows[index++]);
-        if (!this.push(event)) return; // back-pressure
-      }
-      this.push(null);
+/**
+ * Events read through a cursor, as an object-mode readable. Destroying the
+ * readable closes the generator, which closes the cursor and gives its client
+ * back to the pool.
+ */
+function readableStreamFromCursor (db: DbLike, sql: string, params: unknown[]): ReadableType {
+  async function * events (): AsyncGenerator<EventLike> {
+    for await (const row of db.queryIterable(sql, params, STREAM_BATCH_SIZE)) {
+      const event = rowToEvent(row);
+      if (event != null) yield event;
     }
-  });
-  return readable;
+  }
+  return Readable.from(events(), { objectMode: true, highWaterMark: STREAM_BATCH_SIZE });
 }

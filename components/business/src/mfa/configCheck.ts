@@ -133,6 +133,14 @@ function describeMfaConfig (rawMfa: unknown): { problems: Problem[]; warnings: s
         warnings.push('services.mfa.sessions.maxPending is 0: the number of pending MFA sessions this core holds in memory is not capped.');
       }
     }
+    if (isSet(sessions.maxPendingPerUser)) {
+      const n = Number(sessions.maxPendingPerUser);
+      if ((typeof sessions.maxPendingPerUser !== 'number' && typeof sessions.maxPendingPerUser !== 'string') || !Number.isInteger(n) || n < 0) {
+        problems.push({ message: `sessions.maxPendingPerUser must be a non-negative integer (0 disables the cap), got ${JSON.stringify(sessions.maxPendingPerUser)}.`, path: [...base, 'sessions', 'maxPendingPerUser'] });
+      } else if (n === 0) {
+        warnings.push('services.mfa.sessions.maxPendingPerUser is 0: one account may hold every pending MFA session of this core, refusing the MFA sign-in of all others.');
+      }
+    }
   }
 
   // The step-up on turning MFA off or replacing it is always required; the

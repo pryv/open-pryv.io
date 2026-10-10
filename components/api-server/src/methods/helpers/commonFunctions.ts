@@ -35,6 +35,25 @@ export const requirePersonalAccess = function requirePersonalAccess (context: Me
   next();
 };
 /**
+ * First step of every method that takes credentials (a password, a reset or
+ * verification token, a one-time secret key) instead of an access token:
+ * sign-in, registration, password reset, MFA recovery, secret retrieval.
+ *
+ * Such a method is served over its own HTTP route only. The generic
+ * dispatchers (callBatch, socket.io) take the method id from the client and
+ * run under an access already loaded, so through them any token of the
+ * account would reach a credential check without the per-request limits an
+ * operator sets on those routes, and many guesses would fit in one request.
+ * The refusal comes before any other step, so nothing is validated, checked,
+ * sent or written.
+ */
+export const refuseGenericDispatch = function refuseGenericDispatch (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+  if (context.genericDispatch != null) {
+    return next(errors.invalidOperation(context.methodId + ' is only served over its own HTTP route: it cannot be called inside a batch call or over socket.io.'));
+  }
+  next();
+};
+/**
  * Basic check for authorized access based on context.methodId
  */
 export const basicAccessAuthorizationCheck = function (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {

@@ -165,6 +165,19 @@ auth:
   passwordAgeMaxDays: 0
   passwordAgeMinDays: 0
   passwordPreventReuseHistoryLength: 0
+  # Failed passwords are delayed per account, never locked out. Every check of
+  # the account password counts on one tally: sign-in, account.changePassword
+  # (old password), the MFA step-up by password, mfa.recover. After
+  # `freeFailures` failures within `windowSeconds`, each further failure delays
+  # the next attempt by `baseSeconds`, doubling up to `maxSeconds`; during the
+  # delay those calls answer 429 too-many-attempts with Retry-After, without
+  # checking the password. A success clears the tally. maxSeconds: 0 disables
+  # it. PLATFORM-WIDE: set the same values on every core.
+  passwordAttempts:
+    freeFailures: 5
+    baseSeconds: 2
+    maxSeconds: 300
+    windowSeconds: 900
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
 # Inert unless a provider is configured: no routes mount and no network calls
@@ -294,6 +307,12 @@ services:
       # 429 too-many-requests until sessions are completed or expire.
       # 0 disables the cap.
       maxPending: 10000
+      # Most pending MFA LOGIN sessions one account holds at once. A further
+      # login of that account ends its oldest pending one (whose mfaToken then
+      # answers invalid-access-token), so one account cannot fill maxPending
+      # and refuse every other account's MFA sign-in. Activations are not
+      # counted. 0 disables the cap.
+      maxPendingPerUser: 5
     # Failed second-factor limits. `perSession` bounds one pending MFA session
     # (the historical fixed limit). Failures also accrue per account across
     # logins, so re-authenticating does not hand out a fresh budget: after
@@ -542,6 +561,37 @@ uploads:
   # Maximum number of attachment files in one multipart request (which may
   # carry only one non-file part, the JSON body). 10 when absent.
   maxFiles: 10
+
+# === PER-CORE: request bounds ===
+limits:
+  batch:
+    # Most result items all the calls of one batch call (POST /<username>/,
+    # or callBatch over socket.io) may return together. Past it the whole
+    # batch answers 413 too-many-results. A batch holds at most 1000 calls
+    # (fixed); one call may return at most 100000 items.
+    maxTotalItems: 100000
+
+# === PER-CORE: socket.io ===
+socketIO:
+  # Largest socket.io message (and polling payload) accepted, in bytes; past
+  # it the connection is closed.
+  maxMessageBytes: 1000000
+
+# === PER-CORE: access requests (POST /reg/access) ===
+# Other keys (defaultAuthUrl, trustedAuthUrls, terminalRetentionMs,
+# handoffTtl, maxLiveRequests, maxRequestBytes) keep their defaults when
+# absent; see the bin/init.js appendix.
+access:
+  # Most live access requests created from one address (an IPv4 address, or
+  # one /64 of IPv6) on this core; past it POST /reg/access answers 429. A
+  # request stops counting once decided, removed or expired. The address
+  # honours http.trustedProxies only: behind a reverse proxy, list the proxy
+  # there, or every client shares the proxy's budget. 0 disables it.
+  maxLiveRequestsPerIp: 50
+  # Life, in seconds, of an access request no poll has read yet (the auth page
+  # and the app both read it right away); the first read gives it the full
+  # hour. 0 = the full hour from creation.
+  unopenedRequestTtl: 600
 
 # === PER-CORE: local tracing toggle ===
 trace:
