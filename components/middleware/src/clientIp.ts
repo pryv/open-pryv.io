@@ -148,6 +148,29 @@ function normaliseIp (ip: string): string {
   return ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4 ? ip.slice(7) : ip;
 }
 
+/** The /64 prefix of an IPv6 address, e.g. `2001:db8:1:2::/64`. */
+function ipv6Prefix64 (ip: string): string {
+  const address = ip.split('%')[0]; // drop a zone id
+  const [head, tail] = address.split('::');
+  const groupsOf = (part: string | undefined): string[] => (part == null || part === '') ? [] : part.split(':');
+  const headGroups = groupsOf(head);
+  const tailGroups = groupsOf(tail);
+  // An embedded IPv4 address at the end stands for two groups.
+  const size = (groups: string[]) => groups.reduce((n, g) => n + (g.includes('.') ? 2 : 1), 0);
+  const fill = tail !== undefined ? Math.max(0, 8 - size(headGroups) - size(tailGroups)) : 0;
+  const groups = [...headGroups, ...new Array(fill).fill('0'), ...tailGroups];
+  return groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':') + '::/64';
+}
+
+/**
+ * The bucket a per-address limit counts a client address toward: an IPv4
+ * address as is, an IPv6 address by its /64 (one subscriber's allocation, so
+ * rotating addresses inside it buys no fresh budget).
+ */
+function addressBucket (ip: string): string {
+  return isIP(ip) === 6 ? ipv6Prefix64(ip) : ip;
+}
+
 function peerAddress (req: RequestLike): string | null {
   return req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? null;
 }
@@ -165,4 +188,4 @@ function clientIp (req: RequestLike): string | null {
   return normaliseIp(isIP(resolved) ? resolved : peer);
 }
 
-export { configureTrustedProxies, trustedProxyFn, expressTrustProxy, currentTrustedProxies, trustedProxiesSummary, checkTrustedProxiesConfig, clientIp, normaliseIp, DEFAULT_TRUSTED_PROXIES };
+export { configureTrustedProxies, trustedProxyFn, expressTrustProxy, currentTrustedProxies, trustedProxiesSummary, checkTrustedProxiesConfig, clientIp, normaliseIp, addressBucket, DEFAULT_TRUSTED_PROXIES };

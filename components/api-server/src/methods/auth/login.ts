@@ -38,6 +38,7 @@ const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile:
 // distinct site from accesses.create), so index them too. Non-fatal.
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('../helpers/accountAttemptThrottle.ts') as typeof import('../helpers/accountAttemptThrottle.ts');
 
 const MFA_PROFILE_ID = 'private';
@@ -149,13 +150,19 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   async function checkPassword (context: MethodContext, params: { password: string }, result: ResultBag, next: Next) {
     try {
-      // Counted on the account before the password is checked; refused,
-      // unchecked, while a delay from earlier failures runs.
+      // Refused, unchecked, while the caller's address has spent its budget
+      // of failures or a delay from the account's earlier failures runs;
+      // counted on the account before the password is checked.
+      const attempts = passwordAttemptsCfg();
+      const ip = context.source?.ip;
+      const ipErr = await passwordIpRefusal(ip, attempts.perIp);
+      if (ipErr) return next(ipErr);
       const user = { id: context.user.id as string, username: context.user.username };
-      const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+      const attemptErr = await passwordTally.reserve(user, attempts);
       if (attemptErr) return next(attemptErr);
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
       if (!isValid) {
+        await countPasswordIpFailure(ip, attempts.perIp);
         return next(errors.invalidCredentials());
       }
       await passwordTally.clearIfAny(user);

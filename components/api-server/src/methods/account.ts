@@ -66,6 +66,7 @@ const { isAddressProved } = require('business/src/emails/status.ts');
 const { buildVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
 const cache = require('cache').default;
 const timestamp = require('unix-timestamp');
@@ -216,12 +217,18 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   async function verifyOldPassword (context: MethodContext, params: { oldPassword: string }, _result: ResultBag, next: Next) {
     try {
       // The old password counts on the account's password tally, like a
-      // sign-in: a stolen token must not make it a password oracle.
+      // sign-in (and on the caller's address budget): a stolen token must not
+      // make it a password oracle.
+      const attempts = passwordAttemptsCfg();
+      const ip = context.source?.ip;
+      const ipErr = await passwordIpRefusal(ip, attempts.perIp);
+      if (ipErr) return next(ipErr);
       const user = { id: context.user.id as string, username: context.user.username };
-      const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+      const attemptErr = await passwordTally.reserve(user, attempts);
       if (attemptErr) return next(attemptErr);
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.oldPassword);
       if (!isValid) {
+        await countPasswordIpFailure(ip, attempts.perIp);
         return next(errors.invalidOperation('The given password does not match.'));
       }
       await passwordTally.clearIfAny(user);

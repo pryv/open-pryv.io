@@ -178,6 +178,17 @@ auth:
     baseSeconds: 2
     maxSeconds: 300
     windowSeconds: 900
+    # The same failures also count per client address (an IPv4 address, or one
+    # /64 of IPv6), whatever the account, across all cores: past `maxFailures`
+    # within a window of `windowSeconds`, those calls answer 429
+    # too-many-attempts with Retry-After from that address until the window
+    # ends, without checking the password. Successes neither count nor clear
+    # it. The address honours http.trustedProxies only: behind a reverse
+    # proxy, list the proxy there, or every client shares the proxy's budget.
+    # maxFailures: 0 disables it.
+    perIp:
+      maxFailures: 30
+      windowSeconds: 900
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
 # Inert unless a provider is configured: no routes mount and no network calls

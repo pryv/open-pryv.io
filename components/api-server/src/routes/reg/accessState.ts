@@ -33,7 +33,7 @@ const require = createRequire(import.meta.url);
  */
 
 const crypto = require('node:crypto');
-const { isIP } = require('node:net');
+const { addressBucket } = require('middleware/src/clientIp.ts');
 
 const KEY_LENGTH = 16;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
@@ -331,20 +331,6 @@ async function markOpened (key: string, state: AccessState): Promise<void> {
 // request leaves the list when it is decided, removed, or expires.
 // ----------------------------------------------------------------------
 
-/** The /64 prefix of an IPv6 address, e.g. `2001:db8:1:2::/64`. */
-function ipv6Prefix64 (ip: string): string {
-  const address = ip.split('%')[0]; // drop a zone id
-  const [head, tail] = address.split('::');
-  const groupsOf = (part: string | undefined): string[] => (part == null || part === '') ? [] : part.split(':');
-  const headGroups = groupsOf(head);
-  const tailGroups = groupsOf(tail);
-  // An embedded IPv4 address at the end stands for two groups.
-  const size = (groups: string[]) => groups.reduce((n, g) => n + (g.includes('.') ? 2 : 1), 0);
-  const fill = tail !== undefined ? Math.max(0, 8 - size(headGroups) - size(tailGroups)) : 0;
-  const groups = [...headGroups, ...new Array(fill).fill('0'), ...tailGroups];
-  return groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':') + '::/64';
-}
-
 /**
  * The hashed address bucket a request counts toward, or null when the
  * transport carries no address. IPv6 addresses are grouped by /64 (one
@@ -352,8 +338,7 @@ function ipv6Prefix64 (ip: string): string {
  */
 function ipRefOf (ip: string | null | undefined): string | null {
   if (ip == null || ip === '') return null;
-  const bucket = isIP(ip) === 6 ? ipv6Prefix64(ip) : ip;
-  return crypto.createHash('sha256').update(bucket).digest('hex').slice(0, 32);
+  return crypto.createHash('sha256').update(addressBucket(ip)).digest('hex').slice(0, 32);
 }
 
 function asIpPlaces (value: unknown): IpPlace[] {

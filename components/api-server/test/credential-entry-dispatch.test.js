@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  * served over their own HTTP routes only: the generic dispatchers (a batch
  * call, a socket.io message) refuse them. A batch is bounded in size, does
  * not nest, and its results are bounded in total. Failed passwords are
- * delayed per account, never locked out.
+ * delayed per account, never locked out, and budgeted per client address.
  */
 
 const storage = require('storage');
@@ -267,6 +267,163 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
         for (let i = 0; i < 4; i++) assertWrongPassword(await login('wrong-' + i));
         assert.strictEqual((await login(password)).status, 200);
       });
+    });
+  });
+
+  describe('[CEPI] failed-password budget per client address', function () {
+    const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
+    const { clearPasswordIpThrottle } = require('business/src/auth/passwordIpThrottle.ts');
+    const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+    // A window far wider than a test run, so no run straddles a window end.
+    const WIDE = 100000000;
+    // The per-account delay is off here, so only the address budget answers
+    // (the pool accounts take a failure in most cases).
+    const perIp = (maxFailures, windowSeconds = WIDE) => ({ auth: { passwordAttempts: { maxSeconds: 0, perIp: { maxFailures, windowSeconds } } } });
+    const ADDRESSES = ['198.51.100.1', '198.51.100.2', '198.51.100.3', '198.51.100.4', '198.51.100.5',
+      '198.51.100.6', '2001:db8:7:1::1', '2001:db8:7:2::1', '127.0.0.1', '::1'];
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const POOL_SIZE = 31;
+    const pool = [];
+
+    before(async function () {
+      this.timeout(120000);
+      for (let i = 0; i < POOL_SIZE; i++) {
+        const name = ('cepi' + i + cuid.slug()).toLowerCase();
+        await fixtures.user(name, { password });
+        pool.push(name);
+      }
+    });
+
+    beforeEach(async function () {
+      await clearPasswordIpThrottle(ADDRESSES, { maxFailures: 30, windowSeconds: WIDE });
+    });
+
+    after(async function () {
+      await clearPasswordIpThrottle(ADDRESSES, { maxFailures: 30, windowSeconds: WIDE });
+    });
+
+    function from (req, address) {
+      return address == null ? req : req.set('X-Forwarded-For', address);
+    }
+
+    function loginAs (name, pwd, address) {
+      return from(coreRequest.post(`/${name}/auth/login`).set('Origin', TRUSTED_ORIGIN), address)
+        .send({ username: name, password: pwd, appId: APP_ID });
+    }
+
+    function assertWrongPassword (res) {
+      assert.strictEqual(res.status, 401, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-credentials');
+    }
+
+    function assertAddressRefused (res, maxSeconds = WIDE) {
+      assert.strictEqual(res.status, 429, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'too-many-attempts');
+      assert.ok(/from this address/.test(res.body.error.message), res.body.error.message);
+      const seconds = res.body.error.data.retryAfterSeconds;
+      assert.ok(Number.isInteger(seconds) && seconds >= 1 && seconds <= maxSeconds, 'retryAfterSeconds: ' + seconds);
+      assert.strictEqual(res.headers['retry-after'], String(seconds));
+    }
+
+    it('[CEPI1] 30 failures across 30 accounts from one address: the 31st account is refused from it, even with its right password; another address is not', async function () {
+      const A = '198.51.100.1';
+      await withInjectedConfig(perIp(30), async () => {
+        for (let i = 0; i < 30; i++) assertWrongPassword(await loginAs(pool[i], 'wrong-' + i, A));
+        const last = pool[30];
+        assertAddressRefused(await loginAs(last, 'wrong-31', A));
+        assertAddressRefused(await loginAs(last, password, A));
+        assertWrongPassword(await loginAs(last, 'wrong-31', '198.51.100.2'));
+        assert.strictEqual((await loginAs(last, password, '198.51.100.2')).status, 200);
+      });
+    });
+
+    it('[CEPI2] X-Forwarded-For is believed only from a trusted proxy', async function () {
+      const previous = currentTrustedProxies();
+      configureTrustedProxies([]);
+      try {
+        await withInjectedConfig(perIp(2), async () => {
+          assertWrongPassword(await loginAs(pool[0], 'wrong-1', '198.51.100.3'));
+          assertWrongPassword(await loginAs(pool[1], 'wrong-2', '198.51.100.4'));
+          // Every forged header still comes from the same peer address.
+          assertAddressRefused(await loginAs(pool[2], 'wrong-3', '198.51.100.5'));
+        });
+      } finally {
+        configureTrustedProxies(previous);
+      }
+      // From the trusted loopback peer, the header names the client again.
+      await withInjectedConfig(perIp(2), async () => {
+        assertWrongPassword(await loginAs(pool[2], 'wrong-3', '198.51.100.5'));
+      });
+    });
+
+    it('[CEPI3] IPv6 addresses of one /64 share a budget', async function () {
+      await withInjectedConfig(perIp(1), async () => {
+        assertWrongPassword(await loginAs(pool[0], 'wrong-1', '2001:db8:7:1::1'));
+        assertAddressRefused(await loginAs(pool[1], 'wrong-2', '2001:db8:7:1:abcd::99'));
+        assertWrongPassword(await loginAs(pool[1], 'wrong-2', '2001:db8:7:2::1'));
+      });
+    });
+
+    it('[CEPI4] a wrong old password, step-up password or recovery password counts on the same budget', async function () {
+      const A = '198.51.100.6';
+      await withInjectedConfig(perIp(3), async () => {
+        const change = await from(coreRequest.post(`/${username}/account/change-password`).set('Authorization', personalToken), A)
+          .send({ oldPassword: 'wrong-old', newPassword: password + '-x' });
+        assert.strictEqual(change.status, 400, JSON.stringify(change.body));
+        const deactivate = await from(coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken), A)
+          .send({ password: 'wrong-step-up' });
+        assert.strictEqual(deactivate.status, 403, JSON.stringify(deactivate.body));
+        const recover = await from(coreRequest.post(`/${pool[0]}/mfa/recover`), A)
+          .send({ username: pool[0], password: 'wrong-recover', recoveryCode: 'not-a-code' });
+        assertWrongPassword(recover);
+        assertAddressRefused(await loginAs(pool[1], password, A));
+        const refusedChange = await from(coreRequest.post(`/${username}/account/change-password`).set('Authorization', personalToken), A)
+          .send({ oldPassword: password, newPassword: password + '-x' });
+        assertAddressRefused(refusedChange);
+      });
+    });
+
+    it('[CEPI5] a success neither counts nor clears the budget', async function () {
+      const A = '198.51.100.1';
+      await withInjectedConfig(perIp(2), async () => {
+        assertWrongPassword(await loginAs(pool[0], 'wrong-1', A));
+        assert.strictEqual((await loginAs(pool[1], password, A)).status, 200);
+        assertWrongPassword(await loginAs(pool[2], 'wrong-2', A));
+        assertAddressRefused(await loginAs(pool[3], password, A));
+      });
+    });
+
+    it('[CEPI6] failures sent in parallel each count', async function () {
+      const A = '198.51.100.2';
+      await withInjectedConfig(perIp(4), async () => {
+        const results = await Promise.all([0, 1, 2, 3].map((i) => loginAs(pool[i], 'wrong-' + i, A)));
+        results.forEach(assertWrongPassword);
+        assertAddressRefused(await loginAs(pool[4], password, A));
+      });
+    });
+
+    it('[CEPI7] the refusal ends with its window', async function () {
+      const A = '198.51.100.3';
+      // Start at the beginning of a two-second window.
+      await sleep(2000 - (Date.now() % 2000) + 50);
+      await withInjectedConfig(perIp(1, 2), async () => {
+        assertWrongPassword(await loginAs(pool[0], 'wrong-1', A));
+        const refused = await loginAs(pool[1], password, A);
+        assertAddressRefused(refused, 2);
+        await sleep(refused.body.error.data.retryAfterSeconds * 1000 + 100);
+        assert.strictEqual((await loginAs(pool[1], password, A)).status, 200);
+      });
+    });
+
+    it('[CEPI8] maxFailures 0 disables the budget; defaults are 30 failures per 900 s', async function () {
+      const A = '198.51.100.4';
+      await withInjectedConfig(perIp(0), async () => {
+        for (let i = 0; i < 4; i++) assertWrongPassword(await loginAs(pool[i], 'wrong-' + i, A));
+        assert.strictEqual((await loginAs(pool[4], password, A)).status, 200);
+      });
+      assert.deepStrictEqual(normalizePasswordAttempts({}).perIp, { maxFailures: 30, windowSeconds: 900 });
+      assert.deepStrictEqual(normalizePasswordAttempts({ perIp: { maxFailures: 'x', windowSeconds: 0 } }).perIp,
+        { maxFailures: 30, windowSeconds: 900 }, 'an invalid value keeps the default');
     });
   });
 });

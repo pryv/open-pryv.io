@@ -50,6 +50,14 @@
   without checking the password, for `baseSeconds` (2) doubling up to `maxSeconds` (300; `0`
   disables). A success clears the tally. A wrong step-up password no longer counts on the
   second-factor tally (`services.mfa.attempts`), a wrong step-up code still does.
+- **Visible to clients:** the same failed passwords also count per client address (an IPv4
+  address, or an IPv6 /64), whatever the account and across all cores: past
+  `auth.passwordAttempts.perIp.maxFailures` failures (new setting, default 30) within a window of
+  `perIp.windowSeconds` (900), those calls answer `429` `too-many-attempts` with `Retry-After` and
+  `data.retryAfterSeconds` from that address until the window ends, without checking the
+  password. Successes neither count nor clear it; `maxFailures: 0` disables it. The address
+  honours `http.trustedProxies` only: behind a reverse proxy, list the proxy there, or every
+  client shares the proxy's budget.
 - MFA: one account holds at most `services.mfa.sessions.maxPendingPerUser` pending login
   sessions (new setting, default 5, `0` disables); a further login ends the oldest, whose
   `mfaToken` then answers `invalid-access-token`. One account can no longer fill

@@ -50,6 +50,7 @@ const mfaLogger = getLogger('methods:mfa');
 const { normalizeMfaConfig, normalizeAttempts, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile, enrolmentFingerprint } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
 
 const PROFILE_ID = 'private';
@@ -252,7 +253,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // --------------------------------------------------------------------
 
   /** Null when the call may proceed; else the error to surface. */
-  async function checkStepUp (user: UserRef, params: Record<string, unknown>, stored: MFAProfile, cfg: NormalizedMfaConfig): Promise<Error | null> {
+  async function checkStepUp (user: UserRef, params: Record<string, unknown>, stored: MFAProfile, cfg: NormalizedMfaConfig, ip: string | null | undefined): Promise<Error | null> {
     const hasCode = params.code != null;
     const hasPassword = params.password != null;
     if (hasCode === hasPassword) {
@@ -277,9 +278,16 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       await clearThrottleIfAny(user);
       return null;
     }
-    const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+    // A password also counts on the caller's address budget.
+    const attempts = passwordAttemptsCfg();
+    const ipErr = await passwordIpRefusal(ip, attempts.perIp);
+    if (ipErr) return ipErr;
+    const attemptErr = await passwordTally.reserve(user, attempts);
     if (attemptErr) return attemptErr;
-    if (!await (await getUsersRepository()).checkUserPassword(user.id, value)) return errors.invalidStepUp();
+    if (!await (await getUsersRepository()).checkUserPassword(user.id, value)) {
+      await countPasswordIpFailure(ip, attempts.perIp);
+      return errors.invalidStepUp();
+    }
     await passwordTally.clearIfAny(user);
     return null;
   }
@@ -373,7 +381,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const user = context.user as UserRef;
         const stored = await loadMFAProfile(user);
         if (stored.isActive()) {
-          const stepUpErr = await checkStepUp(user, params, stored, cfg);
+          const stepUpErr = await checkStepUp(user, params, stored, cfg, context.source?.ip);
           if (stepUpErr) return next(stepUpErr);
         }
         const profile = new Profile();
@@ -590,7 +598,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const stored = await loadMFAProfile(user);
         // Required whether or not an enrolment is active, so the contract
         // does not depend on (and does not reveal) the account's MFA state.
-        const stepUpErr = await checkStepUp(user, params, stored, cfg);
+        const stepUpErr = await checkStepUp(user, params, stored, cfg, context.source?.ip);
         if (stepUpErr) return next(stepUpErr);
         await saveMFAProfile(user, null);
         await clearThrottleIfAny(user);
@@ -630,10 +638,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // so the call and its audit rows concern one account.
         const pathUserId = (context.user as Partial<UserRef> | undefined)?.id;
         if (pathUserId != null && pathUserId !== user.id) return next(errors.invalidCredentials());
-        const attemptErr = await passwordTally.reserve(user, passwordAttemptsCfg());
+        const attempts = passwordAttemptsCfg();
+        const ip = context.source?.ip;
+        const ipErr = await passwordIpRefusal(ip, attempts.perIp);
+        if (ipErr) return next(ipErr);
+        const attemptErr = await passwordTally.reserve(user, attempts);
         if (attemptErr) return next(attemptErr);
         const isValid = await usersRepository.checkUserPassword(user.id, params.password);
-        if (!isValid) return next(errors.invalidCredentials());
+        if (!isValid) {
+          await countPasswordIpFailure(ip, attempts.perIp);
+          return next(errors.invalidCredentials());
+        }
         await passwordTally.clearIfAny(user);
         const profile = await loadMFAProfile(user);
         if (!profile.isActive()) {

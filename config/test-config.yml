@@ -11,6 +11,12 @@ auth:
   # mail-sending paths stay opt-in per test. This URL backs the verify-email
   # REQUIRED_WHEN for the tests that opt in (e.g. [VEML*]).
   emailVerificationPageURL: 'http://test.pryv.local/verify-email'
+  # Every test request comes from the loopback address, so the per-address
+  # failed-password budget would be shared by the whole suite: it stays OFF
+  # here, and the tests that exercise it opt in.
+  passwordAttempts:
+    perIp:
+      maxFailures: 0
 logs:
   console:
     active: false

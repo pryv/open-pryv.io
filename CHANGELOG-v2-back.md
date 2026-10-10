@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## Per-address failed-password budget
+
+- New `business/src/auth/passwordIpThrottle.ts`: `passwordIpRefusal(ip, cfg)` (read-only, before
+  the check) and `countPasswordIpFailure(ip, cfg)` (after a wrong password) on PlatformDB's
+  access-state store, keys `password-fail-ip/<sha256 of the address bucket>/<window>/<n>`. Fixed
+  windows aligned on `windowSeconds`; each failure claims its own row with
+  `setAccessStateIfAbsent` (exact under concurrency, the claimed rows form a prefix, found by
+  bisection), so the budget is spent when row `maxFailures - 1` exists. One warning is logged per
+  address and window when it is spent, without the address. `clearPasswordIpThrottle(ips, cfg)`
+  for tests.
+- Wired into the four password checks, before the per-account reservation: `auth/login.ts`
+  (`checkPassword`), `account.ts` (`verifyOldPassword`), `mfa.ts` (`checkStepUp`, which now takes
+  the client address, and `mfa.recover`). The address is `context.source.ip`.
+- `business/src/auth/passwordAttempts.ts`: `normalizePasswordAttempts(...).perIp`
+  (`maxFailures` 30, `windowSeconds` 900; invalid values and a zero window keep the default).
+- `middleware/src/clientIp.ts` `addressBucket(ip)` (IPv4 as is, IPv6 by /64), moved from
+  `routes/reg/accessState.ts`, which now uses it (same bucket hashes as before).
+- Every failed password check now costs one PlatformDB read before it and about five reads and one
+  write after it; every password check costs that one read. A PlatformDB error fails the check.
+- `config/test-config.yml` turns the budget off (every test request shares the loopback
+  address); tests opt in. Tests: `credential-entry-dispatch.test.js` `[CEPI1]`..`[CEPI8]`.
+
 ## Account deletion: teardown of delegation and CMC relationships
 
 - New `business/src/auth/deletionTeardown.ts`: `setDeletionTeardownStep(name, step)` /
