@@ -68,7 +68,8 @@ describe('[ATRN] access tokens named like built-in object properties', function 
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     for (const name of PROTOTYPE_NAMES) {
       const res = await coreRequest.get('/' + username + '/events/' + eventId + '/file-id?readToken=' + encodeURIComponent(name + '-signature'));
-      assert.ok(res.status === 401 || res.status === 403 || res.status === 404, name + ': ' + res.status + ' ' + JSON.stringify(res.body));
+      assert.strictEqual(res.status, 403, name + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, ErrorIds.InvalidAccessToken, name);
     }
   });
 

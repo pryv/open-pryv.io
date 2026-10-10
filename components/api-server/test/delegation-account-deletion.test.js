@@ -29,6 +29,8 @@ const require = createRequire(import.meta.url);
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
+const { ErrorIds } = require('errors/src/index.ts');
+
 describe('[DADL] account deletion ends its delegation relationships (in-process integration)', function () {
   this.timeout(60_000);
 
@@ -128,6 +130,7 @@ describe('[DADL] account deletion ends its delegation relationships (in-process 
       const res = await coreRequest.post(bob.delegationsPath + '/controlled-side/token')
         .set('Authorization', controlToken).send({});
       assert.ok([401, 403].includes(res.status), res.status + ' ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error?.id, ErrorIds.InvalidAccessToken, JSON.stringify(res.body));
       assert.strictEqual(res.body.token, undefined);
     });
 

@@ -107,7 +107,7 @@ describe('[ASTE] Audit Streams and Events', function () {
       assert.ok(res.body.error);
     });
 
-    it('[7SGO] must allow listing one accesses (stream) with appAccess', async () => {
+    it('[7SGO] an app access lists the children of its own audit access stream (none) without error', async () => {
       const res = await coreRequest
         .get(streamsPath)
         .query({ parentId: ':_audit:access-' + appAccess.id })

@@ -11,9 +11,9 @@ const require = createRequire(import.meta.url);
 
 /**
  * Server-managed security state in the private profile (the MFA enrolment
- * `mfa` and the failed-attempt tally `mfaThrottle`) is not writable through the
- * profile methods; reads show the enrolment without its secrets and never the
- * tally. An app access whose name is a
+ * `mfa`, the failed-attempt tallies `mfaThrottle` and `passwordThrottle`) is not
+ * writable through the profile methods; reads show the enrolment without its
+ * secrets and never the tallies. An app access whose name is a
  * non-app profile id ("private", "public") cannot reach those profiles.
  */
 
@@ -39,6 +39,7 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     totp: { confirmedAt: 1700000000000, algorithm: 'SHA1', digits: 6, periodSeconds: 30 }
   };
   const THROTTLE = { failures: 2, lastFailureAt: 1, notBefore: 0 };
+  const PASSWORD_THROTTLE = { failures: 3, lastFailureAt: 2, notBefore: 0 };
 
   before(async function () {
     await initTests();
@@ -55,7 +56,7 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     await user.access({ type: 'app', name: 'public', token: publicAppToken, permissions: [{ streamId: '*', level: 'read' }] });
     await fixtures.context.profile(username, {
       id: 'private',
-      data: { language: 'fr', mfa: MFA, mfaThrottle: THROTTLE }
+      data: { language: 'fr', mfa: MFA, mfaThrottle: THROTTLE, passwordThrottle: PASSWORD_THROTTLE }
     });
   });
 
@@ -66,17 +67,18 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     return item.data;
   }
 
-  it('[PRS1] GET /profile/private shows the MFA enrolment without its secrets, never the tally, and keeps the rest', async function () {
+  it('[PRS1] GET /profile/private shows the MFA enrolment without its secrets, never the tallies, and keeps the rest', async function () {
     const res = await coreRequest.get(`/${username}/profile/private`).set('Authorization', personalToken);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.profile.language, 'fr');
     assert.deepStrictEqual(res.body.profile.mfa, MFA_VIEW);
     assert.strictEqual(res.body.profile.mfaThrottle, undefined);
+    assert.strictEqual(res.body.profile.passwordThrottle, undefined);
     assert.ok(!JSON.stringify(res.body).includes('enc-envelope'), 'the encrypted secret never leaves');
   });
 
-  it('[PRS2] PUT /profile/private refuses mfa and mfaThrottle and leaves them untouched', async function () {
-    for (const update of [{ mfa: null }, { mfaThrottle: null }, { mfa: { method: 'sms' }, language: 'de' }]) {
+  it('[PRS2] PUT /profile/private refuses mfa, mfaThrottle and passwordThrottle and leaves them untouched', async function () {
+    for (const update of [{ mfa: null }, { mfaThrottle: null }, { passwordThrottle: null }, { passwordThrottle: {}, language: 'de' }, { mfa: { method: 'sms' }, language: 'de' }]) {
       const res = await coreRequest.put(`/${username}/profile/private`).set('Authorization', personalToken).send(update);
       assert.strictEqual(res.status, 400, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
@@ -84,6 +86,7 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     const data = await storedPrivate();
     assert.deepStrictEqual(data.mfa, MFA);
     assert.deepStrictEqual(data.mfaThrottle, THROTTLE);
+    assert.deepStrictEqual(data.passwordThrottle, PASSWORD_THROTTLE);
     assert.strictEqual(data.language, 'fr', 'a refused update writes nothing');
   });
 
@@ -93,9 +96,11 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
     assert.strictEqual(res.body.profile.language, 'it');
     assert.deepStrictEqual(res.body.profile.mfa, MFA_VIEW);
     assert.strictEqual(res.body.profile.mfaThrottle, undefined);
+    assert.strictEqual(res.body.profile.passwordThrottle, undefined);
     const data = await storedPrivate();
     assert.deepStrictEqual(data.mfa, MFA);
     assert.deepStrictEqual(data.mfaThrottle, THROTTLE);
+    assert.deepStrictEqual(data.passwordThrottle, PASSWORD_THROTTLE);
   });
 
   it('[PRS4] an app access named "private" or "public" reaches no profile through /profile/app', async function () {

@@ -26,6 +26,10 @@
  * `maxFailures - 1` exists, and the first free row is found by bisection.
  * Checks that were already past the refusal when the budget ran out still
  * complete: a burst overshoots by at most its own width, once per window.
+ *
+ * Fails open: when PlatformDB cannot be read or written, the check proceeds
+ * (the per-account delay still applies) and a warning is logged at most once
+ * a minute. A platform database outage must not stop every sign-in.
  */
 
 import { factory as errors } from 'errors';
@@ -45,6 +49,21 @@ type ThrottleStore = {
 };
 
 let logger: { warn (msg: string): void } | null = null;
+const STORE_WARNING_INTERVAL_MS = 60_000;
+let lastStoreWarningAt = 0;
+
+function getBudgetLogger (): { warn (msg: string): void } {
+  logger ??= getLogger('auth:password-ip-budget');
+  return logger;
+}
+
+function warnStoreUnavailable (err: unknown): void {
+  const now = Date.now();
+  if (now - lastStoreWarningAt < STORE_WARNING_INTERVAL_MS) return;
+  lastStoreWarningAt = now;
+  getBudgetLogger().warn('Failed-password budget per address skipped: the platform database is unavailable (' +
+    String((err as Error)?.message ?? err) + '); the per-account delay still applies.');
+}
 
 function getStore (): ThrottleStore {
   const db = storages.platformDB as ThrottleStore | undefined;
@@ -89,7 +108,13 @@ async function passwordIpRefusal (ip: string | null | undefined, cfg: PasswordIp
   if (!applies(ip, cfg)) return null;
   const now = Date.now();
   const w = windowAt(now, cfg);
-  const last = await getStore().getAccessState(slotKey(bucketKey(ip), w.index, cfg.maxFailures - 1));
+  let last: StateRow | null;
+  try {
+    last = await getStore().getAccessState(slotKey(bucketKey(ip), w.index, cfg.maxFailures - 1));
+  } catch (err) {
+    warnStoreUnavailable(err);
+    return null;
+  }
   if (last == null) return null;
   return refusal(Math.max(1, Math.ceil((w.endsAt - now) / 1000)));
 }
@@ -97,6 +122,14 @@ async function passwordIpRefusal (ip: string | null | undefined, cfg: PasswordIp
 /** Count one failed password check from `ip`. */
 async function countPasswordIpFailure (ip: string | null | undefined, cfg: PasswordIpCfg): Promise<void> {
   if (!applies(ip, cfg)) return;
+  try {
+    await claimFailureSlot(ip, cfg);
+  } catch (err) {
+    warnStoreUnavailable(err);
+  }
+}
+
+async function claimFailureSlot (ip: string, cfg: PasswordIpCfg): Promise<void> {
   const store = getStore();
   const bucket = bucketKey(ip);
   const w = windowAt(Date.now(), cfg);
@@ -114,8 +147,7 @@ async function countPasswordIpFailure (ip: string | null | undefined, cfg: Passw
       // Logged once per address and window, never per failure: under an
       // attack the per-failure line would itself be the amplification.
       if (n === cfg.maxFailures - 1) {
-        logger ??= getLogger('auth:password-ip-budget');
-        logger.warn(`Failed passwords from one client address reached ${cfg.maxFailures} within ${cfg.windowSeconds} s: password checks from it are refused until the window ends.`);
+        getBudgetLogger().warn(`Failed passwords from one client address reached ${cfg.maxFailures} within ${cfg.windowSeconds} s: password checks from it are refused until the window ends.`);
       }
       return;
     }

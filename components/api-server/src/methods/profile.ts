@@ -21,11 +21,11 @@ type ProfileSet = { id: string; data: Record<string, unknown> } | null;
 
 /**
  * Keys of the private profile that hold server-managed security state (the MFA
- * enrolment and the failed-attempt tally). Only the mfa.* methods write them:
- * profile updates refuse them. Reads show the enrolment through
- * `mfaReadView` only, and never the tally.
+ * enrolment, the MFA failed-attempt tally and the failed-password tally). Only
+ * the server writes them: profile updates refuse them. Reads show the
+ * enrolment through `mfaReadView` only, and never the tallies.
  */
-const RESERVED_PRIVATE_KEYS = ['mfa', 'mfaThrottle'];
+const RESERVED_PRIVATE_KEYS = ['mfa', 'mfaThrottle', 'passwordThrottle'];
 /** Profile ids that are not app profiles, even for an app access bearing that name. */
 const NON_APP_PROFILE_IDS = ['private', 'public'];
 /** TOTP enrolment fields a read may show: parameters, never the secret or the replay step. */
@@ -55,6 +55,7 @@ function withoutReserved (id: string | undefined, data: Record<string, unknown>)
   if (id !== 'private') return data;
   const out = { ...data };
   delete out.mfaThrottle;
+  delete out.passwordThrottle;
   if (out.mfa != null && typeof out.mfa === 'object') out.mfa = mfaReadView(out.mfa as StoredMfaLike);
   else delete out.mfa;
   return out;
@@ -113,7 +114,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const reserved = RESERVED_PRIVATE_KEYS.filter((k) => Object.hasOwn(params.update || {}, k));
       if (reserved.length > 0) {
         return next(errors.invalidOperation(
-          `The private profile keys ${reserved.join(', ')} are managed by the MFA methods and cannot be set here.`,
+          `The private profile keys ${reserved.join(', ')} are managed by the server and cannot be set here.`,
           { keys: reserved }));
       }
     }

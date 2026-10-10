@@ -18,7 +18,11 @@
 - `middleware/src/clientIp.ts` `addressBucket(ip)` (IPv4 as is, IPv6 by /64), moved from
   `routes/reg/accessState.ts`, which now uses it (same bucket hashes as before).
 - Every failed password check now costs one PlatformDB read before it and about five reads and one
-  write after it; every password check costs that one read. A PlatformDB error fails the check.
+  write after it; every password check costs that one read. A PlatformDB error skips the budget
+  (fail open, one warning a minute at most): the per-account delay still applies, and a platform
+  database outage does not stop sign-in. The `passwordThrottle` key of the private profile is
+  server-managed like `mfa` / `mfaThrottle`: `profile.update` refuses it, `profile.get` never
+  shows it.
 - `config/test-config.yml` turns the budget off (every test request shares the loopback
   address); tests opt in. Tests: `credential-entry-dispatch.test.js` `[CEPI1]`..`[CEPI8]`.
 

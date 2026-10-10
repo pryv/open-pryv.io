@@ -515,7 +515,20 @@ class UsersRepository {
     const cleanups: Array<[string, () => Promise<unknown>]> = [
       ['usersIndex', async () => { if (ownsId) await this.usersIndex.deleteById(user.id); }],
       ['cache', async () => cache.unsetUser(user.username)],
-      ['platform', async () => await this.platform.deleteUser(user.username, user)],
+      // When a concurrent registration of the same name reached the local
+      // index (single-core recycles names, so both can get here), the rows
+      // under this name's token are partly the winner's: release only the
+      // unique values this attempt carried, and leave the indexed fields.
+      ['platform', async () => {
+        if (await this.usersIndex.usernameExists(user.username)) {
+          for (const field of accountStreams.uniqueFieldNames) {
+            const value = (user as unknown as Record<string, unknown>)[field];
+            if (value != null) await this.platform.releaseUserUniqueValue(user.username, field, String(value));
+          }
+          return;
+        }
+        await this.platform.deleteUser(user.username, user);
+      }],
       // Free the name→core claim validateRegistration made for this name, but
       // ONLY if no local user now owns it (B3): a concurrent same-name winner
       // reached the local index, so its routing row must survive. Runs after

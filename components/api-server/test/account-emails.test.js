@@ -375,6 +375,34 @@ describe('[EMLS] account emails (multiple)', function () {
   });
 
   describe('[EML9] concurrent legacy email updates', function () {
+    it('[EML84] a failed same-name registration releases only its own address, never the winner\'s rows', async function () {
+      const username = 'reg' + cuid().toLowerCase().slice(1, 12);
+      const winnerEmail = cuid() + '@rb-winner.example.com';
+      const loserEmail = cuid() + '@rb-loser.example.com';
+      const regRes = await coreRequest.post('/users').send({
+        appId: 'test-emails',
+        username,
+        password: 'testpassw0rd',
+        email: winnerEmail,
+        insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+        language: 'en'
+      });
+      assert.strictEqual(regRes.status, 201, JSON.stringify(regRes.body));
+      const usersRepository = await getUsersRepository();
+      const platform = await getPlatform();
+      try {
+        // A concurrent registration of the same name reserved its own address
+        // under the same name, then lost the local insert to the winner.
+        assert.strictEqual(await platform.reserveUserUniqueValue(username, 'email', loserEmail), true);
+        await usersRepository.compensateFailedInsert({ id: cuid(), username, email: loserEmail, language: 'en' });
+        assert.strictEqual(await rowOwner(loserEmail), null, 'the failed attempt releases its own address');
+        assert.strictEqual(await rowOwner(winnerEmail), await usernameToken(username), 'the winner keeps its address');
+        assert.notStrictEqual(await platform.getUserCore(username), null, 'the winner keeps its name claim');
+      } finally {
+        await usersRepository.deleteOne(await usersRepository.getUserIdForUsername(username), username);
+      }
+    });
+
     it('[EML91] two accounts updating to the same address at once: one wins, the other keeps its address', async function () {
       this.timeout(180000);
       const usersRepository = await getUsersRepository();

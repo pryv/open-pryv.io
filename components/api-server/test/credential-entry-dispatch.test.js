@@ -29,7 +29,11 @@ const FRESH_APP_ID = 'pryv-test-no-cors';
 
 describe('[CEDP] credential entry methods and batch bounds', function () {
   this.timeout(60000);
-  let fixtures, username, password, personalToken, sharedToken, streamId;
+  // Set here, not only in beforeEach: the [CEPI] before hook (which runs
+  // before any beforeEach) creates its accounts with it.
+  const PASSWORD = 'cedp-passw0rd';
+  let fixtures, username, personalToken, sharedToken, streamId;
+  let password = PASSWORD;
 
   before(async function () {
     await initTests();
@@ -39,7 +43,7 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
 
   beforeEach(async function () {
     username = ('cedp' + cuid.slug()).toLowerCase();
-    password = 'cedp-passw0rd';
+    password = PASSWORD;
     personalToken = cuid();
     sharedToken = cuid();
     streamId = 'cedp-' + cuid.slug();
