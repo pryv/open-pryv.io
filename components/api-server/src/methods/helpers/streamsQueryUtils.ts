@@ -28,8 +28,11 @@ type StreamQueryLike = {
 };
 // A streamId
 type StreamId = string;
-type ExpandSetFn = (streamIds: StreamId[], storeId: string, excludedIds?: StreamId[]) => Promise<StreamId[]>;
-type ExpandStreamFn = (streamId: StreamId, storeId: string, excludedIds?: StreamId[]) => Promise<StreamId[]>;
+// `includeTrashed: true` asks for trashed streams whatever the query's state:
+// used for exclusions, which must keep applying once the excluded stream is trashed.
+type ExpandOptions = { includeTrashed?: boolean };
+type ExpandSetFn = (streamIds: StreamId[], storeId: string, excludedIds?: StreamId[], opts?: ExpandOptions) => Promise<StreamId[]>;
+type ExpandStreamFn = (streamId: StreamId, storeId: string, excludedIds?: StreamId[], opts?: ExpandOptions) => Promise<StreamId[]>;
 type ExpandedQuery = {
   storeId?: string;
   any?: StreamId[];
@@ -188,12 +191,12 @@ function uniqueStreamIds (arrayOfStreamiIs: StreamId[]): StreamId[] {
   return [...new Set(arrayOfStreamiIs)];
 }
 export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries: StreamQueryLike[], expandStream: ExpandStreamFn) {
-      async function expandSet (streamIds: StreamId[], storeId: string, excludedIds: StreamId[] = []): Promise<StreamId[]> {
+      async function expandSet (streamIds: StreamId[], storeId: string, excludedIds: StreamId[] = [], opts?: ExpandOptions): Promise<StreamId[]> {
         const expandedSet = new Set<StreamId>(); // use a Set to avoid duplicate entries;
         for (const streamId of streamIds) {
           // skip streamId presents in exluded set
           if (!excludedIds.includes(streamId)) {
-            (await expandStream(streamId, storeId, excludedIds)).forEach((item: StreamId) => expandedSet.add(item));
+            (await expandStream(streamId, storeId, excludedIds, opts)).forEach((item: StreamId) => expandedSet.add(item));
           }
         }
         return Array.from(expandedSet);
@@ -226,11 +229,12 @@ async function expandAndTransformStreamQuery (streamQuery: StreamQueryLike, expa
       res.and.push({ any: uniqueStreamIds(expandedSet) });
     }
   }
-  // not
+  // not: expanded with trashed streams included, so an excluded stream (or
+  // one of its descendants) keeps excluding its events once it is trashed.
   if (streamQuery.not) {
     const not: StreamId[] = [];
     for (const streamId of streamQuery.not) {
-      const expandedSet = await expandSet([streamId], streamQuery.storeId!, streamQuery.any);
+      const expandedSet = await expandSet([streamId], streamQuery.storeId!, streamQuery.any, { includeTrashed: true });
       if (expandedSet.length === 0) { continue; } // escape
       not.push(...expandedSet);
     }

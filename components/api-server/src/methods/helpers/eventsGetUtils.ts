@@ -444,14 +444,14 @@ async function streamQueryExpandStreams (context: MethodContext, params: GetEven
   captureAuditScopedStreams(context, params.arrayOfStreamQueriesWithStoreId, scopedWildcard);
   context.tracing.finishSpan('streamQueries');
   next();
-  async function expandStreamInContext (streamId: string, storeId: string, excludedIds: string[]) {
+  async function expandStreamInContext (streamId: string, storeId: string, excludedIds: string[], opts?: { includeTrashed?: boolean }) {
     if (hasDoNotExpandMarker(streamId)) {
       return [stripDoNotExpandMarker(streamId)];
     }
     const query = {
       id: streamId,
       storeId,
-      includeTrashed: params.state === 'all' || params.state === 'trashed',
+      includeTrashed: opts?.includeTrashed ?? (params.state === 'all' || params.state === 'trashed'),
       childrenDepth: -1,
       excludedIds,
       hideStoreRoots: true
