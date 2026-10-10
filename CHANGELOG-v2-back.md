@@ -30,6 +30,17 @@
   `MAX_VALUES_PER_SUBDOMAIN` (64) values in all; an oversized list yields one problem, the
   per-value checks are skipped for it. Test: `components/dns-server/test/record-validation.test.js`.
 
+## Embedded DNS server: stored rows normalised, TXT split on bytes, boot check of dns.publicIp
+
+- `recordValidation.ts` `normalizeStoredRecord` (lowercase subdomain and cname target, one trailing
+  dot stripped) runs before validation in `DnsServer.refreshFromPlatform`; each row still refused is
+  logged once per name and reason (`#refusedRows`). Tests `[DNP08]`, `[DNP09]`, `[DNNM1]`, `[DNNM2]`.
+- `toCharacterStrings` splits TXT values on UTF-8 bytes into Buffers of at most 255 octets;
+  `isEncodableAnswer` bounds every TXT element. Tests `[DNTX1]`..`[DNTX3]`.
+- `wire.ts` `parseName`: the 255-octet name limit counts the terminating zero octet (`[DNW18]`).
+- `bin/master.js`: on the first dns-active boot, a `dns.publicIp` that is not IPv4 stops the boot with
+  a FATAL line (checked before writing the `core` record).
+
 ## Embedded DNS server: own sockets, RFC 1035 request validation, bounded resources
 
 - `components/dns-server/src/DnsServer.ts` now owns its UDP (`dgram`) and TCP (`net`) listeners

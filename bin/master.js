@@ -507,16 +507,15 @@ if (cluster.isPrimary) {
         const bootstrapPlatform = await getPlatform();
         const existingCore = await bootstrapPlatform.getDnsRecord('core');
         if (existingCore == null) {
-          try {
-            await bootstrapPlatform.setDnsRecord('core', { a: [publicIp] });
-          } catch (err) {
+          if (!require('node:net').isIPv4(String(publicIp))) {
             // A configuration error, not a crash: stop with a FATAL line and no stack.
             const fatal = new Error(
-              `dns.publicIp (${JSON.stringify(publicIp)}) cannot be published as A core.${dnsDomain}: ${err.message}. ` +
+              `dns.publicIp (${JSON.stringify(publicIp)}) cannot be published as A core.${dnsDomain}: not an IPv4 address. ` +
               'Set dns.publicIp to this host\'s public IPv4 address and restart.');
             fatal.bootFatal = true;
             throw fatal;
           }
+          await bootstrapPlatform.setDnsRecord('core', { a: [publicIp] });
           log(`[dns-bootstrap] published A core.${dnsDomain} -> ${publicIp}`);
         } else {
           log(`[dns-bootstrap] A core.${dnsDomain} already set in PlatformDB; not overwriting`);

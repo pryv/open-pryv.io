@@ -8,7 +8,11 @@
   (attachments come from multipart uploads on the REST routes; the `events.update` parameters
   accept only `id` and `update`).
 - Embedded DNS server: stricter request validation, size-limited responses (TC over UDP), bounded
-  TCP connections (`dns.tcpMaxConnections`, default 64) and validated stored DNS records.
+  TCP connections (`dns.tcpMaxConnections`, default 64) and validated stored DNS records. Stored
+  records are normalised (lowercase, no trailing dot) when loaded; a record that still does not
+  validate is not served and is named once in the master log (`DNS: stored record "<name>" is not
+  served: ...`): check `node bin/dns-records.js list` before restarting. On the first boot of a
+  dns-active core, a `dns.publicIp` that is not an IPv4 address stops the boot with a FATAL line.
 - Stored DNS records hold at most 32 values per key (`a`, `aaaa`, `txt`) and 64 values per
   subdomain; a larger record is refused like any other invalid record (`/reg/records`: `400`).
 - `events.get` never returns events of internal plugin streams, whatever stream ids are queried.
