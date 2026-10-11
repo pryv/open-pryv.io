@@ -1,6 +1,13 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.48 - 2026-10-11
+
+Events the server writes itself now carry `created`, `createdBy`, `modified` and `modifiedBy`
+(`createdBy` / `modifiedBy` read `'system'`), so `modifiedSince` syncs return them. Contains
+2.0.0-rc.47 (read its notes if you have not deployed it). Operator step, once per core after the
+upgrade: `node bin/events-stamp-backfill.js --dry-run` (counts the existing events written without
+these fields), then the same command without `--dry-run` to stamp them (idempotent; each stamped
+event is returned once by the next `modifiedSince` sync).
 
 ### Events
 
