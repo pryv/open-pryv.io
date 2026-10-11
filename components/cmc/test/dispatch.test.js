@@ -184,6 +184,31 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.deepEqual(mall.calls.eventsUpdated[1].content.from, { username: 'provider-a', host: 'example.com' });
     });
 
+    it('[CD33] every status stamp records the change: modified = write time, modifiedBy = system', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const before = Date.now() / 1000;
+      await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-accept',
+          type: 'consent/accept-cmc',
+          content: { capabilityUrl: 'https://Tok@example.com/' },
+          modified: 1,
+          modifiedBy: 'app-access',
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(mall.calls.eventsUpdated.length, 2);
+      for (const u of mall.calls.eventsUpdated) {
+        assert.ok(u.modified >= before, u.content.status + ': modified is the write time');
+        assert.equal(u.modifiedBy, 'system', u.content.status + ': modifiedBy');
+      }
+    });
+
     it('[CD28] the completed accept carries the resolved features, not the ones the client wrote', async () => {
       const mall = fakeMall();
       const offer = structuredClone(VALID_OFFER);

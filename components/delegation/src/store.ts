@@ -286,13 +286,15 @@ async function updateAccessFields (mall: MallLike, userId: string, accessId: str
  * Merge `patch` into the content of the event `eventId` as stored at write
  * time (other fields, and content keys the patch does not name, are kept as
  * stored, so an update landed since the caller's read survives). Stamps
- * `modified` when given.
+ * `modified` (the given time, else the write time) and `modifiedBy` (the
+ * platform's reserved access id: the plugin, not an access, made the change).
  */
 async function mergeEventContent (mall: MallLike, userId: string, eventId: string | undefined, patch: object, modified?: number): Promise<void> {
   if (eventId == null) throw new Error('delegation-store: cannot update an event without an id');
   await mall.events.updateWithMerge(userId, eventId, (stored) => {
-    const next: EventLike & { modified?: number } = { ...stored, content: { ...(stored.content || {}), ...patch } };
-    if (modified != null) next.modified = modified;
+    const next: EventLike & { modified?: number; modifiedBy?: string } = { ...stored, content: { ...(stored.content || {}), ...patch } };
+    next.modified = modified ?? Date.now() / 1000;
+    next.modifiedBy = C.SYSTEM_ACCESS_ID;
     return next;
   });
 }

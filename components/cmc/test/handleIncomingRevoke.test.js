@@ -549,6 +549,26 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
       assert.deepEqual(event.content.revokedAccessIds, ['legacy-24'], 'the in-memory copy is enriched too');
     });
 
+    it('[CIR25] the enrichment records the change: modified = write time, modifiedBy = system', async () => {
+      const event = {
+        id: 'evt-revoke-25',
+        type: 'consent/revoke-cmc',
+        streamIds: [':_cmc:inbox'],
+        createdBy: 'bc-25',
+        modified: 1,
+        modifiedBy: 'bc-25',
+        content: { from: SUBJECT },
+      };
+      const mall = mallWithEvent(event);
+      seedBackChannel(mall, 'bc-25', { capabilityId: null, counterparty: SUBJECT });
+      const before = Date.now() / 1000;
+      const res = await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+      assert.equal(res.enriched, true);
+      const written = mall.calls.eventsUpdated.filter((e) => e.id === 'evt-revoke-25').at(-1);
+      assert.ok(written.modified >= before, 'modified is the write time');
+      assert.equal(written.modifiedBy, 'system');
+    });
+
     it('[CIR20] a non-open-link back-channel is still the requester side', async () => {
       // capabilityId is present but null for a relationship that did not come
       // through a capability. The key is the signal, not its value.

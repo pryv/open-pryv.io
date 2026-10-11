@@ -45,6 +45,7 @@
  * live sibling relationship.
  */
 
+import * as C from './constants.ts';
 import * as inviteState from './inviteState.ts';
 import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import * as relationshipKey from './relationshipKey.ts';
@@ -282,6 +283,8 @@ async function enrichArrival (params: {
     await mall.events.updateWithMerge(userId, event.id as string, (stored) => ({
       ...stored,
       content: enrich(stored.content as Record<string, unknown> | null | undefined),
+      modified: Date.now() / 1000,
+      modifiedBy: C.SYSTEM_ACCESS_ID,
     }));
     event.content = enrich(event.content);
     try { notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }

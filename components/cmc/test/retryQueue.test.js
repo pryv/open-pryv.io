@@ -309,6 +309,27 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       });
       assert.equal(r.outcome, 'skipped-non-pending');
     });
+
+    it('[RQ17] each outcome stamps the retry event: modified = write time, modifiedBy = system', async () => {
+      const outcomes = [
+        ['succeeded', async () => ({ handled: true, status: 'completed' }), {}],
+        ['rescheduled', async () => ({ handled: true, status: 'failed', reason: 'cmc-handler-delivery-failed', detail: { peerReason: 'http-5xx' } }), {}],
+        ['failed-permanent', async () => ({ handled: true, status: 'failed', reason: 'cmc-handler-delivery-rejected' }), {}],
+      ];
+      for (const [outcome, dispatch, overrides] of outcomes) {
+        const mall = fakeMall();
+        mall._events.set('r-1', { ...makeRetryEvent(overrides), modified: 1, modifiedBy: 'system' });
+        const r = await processRetryEvent({
+          userId: 'u1',
+          retryEvent: mall._events.get('r-1'),
+          deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000_000 },
+        });
+        assert.equal(r.outcome, outcome);
+        const stored = mall._events.get('r-1');
+        assert.equal(stored.modified, 10_000, outcome + ': modified is the write time (s)');
+        assert.equal(stored.modifiedBy, 'system', outcome + ': modifiedBy');
+      }
+    });
   });
 
   describe('[CMCRQ-LP] runRetryLoop', () => {

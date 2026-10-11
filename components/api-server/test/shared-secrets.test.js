@@ -399,6 +399,23 @@ describe('[SHS] shared secrets', function () {
       assert.ok(typeof history[1].time === 'number');
     });
 
+    it('[SWS6] a consumed item records the server as its modifier, at the consume time', async function () {
+      const created = await createOk(personalToken, validBody());
+      const before = await coreRequest.get(eventsPath + '/' + created.id).set('Authorization', personalToken);
+      assert.strictEqual(before.status, 200, JSON.stringify(before.body));
+      const creator = before.body.event.createdBy;
+      assert.notStrictEqual(creator, 'system', 'premise: the creating access is recorded');
+      const tBefore = Date.now() / 1000;
+      const res = await retrieve(created.key);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const ev = await coreRequest.get(eventsPath + '/' + created.id).set('Authorization', personalToken);
+      assert.strictEqual(ev.status, 200, JSON.stringify(ev.body));
+      assert.strictEqual(ev.body.event.content.status, 'consumed');
+      assert.ok(ev.body.event.modified >= tBefore, 'modified is the consume time');
+      assert.strictEqual(ev.body.event.modifiedBy, 'system', 'the redemption carries no access: the server is the modifier');
+      assert.strictEqual(ev.body.event.createdBy, creator, 'createdBy is kept');
+    });
+
     it('[SHS56] secret AND signature value are scrubbed once the item leaves pending', async function () {
       const consumed = await createOk(personalToken, validBody({
         signature: { type: 'secret', value: 'a-passphrase-in-clear' }

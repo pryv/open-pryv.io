@@ -74,7 +74,12 @@ async function stampTriggerStatus (deps: DispatchDeps, userId: string, eventId: 
   await deps.mall.events.updateWithMerge(userId, eventId, (stored) => {
     const content: Record<string, unknown> = { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), ...stamp };
     if (content.status !== 'failed') delete content.failure;
-    return { ...stored, content: credentialScrub.scrubCredentials(content) ?? content };
+    return {
+      ...stored,
+      content: credentialScrub.scrubCredentials(content) ?? content,
+      modified: Date.now() / 1000,
+      modifiedBy: C.SYSTEM_ACCESS_ID,
+    };
   }, null, STATUS_STAMP_OPTS);
 }
 

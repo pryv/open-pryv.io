@@ -251,6 +251,10 @@ const ALL_EVENT_TYPES = [
 
 const ALL_EVENT_TYPES_SET = new Set(ALL_EVENT_TYPES);
 
+// The author (`modifiedBy`) the plugin records on the events it updates
+// itself: the platform's reserved access id, never the id of a real access.
+const SYSTEM_ACCESS_ID = 'system';
+
 /**
  * True if the given event type is one that the CMC plugin owns
  * (and therefore should be intercepted by the dispatch / hooks).
@@ -316,4 +320,7 @@ export {
   EVENT_TYPES_CAPABILITY,
   ALL_EVENT_TYPES,
   isCmcEventType,
+
+  // server-side writes
+  SYSTEM_ACCESS_ID,
 };

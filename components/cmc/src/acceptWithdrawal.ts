@@ -150,7 +150,7 @@ async function stampWithdrawalOnAccept (params: {
       if (stored.type !== C.ET_ACCEPT) { skipped = 'not-an-accept'; return null; }
       const content = stored.content ?? {};
       if (content.withdrawal != null) { skipped = 'already-withdrawn'; return null; }
-      return { ...storedRow, content: { ...content, withdrawal }, modified: at };
+      return { ...storedRow, content: { ...content, withdrawal }, modified: at, modifiedBy: C.SYSTEM_ACCESS_ID };
     }) as AcceptEventLike | null;
     if (written == null) return { ok: true, written: false, skipped: skipped ?? 'already-withdrawn' };
     try { deps.notifyEventChanged?.(userId, written); } catch (_e) { /* notify is best-effort */ }

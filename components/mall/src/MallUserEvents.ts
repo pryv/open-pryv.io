@@ -21,6 +21,7 @@ const errorFactory = require('errors').factory;
 const { getConditionsSupportError } = require('../../../storages/shared/contentQueryConditions.ts');
 import type { NormalizedCondition, StoreSupports } from '../../../storages/shared/contentQueryConditions.ts';
 const integrity = require('business/src/integrity/index.ts').default;
+const { SystemAccessId } = require('@pryv/datastore').defaults;
 
 
 const { Readable } = require('stream');
@@ -478,9 +479,13 @@ class MallUserEvents implements MallEvents {
   // ----------------- UTILS -----------------
 
   /**
-   * Common utils for events.create and events.createWithAttachmentss
+   * Common utils for events.create and events.createWithAttachmentss:
+   * assigns the id, fills the missing tracking properties (`created` /
+   * `modified` = now, `createdBy` / `modifiedBy` = `SystemAccessId`) and
+   * computes the integrity.
    * @param [mallTransaction]
-   * @param [doNotOverrideIntegrity] - Used during tests to store raw events (ex: history or deleted event)
+   * @param [doNotOverrideIntegrity] - Used during tests to store raw events (ex: history or deleted event);
+   *   the tracking properties are then left as given too
    * @private
    */
   async prepareForStore (eventData: Partial<EventLike>, mallTransaction: Transaction, doNotOverrideIntegrity = false): Promise<{ storeId: string; eventsStore: EventsStore; storeEvent: EventLike; storeTransaction: unknown }> {
@@ -502,6 +507,16 @@ class MallUserEvents implements MallEvents {
     } else {
       // get storeId from event id
       [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
+    }
+    // Tracking properties: an event the server writes itself (outside the
+    // events API, which always sets all four) is stamped here, with
+    // `SystemAccessId` as the author. Only missing values are filled. Raw
+    // loads (`doNotOverrideIntegrity`) are stored as given.
+    if (!doNotOverrideIntegrity) {
+      eventData.created ??= Date.now() / 1000;
+      eventData.modified ??= eventData.created;
+      eventData.createdBy ??= SystemAccessId;
+      eventData.modifiedBy ??= eventData.createdBy;
     }
     // set integrity, over the duration as the store will give it back
     eventsUtils.normaliseDurationToStored(eventData);

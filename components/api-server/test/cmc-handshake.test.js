@@ -2585,6 +2585,70 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     });
   });
 
+  describe('[SWST] events the server writes carry the tracking properties', function () {
+    const { getMall } = require('mall');
+    const validation = require('./helpers').validation;
+    const eventsMethodsSchema = require('../src/schema/eventsMethods.ts');
+    let h, tBefore;
+
+    before(async function () {
+      tBefore = Date.now() / 1000;
+      h = await runFreshHandshake('study-stamp', 'stamp-app');
+    });
+
+    function assertSystemStamped (event, label) {
+      assert.strictEqual(typeof event.created, 'number', label + ': created');
+      assert.strictEqual(typeof event.modified, 'number', label + ': modified');
+      assert.ok(event.created >= tBefore && event.modified >= event.created, label + ': written during the test');
+      assert.strictEqual(event.createdBy, 'system', label + ': createdBy');
+      assert.strictEqual(event.modifiedBy, 'system', label + ': modifiedBy');
+      validation.checkSchema({ events: [event] }, eventsMethodsSchema.get.result);
+    }
+
+    async function idsModifiedSince (actor, query, since) {
+      const res = await coreRequest.get(actor.eventsPath).set('Authorization', actor.token)
+        .query({ ...query, modifiedSince: since, limit: 100 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.events.map((e) => e.id);
+    }
+
+    it('[SWS1] the requester\'s inbox copy of an accept: system as author; modifiedSince returns it once', async function () {
+      const mirror = await pollInboxFor(alice.eventsPath, alice.token, 'consent/accept-cmc',
+        (e) => e.content?.inviteEventId === h.requestEventId);
+      assertSystemStamped(mirror, 'inbox copy');
+      const query = { streams: [':_cmc:inbox'], types: ['consent/accept-cmc'] };
+      assert.ok((await idsModifiedSince(alice, query, tBefore)).includes(mirror.id), 'returned by a sync from before the accept');
+      assert.ok(!(await idsModifiedSince(alice, query, mirror.modified)).includes(mirror.id), 'not returned again by the next sync');
+    });
+
+    it('[SWS2] the local scope-update record of a raw accesses.update: system as author; modifiedSince returns it', async function () {
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await ensureStream(bob.streamsPath, bob.token, { id: 'stampextra', name: 'Stamp Extra' });
+      const tUpdate = Date.now() / 1000;
+      const updRes = await coreRequest.put(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token)
+        .send({ permissions: (dataGrant.permissions || []).concat([{ streamId: 'stampextra', level: 'read' }]) });
+      assert.strictEqual(updRes.status, 200, JSON.stringify(updRes.body));
+      // The local record is written before the peer is told: once the peer
+      // has it, the record exists.
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/scope-update-cmc',
+        (e) => e.content?.source === 'post-hook' && (e.content?.newPermissions || []).some((p) => p.streamId === 'stampextra'));
+      // Where the hook writes it: the collectors stream of the access's app for this peer.
+      const cmc = dataGrant.clientData.cmc;
+      const recordStreamId = ':_cmc:apps:' + cmc.appCode + ':collectors:' +
+        cmc.counterparty.username + '--' + cmc.counterparty.host.toLowerCase().replace(/\./g, '-');
+      const mall = await getMall();
+      const records = (await mall.events.get(bob.username, { types: ['consent/scope-update-cmc'], streams: [{ any: [recordStreamId] }] }))
+        .filter((e) => e.content?.source === 'post-hook' && (e.content?.newPermissions || []).some((p) => p.streamId === 'stampextra'));
+      assert.strictEqual(records.length, 1, 'one local record: ' + JSON.stringify(records));
+      const record = records[0];
+      assertSystemStamped(record, 'scope-update record');
+      // Read through the mall: the record's stream is not one events.get can name.
+      const since = await mall.events.get(bob.username, { types: ['consent/scope-update-cmc'], streams: [{ any: [recordStreamId] }], modifiedSince: tUpdate });
+      assert.ok(since.some((e) => e.id === record.id), 'returned by a sync from before the update');
+    });
+  });
+
   describe('[CMCHS-NOCHAT] a relationship offered without chat gets no chat channel', function () {
     const APP = 'nochat-app';
     let h, aliceSlug, bobSlug;

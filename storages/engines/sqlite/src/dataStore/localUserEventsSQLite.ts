@@ -45,6 +45,8 @@ type UserDbLike = {
   getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
   getEventHistory: (eventId: string) => EventLike[];
   getAllStatesPage: (afterId: string | null, limit: number) => EventLike[];
+  getUnstampedPage: (afterId: string | null, limit: number) => EventLike[];
+  countUnstampedVersionRows: () => number;
   createEvent: (event: EventLike) => Promise<void>;
   updateEvent: (eventId: string, eventData: EventLike, onlyIfNotTrashed?: boolean) => Promise<EventLike | null>;
   updateEventAtomic: (eventId: string, fn: (stored: EventLike) => { next: EventLike, versionItem?: EventLike } | null) => Promise<EventLike | null | false>;
@@ -136,6 +138,24 @@ const userEvents = ds.createUserEvents({
   async _getAllStatesPage (this: Store, userId: string, afterId: string | null, limit: number): Promise<EventLike[]> {
     const db = await this.storage.forUser(userId);
     return db.getAllStatesPage(afterId, limit);
+  },
+
+  /**
+   * One page (keyset on the id, like `_getAllStatesPage`) of the user's event
+   * rows missing any of `created` / `createdBy` / `modified` / `modifiedBy`.
+   * Deleted rows are excluded: the deletion modes clear these columns on
+   * purpose. Version rows are excluded: no supported write path addresses one
+   * (see `_countUnstampedVersionRows`). Trashed rows are included.
+   */
+  async _getUnstampedPage (this: Store, userId: string, afterId: string | null, limit: number): Promise<EventLike[]> {
+    const db = await this.storage.forUser(userId);
+    return db.getUnstampedPage(afterId, limit);
+  },
+
+  /** Number of the user's version rows (history) missing any of the four tracking columns. */
+  async _countUnstampedVersionRows (this: Store, userId: string): Promise<number> {
+    const db = await this.storage.forUser(userId);
+    return db.countUnstampedVersionRows();
   },
 
   async create (this: Store, userId: string, event: EventLike, _transaction: unknown): Promise<EventLike> {

@@ -1,5 +1,29 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Events
+
+- Events the platform writes on the user's behalf (consent inbox copies and scope-update
+  records, account e-mail records, delegation records) now carry `created`, `modified`,
+  `createdBy` and `modifiedBy`, with `system` as the access id, like every other event. They
+  were stored without these fields, so `events.get` returned them without the fields the Event
+  schema documents as always present, and the `modifiedSince` filter never returned them.
+  `createdBy` / `modifiedBy` may therefore read `system` on events, as they already could on
+  accesses. Status changes the platform makes to existing events (consent request and trigger
+  status, delegation records, consent withdrawals) now set `modified` and `modifiedBy: system`
+  as well. Not a breaking change.
+- Events moved to the parent stream by `streams.delete` (with `mergeEventsWithParent`), or left
+  in their other streams (without it), now get a fresh `modified` and the deleting access as
+  `modifiedBy`, so clients syncing with `modifiedSince` see the change.
+- A shared-secret item consumed or discarded at retrieval records `system` as `modifiedBy`
+  (retrieval carries no access); it kept the creating access before.
+- **Operator step:** existing rows are repaired by `node bin/events-stamp-backfill.js`
+  (`--dry-run` first; `--config <host config>` on each core of a multi-core platform; safe to
+  re-run, no restart needed). Repaired events are returned once by the next `modifiedSince` sync
+  of each client and get a new `integrity` value. Deleted events are left as they are; version
+  rows (history enabled) are counted, not rewritten.
+
 ## 2.0.0-rc.47 - 2026-10-10
 
 **Security release: upgrade promptly.** It contains 2.0.0-rc.46 (read its notes if you have not

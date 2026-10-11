@@ -393,6 +393,92 @@ describe('[STRP] streams (Pattern C)', function () {
     });
   });
 
+  // Events the deletion moves or trims are modified by the deleting access, so
+  // a client syncing with `modifiedSince` sees the change.
+  describe('[SWSD] DELETE /<id> of a trashed stream stamps the events it changes', function () {
+    let fixtureUser, ownerName, ownerToken, ownerAccessId;
+    const OLD = { created: 1000, createdBy: 'test', modified: 1000, modifiedBy: 'test' };
+
+    before(async function () {
+      const fixtures = getNewFixture();
+      ownerName = cuid();
+      fixtureUser = await fixtures.user(ownerName);
+      ownerToken = cuid();
+      ownerAccessId = cuid();
+      await fixtureUser.access({ id: ownerAccessId, token: ownerToken, type: 'personal' });
+      await fixtureUser.session(ownerToken);
+    });
+
+    // P (root) > S > X, plus Q (root); events in S, in X, and in S and Q.
+    async function setupTree () {
+      const suffix = cuid().slice(-8);
+      const ids = { P: 'swd-p-' + suffix, S: 'swd-s-' + suffix, X: 'swd-x-' + suffix, Q: 'swd-q-' + suffix, evS: cuid(), evX: cuid(), evSQ: cuid() };
+      await fixtureUser.stream({ id: ids.P, name: 'P ' + suffix });
+      await fixtureUser.stream({ id: ids.S, name: 'S ' + suffix, parentId: ids.P });
+      await fixtureUser.stream({ id: ids.X, name: 'X ' + suffix, parentId: ids.S });
+      await fixtureUser.stream({ id: ids.Q, name: 'Q ' + suffix });
+      await fixtureUser.event({ id: ids.evS, type: 'note/txt', content: 'in S', streamIds: [ids.S], ...OLD });
+      await fixtureUser.event({ id: ids.evX, type: 'note/txt', content: 'in X', streamIds: [ids.X], ...OLD });
+      await fixtureUser.event({ id: ids.evSQ, type: 'note/txt', content: 'in S and Q', streamIds: [ids.S, ids.Q], ...OLD });
+      return ids;
+    }
+
+    function streamPath (id) { return '/' + ownerName + '/streams/' + id; }
+
+    async function getEvent (id) {
+      const res = await coreRequest.get('/' + ownerName + '/events/' + id).set('Authorization', ownerToken);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.event;
+    }
+
+    async function deleteTrashed (id, mergeEventsWithParent) {
+      const trashed = await coreRequest.del(streamPath(id)).set('Authorization', ownerToken);
+      assert.strictEqual(trashed.status, 200, JSON.stringify(trashed.body));
+      const res = await coreRequest.del(streamPath(id)).set('Authorization', ownerToken).query({ mergeEventsWithParent });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    }
+
+    async function idsModifiedSince (streamId, since) {
+      const res = await coreRequest.get('/' + ownerName + '/events').set('Authorization', ownerToken)
+        .query({ streams: JSON.stringify([streamId]), modifiedSince: since });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.events.map((e) => e.id);
+    }
+
+    function assertRestamped (event, tBefore, label) {
+      assert.ok(event.modified >= tBefore, label + ': modified is the deletion time');
+      assert.strictEqual(event.modifiedBy, ownerAccessId, label + ': modifiedBy is the deleting access');
+      assert.strictEqual(event.created, OLD.created, label + ': created is kept');
+      assert.strictEqual(event.createdBy, OLD.createdBy, label + ': createdBy is kept');
+    }
+
+    it('[SWS4] merged into the parent: every moved event is stamped and returned by modifiedSince', async function () {
+      const ids = await setupTree();
+      const tBefore = Date.now() / 1000;
+      await deleteTrashed(ids.S, true);
+      for (const id of [ids.evS, ids.evX, ids.evSQ]) {
+        const event = await getEvent(id);
+        assert.ok(event.streamIds.includes(ids.P), id + ' moved to the parent: ' + JSON.stringify(event.streamIds));
+        assertRestamped(event, tBefore, id);
+      }
+      const synced = await idsModifiedSince(ids.P, tBefore);
+      for (const id of [ids.evS, ids.evX, ids.evSQ]) assert.ok(synced.includes(id), id + ' returned by a sync from before the deletion');
+    });
+
+    it('[SWS5] not merged: an event left in another stream is stamped; one only in the subtree is deleted', async function () {
+      const ids = await setupTree();
+      const tBefore = Date.now() / 1000;
+      await deleteTrashed(ids.S, false);
+      const kept = await getEvent(ids.evSQ);
+      assert.deepStrictEqual(kept.streamIds, [ids.Q]);
+      assertRestamped(kept, tBefore, 'event left in Q');
+      assert.ok((await idsModifiedSince(ids.Q, tBefore)).includes(ids.evSQ), 'returned by a sync from before the deletion');
+      for (const id of [ids.evS, ids.evX]) {
+        assert.strictEqual(typeof (await getEvent(id)).deleted, 'number', id + ' is deleted');
+      }
+    });
+  });
+
   // The actual deletion of a trashed stream removes its whole subtree and its
   // events (or moves them to the parent), so a non-personal access needs
   // `manage` on every stream of the subtree, and `contribute` on the parent

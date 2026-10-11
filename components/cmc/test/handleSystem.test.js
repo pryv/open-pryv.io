@@ -994,6 +994,25 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(triggerWrite.content.accessId, 'acc-grant-a');
     });
 
+    it('[HS48] the request stamp and the trigger outcome record the change: modified = write time, modifiedBy = system', async () => {
+      const trigger = answer({ scopeRequestEventId: 'req-1', accept: true });
+      const mall = mallWith([GRANT_A], [
+        { ...request(), modified: 1, modifiedBy: 'acc-grant-a' },
+        { ...structuredClone(trigger), modified: 1, modifiedBy: 'app-access' },
+      ]);
+      const before = Date.now() / 1000;
+      const { r } = await run(trigger, mall);
+      assert.equal(r.ok, true);
+      for (const id of ['req-1', 'ans-1']) {
+        const writes = mall.calls.eventsUpdated.filter((e) => e.id === id);
+        assert.ok(writes.length > 0, id + ' is written');
+        for (const w of writes) {
+          assert.ok(w.modified >= before, id + ': modified is the write time');
+          assert.equal(w.modifiedBy, 'system', id + ': modifiedBy');
+        }
+      }
+    });
+
     it('[HS45] an explicit accessId must be the grant serving the trigger stream', async () => {
       const mall = mallWith([GRANT_A, GRANT_B], []);
       const { r, calls } = await run(answer({ accessId: 'acc-grant-b', newPermissions: [{ streamId: 'steps', level: 'read' }] }), mall);

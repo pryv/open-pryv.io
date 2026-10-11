@@ -124,6 +124,24 @@ describe('[EMLS] account emails (multiple)', function () {
       assert.ok(res.body.account.emails.some((e) => e.primary === true && e.status === 'verified'));
     });
 
+    it('[SWS3] an added email\'s record carries created and modified, and modifiedSince returns it', async function () {
+      const u = await makeUser(cuid() + '@stamp.example.com');
+      const newEmail = cuid() + '@stamped.example.com';
+      const tBefore = Date.now() / 1000;
+      const res = await updateAccount(u, { emails: { add: [newEmail] } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const synced = await coreRequest.get(eventsPath(u.username)).set('Authorization', u.token)
+        .query({ streams: JSON.stringify([CONTAINER]), modifiedSince: tBefore });
+      assert.strictEqual(synced.status, 200, JSON.stringify(synced.body));
+      const record = synced.body.events.find((e) => e.content?.value === newEmail);
+      assert.ok(record != null, 'the pending record is returned by a sync from before the add: ' + JSON.stringify(synced.body.events));
+      assert.strictEqual(typeof record.created, 'number');
+      assert.ok(record.created >= tBefore, 'created is the write time');
+      assert.ok(record.modified >= record.created, 'modified is set, not before created');
+      assert.strictEqual(typeof record.createdBy, 'string');
+      assert.strictEqual(typeof record.modifiedBy, 'string');
+    });
+
     it('[EML22] rejects an email another account registered or proved, accepts one merely pending there', async function () {
       const taken = cuid() + '@taken.example.com';
       await makeUser(taken); // user B registered `taken`

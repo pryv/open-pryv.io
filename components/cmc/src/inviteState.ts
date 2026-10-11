@@ -106,7 +106,12 @@ async function stampInvite (params: {
         // A refused single-use invite accepted later: the refusal no longer holds.
         for (const k of ['refusedBy', 'refusedAt', 'reason']) delete base[k];
       }
-      return { ...storedRow, content: { ...base, status: transition, ...(params.fields ?? {}) } };
+      return {
+        ...storedRow,
+        content: { ...base, status: transition, ...(params.fields ?? {}) },
+        modified: Date.now() / 1000,
+        modifiedBy: C.SYSTEM_ACCESS_ID,
+      };
     }) as TriggerLike | null;
     if (written == null) return { ok: true, written: false, skipped: skipped ?? 'transition-not-allowed' };
     try { deps.notifyEventChanged?.(userId, written); } catch (_e) { /* notify is best-effort */ }

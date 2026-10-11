@@ -60,6 +60,15 @@ describe('[CMCIS] cmc/inviteState', () => {
     assert.deepEqual(notified, ['inv-1']);
   });
 
+  it('[IS12] the stamp records the change: modified = write time, modifiedBy = system', async () => {
+    const mall = fakeMall({ ...invite({ status: 'pending' }), modified: 1, modifiedBy: 'app-access' });
+    const before = Date.now() / 1000;
+    await stampInvite({ userId: 'u1', inviteEventId: 'inv-1', transition: 'refused', deps: { mall } });
+    const stored = mall.get('inv-1');
+    assert.ok(stored.modified >= before, 'modified is the write time');
+    assert.equal(stored.modifiedBy, 'system');
+  });
+
   it('[IS02] an open-link invite refuses accepted / refused / revoked and writes nothing', async () => {
     for (const transition of ['accepted', 'refused', 'revoked']) {
       const mall = fakeMall(invite({ status: 'delivered', capability: { mode: 'open-link' } }));

@@ -605,6 +605,21 @@ describe('[DSM] delegation store: a patch lands on the event as stored at write 
     assert.equal(stored.content.patSessionId, 'sess-1', 'the first writer\'s field survives the second');
     assert.equal(stored.content.status, C.STATUS.ACTIVE);
   });
+
+  it('[DSM03] a patch records the change: modified = the given time or the write time, modifiedBy = system', async function () {
+    const mall = makeFakeMall();
+    const anchor = await store.createAnchor(mall, USER_B, { relId: 'rel-s', status: C.STATUS.INVITE }, nowSeconds);
+    await mall.events.update(USER_B, { ...(await mall.events.getOne(USER_B, anchor.id)), modified: 1, modifiedBy: 'acc-x' });
+    const before = Date.now() / 1000;
+    await store.updateAnchorContent(mall, USER_B, anchor, { status: C.STATUS.ACTIVE });
+    let stored = await mall.events.getOne(USER_B, anchor.id);
+    assert.ok(stored.modified >= before, 'modified is the write time');
+    assert.equal(stored.modifiedBy, 'system');
+    await store.patchEventContent(mall, USER_B, anchor.id, { note: 'x' }, 2);
+    stored = await mall.events.getOne(USER_B, anchor.id);
+    assert.equal(stored.modified, 2, 'a given time is kept');
+    assert.equal(stored.modifiedBy, 'system');
+  });
 });
 
 // ================================================= release (delegate deleted)

@@ -329,6 +329,7 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(typeof withdrawal.at, 'number');
     assert.ok(withdrawal.at >= before && withdrawal.at <= Date.now() / 1000 + 1, 'at is in seconds');
     assert.equal(stored.modified, withdrawal.at);
+    assert.equal(stored.modifiedBy, 'system', 'the server records the withdrawal as its own change');
     assert.deepEqual(rest, ACCEPT_EVENT.content, 'the rest of the record is kept');
   });
 

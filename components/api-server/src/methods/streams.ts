@@ -449,10 +449,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         // -- Case 1 -- Merge events with parent
         // add parent stream Id if needed and remove deleted stream ids
         // the following add "parentId" if not present and remove "streamAndDescendantIds"
+        // A moved event is modified by the access deleting the stream: stamped
+        // like an events.update, so a `modifiedSince` sync sees the move.
         const query = { streams: [{ any: streamAndDescendantIds }] };
         await mall.events.updateMany(context.user.id, query, {
           addStreams: [parentId],
-          removeStreams: streamAndDescendantIds
+          removeStreams: streamAndDescendantIds,
+          fieldsToSet: context.updateTrackingProperties({})
         }, function (event: { streamIds?: string[]; [k: string]: unknown }) {
           if (event == null) return;
           updatedEventsStream.add({ action: 'mergedToParent', id: event.id });
@@ -467,6 +470,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
             updatedEventsStream.add({ action: 'deleted', id: event.id });
           } else { // update event without these streams
             event.streamIds = remaningStreamsIds;
+            context.updateTrackingProperties(event);
             await mall.events.update(context.user.id, event);
             updatedEventsStream.add({ action: 'updatedStreamIds', id: event.id });
           }

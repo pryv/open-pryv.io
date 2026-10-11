@@ -1,5 +1,31 @@
 # Changelog - Internal (no API impact)
 
+## Server-written events: tracking properties stamped in the mall; backfill tool
+
+- `components/mall/src/MallUserEvents.ts` `prepareForStore` fills missing `created` /
+  `modified` (now; `modified` defaults to `created`) and `createdBy` / `modifiedBy` (`system`,
+  the datastore `SystemAccessId`; `modifiedBy` defaults to `createdBy`) before the integrity hash;
+  raw fixture loads (`doNotOverrideIntegrity`) are left as given.
+- Server-side update sites set `modified` (write time) and `modifiedBy: 'system'` on the object
+  handed to the mall: CMC retry queue (three transitions), invite state, dispatch status stamps,
+  scope-request stamp and trigger outcome, incoming-revoke enrichment, consent withdrawal
+  (`modifiedBy` only, `modified` was already set); delegation `mergeEventContent` (`modified`
+  defaults to the write time); shared-secret transitions. New constants `SYSTEM_ACCESS_ID` in
+  the CMC and delegation constants modules. The two scrub tools, the HF duration repair (which
+  refreshes `modified` and keeps `modifiedBy`) and the backup restore keep the authors they read,
+  as before.
+- `streams.delete` stamps the events it moves (`updateMany` `fieldsToSet` from
+  `context.updateTrackingProperties`) or trims, with the deleting access.
+- New local-store methods `_getUnstampedPage` (keyset on the id; head rows, not deleted, any
+  tracking column NULL) and `_countUnstampedVersionRows`, on PostgreSQL and SQLite
+  (`UserDatabase.getUnstampedPage` / `countUnstampedVersionRows`), backing
+  `bin/events-stamp-backfill.js` (`--dry-run`, `--user`, `--page-size`, `--config`; writes through
+  the mall with `skipVersioning`, which recomputes the integrity).
+- Tests: mall `[MSTP1]`..`[MSTP4]`; api-server `[SWS1]`..`[SWS6]` (CMC inbox copy and
+  scope-update record, e-mail record, `streams.delete` with and without merge, shared-secret
+  consume) and `[SBF1]`..`[SBF3]` (the tool); CMC `[RQ17]`, `[IS12]`, `[CD33]`, `[HS48]`,
+  `[CIR25]`, `[DH16]`; delegation `[DSM03]`.
+
 ## Per-address failed-password budget
 
 - New `business/src/auth/passwordIpThrottle.ts`: `passwordIpRefusal(ip, cfg)` (read-only, before

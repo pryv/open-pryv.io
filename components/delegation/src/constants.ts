@@ -123,6 +123,10 @@ const STATUS = {
   STALE: 'stale',
 } as const;
 
+// The author (`modifiedBy`) the plugin records on the events it updates
+// itself: the platform's reserved access id, never the id of a real access.
+const SYSTEM_ACCESS_ID = 'system';
+
 export {
   // namespaces (reserved roots)
   NS,
@@ -147,4 +151,7 @@ export {
   // clientData discriminators + statuses
   CLIENTDATA_KIND,
   STATUS,
+
+  // server-side writes
+  SYSTEM_ACCESS_ID,
 };

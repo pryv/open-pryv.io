@@ -250,6 +250,33 @@ const userEvents = ds.createUserEvents({
     return res.rows.map(rowToEvent).filter((e): e is EventLike => e !== null);
   },
 
+  /**
+   * One page (keyset on the id, like `_getAllStatesPage`) of the user's event
+   * rows missing any of `created` / `createdBy` / `modified` / `modifiedBy`.
+   * Deleted rows are excluded: the deletion modes clear these columns on
+   * purpose. Version rows are excluded: no supported write path addresses one
+   * (see `_countUnstampedVersionRows`). Trashed rows are included.
+   */
+  async _getUnstampedPage (this: Store, userId: string, afterId: string | null, limit: number): Promise<EventLike[]> {
+    const res = await this.db.query(
+      'SELECT * FROM events WHERE user_id = $1 AND head_id IS NULL AND deleted IS NULL' +
+      ' AND (created IS NULL OR created_by IS NULL OR modified IS NULL OR modified_by IS NULL)' +
+      ' AND id > $2 ORDER BY id ASC LIMIT $3',
+      [userId, afterId ?? '', limit]
+    );
+    return res.rows.map(rowToEvent).filter((e): e is EventLike => e !== null);
+  },
+
+  /** Number of the user's version rows (history) missing any of the four tracking columns. */
+  async _countUnstampedVersionRows (this: Store, userId: string): Promise<number> {
+    const res = await this.db.query(
+      'SELECT COUNT(*)::int AS n FROM events WHERE user_id = $1 AND head_id IS NOT NULL' +
+      ' AND (created IS NULL OR created_by IS NULL OR modified IS NULL OR modified_by IS NULL)',
+      [userId]
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  },
+
   async create (this: Store, userId: string, event: EventLike, transaction: Transaction): Promise<EventLike> {
     try {
       const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);

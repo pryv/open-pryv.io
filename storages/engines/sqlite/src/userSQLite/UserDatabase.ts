@@ -312,6 +312,26 @@ UserDatabase.prototype.getAllStatesPage = function (this: UserDatabaseInstance, 
     .map(eventsSchema.fromDB);
 };
 
+const UNSTAMPED = '(created IS NULL OR createdBy IS NULL OR modified IS NULL OR modifiedBy IS NULL)';
+
+/**
+ * Up to `limit` event rows missing any tracking property, whose id sorts after
+ * `afterId`, in id order (keyset paging). Deleted rows are excluded (the
+ * deletion modes clear these columns on purpose), and so are version rows (no
+ * supported write path addresses one; see `countUnstampedVersionRows`).
+ */
+UserDatabase.prototype.getUnstampedPage = function (this: UserDatabaseInstance, afterId: string | null, limit: number): DomainEvent[] {
+  return this.db.prepare(`SELECT * FROM events WHERE headId IS NULL AND deleted IS NULL AND ${UNSTAMPED} AND eventid > ? ORDER BY eventid ASC LIMIT ?`)
+    .all(afterId ?? '', limit)
+    .map(eventsSchema.fromDB);
+};
+
+/** Number of version rows (history) missing any tracking property. */
+UserDatabase.prototype.countUnstampedVersionRows = function (this: UserDatabaseInstance): number {
+  const row = this.db.prepare(`SELECT COUNT(*) AS n FROM events WHERE headId IS NOT NULL AND ${UNSTAMPED}`).get() as { n: number } | undefined;
+  return Number(row?.n ?? 0);
+};
+
 UserDatabase.prototype.minimizeEventHistory =async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
   const minimizeHistoryStatement = `UPDATE events SET ${fieldsToRemove.map(field => `${field} = ${field === 'streamIds' ? '\'' + eventsSchema.ALL_EVENTS_TAG + '\'' : 'NULL'}`).join(', ')} WHERE headId = ?`;
   this.logger.debug(`(async) Minimize event history: ${minimizeHistoryStatement}`);

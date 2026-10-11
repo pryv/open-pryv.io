@@ -27,6 +27,7 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 
 import * as S from 'shared-secrets';
 import { refuseGenericDispatch } from './helpers/commonFunctions.ts';
+import { SYSTEM_USER_ACCESS_ID } from 'business/src/users/UserRepositoryOptions.ts';
 
 import type {
   CreateParams, OnConsumed, ItemSignature, ItemContent
@@ -249,6 +250,10 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
    *
    * It goes through `mall.events.update` rather than a raw engine write so the
    * event's integrity hash is recomputed with the new content.
+   *
+   * `modifiedBy` is the platform's reserved access id: retrieval carries no
+   * access (the key is the only credential), so the server records the change
+   * as its own rather than leaving the creator's access as the author.
    */
   async function transition (
     userId: string,
@@ -264,7 +269,8 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
     const written = await mall.events.update(userId, Object.assign({}, fresh, {
       content: next,
       trashed: true,
-      modified: now
+      modified: now,
+      modifiedBy: SYSTEM_USER_ACCESS_ID
     }), undefined, { onlyIfNotTrashed: true, skipVersioning: true });
     return written != null;
   }

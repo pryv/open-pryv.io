@@ -168,6 +168,11 @@ async function enqueueRetry (params: {
   return event;
 }
 
+/** `modified` (write time, unix seconds) and `modifiedBy` for a retry event the plugin updates. */
+function serverModification (deps: RetryDeps): { modified: number; modifiedBy: string } {
+  return { modified: (deps.now ?? Date.now)() / 1000, modifiedBy: C.SYSTEM_ACCESS_ID };
+}
+
 /**
  * Process a single retry event: rebuild a synthetic trigger from
  * content, call dispatch, then either mark succeeded, increment attempts
@@ -223,6 +228,7 @@ async function processRetryEvent (params: {
   if (dispatched.status === 'completed' || dispatched.status === 'delivered') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
+      ...serverModification(deps),
       content: { ...c, status: 'succeeded' },
     });
     deps.logger?.debug?.('cmc/retry: succeeded', { retryEventId: retryEvent.id });
@@ -234,6 +240,7 @@ async function processRetryEvent (params: {
   if (nextAttempts > MAX_ATTEMPTS || !isRetryableReason(dispatched.reason ?? '', dispatched.detail)) {
     await deps.mall.events.update(userId, {
       ...retryEvent,
+      ...serverModification(deps),
       content: {
         ...c,
         status: 'failed-permanent',
@@ -252,6 +259,7 @@ async function processRetryEvent (params: {
   // Reschedule.
   await deps.mall.events.update(userId, {
     ...retryEvent,
+    ...serverModification(deps),
     content: {
       ...c,
       attempts: nextAttempts,

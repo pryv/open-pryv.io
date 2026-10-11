@@ -520,6 +520,8 @@ async function stampScopeRequest (
     await deps.mall.events.updateWithMerge(userId, requestEvent.id, (stored) => ({
       ...stored,
       content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), status, responseEventId },
+      modified: Date.now() / 1000,
+      modifiedBy: C.SYSTEM_ACCESS_ID,
     }));
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to stamp the scope request', {
@@ -553,6 +555,8 @@ async function persistTriggerOutcome (
     await deps.mall.events.updateWithMerge(userId, triggerEvent.id, (stored) => ({
       ...stored,
       content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), ...outcome },
+      modified: Date.now() / 1000,
+      modifiedBy: C.SYSTEM_ACCESS_ID,
     }));
   } catch (err: unknown) {
     deps.logger?.warn?.('cmc/handleSystemScopeUpdate: failed to record the outcome before delivery', {
