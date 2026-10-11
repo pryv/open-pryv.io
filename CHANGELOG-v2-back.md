@@ -25,6 +25,10 @@
   scope-update record, e-mail record, `streams.delete` with and without merge, shared-secret
   consume) and `[SBF1]`..`[SBF3]` (the tool); CMC `[RQ17]`, `[IS12]`, `[CD33]`, `[HS48]`,
   `[CIR25]`, `[DH16]`; delegation `[DSM03]`.
+- `components/cmc/src/accessesUpdateHook.ts` resolves the local scope-update record's stream from
+  the relationship's scope (`relationshipKey.scopeOfAccess` on the updated access, then on the
+  previous one) and the anchor slug, falling back to the app root only when no scope resolves.
+  Tests: CMC `[AU13]`..`[AU16]`; api-server `[CN24]`, `[SWS2]` now reads the resolved stream.
 
 ## Per-address failed-password budget
 

@@ -24,6 +24,13 @@
   of each client and get a new `integrity` value. Deleted events are left as they are; version
   rows (history enabled) are counted, not rewritten.
 
+### Fixed
+
+- The local `consent/scope-update-cmc` record written when a CMC relationship access is changed
+  with `accesses.update` now lands on that relationship's own collectors stream
+  (`<scope>:collectors:<peer>`); for a relationship under a nested scope it went to the app
+  root's collectors stream, which does not exist, so `events.get` could not read it.
+
 ## 2.0.0-rc.47 - 2026-10-10
 
 **Security release: upgrade promptly.** It contains 2.0.0-rc.46 (read its notes if you have not

@@ -184,6 +184,45 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
     });
   });
 
+  describe('[CMCAU-LOC] where the local record is written', () => {
+    const NESTED = ':_cmc:apps:my-app:study-a';
+    async function localStreamIdsFor (before, after) {
+      const mall = fakeMall();
+      const hook = createAccessesUpdatePostHook({ mall, fetch: fakeFetch({ status: 201, body: {} }).fetch });
+      await hook('u1', before, after);
+      assert.equal(mall.calls.eventsCreated.length, 1);
+      return mall.calls.eventsCreated[0].streamIds;
+    }
+    function withCmc (extra, permissions = CMC_COUNTERPARTY_ACCESS.permissions) {
+      return {
+        ...CMC_COUNTERPARTY_ACCESS,
+        permissions,
+        clientData: { cmc: { ...CMC_COUNTERPARTY_ACCESS.clientData.cmc, ...extra } },
+      };
+    }
+
+    it('[AU13] a nested scope stamped on the access: that scope\'s collectors stream', async () => {
+      const acc = withCmc({ scopeStreamId: NESTED });
+      assert.deepEqual(await localStreamIdsFor(undefined, acc), [NESTED + ':collectors:alice--pryv-me']);
+    });
+
+    it('[AU14] no stamped scope: the scope of the access\'s own channel permissions', async () => {
+      const acc = withCmc({}, [{ streamId: NESTED + ':collectors:alice--pryv-me', level: 'contribute' }]);
+      assert.deepEqual(await localStreamIdsFor(undefined, acc), [NESTED + ':collectors:alice--pryv-me']);
+    });
+
+    it('[AU15] the update dropped the channel permissions: the scope they had before', async () => {
+      const before = withCmc({}, [{ streamId: NESTED + ':collectors:alice--pryv-me', level: 'contribute' }]);
+      const after = withCmc({}, [{ streamId: 'x', level: 'read' }]);
+      assert.deepEqual(await localStreamIdsFor(before, after), [NESTED + ':collectors:alice--pryv-me']);
+    });
+
+    it('[AU16] a recorded scope outside the app region: the app root, as for an unresolved scope', async () => {
+      const acc = withCmc({ scopeStreamId: ':_cmc:_internal:retries' });
+      assert.deepEqual(await localStreamIdsFor(undefined, acc), [':_cmc:apps:my-app:collectors:alice--pryv-me']);
+    });
+  });
+
   describe('[CMCAU-SKIP] post-hook skips non-CMC + missing-apiendpoint', () => {
     it('[AU03] skips when access has no clientData.cmc', async () => {
       const mall = fakeMall();

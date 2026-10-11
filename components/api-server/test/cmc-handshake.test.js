@@ -1271,6 +1271,37 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(newAccessId === dataGrant.id || newAccessId.startsWith(dataGrant.id + ':'),
         'newAccessId must reference the updated data-grant: ' + newAccessId);
     });
+
+    it('[CN24] the local scope-update record lands on the relationship\'s own collectors stream, readable with events.get, on both sides', async function () {
+      // A relationship under a nested scope (`:_cmc:apps:<app>:<path>`):
+      // its collectors stream is `<path scope>:collectors:<peer>`, not the
+      // app root's.
+      const h = await runFreshHandshake('study-rec', 'rec-app');
+      const isRecord = (marker) => (e) => e.content?.source === 'post-hook' &&
+        (e.content?.newPermissions || []).some((p) => p.streamId === marker);
+
+      // Accepter side: bob widens his data-grant.
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await ensureStream(bob.streamsPath, bob.token, { id: 'recextra-b', name: 'Rec Extra B' });
+      const bobUpd = await coreRequest.put(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token)
+        .send({ permissions: (dataGrant.permissions || []).concat([{ streamId: 'recextra-b', level: 'read' }]) });
+      assert.strictEqual(bobUpd.status, 200, JSON.stringify(bobUpd.body));
+      const bobRecord = await pollStreamFor(bob.eventsPath, bob.token, h.bobCollectorStreamId,
+        'consent/scope-update-cmc', isRecord('recextra-b'));
+      assert.deepStrictEqual(bobRecord.streamIds, [h.bobCollectorStreamId]);
+
+      // Requester side: alice widens her back-channel for the same relationship.
+      const backChannel = await pollCounterpartyAccessForScope(alice, bob.username, h.triggerStreamId);
+      await ensureStream(alice.streamsPath, alice.token, { id: 'recextra-a', name: 'Rec Extra A' });
+      const aliceUpd = await coreRequest.put(alice.accessesPath + '/' + backChannel.id)
+        .set('Authorization', alice.token)
+        .send({ permissions: (backChannel.permissions || []).concat([{ streamId: 'recextra-a', level: 'read' }]) });
+      assert.strictEqual(aliceUpd.status, 200, JSON.stringify(aliceUpd.body));
+      const aliceRecord = await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId,
+        'consent/scope-update-cmc', isRecord('recextra-a'));
+      assert.deepStrictEqual(aliceRecord.streamIds, [h.aliceCollectorStreamId]);
+    });
   });
 
   describe('[CMCHS-RV] revocation forwarded to the counterparty', function () {
@@ -2633,17 +2664,14 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // has it, the record exists.
       await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/scope-update-cmc',
         (e) => e.content?.source === 'post-hook' && (e.content?.newPermissions || []).some((p) => p.streamId === 'stampextra'));
-      // Where the hook writes it: the collectors stream of the access's app for this peer.
-      const cmc = dataGrant.clientData.cmc;
-      const recordStreamId = ':_cmc:apps:' + cmc.appCode + ':collectors:' +
-        cmc.counterparty.username + '--' + cmc.counterparty.host.toLowerCase().replace(/\./g, '-');
+      // Where the hook writes it: the relationship's own collectors stream for this peer.
+      const recordStreamId = h.bobCollectorStreamId;
       const mall = await getMall();
       const records = (await mall.events.get(bob.username, { types: ['consent/scope-update-cmc'], streams: [{ any: [recordStreamId] }] }))
         .filter((e) => e.content?.source === 'post-hook' && (e.content?.newPermissions || []).some((p) => p.streamId === 'stampextra'));
       assert.strictEqual(records.length, 1, 'one local record: ' + JSON.stringify(records));
       const record = records[0];
       assertSystemStamped(record, 'scope-update record');
-      // Read through the mall: the record's stream is not one events.get can name.
       const since = await mall.events.get(bob.username, { types: ['consent/scope-update-cmc'], streams: [{ any: [recordStreamId] }], modifiedSince: tUpdate });
       assert.ok(since.some((e) => e.id === record.id), 'returned by a sync from before the update');
     });

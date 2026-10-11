@@ -33,6 +33,8 @@ const require = createRequire(import.meta.url);
 const { AsyncLocalStorage } = require('node:async_hooks');
 const C = require('./constants.ts');
 const outbound = require('./outbound.ts');
+const relationshipKey = require('./relationshipKey.ts');
+const slugMod = require('./slug.ts');
 
 // One process-wide suppression context. CMC handlers enter via
 // runWithSuppression(); the post-hook reads via isSuppressed().
@@ -56,6 +58,38 @@ import type { CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } fr
 type MallLike = { events: MallEventsLike; accesses?: MallAccessesLike };
 
 
+
+/**
+ * The collectors stream on OUR side for the relationship this access
+ * serves: `<scope>:collectors:<peer-slug>`, the anchor stream provisioned at
+ * accept time, where `<scope>` is the relationship's own scope (stamped on
+ * the access, or read from its channel permissions; see
+ * relationshipKey.scopeOfAccess). Only when no scope can be resolved (an
+ * access minted before either existed) does it fall back to the app root,
+ * `:_cmc:apps:<appCode>:collectors:<peer-slug>`. Null when the peer is
+ * unknown.
+ */
+function localCollectorStreamFor (before: AccessLike | undefined, after: AccessLike): string | null {
+  const cmc = after?.clientData?.cmc;
+  const peer = cmc?.counterparty;
+  if (peer?.username == null || peer?.host == null) return null;
+  let peerSlug: string;
+  try {
+    // Same slug the anchor streams were provisioned with.
+    peerSlug = slugMod.counterpartySlug({ username: peer.username, host: peer.host });
+  } catch {
+    peerSlug = peer.username + '--' + peer.host.toLowerCase().replace(/\./g, '-');
+  }
+  const scope = relationshipKey.scopeOfAccess(after) ?? relationshipKey.scopeOfAccess(before);
+  if (typeof scope === 'string' && scope.startsWith(C.NS_APPS + ':')) {
+    const streamId = C.collectorStreamUnder(scope, peerSlug);
+    // Accept only a well-formed channel stream of that very scope.
+    if (relationshipKey.scopeOfChannelStream(streamId) === scope) return streamId;
+  }
+  const appCode: string | null = typeof cmc?.appCode === 'string' ? cmc.appCode : null;
+  if (appCode == null) return null;
+  return C.NS_APPS + ':' + appCode + ':collectors:' + peerSlug;
+}
 
 type PostHookDeps = {
   mall: MallLike;
@@ -115,17 +149,7 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
       newAccessId: after.id,
     };
 
-    // Pick the collectors stream-id on OUR side under the access's app scope.
-    // The access stores appCode and (in some cases) the originating scope —
-    // we build the collectors stream id deterministically from appCode + slug.
-    const appCode: string | null = typeof cmc.appCode === 'string' ? cmc.appCode : null;
-    const peer = cmc?.counterparty;
-    let localCollectorStreamId: string | null = null;
-    if (appCode != null && peer?.username != null && peer?.host != null) {
-      const hostSlug = peer.host.toLowerCase().replace(/\./g, '-');
-      const peerSlug = peer.username + '--' + hostSlug;
-      localCollectorStreamId = C.NS_APPS + ':' + appCode + ':collectors:' + peerSlug;
-    }
+    const localCollectorStreamId = localCollectorStreamFor(before, after);
 
     // Step 1: write the local audit event (so the user's app gets a socket
     // push). Best-effort; failure doesn't block peer delivery.
