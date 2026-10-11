@@ -23,8 +23,9 @@
   the mall with `skipVersioning`, which recomputes the integrity).
 - Tests: mall `[MSTP1]`..`[MSTP4]`; api-server `[SWS1]`..`[SWS6]` (CMC inbox copy and
   scope-update record, e-mail record, `streams.delete` with and without merge, shared-secret
-  consume) and `[SBF1]`..`[SBF3]` (the tool); CMC `[RQ17]`, `[IS12]`, `[CD33]`, `[HS48]`,
-  `[CIR25]`, `[DH16]`; delegation `[DSM03]`.
+  consume), `[SWS7]` (a client cannot claim `'system'` as author) and `[SBF1]`..`[SBF3]` (the
+  tool); CMC `[RQ17]`, `[IS12]`, `[CD33]`, `[HS48]`, `[CIR25]` (new) and one assertion added to
+  `[DH16]`; delegation `[DSM03]`.
 - `components/cmc/src/accessesUpdateHook.ts` resolves the local scope-update record's stream from
   the relationship's scope (`relationshipKey.scopeOfAccess` on the updated access, then on the
   previous one) and the anchor slug, falling back to the app root only when no scope resolves.

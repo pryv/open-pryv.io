@@ -477,6 +477,22 @@ describe('[STRP] streams (Pattern C)', function () {
         assert.strictEqual(typeof (await getEvent(id)).deleted, 'number', id + ' is deleted');
       }
     });
+
+    it('[SWS7] a client cannot claim the server marker as author: events.create stamps its own access', async function () {
+      const streamId = 'swd-app-' + cuid().slice(-8);
+      await fixtureUser.stream({ id: streamId, name: streamId });
+      const appToken = cuid();
+      const appAccessId = cuid();
+      await fixtureUser.access({ id: appAccessId, token: appToken, type: 'app', name: 'swd-app', permissions: [{ streamId, level: 'contribute' }] });
+      const res = await coreRequest.post('/' + ownerName + '/events').set('Authorization', appToken)
+        .send({ type: 'note/txt', content: 'claims system', streamIds: [streamId], createdBy: 'system', modifiedBy: 'system' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(res.body.event.createdBy, appAccessId);
+      assert.strictEqual(res.body.event.modifiedBy, appAccessId);
+      const stored = await getEvent(res.body.event.id);
+      assert.strictEqual(stored.createdBy, appAccessId);
+      assert.strictEqual(stored.modifiedBy, appAccessId);
+    });
   });
 
   // The actual deletion of a trashed stream removes its whole subtree and its
