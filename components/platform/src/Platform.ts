@@ -45,12 +45,17 @@ const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
  */
 const USERNAME_FIELD = 'username';
 
+/** How often a multi-core core re-reads the other cores' URLs (as the embedded DNS does). */
+const CORE_URL_REFRESH_INTERVAL_MS = 30_000;
+
 /**
  * @class Platform
  * @property {Users} users
  */
 class Platform {
   #initialized: boolean;
+  #initPromise: Promise<this> | null = null;
+  #coreUrlRefreshTimer: ReturnType<typeof setInterval> | null = null;
   #db!: PlatformDB;
   #config!: Config;
   initialized: boolean = false;
@@ -95,13 +100,26 @@ class Platform {
     this.#coreUrlCache = new Map();
   }
 
+  /**
+   * Every `getPlatform()` call lands here. The first call initialises; the
+   * concurrent and later ones get the same promise, so none of them sees a
+   * half-initialised platform. A failed initialisation can be retried.
+   */
   async init () {
-    if (this.#initialized) {
-      logger.warn('Platform already initialized, skipping');
-      return this;
+    if (this.#initPromise == null) {
+      this.#initPromise = this.#initOnce().catch((err) => {
+        this.stopCoreUrlRefresh(); // a failure after the refresh started must not leave it running
+        this.#initPromise = null;
+        this.#initialized = false;
+        this.initialized = false;
+        throw err;
+      });
     }
+    return await this.#initPromise;
+  }
 
-    this.#initialized = true; // guards re-entry (read at the top of init())
+  async #initOnce () {
+    this.#initialized = true;
     this.initialized = true; // intentionally public — see original code note
     this.#config = await getConfig();
     this.#db = await getPlatformDB();
@@ -120,6 +138,9 @@ class Platform {
     // `coreIdToUrl()` can answer synchronously even when explicit
     // `core.url` overrides are in play (DNSless multi-core).
     await this._refreshCoreUrlCache();
+    // A core that joins or moves later writes its row; refresh periodically so
+    // the running cores learn its URL without a restart (multi-core only).
+    if (!this.isSingleCore) this.startCoreUrlRefresh();
 
     // Re-key any legacy raw-keyed invitation tokens to their hash (idempotent),
     // then seed from config (writes hashed keys).
@@ -451,8 +472,8 @@ class Platform {
    *  3. Self URL (single-core / fallback).
    *
    * Stays synchronous so existing call sites (~10 across api-server) don't need
-   * a cascade rewrite. The cache is refreshed on `init()` and via
-   * `_refreshCoreUrlCache()` (called from this core after `registerSelf()`).
+   * a cascade rewrite. The cache is refreshed on `init()`, after this core's
+   * `registerSelf()`, and every 30 s on a multi-core core (`startCoreUrlRefresh`).
    *
    */
   coreIdToUrl (coreId: string): string {
@@ -474,6 +495,26 @@ class Platform {
       }
     }
     return withTrailingSlash(url);
+  }
+
+  /**
+   * Re-read the core URLs every `intervalMs` (default 30 s, the embedded DNS
+   * refresh interval). The timer does not keep the process alive; a failed
+   * read keeps the previous cache. Idempotent: a running timer is replaced.
+   */
+  startCoreUrlRefresh (intervalMs: number = CORE_URL_REFRESH_INTERVAL_MS): void {
+    this.stopCoreUrlRefresh();
+    this.#coreUrlRefreshTimer = setInterval(() => {
+      this._refreshCoreUrlCache().catch((err: unknown) => {
+        logger.warn('core URL cache refresh failed (previous URLs kept): ' + ((err as Error)?.message ?? err));
+      });
+    }, intervalMs);
+    this.#coreUrlRefreshTimer.unref?.();
+  }
+
+  stopCoreUrlRefresh (): void {
+    if (this.#coreUrlRefreshTimer != null) clearInterval(this.#coreUrlRefreshTimer);
+    this.#coreUrlRefreshTimer = null;
   }
 
   /**
@@ -563,9 +604,8 @@ class Platform {
     if (sites.length > 0) info.sites = sites;
     await this.#db.setCoreInfo(this.coreId, info);
     // Refresh the in-memory coreId→URL cache so this core's own entry is
-    // visible immediately. NOTE: cache stays cold for changes made by OTHER
-    // cores until the next init() — periodic refresh for dynamic cluster
-    // membership is tracked in PLATFORM-WIDE-CONFIG-MIGRATION.md follow-up.
+    // visible immediately. Changes made by OTHER cores are picked up by the
+    // periodic refresh (`startCoreUrlRefresh`, multi-core).
     await this._refreshCoreUrlCache();
 
     const { snapshot, hash } = this.getPlatformConfigSnapshot();

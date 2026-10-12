@@ -268,6 +268,11 @@ class Config {
       }
       if (extra.urlFromKey) {
         const url = store.get(extra.urlFromKey) as string | undefined | null;
+        // The key is optional (e.g. `serviceInfoUrl` when `service.*` is in YAML).
+        if (url == null) {
+          logger.debug('No URL at [' + extra.urlFromKey + '], nothing loaded for [' + extra.scope + ']');
+          continue;
+        }
         await loadUrl(extra.scope, extra.key, url);
         continue;
       }
