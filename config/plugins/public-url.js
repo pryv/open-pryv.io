@@ -8,7 +8,10 @@
 const path = require('path');
 
 const REG_PATH = '/reg';
-const WWW_PATH = '/www';
+// Default UI assets (login button, CSS, icons) when `service.assets` is not
+// set: the core serves none itself, so point at the public Pryv set rather
+// than at a path nothing answers. Operators set their own for their branding.
+const DEFAULT_ASSETS_DEFINITIONS = 'https://pryv.github.io/assets-pryv.me/index.json';
 
 async function publicUrlToService (config) {
   const isDnsLess = config.get('dnsLess:isActive');
@@ -20,9 +23,7 @@ async function publicUrlToService (config) {
       api: buildUrl(publicUrl, '/{username}/'),
       register: buildUrl(publicUrl, path.join(REG_PATH, '/')),
       access: buildUrl(publicUrl, path.join(REG_PATH, '/access/')),
-      assets: existing.assets || {
-        definitions: buildUrl(publicUrl, path.join(WWW_PATH, '/assets/index.json'))
-      },
+      assets: existing.assets || { definitions: DEFAULT_ASSETS_DEFINITIONS },
       ...(existing.features ? { features: existing.features } : {})
     }));
   } else {
@@ -45,9 +46,7 @@ async function publicUrlToService (config) {
         api: 'https://{username}.' + dnsDomain + '/',
         register: regUrl,
         access: accessUrl,
-        assets: existing.assets || {
-          definitions: buildUrl(coreUrl, path.join(WWW_PATH, '/assets/index.json'))
-        },
+        assets: existing.assets || { definitions: DEFAULT_ASSETS_DEFINITIONS },
         ...(existing.features ? { features: existing.features } : {})
       }));
     }
@@ -59,5 +58,6 @@ function buildUrl (url, path) {
 }
 
 module.exports = {
-  load: publicUrlToService
+  load: publicUrlToService,
+  DEFAULT_ASSETS_DEFINITIONS
 };

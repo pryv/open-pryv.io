@@ -5,8 +5,9 @@
 Hardening release. Client-visible: JSON answers carry `Cache-Control: no-store` and
 `Vary: Origin`; a path id always wins over an `id` query parameter; HF series points and query
 bounds are checked strictly; `accesses.checkApp` compares feature permissions; access deletion
-records no longer carry the token. Contains 2.0.0-rc.48 (read its notes, including the
-`bin/events-stamp-backfill.js` step, if you have not deployed it). Operator steps: backups, the
+records no longer carry the token. Fresh installs get working default UI assets. Contains
+2.0.0-rc.48 (read its notes, including the `bin/events-stamp-backfill.js` step, if you have not
+deployed it). Operator steps: backups, the
 `bin/breach-scope.js --output` reports and the `config-to-env` env file are now written owner-only
 (`0600`), so adjust any process that reads them as another user; a restore refuses backups whose
 user ids or names are not one safe file name, or that keep data behind symbolic links (see
@@ -82,6 +83,14 @@ Operators below).
 - A registration refused because its username was just taken no longer releases the e-mail
   address of the account that holds the name when that address is one of its verified secondary
   addresses.
+- `service.assets.definitions` left unset defaulted to `<publicUrl>/www/assets/index.json`, a path
+  the core does not serve (404), which broke lib-js `ServiceAssets` / the login button on fresh
+  installs. The default is now the public Pryv assets
+  (`https://pryv.github.io/assets-pryv.me/index.json`); a configured value is kept. The install
+  wizard asks for it and writes it explicitly.
+- Install wizard, dns-active: the default `auth.trustedApps` now include `https://reg.<domain>` and
+  `https://access.<domain>`; lib-js `Service.login` from Node sends the register URL as `Origin`
+  and was refused on a fresh install.
 
 ### Operators
 
