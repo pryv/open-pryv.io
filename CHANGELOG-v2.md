@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Operators
+
+- `bin/check-config.js` now reads configuration keys set as environment variables
+  (`platform__piiHmacKey`, `storages__base__engine`, ...) the way boot does: under the checked
+  file, above the base layer. A core configured through its environment (Docker) no longer gets
+  false "missing or unset" problems. The output names the variables it merged, never their values.
+  ([#155](https://github.com/pryv/open-pryv.io/issues/155))
+
 ## 2.0.0-rc.49 - 2026-10-12
 
 Hardening release. Client-visible: JSON answers carry `Cache-Control: no-store` and
