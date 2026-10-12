@@ -22,6 +22,13 @@
 //     is the post-divergence repair mode (partition recovery, or after a
 //     logged [access-index] live-write failure).
 //   - --dry-run: report the counts without writing.
+//   - --prune: list (counts only) the index rows that name the wrong account:
+//     no account on any core holds the stored name (orphan), or the name
+//     belongs to an account of this core that has no such access (stale: a
+//     later holder of a renamed or deleted account's former name). Nothing is
+//     changed unless --apply is given: then they are deleted (tombstoned under
+//     audit.onUserDelete: keep). Run on every core (stale rows are judged by
+//     the name's home core).
 //
 // Usage:
 //   node bin/backfill-access-index.js            # write-if-absent
@@ -79,6 +86,28 @@ require('@pryv/boiler').init({
     const byUsername = await usersIndex.getAllByUsername(); // { username: userId }
     const usernames = Object.keys(byUsername);
 
+    if (args.prune) {
+      const { findPrunableAccessIndexRows, pruneAccessIndexRow } = require('platform/src/accessIndex.ts');
+      const rows = await findPrunableAccessIndexRows(platform, {
+        coreId: platform.coreId,
+        userCoreOf: (stored) => platform.getUserCoreByPreHashedUsername(stored),
+        ownsAccess: async (stored, accessId) => {
+          const name = await platform.resolveLocalUsernameFromToken(stored);
+          const userId = name != null ? byUsername[name] : null;
+          if (userId == null) return null;
+          const found = await fromCallback((cb) =>
+            accessesStorage.findIncludingDeletionsAndVersions({ id: userId }, { id: accessId }, null, cb));
+          return (found || []).length > 0;
+        }
+      });
+      const keepMode = config.get('audit:onUserDelete') === 'keep';
+      if (args.apply) for (const { key, entry } of rows) await pruneAccessIndexRow(platform, key, entry, keepMode);
+      console.log('backfill-access-index: prune ' + (args.apply ? (keepMode ? '(applied: tombstoned)' : '(applied: deleted)') : '(listing only; --apply to change)'));
+      console.log('  orphan rows (no account holds the name)        ' + rows.filter((r) => r.reason === 'orphan').length);
+      console.log('  stale rows (name now held by another account)  ' + rows.filter((r) => r.reason === 'stale').length);
+      process.exit(0);
+    }
+
     const counts = { users: usernames.length, accesses: 0, written: 0, tombstoned: 0, skipped: 0 };
 
     for (const username of usernames) {
@@ -118,15 +147,21 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { resync: false, dryRun: false };
+  const args = { resync: false, dryRun: false, prune: false, apply: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--resync') args.resync = true;
     else if (a === '--dry-run') args.dryRun = true;
+    else if (a === '--prune') args.prune = true;
+    else if (a === '--apply') args.apply = true;
     else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
     }
+  }
+  if (args.apply && !args.prune) {
+    console.error('--apply is only valid with --prune');
+    process.exit(1);
   }
   return args;
 }
@@ -137,6 +172,8 @@ function printUsage (stream) {
     '  node bin/backfill-access-index.js            # write index rows that are absent',
     '  node bin/backfill-access-index.js --resync   # overwrite every row from access storage (repair)',
     '  node bin/backfill-access-index.js --dry-run  # report counts; do not write',
+    '  node bin/backfill-access-index.js --prune    # count index rows naming the wrong account',
+    '  node bin/backfill-access-index.js --prune --apply  # delete them (tombstone under audit keep)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the backfill reads the same storage:',

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Multi-core registration forward: the landing core signs the forward (`pryv-registration-forward`,
+  HMAC with the shared `auth.adminAccessKey` over the landing core id, the client address, a
+  timestamp and the body hash; the key never travels), checks the target with the peer-URL rule
+  and follows no redirect. The target accepts the header only with a valid signature (60 s
+  window; otherwise 403), then creates the account itself (no second forward or redirect: a
+  stale `core.url` or a concurrent selection could bounce a registration between cores) and
+  records the client address the landing core saw instead of the landing core's. Mixed versions:
+  an older target ignores the header. Tests `[MC15]`-`[MC17]`.
+
+- Breach-scope access index: a username change moves the account's index rows to the new name
+  (`renameAccessIndexOwner`); they stayed under the former name, which a later holder of that name
+  would have been resolved to. Account erasure also removes rows under the account's former names.
+  Existing renamed accounts: run `node bin/backfill-access-index.js --resync` once on each core;
+  then `--prune` (counts only) lists rows naming no account (orphan) or a later holder of the name
+  (stale), and `--prune --apply` deletes them (tombstones under `audit.onUserDelete: keep`); run
+  it on every core. Tests `[ACCIDX-12]`, `[ACCIDX-13]`, `[ACIX06]`.
+
 - Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
   rejected async branch is answered 500 (or the connection closed when the answer has started) and
   logged, instead of ending the worker (`api-server/src/ingressGuard.ts`); the worker and

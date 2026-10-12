@@ -35,7 +35,7 @@ The existing core (call it `core-a`) holds a self-signed **cluster CA** in `/etc
 2. You transfer the bundle file and the passphrase to `core-b` on two separate channels. **The bundle and its passphrase together are equivalent to the platform admin key plus a cluster node identity** (see "Cluster security").
 3. On `core-b`, you run `bin/master.js --bootstrap <bundle> --bootstrap-passphrase-file <pass>`. This:
    - decrypts and validates the bundle,
-   - stages `override-config.yml` and the TLS files in a private directory,
+   - stages `bootstrap-config.yml` and the TLS files in a private directory (your own `override-config.yml` is never written),
    - POSTs an ack to `core-a` (TLS pinned to the bundled CA),
    - on success, moves the staged files into place and deletes the bundle file (the join token is one-shot); on any failure, removes the staged files, so nothing from the bundle is left on disk,
    - chains into normal startup — joining the rqlite cluster over mTLS.
@@ -177,10 +177,11 @@ For a ≥3-core HA cluster, add `--bootstrap-as-voter` to each core that should 
 
 The master process:
 - decrypts and validates the bundle,
-- stages `override-config.yml` and `{ca,node}.{crt,key}` in a private directory (`.bootstrap-staging-*`, mode 0700) inside its config directory,
+- refuses the join when the core's own `override-config.yml` sets a key the bundle provides (`core.id`, `auth.adminAccessKey`, `storages.engines.rqlite.tls`, ...): that file would keep winning over the bundle. It lists the keys; remove them, or pass `--bootstrap-force` to keep them,
+- stages `bootstrap-config.yml` and `{ca,node}.{crt,key}` in a private directory (`.bootstrap-staging-*`, mode 0700) inside its config directory,
 - checks its clock against the existing core's and refuses the join on more than 30 s of skew (see above),
 - POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA (or, with `--bootstrap-ack-trust-system-ca`, verified against the system CA store), carrying the node certificate fingerprint the issuing core recorded with the token,
-- on success, moves `override-config.yml` into its config directory and the TLS files into `/etc/pryv/tls/` (mode 0600 for the key and the override), then deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
+- on success, moves `bootstrap-config.yml` into its config directory and the TLS files into `/etc/pryv/tls/` (mode 0600 for the key and that file), then deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
 - on any failure before that (refused ack, network error, clock skew), removes the staged files and exits 1: no platform secret and no node key stay on disk,
 - continues into normal startup — `rqlited` joins the cluster over mTLS.
 
@@ -221,7 +222,7 @@ so a core with a different name set shows a different hash.
 
 ## Cluster security
 
-- **Raft channel uses mTLS.** Bootstrap-issued cores ship with `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` set in `override-config.yml`. Both ends of every Raft connection verify the peer's cert against the cluster CA — a stranger on the network cannot join or impersonate a peer.
+- **Raft channel uses mTLS.** Bootstrap-issued cores ship with `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` set in `bootstrap-config.yml`. Both ends of every Raft connection verify the peer's cert against the cluster CA — a stranger on the network cannot join or impersonate a peer.
 - **The cluster CA private key lives only on the issuing core**, in `/etc/pryv/ca/ca.key` (mode 0600). Only this host can issue new node certs. Back up this directory off-host.
 - **Join tokens are one-shot.** A token verifies exactly once at the ack endpoint and is then burned; replays return 401. Default TTL 24h. The token is bound to the node certificate issued with it: an ack presenting another certificate fingerprint is refused (bundles issued by earlier versions carry no recorded fingerprint and are not checked).
 - **Bundles are AES-256-GCM encrypted** with a passphrase derived via scrypt. Tampering breaks GCM auth at decrypt time.
@@ -253,7 +254,7 @@ A **two-core cluster is a trap for availability**: quorum is 2-of-2, so if *eith
 
 ### Presets — which role for which topology
 
-Pick the preset that matches what you're building. The default join role is **non-voter**; pass `--bootstrap-as-voter` to join as a voter (persisted as `core.nonVoter` in the new core's generated `override-config.yml`).
+Pick the preset that matches what you're building. The default join role is **non-voter**; pass `--bootstrap-as-voter` to join as a voter (persisted as `core.nonVoter` in the new core's `bootstrap-config.yml`).
 
 | Your goal | First core (`core-a`) | Each additional core | Quorum | Survives a core dying? |
 |---|---|---|---|---|
@@ -323,7 +324,7 @@ A bundle plus its passphrase is equivalent to the platform admin key plus a clus
 3. **`letsEncrypt.atRestKey`**: set a new value on every core. The certificate and ACME account rows stored in the platform DB were encrypted with the old key, and their private keys were readable with it: re-issue those certificates under the new key.
 4. **`platform.piiHmacKey`** (when set): rotate it with `bin/platform-pii-rotate.js` (see [INSTALL.md](INSTALL.md), "Pepper rotation").
 5. **Raft membership**: remove any node you do not run from the Raft configuration (on the leader: `curl -s -XDELETE http://127.0.0.1:4001/remove -d '{"id":"<core-id>"}'`) and check `GET /nodes?nonvoters` on the leader. Restrict the Raft port (default 4002) in your firewall to the IPs of the cores you run.
-6. **Cluster CA and node certificates**: rqlite has no certificate revocation, so a node certificate stays valid until it expires (one year) unless the CA changes. Generate a new cluster CA and give every core a new node certificate: on the CA holder, move `/etc/pryv/ca/` and its TLS directory aside and run `node bin/bootstrap.js init-ca-holder`; then re-join each other core with a fresh bundle (`new-core --id <id> --ip <ip> --replace`, transferred and consumed as in the step-by-step above, after the secrets above were rotated). `--bootstrap` rewrites that core's `override-config.yml`: keep a copy of any setting you added there. Restart every core so all Raft connections use the new CA.
+6. **Cluster CA and node certificates**: rqlite has no certificate revocation, so a node certificate stays valid until it expires (one year) unless the CA changes. Generate a new cluster CA and give every core a new node certificate: on the CA holder, move `/etc/pryv/ca/` and its TLS directory aside and run `node bin/bootstrap.js init-ca-holder`; then re-join each other core with a fresh bundle (`new-core --id <id> --ip <ip> --replace`, transferred and consumed as in the step-by-step above, after the secrets above were rotated). `--bootstrap` replaces that core's `bootstrap-config.yml` (your `override-config.yml` is kept; on a core that joined with an earlier version, the `override-config.yml` that version wrote is moved to `override-config.yml.bootstrap-<date>.bak`: copy back any setting you added there). Restart every core so all Raft connections use the new CA.
 
 Rotate in that order where you can: the new bundles then carry the new secrets.
 
@@ -363,7 +364,7 @@ node bin/bootstrap.js new-core \
     --out /tmp/core-b.bundle.age
 ```
 
-The bundle includes the explicit `core.url`, which the new core writes into its `override-config.yml` and advertises to PlatformDB on startup. Other cores read this via the `Platform.coreIdToUrl()` cache, so the `/reg/cores` discovery route and the wrong-core middleware return the externally-correct URL.
+The bundle includes the explicit `core.url`, which the new core writes into its `bootstrap-config.yml` and advertises to PlatformDB on startup. Other cores read this via the `Platform.coreIdToUrl()` cache, so the `/reg/cores` discovery route and the wrong-core middleware return the externally-correct URL.
 
 ### Discovery preflight (required for client SDKs)
 

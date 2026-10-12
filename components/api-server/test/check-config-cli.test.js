@@ -332,3 +332,28 @@ describe('[CKEV] bin/check-config.js keys supplied by environment variables', fu
     assert.match(noDns.stderr, /Neither dnsLess\.isActive nor dns\.active is true/);
   });
 });
+
+describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', function () {
+  this.timeout(60000);
+
+  it('[CKBS1] keys in bootstrap-config.yml next to the file count, as at boot; the file still wins', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-config-bs-'));
+    try {
+      const file = path.join(dir, 'override-config.yml');
+      fs.writeFileSync(file, BASE_WITHOUT_PII_KEY);
+      const run = () => {
+        const env = Object.assign({}, process.env);
+        for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
+        delete env.NODE_ENV;
+        return spawnSync('node', [CLI, file], { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: 30000 });
+      };
+      assert.strictEqual(run().status, 1, 'no key anywhere');
+      fs.writeFileSync(path.join(dir, 'bootstrap-config.yml'), 'platform:\n  piiHmacKey: k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=\n');
+      const res = run();
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.match(res.stdout, /Bootstrap layer: .*bootstrap-config\.yml/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

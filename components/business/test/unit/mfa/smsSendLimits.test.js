@@ -27,7 +27,22 @@ describe('[MSSL] mfa/smsSendLimits', () => {
     clientHandle.send = (msg) => cluster.emit('message', workerSink, msg);
     return clusterKv.clientFor({ processHandle: clientHandle, timeoutMs: 1000 });
   }
-  const limiter = (limits = {}) => new SmsSendLimiter({ ...SEND_LIMIT_DEFAULTS, ...limits }, { kvClient: kvClient() });
+  const limiter = (limits = {}, sharedCounters = null) => new SmsSendLimiter({ ...SEND_LIMIT_DEFAULTS, ...limits }, { kvClient: kvClient(), sharedCounters });
+  // The platform store's counter, in memory (shared by every limiter given it).
+  function memoryCounters () {
+    const rows = new Map();
+    return {
+      rows,
+      async bumpWindowedCounter (key, max, windowMs, now) {
+        const row = rows.get(key);
+        if (row == null || row.windowEndsAt <= now) { rows.set(key, { count: 1, windowEndsAt: now + windowMs }); return null; }
+        if (row.count >= max) return row.windowEndsAt;
+        row.count++;
+        return null;
+      },
+      async releaseWindowedCounter (key) { const row = rows.get(key); if (row != null && row.count > 0) row.count--; }
+    };
+  }
   const send = (sessionId, username = 'alice', destination = '+41791234567') => ({ sessionId, username, destination });
   const advanceClock = (ms) => { const base = Date.now(); Date.now = () => base + ms; };
 
@@ -56,8 +71,8 @@ describe('[MSSL] mfa/smsSendLimits', () => {
     clusterKv.masterStop();
   });
 
-  it('[MSSL1] the defaults: 30 s per session, 5 per user per hour, 10 per destination per day', () => {
-    assert.deepStrictEqual(SEND_LIMIT_DEFAULTS, { minIntervalSeconds: 30, perUserPerHour: 5, perDestinationPerDay: 10 });
+  it('[MSSL1] the defaults: 30 s per session, 5 per user per hour, 100 per core per hour, 10 per destination per day', () => {
+    assert.deepStrictEqual(SEND_LIMIT_DEFAULTS, { minIntervalSeconds: 30, perUserPerHour: 5, perCorePerHour: 100, perDestinationPerDay: 10 });
   });
 
   it('[MSSL2] a second send on one session within the interval is refused, and allowed after it', async () => {
@@ -131,5 +146,32 @@ describe('[MSSL] mfa/smsSendLimits', () => {
     await assertTooMany(method.challenge('alice', profile, { headers: {}, body: {}, sessionId: 's1' }));
     assert.strictEqual(calls.length, 1, 'the refused send never reached the provider service');
     assert.deepStrictEqual(calls[0][2], { headers: {}, body: {}, sessionId: 's1' }, 'nothing of the client request is passed on');
+  });
+
+  it('[MSSL10] the core budget caps the sends of all users, and a refusal there gives back the user budget', async () => {
+    const l = limiter({ perCorePerHour: 3 });
+    for (let i = 0; i < 3; i++) await l.reserve(send('c' + i, 'user' + i, '+4179000000' + i));
+    await assertTooMany(l.reserve(send('c3', 'user3', '+41790000003')));
+    advanceClock(60 * 60 * 1000 + 1);
+    await l.reserve(send('c4', 'user3', '+41790000003')); // user3's hour budget was not used up by the refusal
+  });
+
+  it('[MSSL11] the destination budget is shared by the cores (platform store)', async () => {
+    const shared = memoryCounters();
+    const coreA = limiter({}, shared);
+    const coreB = limiter({}, shared);
+    for (let i = 0; i < 10; i++) await (i % 2 === 0 ? coreA : coreB).reserve(send('d' + i, 'user' + i));
+    await assertTooMany(coreB.reserve(send('d10', 'user10')));
+    assert.strictEqual(shared.rows.size, 1);
+    assert.ok(![...shared.rows.keys()][0].includes('+41791234567'), 'keyed by a hash');
+  });
+
+  it('[MSSL12] a platform store failure refuses the send and gives back the other budgets', async () => {
+    const failing = { bumpWindowedCounter: async () => { throw new Error('store down'); }, releaseWindowedCounter: async () => {} };
+    const l = limiter({ perUserPerHour: 1 }, failing);
+    await assertTooMany(l.reserve(send('f1')));
+    const ok = limiter({ perUserPerHour: 1 }, memoryCounters());
+    ok.kv = l.kv; // same core counters: the user's budget was given back
+    await ok.reserve(send('f2'));
   });
 });

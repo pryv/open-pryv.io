@@ -708,7 +708,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #         sendLimits:            # 429 past a limit; 0 disables it
 # #           minIntervalSeconds: 30    # between two sends on one MFA session
 # #           perUserPerHour: 5
-# #           perDestinationPerDay: 10  # per phone number, across users
+# #           perCorePerHour: 100       # this core, all users (the SMS cost cap)
+# #           perDestinationPerDay: 10  # per phone number, across users and cores
 # #         # challenge-verify mode: how the provider confirms a code; without
 # #         # it only an empty 2xx answer (e.g. 204) is a success.
 # #         # endpoints.verify.success: { jsonPath: status, equals: approved }

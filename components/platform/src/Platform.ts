@@ -1048,7 +1048,7 @@ class Platform {
    *   aws-us-east-1 registrations land on the correct core even if
    *   another hosting has fewer users.
    */
-  async validateRegistration (username: string, invitationToken: string, uniqueFields: Record<string, string>, hosting: string | null) {
+  async validateRegistration (username: string, invitationToken: string, uniqueFields: Record<string, string>, hosting: string | null, options: { pinToSelf?: boolean } = {}) {
     // 1. Check invitation token (claimed atomically in step 6, once the
     //    registration is known to happen on this core)
     const invitationKey = await this.#checkInvitationToken(invitationToken);
@@ -1084,7 +1084,8 @@ class Platform {
     // 4. Select a core (honour requested hosting so e.g. aws-us-east-1
     //    registrations don't leak to aws-eu-central-1 just because the latter
     //    happens to have fewer users).
-    const selectedCoreId = await this.selectCoreForRegistration(hosting);
+    // A registration another core forwarded here was already placed here.
+    const selectedCoreId = options.pinToSelf === true ? this.coreId : await this.selectCoreForRegistration(hosting);
 
     // 5. If the selected core is not self, redirect WITHOUT writing anything:
     //    only the core that actually creates the user claims its `user-core/`

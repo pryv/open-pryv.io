@@ -13,6 +13,8 @@ const methodCallback = require('../methodCallback.ts').default;
 const regPath = require('../Paths.ts').Register;
 const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
+const { getConfigSync } = require('@pryv/boiler');
+const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
 
 
 /**
@@ -23,6 +25,16 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   // POST /users: create a new user
   const registerHandler = function (req: PryvRequest, res: Response, next: NextFunction) {
     (req.context as { host?: string }).host = req.headers.host;
+    // Forwarded by another core: accepted only with a valid signature, which
+    // also vouches for the client address the landing core saw.
+    const forwardHeader = req.headers[REGISTRATION_FORWARD_HEADER];
+    if (forwardHeader != null) {
+      const forward = verifyRegistrationForward(forwardHeader, getConfigSync().get('auth:adminAccessKey'), JSON.stringify(req.body ?? {}));
+      if (forward == null) return next(errors.forbidden('Invalid registration forward.'));
+      const context = req.context as { registrationForwardedFrom?: string; source?: { ip?: string } };
+      context.registrationForwardedFrom = forward.from;
+      if (context.source != null && forward.client !== '') context.source.ip = forward.client;
+    }
     api.call(req.context, req.body, methodCallback(res, next, 201));
   };
   expressApp.post('/users', setMinimalMethodContext, setMethodId('auth.register'), registerHandler);

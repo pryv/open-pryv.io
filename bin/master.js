@@ -15,7 +15,7 @@
 //   node bin/master.js --bootstrap <bundle-file> --bootstrap-passphrase-file <path>
 //                      [--bootstrap-tls-dir <path>] [--bootstrap-config-dir <path>]
 //                      [--bootstrap-ack-trust-system-ca] [--bootstrap-as-voter]
-//                      [--bootstrap-clock-skew-seconds <n>]
+//                      [--bootstrap-clock-skew-seconds <n>] [--bootstrap-force]
 //
 // --bootstrap-clock-skew-seconds: before the ack, compare this host's clock
 //   with the issuing core's and refuse the join (exit 1, join token not used)
@@ -34,7 +34,7 @@
 //   quorum where either core dying is an outage).
 //
 // In --bootstrap mode the master decrypts the bundle, stages
-// `override-config.yml` + TLS files, posts an ack to the issuing core, moves
+// `bootstrap-config.yml` + TLS files, posts an ack to the issuing core, moves
 // the staged files into place once the ack is accepted (removes them on any
 // failure), then falls through into normal startup — picking up the
 // freshly-written config via @pryv/boiler's highest-precedence override-file slot.
@@ -56,8 +56,8 @@ if (cluster.isPrimary) {
 
   (async () => {
     // BOOTSTRAP MODE — runs before @pryv/boiler.init so the
-    // override-config.yml it writes is picked up at the highest precedence
-    // by the init below. Workers (cluster.fork()) skip this block entirely.
+    // bootstrap-config.yml it writes is picked up (below the operator's
+    // override-config.yml) by the init below. Workers (cluster.fork()) skip this block entirely.
     const bootstrapArgs = parseBootstrapArgs(process.argv.slice(2));
     if (bootstrapArgs.enabled) {
       try {
@@ -70,7 +70,7 @@ if (cluster.isPrimary) {
     }
 
     // Minimal boiler init — just enough to read config (now including any
-    // override-config.yml the bootstrap step wrote above).
+    // bootstrap-config.yml the bootstrap step wrote above).
     require('@pryv/boiler').init({
       appName: 'master',
       baseFilesDir: path.resolve(__dirname, '../'),
@@ -391,6 +391,13 @@ if (cluster.isPrimary) {
           })
           .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
       });
+      // Platform-wide counters (e.g. the SMS budget per destination) whose
+      // window ended: they hold destination hashes, kept no longer than needed.
+      platformDB.sweepExpiredWindowedCounters()
+        .then(({ removed }) => {
+          if (removed > 0) log(`[counter-sweep] removed ${removed} expired counter(s)`);
+        })
+        .catch((err) => log(`[counter-sweep] failed: ${err.message}`));
       // Prune operator-revoke tombstones + the advisory key inventory older than
       // the max token lifetime: past it every token the revoke could have killed
       // is already expired, so the marker's job is done. Keeps the per-core-cached
@@ -913,7 +920,7 @@ function parseBootstrapArgs (argv) {
   const out = { enabled: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-voter') { out.asVoter = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; } else if (a === '--bootstrap-clock-skew-seconds') { out.clockSkewSeconds = argv[++i]; }
+    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-voter') { out.asVoter = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; } else if (a === '--bootstrap-clock-skew-seconds') { out.clockSkewSeconds = argv[++i]; } else if (a === '--bootstrap-force') { out.force = true; }
   }
   if (out.enabled) {
     if (!out.bundlePath) throw new Error('--bootstrap requires <bundle-file>');
@@ -943,11 +950,17 @@ async function runBootstrap (args) {
     // Default to non-voter join (safe by default). --bootstrap-as-voter opts
     // into a voting node for >=3-core HA clusters.
     asNonVoter: args.asVoter !== true,
+    // Join although override-config.yml sets keys the bundle provides (they keep winning).
+    force: args.force === true,
     // Undefined keeps the consumer's default (30 s); 0 disables the check.
     clockSkewSeconds: args.clockSkewSeconds,
     log: (m) => console.log('[bootstrap] ' + m)
   });
   console.log('[bootstrap] joined cluster as ' + result.coreId);
-  console.log('[bootstrap] override-config: ' + result.overridePath);
+  console.log('[bootstrap] bootstrap-config: ' + result.configPath);
+  if (result.previousGeneratedOverrideBackup != null) {
+    console.log('[bootstrap] the override-config.yml written by an earlier --bootstrap was moved to ' + result.previousGeneratedOverrideBackup +
+      ': copy back into override-config.yml any setting you had added there');
+  }
   console.log('[bootstrap] continuing into normal startup ...');
 }

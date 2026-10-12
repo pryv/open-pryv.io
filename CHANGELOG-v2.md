@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Notifications
+
+- Scoped Socket.IO subscriptions and scoped webhooks now cover the streams created (or moved)
+  after they were set: a scope on a stream matches events in a child created later. The scopes are
+  resolved again after each stream change (create, update, trash, delete). An event written in a
+  new child within milliseconds of its creation can still be missed by a socket while it re-resolves.
+
+### Account
+
+- An account created without an email (e.g. by its delegate) that is then given one with
+  `account.update` (or `emails.setPrimary`) now stores it as its primary email. The address was
+  reserved on the platform but never stored, so the account showed no email, a password reset had
+  no recipient, and deleting the account kept the address reserved. Accounts already in that state:
+  set the email again. The platform integrity check now reports such an account as "email rows but
+  no primary email" instead of an unknown account.
+
 ### Requests
 
 - Query strings are parsed without letting a key shadow a built-in object property: parameters
@@ -69,6 +85,22 @@
   file, above the base layer. A core configured through its environment (Docker) no longer gets
   false "missing or unset" problems. The output names the variables it merged, never their values.
   ([#155](https://github.com/pryv/open-pryv.io/issues/155))
+- Joining a cluster (`bin/master.js --bootstrap`) no longer replaces `override-config.yml`: the
+  cluster identity, platform secrets and rqlite mTLS settings go to a new `bootstrap-config.yml`
+  (0600) in the same directory, loaded just below `override-config.yml` (which stays the
+  operator's and wins) and above environment variables and `--config`. The join is refused while
+  `override-config.yml` sets a key the bundle provides (it lists them; `--bootstrap-force` keeps
+  them). On a core that joined with an earlier version, a re-join moves the `override-config.yml`
+  that version wrote to `override-config.yml.bootstrap-<date>.bak` (copy back any setting you had
+  added). Already-joined cores need nothing. Docker: the entrypoint prepares
+  `/app/config/bootstrap-config.yml`; a read-only `/app/config` mount needs that file writable for a
+  join. `bin/check-config.js` reads `bootstrap-config.yml` next to the checked file, as boot does.
+- MFA SMS send limits: a new `services.mfa.methods.sms.sendLimits.perCorePerHour` (default 100, 0
+  disables) caps the SMS a core sends per hour, all users together, against toll fraud through many
+  accounts and premium-rate numbers; reaching it is logged (WARN). `perDestinationPerDay` is now
+  counted platform-wide (it was per core, so N cores allowed N times the budget); when the platform
+  store cannot be reached the send is refused. Expired counters are swept with the periodic
+  access-state sweep.
 
 ## 2.0.0-rc.49 - 2026-10-12
 

@@ -957,6 +957,20 @@ describe('[WH01] webhooks', () => {
       assert.strictEqual(hook.body.webhook.state, 'inactive');
     });
 
+    it('[SNWA7] a scope on a stream covers a child stream created later', async () => {
+      const { access, hookId } = await appWithWebhook({ a: scopesAB.a });
+      const childId = 'snwn-a-child-' + cuid();
+      const created = await coreRequest.post(`/${username}/streams`).set('Authorization', personalToken)
+        .send({ id: childId, name: childId, parentId: 'snwn-a' });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      const storage = await require('storage').getStorageLayer();
+      const repo = new (require('business').webhooks.Repository)(storage.webhooks, storage.events, storage.accesses);
+      const userId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(username);
+      const stored = await repo.getById({ id: userId, username }, hookId);
+      assert.ok(JSON.stringify(stored.scopes.a.prepared).includes(childId), 'prepared covers the child: ' + JSON.stringify(stored.scopes.a.prepared));
+      assert.ok(access != null);
+    });
+
     it('[SNWA5] scopes set by the personal token are bound to the webhook\'s access', async () => {
       const { hookId } = await appWithWebhook({ a: scopesAB.a });
       const res = await coreRequest.put(`/${username}/webhooks/${hookId}`).set('Authorization', personalToken)

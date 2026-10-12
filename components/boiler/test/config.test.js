@@ -110,3 +110,44 @@ describe('[BCFG] boiler config: values read are copies', function () {
     assert.strictEqual(config.get('services:none'), undefined);
   });
 });
+
+describe('[BCFL] boiler config: override and bootstrap layers', function () {
+  let dir;
+  const noop = () => {};
+  const logging = {
+    getLogger: () => ({ debug: noop, warn: noop, info: noop, error: noop }),
+    initLoggerWithConfig: noop
+  };
+
+  before(function () {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boiler-layers-'));
+    fs.writeFileSync(path.join(dir, 'default-config.yml'), 'a: default\nb: default\nc: default\nd: default\n');
+    fs.writeFileSync(path.join(dir, 'base-config.yml'), 'a: base\nb: base\nc: base\n');
+    fs.writeFileSync(path.join(dir, 'bootstrap-config.yml'), 'a: bootstrap\nb: bootstrap\n');
+    fs.writeFileSync(path.join(dir, 'override-config.yml'), 'a: override\n');
+  });
+  after(function () {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('[BCFL1] override-config.yml wins over bootstrap-config.yml, which wins over the base file', function () {
+    const config = new Config().initSync({
+      baseConfigDir: dir,
+      extras: [{ scope: 'base-file', file: path.join(dir, 'base-config.yml') }]
+    }, logging);
+    assert.strictEqual(config.get('a'), 'override');
+    assert.strictEqual(config.get('b'), 'bootstrap');
+    assert.strictEqual(config.get('c'), 'base');
+    assert.strictEqual(config.get('d'), 'default');
+  });
+
+  it('[BCFL2] skipOverrideConfig skips both files', function () {
+    const config = new Config().initSync({
+      baseConfigDir: dir,
+      skipOverrideConfig: true,
+      extras: [{ scope: 'base-file', file: path.join(dir, 'base-config.yml') }]
+    }, logging);
+    assert.strictEqual(config.get('a'), 'base');
+    assert.strictEqual(config.get('b'), 'base');
+  });
+});

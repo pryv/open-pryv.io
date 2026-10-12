@@ -13,6 +13,7 @@ import type { Subscriber } from 'business/src/notifications/NotificationEngine.t
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
 const errors = require('errors').factory;
+const { APIError } = require('errors');
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
@@ -213,6 +214,13 @@ class NamespaceContext {
     }
   }
 
+  reprepareConnections (): void {
+    for (const conn of this.connections.values()) {
+      if (!conn.hasScopes()) continue;
+      conn.reprepareScopes().catch((err: unknown) => this.logger.warn('scoped-notification re-prepare failed', err));
+    }
+  }
+
   // Adds a connection to the namespace. This produces a `Connection` instance
   // and stores it in (our) namespace.
   //
@@ -267,6 +275,9 @@ class NamespaceContext {
     if (message != null) {
       this.emitCoarse(message);
       if (message === 'accessesChanged') this.revalidateConnections(); // D10
+      // Scopes are resolved to a set of streams: a stream created, moved or
+      // deleted changes that set (e.g. a new child of a watched stream).
+      if (message === 'streamsChanged') this.reprepareConnections();
     } else {
       this.logger.debug('Unknown payload', payload);
     }
@@ -405,13 +416,31 @@ class Connection {
       this.socket.disconnect();
       return;
     }
-    if (this.scopes.size === 0) return;
-    for (const [key, s] of [...this.scopes]) {
-      try {
-        s.prepared = await prepareScopeQuery(this.methodContext, s.rawQuery);
-      } catch (err) {
-        this.scopes.delete(key); // scope now out of permission -> drop it
-      }
+    await this.reprepareScopes();
+  }
+
+  // Resolve every scope again (permissions and stream tree as they are now).
+  // Coalesced: a burst of changes while one pass runs costs one more pass.
+  private reprepareRunning = false;
+  private reprepareAgain = false;
+  async reprepareScopes (): Promise<void> {
+    if (this.reprepareRunning) { this.reprepareAgain = true; return; }
+    this.reprepareRunning = true;
+    try {
+      do {
+        this.reprepareAgain = false;
+        for (const [key, s] of [...this.scopes]) {
+          try {
+            s.prepared = await prepareScopeQuery(this.methodContext, s.rawQuery);
+          } catch (err) {
+            // Out of permission (or its stream gone): drop it. Any other
+            // failure keeps the scope as it was until the next pass.
+            if (err instanceof APIError) this.scopes.delete(key);
+          }
+        }
+      } while (this.reprepareAgain);
+    } finally {
+      this.reprepareRunning = false;
     }
     this.syncSubscriber();
   }

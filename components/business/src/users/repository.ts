@@ -28,7 +28,7 @@ const { getPlatform } = require('platform');
 // Breach-scope reverse-index: a personal access is created with the user at
 // registration (a distinct site from accesses.create + login), so index it too;
 // and a user's index rows are cleaned up (Art.17) when the account is erased.
-const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal } = require('platform/src/accessIndex.ts');
+const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal, renameAccessIndexOwnerNonFatal } = require('platform/src/accessIndex.ts');
 const cache = require('cache').default;
 const cmc = require('cmc');
 const emailsContainer = require('business/src/emails/container.ts');
@@ -232,6 +232,9 @@ class UsersRepository {
     //    unique fields re-owned, indexed fields moved). Caller verified the
     //    new name is free; the claim above made it atomic.
     await this.platform.renameUser(oldUsername, newUsername);
+    // The breach-scope index names the owner of each access: move its rows
+    // too, or they would be resolved to a later holder of the former name.
+    await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
 
     // 3. local index rename (leaves the alias index intact)
     await this.usersIndex.renameUser(oldUsername, newUsername);
@@ -625,7 +628,13 @@ class UsersRepository {
           modified: modifiedTime,
           modifiedBy: accessId
         };
-        await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null, mallTransaction);
+        const updated = await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null, mallTransaction);
+        // A field the account never had (created without it, e.g. no email):
+        // nothing to update, so write it.
+        if ((updated == null || updated.length === 0) && content != null &&
+            accountStreams.accountLeavesMap[accountStreams.toStreamId(streamIdWithoutPrefix)] != null) {
+          await this.userAccountStorage.setAccountField(user.id, streamIdWithoutPrefix, content, accessId, modifiedTime);
+        }
       }
     });
   }
@@ -665,7 +674,8 @@ class UsersRepository {
       // tombstones them (strip username) so a late breach can still confirm the
       // accessId belonged to a since-erased account. Non-fatal.
       const keepMode = ((await getConfig()).get('audit:onUserDelete') as string) === 'keep';
-      await cleanupUserAccessIndexNonFatal(this.platform, username, keepMode);
+      // Also under the former names: rows written before they were moved on rename.
+      for (const name of [username, ...aliases]) await cleanupUserAccessIndexNonFatal(this.platform, name, keepMode);
       // Reset requests are keyed by username: a token issued before the
       // deletion must not apply to a later account of the same name, nor of
       // one of its aliases (a former username is released here too).

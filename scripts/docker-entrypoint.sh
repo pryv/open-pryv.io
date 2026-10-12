@@ -34,7 +34,7 @@ run_server () {
       changed=$(find "$real" ! -user node -execdir chown -h node:node {} + -print | wc -l)
       [ "$changed" = "0" ] || echo "docker-entrypoint: $changed path(s) under $dir handed to user node"
     done
-    # `--bootstrap` (joining a cluster) writes override-config.yml into the
+    # `--bootstrap` (joining a cluster) writes bootstrap-config.yml into the
     # image's config directory, which stays root-owned: prepare that one file.
     case " $* " in
       *" --bootstrap "*)
@@ -42,9 +42,9 @@ run_server () {
           *" --bootstrap-config-dir "*) ;;
           *)
             # 0600: it will carry the cluster secrets.
-            touch /app/config/override-config.yml
-            chmod 600 /app/config/override-config.yml
-            chown node:node /app/config/override-config.yml
+            touch /app/config/bootstrap-config.yml
+            chmod 600 /app/config/bootstrap-config.yml
+            chown node:node /app/config/bootstrap-config.yml
             ;;
         esac
         ;;

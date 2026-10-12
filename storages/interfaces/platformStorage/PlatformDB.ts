@@ -216,6 +216,18 @@ export interface PlatformDB {
   consumeAccessState (key: string): Promise<AccessStateEntry | null>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
   /**
+   * Platform-wide windowed counter (e.g. a send budget shared by all cores):
+   * count one under `key` unless `max` was reached in the current window, in
+   * one linearized statement (of N concurrent bumps at max-1, exactly one
+   * counts). A window opens at the first count and lasts `windowMs`. Answers
+   * null when counted, else the time (ms) the window ends.
+   */
+  bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null>;
+  /** Give back one count of {@link bumpWindowedCounter} (never below 0). */
+  releaseWindowedCounter (key: string): Promise<void>;
+  /** Delete the counters whose window ended. */
+  sweepExpiredWindowedCounters (now?: number): Promise<{ removed: number }>;
+  /**
    * Non-destructive listing of the EXPIRED access-state entries whose
    * (caller-facing) key starts with `prefix`. Returns each match's key and
    * parsed value — for callers that must act on an expired entry (e.g. revoke
@@ -370,6 +382,12 @@ const PlatformDB: PlatformDB = {
   async consumeAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
+  async bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null> { throw new Error('Not implemented'); },
+
+  async releaseWindowedCounter (key: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async sweepExpiredWindowedCounters (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
 
   async listExpiredAccessStates (prefix: string, now?: number): Promise<ExpiredAccessStateEntry[]> { throw new Error('Not implemented'); },
 
