@@ -44,6 +44,8 @@ const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
  * every call-site.
  */
 const USERNAME_FIELD = 'username';
+/** `consumedBy` of an invitation whose account was deleted: never a valid username. */
+const INVITATION_CONSUMER_DELETED = '(deleted)';
 
 /** How often a multi-core core re-reads the other cores' URLs (as the embedded DNS does). */
 const CORE_URL_REFRESH_INTERVAL_MS = 30_000;
@@ -405,6 +407,8 @@ class Platform {
         await this.#db.deleteUserIndexedField(usernameToken, entry.field);
       }
     }
+    // The invitations it consumed stay consumed, without its name.
+    await this.#db.reassignInvitationConsumer(username, INVITATION_CONSUMER_DELETED);
   }
 
   /**
@@ -442,6 +446,7 @@ class Platform {
         await this.#db.deleteUserIndexedField(oldToken, entry.field);
       }
     }
+    await this.#db.reassignInvitationConsumer(oldUsername, newUsername);
   }
 
   // ----------------  Core identity (multi-core)  ----------------

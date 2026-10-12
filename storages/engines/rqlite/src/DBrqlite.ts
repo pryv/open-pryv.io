@@ -345,6 +345,14 @@ class DBrqlite {
     );
   }
 
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> {
+    await this.execute(
+      `UPDATE keyValue SET value = json_set(value, '$.consumedBy', ?)
+       WHERE key LIKE 'invitation/%' AND json_extract(value, '$.consumedBy') = ?`,
+      [to, from]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**

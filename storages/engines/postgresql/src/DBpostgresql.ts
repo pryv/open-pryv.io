@@ -267,6 +267,15 @@ class DBpostgresql {
     );
   }
 
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> {
+    await this.db.query(
+      `UPDATE platform_kv
+       SET value = (value::jsonb || jsonb_build_object('consumedBy', $2::text))::text
+       WHERE key LIKE 'invitation/%' AND (value::jsonb ->> 'consumedBy') = $1`,
+      [from, to]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**

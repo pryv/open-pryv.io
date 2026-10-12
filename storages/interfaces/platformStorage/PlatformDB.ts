@@ -248,6 +248,8 @@ export interface PlatformDB {
   claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean>;
   /** Clear a claim made by `consumedBy` (no-op when someone else holds it). */
   releaseInvitationToken (token: string, consumedBy: string): Promise<void>;
+  /** Set `consumedBy` to `to` on every invitation consumed by `from` (account renamed or deleted). */
+  reassignInvitationConsumer (from: string, to: string): Promise<void>;
 
   // Integrity (read-only)
   checkStoreIntegrity (): Promise<PlatformIntegrityReport>;
@@ -398,6 +400,8 @@ const PlatformDB: PlatformDB = {
   async claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean> { throw new Error('Not implemented'); },
 
   async releaseInvitationToken (token: string, consumedBy: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> { throw new Error('Not implemented'); },
 
   async checkStoreIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
 };

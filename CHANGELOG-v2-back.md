@@ -9,6 +9,12 @@
   checked with Node's own header-value rule at boot and in `check-config` (control characters and
   non-Latin-1 text were accepted, then refused by `setHeader` at every answer). Tests: `[INGG]`,
   business `[HSC8]`.
+- PlatformDB invitations: deleting an account rewrites `consumedBy` of the invitations it
+  consumed to `(deleted)` (they stay consumed), and renaming an account moves them to the new
+  name; the plain username no longer outlives the account in the replicated platform store. New
+  PlatformDB method `reassignInvitationConsumer(from, to)` (PostgreSQL and rqlite). Tests:
+  conformance `[PDIC1]`, platform `[INVT8]` `[INVT9]`. Invitations consumed by accounts deleted
+  before this change keep the name (no sweep).
 - `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
 
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
