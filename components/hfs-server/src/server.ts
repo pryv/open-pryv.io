@@ -116,6 +116,7 @@ class Server {
     // this worker over loopback with the resolved client in X-Forwarded-For.
     configureTrustedProxies(config.get('http:trustedProxies') as string[] | undefined);
     app.set('trust proxy', expressTrustProxy);
+    app.set('query parser', middleware.queryParser);
     app.disable('x-powered-by');
     app.use(middleware.noSniff);
     app.use(hostToPath(config));

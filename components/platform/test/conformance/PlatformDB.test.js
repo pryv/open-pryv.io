@@ -202,6 +202,25 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('reassignInvitationConsumer()', () => {
+      it('[PDIC1] must rewrite consumedBy on the invitations of that consumer only, keeping them consumed', async () => {
+        const [a, b, free] = ['inv-a-' + cuid(), 'inv-b-' + cuid(), 'inv-f-' + cuid()];
+        for (const key of [a, b, free]) await db.createInvitationToken(key, { createdAt: 1, createdBy: 'admin', description: '' });
+        assert.strictEqual(await db.claimInvitationToken(a, 'alice', 10), true);
+        assert.strictEqual(await db.claimInvitationToken(b, 'bob', 11), true);
+
+        await db.reassignInvitationConsumer('alice', '(deleted)');
+
+        const infoA = await db.getInvitationToken(a);
+        assert.strictEqual(infoA.consumedBy, '(deleted)');
+        assert.strictEqual(infoA.consumedAt, 10);
+        assert.strictEqual((await db.getInvitationToken(b)).consumedBy, 'bob');
+        assert.strictEqual((await db.getInvitationToken(free)).consumedBy, undefined);
+        assert.strictEqual(await db.claimInvitationToken(a, 'carol', 12), false, 'still consumed');
+        for (const key of [a, b, free]) await db.deleteInvitationToken(key);
+      });
+    });
+
     describe('setUserCore() / getUserCore()', () => {
       it('must set and retrieve a user-to-core mapping', async () => {
         const username = 'user-' + cuid();

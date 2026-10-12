@@ -1,5 +1,75 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Requests
+
+- Query strings are parsed without letting a key shadow a built-in object property: parameters
+  such as `?hasOwnProperty=...`, `?toString=...` or `a[constructor]=...` are now ignored (API,
+  HF and previews servers). The bracket syntax (`streams[]=a&streams[]=b`) and repeated keys
+  work as before.
+
+### Events
+
+- Account fields that are unique on the platform (custom `isUnique` account fields): writing a new
+  value with `events.create` now releases the previous value (it stayed reserved for the account,
+  so nobody else could take it, and the reservations piled up); with `events.create` and
+  `events.update`, the previous value is released only once the event is written, and a write that
+  fails releases the value it had claimed. Values left reserved by earlier versions stay reserved.
+- `events.get?includeDeletions` and `streams.get?includeDeletionsSince`: deletion records were
+  returned to any token, whatever its permissions. They keep no streams (unless
+  `versioning.deletionMode` is `keep-everything`), so they are now returned only to an access that
+  reads the whole store: personal, or `*` read with no `none` / `create-only` exception (the
+  entries the server adds itself do not count). Another access gets an empty `eventDeletions` /
+  `streamDeletions` list; with `keep-everything`, it gets the event deletions whose kept streams it
+  can read. Effect on sync clients: a lib-js `Monitor` on a stream-scoped app token no longer
+  receives final deletions (trashing still arrives as an update); personal and `*` read tokens see
+  no change.
+- SQLite: `events.get?includeDeletions` applies `limit`, `skip` and `sortAscending` to the deletion
+  records, like PostgreSQL (it returned all of them, newest first).
+
+### Account deletion and delegation
+
+- `DELETE /users/:username` with the account's personal token is refused (`invalid-operation`,
+  `data.controlledAccountsWithoutEmail`) while the account is the delegate of an account with no
+  email: an account created by its delegate has no usable password until its owner sets one, so
+  deleting the delegate would leave it with no way in. Setting an email on it (proved or not)
+  lifts the refusal. A deletion with the admin key goes through and is logged.
+- New `POST /{controlled}/delegations/controlled-side/status` (control access only): answers
+  `{ hasEmail }`, so the delegate's core can apply the rule above when the controlled account is
+  on another core. A core that cannot answer (older version, unreachable) does not hold the
+  deletion.
+
+### Webhooks
+
+- A webhook was called once per API worker for each change (twice with the default
+  `cluster.apiWorkers: 2`): every worker ran the webhooks service with every webhook. One API
+  worker now runs it; its replacement takes over when it restarts.
+- Scoped webhooks follow their access: when `accesses.update` narrows the access, the scopes are
+  resolved again; a scope the access no longer reaches is removed, and a webhook left without any
+  scope becomes `inactive` (it is never turned into an unscoped webhook).
+- `webhooks.update` with `scopes`: the new map replaces the stored one (removed keys stayed stored)
+  and applies at once (the running webhook kept the previous scopes until a restart). Scopes set by
+  the account owner's personal token are resolved against the webhook's own access, never the
+  wider personal one.
+- Deleting an access stops its webhooks at once (they were deleted from storage but kept running
+  until the next change or a restart).
+
+### Socket.IO
+
+- `accessUpdated` (access id and new serial, after `accesses.update`) is now sent only to the
+  sockets authenticated with the updated access; it was sent to every socket of the account. The
+  other sockets still get `accessesChanged`. lib-js uses `accessUpdated` to refresh the
+  connection's own access info, which is unchanged.
+
+### Operators
+
+- `bin/check-config.js` now reads configuration keys set as environment variables
+  (`platform__piiHmacKey`, `storages__base__engine`, ...) the way boot does: under the checked
+  file, above the base layer. A core configured through its environment (Docker) no longer gets
+  false "missing or unset" problems. The output names the variables it merged, never their values.
+  ([#155](https://github.com/pryv/open-pryv.io/issues/155))
+
 ## 2.0.0-rc.49 - 2026-10-12
 
 Hardening release. Client-visible: JSON answers carry `Cache-Control: no-store` and

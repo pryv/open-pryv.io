@@ -156,7 +156,7 @@ class Repository {
   }
 
   /** @private An access from the access cache, else from storage. */
-  async _findAccess (user: User, accessId: string): Promise<{ deleted?: unknown; expires?: number | null; type?: string; createdBy?: unknown; permissions?: unknown } | null> {
+  async _findAccess (user: User, accessId: string): Promise<{ deleted?: unknown; expires?: number | null; type?: string; createdBy?: unknown; permissions?: unknown; token?: string } | null> {
     const cached = cache.getAccessLogicForId(user.id, accessId);
     if (cached != null) return cached;
     return await fromCallback((cb: NodeCallback) =>

@@ -159,9 +159,17 @@ function prepareEventsGetQuery (params: GetParams): string {
   return 'SELECT * FROM events_fts ' + prepareQuery(params);
 }
 
-UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number): NodeReadable {
+UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: { sortAscending?: boolean; limit?: number; skip?: number } | null): NodeReadable {
   this.logger.debug(`GET events deletions since: ${deletedSince}`);
-  return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
+  if (options?.sortAscending !== true && options?.limit == null && options?.skip == null) {
+    return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
+  }
+  // Same order, limit and skip as the PostgreSQL engine.
+  let sql = `SELECT * from events WHERE deleted >= ? ORDER BY deleted ${options?.sortAscending === true ? 'ASC' : 'DESC'}`;
+  const params: number[] = [deletedSince];
+  if (options?.limit != null || options?.skip != null) { sql += ' LIMIT ?'; params.push(options?.limit ?? -1); }
+  if (options?.skip != null) { sql += ' OFFSET ?'; params.push(options.skip); }
+  return readableEventsStreamForIterator(this.db.prepare(sql).iterate(...params));
 };
 
 // also see: https://nodejs.org/api/stream.html#stream_stream_readable_from_iterable_options

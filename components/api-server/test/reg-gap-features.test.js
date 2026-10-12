@@ -138,6 +138,27 @@ describe('[RGGF] Register gap features', () => {
       const res = await coreRequest.delete('/system/users/userzero?onlyReg=true&dryRun=true');
       assert.strictEqual(res.status, 404); // system routes return 404 for unauth
     });
+
+    it('[GF34] onlyReg removes the registration only: the account stays hosted and usable', async () => {
+      const username = 'gfonlyreg' + Date.now().toString(36);
+      const password = 'testpassw0rd';
+      const regRes = await coreRequest.post('/users').send({
+        appId: 'test-gf',
+        username,
+        password,
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+        language: 'en'
+      });
+      assert.ok(regRes.status === 201 || regRes.status === 200, JSON.stringify(regRes.body));
+      const res = await coreRequest.delete(`/system/users/${username}?onlyReg=true`).set('Authorization', adminAccessKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const login = await coreRequest.post(`/${username}/auth/login`)
+        .send({ username, password, appId: 'pryv-test-no-cors' });
+      assert.strictEqual(login.status, 200, 'still hosted: ' + JSON.stringify(login.body));
+      const usersRepository = await require('business/src/users/index.ts').getUsersRepository();
+      await usersRepository.deleteOne(await usersRepository.getUserIdForUsername(username), username);
+    });
   });
 
   // --- Feature 2: POST /system/users/validate ---

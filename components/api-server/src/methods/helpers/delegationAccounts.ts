@@ -31,6 +31,8 @@ const { getPlatform } = require('platform');
 const { buildMallForCmc } = require('./cmcMall.ts');
 const { slug } = require('cmc');
 const { ready, getLogger } = require('@pryv/boiler');
+const Deletion = require('business/src/auth/deletion.ts').default;
+const { getStorageLayer } = require('storage');
 
 const logger = getLogger('delegations:accounts');
 
@@ -127,12 +129,14 @@ export async function buildSystemCreateAccountDeps (): Promise<{
   }
 
   async function rollbackAccount (username: string, userId: string): Promise<void> {
-    // Full cascading delete of the freshly-created account: releases the
-    // platform unique fields (username, email) + the user-core routing row +
-    // the user's data. Used when a post-creation step (anchor / control mint)
-    // fails after the account already exists.
+    // Erase the freshly-created account as auth.delete does (platform rows,
+    // user-core routing, data, accesses incl. a control access already minted,
+    // sessions, files, user directory). Used when a post-creation step (anchor
+    // / control mint) fails after the account exists. No relationship
+    // teardown: none was established.
     try {
-      await usersRepository.deleteOne(userId, username);
+      const deletion = new Deletion(null, await getStorageLayer(), config);
+      await deletion.eraseAccount({ id: userId, username }, { teardown: false });
     } catch (err) {
       logger.warn('delegated-account rollback failed for "' + username + '"',
         err instanceof Error ? err.message : String(err));

@@ -1,5 +1,41 @@
 # Changelog - Internal (no API impact)
 
+## Unreleased
+
+- Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
+  rejected async branch is answered 500 (or the connection closed when the answer has started) and
+  logged, instead of ending the worker (`api-server/src/ingressGuard.ts`); the worker and
+  hosted-site proxies guard their `writeHead` the same way. `hostedSites.<name>.headers` values are
+  checked with Node's own header-value rule at boot and in `check-config` (control characters and
+  non-Latin-1 text were accepted, then refused by `setHeader` at every answer). Tests: `[INGG]`,
+  business `[HSC8]`.
+- PlatformDB invitations: deleting an account rewrites `consumedBy` of the invitations it
+  consumed to `(deleted)` (they stay consumed), and renaming an account moves them to the new
+  name; the plain username no longer outlives the account in the replicated platform store. New
+  PlatformDB method `reassignInvitationConsumer(from, to)` (PostgreSQL and rqlite). Tests:
+  conformance `[PDIC1]`, platform `[INVT8]` `[INVT9]`. Invitations consumed by accounts deleted
+  before this change keep the name (no sweep).
+- Account erasure in one place: `Deletion.erasureSteps()` is the ordered list `auth.delete`
+  registers, and `Deletion.eraseAccount()` runs it for the other whole-account removals. The
+  rollback of an account created for a delegate (a failure after its control access was minted)
+  used `deleteOne` only and left the control access, sessions, files and user directory; it now
+  erases the account like `auth.delete` (no relationship teardown: none was established). Test
+  `[DCRE-09]`.
+- Registration compensation: a registration with a session that failed after the session and
+  personal access were written (e.g. in `setUserPassword`) left them, and the user directory,
+  behind; `compensateFailedInsert` now removes them (only when the attempt owns the id). Test
+  `[URB2]` on both engines.
+- `DELETE /system/users/:username?onlyReg=true` and restore `--overwrite` keep their partial
+  semantics by design (the account stays hosted; its relationships stay valid). Test `[GF34]`.
+- Account deletion, relationships: a consent revocation to an account of the same core is applied
+  in-process (`events.create` with the same token, through the whole method chain) instead of a
+  request to the core's own public URL, which a core behind a proxy without hairpin access could
+  not reach (`helpers/localDelivery.ts`, also used by the `accesses.delete` hook). The deliveries
+  to other cores (delegation releases, detach notices, revocations) are awaited for 5 s at most
+  before the deletion answers (`trackTeardownDelivery`); still pending, they go on and are logged.
+  Tests `[CN84]`, `[LDLV]`.
+- `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
+
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
 
 - `components/storage/src/userLocalDirectory.ts` `getPathForUser` refuses a user id holding `/`,

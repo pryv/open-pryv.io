@@ -264,8 +264,18 @@ class Webhook {
 
   async update (fieldsToUpdate: Partial<Webhook>) {
     const fields = Object.keys(fieldsToUpdate);
+    const replacesScopes = 'scopes' in fieldsToUpdate;
+    const scopes = fieldsToUpdate.scopes;
     deepMerge(this, fieldsToUpdate);
-    await makeUpdate(fields, this);
+    if (!replacesScopes) return await makeUpdate(fields, this);
+    // `scopes` replaces the whole map. The store merges a map into the stored
+    // one (a null value removes a key), so the stored keys not in the new map
+    // are sent as null.
+    this.scopes = scopes ?? {};
+    const stored = this.repository == null ? null : await this.repository.getById(this.user, this.id);
+    const removed: Record<string, null> = {};
+    for (const key of Object.keys(stored?.scopes ?? {})) if (!(key in this.scopes)) removed[key] = null;
+    await makeUpdate(fields, this, { scopes: Object.assign(removed, this.scopes) });
   }
 
   async delete () {
@@ -355,7 +365,7 @@ function warn (webhook: Webhook, msg: string) {
   if (webhook.logger == null) { return; }
   webhook.logger.warn(msg);
 }
-async function makeUpdate (fields: string[] | null, webhook: Webhook) {
+async function makeUpdate (fields: string[] | null, webhook: Webhook, overrides: Record<string, unknown> = {}) {
   if (webhook.repository == null) {
     throw new Error('repository not set for Webhook object.');
   }
@@ -365,7 +375,7 @@ async function makeUpdate (fields: string[] | null, webhook: Webhook) {
   } else {
     update = pick(webhook.forStorage(), fields);
   }
-  await webhook.repository.updateOne(webhook.user, update, webhook.id);
+  await webhook.repository.updateOne(webhook.user, Object.assign(update, overrides), webhook.id);
 }
 
 type Run = {
@@ -382,8 +392,9 @@ type WebhookMessage = string;
 type WebhooksRepository = {
   accessIsUsable?: (user: User, accessId: string) => Promise<boolean>;
   insertOne (user: User, webhook: Webhook): Promise<unknown>;
-  updateOne (user: User, update: Partial<Webhook>, id: string): Promise<unknown>;
+  updateOne (user: User, update: Record<string, unknown>, id: string): Promise<unknown>;
   deleteOne (user: User, id: string): Promise<unknown>;
+  getById (user: User, id: string): Promise<{ scopes?: WebhookScopes | null } | null>;
 };
 type WebhookCtorParams = {
   id?: string;

@@ -700,6 +700,7 @@ if (cluster.isPrimary) {
     // (euc1 api workers were crash-looping on Mongo).
     cluster.setupPrimary({ args: process.argv.slice(2) });
 
+    let webhooksWorkerId = null; // cluster id of the API worker running the webhooks service
     log(`Forking ${numApiWorkers} API worker(s)`);
     for (let i = 0; i < numApiWorkers; i++) {
       forkApiWorker();
@@ -707,13 +708,19 @@ if (cluster.isPrimary) {
 
     function forkApiWorker () {
       const id = apiWorkerId++;
+      // One API worker runs the webhooks service: every worker receives every
+      // change notification and every webhook, so a service in each worker
+      // would call each webhook once per worker. Its replacement takes over.
+      const runsWebhooks = webhooksWorkerId == null;
       const worker = cluster.fork({
         PRYV_WORKER_TYPE: 'api',
         PRYV_BOILER_SUFFIX: `-w${id}`,
+        PRYV_WEBHOOKS_WORKER: runsWebhooks ? '1' : '0',
         ...observabilityEnv
       });
       workerTypes.set(worker.id, 'api');
-      log(`API worker w${id} started (pid ${worker.process.pid})`);
+      if (runsWebhooks) webhooksWorkerId = worker.id;
+      log(`API worker w${id} started (pid ${worker.process.pid})${runsWebhooks ? ', runs the webhooks service' : ''}`);
     }
 
     // --- HFS workers ---
@@ -860,6 +867,7 @@ if (cluster.isPrimary) {
       } else if (type === 'previews') {
         forkPreviewsWorker();
       } else {
+        if (worker.id === webhooksWorkerId) webhooksWorkerId = null;
         forkApiWorker();
       }
     });

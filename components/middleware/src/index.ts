@@ -18,6 +18,7 @@ const loadAccess = require('./loadAccess.ts').default;
 const noSniff = require('./noSniff.ts').default;
 const notFound = require('./notFound.ts').default;
 const override = require('./override.ts').default;
+const queryParser = require('./queryParser.ts').default;
 const requestTrace = require('./requestTrace.ts').default;
 const setMethodId = require('./setMethodId.ts').default;
 const setMinimalMethodContext = require('./setMinimalMethodContext.ts').default;
@@ -35,6 +36,7 @@ export {
   noSniff,
   notFound,
   override,
+  queryParser,
   requestTrace,
   setMethodId,
   setMinimalMethodContext,

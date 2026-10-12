@@ -45,13 +45,27 @@ if (!fs.existsSync(absPath)) {
   process.exit(1);
 }
 
-let config;
+let fileConfig;
 try {
-  config = yaml.load(fs.readFileSync(absPath, 'utf8'));
+  fileConfig = yaml.load(fs.readFileSync(absPath, 'utf8'));
 } catch (e) {
   console.error(`check-config: failed to parse YAML: ${e.message}`);
   process.exit(1);
 }
+
+function merge (base, over) {
+  if (over == null || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
+  const out = Object.assign({}, (base != null && typeof base === 'object' && !Array.isArray(base)) ? base : {});
+  for (const k of Object.keys(over)) out[k] = merge(out[k], over[k]);
+  return out;
+}
+
+// Environment variables (`platform__piiHmacKey=...`) are read at boot with the
+// same nconf options as here, below the override file and above the base layer.
+// Docker deployments often supply secrets this way.
+const envConfig = new (require('nconf').Provider)().env({ parseValues: true, separator: '__' }).get() || {};
+const envKeys = Object.keys(process.env).filter((k) => /^[^_].*__/.test(k));
+const config = merge(envConfig, fileConfig);
 
 function get (dottedPath, from = config) {
   return dottedPath.split('.').reduce((obj, key) => (obj == null ? obj : obj[key]), from);
@@ -74,6 +88,9 @@ if (baseLayerPath != null && fs.existsSync(baseLayerPath)) {
 const baseLayerNote = baseLayer != null
   ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
   : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`;
+const envNote = envKeys.length > 0
+  ? `Environment: ${envKeys.length} variable(s) merged under this file, as at boot (${envKeys.sort().join(', ')}).`
+  : 'Environment: no `a__b` variables set; keys can also come from the environment at boot.';
 
 function isMissingOrSentinel (v) {
   if (v == null) return true;
@@ -391,12 +408,6 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
 if (get('services.mfa') != null) {
   try {
     const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
-    const merge = (base, over) => {
-      if (over == null || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
-      const out = Object.assign({}, (base != null && typeof base === 'object' && !Array.isArray(base)) ? base : {});
-      for (const k of Object.keys(over)) out[k] = merge(out[k], over[k]);
-      return out;
-    };
     const { describeMfaConfig } = require('../components/business/src/mfa/configCheck.ts');
     const mfa = describeMfaConfig(merge(defaults.services && defaults.services.mfa, get('services.mfa')));
     for (const p of mfa.problems) problems.push(`${p.path.join('.')}: ${p.message}`);
@@ -470,6 +481,7 @@ if (get('http.trustedProxies') != null) {
 if (problems.length > 0) {
   console.error(`✗ ${absPath}`);
   console.error(`  ${baseLayerNote}`);
+  console.error(`  ${envNote}`);
   console.error(`  ${problems.length} problem(s):`);
   problems.forEach(p => console.error(`    - ${p}`));
   if (warnings.length > 0) {
@@ -481,6 +493,7 @@ if (problems.length > 0) {
 
 console.log(`✓ ${absPath}`);
 console.log(`  ${baseLayerNote}`);
+console.log(`  ${envNote}`);
 console.log('  All required-at-boot checks passed.');
 if (warnings.length > 0) {
   console.log(`  ${warnings.length} warning(s):`);

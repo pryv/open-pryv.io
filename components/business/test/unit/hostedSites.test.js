@@ -107,6 +107,11 @@ describe('[HSCF] hostedSites configuration', function () {
     assert.ok(problemsOf({ a: { static: '/srv/x', headers: { 'bad name': 'v' } } }).some((m) => m.includes('not a valid header name')));
     assert.ok(problemsOf({ a: { static: '/srv/x', headers: { 'x-a': 'v\r\nx-b: w' } } }).some((m) => m.includes('single-line')));
     assert.ok(problemsOf({ a: { static: '/srv/x', headers: { 'x-a': 3 } } }).some((m) => m.includes('single-line')));
+    // Any value res.setHeader would refuse at answer time (control characters, non-Latin-1)
+    for (const bad of ['a\x7fb', 'snow ☃', 'x\x01']) {
+      assert.ok(problemsOf({ a: { static: '/srv/x', headers: { 'x-a': bad } } }).some((m) => m.includes('single-line')), JSON.stringify(bad));
+    }
+    assert.deepStrictEqual(problemsOf({ a: { static: '/srv/x', headers: { 'x-a': 'tab\tand café' } } }), []);
     assert.ok(problemsOf({ a: { static: '/srv/x', headers: ['x'] } }).some((m) => m.includes('map of header')));
   });
 
