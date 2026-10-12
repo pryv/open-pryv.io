@@ -9,6 +9,14 @@
   HF and previews servers). The bracket syntax (`streams[]=a&streams[]=b`) and repeated keys
   work as before.
 
+### Events
+
+- Account fields that are unique on the platform (custom `isUnique` account fields): writing a new
+  value with `events.create` now releases the previous value (it stayed reserved for the account,
+  so nobody else could take it, and the reservations piled up); with `events.create` and
+  `events.update`, the previous value is released only once the event is written, and a write that
+  fails releases the value it had claimed. Values left reserved by earlier versions stay reserved.
+
 ### Socket.IO
 
 - `accessUpdated` (access id and new serial, after `accesses.update`) is now sent only to the

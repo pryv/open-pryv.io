@@ -65,7 +65,12 @@ type MethodContext = BaseMethodContext & {
   accountStreamId?: string;
   systemStream?: SystemStreamConfig;
   accountStreamIdWithoutPrefix?: string;
+  accountFieldClaim?: AccountFieldClaim;
 };
+
+// The platform index entry claimed for an account-field event before it is
+// written (see claimAccountField / settleAccountFieldClaim).
+type AccountFieldClaim = { field: string; value: unknown; previousValue: unknown; isUnique: boolean };
 
 // Per-method param + result shapes mirroring components/api-server/src/schema/eventsMethods.ts.
 // Hand-authored. Keep in sync with that file when the wire schema changes.
@@ -560,9 +565,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,
-    notifyPlatformForCreate,
     handleSeries,
-    createEvent,
+    claimAccountFieldForCreate,
+    settlingAccountFieldClaim(createEvent),
     // Post-stamp: AFTER createEvent assigns event.id, copy it
     // onto the capability access's clientData.cmc.requestEventId. Must
     // run after createEvent (which generates id) and before
@@ -738,56 +743,90 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
 
   /**
-   * Notify platform of a new or changed indexed account field value.
-   * Uses 'update' action when the field already has a value (to clean up old unique entries).
+   * Indexed account field (platform index): claim the new value before the
+   * event is written, so a unique value owned by another account refuses the
+   * write. The previous value is released only once the write succeeded, and
+   * the claim is undone when it failed (settleAccountFieldClaim).
    */
-  async function notifyPlatformForCreate (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
+  async function claimAccountFieldForCreate (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     // Invariant: validateAccountStreamForCreate ran earlier in this chain.
-    const systemStream = context.systemStream!;
-    if (!systemStream.isIndexed) return next();
+    if (!context.systemStream!.isIndexed) return next();
     try {
-      const fieldName: string = context.accountStreamIdWithoutPrefix!;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- system-stream-driven dynamic field access
-      const previousValue = (context.user as any)[fieldName];
-      const action = previousValue != null ? 'update' : 'create';
-      const operations = [{
-        action,
-        key: fieldName,
-        value: context.newEvent!.content,
-        previousValue,
-        isUnique: systemStream.isUnique,
-        isActive: true
-      }];
-      await platform.updateUser(context.user.username, operations);
+      const field = context.accountStreamIdWithoutPrefix!;
+      await claimAccountField(context, await usersRepository.getOnePropertyValue(context.user.id, field));
     } catch (err) {
       return next(err);
     }
     next();
   }
 
-  /**
-   * Notify platform of an updated indexed account field value.
-   */
-  async function notifyPlatformForUpdate (context: MethodContext, params: EventsUpdateParams, result: EventsUpdateResult, next: MethodNext) {
+  async function claimAccountFieldForUpdate (context: MethodContext, params: EventsUpdateParams, result: EventsUpdateResult, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     // Invariant: validateAccountStreamForUpdate ran earlier in this chain.
-    const systemStream = context.systemStream!;
-    if (!systemStream.isIndexed) return next();
+    if (!context.systemStream!.isIndexed) return next();
     try {
-      const operations = [{
-        action: 'update',
-        key: context.accountStreamIdWithoutPrefix,
-        value: context.newEvent!.content,
-        previousValue: context.oldEvent ? context.oldEvent.content : undefined,
-        isUnique: systemStream.isUnique,
-        isActive: true
-      }];
-      await platform.updateUser(context.user.username, operations);
+      await claimAccountField(context, context.oldEvent?.content);
     } catch (err) {
       return next(err);
     }
     next();
+  }
+
+  async function claimAccountField (context: MethodContext, previousValue: unknown) {
+    const field = context.accountStreamIdWithoutPrefix!;
+    const isUnique = context.systemStream!.isUnique === true;
+    const value = context.newEvent!.content;
+    // A unique value is indexed as a string (the stored token is computed from it).
+    if (!isUnique || value != null) {
+      await platform.updateUser(context.user.username, [{
+        action: 'create',
+        key: field,
+        value: isUnique ? String(value) : value,
+        isUnique,
+        isActive: true
+      }]);
+    }
+    context.accountFieldClaim = { field, value, previousValue, isUnique };
+  }
+
+  /**
+   * After the event write: on success release the previous unique value; on
+   * failure undo the claim (release the new unique value, or restore the
+   * previous indexed one). Errors are logged, never thrown: the answer is
+   * decided by the write.
+   */
+  async function settleAccountFieldClaim (context: MethodContext, written: boolean) {
+    const claim = context.accountFieldClaim;
+    if (claim == null) return;
+    delete context.accountFieldClaim;
+    const { field, value, previousValue, isUnique } = claim;
+    const username = context.user.username;
+    try {
+      // The value the account no longer holds: the previous one after a write,
+      // the claimed one after a failure. Kept when both are the same value.
+      const released = written ? previousValue : value;
+      const kept = written ? value : previousValue;
+      if (isUnique) {
+        if (released != null && (kept == null || String(released) !== String(kept))) {
+          await platform.releaseUserUniqueValue(username, field, String(released));
+        }
+      } else if (!written && previousValue != null) {
+        await platform.updateUser(username, [{ action: 'create', key: field, value: previousValue, isUnique: false, isActive: true }]);
+      }
+    } catch (err) {
+      logger.warn(`account field "${field}": platform index not settled after the event write (${written ? 'release previous value' : 'undo claim'}): ${(err as Error).message}`);
+    }
+  }
+
+  // Runs `step` (the event write) and settles the account-field claim with its outcome.
+  function settlingAccountFieldClaim<P, R> (step: (context: MethodContext, params: P, result: R, next: MethodNext) => unknown) {
+    return function (context: MethodContext, params: P, result: R, next: MethodNext) {
+      if (context.accountFieldClaim == null) return step(context, params, result, next);
+      return step(context, params, result, (err?: unknown) => {
+        settleAccountFieldClaim(context, err == null).then(() => next(err as Error));
+      });
+    };
   }
 
   function handleSeries (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
@@ -890,8 +929,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     detectAccountStream,
     validateAccountStreamForUpdate,
     validateAccountStreamContent,
-    notifyPlatformForUpdate,
-    updateEvent,
+    claimAccountFieldForUpdate,
+    settlingAccountFieldClaim(updateEvent),
     addIntegrityToContext,
     notify
   );
