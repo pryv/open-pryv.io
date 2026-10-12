@@ -116,7 +116,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    - Spawns and supervises an **embedded `rqlited`** in both single- and multi-core mode (no separate DB process to manage; skipped entirely when `storages.platform.engine: postgresql`, the single-core diskless shape),
    - Forks cluster workers: `cluster.apiWorkers` (default 2) API workers, `cluster.hfsWorkers` HFS workers, `cluster.previewsWorker` previews worker,
    - On the CA-holder core only, runs the **AcmeOrchestrator** that polls PlatformDB for cert state (other cores poll + materialize),
-   - Handles the `--bootstrap` mode used to add new cores (decrypts a sealed bundle, writes `override-config.yml` + TLS files, acks the issuer, falls through into normal startup).
+   - Handles the `--bootstrap` mode used to add new cores (decrypts a sealed bundle, writes `bootstrap-config.yml` + TLS files, acks the issuer, falls through into normal startup).
 
    Don't add a PM2 / systemd / Docker-compose-style process supervisor around it. master.js *is* the supervisor.
 
@@ -215,8 +215,9 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 1. `config/default-config.yml` (committed defaults)
 2. `config/plugins/*` (derived values like system streams)
 3. `${NODE_ENV}-config.yml` or the file passed via `--config <path>`
-4. `override-config.yml` at the baseConfigDir (written by `master.js --bootstrap` on core join)
-5. Environment variables: boiler uses `__` (double underscore) as the nested-key separator (e.g. `auth__adminAccessKey=…` sets `auth.adminAccessKey`). See `@pryv/boiler` for the exact mapping rules.
+4. Environment variables (and argv): boiler uses `__` (double underscore) as the nested-key separator (e.g. `auth__adminAccessKey=…` sets `auth.adminAccessKey`). See `@pryv/boiler` for the exact mapping rules.
+5. `bootstrap-config.yml` at the baseConfigDir (written by `master.js --bootstrap` on core join; replaced by a re-join)
+6. `override-config.yml` at the baseConfigDir (the operator's; never written by the server)
 
 Understand this before debugging why a setting "isn't taking effect".
 

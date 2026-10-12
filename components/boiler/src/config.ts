@@ -19,6 +19,10 @@ const require = createRequire(import.meta.url);
  *                       local override-config.yml — gitignored, used by
  *                       NODE_ENV=development — does not bleed into test
  *                       expectations)
+ * .1b 'bootstrap-file' -> Loaded from bootstrap-config.yml (if present; same
+ *                       skip rule): written by `bin/master.js --bootstrap`
+ *                       when a core joins a cluster; the operator's
+ *                       override-config.yml wins over it
  * .2 'test' -> empty, used by test to override any other config parameter
  * .3 'argv' -> Loaded from arguments
  * .4 'env' -> Loaded from environement variables
@@ -144,6 +148,7 @@ class Config {
     // local override-config.yml doesn't poison test expectations.
     if (options.skipOverrideConfig !== true) {
       loadFile('override-file', path.resolve(baseConfigDir, 'override-config.yml'));
+      loadFile('bootstrap-file', path.resolve(baseConfigDir, 'bootstrap-config.yml'));
     } else {
       logger.debug('Skipping override-config.yml (skipOverrideConfig: true)');
     }

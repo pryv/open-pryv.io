@@ -78,6 +78,16 @@
   file, above the base layer. A core configured through its environment (Docker) no longer gets
   false "missing or unset" problems. The output names the variables it merged, never their values.
   ([#155](https://github.com/pryv/open-pryv.io/issues/155))
+- Joining a cluster (`bin/master.js --bootstrap`) no longer replaces `override-config.yml`: the
+  cluster identity, platform secrets and rqlite mTLS settings go to a new `bootstrap-config.yml`
+  (0600) in the same directory, loaded just below `override-config.yml` (which stays the
+  operator's and wins) and above environment variables and `--config`. The join is refused while
+  `override-config.yml` sets a key the bundle provides (it lists them; `--bootstrap-force` keeps
+  them). On a core that joined with an earlier version, a re-join moves the `override-config.yml`
+  that version wrote to `override-config.yml.bootstrap-<date>.bak` (copy back any setting you had
+  added). Already-joined cores need nothing. Docker: the entrypoint prepares
+  `/app/config/bootstrap-config.yml`; a read-only `/app/config` mount needs that file writable for a
+  join. `bin/check-config.js` reads `bootstrap-config.yml` next to the checked file, as boot does.
 
 ## 2.0.0-rc.49 - 2026-10-12
 

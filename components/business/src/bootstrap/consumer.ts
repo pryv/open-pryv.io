@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
  *   1. Read the armored bundle file from `bundlePath`.
  *   2. Resolve the passphrase from `--bootstrap-passphrase-file` (preferred)
  *      or interactively from a TTY. Tests inject `passphrase` directly.
- *   3. stageBundle(...) — decrypt, validate, write override-config.yml and
+ *   3. stageBundle(...) — decrypt, validate, write bootstrap-config.yml and
  *      the TLS files to a private staging directory (see ./applyBundle.js).
  *   4. POST {coreId, token, tlsFingerprint} to the bundle's ackUrl, with the
  *      bundled CA cert pinned (`ca:` option on the https request) so we
@@ -57,6 +57,7 @@ interface ConsumeOpts {
   httpClient?: HttpClient;
   trustSystemCa?: boolean;
   asNonVoter?: boolean;
+  force?: boolean;
   clockSkewSeconds?: number;
   clockProbe?: ClockProbe;
   log?: (msg: string) => void;
@@ -65,7 +66,8 @@ interface ConsumeOpts {
 interface ConsumeResult {
   coreId: string;
   ackResponse: unknown;
-  overridePath: string;
+  configPath: string;
+  previousGeneratedOverrideBackup: string | null;
   tlsPaths: Record<string, string>;
   bundleDeleted: boolean;
 }
@@ -86,7 +88,7 @@ interface ConsumeResult {
  * @param [opts.log] - logger; default = console.log
  *   coreId: string,
  *   ackResponse: Object,
- *   overridePath: string,
+ *   configPath: string,
  *   tlsPaths: Object,
  *   bundleDeleted: boolean
  * }>}
@@ -97,6 +99,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     httpClient = defaultHttpClient,
     trustSystemCa = false,
     asNonVoter = true,
+    force = false,
     clockSkewSeconds = 30,
     clockProbe = defaultClockProbe,
     log = (m: string) => console.log('[bootstrap] ' + m)
@@ -131,7 +134,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     // Secrets and the node key stay in a staging directory until the issuing
     // core accepts the ack; any failure before that removes them.
     applied = await applyBundleMod.stageBundle({
-      armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter
+      armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter, force
     });
     log(`Staged the bundle files in ${applied.stagingDir}`);
     try {
@@ -150,7 +153,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
       applied.commit();
     } catch (err) {
       throw new Error(`ack accepted (the join token is spent) but moving the staged files into place failed: ${(err as Error).message}. ` +
-        `The files are in ${applied.stagingDir}: move them to ${tlsDir} and ${applied.overridePath} by hand, then start the core without --bootstrap.`);
+        `The files are in ${applied.stagingDir}: move them to ${tlsDir} and ${applied.configPath} by hand, then start the core without --bootstrap.`);
     }
   } catch (err) {
     if (usesPassphraseFile) {
@@ -178,7 +181,8 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   return {
     coreId: applied.coreId,
     ackResponse: ackResponse.body,
-    overridePath: applied.overridePath,
+    configPath: applied.configPath,
+    previousGeneratedOverrideBackup: applied.previousGeneratedOverrideBackup,
     tlsPaths: applied.tlsPaths,
     bundleDeleted
   };
