@@ -157,13 +157,23 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: StreamQueryLike[
                     item +
                     "'.");
       }
-      if (property !== 'any' && item === '*') {
+      if (hasMalformedStorePrefix(item)) {
+        throw new Error("Error in 'streams' parameter '" +
+                    objectToString(arrayOfQueries) +
+                    "' malformed store prefix in streamId '" +
+                    item +
+                    "': expected ':<store>:<streamId>'.");
+      }
+      const cleanStreamid = validateAndAttachStore(item);
+      // The `*` rules apply to the parsed id, so a store root (`:local:`,
+      // `:<store>:`), which stands for `*` in its store, follows them too.
+      if (property !== 'any' && cleanStreamid === '*') {
         throw new Error("Error in 'streams' parameter[" +
                     objectToString(arrayOfQueries) +
                     "] only 'any' can contain '*' : " +
                     objectToString(arrayOfStreamIds));
       }
-      if (property === 'any' && item === '*') {
+      if (property === 'any' && cleanStreamid === '*') {
         hasAnyStar = true;
         if (arrayOfStreamIds.length > 1) {
           throw new Error("Error in 'streams' parameter[" +
@@ -172,7 +182,6 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: StreamQueryLike[
                         objectToString(arrayOfStreamIds));
         }
       }
-      const cleanStreamid = validateAndAttachStore(item);
       arrayOfCleanStreamIds.push(cleanStreamid);
       (streamQuery as Record<string, unknown>)[property] = arrayOfCleanStreamIds;
     }
@@ -219,11 +228,13 @@ async function expandAndTransformStreamQuery (streamQuery: StreamQueryLike, expa
       res.any = uniqueStreamIds(expandedSet);
     }
   }
-  // all
+  // all: every entry must hold. An entry that resolves to no stream (unknown,
+  // or excluded by `not`) cannot hold, so the whole query matches nothing;
+  // dropping the entry would widen the query instead.
   if (streamQuery.all) {
     for (const streamId of streamQuery.all) {
       const expandedSet = await expandSet([streamId], streamQuery.storeId!, streamQuery.not);
-      if (expandedSet.length === 0) { continue; } // escape
+      if (expandedSet.length === 0) { return null; }
       if (!res.and) { res.and = []; }
       containsAtLeastOneInclusion = true;
       res.and.push({ any: uniqueStreamIds(expandedSet) });
@@ -246,6 +257,15 @@ async function expandAndTransformStreamQuery (streamQuery: StreamQueryLike, expa
   return containsAtLeastOneInclusion ? res : null;
 }
 // ------------------------ helpers ----------------------------------//
+/**
+ * A stream id starting with the store marker must name a store between two
+ * markers: `:abc` (no closing marker) and `::x` (empty store) name none.
+ */
+function hasMalformedStorePrefix (streamId: StreamId): boolean {
+  if (!streamId.startsWith(':')) return false;
+  const endMarkerIndex = streamId.indexOf(':', 1);
+  return endMarkerIndex === -1 || endMarkerIndex === 1;
+}
 /**
  * for nice error message with clear query content
  */

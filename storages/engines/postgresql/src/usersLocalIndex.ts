@@ -123,8 +123,8 @@ class UsersLocalIndexPG {
     return res.rows.map((row) => row.alias);
   }
 
-  async deleteAlias (alias: string): Promise<void> {
-    await this.db.query('DELETE FROM alias_index WHERE alias = $1', [alias]);
+  async deleteAlias (alias: string, userId: string): Promise<void> {
+    await this.db.query('DELETE FROM alias_index WHERE alias = $1 AND user_id = $2', [alias, userId]);
   }
 
   async deleteAliasesForId (userId: string): Promise<void> {

@@ -64,7 +64,7 @@ async function middlewareFactory (): Promise<RequestHandler> {
   return attachmentsAccessMiddleware as RequestHandler;
 }
 export default middlewareFactory;
-export { middlewareFactory, isActiveContentType, ACTIVE_CONTENT_CSP };
+export { middlewareFactory, isActiveContentType, contentDisposition, ACTIVE_CONTENT_CSP };
 
 // Attachments keep the content type the client declared at upload. A type a
 // browser executes or renders as a document (HTML, XML incl. SVG, scripts)
@@ -111,6 +111,19 @@ function isActiveContentType (contentType: string | null | undefined): boolean {
   return ACTIVE_CONTENT_TYPES.has(essence) || essence.endsWith('+xml');
 }
 
+// The download disposition, with the stored file name (RFC 5987 encoding)
+// when it has one that encodes: a name that is not a string, or holds a lone
+// surrogate (which `encodeURIComponent` refuses), gives a plain `attachment`
+// instead of failing the download.
+function contentDisposition (fileName: unknown): string {
+  if (typeof fileName !== 'string') return 'attachment';
+  try {
+    return "attachment; filename*=UTF-8''" + encodeURIComponent(fileName);
+  } catch {
+    return 'attachment';
+  }
+}
+
 // A middleware that checks permissions to access the file attachment, then
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.
@@ -153,7 +166,7 @@ async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, nex
     // from the attachment metadata, we can't rely on the filename.
     res.header('Content-Type', attachment.type);
     res.header('Content-Length', String(attachment.size));
-    res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
+    res.header('Content-Disposition', contentDisposition(attachment.fileName));
     if (isActiveContentType(attachment.type)) {
       res.header('Content-Security-Policy', ACTIVE_CONTENT_CSP);
     }

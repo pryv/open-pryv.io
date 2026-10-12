@@ -130,8 +130,8 @@ class UsersLocalIndex {
     return await this.db.getAliasesForId(userId);
   }
 
-  async deleteAlias (alias: string): Promise<void> {
-    await this.db.deleteAlias(alias);
+  async deleteAlias (alias: string, userId: string): Promise<void> {
+    await this.db.deleteAlias(alias, userId);
     cache.unsetUser(alias); // bust AFTER the write (see renameUser)
     logger.debug('deleteAlias', alias);
   }

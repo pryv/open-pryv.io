@@ -316,7 +316,8 @@ describe('[FG5R] Events of system streams', () => {
               await createUser();
               eventData = {
                 streamIds: [addPrivatePrefixToStreamId('language')],
-                content: charlatan.Lorem.characters(7),
+                // a language holds at most 5 characters, as in account.update
+                content: charlatan.Lorem.characters(5),
                 type: 'string/pryv'
               };
 
@@ -592,7 +593,8 @@ describe('[FG5R] Events of system streams', () => {
         async function editEvent (streamId, isFaulty = false) {
           eventData = {
             streamIds: [streamId],
-            content: isFaulty ? { someProp: 123 } : charlatan.Lorem.characters(7),
+            // a language holds at most 5 characters, as in account.update
+            content: isFaulty ? { someProp: 123 } : charlatan.Lorem.characters(streamId.endsWith(':language') ? 5 : 7),
             type: 'string/pryv'
           };
           const initialEvent = await getOneEvent(user.attrs.id, streamId);

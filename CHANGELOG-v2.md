@@ -1,5 +1,87 @@
 # Changelog - API Changes
 
+## Unreleased
+
+Hardening of API inputs and query semantics. Client-visible: a stream query whose `all` entry
+names no stream now matches nothing; time bounds must be finite; `accesses.get` validates its
+options and `includeDeletions=false` leaves deletions out; the account root stream can no longer
+be granted at a writing level; account fields written through events follow the field's rules and
+take the server time. Operators: run the read-only counts listed in the deploy notes before
+deploying (local events carrying an account stream id next to another stream, accesses granting
+the account root above `read`).
+
+### Events
+
+- Stream queries: an `all` entry that resolves to no stream (unknown, or also excluded by `not`)
+  now makes its query match nothing. The entry was ignored, so `{ "any": ["A"], "all": ["X"] }`
+  returned every event of `A` when `X` did not exist. The same holds for webhook and socket.io
+  notification scopes: a scope whose streams resolve to nothing matches no event (it matched
+  every event).
+- Stream queries: a store root (`:local:`, `:<store>:`) stands for `*` and follows its rules: it
+  can only appear alone in `any` (it was accepted mixed with other ids and in `all` / `not`). A
+  stream id with a malformed store prefix (`:abc`, `::x`) is refused with
+  `invalid-request-structure` (it answered `unknown-referenced-resource` or a store error).
+- `events.get`: `fromTime`, `toTime` and `modifiedSince` must be finite numbers; `1e999` or
+  `Infinity` is refused with `invalid-parameters-format` (PostgreSQL cores answered no event,
+  SQLite cores `500`).
+- `events.get` on SQLite cores, now as on PostgreSQL cores: `skip` without `limit` pages the
+  result (it answered `500`), and `includeDeletions` with `modifiedSince` returns the deletions
+  paged by `limit` / `skip` and ordered by `sortAscending` (every deletion was returned, newest
+  first); a deletion made exactly at `modifiedSince` is no longer returned (the bound is strict,
+  as for events; it was inclusive).
+- Account fields written through `events.create` / `events.update` (`:_system:language`, editable
+  custom fields): the value follows the field's own rules whatever event type is sent. `language`
+  takes 1 to 5 characters, as in `account.update`; a field configured with a pattern
+  (`regexValidation`) must match it, as at registration; a string holds at most 300 characters and
+  a number must be finite. Refused with `invalid-parameters-format`; any string was stored. The
+  rules apply when the call sets the value: a value stored before keeps the event updatable. The
+  field takes the server time when the call sets its value: a `time` sent by the client is ignored
+  (it dated the field and its `modified`).
+- An event naming an account stream next to another stream (`["diary", ":_system:language"]`) is
+  refused at creation with `invalid-operation`, and so is an update setting such stream ids; the
+  event was stored as an ordinary event while the platform index recorded its content as the
+  field's value. Events stored that way before stay readable and updatable when the update leaves
+  their stream ids alone.
+
+### Streams
+
+- `streams.create`: an id naming a built-in object property (`constructor`, `__proto__`,
+  `toString`, `hasOwnProperty`, `prototype`, ...) is refused with `invalid-item-id`. A stream
+  created earlier with such an id now gets the permissions a `*` or parent grant gives (it was
+  refused to every non-personal access reaching it that way).
+
+### Accesses
+
+- `accesses.get`: `includeDeletions` and `includeExpired` must be booleans (any value was
+  accepted), and `includeDeletions=false` leaves the deletions out (they were returned for any
+  value given).
+- `accesses.create` / `accesses.update`: the account root stream `:_system:account` can be granted
+  at `read` or `none` only; `create-only`, `contribute` and `manage` are refused with
+  `invalid-operation`. A grant on the root applies to every account field below it, hidden ones
+  included; grant the fields themselves to write them.
+
+### HTTP
+
+- Urlencoded requests: `_method` must be one of `GET`, `POST`, `PUT`, `DELETE` and `_json` must
+  hold a JSON object or array; a repeated `_auth` or `_method` field is refused. Each is refused
+  with `invalid-request-structure`; any method name was taken, and a `_json` holding `null`, a
+  number or a string reached the method (often a `500`).
+- An `auth` query parameter that is not a single string (`?auth[x]=y`) carries no token: the call
+  is answered `401 invalid-access-token` (it answered `500`). A repeated `?auth=` keeps the first
+  value, as before.
+- Profiles (`profile.update`), event `clientData` updates and webhook scope names keep a
+  `__proto__` key as an ordinary entry; it was silently dropped.
+- Attachment download: an attachment whose stored file name cannot be encoded (e.g. it holds a
+  lone UTF-16 surrogate, possible only through a restore) is served with
+  `Content-Disposition: attachment` without a file name; the download answered `500`.
+
+### Hosted sites
+
+- A proxy site refuses, with `400`, a request path holding an encoded `/` or `\` (`%2F`, `%5C`),
+  a segment that is `.` or `..` once decoded, or a malformed percent-encoding; such paths were
+  forwarded, and an upstream that decodes before normalising could serve content outside the
+  configured base path.
+
 ## 2.0.0-rc.49 - 2026-10-12
 
 Hardening release. Client-visible: JSON answers carry `Cache-Control: no-store` and

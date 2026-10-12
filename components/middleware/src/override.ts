@@ -11,24 +11,39 @@ const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 
 type PryvRequest = Request & { originalMethod?: string; originalBody?: unknown };
+
+// The verbs the API routes answer; `_method` cannot name any other.
+const OVERRIDE_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
+
 /**
  * Middleware to allow overriding HTTP method, "Authorization" header and JSON
  * body content by sending them as fields in urlencoded requests. Does not
  * perform request body parsing (expects req.body to exist), so must be executed
  * after e.g. bodyParser middleware.
+ *
+ * Each field yields what the real thing could carry, or the request is
+ * refused: `_method` one of the API verbs, `_auth` one string, `_json` an
+ * object or an array (what the JSON body parser accepts).
  */
 function normalizeRequest (req: PryvRequest, res: Response, next: NextFunction) {
   if (!req.is('application/x-www-form-urlencoded')) {
     return next();
   }
-  const body = req.body as Record<string, string>;
+  const body = req.body as Record<string, unknown>;
   if (body == null || typeof body !== 'object') { return next(); }
-  if (typeof body._method === 'string') {
+  if (body._method != null) {
+    const method = typeof body._method === 'string' ? body._method.toUpperCase() : null;
+    if (method == null || !OVERRIDE_METHODS.has(method)) {
+      return next(errors.invalidRequestStructure('"_method" must be one of ' + [...OVERRIDE_METHODS].join(', ') + '.'));
+    }
     req.originalMethod = req.originalMethod || req.method;
-    req.method = body._method.toUpperCase();
+    req.method = method;
     delete body._method;
   }
-  if (body._auth) {
+  if (body._auth != null && body._auth !== '') {
+    if (typeof body._auth !== 'string') {
+      return next(errors.invalidRequestStructure('"_auth" must be a single string.'));
+    }
     if (req.headers.authorization) {
       req.headers['original-authorization'] = req.headers.authorization;
     }
@@ -37,11 +52,16 @@ function normalizeRequest (req: PryvRequest, res: Response, next: NextFunction) 
   }
   if (typeof body._json === 'string') {
     req.originalBody = req.originalBody || body;
+    let parsed: unknown;
     try {
-      req.body = JSON.parse(body._json);
+      parsed = JSON.parse(body._json);
     } catch (err) {
       return next(errors.invalidRequestStructure((err as Error).message));
     }
+    if (parsed == null || typeof parsed !== 'object') {
+      return next(errors.invalidRequestStructure('"_json" must hold a JSON object or array.'));
+    }
+    req.body = parsed;
   }
   next();
 }

@@ -51,4 +51,18 @@ describe('[GAUTH] getAuth middleware', function () {
   it('[GA-NONE] yields null when neither header nor query is present', function () {
     assert.strictEqual(run(undefined, {}), null);
   });
+
+  it('[GAN1] a query auth that is not a string (bracketed keys) is no token', function () {
+    assert.strictEqual(run(undefined, { auth: { $ne: 'x' } }), null);
+    assert.strictEqual(run(undefined, { auth: [{ a: 1 }] }), null);
+  });
+
+  it('[GAN2] a repeated query auth keeps the first string', function () {
+    assert.strictEqual(run(undefined, { auth: ['first', 'second'] }), 'first');
+  });
+
+  it('[GAN3] a header value that is not a string is no token', function () {
+    assert.strictEqual(run(['tok-a', 'tok-b']), null);
+    assert.strictEqual(run({ token: 'x' }), null);
+  });
 });

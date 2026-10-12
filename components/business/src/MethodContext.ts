@@ -137,7 +137,10 @@ class MethodContext {
     this.authScheme = null;
     this.requestSignatureTarget = null;
     this.readTokenAuthenticated = false;
-    if (auth != null) { this.parseAuth(auth); }
+    // Only a string is a credential, whatever the transport handed over (an
+    // array from a repeated form field, an object from a bracketed query key):
+    // anything else leaves the call without a token.
+    if (typeof auth === 'string') { this.parseAuth(auth); }
     this.originalQuery = structuredClone(query);
     // No credential in what the audit trail records (`content.query`, see
     // audit/src/Audit.ts). `auth` is this call's own token. `token` is the one

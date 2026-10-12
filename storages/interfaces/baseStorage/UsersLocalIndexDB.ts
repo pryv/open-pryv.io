@@ -27,7 +27,7 @@ export interface UsersLocalIndexDB {
   addAlias (alias: string, userId: string): Promise<unknown>;
   getIdForAlias (alias: string): Promise<string | undefined>;
   getAliasesForId (userId: string): Promise<string[]>;
-  deleteAlias (alias: string): Promise<void>;
+  deleteAlias (alias: string, userId: string): Promise<void>;
   deleteAliasesForId (userId: string): Promise<void>;
 }
 
@@ -69,7 +69,7 @@ const UsersLocalIndexDB: UsersLocalIndexDB = {
 
   async getAliasesForId (userId: string): Promise<string[]> { throw new Error('Not implemented'); },
 
-  async deleteAlias (alias: string): Promise<void> { throw new Error('Not implemented'); },
+  async deleteAlias (alias: string, userId: string): Promise<void> { throw new Error('Not implemented'); },
 
   async deleteAliasesForId (userId: string): Promise<void> { throw new Error('Not implemented'); }
 };

@@ -597,7 +597,8 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       const base = (existing != null && typeof existing === 'object' && !Array.isArray(existing))
         ? (existing as Record<string, unknown>)
         : {};
-      const mergedField = Object.assign({}, base);
+      // No prototype: sub-keys are client-chosen (a `__proto__` entry stays an entry)
+      const mergedField: Record<string, unknown> = Object.assign(Object.create(null), base);
       for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
         if (subVal === null) delete mergedField[subKey];
         else mergedField[subKey] = subVal;

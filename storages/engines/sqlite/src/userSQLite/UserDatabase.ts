@@ -113,7 +113,7 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term like ?');
 
   this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ?');
-  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE deleted >= ? ORDER BY deleted DESC');
+  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE deleted > ? ORDER BY deleted DESC');
   this.eventQueries.getHistory = this.db.prepare('SELECT * from events WHERE headId = ? ORDER BY modified ASC');
 
   this.eventQueries.create = prepareCreateQuery(this.db, 'events', Object.keys(tableSchemas.events));
@@ -159,10 +159,22 @@ function prepareEventsGetQuery (params: GetParams): string {
   return 'SELECT * FROM events_fts ' + prepareQuery(params);
 }
 
-UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number): NodeReadable {
+/**
+ * Deletions since `deletedSince`, newest first unless `sortAscending`, paged by
+ * `limit` / `skip` like the events they stand for (same as the PostgreSQL
+ * engine).
+ */
+UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: DeletionsOptions | null): NodeReadable {
   this.logger.debug(`GET events deletions since: ${deletedSince}`);
-  return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
+  if (options == null || (options.limit == null && options.skip == null && !options.sortAscending)) {
+    return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
+  }
+  const sql = 'SELECT * from events WHERE deleted > ? ORDER BY deleted ' + (options.sortAscending ? 'ASC' : 'DESC') +
+    pagingClause(options.limit, options.skip);
+  return readableEventsStreamForIterator(this.db.prepare(sql).iterate(deletedSince));
 };
+
+type DeletionsOptions = { sortAscending?: boolean; limit?: number | null; skip?: number | null };
 
 // also see: https://nodejs.org/api/stream.html#stream_stream_readable_from_iterable_options
 function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): NodeReadable {
@@ -553,16 +565,24 @@ function prepareQuery (params: GetParams = { query: [] }, isDelete = false): str
     }
   }
 
-  const limit = params.options?.limit;
-  if (limit) {
-    queryString += ' LIMIT ' + limit;
-  }
-
-  const skip = params.options?.skip;
-  if (skip) {
-    queryString += ' OFFSET ' + skip;
-  }
+  queryString += pagingClause(params.options?.limit, params.options?.skip);
   return queryString;
+}
+
+/**
+ * `LIMIT` / `OFFSET` as the PostgreSQL engine applies them: a given limit
+ * (0 included) caps the rows, and an offset alone needs `LIMIT -1` (no limit),
+ * since SQLite has no `OFFSET` without `LIMIT`. Only non-negative integers
+ * reach the SQL text.
+ */
+function pagingClause (limit: unknown, skip: unknown): string {
+  const hasLimit = Number.isInteger(limit) && (limit as number) >= 0;
+  const hasSkip = Number.isInteger(skip) && (skip as number) > 0;
+  let clause = '';
+  if (hasLimit) clause += ' LIMIT ' + limit;
+  else if (hasSkip) clause += ' LIMIT -1';
+  if (hasSkip) clause += ' OFFSET ' + skip;
+  return clause;
 }
 
 export { UserDatabase, jsonConditionToSql };

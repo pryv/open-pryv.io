@@ -123,5 +123,26 @@ describe('[CQIX] Content-query index reconciler (PostgreSQL)', function () {
     it('[IX12] rejects a non-array declaration', async () => {
       await assert.rejects(() => reconcileContentIndexes(db, { path: 'a' }, noopLogger), /expected an array/);
     });
+
+    it('[IX13] only names carrying the literal prefix are managed, and they are dropped whatever their case', async () => {
+      async function indexExists (name) {
+        const res = await db.query('SELECT 1 FROM pg_class WHERE relname = $1', [name]);
+        return res.rows.length > 0;
+      }
+      // `_` is a LIKE wildcard: this name is not one of ours
+      await db.query('CREATE INDEX IF NOT EXISTS pryvXcqXforeign ON events (type)');
+      // ours (prefix), but needs quoting to be named exactly
+      await db.query('CREATE INDEX IF NOT EXISTS "pryv_cq_Stray" ON events (type)');
+      try {
+        const summary = await reconcileContentIndexes(db, [], noopLogger);
+        assert.ok(!summary.dropped.includes('pryvxcqxforeign'), JSON.stringify(summary));
+        assert.strictEqual(await indexExists('pryvxcqxforeign'), true, 'a foreign index is left alone');
+        assert.ok(summary.dropped.includes('pryv_cq_Stray'), JSON.stringify(summary));
+        assert.strictEqual(await indexExists('pryv_cq_Stray'), false, 'an undeclared index of ours is dropped');
+      } finally {
+        await db.query('DROP INDEX IF EXISTS pryvXcqXforeign');
+        await db.query('DROP INDEX IF EXISTS "pryv_cq_Stray"');
+      }
+    });
   });
 });

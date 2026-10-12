@@ -417,6 +417,19 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       }
     });
 
+    it('[HSPE1] an encoded separator or dot segment in the path is refused before the upstream', async function () {
+      for (const p of ['/a%2F..%2Fsecret', '/a%2f..%2fsecret', '/a%5C..%5Csecret', '/x/%2e%2e%2fy', '/a%2fb']) {
+        lastUpstream = null;
+        const r = await get(p);
+        assert.equal(r.status, 400, p);
+        assert.equal(lastUpstream, null, p);
+      }
+      // ordinary encoded characters still pass
+      const r = await get('/guide/caf%C3%A9%20menu.html');
+      assert.equal(r.status, 200);
+      assert.equal(r.body, 'upstream:/docs/guide/caf%C3%A9%20menu.html');
+    });
+
     it('[HSTL] rewrites a Location inside the upstream base to the site; keeps others', async function () {
       assert.equal((await get('/redirect-abs')).headers.location, '/target/');
       assert.equal((await get('/redirect-rel')).headers.location, '/other/');

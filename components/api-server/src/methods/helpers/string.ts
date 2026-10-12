@@ -27,11 +27,20 @@ function isReservedId (s: string) {
  * `toString`, ...) and `prototype`, which must never become lookup keys.
  */
 function isReservedToken (s: string) {
-  return isReservedId(s) || s === 'prototype' || Object.prototype.hasOwnProperty.call(Object.prototype, s);
+  return isReservedId(s) || isBuiltInPropertyName(s);
+}
+
+/**
+ * Whether `s` names a built-in object property (`__proto__`, `constructor`,
+ * `toString`, ...) or is `prototype`: such a name is refused where it would
+ * become a key of a plain object (stream ids, client-chosen tokens).
+ */
+function isBuiltInPropertyName (s: string) {
+  return s === 'prototype' || Object.prototype.hasOwnProperty.call(Object.prototype, s);
 }
 
 function sanitizeFieldKey (s: string) {
   return (s[0] === '$' ? '_' + s.substr(1) : s).replace('.', ':');
 }
 
-export { isReservedId, isReservedToken, sanitizeFieldKey };
+export { isReservedId, isReservedToken, isBuiltInPropertyName, sanitizeFieldKey };

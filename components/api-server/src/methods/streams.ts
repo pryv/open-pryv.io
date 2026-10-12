@@ -249,7 +249,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       // via a registry instead of more special-cases.
       const isPathStyleId = streamId.startsWith(':_cmc:');
       const slugId = isPathStyleId ? streamId : slugify(streamId);
-      if (string.isReservedId(streamId) || string.isReservedId(slugId)) {
+      if (string.isReservedId(streamId) || string.isReservedId(slugId) ||
+          string.isBuiltInPropertyName(streamId) || string.isBuiltInPropertyName(slugId)) {
         return process.nextTick(next.bind(null, errors.invalidItemId('The specified id "' + params.id + '" is not allowed.')));
       }
       params.id = storeDataUtils.getFullItemId(storeId, slugId);

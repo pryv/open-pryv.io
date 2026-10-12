@@ -51,7 +51,7 @@ import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
 import type { ReadStream } from 'node:fs';
 /** System-stream config entry from accountStreams.accountMap. */
-type SystemStreamConfig = { isEditable?: boolean; isIndexed?: boolean; isUnique?: boolean; [k: string]: unknown };
+type SystemStreamConfig = { isEditable?: boolean; isIndexed?: boolean; isUnique?: boolean; regexValidation?: string; [k: string]: unknown };
 
 // Scratchpad fields the events middleware chains stash on the context,
 // named and typed (populated mid-chain, hence all optional).
@@ -644,6 +644,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         { streamIds: accountStreamIds }
       ));
     }
+    // An account event is the field's value: it belongs to its account stream
+    // only. Next to another stream it would be stored as an ordinary event
+    // while the platform index records it as the field's value.
+    const streamIds = context.newEvent!.streamIds ?? [];
+    if (streamIds.length > 1) {
+      return next(errors.invalidOperation(ACCOUNT_EVENT_SINGLE_STREAM_MESSAGE, { streamIds }));
+    }
     context.accountStreamId = accountStreamIds[0];
     const streamConfig = accountStreams.accountMap[context.accountStreamId];
     if (!streamConfig?.isEditable) {
@@ -689,6 +696,14 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         { streamIds: activeStreamIds }
       ));
     }
+    // Same rule as at creation for the stream ids this update sets: an account
+    // stream cannot be added next to other streams (nor other streams next to
+    // it). Events stored that way earlier stay updatable when the update
+    // leaves their stream ids alone.
+    const newStreamIds = context.newEvent!.streamIds ?? [];
+    if (params.update?.streamIds != null && accountStreamIds.length > 0 && newStreamIds.length > 1) {
+      return next(errors.invalidOperation(ACCOUNT_EVENT_SINGLE_STREAM_MESSAGE, { streamIds: newStreamIds }));
+    }
     // Cannot change the account stream of an event
     if (oldAccountStreamIds.length > 0 && accountStreamIds.length > 0) {
       if (oldAccountStreamIds[0] !== accountStreamIds[0]) {
@@ -725,7 +740,16 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
    */
   function validateAccountStreamContent (context: MethodContext, params: EventsCreateOrUpdateParams, result: EventsCreateOrUpdateResult, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
-    if (context.newEvent == null || context.newEvent.content == null) return next();
+    if (context.newEvent == null) return next();
+    const setsContent = params.update == null || params.update.content !== undefined;
+    // The field's value carries the server time: a client `time` would date
+    // the field (and its `modified`) back or forward. Only for an event that
+    // is the field's value (its one stream), when this call sets the value.
+    if (setsContent && context.newEvent.streamIds?.length === 1 && context.accountStreamId != null &&
+        context.newEvent.streamIds[0] === context.accountStreamId) {
+      context.newEvent.time = timestamp.now();
+    }
+    if (context.newEvent.content == null) return next();
     const contentType = typeof context.newEvent.content;
     const accepted = ['number', 'string', 'undefined'];
     if (!accepted.includes(contentType)) {
@@ -733,6 +757,15 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         ErrorMessages.IndexedParameterInvalidFormat || "The event content's format is invalid.",
         params
       ));
+    }
+    // The value follows the field's own rules, whatever event type was sent
+    // (the account store ignores it): the ones account.update and the
+    // registration apply. Checked when this call sets it, so a value stored
+    // before these rules does not block an update of other properties.
+    if (!setsContent) return next();
+    const problem = accountFieldValueProblem(context.accountStreamIdWithoutPrefix, context.systemStream, context.newEvent.content);
+    if (problem != null) {
+      return next(errors.invalidParametersFormat("The event content's format is invalid.", [{ param: 'content', message: problem }]));
     }
     next();
   }
@@ -1347,6 +1380,41 @@ function closeAttachmentItems (items: AttachmentItem[]) {
   for (const item of items) item.attachmentData.destroy();
 }
 
+const ACCOUNT_EVENT_SINGLE_STREAM_MESSAGE = 'An account field event belongs to its account stream only: it cannot carry other stream ids.';
+/** Longest string value of an account field written through the events API. */
+const ACCOUNT_FIELD_MAX_LENGTH = 300;
+/** `language` takes the values account.update accepts (schema `helpers.language`). */
+const LANGUAGE_MIN_LENGTH = 1;
+const LANGUAGE_MAX_LENGTH = 5;
+
+/**
+ * Why `content` cannot be the value of the account field, or null when it
+ * can: a finite number, or a string within the length cap matching the
+ * field's configured pattern (`regexValidation`, as at registration);
+ * `language` as account.update takes it.
+ */
+function accountFieldValueProblem (fieldName: string | undefined, systemStream: SystemStreamConfig | undefined, content: unknown): string | null {
+  if (typeof content === 'number') {
+    if (fieldName === 'language') return 'The language must be a string.';
+    return Number.isFinite(content) ? null : 'The value must be a finite number.';
+  }
+  if (typeof content !== 'string') return null; // other types are refused before
+  if (fieldName === 'language') {
+    if (content.length < LANGUAGE_MIN_LENGTH || content.length > LANGUAGE_MAX_LENGTH) {
+      return `The language must hold ${LANGUAGE_MIN_LENGTH} to ${LANGUAGE_MAX_LENGTH} characters.`;
+    }
+    return null;
+  }
+  if (content.length > ACCOUNT_FIELD_MAX_LENGTH) {
+    return `The value must hold at most ${ACCOUNT_FIELD_MAX_LENGTH} characters.`;
+  }
+  const pattern = systemStream?.regexValidation;
+  if (typeof pattern === 'string' && !new RegExp(pattern).test(content)) {
+    return `The value does not match the pattern of the "${fieldName}" field.`;
+  }
+  return null;
+}
+
 /** `clientData` key-map update: a null value removes the key, others are set. */
 function mergeClientDataMap (clientData: Record<string, unknown> | null | undefined, update: Record<string, unknown>): Record<string, unknown> {
   const merged: Record<string, unknown> = structuredClone(clientData || {});
@@ -1354,7 +1422,9 @@ function mergeClientDataMap (clientData: Record<string, unknown> | null | undefi
     if (value == null) {
       delete merged[key];
     } else {
-      merged[key] = value;
+      // an own entry whatever the key (`merged[key] =` would turn `__proto__`
+      // into a prototype change and lose the entry)
+      Object.defineProperty(merged, key, { value, enumerable: true, writable: true, configurable: true });
     }
   }
   return merged;

@@ -38,6 +38,16 @@ const TYPE_REGEXP = /^[a-zA-Z0-9*/:_-]+$/;
 export { reconcileContentIndexes, buildIndexStatements };
 export type { IndexDeclaration, ReconcileSummary };
 
+/** A LIKE pattern matching names that start with `prefix` literally (`_` and `%` escaped). */
+function likePrefix (prefix: string): string {
+  return prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+}
+
+/** A double-quoted SQL identifier. */
+function quoteIdentifier (name: string): string {
+  return '"' + name.replace(/"/g, '""') + '"';
+}
+
 /**
  * Build the two CREATE INDEX statements (and their names) for one declaration.
  * Throws on invalid declarations — config errors should fail loudly at boot.
@@ -105,7 +115,7 @@ async function reconcileContentIndexes (db: DbLike, declarations: unknown, logge
     FROM pg_index i
     JOIN pg_class c ON c.oid = i.indexrelid
     JOIN pg_class t ON t.oid = i.indrelid
-    WHERE t.relname = 'events' AND c.relname LIKE '${INDEX_PREFIX}%'`);
+    WHERE t.relname = 'events' AND c.relname LIKE $1`, [likePrefix(INDEX_PREFIX)]);
   const existing = new Map<string, boolean>(
     existingRes.rows.map((r) => [r.name as string, r.valid === true])
   );
@@ -113,7 +123,8 @@ async function reconcileContentIndexes (db: DbLike, declarations: unknown, logge
   // Drop: undeclared, or declared-but-invalid (will be recreated below)
   for (const [name, valid] of existing) {
     if (desired.has(name) && valid) continue;
-    await db.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+    // A catalog name: quoted, so it is dropped exactly as named
+    await db.query(`DROP INDEX CONCURRENTLY IF EXISTS ${quoteIdentifier(name)}`);
     summary.dropped.push(name);
     existing.delete(name);
   }

@@ -57,7 +57,9 @@ async function prepareWebhookScopes (context: BaseMethodContext, rawScopes: unkn
     } else {
       throw errors.invalidRequestStructure(`scope '${key}': kind '${kind}' is not yet supported`);
     }
-    out[key] = { kind, query, prepared };
+    // an own entry whatever the scope name (`out[key] =` would turn
+    // `__proto__` into a prototype change and lose the scope)
+    Object.defineProperty(out, key, { value: { kind, query, prepared }, enumerable: true, writable: true, configurable: true });
   }
   return out;
 }

@@ -118,6 +118,20 @@ function sendsHsts (req: IncomingMessage, site: HostedSite): boolean {
   return (req.socket as TLSSocket).encrypted === true;
 }
 
+/**
+ * Whether a proxied path holds an encoded `/` or `\`, or a segment that is a
+ * dot segment once decoded (the URL parser already removed the literal ones).
+ */
+function hasEncodedSeparatorOrDotSegment (subPath: string): boolean {
+  if (/%(2f|5c)/i.test(subPath)) return true;
+  for (const segment of subPath.split('/')) {
+    let decoded: string;
+    try { decoded = decodeURIComponent(segment); } catch { return true; }
+    if (decoded === '.' || decoded === '..') return true;
+  }
+  return false;
+}
+
 function plain (res: ServerResponse, status: number, message: string, extra: OutgoingHttpHeaders = {}, head = false) {
   const body = message + '\n';
   res.writeHead(status, Object.assign({
@@ -295,6 +309,13 @@ function buildHostedSitesIngress (opts: {
   function proxy (req: IncomingMessage, res: ServerResponse, site: ProxySite, subPath: string, search: string, prefix: string) {
     // Before any answer, so 400 / 502 / 504 carry them too
     setSiteHeaders(req, res, site);
+    // An upstream that decodes the path before normalising it would read
+    // `%2F..%2F` as `/../` and serve outside the configured base path: encoded
+    // separators, and dot segments once decoded, never reach it.
+    if (hasEncodedSeparatorOrDotSegment(subPath)) {
+      plain(res, 400, 'Bad Request', {}, req.method === 'HEAD');
+      return;
+    }
     const base = new URL(site.upstream);
     const target = new URL(site.upstream);
     // Assigning the path cannot change the host, whatever the request holds.

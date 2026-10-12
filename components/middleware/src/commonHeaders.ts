@@ -52,11 +52,34 @@ export default async function (): Promise<RequestHandler> {
 function noStoreForJson (res: Response): void {
   const writeHead = res.writeHead;
   res.writeHead = function (this: Response, ...args: unknown[]) {
-    if (!res.hasHeader('Cache-Control') && isJson(res.getHeader('Content-Type'))) {
+    // writeHead(status, [statusMessage], [headers]): the headers given there
+    // are applied on top of the ones already set.
+    const passed = headerLookup(typeof args[1] === 'string' ? args[2] : args[1]);
+    const cacheControl = passed('cache-control') ?? res.getHeader('Cache-Control');
+    const contentType = passed('content-type') ?? res.getHeader('Content-Type');
+    if (cacheControl == null && isJson(contentType)) {
       res.setHeader('Cache-Control', 'no-store');
     }
     return (writeHead as (...a: unknown[]) => Response).apply(this, args);
   } as Response['writeHead'];
+}
+
+/**
+ * Case-insensitive reader over the headers argument of writeHead: an object,
+ * a flat `[name, value, ...]` array or an array of `[name, value]` pairs.
+ */
+function headerLookup (headers: unknown): (name: string) => unknown {
+  const found = new Map<string, unknown>();
+  if (Array.isArray(headers)) {
+    if (headers.every((h) => Array.isArray(h))) {
+      for (const [name, value] of headers as unknown[][]) found.set(String(name).toLowerCase(), value);
+    } else {
+      for (let i = 0; i + 1 < headers.length; i += 2) found.set(String(headers[i]).toLowerCase(), headers[i + 1]);
+    }
+  } else if (headers != null && typeof headers === 'object') {
+    for (const [name, value] of Object.entries(headers)) found.set(name.toLowerCase(), value);
+  }
+  return (name) => found.get(name);
 }
 
 function isJson (contentType: unknown): boolean {

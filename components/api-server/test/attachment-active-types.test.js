@@ -116,6 +116,32 @@ describe('[ACTY] attachments with an active content type', function () {
     assertUnchanged(viaToken, 'doc.pdf', 'application/pdf');
   });
 
+  it('[ACFN1] contentDisposition() encodes the file name, and falls back when it cannot', function () {
+    const { contentDisposition } = require('../src/middleware/attachment-access.ts');
+    assert.strictEqual(contentDisposition('café report.pdf'), "attachment; filename*=UTF-8''" + encodeURIComponent('café report.pdf'));
+    for (const bad of ['bad\uD800name.txt', '\uDC00', null, undefined, 42]) {
+      assert.strictEqual(contentDisposition(bad), 'attachment', String(bad));
+    }
+  });
+
+  it('[ACFN2] an attachment whose stored file name cannot be encoded is served with a generic disposition', async function () {
+    // PostgreSQL refuses a lone surrogate in a JSON value: only SQLite can hold one.
+    if (process.env.STORAGE_ENGINE !== 'sqlite') this.skip();
+    const { eventId, attachment } = await upload('plain.txt', 'text/plain', 'hello');
+    const { getMall } = require('mall');
+    const mall = await getMall();
+    const event = await mall.events.getOne(username, eventId);
+    event.attachments[0].fileName = 'bad\uD800name.txt';
+    await mall.events.update(username, event);
+    const res = await coreRequest
+      .get('/' + username + '/events/' + eventId + '/' + attachment.id)
+      .set('Authorization', token)
+      .buffer(true);
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(res.headers['content-disposition'], 'attachment');
+    assert.strictEqual(res.text, 'hello');
+  });
+
   it('[ACU1] isActiveContentType() decides on the type essence', function () {
     const { isActiveContentType } = require('../src/middleware/attachment-access.ts');
     for (const t of ['text/html', 'TEXT/HTML; charset=utf-8', 'application/xhtml+xml', 'image/svg+xml',

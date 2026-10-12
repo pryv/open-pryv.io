@@ -23,6 +23,7 @@ const methodsSchema = require('../schema/accessesMethods.ts');
 const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
+const ACCOUNT_ROOT_LEVEL_MESSAGE = "The account root stream can only be granted at the 'read' or 'none' level; grant the account fields themselves to write them.";
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 
 const cache = require('cache').default;
@@ -161,7 +162,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   }
 
   async function includeDeletionsIfRequested (context: MethodContext, params: AccessesGetParams, result: AccessesGetResult, next: MethodNext) {
-    if (params.includeDeletions == null) {
+    if (!params.includeDeletions) {
       return next();
     }
     const currentAccess = context.access;
@@ -412,6 +413,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       if (isStreamBasedPermission(permission)) {
         if (isUnknownSystemStream(permission.streamId)) {
           return errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId });
+        }
+        // The account root grants its level on every account field below it,
+        // hidden ones included: it can be read or locked, never written.
+        if (permission.streamId === accountStreams.STREAM_ID_ACCOUNT &&
+            permission.level !== 'read' && permission.level !== 'none') {
+          return errors.invalidOperation(ACCOUNT_ROOT_LEVEL_MESSAGE, { param: permission.streamId, level: permission.level });
         }
         // don't allow user to give access to not visible stream
         if (notVisibleAccountStreamsIds.includes(permission.streamId)) {

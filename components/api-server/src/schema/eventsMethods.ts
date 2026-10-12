@@ -23,6 +23,9 @@ const boolean = helpers.boolean;
  * may drain into memory when its result is not streamed (batch, socket.io). */
 const EVENTS_GET_MAX_PAGING = 100000;
 const paging = () => helpers.getBaseSchema('integer', { minimum: 0, maximum: EVENTS_GET_MAX_PAGING });
+// A time bound is a finite number: `1e999` parses to Infinity, which the
+// bounds exclude.
+const finiteTime = () => number({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
 export { EVENTS_GET_MAX_PAGING };
 const __ex_get = {
     params: object({
@@ -32,13 +35,13 @@ const __ex_get = {
       content: {},
       clientData: {},
       types: array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$' }), { nullable: true }),
-      fromTime: number(),
-      toTime: number(),
+      fromTime: finiteTime(),
+      toTime: finiteTime(),
       sortAscending: boolean(),
       skip: paging(),
       limit: paging(),
       state: string({ enum: ['default', 'trashed', 'all'] }),
-      modifiedSince: number(),
+      modifiedSince: finiteTime(),
       includeDeletions: boolean(),
       auth: string(),
       running: boolean()

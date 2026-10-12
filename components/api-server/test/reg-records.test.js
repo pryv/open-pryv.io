@@ -108,14 +108,17 @@ describe('[RGRC] Register records admin endpoint', () => {
     });
 
     it('[RR09] a body that is not an object is answered 400, never left hanging', async () => {
-      for (const json of ['null', '42', '"text"', '[1]']) {
+      // `_json` holding no object nor array is refused as it is read; an array
+      // reaches the route, which refuses it
+      for (const [json, errorId] of [['null', 'invalid-request-structure'], ['42', 'invalid-request-structure'],
+        ['"text"', 'invalid-request-structure'], ['[1]', 'invalid-parameters']]) {
         const res = await coreRequest.post('/reg/records')
           .set('Authorization', adminAccessKey)
           .type('form')
           .send({ _json: json })
           .timeout(5000);
         assert.strictEqual(res.status, 400, json);
-        assert.strictEqual(res.body.error.id, 'invalid-parameters', json);
+        assert.strictEqual(res.body.error.id, errorId, json);
       }
     });
 

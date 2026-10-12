@@ -13,8 +13,11 @@ export default (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 function getAuth (req: Request): string | null {
-  let authorizationHeader = req.header('authorization');
+  // Only a string is a credential: a header sent twice, or a bracketed query
+  // key (`?auth[x]=y` parses to an object), carries no token at all.
+  let authorizationHeader: unknown = req.header('authorization');
   if (authorizationHeader != null) {
+    if (typeof authorizationHeader !== 'string') { return null; }
     const basic = authorizationHeader.split(' ');
     if (basic[0].toLowerCase() === 'basic' && basic[1]) {
       authorizationHeader = Buffer.from(basic[1], 'base64')
@@ -25,12 +28,11 @@ function getAuth (req: Request): string | null {
       // parseAuth. Keep any trailing " CALLERID" for its TOKEN/CALLERID split.
       authorizationHeader = authorizationHeader.substring(basic[0].length + 1);
     }
-    if (Array.isArray(authorizationHeader)) { return authorizationHeader[0]; }
-    return authorizationHeader;
+    return authorizationHeader as string;
   }
   // assert: no authorization in header, let's check query:
-  const authFromQuery = req.query.auth as string | string[] | undefined;
-  if (authFromQuery == null) { return null; }
-  if (Array.isArray(authFromQuery)) { return authFromQuery[0]; }
+  let authFromQuery: unknown = req.query.auth;
+  if (Array.isArray(authFromQuery)) { authFromQuery = authFromQuery[0]; }
+  if (typeof authFromQuery !== 'string') { return null; }
   return authFromQuery;
 }

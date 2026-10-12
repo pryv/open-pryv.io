@@ -1,5 +1,51 @@
 # Changelog - Internal (no API impact)
 
+## Hardening batch: query semantics, client-keyed maps, credentials, storage statements
+
+- `streamsQueryUtils.expandAndTransformStreamQuery` returns no query when an `all` entry expands to
+  nothing (it skipped the entry); `validateStreamsQuerySchemaAndSetStore` applies the `*` rules to
+  the parsed id and refuses a malformed store prefix. `scopeQueryUtils.toStreamGroups` returns a
+  group no event satisfies when nothing resolved (an empty list read as "no stream filter" to
+  `eventMatchesQuery`). Tests: api-server `[QALL1]`..`[QALL3]`, `[QRT1]`, `[QMAL1]`.
+- `events.get` params: `fromTime` / `toTime` / `modifiedSince` bounded by `±Number.MAX_VALUE`
+  (finite). SQLite `UserDatabase`: one `pagingClause` emits `LIMIT n` for any non-negative integer
+  and `LIMIT -1 OFFSET n` for an offset alone; `getEventDeletionsStreamed(deletedSince, options)`
+  honours `sortAscending` / `limit` / `skip`, passed through by `localUserEventsSQLite`. Tests:
+  api-server `[QFIN1]`, `[QSKP1]`, `[QLIM0]`, `[QDEL1]`. SQLite deletions use `deleted > since` (strict, as
+  the PostgreSQL engine; it was `>=`). Test: api-server `[QDEL2]`.
+- Maps keyed by client strings have no prototype: `AccessLogic` permission maps, forced-stream map,
+  feature map and level cache (`keyedMap()`), the PostgreSQL `BaseStoragePG` JSONB update maps and
+  the SQLite `BaseStorageSQLite` merged field; `mergeClientDataMap` and `prepareWebhookScopes` define
+  own properties. `string.isBuiltInPropertyName` (shared with `isReservedToken`) refuses such
+  stream ids at `streams.create`. Tests: api-server `[PRTO1]`..`[PRTO4]`.
+- Credentials: `getAuth` returns only a string (header or `?auth=`, first of a repeated one) or
+  `null`; `MethodContext` parses `auth` only when it is a string (the batch route and socket.io
+  hand over the raw value); the urlencoded `override` middleware takes `_method` from
+  `GET`/`POST`/`PUT`/`DELETE`, `_auth` / `_method` as single strings and `_json` as an object or
+  array. Tests: middleware `[GAN1]`..`[GAN3]`, `[OVR1]`..`[OVR4]`, api-server `[GAN4]`.
+- `commonHeaders` `noStoreForJson` reads `Content-Type` / `Cache-Control` from the headers passed
+  to `writeHead` too (object, flat array or pairs, with or without a status message); no Express
+  route passes headers that way today. Test: middleware `[NSWH1]`.
+- PostgreSQL content-index reconciler: existing indexes selected with an escaped `LIKE` prefix (a
+  bound `pryv\_cq\_%`; `_` matched any character, so a foreign index named like ours was dropped)
+  and dropped by quoted name (a mixed-case name was folded and missed). Test: storages `[IX13]`.
+- `UsersLocalIndexDB.deleteAlias(alias, userId)` (interface, PostgreSQL, SQLite, storage wrapper):
+  the delete is scoped to the owning user; `UsersRepository.releaseAlias` passes it. Test: storage
+  `[ALDK1]`.
+- `accesses.get` schema: `includeDeletions` / `includeExpired` declared in `properties` (they sat at
+  the schema root as unknown keywords). `validateAccountStreamPermissions` refuses levels other
+  than `read` / `none` on `:_system:account`. Tests: api-server `[AGOP1]`, `[AGOP2]`, `[ACRT1]`,
+  `[ACRT2]`.
+- events: `validateAccountStreamForCreate` / `ForUpdate` refuse account stream ids next to other
+  stream ids (update: only when it sets `streamIds`); `validateAccountStreamContent` checks the
+  value with `accountFieldValueProblem` (language 1..5, `regexValidation`, 300 characters, finite
+  numbers) when the call sets it and stamps the server time on an account field event. Tests:
+  api-server `[ACFT1]`..`[ACFT3]`, `[ACMX1]`, `[ACMX2]`.
+- Hosted proxy sites: `hasEncodedSeparatorOrDotSegment` refuses the path before the upstream
+  request. Attachment download: `contentDisposition()` falls back to a bare `attachment`. Tests:
+  api-server `[HSPE1]`, `[ACFN1]`, `[ACFN2]` (SQLite only: PostgreSQL refuses a lone surrogate in
+  JSON).
+
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
 
 - `components/storage/src/userLocalDirectory.ts` `getPathForUser` refuses a user id holding `/`,

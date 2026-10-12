@@ -188,7 +188,7 @@ class UsersRepository {
     const aliases = await this.usersIndex.getAliasesForId(ownerUserId);
     if (!aliases.includes(alias)) return;
     await this.platform.deleteUserUniqueField('alias', alias);
-    await this.usersIndex.deleteAlias(alias);
+    await this.usersIndex.deleteAlias(alias, ownerUserId);
     if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
   }
 

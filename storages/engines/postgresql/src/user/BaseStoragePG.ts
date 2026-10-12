@@ -615,13 +615,15 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     // exactly one dot. The object form must therefore feed the map directly and
     // never be re-encoded as a dotted string, or a legitimate sub-key such as
     // 'com.example.app' would be re-parsed and rejected.
+    // The per-column maps have no prototype: their keys are client-chosen,
+    // and a `__proto__` sub-key must stay an entry.
     const jsonbUpdates: Record<string, Record<string, unknown>> = {};
 
     for (const [k, v] of Object.entries($set)) {
       if (v != null && typeof v === 'object' && !Array.isArray(v)) {
         const snakeCol = this.toCol(k);
         if (this.isJsonbCol(snakeCol)) {
-          if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
+          if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = Object.create(null);
           for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
             // null is the removal marker further down.
             jsonbUpdates[snakeCol][subKey] = subVal;
@@ -638,21 +640,21 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     for (const key of dotSetKeys) {
       const { field, entry } = splitUpdatePath(key);
       const snakeCol = this.toCol(field);
-      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
+      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = Object.create(null);
       jsonbUpdates[snakeCol][entry as string] = $set[key];
       delete $set[key];
     }
     for (const key of dotUnsetKeys) {
       const { field, entry } = splitUpdatePath(key);
       const snakeCol = this.toCol(field);
-      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
+      if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = Object.create(null);
       jsonbUpdates[snakeCol][entry as string] = null;
       delete $unset[key];
     }
 
     if (Object.keys(jsonbUpdates).length > 0) {
       for (const [snakeCol, updates] of Object.entries(jsonbUpdates)) {
-        const keysToSet: Record<string, unknown> = {};
+        const keysToSet: Record<string, unknown> = Object.create(null);
         const keysToRemove: string[] = [];
         for (const [k, v] of Object.entries(updates)) {
           if (v === null) {

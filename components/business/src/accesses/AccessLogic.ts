@@ -44,6 +44,15 @@ const WEBHOOKS_FORBIDDEN_MESSAGE = 'Webhooks are not allowed with this access: i
  */
 const SHARED_SECRETS_NS = ':_shared-secrets:';
 
+/**
+ * An empty map keyed by client-chosen strings (stream ids, feature names): no
+ * prototype, so a key such as `constructor` or `__proto__` is an ordinary
+ * entry, absent until set, never an inherited member.
+ */
+function keyedMap<T> (): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 /** True for the namespace root and anything below it. */
 function isSharedSecretsStream (streamId: unknown): boolean {
   if (typeof streamId !== 'string') return false;
@@ -94,7 +103,7 @@ class AccessLogic {
   constructor (userId: string, access: Record<string, unknown>) {
     this._access = access;
     this._userId = userId;
-    this._streamPermissionLevelCache = {};
+    this._streamPermissionLevelCache = keyedMap();
     this._permissionsLoad = null;
     deepMerge(this, access);
 
@@ -172,9 +181,9 @@ class AccessLogic {
       return;
     }
 
-    const featurePermissionsMap: Record<string, FeaturePermission> = {};
-    const streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>> = {};
-    const streamByStoreForced: Record<string, string[]> = {};
+    const featurePermissionsMap: Record<string, FeaturePermission> = keyedMap();
+    const streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>> = keyedMap();
+    const streamByStoreForced: Record<string, string[]> = keyedMap();
 
     for (const perm of this.permissions) {
       if ('streamId' in perm && perm.streamId != null) {
@@ -189,19 +198,19 @@ class AccessLogic {
     this.featurePermissionsMap = featurePermissionsMap;
     this._streamByStorePermissionsMap = streamByStorePermissionsMap;
     this._streamByStoreForced = streamByStoreForced;
-    this._streamPermissionLevelCache = {};
+    this._streamPermissionLevelCache = keyedMap();
   }
 
   async _loadStreamPermission (perm: StreamPermission, streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>>) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
-    if (streamByStorePermissionsMap[storeId] == null) streamByStorePermissionsMap[storeId] = {};
+    if (streamByStorePermissionsMap[storeId] == null) streamByStorePermissionsMap[storeId] = keyedMap();
     streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
 
     if (perm.streamId === '*') { // add mall stores to permissions
       const mall = await getMall();
       const mallStoreIds = mall.includedInStarPermissions;
       for (const mallStoreId of mallStoreIds) {
-        if (streamByStorePermissionsMap[mallStoreId] == null) streamByStorePermissionsMap[mallStoreId] = {};
+        if (streamByStorePermissionsMap[mallStoreId] == null) streamByStorePermissionsMap[mallStoreId] = keyedMap();
         streamByStorePermissionsMap[mallStoreId]['*'] = { streamId: '*', level: perm.level };
       }
     }

@@ -74,6 +74,10 @@ function toStreamGroups (items: Array<{ any?: string[]; not?: string[]; and?: Ar
     if (Array.isArray(item.not) && item.not.length > 0) conditions.push({ not: item.not });
     if (conditions.length > 0) groups.push(conditions);
   }
+  // Streams that resolved to nothing (no readable stream, an `all` entry that
+  // cannot hold) match no event, as in events.get. An empty list would read as
+  // "no stream filter" to the matcher, so it gets a group no event satisfies.
+  if (groups.length === 0) return [[{ any: [] }]];
   return groups;
 }
 

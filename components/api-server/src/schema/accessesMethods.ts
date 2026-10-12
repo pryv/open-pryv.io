@@ -21,10 +21,11 @@ const boolean = helpers.boolean;
 const number = helpers.number;
 
 const __ex_get = {
-    params: object({}, {
-      id: 'accesses.get',
+    params: object({
       includeDeletions: boolean(),
       includeExpired: boolean()
+    }, {
+      id: 'accesses.get'
     }),
     result: object({
       accesses: {
