@@ -18,6 +18,7 @@ type WebhookInstance = {
   id: string;
   url: string;
   accessId: string;
+  minIntervalMs?: number;
   forApi (): Record<string, unknown>;
   save (): Promise<unknown>;
   update (data: Record<string, unknown>): Promise<unknown>;
@@ -37,6 +38,7 @@ const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
 const { webhookUrlProblem, describeCallFailure } = require('business').webhooks.destination;
 const { prepareScopeQuery, prepareAccessScopeQuery } = require('./helpers/scopeQueryUtils.ts');
+const { reserveWebhookTestCall } = require('business/src/webhooks/testThrottle.ts') as typeof import('../../../business/src/webhooks/testThrottle.ts');
 
 // Validate + prepare a raw webhook scopes map { key -> { kind, query } } into
 // the stored form { key -> { kind, query, prepared } }. Stream resolution
@@ -306,6 +308,14 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       }
       if (!isWebhookInScope(webhook, currentAccess)) {
         return next(errors.forbidden('The webhook was not created by this app access.'));
+      }
+      // Same pace as the deliveries: one test call per minIntervalMs.
+      // Invariant: the access check resolved the account, so user.id is set.
+      const retryAfterSeconds = await reserveWebhookTestCall(user.id!, webhook.id, webhook.minIntervalMs);
+      if (retryAfterSeconds != null) {
+        return next(errors.tooManyAttempts(retryAfterSeconds, {
+          message: 'This webhook was tested less than its minimum interval ago. Please try again later.'
+        }));
       }
     } catch (error) {
       return next(errors.unexpectedError(error));

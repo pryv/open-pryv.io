@@ -103,4 +103,49 @@ describe('[BKRE] bin/backup.js restore refuses an unexpected plaintext backup', 
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /Restored: 0 users/);
   });
+
+  // A passphrase given on the command line shows in the process list and the
+  // shell history; --passphrase-file reads it from a file instead.
+  it('[BKPF1] a passphrase from --passphrase-file counts as a decryption secret', () => {
+    const file = path.join(tmpDir, 'passphrase-bkpf1');
+    fs.writeFileSync(file, 'some-secret\n', { mode: 0o600 });
+    assertRefused(runCli(['--restore', plainBackup, '--passphrase-file', file]));
+  });
+
+  it('[BKPF2] --passphrase-file with a command-line passphrase, or an empty file, is a usage error', () => {
+    const file = path.join(tmpDir, 'passphrase-bkpf2');
+    fs.writeFileSync(file, 'some-secret\n', { mode: 0o600 });
+    const both = runCli(['--restore', plainBackup, '--passphrase-file', file, '--decrypt-passphrase', 'x']);
+    assert.strictEqual(both.status, 1, both.stdout + both.stderr);
+    assert.match(both.stderr, /mutually exclusive/);
+    const empty = path.join(tmpDir, 'passphrase-bkpf2-empty');
+    fs.writeFileSync(empty, '\n', { mode: 0o600 });
+    const res = runCli(['--restore', plainBackup, '--passphrase-file', empty]);
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /is empty/);
+  });
+});
+
+describe('[BKPW] bin/backup.js backup without a key model', function () {
+  this.timeout(120000);
+
+  let tmpDir;
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-plain-warn-'));
+  });
+  after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('[BKPW1] a plaintext backup is announced on stderr; an encrypted one is not', () => {
+    const user = 'bkpw-nobody';
+    const plain = runCli(['--output', path.join(tmpDir, 'plain'), '--user', user]);
+    assert.match(plain.stderr, /WARNING: this backup is NOT encrypted/, plain.stdout + plain.stderr);
+
+    const file = path.join(tmpDir, 'passphrase');
+    fs.writeFileSync(file, 'a-backup-passphrase\n', { mode: 0o600 });
+    const encrypted = runCli(['--output', path.join(tmpDir, 'encrypted'), '--user', user, '--passphrase-file', file]);
+    assert.doesNotMatch(encrypted.stderr, /NOT encrypted/, encrypted.stdout + encrypted.stderr);
+    assert.match(encrypted.stdout, /Encryption: /, encrypted.stdout + encrypted.stderr);
+  });
 });

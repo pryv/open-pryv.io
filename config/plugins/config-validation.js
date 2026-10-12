@@ -423,6 +423,15 @@ function checkWebhooks (config, problems) {
   }
 }
 
+// integrity.algorithm: the checksums of events, accesses and attachments.
+// md5 and sha1 are refused, like any value outside the accepted list.
+function checkIntegrityAlgorithm (config, problems) {
+  const { integrityAlgorithmProblem } = require('../../components/business/src/integrity/algorithms.ts');
+  const algorithm = config.get('integrity:algorithm');
+  const problem = integrityAlgorithmProblem(algorithm);
+  if (problem != null) problems.push({ message: problem + '.', path: ['integrity', 'algorithm'], payload: { algorithm } });
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -538,6 +547,7 @@ async function validate (config) {
   checkHostedSites(config, problems);
   checkTrustedProxies(config, problems);
   checkWebhooks(config, problems);
+  checkIntegrityAlgorithm(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
@@ -710,6 +720,7 @@ module.exports = {
   checkMfaConfig,
   checkHostedSites,
   checkTrustedProxies,
+  checkIntegrityAlgorithm,
   checkUserDataRootPersistence,
   checkCoreIdentity,
   checkRaftTls,

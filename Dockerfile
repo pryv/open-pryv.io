@@ -78,6 +78,14 @@ RUN apt-get -y --purge autoremove python3 build-essential curl && \
 
 ENV NODE_ENV=production
 
+# libuv's thread pool (default 4 threads per process) runs the password hashes
+# (bcrypt), file system calls (attachments, uploads, SQLite files), DNS lookups
+# (webhook targets) and compression. With 4 threads, a burst of logins keeps
+# them all busy and every attachment read or webhook call waits behind it.
+# 16 leaves threads for the other work; each idle thread costs little memory.
+# Override with `-e UV_THREADPOOL_SIZE=<n>` (Node caps it at 1024).
+ENV UV_THREADPOOL_SIZE=16
+
 # Self-referential image tag — baked at build time, read at runtime by the
 # install wizard so the generated run-pryv.sh / check-config.sh launchers
 # default their PRYV_IMAGE to the same tag the container was pulled from.

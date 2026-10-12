@@ -33,6 +33,7 @@ const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const attachmentManagement = require('../attachmentManagement.ts');
+const { createRenderLimiter } = require('../renderLimiter.ts') as typeof import('../renderLimiter.ts');
 const { getConfig } = require('@pryv/boiler');
 
 // constants
@@ -40,6 +41,13 @@ const StandardDimensions = [256, 512, 768, 1024];
 const SmallestStandardDimension = StandardDimensions[0];
 const BiggestStandardDimension = StandardDimensions[StandardDimensions.length - 1];
 const StandardDimensionsLength = StandardDimensions.length;
+// eventFiles:previewsMaxInputPixels / previewsRenderConcurrency when unset
+const DefaultMaxInputPixels = 100000000;
+const DefaultRenderConcurrency = 2;
+
+function positiveIntegerOr (value: unknown, fallback: number): number {
+  return (typeof value === 'number' && Number.isInteger(value) && value > 0) ? value : fallback;
+}
 /**
  * Routes for retrieving preview images for events.
  *
@@ -81,6 +89,11 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
   // also accept the key as `?auth=`, Bearer or Basic. The nightly cron below
   // does not need it.
   const adminAccessKey = (await getConfig()).get('auth:adminAccessKey');
+  // Decoding cost bounds: an image declaring more pixels than this is refused
+  // before it is decoded (a small file can declare a huge canvas), and at most
+  // this many renders run at once in this worker, the others wait.
+  const maxInputPixels = positiveIntegerOr((await getConfig()).get('eventFiles:previewsMaxInputPixels'), DefaultMaxInputPixels);
+  const renderLimiter = createRenderLimiter(positiveIntegerOr((await getConfig()).get('eventFiles:previewsRenderConcurrency'), DefaultRenderConcurrency));
   expressApp.post('/clean-up-cache', checkAdminKey, cleanUpCache);
   expressApp.post('/:username/clean-up-cache', checkAdminKey, cleanUpCache);
   // SERVING PREVIEWS
@@ -129,7 +142,7 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
         originalSize = { width: attachment.width, height: attachment.height };
       }
       try {
-        const metadata = await sharp(attachmentPath).metadata();
+        const metadata = await sharp(attachmentPath, { limitInputPixels: maxInputPixels }).metadata();
         originalSize = { width: metadata.width, height: metadata.height };
         attachment.width = originalSize.width;
         attachment.height = originalSize.height;
@@ -152,11 +165,12 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
         // assume no cache (don't throw any error)
       }
       if (!cached) {
+        const outputPath: string = previewPath;
         try {
-          await sharp(attachmentPath, { pages: 1 }) // pages: 1 extracts first frame (animated GIFs)
+          await renderLimiter.run(() => sharp(attachmentPath, { pages: 1, limitInputPixels: maxInputPixels }) // pages: 1 extracts first frame (animated GIFs)
             .resize(Math.round(targetSize.width), Math.round(targetSize.height))
             .jpeg({ progressive: true })
-            .toFile(previewPath);
+            .toFile(outputPath));
         } catch (err) {
           return next(adjustImageError(err));
         }
@@ -226,6 +240,9 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
     // sharp throws on corrupt/missing files with specific messages
     if (e.message && (e.message.includes('Input file is missing') || e.message.includes('unsupported image format'))) {
       return errors.corruptedData('Corrupt event data: expected an attached file.', err);
+    }
+    if (e.message && e.message.includes('exceeds pixel limit')) {
+      return errors.payloadTooLarge('The attached image has too many pixels to be previewed.');
     }
     return err;
   }

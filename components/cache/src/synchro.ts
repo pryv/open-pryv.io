@@ -59,7 +59,8 @@ function removeListenerForUserId (userId: string): void {
 }
 // listener
 function handleMessage (userId: string, msg: Message): void {
-  logger.debug('handleMessage', userId, msg);
+  // The token of an updated access is still valid: never in the log.
+  logger.debug('handleMessage', userId, { action: msg.action, accessId: msg.accessId, username: msg.username, userId: msg.userId });
   if (msg.action === MESSAGES.UNSET_ACCESS_LOGIC) {
     return cache!.unsetAccessLogic(userId, { id: msg.accessId!, token: msg.accessToken! }, false);
   }

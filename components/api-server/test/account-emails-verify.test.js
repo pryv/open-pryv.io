@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
  * the public POST /:username/account/verify-email endpoint.
  */
 
-/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, config */
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const container = require('business/src/emails/container.ts');
 const operations = require('business/src/emails/operations.ts');
@@ -35,6 +35,10 @@ const { withInjectedConfig } = require('test-helpers');
 // A trusted app with a wildcard origin in the test config, so the public
 // endpoint's trusted-app check passes without a real Origin.
 const TRUSTED_APP = 'pryv-test-no-cors';
+
+// Scoped through the test config scope (restored on exit): a config.set value
+// would stay above that scope for the rest of the mocha process.
+const NO_RESEND_COOLDOWN = { account: { emailVerification: { resendCooldownMs: 0 } } };
 
 describe('[VEML] account email verification', function () {
   this.timeout(30000);
@@ -185,9 +189,7 @@ describe('[VEML] account email verification', function () {
     });
 
     it('[VEML22] a resend past the cooldown rotates the token: the old dies, the new verifies', async function () {
-      const saved = config.get('account:emailVerification:resendCooldownMs');
-      config.set('account:emailVerification:resendCooldownMs', 0);
-      try {
+      await withInjectedConfig(NO_RESEND_COOLDOWN, async () => {
         const u = await makeUser(cuid() + '@rr.example.com');
         const email = cuid() + '@rotate.example.com';
         const oldToken = await addPending(u, email);
@@ -197,9 +199,7 @@ describe('[VEML] account email verification', function () {
 
         assert.strictEqual(await operations.verifyToken(u.userId, oldToken, u.username), null, 'old token rotated out');
         assert.strictEqual(await operations.verifyToken(u.userId, newToken, u.username), email);
-      } finally {
-        config.set('account:emailVerification:resendCooldownMs', saved);
-      }
+      });
     });
 
     it('[VEML24] the persistent send-throttle is first-writer-wins and survives release', async function () {
@@ -278,9 +278,7 @@ describe('[VEML] account email verification', function () {
     });
 
     it('[VEML34] account.update {emails:{resend}} rotates the token (old link dies)', async function () {
-      const saved = config.get('account:emailVerification:resendCooldownMs');
-      config.set('account:emailVerification:resendCooldownMs', 0);
-      try {
+      await withInjectedConfig(NO_RESEND_COOLDOWN, async () => {
         const u = await makeUser(cuid() + '@hr.example.com');
         const email = cuid() + '@http-resend.example.com';
         const oldToken = await addPending(u, email);
@@ -292,9 +290,7 @@ describe('[VEML] account email verification', function () {
         assert.strictEqual(await operations.verifyToken(u.userId, oldToken, u.username), null);
         const raw = await container.findRawByValue(u.userId, email);
         assert.strictEqual(raw.content.status, 'pending');
-      } finally {
-        config.set('account:emailVerification:resendCooldownMs', saved);
-      }
+      });
     });
   });
 
@@ -305,9 +301,7 @@ describe('[VEML] account email verification', function () {
   // can prove its own address and become linkable.
   describe('[VEMU] provenance upgrade of an asserted email', function () {
     it('[VEMU11] resend + verify upgrades a registration-asserted founding email to email-link proved (status stays verified)', async function () {
-      const saved = config.get('account:emailVerification:resendCooldownMs');
-      config.set('account:emailVerification:resendCooldownMs', 0);
-      try {
+      await withInjectedConfig(NO_RESEND_COOLDOWN, async () => {
         const founding = cuid() + '@founding.example.com';
         const u = await makeUser(founding);
         // Seed the container from the legacy primary and confirm the founding
@@ -337,15 +331,11 @@ describe('[VEML] account email verification', function () {
         assert.strictEqual(raw.content.verificationTokenHash, null);
         assert.strictEqual(raw.content.verificationTokenExpires, null);
         assert.strictEqual(raw.content.verificationSentAt, null);
-      } finally {
-        config.set('account:emailVerification:resendCooldownMs', saved);
-      }
+      });
     });
 
     it('[VEMU12] resend + verify upgrades a legacy-asserted verified address to proved', async function () {
-      const saved = config.get('account:emailVerification:resendCooldownMs');
-      config.set('account:emailVerification:resendCooldownMs', 0);
-      try {
+      await withInjectedConfig(NO_RESEND_COOLDOWN, async () => {
         const u = await makeUser(cuid() + '@lg.example.com');
         // A legacy `account.update {email}` sets an unowned address as primary:
         // verified with method `legacy`, NOT proved.
@@ -365,9 +355,7 @@ describe('[VEML] account email verification', function () {
         assert.strictEqual(raw.content.status, 'verified');
         assert.strictEqual(raw.content.verificationMethod, 'email-link');
         assert.strictEqual(constants.isProvedOwnership(raw.content), true);
-      } finally {
-        config.set('account:emailVerification:resendCooldownMs', saved);
-      }
+      });
     });
 
     it('[VEMU13] verifyToken never re-stamps an already-proved entry, even if a token lingers', async function () {

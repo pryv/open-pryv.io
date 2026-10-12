@@ -9,10 +9,14 @@ leaves deletions out; the account root stream can no longer be granted at a writ
 account fields written through events follow the field's rules and take the server time; the first
 decision posted on an access request wins; OAuth2 PKCE values must have the RFC 7636 form; new
 usernames of the `xn--` / `??--` forms or of the shape of a minted alias are refused, and a
-delegated account takes a username only under the registration rules. Operators: run the read-only
-counts listed in the deploy notes before deploying (local events carrying an account stream id
-next to another stream, accesses granting the account root above `read`, usernames of the shapes
-now refused).
+delegated account takes a username only under the registration rules. Operations, limits, logging
+and deletion: `webhooks.test` follows the webhook's minimum interval (`429` otherwise); the
+webhooks of a renamed account follow it, those of a deleted account stop; a preview of an image
+declaring too many pixels answers `413`. Operators: run the read-only counts listed in the deploy
+notes before deploying (local events carrying an account stream id next to another stream,
+accesses granting the account root above `read`, usernames of the shapes now refused); a core
+configured with `integrity.algorithm: md5` or `sha1` refuses to boot; the admin key fingerprint
+of the boot log changes (name and value); new log files are created `0640` in `0750` directories.
 
 ### Events
 
@@ -140,6 +144,27 @@ now refused).
 - MFA SMS: the per-user hourly send budget follows the account (user id): a username change no
   longer gives a fresh budget, and the next holder of a released username no longer inherits a
   spent one.
+- `account.changeUsername`: the account's webhooks keep firing under the new username; they
+  stopped silently (they listened under the former name until the next restart of the core).
+- Account deletion: the account's webhooks stop at once; they stayed loaded under the username
+  until the next restart of the core.
+- Account deletion: the high-frequency series of the account are dropped again as the last step,
+  so points written during the deletion (through a series credential still cached) no longer
+  survive it.
+
+### Webhooks
+
+- `webhooks.test`: one test call per webhook per `minIntervalMs` (the interval of the webhook's
+  deliveries, 5 s by default), across every worker and core; a call within the interval is
+  refused with `429 too-many-attempts` and `Retry-After`, and the receiver is not called. Test
+  calls were unlimited.
+
+### Previews
+
+- A preview of an attached image declaring more pixels than `eventFiles.previewsMaxInputPixels`
+  (default 100 000 000) is refused with `413 payload-too-large` before the image is decoded; a
+  small file can declare a huge canvas. Up to about 268 million pixels were decoded (larger ones
+  answered `500`).
 
 ### Operators
 
@@ -163,6 +188,44 @@ now refused).
   any user is restored. A single-user restore of a username that now belongs to another account
   is refused, with or without `--overwrite` (with it, the backed-up account was mixed into the
   current holder of the name).
+- `integrity.algorithm` accepts `sha256` and `sha512` only: `md5` and `sha1` (and any other
+  value) refuse the boot, and `bin/check-config.js` reports them; any listed algorithm was
+  accepted, and an unknown one was refused only while integrity was active. The integrity values
+  are unkeyed checksums: they detect corruption, not a change made by someone who can write the
+  storage (the docs now say "checksum"). Switching a core away from `md5` / `sha1` makes the
+  events and accesses written before no longer match their checksum (`bin/integrity-check.js`
+  reports them).
+- Boot log `[platform-config-snapshot]` and `bin/observability.js show`: the admin key appears as
+  `auth.adminAccessKey.fingerprint`, an HMAC-SHA256 keyed by the admin key over a fixed label
+  (16 hex characters); it was `auth.adminAccessKey.sha256`, a prefix of the plain SHA-256 of the
+  key, which a log reader could check candidate keys against. The logged value and the snapshot
+  `hash` change once, with the upgrade: compare cores running the same version.
+- Logs: an `Error` passed to the logger is masked like other values (message, stack, fields,
+  cause; it was printed as is); more credential names are hidden (`key`, `readToken`,
+  `passphrase`, `adminAccessKey`, `filesReadTokenSecret`, `atRestKey`, `piiHmacKey`,
+  `access_token`, `refresh_token`, `id_token`, `client_secret`, `code_verifier`, `cookie`); the
+  user info of a URL (`https://<token>@host/`) is replaced by `(hidden)`; the `DEBUG=pryv:*`
+  output is masked too (it printed raw values, e.g. the token of an updated access in the cache
+  synchronisation messages).
+- Log files (`logs.file`, `logs.fileSync`, the rqlited output file) are created with mode `0640`,
+  and their directory, when the core creates it, `0750`; they were created `0644` / `0755` (with
+  the usual umask). Existing files and directories keep their modes. A log shipper reading them
+  as another user needs the files' group.
+- Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
+  once by the previews worker, the others wait; renders were unbounded. See also
+  `eventFiles.previewsMaxInputPixels` above.
+- Docker image: `UV_THREADPOOL_SIZE=16` (Node's default is 4). Password hashing, file system
+  calls (attachments, SQLite files), DNS lookups (webhook targets) and compression share that
+  pool: a burst of logins no longer stalls the rest. Override with `-e UV_THREADPOOL_SIZE=<n>`.
+- `bin/master.js`: a worker that keeps dying soon after it started is replaced after a delay
+  doubling from 1 s up to 30 s (the first replacement is immediate, a worker that stayed up a
+  minute resets the delay); the master logs the delay. Crashed workers were replaced at once,
+  without limit.
+- `bin/backup.js`: a backup without `--recipient-pubkey` or a passphrase prints a warning on
+  stderr that it is written in plaintext (it holds every account's data, access tokens included).
+  New `--passphrase-file <path>`: the passphrase on the first line of the file (encryption for a
+  backup, decryption for a restore), so it shows neither in the process list nor in the shell
+  history; it excludes `--encrypt-passphrase` / `--decrypt-passphrase`.
 
 ## 2.0.0-rc.49 - 2026-10-12
 

@@ -27,7 +27,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 - **Built-in MFA** — two-factor authentication as `mfa.*` API methods: an authenticator app (TOTP, RFC 6238), enabled by default and working out of the box, or SMS (opt-in).
 - **rqlite for PlatformDB** — distributed platform storage for single- and multi-core deployments with Raft consensus.
 - **Multi-core deployments** — HTTP 421 wrong-core routing, DNS-based or DNSless topology, platform-config-snapshot hash comparison for drift detection.
-- **Backup, restore & integrity** — engine-agnostic backup to JSONL+gzip, per-user integrity verification with SHA-256 hashes.
+- **Backup, restore & integrity** — engine-agnostic backup to JSONL+gzip, per-user verification of the SHA-256 checksums of events, accesses and attachments (unkeyed: they detect corruption, not a change made by someone who can write the storage).
 - **Optional observability** — telemetry built from a fixed allow-list (per-method call counts, durations, error counts, sanitized stack traces) and shipped over OTLP/HTTP, so any OTLP-ingesting backend works, including a collector you host yourself. No third-party agent runs in the process. Opt-in, cluster-wide config via PlatformDB (auth headers AES-256-GCM encrypted at rest). Operator guide: [Observability](https://pryv.github.io/customer-resources/observability/).
 
 For the full v2 change history, see [CHANGELOG-v2.md](./CHANGELOG-v2.md) (API-facing) and [CHANGELOG-v2-back.md](./CHANGELOG-v2-back.md) (internal).

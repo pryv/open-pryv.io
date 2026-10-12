@@ -40,9 +40,12 @@ describe('[BIH] boiler/logging inspectAndHide', function () {
     assert.strictEqual(inspectAndHide(obj), obj);
   });
 
-  it('[BIH5] passes through Error instances unchanged', function () {
+  it('[BIH5] returns an Error for an Error (a masked copy, the original untouched)', function () {
     const err = new Error('boom');
-    assert.strictEqual(inspectAndHide(err), err);
+    const masked = inspectAndHide(err);
+    assert.ok(masked instanceof Error);
+    assert.strictEqual(masked.message, 'boom');
+    assert.strictEqual(err.message, 'boom');
   });
 
   it('[BIH6] hides sensitive fields in plain objects', function () {

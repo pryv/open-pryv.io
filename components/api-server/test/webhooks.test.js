@@ -19,6 +19,7 @@ const HttpServer = require('business/test/acceptance/webhooks/support/httpServer
 
 const { ErrorIds } = require('errors/src/index.ts');
 const dependencies = require('test-helpers').dependencies;
+const { withInjectedConfig } = require('test-helpers');
 // Use a getter to access webhooks storage after dependencies.init() runs
 const getWebhooksStorage = () => dependencies.storage.user.webhooks;
 const { Webhook } = require('business').webhooks;
@@ -951,7 +952,9 @@ describe('[WH01] webhooks', () => {
         });
         user.webhook({
           url: 'http://127.0.0.1:' + port + postPath,
-          id: webhookId1
+          id: webhookId1,
+          // tested three times in a row below; test calls follow the interval
+          minIntervalMs: 1
         }, appAccessId1);
         user.webhook({
           id: webhookId2
@@ -1167,7 +1170,9 @@ describe('[WH01] webhooks', () => {
 
       it('[WVA3] webhooks.test of a host name resolving to loopback: same error as a failed call, nothing reaches the receiver', async () => {
         const port = receiver.address().port;
-        const created = await create({ url: `http://localhost:${port}/wva3?k=v` });
+        // tested twice in a row; test calls follow the webhook's interval
+        const created = await withInjectedConfig({ webhooks: { minIntervalMs: 1 } },
+          () => create({ url: `http://localhost:${port}/wva3?k=v` }));
         assert.strictEqual(created.status, 201);
         const id = created.body.webhook.id;
 
@@ -1199,6 +1204,26 @@ describe('[WH01] webhooks', () => {
         assert.strictEqual(res.status, 200);
         assert.strictEqual(receivedCount, before + 1);
         setAllowList(savedAllowList);
+      });
+
+      it('[WHTT1] webhooks.test follows the webhook\'s minimum interval: a second test right away is refused, the receiver is not called', async () => {
+        setAllowList(['localhost']);
+        receiverStatus = 200;
+        try {
+          const created = await create({ url: `http://localhost:${receiver.address().port}/whtt1` });
+          assert.strictEqual(created.status, 201);
+          const id = created.body.webhook.id;
+          const before = receivedCount;
+          const first = await coreRequest.post(`/${vUsername}/webhooks/${id}/test`).set('Authorization', vAppToken);
+          assert.strictEqual(first.status, 200, JSON.stringify(first.body));
+          const second = await coreRequest.post(`/${vUsername}/webhooks/${id}/test`).set('Authorization', vAppToken);
+          assert.strictEqual(second.status, 429, JSON.stringify(second.body));
+          assert.strictEqual(second.body.error.id, ErrorIds.TooManyAttempts);
+          assert.ok(Number(second.headers['retry-after']) >= 1, JSON.stringify(second.headers));
+          assert.strictEqual(receivedCount, before + 1, 'the refused test never reaches the receiver');
+        } finally {
+          setAllowList(savedAllowList);
+        }
       });
 
       it('[WVA5] accepts an allowed private IP literal at creation', async () => {

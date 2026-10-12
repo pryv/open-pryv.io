@@ -36,7 +36,7 @@ class SyncFileTransport extends Transport {
   constructor (opts: { filePath: string; level?: string }) {
     super(opts as never);
     this.filePath = opts.filePath;
-    fs.mkdirSync(nodePath.dirname(this.filePath), { recursive: true });
+    ensureLogDir(this.filePath);
   }
 
   log (info: Record<string, unknown>, callback: () => void): void {
@@ -47,7 +47,7 @@ class SyncFileTransport extends Transport {
         pid: process.pid,
         message: info.message,
       };
-      fs.appendFileSync(this.filePath, JSON.stringify(entry) + '\n');
+      fs.appendFileSync(this.filePath, JSON.stringify(entry) + '\n', { mode: LOG_FILE_MODE });
     } catch (_e) {
       // Logging must never throw back into the caller's path.
     }
@@ -181,6 +181,69 @@ function globalLog (level: LogLevel, key: string, message: string, context: unkn
   }
 }
 
+// Log files carry client addresses, usernames and e-mail addresses: created
+// readable by the owner and its group only, in a directory others cannot enter.
+// (Modes apply when the file or the directory is created; existing ones keep theirs.)
+const LOG_FILE_MODE = 0o640;
+const LOG_DIR_MODE = 0o750;
+
+function ensureLogDir (filePath: string): void {
+  fs.mkdirSync(nodePath.dirname(filePath), { recursive: true, mode: LOG_DIR_MODE });
+}
+
+/**
+ * The file transports set by `logs:file` and `logs:fileSync` (none when both
+ * are inactive).
+ */
+function createFileTransports (config: BoilerConfig): unknown[] {
+  const transports: unknown[] = [];
+  const logFile = config.get('logs:file');
+  if (config.get('logs:file:active')) {
+    const fileFormat = winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json()
+    );
+
+    rootLogger?.debug('File active: ' + logFile.path);
+    ensureLogDir(logFile.path);
+    const fileOptions = { flags: 'a', mode: LOG_FILE_MODE };
+    if (logFile.rotation.isActive) {
+      transports.push(new winston.transports.DailyRotateFile({
+        filename: logFile.path + '.%DATE%',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        level: logFile.level,
+        maxFiles: logFile.rotation.days ? logFile.rotation.days + 'd' : null,
+        format: fileFormat,
+        options: fileOptions
+      }));
+    } else {
+      transports.push(new winston.transports.File({
+        filename: logFile.path,
+        level: logFile.level,
+        maxSize: logFile.maxFileBytes || '10m',
+        maxFiles: logFile.maxNbFiles || '14d',
+        format: fileFormat,
+        options: fileOptions
+      }));
+    }
+  }
+
+  // sync file — a loss-proof trail for the levels you cannot afford to
+  // miss. Separate from `logs:file` above on purpose: that one keeps the
+  // high-volume async stream, this one guarantees delivery even when the
+  // process is killed with process.exit() before the stream drains.
+  const fileSync = config.get('logs:fileSync');
+  if (fileSync?.active) {
+    transports.push(new SyncFileTransport({
+      filePath: fileSync.path,
+      level: fileSync.level || 'warn',
+    }));
+    rootLogger?.debug('Sync file active: ' + fileSync.path);
+  }
+  return transports;
+}
+
 /**
  * Config initialize Logger right after beeing loaded
  * This is done by config Only
@@ -208,48 +271,9 @@ async function initLoggerWithConfig (config: BoilerConfig) {
 
   rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', logConsole.level);
 
-  // file
-  const logFile = config.get('logs:file');
-  if (config.get('logs:file:active')) {
-    const fileFormat = winston.format.combine(
-      winston.format.timestamp(),
-      winston.format.json()
-    );
-
-    rootLogger!.debug('File active: ' + logFile.path);
-    if (logFile.rotation.isActive) {
-      const rotatedFiles = new winston.transports.DailyRotateFile({
-        filename: logFile.path + '.%DATE%',
-        datePattern: 'YYYY-MM-DD',
-        zippedArchive: true,
-        level: logFile.level,
-        maxFiles: logFile.rotation.days ? logFile.rotation.days + 'd' : null,
-        format: fileFormat
-      });
-      winstonInstance!.add(rotatedFiles);
-    } else {
-      const files = new winston.transports.File({
-        filename: logFile.path,
-        level: logFile.level,
-        maxSize: logFile.maxFileBytes || '10m',
-        maxFiles: logFile.maxNbFiles || '14d',
-        format: fileFormat
-      });
-      winstonInstance!.add(files);
-    }
-  }
-
-  // sync file — a loss-proof trail for the levels you cannot afford to
-  // miss. Separate from `logs:file` above on purpose: that one keeps the
-  // high-volume async stream, this one guarantees delivery even when the
-  // process is killed with process.exit() before the stream drains.
-  const fileSync = config.get('logs:fileSync');
-  if (fileSync?.active) {
-    winstonInstance!.add(new SyncFileTransport({
-      filePath: fileSync.path,
-      level: fileSync.level || 'warn',
-    }));
-    rootLogger!.debug('Sync file active: ' + fileSync.path);
+  // files
+  for (const transport of createFileTransports(config)) {
+    winstonInstance!.add(transport);
   }
 
   // custom
@@ -302,7 +326,7 @@ function setGlobalName (name: string) {
 class Logger {
   name: string;
   parent: Logger | null;
-  debugInstance: (...args: unknown[]) => void;
+  debugInstance: ((...args: unknown[]) => void) & { enabled?: boolean };
 
   constructor (name: string, parent: Logger | null) {
     this.name = name;
@@ -317,7 +341,8 @@ class Logger {
 
   log (...args: unknown[]) {
     const level = args[0] as LogLevel;
-    const message = hideSensitiveValues(args[1]) as string;
+    // An Error as the message (`logger.error(err, err)`) prints as "Name: message".
+    const message = hideSensitiveValues(args[1] instanceof Error ? String(args[1]) : args[1]) as string;
     const context: unknown[] = [];
 
     let meta;
@@ -339,7 +364,10 @@ class Logger {
     if (winstonInstance) {
       this.log('debug', ...args);
     }
-    this.debugInstance(...args);
+    // `DEBUG=pryv:*` output gets the same masking as the other levels.
+    if (this.debugInstance.enabled) {
+      this.debugInstance(...args.map((a) => typeof a === 'string' ? hideSensitiveValues(a) : inspectAndHide(a)));
+    }
   }
 
   getLogger (name: string): Logger {
@@ -374,18 +402,68 @@ function inspectAndHide (o: unknown): unknown {
   //   then JSON.parse('undefined') throws SyntaxError.
   // - symbols: JSON.stringify(symbol) returns undefined likewise.
   // - any object whose toJSON returns undefined: same shape.
-  // - Errors are special-cased upstream by winston, pass through unchanged.
   if (o === undefined || typeof o === 'function' || typeof o === 'symbol') return o;
-  if (o instanceof Error) return o;
+  // An Error stays an Error (printed with its stack), its message, stack,
+  // fields and cause masked.
+  if (o instanceof Error) return maskError(o, 0);
   let cloned;
   try {
-    cloned = JSON.parse(JSON.stringify(o));
+    cloned = JSON.parse(JSON.stringify(o, errorsAsPlainObjects));
   } catch {
     // Non-round-trippable value (e.g. toJSON returns undefined or a non-JSON
     // primitive). Fall back to the raw value rather than crash.
     return o;
   }
   return _inspectAndHide(cloned);
+}
+
+const MAX_NESTED_ERRORS = 5;
+
+function maskError (e: Error, depth: number): Error {
+  const masked = new Error(hideSensitiveValues(e.message) as string);
+  Object.defineProperty(masked, 'name', { value: e.name, writable: true, configurable: true, enumerable: false });
+  masked.stack = hideSensitiveValues(e.stack) as string;
+  const fields = e as unknown as Record<string, unknown>;
+  const out = masked as unknown as Record<string, unknown>;
+  for (const key of Object.keys(e)) {
+    if (SENSITIVE_KEYS.has(key.toLowerCase())) {
+      out[key] = hiddenValue(key);
+    } else {
+      // A getter that throws leaves the field out.
+      try { out[key] = maskNested(fields[key], depth); } catch { out[key] = '(not logged)'; }
+    }
+  }
+  const cause = (e as { cause?: unknown }).cause;
+  if (cause !== undefined && !Object.prototype.propertyIsEnumerable.call(e, 'cause')) {
+    Object.defineProperty(masked, 'cause', { value: maskNested(cause, depth), writable: true, configurable: true, enumerable: false });
+  }
+  return masked;
+}
+
+// A value held by an Error (a field, the cause); nested Errors are bounded.
+// An object that cannot be masked (circular, e.g. an HTTP client's request
+// with its headers) is left out rather than printed as is.
+function maskNested (value: unknown, depth: number): unknown {
+  if (value instanceof Error) return depth < MAX_NESTED_ERRORS ? maskError(value, depth + 1) : '(not logged)';
+  if (value !== null && typeof value === 'object') {
+    try { JSON.stringify(value, errorsAsPlainObjects); } catch { return '(not logged)'; }
+  }
+  return inspectAndHide(value);
+}
+
+// JSON.stringify replacer: an Error nested in a logged object keeps its
+// name, message, stack, fields and cause (JSON would reduce it to its fields).
+function errorsAsPlainObjects (_key: string, value: unknown): unknown {
+  if (!(value instanceof Error)) return value;
+  const plain: Record<string, unknown> = { name: value.name, message: value.message, stack: value.stack };
+  Object.assign(plain, value);
+  const cause = (value as { cause?: unknown }).cause;
+  if (cause !== undefined) plain.cause = cause;
+  return plain;
+}
+
+function hiddenValue (key: string): string {
+  return key.toLowerCase().includes('password') ? '(hidden password)' : '(hidden)';
 }
 
 function _inspectAndHide (o: unknown): unknown {
@@ -405,7 +483,7 @@ function _inspectAndHide (o: unknown): unknown {
     const obj = o as Record<string, unknown>;
     for (const key of Object.keys(obj)) {
       if (SENSITIVE_KEYS.has(key.toLowerCase())) {
-        res[key] = key.toLowerCase().includes('password') ? '(hidden password)' : '(hidden)';
+        res[key] = hiddenValue(key);
       } else {
         res[key] = inspectAndHide(obj[key]);
       }
@@ -415,21 +493,27 @@ function _inspectAndHide (o: unknown): unknown {
   return o;
 }
 
-// Keys whose values are credentials, compared lower-cased.
+// Keys whose values are credentials, compared lower-cased. (Not `code`: it
+// names error codes far more often than authorization codes.)
 const SENSITIVE_KEYS = new Set(['password', 'passwordhash', 'newpassword', 'oldpassword', 'resettoken',
   'recoverycode', 'token', 'emailproof', 'invitationtoken', 'secret', 'handoff', 'refreshtoken',
-  'accesstoken', 'authorization', 'mfatoken']);
+  'accesstoken', 'authorization', 'mfatoken', 'key', 'readtoken', 'passphrase', 'adminaccesskey',
+  'filesreadtokensecret', 'atrestkey', 'piihmackey', 'access_token', 'refresh_token', 'id_token',
+  'client_secret', 'clientsecret', 'code_verifier', 'cookie', 'set-cookie']);
 
-// Hides sensitive values (auth tokens and passwords) in log messages
+// Hides sensitive values (auth tokens, passwords, credentials in URLs) in log messages
 function hideSensitiveValues (msg: unknown) {
   if (typeof msg !== 'string') return msg;
   const tokenRegexp = /auth=([^&\s"']+)/g;
-  const passwordRegexp = /"(password|passwordHash|newPassword|oldPassword|resetToken|recoveryCode|token|emailProof|invitationToken|mfaToken|refreshToken|accessToken)"[:=]"([^"]*)"/g;
+  const passwordRegexp = /"(password|passwordHash|newPassword|oldPassword|resetToken|recoveryCode|token|emailProof|invitationToken|mfaToken|refreshToken|accessToken|readToken|passphrase|adminAccessKey|access_token|refresh_token|id_token|client_secret|code_verifier)"[:=]"([^"]*)"/g;
+  // URL user info: `https://<token>@host/` (an API endpoint) or `//user:pass@host`
+  const userinfoRegexp = /\/\/[^/@\s"']+@/g;
   const mask = '(hidden)';
 
   const res = msg
     .replace(tokenRegexp, 'auth=' + mask)
-    .replace(passwordRegexp, '$1=' + mask);
+    .replace(passwordRegexp, '$1=' + mask)
+    .replace(userinfoRegexp, '//' + mask + '@');
 
   return res;
 }

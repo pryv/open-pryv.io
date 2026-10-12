@@ -434,8 +434,9 @@ async function fetchStatusPid (httpUrl: string): Promise<number | null> {
 function openOutput (logFile: string | null | undefined, log: (msg: string) => void): ['ignore', 'inherit' | number, 'inherit' | number] {
   if (logFile == null || logFile === '') return ['ignore', 'inherit', 'inherit'];
   const absLogFile = path.isAbsolute(logFile) ? logFile : path.resolve(process.cwd(), logFile);
-  fs.mkdirSync(path.dirname(absLogFile), { recursive: true });
-  const fd = fs.openSync(absLogFile, 'a');
+  // Same modes as the core's own log files (applied when created).
+  fs.mkdirSync(path.dirname(absLogFile), { recursive: true, mode: 0o750 });
+  const fd = fs.openSync(absLogFile, 'a', 0o640);
   log(`rqlited output: ${absLogFile}`);
   return ['ignore', fd, fd];
 }

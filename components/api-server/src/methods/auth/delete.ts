@@ -33,5 +33,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     // deleteUser opens the user's per-user SQLite files to remove its rows:
     // after the directory wipe it would create them again, empty. Wipe last.
     deletion.deleteUser.bind(deletion),
-    deletion.deleteAuditData.bind(deletion));
+    deletion.deleteAuditData.bind(deletion),
+    // Last: points written while the steps above ran, through a series
+    // credential still cached by a high-frequency worker.
+    deletion.dropHFDataAgain.bind(deletion));
 };

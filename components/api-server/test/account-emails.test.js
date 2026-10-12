@@ -25,6 +25,7 @@ const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { ErrorIds } = require('errors/src/index.ts');
 const { getPlatform } = require('platform');
 const errors = require('errors').factory;
+const { withInjectedConfig } = require('test-helpers');
 
 const CONTAINER = ':_emails:';
 
@@ -389,18 +390,13 @@ describe('[EMLS] account emails (multiple)', function () {
       const usersRepository = await getUsersRepository();
       const ctxB = { userId: b.userId, username: b.username, user: null, accessId: 'system', legacyEmail: await usersRepository.getOnePropertyValue(b.userId, 'email') };
       const before = (await container.findRawByValue(b.userId, x)).content.verificationTokenHash;
-      // config.set, as account-emails-verify does: a value it set stays above the test scope
-      const savedCooldown = config.get('account:emailVerification:resendCooldownMs');
-      config.set('account:emailVerification:resendCooldownMs', 0);
-      try {
+      await withInjectedConfig({ account: { emailVerification: { resendCooldownMs: 0 } } }, async () => {
         await assert.rejects(operations.resendVerification({ errors, usersRepository }, ctxB, x),
           (err) => err.id === ErrorIds.ItemAlreadyExists);
         // an address nobody holds is still resent
         const minted = await operations.resendVerification({ errors, usersRepository }, ctxB, free);
         assert.strictEqual(minted.value, free);
-      } finally {
-        config.set('account:emailVerification:resendCooldownMs', savedCooldown);
-      }
+      });
       assert.strictEqual((await container.findRawByValue(b.userId, x)).content.verificationTokenHash, before, 'no new link was minted');
     });
 

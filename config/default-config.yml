@@ -149,6 +149,11 @@ storages:
 eventFiles:
   previewsCacheMaxAge: 604800000 # 1 week in ms
   previewsCacheCleanUpCronTime: 00 00 2 * * * # every day at 2:00:00AM
+  # An attached image declaring more pixels than this is not decoded: its
+  # preview answers 413 (a small file can declare a huge canvas).
+  previewsMaxInputPixels: 100000000
+  # Previews rendered at once by the previews worker; the others wait.
+  previewsRenderConcurrency: 2
 
 # === BOOTSTRAP → PLATFORM-WIDE ===
 # Seeded into PlatformDB on first boot, then PlatformDB is authoritative.
@@ -610,6 +615,9 @@ trace:
 
 # === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
 # Integrity algorithm drift would break cross-core validation.
+# The `integrity` values are unkeyed checksums of events, accesses and
+# attachments: they detect corruption, not a change made by someone who can
+# write the storage. `algorithm`: sha256 or sha512 (md5 and sha1 refuse the boot).
 integrity:
   isActive:
     attachments: true

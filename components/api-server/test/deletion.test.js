@@ -328,8 +328,10 @@ describe('[PGTD] DELETE /users/:username', () => {
           // at module-load (still `false`), not the live mutated value.
           const config = await getConfig();
           if (config.get('caching:isActive') && pubsub.isTransportEnabled()) {
+            // (the webhooks scope carries the stop of the account's webhooks)
+            const cacheMessages = delivered.filter((d) => d.scopeName.startsWith('cache'));
             const busts = delivered.filter((d) => d.scopeName === 'cache.' + MESSAGES.UNSET_USER);
-            assert.strictEqual(busts.length, delivered.length, 'only name/user busts are sent');
+            assert.strictEqual(busts.length, cacheMessages.length, 'only name/user busts are sent');
             for (const b of busts) assert.strictEqual(b.eventName, MESSAGES.UNSET_USER);
             // the name bust, and an id-keyed bust sent whatever names this
             // process held, so workers that only know an alias clear it too
@@ -543,6 +545,51 @@ describe('[PGTD] DELETE /users/:username', () => {
       assert.strictEqual(res.body.userDeletion.username, currentName, 'the canonical name is reported');
       assert.ok(await usersRepository.getUserIdForUsername(currentName) == null, 'the account is gone');
       assert.deepStrictEqual(await namesWithSeries([formerName, currentName]), []);
+    });
+
+    it('[DLLW1] series written while the deletion runs, after the first series drop, do not survive it', async function () {
+      const username = freshName('testdellw');
+      await initiateUserWithData(username);
+      // A sensor keeps writing: the high-frequency worker accepts a point
+      // (its credential cache still holds the account) after the series were
+      // dropped and before the account is removed.
+      const deleteOne = usersRepository.deleteOne;
+      usersRepository.deleteOne = async function (...args) {
+        await writeSeries(username);
+        return await deleteOne.apply(this, args);
+      };
+      try {
+        res = await deleteAs(username, authKey);
+      } finally {
+        usersRepository.deleteOne = deleteOne;
+      }
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.deepStrictEqual(await namesWithSeries([username]), []);
+    });
+  });
+
+  // The webhooks service keeps an account's webhooks in memory, listening
+  // under its username; it learns of removed webhooks through the
+  // webhooks-delete signal only.
+  describe('[DLWH] the webhooks of a deleted account stop listening', function () {
+    it('[DLWH1] a deletion signals the stop of every webhook of the account', async function () {
+      const username = 'testdelwh' + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const user = await initiateUserWithData(username);
+      const secondId = cuid();
+      await user.webhook({ id: secondId, url: 'https://hooks.example.com/dlwh1' }, cuid());
+      const stored = await promisify((cb) => app.storageLayer.webhooks.find({ id: username }, {}, {}, cb))();
+      const expected = stored.map((w) => w.id).sort();
+      assert.ok(expected.includes(secondId), JSON.stringify(expected));
+      const stopped = [];
+      const listener = (msg) => stopped.push(msg);
+      pubsub.webhooks.on(pubsub.WEBHOOKS_DELETE, listener);
+      try {
+        res = await request.delete(`/users/${username}`).set('Authorization', authKey);
+      } finally {
+        pubsub.webhooks.off(pubsub.WEBHOOKS_DELETE, listener);
+      }
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.deepStrictEqual(stopped.filter((m) => m.username === username).map((m) => m.webhook.id).sort(), expected);
     });
   });
 

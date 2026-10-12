@@ -275,6 +275,32 @@ describe('[RQOU] rqlited output and stop do not depend on the master', function 
     }
   });
 
+  it('[RQLM1] the rqlited log file is created 0640, in a directory created 0750', async () => {
+    const rp = require(SRC);
+    const fake = writeFake(dir, 'fake-mode', 'snapshot');
+    fakes.push(fake);
+    const httpPort = await freePort();
+    const logDir = path.join(dir, 'logs-mode', 'rqlite');
+    const logFile = path.join(logDir, 'rqlited.log');
+    await rp.start({
+      coreId: 'rqlm1',
+      binPath: fake.bin,
+      dataDir: path.join(dir, 'data-lm1'),
+      httpPort,
+      raftPort: httpPort + 1,
+      readyTimeoutMs: 10000,
+      logFile,
+      log: () => {}
+    });
+    try {
+      const umask = process.umask();
+      assert.equal((fs.statSync(logFile).mode & 0o777).toString(8), (0o640 & ~umask).toString(8));
+      assert.equal((fs.statSync(logDir).mode & 0o777).toString(8), (0o750 & ~umask).toString(8));
+    } finally {
+      await rp.stop(() => {});
+    }
+  });
+
   it('[RQO5] the default kill delay leaves room for a slow snapshot', () => {
     const { STOP_KILL_TIMEOUT_MS } = require(SRC);
     assert.equal(STOP_KILL_TIMEOUT_MS, 20000);

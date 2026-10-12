@@ -663,6 +663,12 @@ if (cluster.isPrimary) {
     const workerTypes = new Map(); // worker.id → 'api' | 'hfs' | 'previews'
     let apiWorkerId = 0;
     let hfsWorkerId = 0;
+    // Replacements of workers that keep dying soon after they started are
+    // delayed, doubling up to a cap (see workerRestartBackoff.ts).
+    const { createWorkerRestartBackoff } = require('business/src/workerRestartBackoff.ts');
+    const restartBackoff = createWorkerRestartBackoff();
+    const workerStartedAt = new Map(); // worker.id → fork time (ms)
+    cluster.on('fork', (worker) => workerStartedAt.set(worker.id, Date.now()));
 
     // Observability env vars workers inherit via setupPrimary.
     // Effective config comes from `Platform.getObservabilityConfig()` which
@@ -854,14 +860,22 @@ if (cluster.isPrimary) {
         masterShutdown.onWorkerExit();
         return;
       }
-      log(`${type ?? 'unknown'} worker pid ${worker.process.pid} died (code=${code} signal=${signal}), restarting`);
-      if (type === 'hfs') {
-        forkHfsWorker();
-      } else if (type === 'previews') {
-        forkPreviewsWorker();
-      } else {
-        forkApiWorker();
-      }
+      const startedAt = workerStartedAt.get(worker.id);
+      workerStartedAt.delete(worker.id);
+      const uptimeMs = startedAt == null ? 0 : Date.now() - startedAt;
+      const delayMs = restartBackoff.onWorkerExit(type ?? 'api', uptimeMs);
+      log(`${type ?? 'unknown'} worker pid ${worker.process.pid} died (code=${code} signal=${signal}) after ${Math.round(uptimeMs / 1000)}s, ` +
+        (delayMs > 0 ? `restarting in ${Math.round(delayMs / 1000)}s (it keeps dying soon after start)` : 'restarting'));
+      setTimeout(() => {
+        if (masterShutdown.isShuttingDown()) return;
+        if (type === 'hfs') {
+          forkHfsWorker();
+        } else if (type === 'previews') {
+          forkPreviewsWorker();
+        } else {
+          forkApiWorker();
+        }
+      }, delayMs);
     });
 
     // A worker leaves `cluster.workers` once it has both exited and

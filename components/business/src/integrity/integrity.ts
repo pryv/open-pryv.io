@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const config = require('@pryv/boiler').getConfigUnsafe(true);
 const logger = require('@pryv/boiler').getLogger('integrity');
 const stableRepresentation = require('@pryv/stable-object-representation');
+const { integrityAlgorithmProblem } = require('./algorithms.ts') as typeof import('./algorithms.ts');
 
 // --------------- CONFIGURATION -------------- //
 const configIntegrity = config.get('integrity');
@@ -22,6 +23,8 @@ const algorithm = config.get('integrity:algorithm');
 /**
  * @private
  * mapping algo codes to https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Digest supported codes
+ * (sha1 and md5 kept to serve checksums stored with them; see ./algorithms.ts
+ * for the algorithms accepted for new ones)
  */
 type EventLike = { integrity?: string; [k: string]: unknown };
 type AccessLike = { integrity?: string; [k: string]: unknown };
@@ -163,13 +166,13 @@ const integrity = {
   algorithm
 };
 
-// config check
-// output message and crash if algorythm is not supported
+// config check (also run by the boot config validation and bin/check-config.js):
+// output message and crash if the checksum algorithm is not accepted
 
-if ((events.isActive || attachments.isActive) && (subResourceCodeToDigestMap[algorithm] == null)) {
-  const message = 'Integrity is active and algorithm [' + algorithm + '] is unsupported. Choose one of: ' + Object.keys(subResourceCodeToDigestMap).join(', ');
-  logger.error(message);
-  console.log('Error: ' + message);
+const algorithmProblem = integrityAlgorithmProblem(algorithm);
+if (algorithmProblem != null) {
+  logger.error(algorithmProblem);
+  console.log('Error: ' + algorithmProblem);
   process.exit(1);
 }
 

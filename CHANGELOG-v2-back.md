@@ -1,5 +1,50 @@
 # Changelog - Internal (no API impact)
 
+## Hardening batch: operations, limits, logging, deletion
+
+- Tests: the resend-cooldown tests of `account-emails-verify` and `[EMRV1]` set
+  `account.emailVerification.resendCooldownMs` through `withInjectedConfig` (the test scope,
+  restored on exit); `config.set` left a value above the test scope for the rest of the mocha
+  process, hiding later injections of that key.
+- Deletion: `deleteHFData` keeps the namespaces it dropped on the context; the new last step
+  `dropHFDataAgain` drops them again (errors logged, never failing the deletion). `deleteUser`
+  lists the webhook ids before the removals and signals `WEBHOOKS_DELETE` for each after them.
+  `business/src/webhooks/accountSignals.ts` (`storedWebhookIds`, `signalWebhooksStopped`,
+  `signalWebhooksRenamed`); `account.changeUsername` signals delete under the former name then
+  create under the new one. Tests: api-server `[DLLW1]`, `[DLWH1]`, `[CUWH1]` (`[635G]` / `[U004]`
+  count the cache messages only: the deletion now also sends on the webhooks scope).
+- `business/src/webhooks/testThrottle.ts`: `reserveWebhookTestCall` on PlatformDB's TTL store
+  (`setAccessStateIfAbsent`, key `webhook-test/<userId>/<webhookId>`, expiry `minIntervalMs`).
+  Test: api-server `[WHTT1]`; `[WH07]` fixtures and `[WVA3]` create their webhook with a 1 ms
+  interval (they test it several times in a row).
+- Previews: `sharp(..., { limitInputPixels })` for the metadata read and the render, the pixel
+  limit error mapped to `payloadTooLarge`; `previews-server/src/renderLimiter.ts` (FIFO, the slot
+  handed to the next waiter). Config keys `eventFiles.previewsMaxInputPixels` /
+  `previewsRenderConcurrency` (defaults, `bin/init.js` appendix). Tests: previews-server
+  `[PVPX1]`, `[PVRQ1]`, `[PVRQ2]`.
+- `business/src/workerRestartBackoff.ts` (`createWorkerRestartBackoff`, `restartDelayMs`: base
+  1 s, cap 30 s, stable after 60 s, counted per worker kind); `bin/master.js` records fork times
+  (`cluster.on('fork')`) and forks the replacement after the delay unless shutting down. Tests:
+  business `[WRBO1]`..`[WRBO4]`.
+- `business/src/integrity/algorithms.ts` (`INTEGRITY_ALGORITHMS`, `integrityAlgorithmProblem`),
+  used by `integrity.ts` at load (now whatever `isActive`), by `config-validation.js`
+  (`checkIntegrityAlgorithm`) and by `bin/check-config.js`. Tests: api-server `[CVIA1]`,
+  `[CVIA2]`, `[CCIA1]`.
+- `Platform.getPlatformConfigSnapshot`: `adminKeyFingerprint` (HMAC-SHA256, fixed label). Test:
+  platform `[PLFP1]`.
+- Boiler logging: `inspectAndHide` returns a masked copy of an `Error` (`maskError`: message,
+  stack, enumerable fields, non-enumerable `cause`, nested errors bounded at 5) and turns errors
+  nested in objects into plain objects before masking; an `Error` given as the message is printed
+  as `Name: message`; `debug()` masks its arguments when the `debug` instance is enabled; more
+  keys in `SENSITIVE_KEYS` and in the message key pattern; URL user info rule. The file
+  transports are built by `createFileTransports` (`options: { flags: 'a', mode: 0o640 }`, the
+  directory created `0o750`); `SyncFileTransport` appends with `0o640`. rqlited's output file is
+  opened `0o640`. Cache `synchro.handleMessage` logs the message without the access token. Tests:
+  boiler `[BLGM1]`..`[BLGM5]`, `[BLFM1]`, rqlite `[RQLM1]`; api-server `[BIH5]` expects a masked
+  `Error` copy.
+- `bin/backup.js`: `warnIfPlaintextBackup` (before storage init), `--passphrase-file`. Tests:
+  api-server `[BKPF1]`, `[BKPF2]`, `[BKPW1]`.
+
 ## Hardening batch: sessions, sockets, registration, platform rows
 
 - `MethodContext`: `checkSessionValid` only checks the session; the new `touchSession` runs at

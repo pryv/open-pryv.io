@@ -628,7 +628,8 @@ class Platform {
    * observes. Mirrors the boot log so operators can cross-reference a
    * CLI read (e.g. `bin/observability.js show`) against the value
    * each core logs at startup. `auth.adminAccessKey` is surfaced only
-   * as a short SHA-256 prefix — the secret itself never leaves config.
+   * as a short keyed fingerprint (see adminKeyFingerprint) — the secret
+   * itself never leaves config.
    *
    */
   getPlatformConfigSnapshot () {
@@ -642,9 +643,7 @@ class Platform {
     const siteNames = this.#localHostedSiteNames().sort();
     if (siteNames.length > 0) snapshot['hostedSites.names'] = siteNames;
     const adminKey = this.#config.get('auth:adminAccessKey');
-    snapshot['auth.adminAccessKey.sha256'] = adminKey
-      ? crypto.createHash('sha256').update(String(adminKey)).digest('hex').slice(0, 16)
-      : null;
+    snapshot['auth.adminAccessKey.fingerprint'] = adminKey ? adminKeyFingerprint(String(adminKey)) : null;
     const hash = crypto
       .createHash('sha256')
       .update(JSON.stringify(snapshot))
@@ -1576,6 +1575,15 @@ function parseHeaders (stored: string): Record<string, string> {
     logger.warn('observability: otlp-headers is not valid JSON — ignoring');
     return {};
   }
+}
+
+// Fingerprint of the admin key for the config snapshot: an HMAC-SHA256 keyed
+// by the admin key over a fixed label, truncated. The same key gives the same
+// value on every core, and a logged value cannot be matched against the plain
+// SHA-256 of candidate keys (precomputed lists of common strings).
+const ADMIN_KEY_FINGERPRINT_LABEL = 'pryv.io admin access key fingerprint v1';
+function adminKeyFingerprint (adminKey: string): string {
+  return crypto.createHmac('sha256', adminKey).update(ADMIN_KEY_FINGERPRINT_LABEL).digest('hex').slice(0, 16);
 }
 
 // A user-core row names a core: refuse a value that is not a core id.

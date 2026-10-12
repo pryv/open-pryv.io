@@ -71,6 +71,7 @@ const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrott
 const cache = require('cache').default;
 const timestamp = require('unix-timestamp');
 const { tombstoneAccessesNonFatal } = require('platform/src/accessIndex.ts');
+const { storedWebhookIds, signalWebhooksRenamed } = require('business/src/webhooks/accountSignals.ts') as typeof import('../../../business/src/webhooks/accountSignals.ts');
 
 export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
@@ -340,6 +341,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // Keep the context coherent for the downstream result builders.
       context.user.username = newUsername;
       pubsub.notifications.emit(oldUsername, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+      // The webhooks service listens under the username: move them.
+      try {
+        // Invariant: the access check resolved the account, so userId is set.
+        signalWebhooksRenamed(oldUsername, newUsername, await storedWebhookIds(storageLayer.webhooks, userId!));
+      } catch (err) {
+        // The rename stands; the service picks the new name up at its next start.
+        logger.warn('Could not move the webhooks of a renamed account', err);
+      }
       result.usernameChangesRemaining = Math.max(0, limit - (used + 1));
       next();
     } catch (err) {

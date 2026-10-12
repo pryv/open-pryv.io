@@ -14,6 +14,7 @@ const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { accountSeriesNamespaces } = require('business/src/series/namespace.ts');
 const { runDeletionTeardownSteps } = require('business/src/auth/deletionTeardown.ts');
+const { storedWebhookIds, signalWebhooksStopped } = require('business/src/webhooks/accountSignals.ts') as typeof import('../webhooks/accountSignals.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
@@ -25,13 +26,19 @@ type MethodContext = {
   access?: { id?: string; isPersonal? (): boolean };
   authorizationHeader?: string;
   source?: { ip?: string };
+  // Set by deleteHFData, read again by dropHFDataAgain (the alias index that
+  // lists them is gone by then).
+  seriesNamespaces?: string[];
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
 type StorageLayer = {
   accesses: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
   profile: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
-  webhooks: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
+  webhooks: {
+    removeAll (user: { id: string }, cb: (err: Error | null) => void): void;
+    find? (user: { id: string }, query: Record<string, unknown>, options: Record<string, unknown>, cb: (err: unknown, items?: Array<{ id: string }>) => void): void;
+  };
   sessions: { remove (query: Record<string, unknown>, cb: (err: Error | null) => void): void };
 };
 
@@ -139,8 +146,28 @@ class Deletion {
     if (conn) {
       const usersRepository = await getUsersRepository();
       const namespaces = await accountSeriesNamespaces(usersRepository.usersIndex, context.user.id, context.user.username);
+      context.seriesNamespaces = namespaces;
       for (const namespace of namespaces) {
         await conn.dropDatabase(namespace);
+      }
+    }
+    next();
+  }
+
+  // The high-frequency workers cache series credentials for a while and take
+  // no deletion signal: a point written between deleteHFData and the removal
+  // of the account recreates its namespace. Drops the same namespaces again,
+  // as the last step, once the account no longer resolves.
+  async dropHFDataAgain (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const conn = require('storages').seriesConnection;
+    if (conn != null && context.seriesNamespaces != null) {
+      for (const namespace of context.seriesNamespaces) {
+        try {
+          await conn.dropDatabase(namespace);
+        } catch (err: unknown) {
+          // The account is already gone: report, do not fail the deletion.
+          this.logger.error('Dropping the series of a deleted account again failed for ' + namespace, err);
+        }
       }
     }
     next();
@@ -238,7 +265,9 @@ class Deletion {
   }
 
   async deleteUser (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+    let webhookIds: string[] = [];
     try {
+      webhookIds = await this.#webhookIds(context.user.id);
       const dbCollections = [
         this.storageLayer.accesses,
         this.storageLayer.profile,
@@ -263,8 +292,20 @@ class Deletion {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));
     }
+    signalWebhooksStopped(context.user.username, webhookIds);
     result.userDeletion = { username: context.user.username };
     next();
+  }
+
+  async #webhookIds (userId: string): Promise<string[]> {
+    if (typeof this.storageLayer.webhooks.find !== 'function') return [];
+    try {
+      return await storedWebhookIds(this.storageLayer.webhooks as Parameters<typeof storedWebhookIds>[0], userId);
+    } catch (err: unknown) {
+      // The service then stops them when it next restarts.
+      this.logger.warn('Could not list the webhooks of the account being deleted', err);
+      return [];
+    }
   }
 }
 

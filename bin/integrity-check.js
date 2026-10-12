@@ -8,7 +8,9 @@
  */
 
 // Standalone CLI for data integrity verification.
-// Recomputes integrity hashes on events and accesses and reports mismatches,
+// Recomputes the integrity checksums of events and accesses (unkeyed hashes:
+// they detect corruption, not a change made by someone who can write the
+// storage) and reports mismatches,
 // and checks this core's copy of the platform DB (structure + duplicate keys).
 //
 // Usage:

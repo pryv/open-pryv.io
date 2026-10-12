@@ -444,6 +444,18 @@ if (get('http.trustedProxies') != null) {
   if (raftProblem != null) problems.push(raftProblem);
 }
 
+// integrity.algorithm: the checksums of events, accesses and attachments;
+// md5 and sha1 are refused (mirrors checkIntegrityAlgorithm in
+// config/plugins/config-validation.js). Absent: the shipped default applies.
+{
+  const algorithm = get('integrity.algorithm');
+  if (algorithm != null) {
+    const { integrityAlgorithmProblem } = require('../components/business/src/integrity/algorithms.ts');
+    const p = integrityAlgorithmProblem(algorithm);
+    if (p != null) problems.push(p);
+  }
+}
+
 // storages.engines.rqlite.url: the spawned rqlited's HTTP API listens on
 // 127.0.0.1 unless httpBindAddr is set, so the core's own client must use loopback.
 {

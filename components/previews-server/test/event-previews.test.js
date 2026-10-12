@@ -266,6 +266,24 @@ describe('[EP01] event previews', function () {
       }
     });
 
+    it('[PVPX1] an image declaring more pixels than the limit is refused before it is decoded', async function () {
+      // 68 bytes declaring a 15000 x 10000 canvas (150 MP, under libvips' own
+      // default limit of about 268 MP)
+      const file = nodePath.join(os.tmpdir(), 'previews-pvpx1-' + process.pid + '.png');
+      fs.writeFileSync(file, headerOnlyPng(15000, 10000));
+      try {
+        const size = fs.statSync(file).size;
+        const event = await mall.events.createWithAttachments(user.id,
+          { streamIds: [testData.streams[2].id], type: 'picture/attached' },
+          [{ fileName: 'canvas.png', type: 'image/png', size, attachmentData: fs.createReadStream(file) }]);
+        const res = await request.get(path(event.id), token);
+        assert.strictEqual(res.statusCode, 413, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, errors.ErrorIds.PayloadTooLarge);
+      } finally {
+        fs.unlinkSync(file);
+      }
+    });
+
     it('[PVPT] preview paths never leave the user\'s previews directory', async function () {
       for (const eventId of ['../escape', 'a/b', '..']) {
         assert.throws(() => attachmentManagement.getPreviewPath(user, eventId, 256), /Invalid previews path segment/, eventId);
@@ -544,3 +562,26 @@ describe('[EP04] previews cache clean-up', function () {
     assert.strictEqual(cache.cleanUpInProgress, false);
   });
 });
+
+// A PNG that declares a canvas of the given size and holds next to no data.
+function headerOnlyPng (width, height) {
+  const zlib = require('node:zlib');
+  function chunk (type, data) {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+    return Buffer.concat([length, body, crc]);
+  }
+  const ihdr = Buffer.alloc(13); // 8-bit greyscale, no interlace
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.alloc(16))),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}

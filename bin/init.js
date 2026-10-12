@@ -794,9 +794,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   piiMode: cleartext   # opt-out; default is hashed
 
 # # eventFiles — attachments + previews size limits.
+# # previewsMaxInputPixels: an image declaring more pixels is not decoded
+# # (its preview answers 413); previewsRenderConcurrency: previews rendered
+# # at once by the previews worker, the others wait.
 # # eventFiles:
 # #   attachmentSizeMaxKB: 10240   # 10 MiB per attachment
 # #   previewsCacheMaxAgeMs: 86400000
+# #   previewsMaxInputPixels: 100000000
+# #   previewsRenderConcurrency: 2
 
 # # webhooks — global delivery tuning. Calls to loopback, private, link-local
 # # and other reserved addresses are refused unless listed in

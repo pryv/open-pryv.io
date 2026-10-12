@@ -17,7 +17,7 @@
 //   node bin/backup.js --output /path/to/backup --max-chunk-size 50
 //   node bin/backup.js --output /path/to/backup --include-ephemeral
 //   node bin/backup.js --output /path/to/backup --recipient-pubkey recipient.pub.pem
-//   node bin/backup.js --output /path/to/backup --encrypt-passphrase 's3cret'
+//   node bin/backup.js --output /path/to/backup --passphrase-file /root/backup-passphrase
 //
 // Restore:
 //   node bin/backup.js --restore /path/to/backup
@@ -26,7 +26,7 @@
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --move-on-success /path/to/done
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --delete-on-success
 //   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem
-//   node bin/backup.js --restore /path/to/backup --decrypt-passphrase 's3cret'
+//   node bin/backup.js --restore /path/to/backup --passphrase-file /root/backup-passphrase
 //   node bin/backup.js --restore /path/to/backup --require-encrypted --private-key recipient.key.pem
 
 const path = require('path');
@@ -61,6 +61,7 @@ require('@pryv/boiler').init({
 
     // Refuse an unexpected plaintext backup before touching any storage.
     if (args.restore) checkRestoreEncryption(args);
+    if (args.output && !args.restore) warnIfPlaintextBackup(args);
 
     // Initialize storage subsystems
     await initStorage();
@@ -195,6 +196,17 @@ function checkRestoreEncryption (args) {
     `${reason} but the backup at ${args.restore} is not encrypted (no encryption.json). ` +
     'Refusing to restore it as plaintext; pass --allow-plaintext to restore it anyway.'
   );
+}
+
+/**
+ * A backup holds every account's data (events, accesses with their tokens,
+ * webhooks, audit). Without a key model it is written as plaintext: say so on
+ * every run, where cron mails and CI logs will show it.
+ */
+function warnIfPlaintextBackup (args) {
+  if (args.recipientPubkey || args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE) return;
+  console.error('WARNING: this backup is NOT encrypted: it holds every account\'s data (events, accesses and their tokens, webhooks, audit) in plaintext. ' +
+    'Pass --recipient-pubkey <pem> (recommended) or --passphrase-file <path> to encrypt it.');
 }
 
 async function runRestore (args) {
@@ -436,6 +448,7 @@ function parseArgs (argv) {
     decryptPassphrase: null,
     privateKey: null,
     privateKeyPassphrase: null,
+    passphraseFile: null,
     allowPlaintext: false,
     requireEncrypted: false,
     help: false
@@ -499,6 +512,9 @@ function parseArgs (argv) {
       case '--private-key-passphrase':
         args.privateKeyPassphrase = argv[++i];
         break;
+      case '--passphrase-file':
+        args.passphraseFile = argv[++i];
+        break;
       case '--allow-plaintext':
         args.allowPlaintext = true;
         break;
@@ -519,6 +535,27 @@ function parseArgs (argv) {
   if (args.deleteOnSuccess && args.moveOnSuccess) {
     console.error('Error: --delete-on-success and --move-on-success are mutually exclusive');
     process.exit(1);
+  }
+  // --passphrase-file: the passphrase read from a file (first line), so it
+  // appears neither in the process list nor in the shell history. It is the
+  // encryption passphrase of a backup, the decryption one of a restore.
+  if (args.passphraseFile != null) {
+    if (args.encryptPassphrase || args.decryptPassphrase) {
+      console.error('Error: --passphrase-file and --encrypt-passphrase / --decrypt-passphrase are mutually exclusive');
+      process.exit(1);
+    }
+    let passphrase;
+    try {
+      passphrase = fs.readFileSync(args.passphraseFile, 'utf8').split(/\r?\n/)[0];
+    } catch (err) {
+      console.error(`Error: cannot read --passphrase-file ${args.passphraseFile}: ${err.message}`);
+      process.exit(1);
+    }
+    if (!passphrase) {
+      console.error(`Error: --passphrase-file ${args.passphraseFile} is empty`);
+      process.exit(1);
+    }
+    if (args.restore) args.decryptPassphrase = passphrase; else args.encryptPassphrase = passphrase;
   }
   if (args.recipientPubkey && args.encryptPassphrase) {
     console.error('Error: --recipient-pubkey and --encrypt-passphrase are mutually exclusive (pick one key model)');
@@ -544,12 +581,16 @@ Backup:
   --include-ephemeral       Include sessions and password-reset-requests
   --incremental             Only export changes since previous backup (auto-detects per-user)
 
-Encryption (opt-in — without these flags output is plaintext as before):
+Encryption (opt-in — without these flags output is plaintext, with a warning):
   --recipient-pubkey <pem>  Encrypt output with a recipient RSA public key
                             (recommended): the backup host holds no decrypt
                             secret — only the private-key holder can restore.
-  --encrypt-passphrase <s>  Encrypt output with a passphrase (scrypt-derived).
-                            Simpler, but this host can decrypt its own backup.
+  --passphrase-file <path>  Encrypt output with the passphrase on the first line
+                            of this file (scrypt-derived). Simpler than a key
+                            pair, but this host can decrypt its own backup.
+  --encrypt-passphrase <s>  Same, the passphrase given on the command line (it
+                            then shows in the process list and the shell
+                            history: prefer --passphrase-file).
                             Also read from PRYV_BACKUP_PASSPHRASE if omitted.
                             (Encrypting an existing incremental backup needs the
                             matching secret to read the previous manifest.)
@@ -567,8 +608,11 @@ Restore:
                             result the backup source is kept (never cleaned up).
   --private-key <pem>       Private key to decrypt a hybrid-encrypted backup
   --private-key-passphrase <s>  Passphrase protecting the private key (if any)
-  --decrypt-passphrase <s>  Passphrase to decrypt a symmetric-encrypted backup
-                            (also read from PRYV_BACKUP_PASSPHRASE)
+  --passphrase-file <path>  Passphrase to decrypt a symmetric-encrypted backup,
+                            read from the first line of this file
+  --decrypt-passphrase <s>  Same, given on the command line (prefer
+                            --passphrase-file; also read from
+                            PRYV_BACKUP_PASSPHRASE)
   --require-encrypted       Refuse a backup that is not encrypted
   --allow-plaintext         Restore a plaintext backup even though a decryption
                             secret was supplied (refused by default)

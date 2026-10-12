@@ -300,3 +300,22 @@ describe('[CKRF] bin/check-config.js Raft TLS on a multi-core node', function ()
     assert.doesNotMatch(res.stdout + res.stderr, /Raft TLS/);
   });
 });
+
+describe('[CCIA] bin/check-config.js integrity.algorithm', function () {
+  this.timeout(60000);
+
+  it('[CCIA1] md5 and sha1 are problems; sha512 and the default pass', () => {
+    for (const algorithm of ['md5', 'sha1']) {
+      const res = runCheck(BASE + `
+integrity:
+  algorithm: ${algorithm}
+`);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stderr, new RegExp('integrity\\.algorithm \'' + algorithm + '\' is not supported'));
+    }
+    const strong = runCheck(BASE + '\nintegrity:\n  algorithm: sha512\n');
+    assert.strictEqual(strong.status, 0, strong.stdout + strong.stderr);
+    const absent = runCheck(BASE);
+    assert.strictEqual(absent.status, 0, absent.stdout + absent.stderr);
+  });
+});

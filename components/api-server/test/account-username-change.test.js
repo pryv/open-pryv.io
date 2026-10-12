@@ -5,7 +5,12 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
+
+const { pubsub } = require('messages');
 
 describe('[UCHG] account.changeUsername (secondary username)', function () {
   const PASSWORD = 'test-password-1';
@@ -110,5 +115,36 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
     const next = ('d' + cuid()).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
     const res = await changeUsername(username, next, witnessToken); // app token
     assert.equal(res.status, 403, JSON.stringify(res.body));
+  });
+
+  // The webhooks service listens for an account's changes under its username:
+  // after a change it must stop listening under the former name and load the
+  // webhooks again under the new one.
+  it('[CUWH1] a username change moves the account\'s webhooks to the new name in the webhooks service', async function () {
+    const { uname } = await freshUser();
+    const token = await login(uname);
+    // webhooks belong to app accesses
+    const app = await coreRequest.post('/' + uname + '/accesses').set('Authorization', token)
+      .send({ name: 'cuwh1', type: 'app', permissions: [{ streamId: 's0', level: 'read' }] });
+    assert.equal(app.status, 201, JSON.stringify(app.body));
+    const created = await coreRequest.post('/' + uname + '/webhooks').set('Authorization', app.body.access.token)
+      .send({ url: 'https://hooks.example.com/cuwh1' });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const webhookId = created.body.webhook.id;
+    const signals = [];
+    const onStop = (msg) => signals.push(['stop', msg.username, msg.webhook.id]);
+    const onLoad = (msg) => signals.push(['load', msg.username, msg.webhook.id]);
+    pubsub.webhooks.on(pubsub.WEBHOOKS_DELETE, onStop);
+    pubsub.webhooks.on(pubsub.WEBHOOKS_CREATE, onLoad);
+    const newUsername = ('e' + cuid()).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+    let res;
+    try {
+      res = await changeUsername(uname, newUsername, token);
+    } finally {
+      pubsub.webhooks.off(pubsub.WEBHOOKS_DELETE, onStop);
+      pubsub.webhooks.off(pubsub.WEBHOOKS_CREATE, onLoad);
+    }
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(signals, [['stop', uname, webhookId], ['load', newUsername, webhookId]]);
   });
 });
