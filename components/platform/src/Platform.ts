@@ -108,6 +108,7 @@ class Platform {
   async init () {
     if (this.#initPromise == null) {
       this.#initPromise = this.#initOnce().catch((err) => {
+        this.stopCoreUrlRefresh(); // a failure after the refresh started must not leave it running
         this.#initPromise = null;
         this.#initialized = false;
         this.initialized = false;
@@ -497,12 +498,6 @@ class Platform {
   }
 
   /**
-   * Reload the coreId → URL cache from PlatformDB. Idempotent.
-   * Adds an entry only when a core info row carries an explicit `url` —
-   * empty url means "fall through to derivation" so a core with neither an
-   * override nor a domain doesn't poison the cache with `null`.
-   */
-  /**
    * Re-read the core URLs every `intervalMs` (default 30 s, the embedded DNS
    * refresh interval). The timer does not keep the process alive; a failed
    * read keeps the previous cache. Idempotent: a running timer is replaced.
@@ -522,6 +517,12 @@ class Platform {
     this.#coreUrlRefreshTimer = null;
   }
 
+  /**
+   * Reload the coreId → URL cache from PlatformDB. Idempotent.
+   * Adds an entry only when a core info row carries an explicit `url` —
+   * empty url means "fall through to derivation" so a core with neither an
+   * override nor a domain doesn't poison the cache with `null`.
+   */
   async _refreshCoreUrlCache () {
     const cores = await this.#db.getAllCoreInfos();
     const fresh = new Map();
@@ -603,9 +604,8 @@ class Platform {
     if (sites.length > 0) info.sites = sites;
     await this.#db.setCoreInfo(this.coreId, info);
     // Refresh the in-memory coreId→URL cache so this core's own entry is
-    // visible immediately. NOTE: cache stays cold for changes made by OTHER
-    // cores until the next init() — periodic refresh for dynamic cluster
-    // membership is tracked in PLATFORM-WIDE-CONFIG-MIGRATION.md follow-up.
+    // visible immediately. Changes made by OTHER cores are picked up by the
+    // periodic refresh (`startCoreUrlRefresh`, multi-core).
     await this._refreshCoreUrlCache();
 
     const { snapshot, hash } = this.getPlatformConfigSnapshot();
