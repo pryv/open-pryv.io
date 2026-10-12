@@ -384,7 +384,7 @@ describe('[ACDS] Account DataStore adapter', () => {
       assert.strictEqual((await accountStore.events.get(userId, { fromTime: 900, toTime: 1100 }, {})).length, 1);
     });
 
-    it('[ATM06] bounds match the local store: toTime inclusive, modifiedSince strict', async () => {
+    it('[ATM08] bounds match the local store: toTime inclusive, modifiedSince strict', async () => {
       await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
       // An event exactly on the upper bound is in the range (a pager moving toTime would otherwise drop it).
       assert.strictEqual((await accountStore.events.get(userId, { fromTime: 0, toTime: 1000 }, {})).length, 1);
