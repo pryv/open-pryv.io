@@ -159,8 +159,9 @@ class Server {
     await this.startListen(server!, serverInfos);
     this.logger.info('Server ready. API Version: ' + apiVersion);
     pubsub.status.emit(pubsub.SERVER_READY);
-    // Start webhooks service in-process (unless explicitly disabled)
-    if (config.get('webhooks:inProcess') !== false) {
+    // Start webhooks service in-process (unless explicitly disabled). Under
+    // bin/master.js only the API worker it designates runs it.
+    if (config.get('webhooks:inProcess') !== false && process.env.PRYV_WEBHOOKS_WORKER !== '0') {
       await this.startWebhooksService();
     }
     this.logger.debug('start completed');
