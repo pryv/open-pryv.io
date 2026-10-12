@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## Unreleased
+
+- Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
+  rejected async branch is answered 500 (or the connection closed when the answer has started) and
+  logged, instead of ending the worker (`api-server/src/ingressGuard.ts`); the worker and
+  hosted-site proxies guard their `writeHead` the same way. `hostedSites.<name>.headers` values are
+  checked with Node's own header-value rule at boot and in `check-config` (control characters and
+  non-Latin-1 text were accepted, then refused by `setHeader` at every answer). Tests: `[INGG]`,
+  business `[HSC8]`.
+- `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
+
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
 
 - `components/storage/src/userLocalDirectory.ts` `getPathForUser` refuses a user id holding `/`,

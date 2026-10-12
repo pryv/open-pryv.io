@@ -25,6 +25,7 @@ const { buildHfsIngress } = require('./hfsIngress.ts');
 const { buildPreviewsIngress } = require('./previewsIngress.ts');
 const { usernameInHost } = require('business/src/usernameSubdomains.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
+const { guardIngress } = require('./ingressGuard.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { getPlatform } = require('platform');
 const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
@@ -117,7 +118,7 @@ class Server {
       ? toExpress
       : (req: unknown, res: unknown) => previewsDispatch(req, res, toExpress);
     const toHfs = (req: unknown, res: unknown) => hfsDispatch(req, res, toPreviews);
-    const requestHandler = (req: unknown, res: unknown) => sitesDispatch(req, res, toHfs);
+    const requestHandler = guardIngress((req: unknown, res: unknown) => sitesDispatch(req, res, toHfs), this.logger);
     // Setup HTTP and register server; setup Socket.IO.
     let server: { address: () => { address: string; port: number }; listen: (...args: unknown[]) => unknown; once: (event: string, handler: (err?: Error) => void) => unknown; key?: unknown } | null = null;
     const serverInfos: { hostname: string | null } = {
