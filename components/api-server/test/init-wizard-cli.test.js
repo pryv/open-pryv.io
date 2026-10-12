@@ -96,8 +96,11 @@ describe('[INWZ] bin/init.js generated files', function () {
   it('[INWZ6] UI assets are written explicitly, the public Pryv set by default', () => {
     const res = runWizard(configDir);
     assert.strictEqual(res.status, 0, res.output);
-    const config = fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8');
-    assert.match(config, /^ {2}assets:\n {4}definitions: https:\/\/pryv\.github\.io\/assets-pryv\.me\/index\.json$/m);
+    const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
+    assert.strictEqual(config.service.assets.definitions, 'https://pryv.github.io/assets-pryv.me/index.json');
+    // dnsLess: the trusted origins stay the public URL and the auth UI, nothing more.
+    assert.deepStrictEqual(config.auth.trustedApps.split(',').map((s) => s.trim()).sort(),
+      ['*@https://account.example.com', '*@https://core.example.com']);
   });
 
   it('[INWZ7] dns-active: the default trustedApps include the register and access hosts', () => {

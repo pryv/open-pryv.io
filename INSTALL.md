@@ -178,7 +178,7 @@ On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and
 
 ### Assets
 
-`service.assets.definitions` points to a JSON file describing UI assets (CSS, icons, login button). If not set, it defaults to the public Pryv assets, `https://pryv.github.io/assets-pryv.me/index.json` (the core serves no assets itself).
+`service.assets.definitions` points to a JSON file describing UI assets (CSS, icons, login button). If not set, it defaults to the public Pryv assets, `https://pryv.github.io/assets-pryv.me/index.json` (the core serves none by default).
 
 Options:
 - Keep the public Pryv assets (the default)

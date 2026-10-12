@@ -38,6 +38,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const readline = require('readline');
+const { DEFAULT_ASSETS_DEFINITIONS } = require('../config/plugins/public-url');
 
 let yaml;
 try {
@@ -1291,14 +1292,15 @@ async function main () {
   const trustedOrigins = new Set();
   trustedOrigins.add(originOf(publicUrl));
   trustedOrigins.add(originOf(authUiUrl));
-  // dns-active: lib-js sends the service's register / access URLs as Origin
-  // (Node has no page origin), so a login from a script is refused without them.
+  // dns-active: lib-js sends the service's register URL as Origin (Node has no
+  // page origin), so a login from a script is refused without it; access.<domain>
+  // is the distribution's other reserved host (exact hosts only, never *.<domain>).
   if (!dnsLess) {
     trustedOrigins.add(`https://reg.${dnsDomain}`);
     trustedOrigins.add(`https://access.${dnsDomain}`);
   }
   const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}`).join(', ');
-  const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl origins)', defaultTrustedApps, 'auth.trustedapps');
+  const trustedApps = await ask(`  auth.trustedApps (auth UI + publicUrl origins${dnsLess ? '' : ' + reg/access hosts'})`, defaultTrustedApps, 'auth.trustedapps');
 
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const serviceSerial = await ask('  service.serial (build tag)', today, 'service.serial');
@@ -1307,7 +1309,7 @@ async function main () {
   const serviceTerms = await ask('  service.terms URL', publicUrl, 'service.terms');
   const serviceEventTypes = await ask('  service.eventTypes URL', 'https://pryv.github.io/event-types/flat.json', 'service.eventtypes');
   // UI assets (login button, CSS, icons): the core serves none itself.
-  const serviceAssetsDefinitions = await ask('  service.assets.definitions URL (UI assets)', require('../config/plugins/public-url').DEFAULT_ASSETS_DEFINITIONS, 'service.assets.definitions');
+  const serviceAssetsDefinitions = await ask('  service.assets.definitions URL (UI assets)', DEFAULT_ASSETS_DEFINITIONS, 'service.assets.definitions');
   console.log();
 
   // 13. HFS workers
