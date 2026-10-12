@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## Platform: one shared initialisation, peer core URLs refreshed; quieter boot
+
+- `platform/src/Platform.ts` `init()`: every `getPlatform()` call lands in it. The first call
+  initialises; concurrent and later calls share the same promise (before, a concurrent caller got a
+  half-initialised platform back, and every later call logged "Platform already initialized,
+  skipping", 17 times on a dev boot plus once per request using it). A failed initialisation is
+  retried on the next call instead of leaving a platform marked initialised.
+- Multi-core: `startCoreUrlRefresh()` re-reads the other cores' URLs every 30 s (the embedded DNS
+  interval; unref'd timer, a failed read keeps the previous URLs, `stopCoreUrlRefresh()`), so a
+  running core learns the explicit `core.url` of a core that joined or moved after it booted;
+  before, until its own restart it answered `/reg/cores` with the derived or the old URL.
+- `boiler`: an `extraConfigs` entry whose `urlFromKey` is unset (`serviceInfoUrl` when `service.*`
+  is in YAML) is skipped at debug level instead of warning "Null or Undefined Url"; a
+  `getConfigUnsafe(true)` pre-init read (the documented integrity capture) logs at debug instead of
+  "Warning! config loaded before being fully initialized".
+- Tests: `components/platform/test/unit/Platform-init-refresh.test.js` `[PINI-01/02]`, `[PCUR-01/02]`.
+
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 
 - `components/mall/src/MallUserEvents.ts` `prepareForStore` fills missing `created` /
