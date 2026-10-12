@@ -98,6 +98,7 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       { userId: 'a\\b', username: 'validname' },
       { userId: 'abc\0def', username: 'validname' },
       { userId: '', username: 'validname' },
+      { userId: 'ab', username: 'validname' },
       { userId: 'x'.repeat(65), username: 'validname' },
       { userId: CUID2_ID + '\n', username: 'validname' },
       { userId: null, username: 'validname' },

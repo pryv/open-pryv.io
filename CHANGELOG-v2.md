@@ -1,7 +1,6 @@
 # Changelog - API Changes
 
 ## Unreleased
-
 ### Accesses
 
 - `accesses.get?includeDeletions=true`: the deletion records in `accessDeletions` no longer carry
@@ -77,7 +76,7 @@
 
 - **Backup restore refusals.** A restore (`bin/backup.js --restore`) now refuses, before writing
   anything, a backup whose manifest lists a user id or a username that is not one safe file name
-  (letters, digits, `-` and `_`, 1 to 64 characters: no dot, no separator, no NUL). It stops, and
+  (letters, digits, `-` and `_`, 3 to 64 characters: no dot, no separator, no NUL). It stops, and
   reads nothing through it, at a symbolic link where the backup keeps its data (the `users`,
   `platform` or `register` folder, a user folder, its `attachments`, `events`, `audit` or
   `series` folder, any data file) or at a non-regular file among the attachments; the backup

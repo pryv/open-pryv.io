@@ -16,10 +16,10 @@ const { seriesNamespace } = require('../series/namespace.ts');
 // A backup can come from storage the operator does not control: its user ids
 // and usernames become local path segments (user directory, series file), so
 // each must be one safe file name: letters, digits, `-` and `_`, no dot, no
-// separator, at most 64 characters. Not the exact grammar of the ids and names
+// separator, 3 to 64 characters. Not the exact grammar of the ids and names
 // this server issues: accounts migrated or created by older versions restore
 // too, and the per-user paths are checked to stay inside their base anyway.
-const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{3,64}$/;
 
 function isRestorableUser (entry: { userId?: unknown; username?: unknown } | null | undefined): boolean {
   return entry != null &&

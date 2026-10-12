@@ -7,7 +7,7 @@
   base path; every per-user path (attachments, SQLite base / account / audit / series files, the
   user-directory wipe at deletion) goes through it. Test: storage `[ULK4]`.
 - Restore: `RestoreOrchestrator` validates every manifest user entry (id and username each one
-  safe path segment, `^[A-Za-z0-9_-]{1,64}$`; the per-user path containment above keeps the
+  safe path segment, `^[A-Za-z0-9_-]{3,64}$`; the per-user path containment above keeps the
   paths inside their base) before any write, for a full restore and for a single-user restore
   (the target id included); attachments read with a null event id are skipped and counted.
   `FilesystemBackupReader` refuses a user id that leaves `users/`; resolves the backup root once

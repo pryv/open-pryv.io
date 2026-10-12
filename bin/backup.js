@@ -205,7 +205,15 @@ async function runRestore (args) {
   let decryptor = null;
   const encryptionPath = path.join(args.restore, 'encryption.json');
   if (fs.existsSync(encryptionPath)) {
-    const envelope = JSON.parse(fs.readFileSync(encryptionPath, 'utf8'));
+    // Not followed when it is a symbolic link, like every other file of the backup.
+    let envelopeText;
+    try {
+      envelopeText = fs.readFileSync(encryptionPath, { encoding: 'utf8', flag: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) });
+    } catch (err) {
+      if (err.code === 'ELOOP') throw new Error(`Backup file ${encryptionPath} is a symbolic link: refused`);
+      throw err;
+    }
+    const envelope = JSON.parse(envelopeText);
     console.log(`Encrypted backup detected: ${envelope.mode} (${envelope.alg})`);
     decryptor = createBackupDecryptor(envelope, buildDecryptSecrets(args, false));
   }
