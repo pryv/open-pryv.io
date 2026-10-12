@@ -24,7 +24,8 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   now makes its query match nothing. The entry was ignored, so `{ "any": ["A"], "all": ["X"] }`
   returned every event of `A` when `X` did not exist. The same holds for webhook and socket.io
   notification scopes: a scope whose streams resolve to nothing matches no event (it matched
-  every event).
+  every event). A webhook created while its access could read no stream keeps matching no event
+  until the webhook is updated, even if streams are added later.
 - Stream queries: a store root (`:local:`, `:<store>:`) stands for `*` and follows its rules: it
   can only appear alone in `any` (it was accepted mixed with other ids and in `all` / `not`). A
   stream id with a malformed store prefix (`:abc`, `::x`) is refused with
@@ -183,8 +184,10 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   access may keep working that long.
 - `bin/backup.js` restore: the whole restore is refused, before anything is written, when a
   username of the manifest, the owner of a platform row or a register server mapping is not one
-  safe segment or is reserved (`pryv...`, the reserved words, the core's own route names, hosted
-  site names); platform rows were written unchecked. Platform rows are read and checked before
+  safe segment or is a name the platform routes itself (`pryv...`, `reg`, `access`, `mfa`, `lsc`,
+  the core's own route names, hosted site names); platform rows were written unchecked. A
+  username that is only a word of the registration list (refused to new accounts) is restored,
+  with a warning in the log. Platform rows are read and checked before
   any user is restored. A single-user restore of a username that now belongs to another account
   is refused, with or without `--overwrite` (with it, the backed-up account was mixed into the
   current holder of the name).
@@ -196,10 +199,12 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   events and accesses written before no longer match their checksum (`bin/integrity-check.js`
   reports them).
 - Boot log `[platform-config-snapshot]` and `bin/observability.js show`: the admin key appears as
-  `auth.adminAccessKey.fingerprint`, an HMAC-SHA256 keyed by the admin key over a fixed label
-  (16 hex characters); it was `auth.adminAccessKey.sha256`, a prefix of the plain SHA-256 of the
-  key, which a log reader could check candidate keys against. The logged value and the snapshot
-  `hash` change once, with the upgrade: compare cores running the same version.
+  `auth.adminAccessKey.fingerprint`, an HMAC-SHA256 of the admin key keyed by
+  `auth.filesReadTokenSecret` (16 hex characters; both secrets are the same on every core, so the
+  values still compare across cores); it was `auth.adminAccessKey.sha256`, a prefix of the plain
+  SHA-256 of the key, which a log reader could check candidate keys against. Testing candidates
+  against the new value also needs `filesReadTokenSecret`, which is never logged. The logged value
+  and the snapshot `hash` change once, with the upgrade: compare cores running the same version.
 - Logs: an `Error` passed to the logger is masked like other values (message, stack, fields,
   cause; it was printed as is); more credential names are hidden (`key`, `readToken`,
   `passphrase`, `adminAccessKey`, `filesReadTokenSecret`, `atRestKey`, `piiHmacKey`,
@@ -211,6 +216,10 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   and their directory, when the core creates it, `0750`; they were created `0644` / `0755` (with
   the usual umask). Existing files and directories keep their modes. A log shipper reading them
   as another user needs the files' group.
+- `logs.file` without daily rotation (`logs.file.rotation.isActive: false`): the file is capped at
+  `logs.file.maxFileBytes` (default 10 MB) and `logs.file.maxNbFiles` files are kept (default 14);
+  both settings were ignored, so the file grew without bound. `production-config.yml` now sets
+  10 MB (it said 4096 bytes, never applied). Daily rotation, the default, is unchanged.
 - Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
   once by the previews worker, the others wait; renders were unbounded. See also
   `eventFiles.previewsMaxInputPixels` above.

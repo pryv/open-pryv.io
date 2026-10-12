@@ -13,8 +13,8 @@ const crypto = require('node:crypto');
 
 const { Platform } = require('../../src/Platform.ts');
 
-function platformWithAdminKey (adminKey) {
-  const values = { 'core:id': 'core-a', 'auth:adminAccessKey': adminKey, 'integrity:algorithm': 'sha256' };
+function platformWithAdminKey (adminKey, filesReadTokenSecret = 'a-files-read-token-secret-0123456789') {
+  const values = { 'core:id': 'core-a', 'auth:adminAccessKey': adminKey, 'auth:filesReadTokenSecret': filesReadTokenSecret, 'integrity:algorithm': 'sha256' };
   const platform = new Platform();
   platform._setDependenciesForTests({}, null, { get: (key) => values[key] });
   return platform;
@@ -36,5 +36,15 @@ describe('[PLFP] admin key fingerprint in the config snapshot', () => {
     assert.ok(!JSON.stringify(snapshot).includes(plain.slice(0, 16)), 'no SHA-256 prefix anywhere in the snapshot');
     assert.equal(platformWithAdminKey(key).getPlatformConfigSnapshot().snapshot['auth.adminAccessKey.fingerprint'], fingerprint);
     assert.notEqual(platformWithAdminKey(key + 'x').getPlatformConfigSnapshot().snapshot['auth.adminAccessKey.fingerprint'], fingerprint);
+  });
+
+  it('[PLFP2] needs a second platform secret: the admin key alone does not give the fingerprint', () => {
+    const key = 'an-admin-key-for-plfp2-0123456789';
+    const fingerprint = platformWithAdminKey(key, 'secret-one-0123456789-abcdefghij').getPlatformConfigSnapshot().snapshot['auth.adminAccessKey.fingerprint'];
+    assert.match(fingerprint, /^[0-9a-f]{16}$/);
+    assert.notEqual(platformWithAdminKey(key, 'secret-two-0123456789-abcdefghij').getPlatformConfigSnapshot().snapshot['auth.adminAccessKey.fingerprint'], fingerprint);
+    // Computable from the admin key alone (an HMAC keyed by it over any fixed label): not the logged value.
+    const keyOnly = crypto.createHmac('sha256', key).update('pryv.io admin access key fingerprint v1').digest('hex').slice(0, 16);
+    assert.notEqual(fingerprint, keyOnly);
   });
 });

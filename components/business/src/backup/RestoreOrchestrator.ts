@@ -40,9 +40,11 @@ function assertRestorableUsers (users: unknown): void {
 /**
  * Refuses the whole restore when a username the backup names (a manifest
  * entry, the owner of a platform row, a register server mapping) is not one
- * safe segment, or is a name this platform keeps for itself (`pryv...`, the
- * reserved words, the routes it serves, hosted-site names): those rows would
- * route platform names to an account. `where` says which part of the backup.
+ * safe segment, or is a name this platform routes itself (`pryv...`, the
+ * service hosts of its DNS, the paths it serves, hosted-site names): those
+ * rows would route platform names to an account. `where` says which part of
+ * the backup. Names that are only in the registration word list are restored
+ * (see `_warnListedUsernames`).
  */
 function assertRestorableUsernames (usernames: unknown[], isReserved: (name: string) => boolean, where: string): void {
   const invalid = usernames.filter((name) => typeof name !== 'string' || !SAFE_SEGMENT_RE.test(name) || isReserved(name));
@@ -68,8 +70,10 @@ class RestoreOrchestrator {
   auditStorage: AuditStorageLike | null = null;
   seriesConnection: SeriesConnectionLike | null = null;
   logger!: Logger;
-  /** Replaces the platform's reserved-name check when set (tests). */
+  /** Replaces the platform's routing-name check when set (tests). */
   isReservedUsername: ((name: string) => boolean) | null = null;
+  /** Replaces the platform's word-list check when set (tests). */
+  isListedUsername: ((name: string) => boolean) | null = null;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -108,6 +112,7 @@ class RestoreOrchestrator {
     assertRestorableUsers(manifest.users);
     const isReserved = await this._reservedUsernameCheck();
     assertRestorableUsernames(manifest.users.map((u: UserManifest) => u.username), isReserved, 'user entry(ies) of the backup manifest');
+    await this._warnListedUsernames(manifest.users.map((u: UserManifest) => u.username));
     // Platform rows are read and checked before any user is restored, and
     // written after them.
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
@@ -166,6 +171,7 @@ class RestoreOrchestrator {
     assertRestorableUsers([userManifest, { userId: targetUserId, username }]);
     const isReserved = await this._reservedUsernameCheck();
     assertRestorableUsernames([username], isReserved, 'user entry(ies) of the backup manifest');
+    await this._warnListedUsernames([username]);
 
     // Check conflicts
     const conflicts = await this._detectConflicts([{ userId: targetUserId, username }]);
@@ -200,16 +206,33 @@ class RestoreOrchestrator {
   }
 
   /**
-   * The reserved-name check applied to the usernames a backup names: the
-   * platform's reserved list (hosted-site names re-read first), or
-   * `isReservedUsername` when set.
+   * The reserved-name check that refuses a restore: the names the platform
+   * routes itself (hosted-site names re-read first), or `isReservedUsername`
+   * when set. The registration word list is not part of it: an account
+   * registered before a word was listed, or on another platform, restores.
    */
   async _reservedUsernameCheck (): Promise<(name: string) => boolean> {
     if (this.isReservedUsername != null) return this.isReservedUsername;
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
     await platform.refreshHostedSiteNames();
-    return (name: string) => platform.isUsernameInReservedList(name);
+    return (name: string) => platform.isUsernameRoutingReserved(name);
+  }
+
+  /**
+   * Log a warning for each restored username that the registration word list
+   * would refuse today (it restores; a new account could not take the name).
+   */
+  async _warnListedUsernames (usernames: string[]): Promise<void> {
+    let isListed = this.isListedUsername;
+    if (isListed == null) {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      isListed = (name: string) => platform.isUsernameInReservedList(name);
+    }
+    for (const name of new Set(usernames)) {
+      if (isListed(name)) this.logger.warn(`Restoring username "${name}": a reserved word for new registrations (restored as is).`);
+    }
   }
 
   // -------------------------------------------------------------------------

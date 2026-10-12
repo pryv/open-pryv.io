@@ -33,6 +33,10 @@ const reservedWords = new Set(require('./reserved-words.json').list);
 // core a user with one of these names would lose part of its own API to them
 // (e.g. its batch call `POST /users` is the registration route).
 const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
+// The service hosts the embedded DNS answers (`reg.`, `access.`, `mfa.`, and
+// `lsc.` for cluster discovery): an account under one of them would not be
+// reachable at `<username>.<domain>`.
+const DNS_SERVICE_NAMES = new Set(['reg', 'access', 'mfa', 'lsc']);
 // The shape of a minted alias (`r-` + 8 characters, see the users
 // repository): refused as a new username, so no account can take a name an
 // alias may later be minted as.
@@ -628,7 +632,8 @@ class Platform {
    * observes. Mirrors the boot log so operators can cross-reference a
    * CLI read (e.g. `bin/observability.js show`) against the value
    * each core logs at startup. `auth.adminAccessKey` is surfaced only
-   * as a short keyed fingerprint (see adminKeyFingerprint) — the secret
+   * as a short keyed fingerprint (see adminKeyFingerprint), null when the
+   * second secret is unset — the secret
    * itself never leaves config.
    *
    */
@@ -643,7 +648,8 @@ class Platform {
     const siteNames = this.#localHostedSiteNames().sort();
     if (siteNames.length > 0) snapshot['hostedSites.names'] = siteNames;
     const adminKey = this.#config.get('auth:adminAccessKey');
-    snapshot['auth.adminAccessKey.fingerprint'] = adminKey ? adminKeyFingerprint(String(adminKey)) : null;
+    const secondSecret = this.#config.get('auth:filesReadTokenSecret');
+    snapshot['auth.adminAccessKey.fingerprint'] = adminKey && secondSecret ? adminKeyFingerprint(String(adminKey), String(secondSecret)) : null;
     const hash = crypto
       .createHash('sha256')
       .update(JSON.stringify(snapshot))
@@ -1385,16 +1391,27 @@ class Platform {
   }
 
   /**
-   * Whether the name is reserved by the list: starts with "pryv", is in the
-   * reserved words list, a path segment the core routes itself, or a
-   * hosted-site name of any core.
+   * Whether the name is reserved by the list: a name the platform routes
+   * (see `isUsernameRoutingReserved`), or a word of the reserved words list.
    */
   isUsernameInReservedList (username: string): boolean {
+    if (this.isUsernameRoutingReserved(username)) return true;
+    return reservedWords.has(username.toLowerCase());
+  }
+
+  /**
+   * Whether the name is one the platform routes itself, so an account under
+   * it would collide with the platform: starts with "pryv", a service host
+   * of the embedded DNS (`reg`, `access`, `mfa`, `lsc`), a path segment the
+   * core routes, or a hosted-site name of any core. The word list is a
+   * registration rule on top of these.
+   */
+  isUsernameRoutingReserved (username: string): boolean {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
+    if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
-    if (this.#hostedSiteNames.has(lower)) return true;
-    return reservedWords.has(lower);
+    return this.#hostedSiteNames.has(lower);
   }
 
   // --- Observability config (optional APM) ---------------------------
@@ -1578,12 +1595,13 @@ function parseHeaders (stored: string): Record<string, string> {
 }
 
 // Fingerprint of the admin key for the config snapshot: an HMAC-SHA256 keyed
-// by the admin key over a fixed label, truncated. The same key gives the same
-// value on every core, and a logged value cannot be matched against the plain
-// SHA-256 of candidate keys (precomputed lists of common strings).
-const ADMIN_KEY_FINGERPRINT_LABEL = 'pryv.io admin access key fingerprint v1';
-function adminKeyFingerprint (adminKey: string): string {
-  return crypto.createHmac('sha256', adminKey).update(ADMIN_KEY_FINGERPRINT_LABEL).digest('hex').slice(0, 16);
+// by `auth.filesReadTokenSecret` (a second secret, required and identical on
+// every core, never logged) over a fixed label and the admin key, truncated.
+// The same keys give the same value on every core; a reader of the log line
+// cannot test candidate admin keys against it without that second secret.
+const ADMIN_KEY_FINGERPRINT_LABEL = 'pryv.io admin access key fingerprint v2';
+function adminKeyFingerprint (adminKey: string, secondSecret: string): string {
+  return crypto.createHmac('sha256', secondSecret).update(ADMIN_KEY_FINGERPRINT_LABEL + '\n' + adminKey).digest('hex').slice(0, 16);
 }
 
 // A user-core row names a core: refuse a value that is not a core id.

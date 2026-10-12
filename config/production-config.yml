@@ -20,5 +20,5 @@ logs:
     active: true
     level: error
     path: var-pryv/logs/api-server.errors.log
-    maxFileBytes: 4096
+    maxFileBytes: 10485760   # 10 MB per file, used when logs.file.rotation.isActive is false
     maxNbFiles: 20

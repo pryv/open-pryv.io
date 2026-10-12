@@ -185,6 +185,10 @@ function globalLog (level: LogLevel, key: string, message: string, context: unkn
 // readable by the owner and its group only, in a directory others cannot enter.
 // (Modes apply when the file or the directory is created; existing ones keep theirs.)
 const LOG_FILE_MODE = 0o640;
+// Without daily rotation: the file size cap and the number of files kept,
+// unless `logs.file.maxFileBytes` / `logs.file.maxNbFiles` say otherwise.
+const DEFAULT_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_LOG_FILE_MAX_FILES = 14;
 const LOG_DIR_MODE = 0o750;
 
 function ensureLogDir (filePath: string): void {
@@ -221,8 +225,10 @@ function createFileTransports (config: BoilerConfig): unknown[] {
       transports.push(new winston.transports.File({
         filename: logFile.path,
         level: logFile.level,
-        maxSize: logFile.maxFileBytes || '10m',
-        maxFiles: logFile.maxNbFiles || '14d',
+        // winston's File transport reads `maxsize` (bytes) and `maxFiles` (a
+        // count): without daily rotation, these cap the file and its rollovers.
+        maxsize: Number(logFile.maxFileBytes) > 0 ? Number(logFile.maxFileBytes) : DEFAULT_LOG_FILE_MAX_BYTES,
+        maxFiles: Number(logFile.maxNbFiles) > 0 ? Number(logFile.maxNbFiles) : DEFAULT_LOG_FILE_MAX_FILES,
         format: fileFormat,
         options: fileOptions
       }));

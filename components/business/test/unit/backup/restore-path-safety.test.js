@@ -86,11 +86,14 @@ function makeOrchestrator () {
   o.seriesConnection = null;
   o.platformDB = null;
   o.isReservedUsername = (name) => RESERVED_FOR_TESTS.has(name.toLowerCase());
+  o.isListedUsername = (name) => RESERVED_FOR_TESTS.has(name.toLowerCase()) || LISTED_FOR_TESTS.has(name.toLowerCase());
   return { o, writes };
 }
 
-// Stands in for the platform's reserved list in these tests.
+// Stand in for the platform's checks in these tests: the names it routes
+// (refused), and words of the registration list (restored, with a warning).
 const RESERVED_FOR_TESTS = new Set(['access', 'pryvsupport']);
+const LISTED_FOR_TESTS = new Set(['summer']);
 
 function makeReaderWithPlatform (users, { platformRows = [], serverMappings = [] } = {}) {
   return {
@@ -180,6 +183,18 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }), /invalid or reserved username: "access"/);
       await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }), /invalid or reserved username/);
       assert.deepStrictEqual(writes, []);
+    });
+
+    it('[BKRN2] a username that is only a word of the registration list is restored, with a warning', async function () {
+      const { o, writes } = makeOrchestrator();
+      const warnings = [];
+      o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+      const users = [{ userId: CUID1_ID, username: 'firstuser' }, { userId: CUID2_ID, username: 'summer' }];
+      const report = await o.restoreAllUsers(makeReader(users), { skipPlatform: true });
+      assert.strictEqual(report.restored.length, 2);
+      assert.ok(writes.includes('usersIndex.addUser'));
+      assert.deepStrictEqual(warnings.filter((w) => w.includes('"summer"')).length, 1, JSON.stringify(warnings));
+      assert.ok(!warnings.some((w) => w.includes('"firstuser"')), JSON.stringify(warnings));
     });
 
     it('[BKRP1] a platform row or a server mapping naming an invalid or reserved username refuses the restore before any user is written', async function () {
