@@ -35,8 +35,10 @@ export default function expressApp (commonHeadersMiddleware: RequestHandler, err
     app.use(middleware.subdomainToPath(['/clean-up-cache'], ignoredUsernameSubdomains(getConfigSync())));
   }
   app.use(requestTraceMiddleware);
-  app.use(express.json());
+  // Before the body parser: the answers to its errors carry the CORS, Vary
+  // and cache headers too.
   app.use(commonHeadersMiddleware);
+  app.use(express.json());
   return {
     expressApp: app,
     routesDefined

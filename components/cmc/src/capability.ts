@@ -125,8 +125,9 @@ function maxTtlSecondsFor (mode: CapabilityMode): number | null {
 }
 
 function defaultIdGen (): string {
-  // URL-safe, CSPRNG-backed: same shape as the id the events method passes
-  // via deps.idGen.
+  // URL-safe, CSPRNG-backed: 22 characters that may hold `-` and `_`. Not
+  // cuid-shaped like the id the events method passes via deps.idGen; a caller
+  // whose ids must match an id pattern passes its own idGen.
   return randomBytes(16).toString('base64url');
 }
 

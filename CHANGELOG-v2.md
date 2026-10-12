@@ -19,7 +19,9 @@
 
 - **Cache directives (client-visible).** Every API answer in JSON now carries
   `Cache-Control: no-store`, unless the route sets its own (the OAuth2 discovery document keeps
-  its `public, max-age`); a browser or a shared cache no longer keeps API answers. Every answer
+  its `public, max-age`), including the answers to a malformed request body and the `502` /
+  `504` answered when a series or previews worker is unreachable or silent; a browser or a
+  shared cache no longer keeps API answers. Every answer
   also carries `Vary: Origin`, since the CORS headers echo the request's `Origin`; preflight
   (`OPTIONS`) answers add `Access-Control-Request-Method` and `Access-Control-Request-Headers`.
   Answers that are not JSON (attachments, previews, the HTML root page) are unchanged.
@@ -49,12 +51,10 @@
 - `callBatch` counts, in the access usage statistics (`calls`), only the calls naming an existing
   method; an unknown method name was stored as a counter key on the access.
 - On SQLite cores, a type wildcard in `events.get` (`types[]=note/*`) matches only the types of
-  that class: it also matched the classes starting with the same letters (`notebook/...`). The
-  audit store on SQLite had the same behaviour.
+  that class: it also matched the classes starting with the same letters (`notebook/...`).
 - A custom indexed account field (`custom.systemStreams.account`) with a `default` value now has
   that default indexed at registration when the field is not given; only the built-in fields'
   defaults were.
-
 - An `accesses.update` that fails after its write (re-reading the updated access) now drops the
   access from the access cache of every worker, as a successful update does; the previous
   permissions could stay in use until the cache entry aged out. The same holds for the access
@@ -62,7 +62,6 @@
   the write: the account's cached accesses are dropped.
 - The audit record of an attachment read refused or failed before the file is opened no longer
   carries the `readToken` query parameter.
-
 - Account deletion checks again, before anything is deleted, that the account's previews
   directory can be written: the check looked one level too deep and never fired. An account whose
   previews directory the core cannot write is now refused with an unexpected error before any
@@ -77,12 +76,14 @@
 ### Operators
 
 - **Backup restore refusals.** A restore (`bin/backup.js --restore`) now refuses, before writing
-  anything, a backup whose manifest lists a user id or a username this server does not issue
-  (ids: cuid or cuid2; usernames: the registration pattern), and refuses a backup whose user
-  attachment folder holds a symbolic link or another non-regular file. An attachment file that
-  no event of the backup references is no longer restored (it was stored under an event id
-  `unknown`); the restore logs how many were skipped. Backups written by the server and by the
-  v1 migration tool restore as before.
+  anything, a backup whose manifest lists a user id or a username that is not one safe file name
+  (letters, digits, `-` and `_`, 1 to 64 characters: no dot, no separator, no NUL). It stops, and
+  reads nothing through it, at a symbolic link where the backup keeps its data (the `users`,
+  `platform` or `register` folder, a user folder, its `attachments`, `events`, `audit` or
+  `series` folder, any data file) or at a non-regular file among the attachments; the backup
+  root itself may be a symbolic link. An attachment file that no event of the backup references
+  is no longer restored (it was stored under an event id `unknown`); the restore logs how many
+  were skipped. Backups written by the server and by the v1 migration tool restore as before.
 - **File modes.** Backups are written with directories `0700` and files `0600`, plaintext and
   encrypted alike; the bundled `decrypt-backup.mjs` writes its decrypted tree the same way; the
   `bin/breach-scope.js --output` reports and the `config-to-env` env file are written `0600`

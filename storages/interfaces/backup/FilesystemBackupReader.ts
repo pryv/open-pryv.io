@@ -32,15 +32,49 @@ interface ReaderOptions {
   decryptor?: BackupDecryptor | null;
 }
 
-/** Read a file, decrypting first when a decryptor is configured. */
+/**
+ * Read a file, decrypting first when a decryptor is configured. A symbolic
+ * link is not followed (refused): the backup's files are read from the backup.
+ */
 function loadBytes (filePath: string, decryptor: BackupDecryptor | null): Buffer {
-  const raw = fs.readFileSync(filePath);
+  let raw: Buffer;
+  try {
+    raw = fs.readFileSync(filePath, { flag: NO_FOLLOW_READ_FLAGS });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw new Error(`Backup file ${filePath} is a symbolic link: refused`);
+    }
+    throw err;
+  }
   return decryptor ? decryptor.decryptBuffer(raw) : raw;
+}
+
+/**
+ * Whether `dir` exists as a directory reached without any symbolic link
+ * (false when it does not exist). Throws when it is a link, not a directory,
+ * or resolves elsewhere: reading through it could import files from outside
+ * the backup. `dir` is built from the backup's real root path.
+ */
+function isRealDirectory (dir: string): boolean {
+  let stat;
+  try {
+    stat = fs.lstatSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  if (!stat.isDirectory() || fs.realpathSync(dir) !== path.resolve(dir)) {
+    throw new Error(`Backup directory ${dir} is not a directory of the backup (symbolic link or special file): refused`);
+  }
+  return true;
 }
 
 function createFilesystemBackupReader (inputPath: string, options?: ReaderOptions): BackupReader {
   let manifest: Manifest | null = null;
   const decryptor: BackupDecryptor | null = options?.decryptor || null;
+  // The backup root may itself be a link the operator chose: everything below
+  // it is read from its real path, where no further link is followed.
+  const realRoot = (): string => fs.realpathSync(inputPath);
 
   return createBackupReader({
     async readManifest () {
@@ -50,10 +84,10 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
     },
 
     readPlatformData () {
-      const platformDir = path.join(inputPath, 'platform');
+      const platformDir = path.join(realRoot(), 'platform');
       const compressed = manifest?.compressed !== false;
       const filePath = path.join(platformDir, jsonlFileName('platform', compressed));
-      if (!fs.existsSync(filePath)) return emptyIterator();
+      if (!isRealDirectory(platformDir) || !fs.existsSync(filePath)) return emptyIterator();
       return readJsonlFile(filePath, compressed, decryptor);
     },
 
@@ -70,10 +104,10 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
      * surfaced when restoring pryv.me onto the v2 cluster.
      */
     readServerMappings () {
-      const registerDir = path.join(inputPath, 'register');
+      const registerDir = path.join(realRoot(), 'register');
       const compressed = manifest?.compressed !== false;
       const filePath = path.join(registerDir, jsonlFileName('servers', compressed));
-      if (!fs.existsSync(filePath)) return emptyIterator();
+      if (!isRealDirectory(registerDir) || !fs.existsSync(filePath)) return emptyIterator();
       return readJsonlFile(filePath, compressed, decryptor);
     },
 
@@ -83,7 +117,11 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       if (userDir == null || path.dirname(userDir) !== usersDir) {
         throw new Error('Invalid user id in the backup: ' + JSON.stringify(userId));
       }
-      return createFilesystemUserBackupReader(userDir, manifest, decryptor);
+      // `users/` and the user directory must be real directories of the backup:
+      // a link there would make every read of this user leave the backup.
+      const realUserDir = path.join(realRoot(), 'users', userId);
+      isRealDirectory(realUserDir);
+      return createFilesystemUserBackupReader(realUserDir, manifest, decryptor);
     },
 
     async close () { /* no-op for filesystem */ }
@@ -130,14 +168,12 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
     readSeries () {
       const seriesDir = path.join(userDir, 'series');
       const filePath = path.join(seriesDir, jsonlFileName('series', compressed));
-      if (!fs.existsSync(filePath)) return emptyIterator();
+      if (!isRealDirectory(seriesDir) || !fs.existsSync(filePath)) return emptyIterator();
       return readJsonlFile(filePath, compressed, decryptor);
     },
 
     readAttachments () {
-      const attachDir = path.join(userDir, 'attachments');
-      if (!fs.existsSync(attachDir)) return emptyIterator();
-      return readAttachmentsFromDir(attachDir, userDir, decryptor);
+      return readAttachmentsFromDir(path.join(userDir, 'attachments'), userDir, decryptor);
     },
 
     async readAccountData () {
@@ -190,7 +226,7 @@ async function * readJsonlFile (filePath: string, compressed: boolean, decryptor
  * Chunk files are sorted alphabetically (events-0001, events-0002, ...).
  */
 async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncGenerator<unknown> {
-  if (!fs.existsSync(dir)) return;
+  if (!isRealDirectory(dir)) return;
   const ext = compressed ? '.jsonl.gz' : '.jsonl';
   const files = fs.readdirSync(dir)
     .filter((f: string) => f.startsWith(baseName + '-') && f.endsWith(ext))
@@ -204,11 +240,12 @@ async function * readChunkedJsonl (dir: string, baseName: string, compressed: bo
  * Iterate attachment files from the attachments directory.
  * Maps fileIds back to eventIds using event JSONL data; a file no event of
  * the backup references comes with a null eventId (the caller does not
- * restore it). Entries are never followed: a symbolic link or any other
- * non-regular entry is refused, it could make the restore import a file from
- * outside the backup.
+ * restore it). Nothing is followed: an attachments directory that is a
+ * symbolic link, or a symbolic link or any other non-regular entry in it, is
+ * refused, it could make the restore import a file from outside the backup.
  */
 async function * readAttachmentsFromDir (attachDir: string, userDir: string, decryptor: BackupDecryptor | null): AsyncGenerator<{ eventId: string | null, fileId: string, stream: NodeJS.ReadableStream }> {
+  if (!isRealDirectory(attachDir)) return;
   // Build fileId -> eventId mapping from events data
   const fileIdToEventId = await buildFileIdMapping(userDir, decryptor);
 
@@ -236,7 +273,7 @@ async function * readAttachmentsFromDir (attachDir: string, userDir: string, dec
 async function buildFileIdMapping (userDir: string, decryptor: BackupDecryptor | null): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const eventsDir = path.join(userDir, 'events');
-  if (!fs.existsSync(eventsDir)) return map;
+  if (!isRealDirectory(eventsDir)) return map;
 
   // Detect compression from file extensions
   const files: string[] = fs.readdirSync(eventsDir);

@@ -99,6 +99,19 @@ describe('[HTRS] HTTP request surface', function () {
       }
     });
 
+    it('[HTC5] the answer to a malformed JSON body carries the CORS echo, varies by Origin and is not stored', async function () {
+      const res = await coreRequest.post(basePath + '/events')
+        .set('Origin', origin)
+        .set('Authorization', token)
+        .set('Content-Type', 'application/json')
+        .send('{"streamIds": [');
+      assert.strictEqual(res.status, 400);
+      assert.ok(/application\/json/.test(res.headers['content-type']), res.headers['content-type']);
+      assert.strictEqual(res.headers['access-control-allow-origin'], origin);
+      assert.ok(/\bOrigin\b/.test(res.headers.vary || ''), 'vary: ' + res.headers.vary);
+      assert.strictEqual(res.headers['cache-control'], 'no-store');
+    });
+
     it('[HTC4] a non-JSON answer gets no cache directive from the API', async function () {
       const res = await coreRequest.get('/').set('Accept', 'text/html');
       assert.strictEqual(res.status, 200);

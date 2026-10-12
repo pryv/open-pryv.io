@@ -6,13 +6,17 @@
   `\` or NUL and checks that the resolved user directory (and the extra path) stays below the
   base path; every per-user path (attachments, SQLite base / account / audit / series files, the
   user-directory wipe at deletion) goes through it. Test: storage `[ULK4]`.
-- Restore: `RestoreOrchestrator` validates every manifest user entry (id `^c[a-z0-9-]{24}$` or
-  `^[a-z][a-z0-9]{23}$`, username `USERNAME_REGEXP_STR`) before any write, for a full restore
-  and for a single-user restore (the target id included); attachments read with a null event id
-  are skipped and counted. `FilesystemBackupReader` refuses a user id that leaves `users/`, reads
-  attachment entries with `lstat` (a symbolic link or special file is refused, directories are
-  skipped), opens them with `O_NOFOLLOW` where available, and yields `eventId: null` for a file
-  no event references (`BackupReader` type updated). Tests: business `[BKRS1]`..`[BKRS6]`.
+- Restore: `RestoreOrchestrator` validates every manifest user entry (id and username each one
+  safe path segment, `^[A-Za-z0-9_-]{1,64}$`; the per-user path containment above keeps the
+  paths inside their base) before any write, for a full restore and for a single-user restore
+  (the target id included); attachments read with a null event id are skipped and counted.
+  `FilesystemBackupReader` refuses a user id that leaves `users/`; resolves the backup root once
+  (`realpathSync`, the root may be a link) and requires every directory it reads below it
+  (`users/<id>`, its `attachments`, `events`, `audit`, `series`, the root's `platform` and
+  `register`) to be a directory reached without a link (`lstat` + real path); reads every file
+  with `O_NOFOLLOW` where available; reads attachment entries with `lstat` (a symbolic link or
+  special file is refused, directories are skipped); yields `eventId: null` for a file no event
+  references (`BackupReader` type updated). Tests: business `[BKRS1]`..`[BKRS9]`.
 - `FilesystemBackupWriter` creates its directories `0700` and files `0600` (`makePrivateDir` /
   `writePrivateFile`, chmod after write; attachments through `createWriteStream` with the mode
   and a chmod); the standalone decrypt script and `bin/breach-scope.js` do the same for what
@@ -66,9 +70,13 @@
 - `middleware/src/commonHeaders.ts`: `res.vary('Origin')` on every answer (plus the two
   `Access-Control-Request-*` headers on `OPTIONS`); `noStoreForJson` wraps `res.writeHead` to set
   `Cache-Control: no-store` when the answer is JSON and has no `Cache-Control` of its own (same
-  middleware on api-server, hfs-server and previews-server). Tests: api-server `[HTC1]`..`[HTC4]`.
-- SQLite `UserDatabase` `typesList`: the `class/*` prefix keeps its slash (`LIKE 'class/%'`).
-  Test: api-server `[PC81]` (both engines).
+  middleware on api-server, hfs-server and previews-server, now registered before the body
+  parsers so their error answers carry the headers too). The master ingress `502` / `504` JSON
+  answers set `cache-control: no-store`. Tests: api-server `[HTC1]`..`[HTC5]`, `[PVIJ]`, `[PVIK]`.
+- SQLite `UserDatabase` `typesList`: the `class/*` prefix keeps its slash (`LIKE 'class/%'`);
+  the SQLite audit store queries through the same builder (audit event types are limited to the
+  `log` and `audit-log` classes, so no audit query could hit a longer class). Tests: api-server
+  `[PC81]` (both engines), audit `[ASTW]`.
 - HF series parsing (`business/src/types/series_row_type.ts`, `value_types.ts`,
   `series/data_matrix.ts`): deltaTime strings must match `^\d+(\.\d+)?$`, deltaTimes must be
   finite and below 2^63 ns; number cells must be finite; empty `points` refused in the parser

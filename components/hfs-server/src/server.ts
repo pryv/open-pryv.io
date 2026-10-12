@@ -120,12 +120,14 @@ class Server {
     app.use(middleware.noSniff);
     app.use(hostToPath(config));
     app.use(middleware.requestTrace(express, logger));
+    // Before the body parser: the answers to its errors carry the CORS, Vary
+    // and cache headers too.
+    app.use(await middleware.commonHeaders());
     // 50 MB when the setting is absent or not a positive number (an invalid
     // limit string would make express.json throw).
     const maxSizeMb = Number(config.get('uploads:maxSizeMb'));
     app.use(express.json({ limit: (Number.isFinite(maxSizeMb) && maxSizeMb > 0 ? maxSizeMb : 50) + 'mb' }));
     app.use(middleware.override);
-    app.use(await middleware.commonHeaders());
     app.all('/*', getAuth);
     this.defineApplication(app);
     app.use(middleware.notFound);

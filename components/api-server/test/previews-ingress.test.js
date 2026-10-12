@@ -92,7 +92,7 @@ describe('[PVI] previews in-process dispatcher', function () {
         const req = http.request({ host: '127.0.0.1', port: front.address().port, method: 'GET', path, headers, agent: false }, (res) => {
           let body = '';
           res.on('data', (c) => { body += c; });
-          res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+          res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], cacheControl: res.headers['cache-control'], body }));
         });
         req.on('error', reject);
         req.end();
@@ -138,6 +138,7 @@ describe('[PVI] previews in-process dispatcher', function () {
       const res = await get('/alice/previews/events/ev1?auth=secret-token');
       assert.strictEqual(res.status, 502);
       assert.match(res.body, /Previews upstream unreachable/);
+      assert.strictEqual(res.cacheControl, 'no-store');
       assert.ok(warns.length > 0 && warns.every((w) => !w.includes('secret-token')), JSON.stringify(warns));
       assert.ok(warns.some((w) => w.includes('auth=***')), JSON.stringify(warns));
     });
@@ -147,6 +148,7 @@ describe('[PVI] previews in-process dispatcher', function () {
       const res = await get('/alice/previews/events/ev1');
       assert.strictEqual(res.status, 504);
       assert.match(res.body, /Previews upstream timed out/);
+      assert.strictEqual(res.cacheControl, 'no-store');
     });
   });
 });

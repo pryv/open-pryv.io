@@ -72,6 +72,10 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
 
     app.use(middleware.subdomainToPath(ignorePaths, ignoredSubdomains));
   }
+  app.use(requestTraceMiddleware);
+  // Before the body parsers: the answers to their errors (malformed or
+  // oversized body) carry the CORS, Vary and cache headers too.
+  app.use(commonHeadersMiddleware);
   // Parse JSON bodies (same size default as multipart uploads when the
   // setting is absent):
   app.use(express.json({
@@ -82,10 +86,7 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   app.use(express.urlencoded({
     extended: false
   }));
-  // Other middleware:
-  app.use(requestTraceMiddleware);
   app.use(middleware.override);
-  app.use(commonHeadersMiddleware);
   return app;
 }
 export default expressAppInit;

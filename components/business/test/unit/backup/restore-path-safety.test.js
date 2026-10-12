@@ -93,9 +93,21 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
     const invalidEntries = [
       { userId: '../../../../tmp/pryv-escape', username: 'validname' },
       { userId: 'cjld2cjxh0000qzrmn831i7rn/..', username: 'validname' },
-      { userId: 'short', username: 'validname' },
+      { userId: '..', username: 'validname' },
+      { userId: 'a/b', username: 'validname' },
+      { userId: 'a\\b', username: 'validname' },
+      { userId: 'abc\0def', username: 'validname' },
+      { userId: '', username: 'validname' },
+      { userId: 'x'.repeat(65), username: 'validname' },
+      { userId: CUID2_ID + '\n', username: 'validname' },
+      { userId: null, username: 'validname' },
       { userId: CUID2_ID, username: '../escape' },
-      { userId: CUID2_ID, username: 'Upper-Case' },
+      { userId: CUID2_ID, username: '..' },
+      { userId: CUID2_ID, username: 'first.last' },
+      { userId: CUID2_ID, username: 'a/b' },
+      { userId: CUID2_ID, username: 'name\0' },
+      { userId: CUID2_ID, username: '' },
+      { userId: CUID2_ID, username: 'n'.repeat(65) },
       { userId: CUID2_ID, username: null }
     ];
 
@@ -116,12 +128,27 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual(writes, []);
     });
 
-    it('[BKRS3] ids and usernames this server issues are restored', async function () {
+    it('[BKRS3] ids and usernames that are one safe path segment are restored, issued by this server or not', async function () {
       const { o, writes } = makeOrchestrator();
-      const users = [{ userId: CUID1_ID, username: 'olderaccount' }, { userId: CUID2_ID, username: 'newer-account1' }];
+      const users = [
+        { userId: CUID1_ID, username: 'olderaccount' },
+        { userId: CUID2_ID, username: 'newer-account1' },
+        { userId: 'legacy_Id-01', username: 'Old_User' },
+        { userId: 'x'.repeat(64), username: 'abc' }
+      ];
       const report = await o.restoreAllUsers(makeReader(users), { skipPlatform: true });
-      assert.strictEqual(report.restored.length, 2);
+      assert.strictEqual(report.restored.length, 4);
       assert.ok(writes.includes('usersIndex.addUser'));
+    });
+
+    it('[BKRS9] a single-user restore of an id this server does not issue, remapped or not, is restored', async function () {
+      const { o, writes } = makeOrchestrator();
+      const report = await o.restoreUser('legacy_Id-01', makeReader([{ userId: 'legacy_Id-01', username: 'Old_User' }]), { overwrite: true });
+      assert.deepStrictEqual(report.restored, [{ userId: 'legacy_Id-01', username: 'Old_User' }]);
+      assert.ok(writes.includes('usersIndex.addUser'));
+      const { o: o2 } = makeOrchestrator();
+      const report2 = await o2.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true, remapUserId: 'remapped_id' });
+      assert.deepStrictEqual(report2.restored, [{ userId: 'remapped_id', username: 'validname' }]);
     });
   });
 
@@ -191,6 +218,87 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       for (const userId of ['../platform', '..', '.', '', 'a/b']) {
         await assert.rejects(() => reader.openUser(userId), /Invalid user id in the backup/, JSON.stringify(userId));
       }
+    });
+
+    // Moves `dir` out of the backup (into `tmp`) and leaves a symbolic link to it in its place.
+    function replaceByLink (dir, outsideName) {
+      const outside = path.join(tmp, outsideName);
+      fs.renameSync(dir, outside);
+      fs.symlinkSync(outside, dir);
+      return outside;
+    }
+
+    it('[BKRS7] an attachments directory, a user directory or a users directory that is a symbolic link is refused before any file is read through it', async function () {
+      // attachments/ is a link to a directory holding a file named like a referenced attachment
+      const backupDir = path.join(tmp, 'backup');
+      const attachDir = await writeBackup(backupDir);
+      const outsideAttach = path.join(tmp, 'outside-attach');
+      fs.mkdirSync(outsideAttach);
+      fs.writeFileSync(path.join(outsideAttach, 'file-ref'), 'SECRET-OUTSIDE-THE-BACKUP');
+      fs.rmSync(attachDir, { recursive: true });
+      fs.symlinkSync(outsideAttach, attachDir);
+      const reader = createFilesystemBackupReader(backupDir);
+      await reader.readManifest();
+      const userReader = await reader.openUser(CUID2_ID);
+      let read = [];
+      await assert.rejects(async () => { read = await collect(userReader.readAttachments()); }, /not a directory of the backup/);
+      assert.deepStrictEqual(read, [], 'nothing is yielded from the link target');
+      const { o } = makeOrchestrator();
+      await assert.rejects(() => o.restoreUser(CUID2_ID, createFilesystemBackupReader(backupDir), { overwrite: true }), /not a directory of the backup/);
+      assert.deepStrictEqual(o.saved, [], 'no attachment is restored');
+
+      // users/<id> is a link to a user directory outside the backup
+      const backupDir2 = path.join(tmp, 'backup2');
+      await writeBackup(backupDir2);
+      replaceByLink(path.join(backupDir2, 'users', CUID2_ID), 'outside-user');
+      const reader2 = createFilesystemBackupReader(backupDir2);
+      await reader2.readManifest();
+      await assert.rejects(() => reader2.openUser(CUID2_ID), /not a directory of the backup/);
+
+      // users/ is a link to a directory outside the backup
+      const backupDir3 = path.join(tmp, 'backup3');
+      await writeBackup(backupDir3);
+      replaceByLink(path.join(backupDir3, 'users'), 'outside-users');
+      const reader3 = createFilesystemBackupReader(backupDir3);
+      await reader3.readManifest();
+      await assert.rejects(() => reader3.openUser(CUID2_ID), /not a directory of the backup/);
+    });
+
+    it('[BKRS8] a user data file or an events directory that is a symbolic link is refused, a backup root that is a link is read', async function () {
+      const backupDir = path.join(tmp, 'backup');
+      await writeBackup(backupDir);
+      const userDir = path.join(backupDir, 'users', CUID2_ID);
+
+      // the account file is a link to a file outside the backup
+      const outsideAccount = path.join(tmp, 'outside-account.jsonl');
+      fs.writeFileSync(outsideAccount, JSON.stringify({ secret: 'SECRET-OUTSIDE-THE-BACKUP' }) + '\n');
+      fs.rmSync(path.join(userDir, 'account.jsonl'));
+      fs.symlinkSync(outsideAccount, path.join(userDir, 'account.jsonl'));
+      // events/ is a link to a directory outside the backup holding an events chunk
+      const outsideEvents = path.join(tmp, 'outside-events');
+      fs.mkdirSync(outsideEvents);
+      fs.writeFileSync(path.join(outsideEvents, 'events-0001.jsonl'), JSON.stringify({ id: 'outside', content: 'SECRET-OUTSIDE-THE-BACKUP' }) + '\n');
+      fs.rmSync(path.join(userDir, 'events'), { recursive: true });
+      fs.symlinkSync(outsideEvents, path.join(userDir, 'events'));
+
+      const reader = createFilesystemBackupReader(backupDir);
+      await reader.readManifest();
+      const userReader = await reader.openUser(CUID2_ID);
+      await assert.rejects(() => userReader.readAccountData(), /is a symbolic link: refused/);
+      const events = [];
+      await assert.rejects(async () => { for await (const e of userReader.readEvents()) events.push(e); }, /not a directory of the backup/);
+      assert.deepStrictEqual(events, []);
+
+      // positive control: the operator may point the restore at a link to the backup
+      const cleanDir = path.join(tmp, 'clean');
+      await writeBackup(cleanDir);
+      const rootLink = path.join(tmp, 'root-link');
+      fs.symlinkSync(cleanDir, rootLink);
+      const linkedReader = createFilesystemBackupReader(rootLink);
+      await linkedReader.readManifest();
+      const linkedUser = await linkedReader.openUser(CUID2_ID);
+      assert.deepStrictEqual((await collect(linkedUser.readAttachments())).map((a) => [a.fileId, a.eventId, a.data]), [['file-ref', 'evt1', 'referenced']]);
+      assert.ok(await linkedUser.readAccountData());
     });
   });
 });

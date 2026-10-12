@@ -12,21 +12,22 @@ const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
 const { seriesNamespace } = require('../series/namespace.ts');
-const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
 
 // A backup can come from storage the operator does not control: its user ids
-// and usernames become local paths (user directory, series file), so only the
-// shapes this server issues are restored. Ids: cuid (older accounts) or cuid2.
-const USER_ID_RE = /^(c[a-z0-9-]{24}|[a-z][a-z0-9]{23})$/;
-const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+// and usernames become local path segments (user directory, series file), so
+// each must be one safe file name: letters, digits, `-` and `_`, no dot, no
+// separator, at most 64 characters. Not the exact grammar of the ids and names
+// this server issues: accounts migrated or created by older versions restore
+// too, and the per-user paths are checked to stay inside their base anyway.
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 function isRestorableUser (entry: { userId?: unknown; username?: unknown } | null | undefined): boolean {
   return entry != null &&
-    typeof entry.userId === 'string' && USER_ID_RE.test(entry.userId) &&
-    typeof entry.username === 'string' && USERNAME_RE.test(entry.username);
+    typeof entry.userId === 'string' && SAFE_SEGMENT_RE.test(entry.userId) &&
+    typeof entry.username === 'string' && SAFE_SEGMENT_RE.test(entry.username);
 }
 
-/** Refuses the whole restore when any user entry is not one this server issues. */
+/** Refuses the whole restore when any user id or username is not a safe path segment. */
 function assertRestorableUsers (users: unknown): void {
   if (!Array.isArray(users)) throw new Error('Restore aborted: the backup manifest has no user list');
   const invalid = users.filter((u) => !isRestorableUser(u));

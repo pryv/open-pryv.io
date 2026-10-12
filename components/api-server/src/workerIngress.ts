@@ -123,7 +123,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       logger.warn(`${tag} no data moved on the worker connection for ${upstreamIdleTimeoutMs} ms${res.writableNeedDrain ? ' (client not reading)' : ''} ${req.method} ${shownUrl}`);
       proxyReq.destroy();
       if (!res.headersSent) {
-        res.writeHead(504, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' });
+        res.writeHead(504, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
         res.end(JSON.stringify({
           error: {
             id: 'unexpected-error',
@@ -144,7 +144,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       }
       logger.warn(`${tag} upstream error ${req.method} ${shownUrl}: ${err.message}`);
       if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff' });
+        res.writeHead(502, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
         res.end(JSON.stringify({
           error: {
             id: 'unexpected-error',

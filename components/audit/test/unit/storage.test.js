@@ -55,4 +55,21 @@ describe('[ASTO] Audit Storage', () => {
       assert.equal(accesses.length, 2);
     });
   });
+
+  describe('[AS02] type wildcard query', () => {
+    it('[ASTW] a type wildcard matches its own class only, not a class sharing its prefix', async () => {
+      const storage = await audit.storage.forUser(cuid());
+      for (const type of ['log/test', 'logx/test']) {
+        await storage.createEvent({
+          id: cuid(),
+          type,
+          createdBy,
+          streamIds: [':_audit:test'],
+          content: { action: 'events.get', message: 'wildcard' }
+        });
+      }
+      const entries = await storage.getEvents({ query: [{ type: 'typesList', content: ['log/*'] }] });
+      assert.deepEqual(entries.map((e) => e.type), ['log/test']);
+    });
+  });
 });
