@@ -31,13 +31,15 @@ describe('[LDLV] deliveries to accounts of this core', function () {
     try {
       await runDeletionTeardownSteps({ id: 'u1', username: 'u1' }, logger, 1000);
       assert.strictEqual(delivered, true, 'awaited');
-      assert.deepStrictEqual(warnings, []);
+      // the steps other modules registered run too and may warn about these fake accounts
+      const pending = () => warnings.filter((w) => /still pending/.test(w));
+      assert.deepStrictEqual(pending(), []);
 
       setDeletionTeardownStep('ldl2-test', async () => { trackTeardownDelivery(new Promise(() => {})); });
       const t0 = Date.now();
       await runDeletionTeardownSteps({ id: 'u2', username: 'u2' }, logger, 100);
       assert.ok(Date.now() - t0 < 1000, 'bounded');
-      assert.match(warnings[0], /still pending/);
+      assert.strictEqual(pending().length, 1);
     } finally {
       setDeletionTeardownStep('ldl2-test', async () => {});
     }

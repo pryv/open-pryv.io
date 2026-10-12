@@ -910,7 +910,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       try {
         accessContext = await contextForAccess(context.source, context.user.username, params.targetAccess!.token!, storageLayer);
       } catch (err) {
-        accessContext = null; // the access cannot be used any more: no scope is kept
+        // The access cannot be used any more: no scope is kept. Any other
+        // failure leaves the webhooks as they are (logged below).
+        if (!(err instanceof APIError)) throw err;
+        accessContext = null;
       }
       for (const hook of hooks) {
         const scopes = accessContext == null ? {} : await reprepareWebhookScopes(accessContext, hook.scopes);

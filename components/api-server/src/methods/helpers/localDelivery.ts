@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { MethodContext } from 'business/src/MethodContext.ts';
+import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { getConfigSync } from '@pryv/boiler';
 
@@ -42,7 +43,11 @@ function localFirstFetch (api: Api, storageLayer: unknown, networkFetch: Network
     if ((await usersRepository.getUserIdForUsername(parts.username)) == null) return await networkFetch(url, init);
 
     const headers = new Headers(init?.headers);
-    const context = new MethodContext({ name: 'http' }, parts.username, headers.get('authorization'), null, {}, {}, null);
+    // The custom auth step the HTTP path would run (resolved per call: the
+    // application registers it at boot).
+    const { getApplication } = await import('api-server/src/application.ts');
+    const customAuthStepFn = getApplication().getCustomAuthFunction('server.js') as CustomAuthFunction | null;
+    const context = new MethodContext({ name: 'http' }, parts.username, headers.get('authorization'), customAuthStepFn, {}, {}, null);
     try {
       await context.init();
       await context.retrieveExpandedAccess(storageLayer as Parameters<MethodContext['retrieveExpandedAccess']>[0]);

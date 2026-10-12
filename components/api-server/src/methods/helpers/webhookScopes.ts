@@ -55,15 +55,21 @@ async function reprepareWebhookScopes (context: MethodContext, stored: StoredSco
 }
 
 /**
- * A method context authenticated with the access holding `token` (a webhook's
- * own access), for preparing its scopes whoever makes the call. Throws when
- * the access cannot be used any more.
+ * A method context holding the access whose token is `token` (a webhook's own
+ * access) with its permissions, for preparing its scopes whoever makes the
+ * call. Server-side: only the checks that do not belong to a request run
+ * (validity and expiry, managing access, revoked DPoP key or OAuth client);
+ * no proof of possession, session or custom auth step. Throws an API error
+ * when the access cannot be used any more.
  */
 async function contextForAccess (source: MethodContext['source'], username: string, token: string, storageLayer: unknown): Promise<MethodContext> {
   const context = new MethodContextClass(source, username, token, null, {}, {}, null);
   context.bypassAccessCache = true;
   await context.init();
-  await context.retrieveExpandedAccess(storageLayer as Parameters<MethodContext['retrieveExpandedAccess']>[0]);
+  await context.retrieveAccessFromToken(storageLayer as Parameters<MethodContext['retrieveAccessFromToken']>[0]);
+  await context.checkDpopKeyNotRevoked();
+  await context.checkClientNotRevoked();
+  if (!context.access!.isPersonal()) await context.access!.loadPermissions();
   return context;
 }
 

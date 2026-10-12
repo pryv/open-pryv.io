@@ -58,6 +58,7 @@ function makeFakePlatformDB () {
       const k = field + ' ' + username;
       return userIndexed.has(k) ? userIndexed.get(k) : null;
     },
+    async reassignInvitationConsumer () { /* no invitations in this fake */ },
     async getAllWithPrefix (prefix) {
       const out = [];
       if (prefix === 'user-' || prefix === 'user') {

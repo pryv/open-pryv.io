@@ -822,8 +822,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         if (released != null && (kept == null || String(released) !== String(kept))) {
           await platform.releaseUserUniqueValue(username, field, String(released));
         }
-      } else if (!written && previousValue != null) {
-        await platform.updateUser(username, [{ action: 'create', key: field, value: previousValue, isUnique: false, isActive: true }]);
+      } else if (!written) {
+        // Back to the previous indexed value, or none.
+        await platform.updateUser(username, [previousValue != null
+          ? { action: 'create', key: field, value: previousValue, isUnique: false, isActive: true }
+          : { action: 'delete', key: field, value, isUnique: false, isActive: true }]);
       }
     } catch (err) {
       logger.warn(`account field "${field}": platform index not settled after the event write (${written ? 'release previous value' : 'undo claim'}): ${(err as Error).message}`);

@@ -22,6 +22,8 @@
  * before the deletion answers without a slow peer holding it.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 type DeletedAccount = { id: string; username: string };
 type TeardownStep = (account: DeletedAccount) => Promise<void>;
 type WarnLogger = { warn: (msg: string, ctx?: Record<string, unknown>) => void };
@@ -30,12 +32,14 @@ type WarnLogger = { warn: (msg: string, ctx?: Record<string, unknown>) => void }
 // step instead of running it twice.
 const steps = new Map<string, TeardownStep>();
 
-// Deliveries of the deletions in progress (a step adds them while it runs).
+// The deliveries of each deletion, collected while its steps run (one list per
+// deletion, so concurrent deletions each wait for their own).
 const DELIVERY_WAIT_MS = 5000;
-let pendingDeliveries: Array<Promise<unknown>> = [];
+const deliveriesOfThisDeletion = new AsyncLocalStorage<Array<Promise<unknown>>>();
 
 function trackTeardownDelivery (delivery: Promise<unknown>): void {
-  pendingDeliveries.push(delivery.catch(() => { /* each delivery logs its own failure */ }));
+  const settled = delivery.catch(() => { /* each delivery logs its own failure */ });
+  deliveriesOfThisDeletion.getStore()?.push(settled);
 }
 
 function setDeletionTeardownStep (name: string, step: TeardownStep): void {
@@ -43,19 +47,19 @@ function setDeletionTeardownStep (name: string, step: TeardownStep): void {
 }
 
 async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLogger, waitMs = DELIVERY_WAIT_MS): Promise<void> {
-  const before = pendingDeliveries.length;
-  for (const [name, step] of steps) {
-    try {
-      await step(account);
-    } catch (err) {
-      logger.warn('account deletion: teardown step "' + name + '" failed (deletion continues)', {
-        userId: account.id,
-        error: String((err as Error)?.message ?? err),
-      });
+  const mine: Array<Promise<unknown>> = [];
+  await deliveriesOfThisDeletion.run(mine, async () => {
+    for (const [name, step] of steps) {
+      try {
+        await step(account);
+      } catch (err) {
+        logger.warn('account deletion: teardown step "' + name + '" failed (deletion continues)', {
+          userId: account.id,
+          error: String((err as Error)?.message ?? err),
+        });
+      }
     }
-  }
-  // This deletion's deliveries (concurrent deletions add theirs to the list too).
-  const mine = pendingDeliveries.slice(before);
+  });
   if (mine.length === 0) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = await Promise.race([
@@ -63,7 +67,6 @@ async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLo
     new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), waitMs); })
   ]);
   if (timer != null) clearTimeout(timer);
-  pendingDeliveries = pendingDeliveries.filter((p) => !mine.includes(p));
   if (timedOut) {
     logger.warn('account deletion: deliveries to other accounts still pending after ' + waitMs + ' ms (they go on)', { userId: account.id });
   }

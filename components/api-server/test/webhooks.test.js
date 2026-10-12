@@ -966,9 +966,39 @@ describe('[WH01] webhooks', () => {
         .send({ scopes: { b: scopesAB.b } });
       assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
       assert.deepStrictEqual(ok.body.webhook.scopes, { b: scopesAB.b });
-      // stored: the map was replaced, not merged into the previous one
+      // stored: the map was replaced, not merged into the previous one (checked below)
       const stored = await coreRequest.get(`/${username}/webhooks/${hookId}`).set('Authorization', personalToken);
       assert.deepStrictEqual(stored.body.webhook.scopes, { b: scopesAB.b });
+    });
+  });
+
+  describe('[SNWD] scoped webhooks of a DPoP-bound access', () => {
+    let username, personalToken, accessId, hookId;
+    const scopes = { a: { kind: 'events', query: { streams: ['snwd-a'] } } };
+    before(async () => {
+      await fixtures.clean();
+      username = cuid();
+      personalToken = cuid();
+      accessId = cuid();
+      hookId = cuid();
+      await fixtures.user(username, {}, async (user) => {
+        user.stream({ id: 'snwd-a', name: 'A' });
+        user.access({ type: 'personal', token: personalToken });
+        user.session(personalToken);
+        user.access({ id: accessId, type: 'app', token: cuid(), name: 'snwd-app', permissions: [{ streamId: 'snwd-a', level: 'read' }], clientData: { dpop: { jkt: 'snwd-thumbprint' } } });
+        user.webhook({ id: hookId, url: 'https://snwd.example/hook' }, accessId);
+      });
+    });
+    after(async () => { await fixtures.clean(); });
+
+    it('[SNWA6] the owner sets scopes on, and renames, a DPoP-bound access: the scopes stay, the webhook stays active', async () => {
+      const set = await coreRequest.put(`/${username}/webhooks/${hookId}`).set('Authorization', personalToken).send({ scopes });
+      assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+      const renamed = await coreRequest.put(`/${username}/accesses/${accessId}`).set('Authorization', personalToken).send({ name: 'snwd-app-renamed' });
+      assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+      const after = await coreRequest.get(`/${username}/webhooks/${hookId}`).set('Authorization', personalToken);
+      assert.deepStrictEqual(after.body.webhook.scopes, scopes);
+      assert.strictEqual(after.body.webhook.state, 'active');
     });
   });
 
