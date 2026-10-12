@@ -59,10 +59,14 @@ Request.prototype.login = function (this: any, user: any, callback: any) {
       // synchronously, gets re-raised by boiler/src/logging.ts:153 as
       // an unhandledRejection, and kills the whole test runner before
       // mocha can report the failing test.
+      // The server's error id and message say WHY a login was refused
+      // (wrong password, failed-password backoff, revoked session, …).
+      const apiError = res?.body?.error;
+      const detail = apiError != null ? ` [${apiError.id}: ${apiError.message}]` : '';
       try {
-        assert.strictEqual(err?.message || null, null, `Request must be a success — login(${user.username}) got: ${err?.message || res?.statusCode || 'unknown'}`);
+        assert.strictEqual(err?.message || null, null, `Request must be a success — login(${user.username}) got: ${err?.message || res?.statusCode || 'unknown'}${detail}`);
         assert.ok(res !== undefined, 'Request has a result');
-        assert.strictEqual(res.statusCode, 200, `Login expected 200, got ${res?.statusCode}`);
+        assert.strictEqual(res.statusCode, 200, `Login expected 200, got ${res?.statusCode}${detail}`);
         if (res.body.token == null) {
           return callback(new Error('Expected "token" in login response body.'));
         }
