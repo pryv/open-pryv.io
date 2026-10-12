@@ -1,3 +1,6 @@
+# check=skip=SecretsUsedInArgOrEnv
+# (the CEV_* variables name a backend, a key provider and paths; no secret is set here)
+#
 # Encryption-at-rest variant of pryvio/open-pryv.io.
 #
 # Layers the `container-encrypted-volume` payload onto the stock image — the base
