@@ -245,9 +245,9 @@ export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHan
 /**
  * Index rows that name the wrong account (left by a rename or a deletion
  * before those moved / removed every row):
- *  - `orphan`: no account on any core holds the stored name;
  *  - `stale`: the name is held by an account of this core that has no such
- *    access (a later holder of a former name).
+ *    access (a later holder of a former name);
+ *  - `orphan`: not an account of this core, and no core holds the name.
  * Rows already stripped of their user (tombstones) are never listed.
  * `userCoreOf(stored)` is the core holding a stored name (null when none);
  * `ownsAccess(stored, accessId)` answers for names hosted on `coreId`, null
@@ -264,11 +264,14 @@ export async function findPrunableAccessIndexRows (platform: PlatformIndexHandle
     try { entry = JSON.parse(value) as AccessIndexEntry; } catch { continue; }
     const stored = entry != null && typeof entry === 'object' ? readStoredUser(entry) : null;
     if (stored == null) continue;
-    const core = await opts.userCoreOf(stored);
-    if (core == null) {
-      found.push({ key, entry, reason: 'orphan' });
-    } else if (core === opts.coreId && (await opts.ownsAccess(stored, entry.accessId)) === false) {
+    // An account of this core is judged by its own accesses first: a live
+    // account may lack its `user-core/` row (single-core, older data, a
+    // partial restore), which must not make its rows orphans.
+    const owns = await opts.ownsAccess(stored, entry.accessId);
+    if (owns === false) {
       found.push({ key, entry, reason: 'stale' });
+    } else if (owns == null && (await opts.userCoreOf(stored)) == null) {
+      found.push({ key, entry, reason: 'orphan' });
     }
   }
   return found;

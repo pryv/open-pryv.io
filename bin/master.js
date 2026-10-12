@@ -34,7 +34,7 @@
 //   quorum where either core dying is an outage).
 //
 // In --bootstrap mode the master decrypts the bundle, stages
-// `override-config.yml` + TLS files, posts an ack to the issuing core, moves
+// `bootstrap-config.yml` + TLS files, posts an ack to the issuing core, moves
 // the staged files into place once the ack is accepted (removes them on any
 // failure), then falls through into normal startup — picking up the
 // freshly-written config via @pryv/boiler's highest-precedence override-file slot.
@@ -56,8 +56,8 @@ if (cluster.isPrimary) {
 
   (async () => {
     // BOOTSTRAP MODE — runs before @pryv/boiler.init so the
-    // override-config.yml it writes is picked up at the highest precedence
-    // by the init below. Workers (cluster.fork()) skip this block entirely.
+    // bootstrap-config.yml it writes is picked up (below the operator's
+    // override-config.yml) by the init below. Workers (cluster.fork()) skip this block entirely.
     const bootstrapArgs = parseBootstrapArgs(process.argv.slice(2));
     if (bootstrapArgs.enabled) {
       try {
@@ -70,7 +70,7 @@ if (cluster.isPrimary) {
     }
 
     // Minimal boiler init — just enough to read config (now including any
-    // override-config.yml the bootstrap step wrote above).
+    // bootstrap-config.yml the bootstrap step wrote above).
     require('@pryv/boiler').init({
       appName: 'master',
       baseFilesDir: path.resolve(__dirname, '../'),

@@ -123,13 +123,20 @@ async function rescopeUserWebhooksOnce (source: MethodContext['source'], user: {
     const ctx = contexts.get(hook.accessId);
     if (ctx == null) continue;
     const scopes = await reprepareWebhookScopes(ctx, hook.scopes!);
-    if (JSON.stringify(scopes) === JSON.stringify(hook.scopes)) continue;
+    if (canonical(scopes) === canonical(hook.scopes)) continue;
     const update: Record<string, unknown> = { scopes };
     if (Object.keys(scopes).length === 0) update.state = 'inactive';
     hook.scopes = scopes;
     await hook.update(update);
     reloadRunningWebhook(user.username, hook.forApi());
   }
+}
+
+// JSON with sorted keys: stored scopes (JSONB on PostgreSQL) do not keep key order.
+function canonical (value: unknown): string {
+  return JSON.stringify(value, (_k, v) => (v != null && typeof v === 'object' && !Array.isArray(v))
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, (v as Record<string, unknown>)[k]]))
+    : v);
 }
 
 /** Have the webhooks service drop its running copy of a webhook and load the stored one. */

@@ -13,6 +13,7 @@ import type { Subscriber } from 'business/src/notifications/NotificationEngine.t
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
 const errors = require('errors').factory;
+const { APIError } = require('errors');
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
@@ -432,7 +433,9 @@ class Connection {
           try {
             s.prepared = await prepareScopeQuery(this.methodContext, s.rawQuery);
           } catch (err) {
-            this.scopes.delete(key); // scope now out of permission -> drop it
+            // Out of permission (or its stream gone): drop it. Any other
+            // failure keeps the scope as it was until the next pass.
+            if (err instanceof APIError) this.scopes.delete(key);
           }
         }
       } while (this.reprepareAgain);

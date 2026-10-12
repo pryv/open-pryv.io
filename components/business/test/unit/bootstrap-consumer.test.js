@@ -380,7 +380,7 @@ describe('[BSTG] consumer.consume writes nothing before an accepted ack', functi
     assert.equal(fs.existsSync(bundlePath), false);
   });
 
-  it('[BSTG4] an override setting a key the bundle provides is refused (nothing written), accepted with force', async () => {
+  it('[BSTG6] an override setting a key the bundle provides is refused (nothing written), accepted with force', async () => {
     const own = 'auth:\n  adminAccessKey: operator-own-key-0123456789\ncore:\n  id: my-core\nmail: kept\n';
     fs.writeFileSync(path.join(configDir, 'override-config.yml'), own);
     const { bundlePath } = writeBundle(tmp);

@@ -166,7 +166,9 @@ class Registration {
       // landing core saw and creates the account itself.
       const forwardedBody = JSON.stringify(params);
       const client = String((context.source as { ip?: string } | undefined)?.ip ?? '');
-      const forward = signRegistrationForward(String(config.get('auth:adminAccessKey')), this.platform.coreId, client, forwardedBody);
+      const key = config.get('auth:adminAccessKey');
+      if (typeof key !== 'string' || key.length === 0) throw new Error('Cross-core registration forward refused: auth.adminAccessKey is not set');
+      const forward = signRegistrationForward(key, this.platform.coreId, client, forwardedBody);
       // 30 s timeout: a hung target must not wedge the landing worker (leaves
       // headroom for password-hashing cost on the target); redirects refused.
       // targetUrl is slash-terminated (Platform.coreIdToUrl convention).

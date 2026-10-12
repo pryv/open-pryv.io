@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createHash } = require('node:crypto');
+const { createHash, createHmac } = require('node:crypto');
 const errors = require('errors').factory;
 
 /**
@@ -78,7 +78,15 @@ function smsDestination (content: Record<string, unknown> | null | undefined): s
   return JSON.stringify(sorted);
 }
 
+// Keyed with the platform's shared secret when there is one: the key is
+// replicated to every core, and an unkeyed phone hash is reversed by
+// enumerating numbers.
 function destinationKeyPart (destination: string): string {
+  let secret: unknown = null;
+  try { secret = require('@pryv/boiler').getConfigSync().get('auth:adminAccessKey'); } catch { secret = null; }
+  if (typeof secret === 'string' && secret.length > 0) {
+    return createHmac('sha256', secret).update('mfa-sms-destination:' + destination).digest('hex');
+  }
   return createHash('sha256').update('mfa-sms-destination:' + destination).digest('hex');
 }
 
@@ -109,11 +117,16 @@ class SmsSendLimiter {
   }
 
   resolveShared: boolean;
+  warnedNoShared = false;
 
   /** The platform store (shared by all cores), else the core's own cluster_kv. */
   shared (): SharedCounters | null {
     if (this.resolveShared && this.sharedCounters == null) {
       this.sharedCounters = require('storages').platformDB ?? null;
+      if (this.sharedCounters == null && !this.warnedNoShared) {
+        this.warnedNoShared = true;
+        warn('SMS send limits: no platform store, the per-destination budget is counted on this core only');
+      }
     }
     return this.sharedCounters;
   }

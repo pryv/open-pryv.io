@@ -29,7 +29,7 @@ function signRegistrationForward (key: string, from: string, client: string, bod
 }
 
 /** The forward a header proves for `body`, or null (bad format, signature or age). */
-function verifyRegistrationForward (header: unknown, key: string, body: string, now: number = Date.now()): Forward | null {
+function verifyRegistrationForward (header: unknown, key: unknown, body: string, now: number = Date.now()): Forward | null {
   if (typeof header !== 'string' || !header.startsWith('v1;') || typeof key !== 'string' || key.length === 0) return null;
   const fields: Record<string, string> = {};
   for (const part of header.slice(3).split(';')) {
@@ -40,7 +40,7 @@ function verifyRegistrationForward (header: unknown, key: string, body: string, 
   const { from, client, sig } = fields;
   const ts = Number(fields.ts);
   if (from == null || client == null || sig == null || !Number.isFinite(ts) || Math.abs(now - ts) > MAX_SKEW_MS) return null;
-  const expected = Buffer.from(signature(key, from, client, ts, body), 'hex');
+  const expected = Buffer.from(signature(key as string, from, client, ts, body), 'hex');
   const given = Buffer.from(sig, 'hex');
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
   return { from, client };

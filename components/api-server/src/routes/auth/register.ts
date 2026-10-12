@@ -29,7 +29,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     // also vouches for the client address the landing core saw.
     const forwardHeader = req.headers[REGISTRATION_FORWARD_HEADER];
     if (forwardHeader != null) {
-      const forward = verifyRegistrationForward(forwardHeader, String(getConfigSync().get('auth:adminAccessKey')), JSON.stringify(req.body ?? {}));
+      const forward = verifyRegistrationForward(forwardHeader, getConfigSync().get('auth:adminAccessKey'), JSON.stringify(req.body ?? {}));
       if (forward == null) return next(errors.forbidden('Invalid registration forward.'));
       const context = req.context as { registrationForwardedFrom?: string; source?: { ip?: string } };
       context.registrationForwardedFrom = forward.from;

@@ -227,11 +227,13 @@ for (const hashed of [false, true]) {
       await accessIndex.putAccessIndex(platform, 'remote', accessRow({ id: 'acc-remote' }));
       await accessIndex.putAccessIndex(platform, 'erased', accessRow({ id: 'acc-tomb' }));
       await accessIndex.tombstoneAccessIndexForUser(platform, 'erased');
+      // `nomap`: a live account of this core without a user-core row: never an orphan
+      await accessIndex.putAccessIndex(platform, 'nomap', accessRow({ id: 'acc-nomap' }));
       const cores = { [u('reused')]: 'c1', [u('remote')]: 'c2' };
       const opts = {
         coreId: 'c1',
         userCoreOf: async (stored) => cores[stored] ?? null,
-        ownsAccess: async (stored, accessId) => stored === u('reused') ? accessId === 'acc-own' : null
+        ownsAccess: async (stored, accessId) => stored === u('reused') ? accessId === 'acc-own' : (stored === u('nomap') ? true : null)
       };
       const found = await accessIndex.findPrunableAccessIndexRows(platform, opts);
       assert.deepStrictEqual(found.map((r) => [r.entry.accessId, r.reason]).sort(), [['acc-orphan', 'orphan'], ['acc-stale', 'stale']]);
