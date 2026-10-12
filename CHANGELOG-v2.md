@@ -7,8 +7,23 @@
 - `accesses.get?includeDeletions=true`: the deletion records in `accessDeletions` no longer carry
   the `token` (nor an `apiEndpoint`) of the deleted access, whoever the caller. A deleted access's
   token opens nothing; the records keep their id, name, type, permissions and `deleted` time.
+- `accesses.checkApp`: a feature permission of the existing app access (e.g.
+  `{ "feature": "selfRevoke", "setting": "forbidden" }`) now matches only a requested entry with
+  the same `feature` and `setting`. Any feature entry matched any other before, so a request
+  changing a feature setting was answered with `matchingAccess` instead of `mismatchingAccess`
+  (no new consent asked). A request carrying a feature permission and matching no existing access
+  is now answered with `checkedPermissions` (the feature entry as sent); it was refused with
+  `invalid-parameters-format` (missing `defaultName`).
 
 ### Fixed
+
+- An `accesses.update` that fails after its write (re-reading the updated access) now drops the
+  access from the access cache of every worker, as a successful update does; the previous
+  permissions could stay in use until the cache entry aged out. The same holds for the access
+  changes made by consent (CMC) and delegation flows when the access token cannot be read around
+  the write: the account's cached accesses are dropped.
+- The audit record of an attachment read refused or failed before the file is opened no longer
+  carries the `readToken` query parameter.
 
 - Account deletion checks again, before anything is deleted, that the account's previews
   directory can be written: the check looked one level too deep and never fired. An account whose
@@ -42,6 +57,14 @@
   should be deleted or kept apart.
 - **S3 attachments.** The S3 attachment engine refuses a user, event or file id that is not a
   single key segment (empty, `.`, `..`, or containing `/`).
+- **Logs.** The request trace and the logged URLs now mask the `code` and `state` query values
+  (authorization-code callbacks such as single sign-on), and the request trace prints the
+  `Referer` with the same masking as the request URL. A logged parameter validation error keeps
+  only each error's `code`, `path` and `param`: the rejected value (an MFA code, a phone number,
+  an account field) is no longer written to the log. The API answer is unchanged.
+- **Password reset budget per address.** The hourly budget of password reset requests per client
+  address counts an IPv6 address toward its /64, like the other per-address budgets. Counters
+  kept under the previous per-address keys expire within the hour.
 
 ## 2.0.0-rc.48 - 2026-10-11
 

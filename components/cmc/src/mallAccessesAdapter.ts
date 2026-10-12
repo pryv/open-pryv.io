@@ -176,11 +176,18 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.updateOne!({ id: userId }, { id: params.id }, update, cb));
       // Re-read the updated access for the caller (also provides the
-      // token for cross-worker cache invalidation below). Best-effort.
+      // token for cross-worker cache invalidation below). A failed re-read
+      // is reported to the caller only after the invalidation: the write
+      // has committed.
       let after: AccessRow | null = null;
+      let reReadError: unknown = null;
       if (storageAccesses.findOne != null) {
-        after = await fromCallback((cb: Cb<AccessRow | null>) =>
-          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
+        try {
+          after = await fromCallback((cb: Cb<AccessRow | null>) =>
+            storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
+        } catch (err: unknown) {
+          reReadError = err;
+        }
         if (after != null && username != null && after.token != null) {
           after.apiEndpoint = apiEndpointBuild(username, after.token);
         }
@@ -198,6 +205,7 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
           userId, accessId: params.id, error: String((err as Error)?.message || err),
         });
       }
+      if (reReadError != null) throw reReadError;
       if (after != null) return after;
       return { id: params.id, ...update } as AccessRow;
     },

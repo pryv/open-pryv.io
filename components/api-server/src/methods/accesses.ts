@@ -78,7 +78,7 @@ type AccessLike = {
 };
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-import type { PermissionLevel, AccessType, StreamPermission } from 'business/src/types/public.ts';
+import type { PermissionLevel, AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
 type MethodContext = BaseMethodContext;
 
 type UpdatesSettingsHolder = {
@@ -852,18 +852,19 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     context.updateTrackingProperties(update);
     update.modifiedBySerial = (context.access?.serial == null) ? null : context.access.serial;
 
+    let headWriteAttempted = false;
+    let failure: unknown = null;
     try {
       // 1. Snapshot current head into history row (frozen state pre-bump).
       await fromCallback((cb: NodeCallback) => accessesRepository.snapshotHead(context.user, baseId, cb));
       // 2. Apply head update (integrity-aware updateOne handles the hash).
+      headWriteAttempted = true;
       await fromCallback((cb: NodeCallback) =>
         accessesRepository.updateOne(context.user, { id: baseId }, update, cb));
       // 3. Re-read the new head.
       const newHead = await fromCallback((cb: NodeCallback) =>
         accessesRepository.findOne(context.user, { id: baseId }, dbFindOptions, cb));
-      if (newHead == null) {
-        return next(errors.unexpectedError(new Error('head row missing after update')));
-      }
+      if (newHead == null) throw new Error('head row missing after update');
       // 4. Compose wire-form access (composite id + createdBy/modifiedBy
       // refs, internal serial fields stripped).
       const wire = composeWireAccess(newHead);
@@ -875,13 +876,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // rejects, so it cannot trip the surrounding catch.
       await reindexAccessNonFatal(context.user.username, newHead as IndexAccessInput);
     } catch (err) {
-      return next(errors.unexpectedError(err));
+      failure = err;
     }
 
-    // 5. Cache invalidation, unconditional like delete: a concurrent request
-    // may re-cache the pre-update row during the write (the expiry chain
-    // reads a managing access's `expires` from this cache).
-    cache.unsetAccessLogic(context.user.id, { id: baseId!, token: target.token });
+    // 5. Cache invalidation, unconditional like delete once the head write
+    // was attempted, even when a later step failed (the write may have
+    // committed): a concurrent request may re-cache the pre-update row during
+    // the write (the expiry chain reads a managing access's `expires` from
+    // this cache).
+    if (headWriteAttempted) cache.unsetAccessLogic(context.user.id, { id: baseId!, token: target.token });
+    if (failure != null) return next(errors.unexpectedError(failure));
     next();
   }
 
@@ -1205,12 +1209,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     // If the access is there but is expired, we consider it a mismatch.
     if (isAccessExpired(access)) { return false; }
-    // Compare permissions
-    let accessPerm, reqPerm;
-    for (let i = 0, ni = accessPerms.length; i < ni; i++) {
-      accessPerm = accessPerms[i];
-      reqPerm = findByStreamId(requestedPerms, accessPerm.streamId);
-      if (!reqPerm || reqPerm.level !== accessPerm.level) {
+    // Compare permissions: stream entries by stream id and level, feature
+    // entries (no stream id) by feature and setting.
+    for (const accessPerm of accessPerms) {
+      if (!requestedPerms.some((reqPerm) => samePermission(accessPerm, reqPerm))) {
         return false;
       }
     }
@@ -1228,8 +1230,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return false;
     }
     return true;
-    function findByStreamId (permissions: StreamPermission[], streamId: string) {
-      return permissions.find((perm) => perm.streamId === streamId);
+    function samePermission (a: Permission, b: Permission): boolean {
+      if ('feature' in a || 'feature' in b) {
+        return 'feature' in a && 'feature' in b && a.feature === b.feature && a.setting === b.setting;
+      }
+      return a.streamId === b.streamId && a.level === b.level;
     }
   }
 
@@ -1254,6 +1259,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     nextPermission();
 
     function checkPermission (permission: StreamPermission, done: (err?: unknown) => void) {
+      // a feature entry names no stream: nothing to resolve
+      if ('feature' in permission) return done();
       if (permission.streamId === '*') {
         // cleanup ignored properties just in case
         delete permission.defaultName;

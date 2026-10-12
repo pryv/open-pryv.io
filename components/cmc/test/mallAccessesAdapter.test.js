@@ -73,6 +73,22 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     assert.equal(invalidations[0].accessToken, undefined);
   });
 
+  it('[MA05] a failing re-read after a committed update still invalidates, then reports the error', async () => {
+    const storage = fakeStorageAccesses(rows);
+    storage.findOne = (userOrId, query, options, cb) => cb(new Error('re-read failed'));
+    adapter = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      invalidateAccessCache: (userId, accessId, accessToken) => {
+        invalidations.push({ userId, accessId, accessToken });
+      }
+    });
+    await assert.rejects(adapter.update('user-1', { id: 'acc-1', update: { name: 'x' } }), /re-read failed/);
+    assert.equal(rows['acc-1'].name, 'x', 'the write committed');
+    assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'acc-1', accessToken: undefined }]);
+  });
+
   it('[MA04] getOne reads one access by id with its apiEndpoint, null when absent', async () => {
     const one = await adapter.getOne('user-1', { id: 'acc-1' });
     assert.equal(one.id, 'acc-1');

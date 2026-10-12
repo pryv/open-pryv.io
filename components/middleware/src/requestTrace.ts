@@ -15,7 +15,14 @@ const { redactUrl } = require('utils/src/redactUrl.ts');
 // and no user field: the Basic-auth user name is an access token in Pryv
 // (`https://<token>@<user>.<domain>/`), so it is always printed as `-`.
 morgan.token('redacted-url', (req: { originalUrl?: string, url?: string }) => redactUrl(req.originalUrl || req.url));
-export const COMBINED_REDACTED = ':remote-addr - - [:date[clf]] ":method :redacted-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"';
+// The Referer is the URL of the page that sent the request (a reset link, an
+// auth page): same redaction.
+morgan.token('redacted-referrer', (req: { headers?: Record<string, string | string[] | undefined> }) => {
+  const referrer = req.headers?.referer ?? req.headers?.referrer;
+  const value = Array.isArray(referrer) ? referrer[0] : referrer;
+  return value == null ? undefined : redactUrl(value);
+});
+export const COMBINED_REDACTED = ':remote-addr - - [:date[clf]] ":method :redacted-url HTTP/:http-version" :status :res[content-length] ":redacted-referrer" ":user-agent"';
 
 export default function (express: unknown) {
   const logger = getLogger('request-trace');

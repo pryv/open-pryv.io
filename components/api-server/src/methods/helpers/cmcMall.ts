@@ -36,6 +36,26 @@ import type { MallLike } from 'cmc/src/_types.ts';
  */
 let cached: MallLike | null = null;
 
+/**
+ * Drop an access written by the CMC / delegation adapter from the access
+ * cache of this worker and of its siblings. The cross-worker unset message is
+ * keyed by token: when neither this worker's cache nor the storage read
+ * around the write gave the token, the user's whole access cache is dropped
+ * (that bust is keyed by user id), so no sibling keeps the old access.
+ */
+function invalidateCmcAccessCache (userId: string, accessId: string, accessToken?: string): void {
+  const cachedLogic = cache.getAccessLogicForId(userId, accessId);
+  if (cachedLogic != null) {
+    cache.unsetAccessLogic(userId, cachedLogic);
+    return;
+  }
+  if (accessToken != null) {
+    cache.unsetAccessLogic(userId, { id: accessId, token: accessToken });
+    return;
+  }
+  cache.unsetUserData(userId);
+}
+
 async function buildMallForCmc (): Promise<MallLike> {
   if (cached != null) return cached;
   const mall = await getMall();
@@ -49,18 +69,7 @@ async function buildMallForCmc (): Promise<MallLike> {
       const u = await usersRepository.getUserById(userId);
       return u?.username;
     },
-    invalidateAccessCache: (userId: string, accessId: string, accessToken?: string) => {
-      const cachedLogic = cache.getAccessLogicForId(userId, accessId);
-      if (cachedLogic != null) {
-        cache.unsetAccessLogic(userId, cachedLogic);
-        return;
-      }
-      // Not cached on THIS worker — still broadcast the unset so sibling
-      // workers holding the entry drop it (cross-worker stale-read race).
-      if (accessToken != null) {
-        cache.unsetAccessLogic(userId, { id: accessId, token: accessToken });
-      }
-    },
+    invalidateAccessCache: invalidateCmcAccessCache,
     logger: getLogger('cmc:mall-accesses-adapter'),
   });
 
@@ -75,4 +84,4 @@ async function buildMallForCmc (): Promise<MallLike> {
   return composed;
 }
 
-export { buildMallForCmc };
+export { buildMallForCmc, invalidateCmcAccessCache };

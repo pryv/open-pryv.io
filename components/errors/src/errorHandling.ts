@@ -46,6 +46,24 @@ function summarizeBody (body: unknown): unknown {
   return summary;
 }
 
+// Schema validation errors echo the rejected value (an MFA code, a phone
+// number, a custom account field) in their `params` and generated `message`:
+// the log keeps only where each error points. The client answer is unchanged.
+const LOGGABLE_VALIDATION_FIELDS = ['code', 'path', 'param'];
+
+function summarizeValidationErrors (data: unknown): unknown {
+  if (!Array.isArray(data)) return data;
+  return data.map((item) => {
+    if (item == null || typeof item !== 'object') return item;
+    const record = item as Record<string, unknown>;
+    const summary: Record<string, unknown> = {};
+    for (const field of LOGGABLE_VALIDATION_FIELDS) {
+      if (typeof record[field] === 'string') summary[field] = record[field];
+    }
+    return summary;
+  });
+}
+
 /**
  * Logs the given error.
  *
@@ -76,7 +94,9 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
             '): ' +
             apiError.message;
     if (apiError.data) {
-      metadata.errorData = apiError.data;
+      metadata.errorData = apiError.id === ErrorIds.InvalidParametersFormat
+        ? summarizeValidationErrors(apiError.data)
+        : apiError.data;
     }
     if (apiError.innerError) {
       metadata.innerError =

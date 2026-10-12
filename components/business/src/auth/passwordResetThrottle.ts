@@ -18,6 +18,7 @@
 
 import { factory as errors } from 'errors';
 import * as storages from 'storages';
+import { addressBucket } from 'middleware/src/clientIp.ts';
 import { hashToken } from '../emails/tokens.ts';
 
 export const ACCOUNT_COOLDOWN_MS = 60 * 1000;
@@ -55,9 +56,13 @@ export function dailyKey (userId: string): string {
   return 'password-reset-daily/' + userId;
 }
 
-/** Hashed so no client address lands in a cluster-wide key. */
+/**
+ * Hashed so no client address lands in a cluster-wide key. An IPv6 address
+ * counts toward its /64 (see addressBucket): rotating addresses inside one
+ * allocation buys no fresh budget.
+ */
 export function ipKey (ip: string): string {
-  return 'password-reset-ip/' + hashToken(ip);
+  return 'password-reset-ip/' + hashToken(addressBucket(ip));
 }
 
 function counterOf (row: StateRow | null): number {

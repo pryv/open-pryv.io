@@ -213,10 +213,12 @@ type AccessLike = { id: string; isPersonal (): boolean };
  * permissions, which cannot express "your own substream only" — so without this
  * an app could enumerate the namespace root and learn which other accesses have
  * secrets outstanding. Personal tokens see everything, as everywhere else.
+ * Without a known access (none loaded), no substream is the caller's: they
+ * are all dropped.
  */
-function filterVisibleStreams<T extends StreamNode> (streams: T[], access: AccessLike): T[] {
-  if (access == null || access.isPersonal()) return streams;
-  const ownStream = C.streamIdForAccess(access.id);
+function filterVisibleStreams<T extends StreamNode> (streams: T[], access: AccessLike | null | undefined): T[] {
+  if (access != null && access.isPersonal()) return streams;
+  const ownStream = access == null ? null : C.streamIdForAccess(access.id);
   return streams
     .filter((s) => !C.isSharedSecretStreamId(s.id) || s.id === ownStream || s.id === C.NS)
     .map((s) => (Array.isArray(s.children)

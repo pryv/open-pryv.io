@@ -53,6 +53,14 @@ describe('[MCTX] MethodContext', () => {
       // the caller's object is not mutated
       assert.strictEqual(query.token, 'app-chosen-access-token');
     });
+
+    it('[MCQR] drops the attachment read token', () => {
+      const query = { readToken: 'acc1-hmacvalue', w: '64' };
+      const mc = new MethodContext(contextSource, username, 'TOKEN', null, {}, query, null);
+      assert.strictEqual(mc.originalQuery.readToken, undefined);
+      assert.strictEqual(mc.originalQuery.w, '64');
+      assert.strictEqual(query.readToken, 'acc1-hmacvalue');
+    });
   });
 
   describe('[MCTX2] #retrieveAccessFromId', () => {

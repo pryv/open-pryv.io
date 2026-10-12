@@ -63,8 +63,15 @@ function parseFileReadToken (fileReadToken: string): { accessId?: string; hmac?:
   };
 }
 
-function isFileReadTokenHMACValid (hmac: string, fileId: string, token: string, secret: string): boolean {
-  return hmac === getFileHMAC(fileId, token, secret);
+/**
+ * With the access id public, the HMAC is the whole credential: compared in
+ * constant time.
+ */
+function isFileReadTokenHMACValid (hmac: string | null | undefined, fileId: string, token: string, secret: string): boolean {
+  if (typeof hmac !== 'string') return false;
+  const given = Buffer.from(hmac);
+  const expected = Buffer.from(getFileHMAC(fileId, token, secret));
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
 
 function getFileHMAC (fileId: string, token: string, secret: string): string {

@@ -262,8 +262,8 @@ class AccessLogic {
   }
 
   /**
-   * get StreamIds with explicit "no-read" permissions
-   * Note!! "create-only", is not forbidden if a "read" permission has been given to a parent
+   * get StreamIds with explicit "no-read" permissions: "none" and "create-only"
+   * (a "create-only" stream is excluded from reads even when a parent grants "read")
    */
   getForbiddenGetEventsStreamIds (storeId: string) {
     if (this._streamByStorePermissionsMap == null) return [];

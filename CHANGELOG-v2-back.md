@@ -34,6 +34,31 @@
 - Users repository: `releaseAttemptUniqueValues` keeps a value the winner holds through
   `holdsUniqueValue` (its own field value, compared only when present, or, for `email`, a
   verified entry of its e-mail container). Tests: api-server `[EML87]`, `[EML88]`.
+- `utils/src/deepMerge.ts`: skips an own `__proto__` key, recurses only into the target's own
+  properties, and no longer treats `Object.prototype` as a plain object. Tests: utils
+  `[DMRG1]`..`[DMRG5]`.
+- `utils/src/encryption.ts` `isFileReadTokenHMACValid`: refuses a non-string HMAC and compares
+  with a length check plus `crypto.timingSafeEqual`. Tests: utils `[ENRT1]`, `[ENRT2]`.
+- CMC `capability.ts` `defaultIdGen` (fallback when no `idGen` is passed): `randomBytes(16)`
+  base64url instead of `Math.random`; exported for tests. Test: cmc `[CCID1]`.
+- `accesses.update` (`snapshotAndApplyUpdate`): the access cache unset runs once the head write was
+  attempted, whether or not a later step fails. CMC mall accesses adapter: a failed re-read after
+  `update` is rethrown after the cache invalidation; `api-server/src/methods/helpers/cmcMall.ts`
+  `invalidateCmcAccessCache` falls back to `cache.unsetUserData(userId)` (broadcast by user id)
+  when neither the local cache nor the adapter has the token. Tests: api-server `[ACBU1]`..`[ACBU4]`,
+  cmc `[MA05]`.
+- `shared-secrets` `filterVisibleStreams` drops every namespace substream when no access is given
+  (it returned the list unfiltered). Tests: shared-secrets `[SSGF1]`..`[SSGF3]`.
+- `accesses.checkApp` `accessMatches`: feature entries compared by `feature` + `setting`, stream
+  entries by `streamId` + `level`; `checkPermissions` passes feature entries through (no stream to
+  resolve). Tests: api-server `[CA02]`, `[CA03]`.
+- `MethodContext`: `readToken` dropped from `originalQuery` with `auth` / `token`. `redactUrl`
+  masks `code` and `state`; the request trace uses a `redacted-referrer` morgan token.
+  `errorHandling.logError` reduces `invalid-parameters-format` array data to `code` / `path` /
+  `param` per item. Tests: business `[MCQR]`, middleware `[RDL8]`, `[RDL9]`, `[RDLA]`.
+- `passwordResetThrottle.ipKey` hashes `addressBucket(ip)`. Tests: business `[PRTB1]`..`[PRTB3]`.
+- `AccessLogic.getForbiddenGetEventsStreamIds`: comment corrected (`create-only` is excluded from
+  reads whatever a parent grants).
 
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 

@@ -102,4 +102,61 @@ describe('[RDLG] access tokens kept out of request logs', function () {
     assert.ok(!line.includes('tok-rdl7'), line);
     assert.ok(line.startsWith('10.0.0.1 - - ['), line);
   });
+
+  it('[RDL8] URLs hide the code and state of an authorization-code callback', function () {
+    const { redactUrl } = require('utils/src/redactUrl.ts');
+    const shown = redactUrl('/auth/sso/acme/callback?code=c0de-rdl8&state=st4te-rdl8&lang=en');
+    assert.ok(!shown.includes('c0de-rdl8') && !shown.includes('st4te-rdl8'), shown);
+    assert.ok(shown.includes('code=***') && shown.includes('state=***') && shown.includes('lang=en'), shown);
+  });
+
+  it('[RDL9] the request trace prints the Referer with its credentials redacted', function () {
+    const { COMBINED_REDACTED } = require('../../src/requestTrace.ts');
+    const morgan = require('morgan');
+    const format = morgan.compile(COMBINED_REDACTED);
+    const req = (headers) => ({
+      ip: '10.0.0.1',
+      method: 'GET',
+      url: '/alice/',
+      originalUrl: '/alice/',
+      httpVersionMajor: 1,
+      httpVersionMinor: 1,
+      headers
+    });
+    const line = format(morgan, req({ referer: 'https://sw.example.com/reset-password.html?resetToken=rst-rdl9&lang=fr' }), { headersSent: false });
+    assert.ok(!line.includes('rst-rdl9'), line);
+    assert.ok(line.includes('"https://sw.example.com/reset-password.html?resetToken=***&lang=fr"'), line);
+    const none = format(morgan, req({}), { headersSent: false });
+    assert.ok(none.includes('"-"'), none);
+  });
+
+  it('[RDLA] error logs keep where a validation error points, never the rejected value', function () {
+    const { errorHandling } = require('errors/src/errorHandling.ts');
+    const { factory } = require('errors');
+    const logged = [];
+    const capture = (msg, meta) => logged.push({ msg, meta });
+    const logger = { debug: capture, info: capture, warn: capture, error: capture };
+    const data = [{
+      code: 'PATTERN',
+      params: ['^[0-9]{6}$', '12345x-rdla'],
+      message: 'String does not match pattern ^[0-9]{6}$: 12345x-rdla',
+      path: '#/code',
+      inner: [{ code: 'PATTERN', params: ['+4179000-rdla'], message: '+4179000-rdla', path: '#/phone' }]
+    }, {
+      code: 'username-invalid',
+      message: 'Username should have from 5 to 60 characters',
+      path: '#/username',
+      param: 'username'
+    }];
+    const error = factory.invalidParametersFormat("The parameters' format is invalid.", data);
+    errorHandling.logError(error, { url: '/alice/mfa/challenge', method: 'POST' }, logger);
+    const text = JSON.stringify(logged);
+    assert.ok(!text.includes('12345x-rdla') && !text.includes('+4179000-rdla'), text);
+    assert.deepEqual(logged[0].meta.errorData, [
+      { code: 'PATTERN', path: '#/code' },
+      { code: 'username-invalid', path: '#/username', param: 'username' }
+    ]);
+    // the client answer is unchanged
+    assert.deepEqual(errorHandling.getPublicErrorData(error).data, data);
+  });
 });

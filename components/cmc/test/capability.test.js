@@ -23,6 +23,7 @@ const {
   setRequestEventIdOnAccess,
   buildApiEndpoint,
   maxTtlSecondsFor,
+  defaultIdGen,
   DEFAULT_TTL_SECONDS,
   MAX_TTL_SECONDS,
 } = require('../src/capability.ts');
@@ -339,6 +340,22 @@ describe('[CMCCAP] cmc/capability', () => {
 
     it('[CC13] rejects empty token', () => {
       assert.throws(() => buildApiEndpoint('https://example.com', ''), /missing access token/);
+    });
+  });
+
+  describe('[CMCCAP-ID] default capability id', () => {
+    it('[CCID1] does not depend on Math.random and is URL-safe', () => {
+      const original = Math.random;
+      Math.random = () => 0.5;
+      let a, b;
+      try {
+        a = defaultIdGen();
+        b = defaultIdGen();
+      } finally {
+        Math.random = original;
+      }
+      assert.notEqual(a, b);
+      assert.match(a, /^[A-Za-z0-9_-]{22,}$/);
     });
   });
 

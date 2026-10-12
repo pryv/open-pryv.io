@@ -585,5 +585,57 @@ describe('[ACUP] accesses.update', function () {
       assert.strictEqual(res.body.matchingAccess, undefined,
         'no match — narrowed head should not be silently re-granted to wider perms');
     });
+
+    it('[CA02] a feature permission matches only the same feature with the same setting', async function () {
+      const appName = 'app-feature-' + cuid().slice(-6);
+      await fixtureUser.access({
+        id: 'appfeat_' + cuid(),
+        token: cuid(),
+        type: 'app',
+        name: appName,
+        permissions: [
+          { streamId: stream0.attrs.id, level: 'read' },
+          { feature: 'selfRevoke', setting: 'forbidden' }
+        ]
+      });
+      async function checkApp (featurePermission) {
+        const res = await coreRequest
+          .post(basePath + '/check-app')
+          .set('Authorization', personalToken)
+          .send({
+            requestingAppId: appName,
+            requestedPermissions: [
+              { streamId: stream0.attrs.id, level: 'read', defaultName: 'Stream 0' },
+              featurePermission
+            ]
+          });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        return res.body;
+      }
+      const otherSetting = await checkApp({ feature: 'selfRevoke', setting: 'allowed' });
+      assert.strictEqual(otherSetting.matchingAccess, undefined, 'a different setting is a re-request');
+      assert.ok(otherSetting.mismatchingAccess != null);
+      const otherFeature = await checkApp({ feature: 'selfAudit', setting: 'forbidden' });
+      assert.strictEqual(otherFeature.matchingAccess, undefined, 'a different feature is a re-request');
+      const same = await checkApp({ feature: 'selfRevoke', setting: 'forbidden' });
+      assert.ok(same.matchingAccess != null, 'the same feature and setting still match: ' + JSON.stringify(same));
+    });
+
+    it('[CA03] a first request carrying a feature permission is answered with the checked permissions', async function () {
+      const res = await coreRequest
+        .post(basePath + '/check-app')
+        .set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'app-first-' + cuid().slice(-6),
+          requestedPermissions: [
+            { streamId: stream0.attrs.id, level: 'read', defaultName: 'Stream 0' },
+            { feature: 'selfRevoke', setting: 'forbidden' }
+          ]
+        });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.matchingAccess, undefined);
+      assert.ok(res.body.checkedPermissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'forbidden'),
+        JSON.stringify(res.body.checkedPermissions));
+    });
   });
 });

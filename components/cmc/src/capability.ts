@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
  * can inject fakes. Issues no HTTP calls — that's the job of outbound.ts.
  */
 
+const { randomBytes } = require('node:crypto');
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
 
@@ -124,9 +125,9 @@ function maxTtlSecondsFor (mode: CapabilityMode): number | null {
 }
 
 function defaultIdGen (): string {
-  // Short, URL-safe id generator. Production callers should pass a real
-  // CSRPNG-backed id-gen (cuid / nanoid / etc.) via deps.idGen.
-  return Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 14);
+  // URL-safe, CSPRNG-backed: same shape as the id the events method passes
+  // via deps.idGen.
+  return randomBytes(16).toString('base64url');
 }
 
 function defaultNow (): number {
@@ -596,6 +597,7 @@ export {
   MIN_TTL_SECONDS,
   MAX_TTL_SECONDS,
   maxTtlSecondsFor,
+  defaultIdGen,
   mintCapability,
   gcCapability,
   findCapabilityAccess,

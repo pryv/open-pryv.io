@@ -10,6 +10,8 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const sinon = require('sinon');
 const encryption = require('../src/encryption.ts');
 
 // `$2b$<cost>$` followed by the 22-character salt.
@@ -49,5 +51,33 @@ describe('[ENCR] password hashing', function () {
     assert.equal(await encryption.compare('wrong-password', h), false);
     const hs = encryption.hashSync('right-password');
     assert.equal(await encryption.compare('right-password', hs), true);
+  });
+});
+
+describe('[ENRT] file read token', function () {
+  const secret = 'enrt-secret';
+  const fileId = 'enrt-file';
+  const token = 'enrt-access-token';
+
+  afterEach(() => sinon.restore());
+
+  it('[ENRT1] accepts the right HMAC and refuses a wrong, shorter, longer or missing one', () => {
+    const { accessId, hmac } = encryption.parseFileReadToken(encryption.fileReadToken(fileId, 'acc1', token, secret));
+    assert.equal(accessId, 'acc1');
+    assert.equal(encryption.isFileReadTokenHMACValid(hmac, fileId, token, secret), true);
+    const flipped = (hmac[0] === 'A' ? 'B' : 'A') + hmac.slice(1);
+    assert.equal(encryption.isFileReadTokenHMACValid(flipped, fileId, token, secret), false);
+    assert.equal(encryption.isFileReadTokenHMACValid(hmac.slice(1), fileId, token, secret), false);
+    assert.equal(encryption.isFileReadTokenHMACValid(hmac + 'x', fileId, token, secret), false);
+    assert.equal(encryption.isFileReadTokenHMACValid(undefined, fileId, token, secret), false);
+    assert.equal(encryption.isFileReadTokenHMACValid(hmac, 'other-file', token, secret), false);
+  });
+
+  it('[ENRT2] a same-length candidate is compared in constant time', () => {
+    const spy = sinon.spy(crypto, 'timingSafeEqual');
+    const { hmac } = encryption.parseFileReadToken(encryption.fileReadToken(fileId, 'acc1', token, secret));
+    const flipped = (hmac[0] === 'A' ? 'B' : 'A') + hmac.slice(1);
+    assert.equal(encryption.isFileReadTokenHMACValid(flipped, fileId, token, secret), false);
+    assert.equal(spy.callCount, 1);
   });
 });
