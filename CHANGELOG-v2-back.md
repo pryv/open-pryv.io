@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Breach-scope access index: a username change moves the account's index rows to the new name
+  (`renameAccessIndexOwner`); they stayed under the former name, which a later holder of that name
+  would have been resolved to. Account erasure also removes rows under the account's former names.
+  Existing renamed accounts: run `node bin/backfill-access-index.js --resync` once. Tests
+  `[ACCIDX-12]`, `[ACIX06]`.
+
 - Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
   rejected async branch is answered 500 (or the connection closed when the answer has started) and
   logged, instead of ending the worker (`api-server/src/ingressGuard.ts`); the worker and

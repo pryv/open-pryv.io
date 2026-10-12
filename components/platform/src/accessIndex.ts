@@ -214,6 +214,34 @@ export async function tombstoneAccessIndexForUser (platform: PlatformIndexHandle
   return owned.length;
 }
 
+/**
+ * Move every index row owned by `oldUsername` to `newUsername` (the
+ * change-username flow): a row left under the former name would be resolved
+ * to whoever holds that name next. Keeps `lastModified` (a routing re-key,
+ * not an access change). Returns the number of rows moved.
+ */
+export async function renameAccessIndexOwner (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<number> {
+  const owned = await entriesOwnedBy(platform, oldUsername);
+  const stored = platform.hashFor(USERNAME_FIELD, newUsername);
+  for (const { key, entry } of owned) {
+    delete entry.username;
+    delete entry.usernameToken;
+    if (platform.piiModeIsHashed) entry.usernameToken = stored;
+    else entry.username = stored;
+    await platform.setPlatformKv(key, JSON.stringify(entry));
+  }
+  return owned.length;
+}
+
+/** Non-fatal {@link renameAccessIndexOwner}: a failure leaves rows `--resync` repairs. Never rejects. */
+export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<void> {
+  try {
+    await renameAccessIndexOwner(platform, oldUsername, newUsername);
+  } catch (err) {
+    logger.warn(`[access-index] failed to move index rows to the new name of user ${platform.hashFor(USERNAME_FIELD, newUsername)}: ${(err as Error).message}`);
+  }
+}
+
 // --- Non-fatal wrappers for the mutation hooks (R4) --- //
 //
 // The index is a secondary breach-scoping artefact: a PlatformDB write

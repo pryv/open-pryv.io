@@ -202,6 +202,22 @@ for (const hashed of [false, true]) {
       assert.ok(!b1.userDeleted);
     });
 
+    it('[ACCIDX-12] a rename moves only that user\'s rows to the new name, keeping their times', async () => {
+      const { platform, hasher } = makePlatform({ hashed });
+      await accessIndex.putAccessIndex(platform, 'alice', accessRow({ id: 'acc-a1' }));
+      await accessIndex.markAccessDeletedInIndex(platform, 'alice', accessRow({ id: 'acc-a2' }), 1750000000);
+      await accessIndex.putAccessIndex(platform, 'bob', accessRow({ id: 'acc-b1' }));
+      assert.strictEqual(await accessIndex.renameAccessIndexOwner(platform, 'alice', 'alicia'), 2);
+      for (const id of ['acc-a1', 'acc-a2']) {
+        const entry = await accessIndex.getAccessIndex(platform, id);
+        assert.strictEqual(accessIndex.readStoredUser(entry), storedUser(hasher, 'alicia'), id);
+        assert.strictEqual(hashed ? 'username' in entry : 'usernameToken' in entry, false);
+        assert.strictEqual(entry.created, 1700000000);
+      }
+      assert.strictEqual((await accessIndex.getAccessIndex(platform, 'acc-a2')).deleted, 1750000000);
+      assert.strictEqual(accessIndex.readStoredUser(await accessIndex.getAccessIndex(platform, 'acc-b1')), storedUser(hasher, 'bob'));
+    });
+
     it('[ACCIDX-11] erasure reads the index in one query, whatever its size (delete and tombstone)', async () => {
       for (const erase of ['delete', 'tombstone']) {
         const { platform, db } = makePlatform({ hashed });

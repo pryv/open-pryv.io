@@ -133,4 +133,29 @@ describe('[ACIX] access reverse-index population hooks', function () {
     await repo.deleteOne(userId, euser);
     assert.strictEqual(await accessIndex.getAccessIndex(platform, accId), null, 'index rows removed on erasure (Art.17)');
   });
+
+  it('[ACIX06] a rename moves the rows to the new name; erasure then removes them all', async function () {
+    const oldName = cuid();
+    const newName = cuid();
+    const ru = await fixtures.user(oldName);
+    const rp = cuid();
+    await ru.access({ token: rp, type: 'personal' });
+    await ru.session(rp);
+    await ru.stream({ id: 'sr', name: 'Sr' });
+    const res = await coreRequest.post(`/${oldName}/accesses`).set('Authorization', rp)
+      .send({ name: 'rename-me', type: 'app', permissions: [{ streamId: 'sr', level: 'read' }] });
+    assert.strictEqual(res.status, 201);
+    const accId = res.body.access.id;
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const repo = await getUsersRepository();
+    const userId = await repo.getUserIdForUsername(oldName);
+    await repo.changeUsername(userId, oldName, newName, 'system');
+    const moved = await accessIndex.getAccessIndex(platform, accId);
+    assert.strictEqual(accessIndex.readStoredUser(moved), platform.hashFor('username', newName), 'stored under the new name');
+    // a row left under the former name (written before rows were moved) goes on erasure too
+    await accessIndex.putAccessIndex(platform, oldName, { id: 'acix06-stale', type: 'app', expires: null, created: 1, modified: 1 });
+    await repo.deleteOne(userId, newName);
+    assert.strictEqual(await accessIndex.getAccessIndex(platform, accId), null);
+    assert.strictEqual(await accessIndex.getAccessIndex(platform, 'acix06-stale'), null, 'former-name row removed');
+  });
 });
