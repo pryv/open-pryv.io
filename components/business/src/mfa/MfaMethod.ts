@@ -27,6 +27,8 @@ export interface MfaClientRequest {
   body: Record<string, unknown>;
   /** The pending MFA session (its mfaToken); set on challenge and verify of a session. */
   sessionId?: string;
+  /** The account's user id; set on challenge (the SMS send budget is per account). */
+  userId?: string;
 }
 
 export interface MfaMethod {

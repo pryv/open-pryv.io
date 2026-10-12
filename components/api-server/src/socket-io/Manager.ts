@@ -123,17 +123,25 @@ class Manager {
   // context outlive its namespace anyway, it is rebound to the live one here,
   // so notifications never go to a deleted namespace.
   //
+  // The context listens to the notifications of `username`, the account's
+  // canonical username as the handshake resolved it: the namespace may name
+  // the account by an alias, while every notification is emitted under the
+  // canonical username. A context already open under that namespace name
+  // for another account (an alias released and reassigned meanwhile) is
+  // not joined.
+  //
   // Everything after the first await runs without yielding to I/O, so a
   // disconnect cannot interleave between the lookup and the caller's
   // `onConnect`.
-  async ensureInitNamespace (socketNs: SocketNamespace): Promise<NamespaceContext> {
+  async ensureInitNamespace (socketNs: SocketNamespace, username: string): Promise<NamespaceContext> {
     await initAsyncProps.call(this);
     const namespaceName = socketNs.name;
     let context = this.contexts.get(namespaceName);
     if (typeof context === 'undefined') {
-      const username = this.extractUsername(namespaceName);
       context = new NamespaceContext(username, socketNs, this.api, this.logger, this.apiVersion, this.hostname, this.storageLayer, this);
       this.contexts.set(namespaceName, context);
+    } else if (context.username !== username) {
+      throw new Error(`namespace '${namespaceName}' is open for another account`);
     } else if (context.socketNs !== socketNs) {
       context.socketNs = socketNs;
     }

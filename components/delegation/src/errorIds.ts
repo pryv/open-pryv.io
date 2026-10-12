@@ -69,8 +69,13 @@ const DelegationErrorIds = {
   INVITE_EXPIRED: 'delegation-invite-expired',
   // The delegation relationship exists but is not in the active state.
   NOT_ACTIVE: 'delegation-not-active',
-  // The requested username for a created delegate account is already taken.
+  // The requested username for a created delegate account is already taken
+  // (or reserved, as the public registration refuses it).
   USERNAME_TAKEN: 'delegation-username-taken',
+  // The requested username for a created delegate account does not follow
+  // the registration rules (5 to 60 lowercase letters, digits and `-`, not
+  // starting nor ending with `-`).
+  INVALID_USERNAME: 'delegation-invalid-username',
   // The counterparty core could not be resolved / is unknown to this platform.
   UNKNOWN_CORE: 'delegation-unknown-core',
   // Creation of the delegate account / relationship failed.

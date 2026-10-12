@@ -355,9 +355,15 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
           if (!heldBefore) reservedHere.push([field, value as string]);
         }
 
-        // 5. Set user-to-core mapping if provided (plaintext input, hashed internally).
+        // 5. Claim the user-to-core mapping if provided (plaintext input,
+        //    hashed internally): never overwrite the mapping of a name another
+        //    core already hosts.
         if (req.body.core && !platform.isSingleCore) {
-          await platform.setUserCore(username, req.body.core);
+          if (!await platform.setUserCoreIfNotExists(username, req.body.core)) {
+            await releaseReserved();
+            await releaseClaim();
+            return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
+          }
         }
       } catch (err) {
         try {
@@ -391,9 +397,20 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       // Update indexed/unique fields via Platform (mode-aware).
       const systemStreams = require('business/src/system-streams/index.ts');
       const usernameToken = platform.hashFor('username', username);
+      // A unique value is claimed, never taken over: a value another account
+      // holds is refused (409) before anything is written.
+      for (const [field, value] of Object.entries(fieldsForUpdate)) {
+        if (!systemStreams.uniqueFieldNames.includes(field)) continue;
+        const owner = await platform.getUsersUniqueField(field, value as string);
+        if (owner != null && owner !== usernameToken) {
+          return next(errors.itemAlreadyExists('user', { [field]: value }));
+        }
+      }
       for (const [field, value] of Object.entries(fieldsForUpdate)) {
         if (systemStreams.uniqueFieldNames.includes(field)) {
-          await platform.setUserUniqueField(username, field, value as string);
+          if (!await platform.setUserUniqueFieldIfNotExists(username, field, value as string)) {
+            return next(errors.itemAlreadyExists('user', { [field]: value }));
+          }
         }
         if (systemStreams.indexedFieldNames.includes(field)) {
           await platform.setUserIndexedField(username, field, value as string);

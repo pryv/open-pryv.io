@@ -288,7 +288,8 @@ async function verifyToken (userId: string, token: string, username: string): Pr
  * existing account can request a link to prove its founding address and upgrade
  * its provenance. Throws invalidOperation when the email is unknown, already
  * PROVED (see PROVED_METHODS), or still within the cooldown window (with
- * `retryAfterSeconds`).
+ * `retryAfterSeconds`); itemAlreadyExists when another account holds the
+ * address (it proved it since it was added here).
  */
 async function resendVerification (deps: Deps, ctx: UserContext, value: string): Promise<MintedVerification> {
   const errors = deps.errors;
@@ -299,6 +300,11 @@ async function resendVerification (deps: Deps, ctx: UserContext, value: string):
   }
   if (C.isProvedOwnership(ev.content)) {
     throw errors.invalidOperation('This email is already verified.', { email: value });
+  }
+  // Another account proved the address since it was added here: a link would
+  // fail at verification anyway, so no mail goes to that address's owner.
+  if (!(await container.isRowFreeFor(ctx.username, value))) {
+    throw errors.itemAlreadyExists('email', { email: value });
   }
   const cooldownMs = await container.getResendCooldownMs();
   const sentAt = ev.content.verificationSentAt;

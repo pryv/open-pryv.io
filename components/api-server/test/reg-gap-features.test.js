@@ -96,6 +96,24 @@ describe('[RGGF] Register gap features', () => {
       assert.strictEqual(res.status, 200);
       assert.strictEqual(res.text, 'false');
     });
+
+    it('[IVCK1] past ten checks a minute an address is refused with 429; another address is not', async () => {
+      const checkFrom = (address) => coreRequest.post('/access/invitationtoken/check')
+        .set('X-Forwarded-For', address).send({ invitationtoken: 'ivck-' + address });
+      try {
+        for (let i = 0; i < 10; i++) {
+          const res = await checkFrom('203.0.113.50');
+          assert.strictEqual(res.status, 200, 'check ' + i + ': ' + res.text);
+        }
+        const refused = await checkFrom('203.0.113.50');
+        assert.strictEqual(refused.status, 429, refused.text);
+        assert.strictEqual(refused.body.error.id, 'too-many-attempts');
+        assert.ok(Number(refused.headers['retry-after']) >= 1, 'a Retry-After header is set');
+        assert.strictEqual((await checkFrom('203.0.113.51')).status, 200);
+      } finally {
+        await require('../src/routes/reg/invitationCheckBudget.ts').clear();
+      }
+    });
   });
 
   // --- Feature 4: DELETE /system/users/:username with onlyReg/dryRun ---
@@ -226,6 +244,31 @@ describe('[RGGF] Register gap features', () => {
         });
       assert.strictEqual(res.status, 200);
       assert.strictEqual(res.body.user, true);
+    });
+
+    it('[SYUU2] a unique value another account holds is refused with 409 and stays with its holder', async () => {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      const holder = 'gfholder' + Date.now().toString(36);
+      const reg = await coreRequest.post('/users').send({
+        appId: 'test-gf',
+        username: holder,
+        password: 'testpassw0rd',
+        email: holder + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+        language: 'en'
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      const taken = await coreRequest.put('/system/users').set('Authorization', adminAccessKey)
+        .send({ username: updateTestUser, user: { email: holder + '@test.example.com', language: 'de' } });
+      assert.strictEqual(taken.status, 409, JSON.stringify(taken.body));
+      assert.strictEqual(taken.body.error.id, 'item-already-exists');
+      assert.strictEqual(await platform.getUsersUniqueField('email', holder + '@test.example.com'), platform.hashFor('username', holder));
+      const free = updateTestUser + '-other@test.example.com';
+      const ok = await coreRequest.put('/system/users').set('Authorization', adminAccessKey)
+        .send({ username: updateTestUser, user: { email: free } });
+      assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+      assert.strictEqual(await platform.getUsersUniqueField('email', free), platform.hashFor('username', updateTestUser));
     });
 
     it('[GF51] must reject without username', async () => {

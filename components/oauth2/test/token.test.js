@@ -61,7 +61,7 @@ function fakePlatform () {
   };
 }
 
-function pkceVerifier () { return 'verifier-1234567890-abcdefg-hijklmnop'; }
+function pkceVerifier () { return 'verifier-1234567890-abcdefg-hijklmnop-qrstuv'; }
 function pkceChallenge (verifier) {
   return crypto.createHash('sha256').update(verifier).digest('base64')
     .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -197,7 +197,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         body: {
           grant_type: 'authorization_code',
           code: 'CODE-P1',
-          code_verifier: 'wrong-verifier-1234567890',
+          code_verifier: 'wrong-verifier-1234567890-abcdefghijklmnopqr',
           client_id: 'myapp',
           redirect_uri: 'https://app.example/cb',
         }
@@ -217,6 +217,32 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         }
       }, res2);
       assert.equal(res2.statusCode, 400);
+    });
+
+    it('[PKCV1] a verifier outside RFC 7636 (43..128 of [A-Za-z0-9-._~]) → invalid_request, the code stays redeemable', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-PV1');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const exchange = async (codeVerifier) => {
+        const res = fakeRes();
+        await handler({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'CODE-PV1',
+            code_verifier: codeVerifier,
+            client_id: 'myapp',
+            redirect_uri: 'https://app.example/cb',
+          }
+        }, res);
+        return res;
+      };
+      for (const bad of ['x', 'a'.repeat(42), 'a'.repeat(129), verifier.slice(0, 42) + '+', verifier.slice(0, 42) + '/', verifier + ' ']) {
+        const res = await exchange(bad);
+        assert.equal(res.statusCode, 400, JSON.stringify(bad));
+        assert.equal(res.body.error, 'invalid_request', JSON.stringify(bad));
+      }
+      const ok = await exchange(verifier);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
     });
   });
 
@@ -434,7 +460,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         body: {
           grant_type: 'authorization_code',
           code: 'CODE-ORV1',
-          code_verifier: 'wrong-verifier-1234567890',
+          code_verifier: 'wrong-verifier-1234567890-abcdefghijklmnopqr',
           client_id: 'myapp',
           redirect_uri: 'https://app.example/cb',
         }
@@ -507,7 +533,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
         body: {
           grant_type: 'authorization_code',
           code: 'CODE-ORV5',
-          code_verifier: 'wrong-verifier-1234567890',
+          code_verifier: 'wrong-verifier-1234567890-abcdefghijklmnopqr',
           client_id: 'myapp',
           redirect_uri: 'https://app.example/cb',
         }

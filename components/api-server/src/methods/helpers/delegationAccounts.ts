@@ -31,6 +31,7 @@ const { getPlatform } = require('platform');
 const { buildMallForCmc } = require('./cmcMall.ts');
 const { slug } = require('cmc');
 const { ready, getLogger } = require('@pryv/boiler');
+const { USERNAME_REGEXP_STR } = require('../../schema/helpers.ts');
 
 const logger = getLogger('delegations:accounts');
 
@@ -50,6 +51,32 @@ function isAlreadyExists (err: unknown): boolean {
   if (id === 'item-already-exists' || id === 'duplicate') return true;
   const msg = String(e?.message || err).toLowerCase();
   return msg.includes('already exists') || msg.includes('duplicate');
+}
+
+const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+
+/**
+ * Refuse a username a delegate may not create, as the public registration
+ * refuses it: the registration pattern (lowercase, as registered names are)
+ * with a `delegation-invalid-username` 400, and a reserved name with
+ * `delegation-username-taken` 409 (the registration answers a reserved name
+ * as taken). Checked on the delegate's core before anything is written, and
+ * again on the core that creates the account.
+ */
+export async function assertDelegatedUsernameAllowed (username: string): Promise<void> {
+  const delegation = require('delegation');
+  const DelegationErrorIds = delegation.errorIds.DelegationErrorIds;
+  const delegationError = delegation.attach.delegationError;
+  if (!USERNAME_RE.test(username)) {
+    throw delegationError(DelegationErrorIds.INVALID_USERNAME,
+      'The requested username does not follow the registration rules', 400, { username });
+  }
+  const platform = await getPlatform();
+  await platform.refreshHostedSiteNames();
+  if (platform.isUsernameReserved(username)) {
+    throw delegationError(DelegationErrorIds.USERNAME_TAKEN,
+      'The requested username is already taken', 409, { username });
+  }
 }
 
 /** A random, unguessable password — the passwordless-account marker. */
@@ -84,6 +111,7 @@ export async function buildSystemCreateAccountDeps (): Promise<{
     if (username.length === 0) {
       throw delegationError(DelegationErrorIds.CREATION_FAILED, 'A username for the new account is required', 400);
     }
+    await assertDelegatedUsernameAllowed(username);
     // Claim the username platform-wide FIRST — the atomic cross-core collision
     // gate (mirrors the registration write order). insertOne's local guard is
     // per-core only, so without this a name hosted on another core would slip

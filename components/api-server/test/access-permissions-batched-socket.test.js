@@ -34,7 +34,8 @@ const RS = '\x1e'; // Engine.IO v4 polling payload separator
 describe('[APBS] access restrictions with batched socket.io packets', function () {
   this.timeout(120000);
   let fixtures, server, port;
-  let username, personalToken, hooksToken, writerToken;
+  let username, userId, personalToken, hooksToken, writerToken, usersRepository;
+  const aliases = [];
   const plainStreams = [];
   const readOnlyStreams = [];
 
@@ -86,6 +87,9 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
         ...readOnlyStreams.map((id) => ({ streamId: id, level: 'read' }))]
     });
 
+    usersRepository = await require('business/src/users/index.ts').getUsersRepository();
+    userId = await usersRepository.getUserIdForUsername(username);
+
     server = http.createServer(app.expressApp);
     await setupSocketIO(server, app.api, app.getCustomAuthFunction('test'));
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -97,6 +101,7 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     }
+    for (const alias of aliases) await usersRepository.releaseAlias(alias, userId);
     await fixtures.clean();
   });
 
@@ -170,9 +175,20 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
     return session;
   }
 
-  /** The handshake packet of a new namespace of the same user. */
-  function handshake (prefix) {
-    return '40/' + prefix + '/' + username + ',';
+  /**
+   * A namespace of the same user not opened yet: `/<alias>` for a fresh alias
+   * of the account (a namespace names one account, by its username or an
+   * alias).
+   */
+  async function freshNamespace () {
+    const alias = await usersRepository.mintAlias(username, userId);
+    aliases.push(alias);
+    return '/' + alias;
+  }
+
+  /** The handshake packet of the namespace `namespace`. */
+  function handshake (namespace) {
+    return '40' + namespace + ',';
   }
 
   async function storedWebhooksCount () {
@@ -196,7 +212,7 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
       const batchId = ++ackId;
       const batch = [];
       for (let i = 0; i < CALLS_PER_BATCH; i++) batch.push({ method: 'webhooks.create', params: { url } });
-      const otherNsp = 'apbs-hooks-' + round;
+      const otherNsp = await freshNamespace();
       await session.send([
         handshake(otherNsp),
         session.call(singleId, 'webhooks.create', { url }),
@@ -207,7 +223,7 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
       const [batchError, batchResult] = await session.ackOf(batchId);
       assert.ok(batchError == null, JSON.stringify(batchError));
       batchResult.results.forEach((answer, i) => assertForbidden(answer, 'round ' + round + ' batched call ' + i));
-      await session.connected('/' + otherNsp + '/' + username);
+      await session.connected(otherNsp);
     }
     assert.strictEqual(await storedWebhooksCount(), 0);
   });
@@ -221,14 +237,14 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
       const streams = plainStreams.slice(round * STREAMS_PER_ROUND, (round + 1) * STREAMS_PER_ROUND);
       streams.splice(round % STREAMS_PER_ROUND, 0, readOnlyStreams[round]);
       const id = ++ackId;
-      const otherNsp = 'apbs-subscribe-' + round;
+      const otherNsp = await freshNamespace();
       await session.send([
         handshake(otherNsp),
         session.call(id, 'subscribe', { key: 'apbs-' + round, kind: 'events', query: { streams } })
       ]);
       const [err] = await session.ackOf(id);
       assert.ok(err == null, JSON.stringify(err));
-      await session.connected('/' + otherNsp + '/' + username);
+      await session.connected(otherNsp);
     }
     const written = [];
     for (let round = 0; round < ROUNDS; round++) {

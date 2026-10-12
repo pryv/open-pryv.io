@@ -40,6 +40,9 @@ import { tokenEndpointAudiences } from '../issuer.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
 import { logServerError } from '../serverLog.ts';
 
+/** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
+const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
+
 /** Read a live access from this core's storage; null when absent, deleted or expired. */
 export type AuthCodeAccessResolver = (params: {
   userId: string; username: string; accessId: string; clientId: string;
@@ -120,6 +123,9 @@ export async function handleAuthorizationCode (
   }
   if (typeof params.code_verifier !== 'string' || params.code_verifier === '') {
     return { ok: false, status: 400, error: 'invalid_request', description: 'code_verifier is required (PKCE mandatory)' };
+  }
+  if (!PKCE_VERIFIER_RE.test(params.code_verifier)) {
+    return { ok: false, status: 400, error: 'invalid_request', description: 'code_verifier must be 43 to 128 characters of [A-Za-z0-9-._~] (RFC 7636)' };
   }
   if (typeof params.client_id !== 'string' || params.client_id === '') {
     return { ok: false, status: 400, error: 'invalid_request', description: 'client_id is required' };

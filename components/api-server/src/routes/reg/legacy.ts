@@ -22,6 +22,9 @@ const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:admin');
 
+/** Most invitation tokens one admin call generates. */
+const MAX_INVITATIONS_PER_CALL = 1000;
+
 type App = { config: { get (key: string): unknown } };
 type UserCore = { coreId: string; username: string };
 type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number> };
@@ -306,6 +309,11 @@ export default function (expressApp: ExpressApp, app: App) {
       if (dstProblem != null) return next(errors.invalidParametersFormat(dstProblem));
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
+      // The users are moved to a core the platform knows: a typo would
+      // otherwise leave every user of the source core unroutable.
+      if ((await platform.getCoreInfo(dstName)) == null) {
+        return next(errors.invalidParametersFormat('unknown core ' + JSON.stringify(dstName)));
+      }
       // getAllUserCores returns mappings with `username` in PlatformDB
       // storage form (HMAC token in hashed mode). Re-writing must skip
       // the hashing layer to avoid double-hashing — use the
@@ -346,11 +354,15 @@ export default function (expressApp: ExpressApp, app: App) {
 
   /**
    * GET /admin/invitations/post — generate new invitation tokens.
-   * Query params: count (number), message (optional description).
+   * Query params: count (an integer from 1 to MAX_INVITATIONS_PER_CALL,
+   * default 1), message (optional description).
    */
   expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const count = parseInt(String(req.query.count)) || 1;
+      const count = req.query.count == null || req.query.count === '' ? 1 : Number(req.query.count);
+      if (!Number.isInteger(count) || count < 1 || count > MAX_INVITATIONS_PER_CALL) {
+        return next(errors.invalidParametersFormat('count must be an integer from 1 to ' + MAX_INVITATIONS_PER_CALL));
+      }
       const message = (req.query.message as string) || '';
       const { getPlatform } = require('platform');
       const platform = await getPlatform();

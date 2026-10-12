@@ -23,6 +23,8 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 const ErrorIds = require('errors').ErrorIds;
+const errors = require('errors').factory;
+const { reserveInvitationCheck } = require('./invitationCheckBudget.ts');
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
@@ -112,6 +114,12 @@ function actAsError (actAs: unknown): string | null {
 function refusalOf (err: unknown): 'invalid-field' | 'too-large' | null {
   const kind = (err as { accessStateRejection?: string } | null)?.accessStateRejection;
   return kind === 'invalid-field' || kind === 'too-large' ? kind : null;
+}
+
+/** The stored state carried by the store's "already decided" refusal, else null. */
+function decidedStateOf (err: unknown): AccessState | null {
+  const e = err as { accessStateRejection?: string; decidedState?: AccessState } | null;
+  return e?.accessStateRejection === 'decided' && e.decidedState != null ? e.decidedState : null;
 }
 
 function respondRefusal (res: Response, kind: 'invalid-field' | 'too-large', err: Error) {
@@ -615,6 +623,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }
         });
       }
+      // The first decision wins (see answerDecided).
+      if (accessState.TERMINAL_STATUSES.includes(pending.status)) {
+        return answerDecided(res, pending, status);
+      }
 
       const hasHandoffField = req.body.handoff != null;
       const hasToken = typeof req.body.token === 'string' && req.body.token !== '';
@@ -820,6 +832,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       } catch (err) {
         const refusal = refusalOf(err);
         if (refusal != null) return respondRefusal(res, refusal, err as Error);
+        // Decided by a concurrent post since it was read above.
+        const decided = decidedStateOf(err);
+        if (decided != null) return answerDecided(res, decided, status);
         throw err;
       }
       if (!state) {
@@ -827,27 +842,57 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           error: { id: 'unknown-access-key', message: 'Unknown or expired access key' }
         });
       }
-
-      let response: Record<string, unknown>;
-      if (state.status === 'ACCEPTED') {
-        response = acceptedBody(state);
-      } else {
-        response = { status: state.status };
-        if (state.status === 'REFUSED' || state.status === 'ERROR') {
-          response.reasonId = state.reasonId;
-          response.message = state.message;
-        }
-      }
-      res.status(state.code).json(response);
+      respondWithState(res, state);
     } catch (err) { next(err); }
   });
 
+  /** The answer to a decision post: the decided state, as the poll serves it. */
+  function respondWithState (res: Response, state: AccessState) {
+    let response: Record<string, unknown>;
+    if (state.status === 'ACCEPTED') {
+      response = acceptedBody(state);
+    } else {
+      response = { status: state.status };
+      if (state.status === 'REFUSED' || state.status === 'ERROR') {
+        response.reasonId = state.reasonId;
+        response.message = state.message;
+      }
+    }
+    res.status(state.code).json(response);
+  }
+
+  /**
+   * A post on a request that already holds a decision. The first decision
+   * wins and is never rewritten. The same decision again (a page posting
+   * twice, a retry after a lost answer) gets the stored outcome, exactly as
+   * the first post did, and nothing is written; a different decision is
+   * refused with 409.
+   */
+  function answerDecided (res: Response, stored: AccessState, status: string) {
+    if (stored.status === status) return respondWithState(res, stored);
+    return res.status(409).json({
+      error: {
+        id: ErrorIds.InvalidOperation,
+        message: 'This access request was already decided (' + stored.status + ').',
+        data: { status: stored.status }
+      }
+    });
+  }
+
   /**
    * POST /access/invitationtoken/check — Check validity of an invitation token.
-   * Returns plain text 'true' or 'false'.
+   * Returns plain text 'true' or 'false'. Within a per-address budget (see
+   * `invitationCheckBudget.ts`): past it, 429 with Retry-After.
    */
   expressApp.post('/access/invitationtoken/check', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
+      const retryAfterSeconds = await reserveInvitationCheck(clientIp(req));
+      if (retryAfterSeconds != null) {
+        return next(errors.tooManyAttempts(retryAfterSeconds, {
+          message: `Too many invitation token checks from this address; retry in ${retryAfterSeconds} s.`,
+          data: { retryAfterSeconds }
+        }));
+      }
       const token = req.body.invitationtoken;
       const { getPlatform } = require('platform');
       const platform = await getPlatform();

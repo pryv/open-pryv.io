@@ -31,17 +31,19 @@ const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
 /**
  * Whether `name` is a namespace a user may connect to: `/<username>`, or
  * `/<username>/<username>` (the path a client builds from a DNS-less API
- * endpoint, `https://host/<username>/`, plus the username), at most
- * MAX_NAMESPACE_LENGTH characters. Checked BEFORE socket.io creates the
- * namespace: a refused name costs an error packet and retains nothing, so
- * unauthenticated clients cannot grow the worker's namespace table.
+ * endpoint, `https://host/<username>/`, plus the username: both segments
+ * name the same account), at most MAX_NAMESPACE_LENGTH characters. Checked
+ * BEFORE socket.io creates the namespace: a refused name costs an error
+ * packet and retains nothing, so unauthenticated clients cannot grow the
+ * worker's namespace table.
  */
 function isUserNamespaceName (name: unknown): boolean {
   if (typeof name !== 'string' || name.length > MAX_NAMESPACE_LENGTH || !name.startsWith('/')) return false;
-  const segments = name.slice(1).split('/');
-  if (segments.length > 2) return false;
   // Lower-cased like Manager.extractUsername (retro-compatibility).
-  return segments.every((segment) => USERNAME_RE.test(segment.toLowerCase()));
+  const segments = name.slice(1).split('/').map((segment) => segment.toLowerCase());
+  if (segments.length > 2) return false;
+  if (segments.length === 2 && segments[0] !== segments[1]) return false;
+  return segments.every((segment) => USERNAME_RE.test(segment));
 }
 
 /** `socketIO.maxMessageBytes`, read when the server is set up. */
@@ -127,7 +129,11 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
     next(null, isUserNamespaceName(name));
   }).on('connect', (socket: SocketLike) => {
     (async () => {
-      const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp);
+      // The account the handshake authenticated, by its canonical username
+      // (the namespace may name it by an alias).
+      const username = (socket.methodContext as { user?: { username?: unknown } } | undefined)?.user?.username;
+      if (typeof username !== 'string' || username === '') throw new Error('socket connected without an authenticated account');
+      const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp, username);
       nameSpaceContext.onConnect(socket);
     })().catch((err: unknown) => {
       logger.error('socket.io: connection setup failed', err);

@@ -38,6 +38,21 @@ function assertRestorableUsers (users: unknown): void {
 }
 
 /**
+ * Refuses the whole restore when a username the backup names (a manifest
+ * entry, the owner of a platform row, a register server mapping) is not one
+ * safe segment, or is a name this platform keeps for itself (`pryv...`, the
+ * reserved words, the routes it serves, hosted-site names): those rows would
+ * route platform names to an account. `where` says which part of the backup.
+ */
+function assertRestorableUsernames (usernames: unknown[], isReserved: (name: string) => boolean, where: string): void {
+  const invalid = usernames.filter((name) => typeof name !== 'string' || !SAFE_SEGMENT_RE.test(name) || isReserved(name));
+  if (invalid.length > 0) {
+    const desc = [...new Set(invalid.map((name) => JSON.stringify(name)))].join(', ');
+    throw new Error(`Restore aborted: ${invalid.length} ${where} name an invalid or reserved username: ${desc}. Nothing was restored.`);
+  }
+}
+
+/**
  * Orchestrates restore from a backup archive into the current core.
  * Reads from a BackupReaderLike and writes into StorageLayer, UserAccountStorage,
  * AuditStorage, EventFiles, PlatformDB.
@@ -53,6 +68,8 @@ class RestoreOrchestrator {
   auditStorage: AuditStorageLike | null = null;
   seriesConnection: SeriesConnectionLike | null = null;
   logger!: Logger;
+  /** Replaces the platform's reserved-name check when set (tests). */
+  isReservedUsername: ((name: string) => boolean) | null = null;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -89,6 +106,11 @@ class RestoreOrchestrator {
 
     const manifest = await reader.readManifest();
     assertRestorableUsers(manifest.users);
+    const isReserved = await this._reservedUsernameCheck();
+    assertRestorableUsernames(manifest.users.map((u: UserManifest) => u.username), isReserved, 'user entry(ies) of the backup manifest');
+    // Platform rows are read and checked before any user is restored, and
+    // written after them.
+    const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
     this.logger.info(`Restoring from backup: format=${manifest.formatVersion} type=${manifest.backupType} users=${manifest.users.length}`);
 
     // Detect conflicts
@@ -115,8 +137,8 @@ class RestoreOrchestrator {
       report.restored.push({ userId, username });
     }
 
-    if (!opts.skipPlatform) {
-      await this._restorePlatform(reader);
+    if (platformRead != null) {
+      await this._writePlatform(platformRead);
     }
 
     this.logger.info(`Restore complete: ${report.restored.length} restored, ${report.skipped.length} skipped`);
@@ -142,17 +164,27 @@ class RestoreOrchestrator {
     const targetUserId = opts.remapUserId || userId;
     const { username } = userManifest;
     assertRestorableUsers([userManifest, { userId: targetUserId, username }]);
+    const isReserved = await this._reservedUsernameCheck();
+    assertRestorableUsernames([username], isReserved, 'user entry(ies) of the backup manifest');
 
     // Check conflicts
     const conflicts = await this._detectConflicts([{ userId: targetUserId, username }]);
+    // The username now belongs to another account: overwriting would mix the
+    // backed-up account into that one (its data cleared, the backup's
+    // imported over it). Never, even with --overwrite.
+    const nameTaken = conflicts.find((c) => c.kind === 'username-taken');
+    if (nameTaken != null) {
+      throw new Error(`User ${username} cannot be restored: ${nameTaken.reason}. Nothing was restored.`);
+    }
     if (conflicts.length > 0 && !opts.overwrite) {
       throw new Error(`User ${username} conflicts with existing data: ${conflicts[0].reason}. Use --overwrite to replace.`);
     }
+    const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
 
     await this._restoreSingleUser(reader, userId, username, opts, targetUserId);
 
-    if (!opts.skipPlatform) {
-      await this._restorePlatform(reader);
+    if (platformRead != null) {
+      await this._writePlatform(platformRead);
     }
 
     this.logger.info(`Single-user restore complete: ${username}`);
@@ -165,6 +197,19 @@ class RestoreOrchestrator {
   async restorePlatform (reader: BackupReaderLike) {
     await reader.readManifest();
     await this._restorePlatform(reader);
+  }
+
+  /**
+   * The reserved-name check applied to the usernames a backup names: the
+   * platform's reserved list (hosted-site names re-read first), or
+   * `isReservedUsername` when set.
+   */
+  async _reservedUsernameCheck (): Promise<(name: string) => boolean> {
+    if (this.isReservedUsername != null) return this.isReservedUsername;
+    const { getPlatform } = require('platform');
+    const platform = await getPlatform();
+    await platform.refreshHostedSiteNames();
+    return (name: string) => platform.isUsernameInReservedList(name);
   }
 
   // -------------------------------------------------------------------------
@@ -403,6 +448,7 @@ class RestoreOrchestrator {
           conflicts.push({
             userId,
             username,
+            kind: 'username-taken',
             reason: `username "${username}" already exists with userId "${existingId}"`
           });
         }
@@ -417,6 +463,7 @@ class RestoreOrchestrator {
           conflicts.push({
             userId,
             username,
+            kind: 'userid-renamed',
             reason: `userId "${userId}" already registered as "${existingUsername}"`
           });
         }
@@ -428,9 +475,19 @@ class RestoreOrchestrator {
   }
 
   async _restorePlatform (reader: BackupReaderLike) {
-    if (!this.platformDB) return;
-    const data: unknown[] = [];
-    let skipped = 0;
+    const platformRead = await this._readPlatform(reader, await this._reservedUsernameCheck());
+    await this._writePlatform(platformRead);
+  }
+
+  /**
+   * Read the platform rows and the register server mappings of a backup, and
+   * refuse the restore (nothing written) when one names an invalid or
+   * reserved username, as for the manifest.
+   */
+  async _readPlatform (reader: BackupReaderLike, isReserved: (name: string) => boolean): Promise<PlatformRead> {
+    const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null };
+    if (!this.platformDB) return read;
+    const data = read.data;
     for await (const item of await reader.readPlatformData()) {
       // v1 backups (and old v2 exports) write raw `{key, value}` entries straight from
       // the SQLite/MongoDB platform-wide store. v2 platformDB.importAll expects the
@@ -439,15 +496,14 @@ class RestoreOrchestrator {
       if (item.username == null && typeof item.key === 'string') {
         const parsed = parseRawPlatformEntry(item as { key: string; value: string });
         if (parsed) data.push(parsed);
-        else skipped++;
+        else read.skipped++;
       } else {
-        data.push(item);
+        data.push(item as PlatformEntry);
       }
     }
-    if (data.length > 0) {
-      await this.platformDB.importAll(data as PlatformEntry[]);
-    }
-    this.logger.info(`Platform data restored: ${data.length} records${skipped ? ` (${skipped} unsupported keys skipped)` : ''}`);
+    // In hashed PII mode a row names its owner by a 64-hex token: one safe
+    // segment, never a reserved name.
+    assertRestorableUsernames(data.map((entry) => entry.username), isReserved, 'platform row(s) of the backup');
 
     // v1 enterprise register mappings → v2 user-core rows.
     //
@@ -464,30 +520,51 @@ class RestoreOrchestrator {
     // restore (e.g. 14 users on me-dns1 → all land on core-use1).
     // Multi-core destinations that want a specific core mapping can be
     // supported later via an options.coreMap callback.
-    let serverMappingsCount = 0;
     try {
       const cores = typeof this.platformDB.getAllCoreInfos === 'function'
         ? await this.platformDB.getAllCoreInfos()
         : [];
       const availableCores = cores.filter((c) => c.available !== false);
-      const defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
-      if (defaultCoreId != null) {
-        // Write through the Platform hashing layer (not the raw engine) so
-        // the user-core key is the HMAC token in hashed mode — otherwise a
-        // restored mapping is stored cleartext and `platform.getUserCore`
-        // (which hashes the lookup) never finds it.
-        const { getPlatform } = require('platform');
-        const platform = await getPlatform();
+      read.defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
+      if (read.defaultCoreId != null) {
         for await (const mapping of await reader.readServerMappings()) {
           if (typeof mapping.username !== 'string') continue;
-          await platform.setUserCore(mapping.username, defaultCoreId);
-          serverMappingsCount++;
+          read.mappingUsernames.push(mapping.username);
         }
       }
     } catch (err: unknown) {
       // readServerMappings is optional (default impl is a no-op) — any
       // error here should not fail the whole restore.
       this.logger.warn('Restoring register/ server mappings failed: ' + (err as Error).message);
+      read.mappingUsernames = [];
+    }
+    assertRestorableUsernames(read.mappingUsernames, isReserved, 'register server mapping(s) of the backup');
+    return read;
+  }
+
+  /** Write what `_readPlatform` read and checked. */
+  async _writePlatform (read: PlatformRead) {
+    if (!this.platformDB) return;
+    if (read.data.length > 0) {
+      await this.platformDB.importAll(read.data);
+    }
+    this.logger.info(`Platform data restored: ${read.data.length} records${read.skipped ? ` (${read.skipped} unsupported keys skipped)` : ''}`);
+    let serverMappingsCount = 0;
+    if (read.defaultCoreId != null && read.mappingUsernames.length > 0) {
+      try {
+        // Write through the Platform hashing layer (not the raw engine) so
+        // the user-core key is the HMAC token in hashed mode — otherwise a
+        // restored mapping is stored cleartext and `platform.getUserCore`
+        // (which hashes the lookup) never finds it.
+        const { getPlatform } = require('platform');
+        const platform = await getPlatform();
+        for (const username of read.mappingUsernames) {
+          await platform.setUserCore(username, read.defaultCoreId);
+          serverMappingsCount++;
+        }
+      } catch (err: unknown) {
+        this.logger.warn('Restoring register/ server mappings failed: ' + (err as Error).message);
+      }
     }
     if (serverMappingsCount > 0) {
       this.logger.info(`Register server mappings restored: ${serverMappingsCount} user-core rows written`);
@@ -564,7 +641,9 @@ type SeriesConnectionLike = {
 };
 type UserManifest = { userId: string; username: string };
 type Manifest = { formatVersion: string; backupType: string; users: UserManifest[] };
-type ConflictRef = { userId: string; username: string; reason: string };
+type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed'; reason: string };
+/** The platform part of a backup, read and checked before anything is written. */
+type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null };
 type UserReader = {
   readStreams (): AsyncIterable<unknown>;
   readAccesses (): AsyncIterable<unknown>;

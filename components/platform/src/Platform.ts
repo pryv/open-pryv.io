@@ -33,6 +33,13 @@ const reservedWords = new Set(require('./reserved-words.json').list);
 // core a user with one of these names would lose part of its own API to them
 // (e.g. its batch call `POST /users` is the registration route).
 const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
+// The shape of a minted alias (`r-` + 8 characters, see the users
+// repository): refused as a new username, so no account can take a name an
+// alias may later be minted as.
+const ALIAS_SHAPE_RE = /^r-[a-z0-9]{8}$/;
+// DNS labels with `--` in the 3rd and 4th positions are reserved by IDNA
+// (RFC 5891 §4.2.3.1); `xn--` labels are punycode for a Unicode name.
+const IDNA_RESERVED_LABEL_RE = /^..--/;
 const { hostedSiteNames } = require('business/src/hostedSites.ts');
 const { coreIdProblem, isValidCoreId, peerUrlProblem, insecurePeerUrlAllowed } = require('./coreIdentity.ts');
 const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
@@ -1357,20 +1364,38 @@ class Platform {
   }
 
   /**
-   * Check if username is reserved (starts with "pryv", in the reserved words
-   * list, a path segment the core routes itself, or a hosted-site name of any core).
+   * Check if a NEW username is refused: a reserved name (see
+   * `isUsernameInReservedList`), or a reserved shape: the shape of the
+   * aliases this server mints (`r-` + 8 letters or digits), whose name ->
+   * core mapping an alias would claim, and a DNS label with hyphens in the
+   * 3rd and 4th positions (`xn--` and the other `??--` prefixes, which
+   * IDNA reserves: an `xn--` name displays as another, Unicode, name).
+   * Applies to names being registered, renamed to or created, never to
+   * accounts that exist.
    */
   #isUsernameReserved (username: string) {
     const lower = username.toLowerCase();
-    if (/^pryv/.test(lower)) return true;
-    if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
-    if (this.#hostedSiteNames.has(lower)) return true;
-    return reservedWords.has(lower);
+    if (ALIAS_SHAPE_RE.test(lower)) return true;
+    if (IDNA_RESERVED_LABEL_RE.test(lower)) return true;
+    return this.isUsernameInReservedList(lower);
   }
 
   /** Public reserved-username check (e.g. for the change-username flow). */
   isUsernameReserved (username: string): boolean {
     return this.#isUsernameReserved(username);
+  }
+
+  /**
+   * Whether the name is reserved by the list: starts with "pryv", is in the
+   * reserved words list, a path segment the core routes itself, or a
+   * hosted-site name of any core.
+   */
+  isUsernameInReservedList (username: string): boolean {
+    const lower = username.toLowerCase();
+    if (/^pryv/.test(lower)) return true;
+    if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
+    if (this.#hostedSiteNames.has(lower)) return true;
+    return reservedWords.has(lower);
   }
 
   // --- Observability config (optional APM) ---------------------------

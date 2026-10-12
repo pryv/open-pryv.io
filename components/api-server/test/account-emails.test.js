@@ -378,6 +378,32 @@ describe('[EMLS] account emails (multiple)', function () {
       assert.strictEqual(entryB.content.verificationMethod, null);
     });
 
+    it('[EMRV1] no verification mail is resent for an address another account has proved since', async function () {
+      const a = await makeUser(cuid() + '@resend-a.example.com');
+      const b = await makeUser(cuid() + '@resend-b.example.com');
+      const x = cuid() + '@resend-shared.example.com';
+      const free = cuid() + '@resend-free.example.com';
+      await addPending(b, [x, free]);
+      const [{ token }] = await addPending(a, [x]);
+      assert.strictEqual(await operations.verifyToken(a.userId, token, a.username), x);
+      const usersRepository = await getUsersRepository();
+      const ctxB = { userId: b.userId, username: b.username, user: null, accessId: 'system', legacyEmail: await usersRepository.getOnePropertyValue(b.userId, 'email') };
+      const before = (await container.findRawByValue(b.userId, x)).content.verificationTokenHash;
+      // config.set, as account-emails-verify does: a value it set stays above the test scope
+      const savedCooldown = config.get('account:emailVerification:resendCooldownMs');
+      config.set('account:emailVerification:resendCooldownMs', 0);
+      try {
+        await assert.rejects(operations.resendVerification({ errors, usersRepository }, ctxB, x),
+          (err) => err.id === ErrorIds.ItemAlreadyExists);
+        // an address nobody holds is still resent
+        const minted = await operations.resendVerification({ errors, usersRepository }, ctxB, free);
+        assert.strictEqual(minted.value, free);
+      } finally {
+        config.set('account:emailVerification:resendCooldownMs', savedCooldown);
+      }
+      assert.strictEqual((await container.findRawByValue(b.userId, x)).content.verificationTokenHash, before, 'no new link was minted');
+    });
+
     it('[EML83] removing a pending address never touches the row another account holds', async function () {
       const a = await makeUser(cuid() + '@rm-pend-a.example.com');
       const b = await makeUser(cuid() + '@rm-pend-b.example.com');

@@ -28,7 +28,7 @@ describe('[MSSL] mfa/smsSendLimits', () => {
     return clusterKv.clientFor({ processHandle: clientHandle, timeoutMs: 1000 });
   }
   const limiter = (limits = {}) => new SmsSendLimiter({ ...SEND_LIMIT_DEFAULTS, ...limits }, { kvClient: kvClient() });
-  const send = (sessionId, username = 'alice', destination = '+41791234567') => ({ sessionId, username, destination });
+  const send = (sessionId, userId = 'alice-id', destination = '+41791234567') => ({ sessionId, userId, destination });
   const advanceClock = (ms) => { const base = Date.now(); Date.now = () => base + ms; };
 
   async function assertTooMany (promise) {
@@ -127,9 +127,29 @@ describe('[MSSL] mfa/smsSendLimits', () => {
     const service = { challenge: async (...args) => { calls.push(args); }, verify: async () => {} };
     const method = new SmsMethod(service, [], limiter());
     const profile = { content: { phone: '+41791234567' } };
-    await method.challenge('alice', profile, { headers: {}, body: { password: 'secret' }, sessionId: 's1' });
-    await assertTooMany(method.challenge('alice', profile, { headers: {}, body: {}, sessionId: 's1' }));
+    await method.challenge('alice', profile, { headers: {}, body: { password: 'secret' }, sessionId: 's1', userId: 'alice-id' });
+    await assertTooMany(method.challenge('alice', profile, { headers: {}, body: {}, sessionId: 's1', userId: 'alice-id' }));
     assert.strictEqual(calls.length, 1, 'the refused send never reached the provider service');
     assert.deepStrictEqual(calls[0][2], { headers: {}, body: {}, sessionId: 's1' }, 'nothing of the client request is passed on');
+  });
+
+  it('[MSSLA] the per-user budget follows the account, not its username', async () => {
+    const calls = [];
+    const service = { challenge: async (...args) => { calls.push(args); }, verify: async () => {} };
+    const method = new SmsMethod(service, [], limiter({ minIntervalSeconds: 0, perUserPerHour: 2, perDestinationPerDay: 100 }));
+    const profile = { content: { phone: '+41791234567' } };
+    const challenge = (username, userId, sessionId) => method.challenge(username, profile, { headers: {}, body: {}, sessionId, userId });
+    await challenge('alice', 'id-alice', 'a1');
+    await challenge('alice', 'id-alice', 'a2');
+    // a username change does not buy a fresh budget
+    await assertTooMany(challenge('alice-renamed', 'id-alice', 'a3'));
+    // the next holder of the released name does not inherit the spent one
+    await challenge('alice', 'id-newcomer', 'n1');
+    assert.strictEqual(calls.length, 3);
+    // a challenge without the account's id sends nothing
+    let refused = null;
+    try { await challenge('carol', undefined, 'x2'); } catch (err) { refused = err; }
+    assert.ok(refused != null, 'refused without a user id');
+    assert.strictEqual(calls.length, 3);
   });
 });

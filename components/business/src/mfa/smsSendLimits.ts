@@ -14,7 +14,9 @@ const errors = require('errors').factory;
  * challenge, an `mfa.challenge` re-send, an SMS `mfa.activate`), in both SMS
  * modes. Three budgets, each 0 to disable:
  *  - `minIntervalSeconds` between two sends on one MFA session;
- *  - `perUserPerHour` sends for one user, in a window opened by the first;
+ *  - `perUserPerHour` sends for one user, in a window opened by the first
+ *    (keyed by the user id: a username change does not reset it, and the
+ *    next holder of a released username does not inherit it);
  *  - `perDestinationPerDay` sends to one destination (phone), whoever the
  *    user, in a window opened by the first.
  * A send over a budget is refused with 429 too-many-attempts and its
@@ -51,7 +53,7 @@ interface KvLike {
 }
 
 type Counter = { count: number; windowEndsAt: number };
-type Send = { sessionId: string; username: string; destination: string };
+type Send = { sessionId: string; userId: string; destination: string };
 
 function isCounter (v: unknown): v is Counter {
   return v != null && typeof v === 'object' &&
@@ -93,7 +95,7 @@ class SmsSendLimiter {
    * Reserve one send on every budget, or throw the 429 to surface (no budget
    * is left taken then).
    */
-  async reserve ({ sessionId, username, destination }: Send): Promise<void> {
+  async reserve ({ sessionId, userId, destination }: Send): Promise<void> {
     const now = Date.now();
     const sessionKey = this.namespace + 'session/' + sessionId;
     const intervalMs = this.limits.minIntervalSeconds * 1000;
@@ -105,7 +107,7 @@ class SmsSendLimiter {
         throw refusal(typeof held?.until === 'number' ? held.until : until, now);
       }
     }
-    const userKey = this.namespace + 'user/' + username;
+    const userKey = this.namespace + 'user/' + userId;
     const userRefused = await this.bump(userKey, this.limits.perUserPerHour, HOUR_MS, now);
     if (userRefused != null) {
       if (intervalMs > 0) await this.kv.delete(sessionKey);

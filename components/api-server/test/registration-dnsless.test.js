@@ -236,6 +236,30 @@ describe('[BMM2] registration: DNS-less', () => {
       });
     });
 
+    describe('[RSVN] reserved username shapes', () => {
+      it('[RSVN1] an IDNA-reserved label (xn--, ??--) or the shape of a minted alias is refused as a new username', async function () {
+        const suffix = cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6).padEnd(6, '0');
+        for (const username of ['xn--reg' + suffix, 'ab--reg' + suffix, 'r-' + suffix + 'xy']) {
+          const registerData = generateRegisterBody();
+          registerData.username = username;
+          const res = await request.post('/users').send(registerData);
+          assert.strictEqual(res.status, 409, username + ': ' + JSON.stringify(res.body));
+          assert.deepEqual(res.body.error.data, { username });
+          const checked = await request.get(`/reg/${username}/check_username`);
+          assert.strictEqual(checked.body.reserved, true, username);
+        }
+      });
+
+      it('[RSVN2] names that only resemble those shapes are not reserved', async function () {
+        const suffix = cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6).padEnd(6, '0');
+        for (const username of ['xnreg' + suffix, 'abc--reg' + suffix, 'r-' + suffix + 'xyz', 'r-' + suffix]) {
+          const checked = await request.get(`/reg/${username}/check_username`);
+          assert.strictEqual(checked.status, 200, username + ': ' + JSON.stringify(checked.body));
+          assert.strictEqual(checked.body.reserved, false, username);
+        }
+      });
+    });
+
     describe('[RD11] When providing an indexed value that is neither a number nor a string', () => {
       function generateInvalidBodyWith (incorrectValue) {
         return {

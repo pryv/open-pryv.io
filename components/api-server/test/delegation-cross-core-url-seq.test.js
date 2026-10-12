@@ -262,6 +262,47 @@ describe('[DXCU] cross-core delegation peer-URL resolution', function () {
     assert.strictEqual(res.status, 400, JSON.stringify(res.body));
   });
 
+  it('[ADRN1] the legacy server rename refuses a destination core the platform does not know, and moves nobody', async function () {
+    await seedPeerCore({});
+    const adminKey = config.get('auth:adminAccessKey');
+    assert.strictEqual(await platform.getUserCore(remoteDelegate), CORE_B);
+    try {
+      const res = await coreRequest.get('/reg/admin/servers/' + CORE_B + '/rename/dxcu-not-registered').set('Authorization', adminKey);
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+      assert.strictEqual(await platform.getUserCore(remoteDelegate), CORE_B, 'the mapping is unchanged');
+    } finally {
+      await platform.setUserCore(remoteDelegate, CORE_B);
+    }
+  });
+
+  it('[SYUU1] /system/users/validate never overwrites a name -> core mapping that appeared after its availability check', async function () {
+    await seedPeerCore({});
+    const adminKey = config.get('auth:adminAccessKey');
+    const usersRepository = await require('business/src/users/index.ts').getUsersRepository();
+    const name = 'dxcur' + cuid().slice(-8);
+    await platform.setUserCore(name, CORE_B); // claimed by the other core meanwhile
+    const realExists = usersRepository.usernameExistsOnPlatform;
+    usersRepository.usernameExistsOnPlatform = async () => false; // the check ran before the claim
+    try {
+      const res = await coreRequest.post('/system/users/validate').set('Authorization', adminKey).send({
+        username: name,
+        invitationToken: (config.get('invitationTokens') || [])[0] || 'any',
+        uniqueFields: {},
+        core: CORE_A
+      });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.reservation, false);
+      assert.strictEqual(res.body.error.id, 'item-already-exists');
+      assert.strictEqual(await platform.getUserCore(name), CORE_B, 'the other core keeps the name');
+      assert.ok(await platform.getUsersUniqueField('username', name) == null, 'the username row it reserved was given back');
+    } finally {
+      usersRepository.usernameExistsOnPlatform = realExists;
+      await platform.deleteUser(name);
+      await platform.deleteUserCore(name);
+    }
+  });
+
   it('[DXCU-03] no url and no domain is refused, NOT delivered to this core itself', async function () {
     const selfUrl = 'https://' + CORE_A + '.' + DOMAIN + '/';
     const restoreNoDomain = injectTestConfigSnapshot({ dns: { domain: null } });

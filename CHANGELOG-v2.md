@@ -2,13 +2,17 @@
 
 ## Unreleased
 
-Hardening of API inputs and query semantics. Client-visible: a stream query whose `all` entry
-names no stream now matches nothing; time bounds must be finite; `accesses.get` validates its
-options and `includeDeletions=false` leaves deletions out; the account root stream can no longer
-be granted at a writing level; account fields written through events follow the field's rules and
-take the server time. Operators: run the read-only counts listed in the deploy notes before
-deploying (local events carrying an account stream id next to another stream, accesses granting
-the account root above `read`).
+Hardening of API inputs and query semantics, sessions, sockets, registration and access
+requests. Client-visible: a stream query whose `all` entry names no stream now matches nothing;
+time bounds must be finite; `accesses.get` validates its options and `includeDeletions=false`
+leaves deletions out; the account root stream can no longer be granted at a writing level;
+account fields written through events follow the field's rules and take the server time; the first
+decision posted on an access request wins; OAuth2 PKCE values must have the RFC 7636 form; new
+usernames of the `xn--` / `??--` forms or of the shape of a minted alias are refused, and a
+delegated account takes a username only under the registration rules. Operators: run the read-only
+counts listed in the deploy notes before deploying (local events carrying an account stream id
+next to another stream, accesses granting the account root above `read`, usernames of the shapes
+now refused).
 
 ### Events
 
@@ -81,6 +85,84 @@ the account root above `read`).
   a segment that is `.` or `..` once decoded, or a malformed percent-encoding; such paths were
   forwarded, and an upstream that decodes before normalising could serve content outside the
   configured base path.
+
+### Sessions and socket.io
+
+- A personal session is extended only by a call that passed every check, the custom auth step
+  included; a call the custom auth step refused extended it.
+- socket.io namespaces: `/<username>/<username>` (the DNS-less form) must name the same account
+  twice; `/<other>/<username>` is refused before any namespace exists (it connected to
+  `<username>`).
+- A socket connected through an alias of an account (`/<alias>`) receives the account's
+  notifications (`eventsChanged`, `streamsChanged`, `accessesChanged`, `accessUpdated`); it
+  received none, and an access change re-checked its connection only at the periodic sweep.
+
+### Access requests (`/reg/access`)
+
+- `POST /reg/access/:key` on a request that already holds a decision: the first decision wins
+  and is never rewritten. The same decision again (`ACCEPTED` after `ACCEPTED`, `REFUSED` after
+  `REFUSED`) is answered with the stored outcome, exactly as the first post was (`200` with the
+  stored body for `ACCEPTED`, `403` for `REFUSED` / `ERROR`), whatever the new body holds; a
+  different decision is refused with `409 invalid-operation` (`data.status` names the stored
+  one). Any later post replaced the outcome, even after the app had read it.
+- The polling key is 32 characters (192 random bits); it was 16 (96 bits). Same alphabet
+  (letters, digits, `-`, `_`).
+- `POST /access/invitationtoken/check`: at most 10 checks a minute from one address (an IPv6
+  address counts toward its /64), per core; past it `429 too-many-attempts` with `Retry-After`.
+  The check was unlimited.
+
+### OAuth2
+
+- `/oauth2/authorize`: the S256 `code_challenge` must be 43 base64url characters (the encoded
+  SHA-256 of the verifier); another value is answered with an `invalid_request` redirect. Any
+  non-empty string was accepted.
+- `/oauth2/token` (`authorization_code`): `code_verifier` must be 43 to 128 characters of
+  `[A-Za-z0-9-._~]` (RFC 7636); another value is answered `400 invalid_request` and leaves the
+  code redeemable. Any non-empty string was accepted.
+
+### Registration and accounts
+
+- New usernames whose 3rd and 4th characters are `--` (`xn--...`, the IDNA form of a Unicode
+  name, and the other `??--` forms reserved for DNS labels), and names of the shape of a minted
+  alias (`r-` followed by 8 letters or digits), are reserved: refused at registration
+  (`409 item-already-exists`), reported `reserved: true` by `check_username`, refused by
+  `account.update` username change (`invalid-operation`), by `/system/users/validate` and by
+  `delegations.createAccount`. Existing accounts are not affected.
+- `delegations.createAccount` (`POST /:username/delegations/controlled`): the username follows
+  the registration rules: a name outside the registration pattern (uppercase, `.`, `_`, under 5
+  or over 60 characters, leading or trailing `-`) is refused with `400
+  delegation-invalid-username` (new error id), a reserved name with `409
+  delegation-username-taken`. Any non-empty string was accepted. Checked on the delegate's core
+  and again on the core that creates the account.
+- `account.update` `emails.resend`: an address another account has proved since it was added is
+  refused with `item-already-exists`, and no mail is sent; the mail went out with a link bound to
+  fail.
+- MFA SMS: the per-user hourly send budget follows the account (user id): a username change no
+  longer gives a fresh budget, and the next holder of a released username no longer inherits a
+  spent one.
+
+### Operators
+
+- `GET /reg/admin/invitations/post`: `count` must be an integer from 1 to 1000 (absent: 1);
+  another value is refused with `400 invalid-parameters-format`. Any count was generated (and
+  `0` or a non-number gave 1).
+- `GET /reg/admin/servers/:src/rename/:dst`: `dst` must be a core registered on the platform,
+  else `400 invalid-parameters-format` and nothing is moved. Any well-formed id was accepted.
+- `POST /system/users/validate` with a `core`: the name is claimed for that core and a mapping
+  held by another core is never overwritten (`400 item-already-exists`, the rows reserved by the
+  call given back). It was overwritten.
+- `PUT /system/users`: a unique value (e.g. `email`) another account holds is refused with
+  `409 item-already-exists` and nothing is written; the value was taken over.
+- Boot warning when `oauth.clientRevokeCheckSeconds` (open-socket re-validation) or
+  `caching.accessMaxAgeSeconds` (access cache lifetime) is above 300 s: a revoked or narrowed
+  access may keep working that long.
+- `bin/backup.js` restore: the whole restore is refused, before anything is written, when a
+  username of the manifest, the owner of a platform row or a register server mapping is not one
+  safe segment or is reserved (`pryv...`, the reserved words, the core's own route names, hosted
+  site names); platform rows were written unchecked. Platform rows are read and checked before
+  any user is restored. A single-user restore of a username that now belongs to another account
+  is refused, with or without `--overwrite` (with it, the backed-up account was mixed into the
+  current holder of the name).
 
 ## 2.0.0-rc.49 - 2026-10-12
 

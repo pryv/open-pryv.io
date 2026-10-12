@@ -1,5 +1,53 @@
 # Changelog - Internal (no API impact)
 
+## Hardening batch: sessions, sockets, registration, platform rows
+
+- `MethodContext`: `checkSessionValid` only checks the session; the new `touchSession` runs at
+  the end of `retrieveExpandedAccess`, after the custom auth step. Tests: business `[MCTS1]`,
+  `[MCTS2]` (`[MCSV3]`, `[MCSV4]` no longer count touches).
+- socket.io: `isUserNamespaceName` requires both segments of a two-segment name to be equal
+  (case-insensitive); `Manager.ensureInitNamespace(socketNs, username)` keys the context by
+  namespace name and subscribes it with the canonical username the handshake resolved (it used
+  the name in the path, an alias included); a context already open under that name for another
+  account is not joined. Tests: api-server `[SNNS1]`, `[SNAL1]`; `[APBS]` opens its extra
+  namespaces of the same token through aliases of the account (it used `/<prefix>/<username>`).
+- MFA SMS: `SmsSendLimiter.reserve` takes `userId` (key `mfa-sms-send/user/<userId>`);
+  `MfaClientRequest.userId` is passed by the three challenge call sites and required by
+  `SmsMethod.challenge` when limits apply. Test: business `[MSSLA]`.
+- Emails: `resendVerification` checks `isRowFreeFor` before minting. Test: api-server `[EMRV1]`.
+- Access requests: `accessState.update` is a compare-and-set on the pending state (`write` takes
+  `ifEquals`, retried while a poll changes the entry), refusing a decided state with a `decided`
+  rejection that carries it; the route answers it (`answerDecided`), before any check when the
+  stored state is already terminal. Keys are `randomBytes(24)` in base64url. Tests: api-server
+  `[RAD71]`..`[RAD73]`, `[RAKL1]` (`[RA01]` expects 32 characters).
+- `invitationCheckBudget.ts`: per-address fixed-window counter on `cluster_kv` (hashed
+  `addressBucket`), compare-and-set, fails open when the store cannot answer. Test: api-server
+  `[IVCK1]`.
+- OAuth2: `PKCE_VERIFIER_RE` checked before the code is consumed, `PKCE_S256_CHALLENGE_RE` at
+  authorize. Test fixtures use RFC 7636 sized verifiers and challenges. Tests: oauth2 `[PKCV1]`,
+  `[PKCF1]`.
+- `Platform.isUsernameReserved` (new names) adds the alias shape `^r-[a-z0-9]{8}$` and `^..--` to
+  the reserved-list check, which is public as `isUsernameInReservedList` (used alone by restore).
+  Tests: api-server `[RSVN1]`, `[RSVN2]`.
+- Delegated accounts: `assertDelegatedUsernameAllowed` (registration pattern, `isUsernameReserved`)
+  in `delegations.createAccount` and in `provisionAccount` before the `user-core` claim; new id
+  `delegation-invalid-username`, mapped from a peer answer by `mapCreateFailure`. Tests: api-server
+  `[DLGU1]`, `[DLGU2]`.
+- `UsersRepository#bindAlias` claims the alias's `user-core` row with `setUserCoreIfNotExists`
+  before indexing it; on a lost claim the alias unique row is released, `mintAlias` tries another
+  alias and `reserveSpecificAlias` answers false. Tests: api-server `[BXAL1]`..`[BXAL3]`.
+- Admin routes: invitation `count` bounded (`MAX_INVITATIONS_PER_CALL` 1000), rename target
+  checked with `getCoreInfo`, `/system/users/validate` step 5 uses `setUserCoreIfNotExists`,
+  `PUT /system/users` checks owners then writes unique rows with `setUserUniqueFieldIfNotExists`.
+  Tests: api-server `[ADIV1]`, `[ADRN1]`, `[SYUU1]`, `[SYUU2]`.
+- `config-validation.js` `collectWarnings`: `revocationLagWarnings` above 300 s. Tests: api-server
+  `[CVRL1]`, `[CVRL2]`.
+- `RestoreOrchestrator`: `assertRestorableUsernames` (safe segment + reserved list) over manifest
+  usernames, platform row owners and server mappings; `_restorePlatform` split into `_readPlatform`
+  (read + check, before users) and `_writePlatform` (after them); conflicts carry a `kind`, and
+  `restoreUser` refuses `username-taken` whatever `overwrite`. Tests: business `[BKRN1]`,
+  `[BKRP1]`, `[RSOW1]`.
+
 ## Hardening batch: query semantics, client-keyed maps, credentials, storage statements
 
 - `streamsQueryUtils.expandAndTransformStreamQuery` returns no query when an `all` entry expands to

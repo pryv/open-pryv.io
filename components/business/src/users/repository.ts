@@ -138,7 +138,8 @@ class UsersRepository {
    *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
    *  2. local alias index — on-core alias→userId resolution (`getUserId`);
    *  3. name→core mapping (multi-core only) — so `alias.domain` routes to the
-   *     owning core exactly like the username does.
+   *     owning core exactly like the username does; claimed, never
+   *     overwritten (see `#bindAlias`).
    * Generates an `r-` prefixed alias and retries on collision.
    * @returns the reserved alias string.
    */
@@ -149,7 +150,7 @@ class UsersRepository {
       const alias = generateRandomAlias();
       const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias);
       if (!reserved) { continue; } // collision — try another
-      await this.#bindAlias(alias, ownerUserId, coreId);
+      if (!await this.#bindAlias(alias, ownerUserId, coreId)) { continue; } // the name routes elsewhere — try another
       return alias;
     }
     throw errors.unexpectedError(new Error('Could not allocate a unique alias after ' + MAX_TRIES + ' attempts.'));
@@ -158,14 +159,14 @@ class UsersRepository {
   /**
    * Reserve a SPECIFIC alias value (used by the change-username flow to keep
    * the superseded username routable). Returns true if reserved, false if the
-   * value is already taken by another user.
+   * value is already taken by another user (an alias, or a name another core
+   * hosts).
    */
   async reserveSpecificAlias (ownerUsername: string, ownerUserId: string, aliasValue: string): Promise<boolean> {
     const coreId = await this.#aliasOwnerCoreId(ownerUsername);
     const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', aliasValue);
     if (!reserved) { return false; }
-    await this.#bindAlias(aliasValue, ownerUserId, coreId);
-    return true;
+    return await this.#bindAlias(aliasValue, ownerUserId, coreId);
   }
 
   async #aliasOwnerCoreId (ownerUsername: string): Promise<string | null> {
@@ -173,9 +174,20 @@ class UsersRepository {
     return await this.platform.getUserCore(ownerUsername);
   }
 
-  async #bindAlias (alias: string, ownerUserId: string, coreId: string | null): Promise<void> {
+  /**
+   * Bind a reserved alias: claim its name -> core mapping (multi-core), then
+   * index it locally. The claim never overwrites a mapping held for another
+   * core (a username or alias there): the alias reservation is then given
+   * back and false answered, with nothing bound. A mapping already pointing
+   * here (a former username of this account) is confirmed.
+   */
+  async #bindAlias (alias: string, ownerUserId: string, coreId: string | null): Promise<boolean> {
+    if (coreId != null && !await this.platform.setUserCoreIfNotExists(alias, coreId)) {
+      await this.platform.deleteUserUniqueField('alias', alias);
+      return false;
+    }
     await this.usersIndex.addAlias(alias, ownerUserId);
-    if (coreId != null) { await this.platform.setUserCore(alias, coreId); }
+    return true;
   }
 
   /**

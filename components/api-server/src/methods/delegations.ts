@@ -32,7 +32,7 @@ const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('pl
 const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
-const { buildSystemCreateAccountDeps } = require('./helpers/delegationAccounts.ts');
+const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
@@ -625,6 +625,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
     commonFns.requirePersonalAccess,
     async function (context: MethodContext, params: { username?: string; email?: string; password?: string; core?: string; language?: string }, result: Record<string, unknown>, next: MethodNext) {
       try {
+        // The registration rules, checked here before the target core is
+        // called (and again by the core that creates the account).
+        const requested = String(params.username || '').trim();
+        if (requested !== '') await assertDelegatedUsernameAllowed(requested);
         const self = await selfIdentity(context.user.username);
         const deps = {
           mall, now: nowSeconds, idGen: newRelId, self,

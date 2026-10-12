@@ -654,6 +654,32 @@ function collectWarnings (config) {
   warnings.push(...describeHostedSites(hostedSitesInputFromConfig(config)).warnings);
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
+  warnings.push(...revocationLagWarnings(config));
+  return warnings;
+}
+
+/** Above this, a revocation-lag setting gets a boot warning. */
+const REVOCATION_LAG_WARN_SECONDS = 300;
+
+/**
+ * The settings that bound how long a revoked or narrowed access keeps
+ * working where no invalidation message arrives: the open-socket
+ * re-validation interval and the access cache lifetime. Accepted at any
+ * value; above five minutes the operator is told what it costs.
+ */
+function revocationLagWarnings (config) {
+  const warnings = [];
+  const knobs = [
+    ['oauth:clientRevokeCheckSeconds', 'open sockets keep a revoked or narrowed access'],
+    ['caching:accessMaxAgeSeconds', 'a worker that missed an invalidation keeps serving a revoked or narrowed access']
+  ];
+  for (const [key, effect] of knobs) {
+    const value = Number(config.get(key));
+    if (Number.isFinite(value) && value > REVOCATION_LAG_WARN_SECONDS) {
+      warnings.push(`'${key.replace(':', '.')}' is ${value} s: ${effect} for up to that long. ` +
+        `Values above ${REVOCATION_LAG_WARN_SECONDS} s are not recommended.`);
+    }
+  }
   return warnings;
 }
 

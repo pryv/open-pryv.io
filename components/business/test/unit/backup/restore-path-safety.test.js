@@ -85,7 +85,27 @@ function makeOrchestrator () {
   o.auditStorage = null;
   o.seriesConnection = null;
   o.platformDB = null;
+  o.isReservedUsername = (name) => RESERVED_FOR_TESTS.has(name.toLowerCase());
   return { o, writes };
+}
+
+// Stands in for the platform's reserved list in these tests.
+const RESERVED_FOR_TESTS = new Set(['access', 'pryvsupport']);
+
+function makeReaderWithPlatform (users, { platformRows = [], serverMappings = [] } = {}) {
+  return {
+    ...makeReader(users),
+    async * readPlatformData () { for (const row of platformRows) yield row; },
+    async * readServerMappings () { for (const m of serverMappings) yield m; }
+  };
+}
+
+// A platform store with one available core, recording its writes.
+function recordingPlatformDB (writes) {
+  return {
+    async importAll (rows) { writes.push('platform.importAll:' + rows.length); },
+    async getAllCoreInfos () { return [{ id: 'core-one', available: true }]; }
+  };
 }
 
 describe('[BKRS] restore from a backup that names unsafe locations', function () {
@@ -150,6 +170,54 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       const { o: o2 } = makeOrchestrator();
       const report2 = await o2.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true, remapUserId: 'remapped_id' });
       assert.deepStrictEqual(report2.restored, [{ userId: 'remapped_id', username: 'validname' }]);
+    });
+  });
+
+  describe('[BKRV] usernames named by the platform part of a backup', function () {
+    it('[BKRN1] a manifest username this platform reserves is refused before anything is written', async function () {
+      const { o, writes } = makeOrchestrator();
+      const users = [{ userId: CUID1_ID, username: 'firstuser' }, { userId: CUID2_ID, username: 'access' }];
+      await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }), /invalid or reserved username: "access"/);
+      await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }), /invalid or reserved username/);
+      assert.deepStrictEqual(writes, []);
+    });
+
+    it('[BKRP1] a platform row or a server mapping naming an invalid or reserved username refuses the restore before any user is written', async function () {
+      const users = [{ userId: CUID1_ID, username: 'firstuser' }];
+      const goodRow = { username: 'firstuser', field: 'email', value: 'first@example.com', isUnique: true };
+      const cases = [
+        { platformRows: [goodRow, { username: 'bad.name', field: 'email', value: 'x@example.com', isUnique: true }] },
+        { platformRows: [goodRow, { username: 'PryvSupport', field: 'language', value: 'en', isUnique: false }] },
+        { platformRows: [goodRow, { key: 'user-unique/email/y@example.com', value: '../escape' }] },
+        { platformRows: [goodRow, { field: 'email', value: 'z@example.com', isUnique: true }] },
+        { platformRows: [goodRow], serverMappings: [{ username: 'firstuser' }, { username: 'access' }] },
+        { platformRows: [goodRow], serverMappings: [{ username: 'first/user' }] }
+      ];
+      for (const backup of cases) {
+        const { o, writes } = makeOrchestrator();
+        o.platformDB = recordingPlatformDB(writes);
+        await assert.rejects(() => o.restoreAllUsers(makeReaderWithPlatform(users, backup)), /invalid or reserved username/, JSON.stringify(backup));
+        assert.deepStrictEqual(writes, [], JSON.stringify(backup));
+      }
+      // control: valid rows are restored after the users
+      const { o, writes } = makeOrchestrator();
+      o.platformDB = recordingPlatformDB(writes);
+      await o.restoreAllUsers(makeReaderWithPlatform(users, { platformRows: [goodRow, { key: 'user-indexed/language/firstuser', value: 'en' }] }));
+      assert.strictEqual(writes[writes.length - 1], 'platform.importAll:2');
+      assert.ok(writes.indexOf('usersIndex.addUser') < writes.indexOf('platform.importAll:2'));
+    });
+
+    it('[RSOW1] a single-user restore never overwrites an account that now holds the username, even with overwrite', async function () {
+      const { o, writes } = makeOrchestrator();
+      o.usersLocalIndex.getUserId = async () => 'another-account-id';
+      await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true }),
+        /already exists with userId "another-account-id".*Nothing was restored/);
+      assert.deepStrictEqual(writes, []);
+      // the same account restored over itself still is
+      const { o: same, writes: sameWrites } = makeOrchestrator();
+      same.usersLocalIndex.getUserId = async () => CUID2_ID;
+      await same.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true });
+      assert.ok(sameWrites.includes('usersIndex.addUser'));
     });
   });
 

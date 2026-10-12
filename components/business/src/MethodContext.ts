@@ -259,11 +259,14 @@ class MethodContext {
       // whose client was revoked, even before the token expires. Same choke
       // point as DPoP so it covers every transport.
       await this.checkClientNotRevoked();
-      // Check if the session is valid; touch it.
+      // Check if the session is valid.
       await this.checkSessionValid(storage);
       // Perform the custom auth step.
       const customAuthStep = this.customAuthStepFn;
       if (customAuthStep != null) { await this.performCustomAuthStep(customAuthStep); }
+      // Keep the session alive only once every check passed: a call the
+      // custom auth step refuses does not extend it.
+      this.touchSession(storage);
       // those 2 last are executed in callbatch for each call.
       // Load the streams we can access (once per access object: a cached
       // access shares its first load with every later request).
@@ -539,7 +542,8 @@ class MethodContext {
   }
 
   /**
-   * Loads session and touches it (personal sessions only)
+   * Loads the session and checks it belongs to this account (personal
+   * sessions only). Does not touch it: see `touchSession`.
    */
   async checkSessionValid (storage: StorageLike) { // storage layer
     const access = this.access;
@@ -573,8 +577,16 @@ class MethodContext {
         throw errors.invalidAccessToken('Access session does not belong to this account.', 403);
       }
     }
-    // Keep the session alive (don't await, see below)
-    storage.sessions.touch(token, () => null);
+  }
+
+  /**
+   * Keeps the session of a personal access alive (not awaited). Called once
+   * the access passed every check, the custom auth step included.
+   */
+  touchSession (storage: StorageLike) {
+    const access = this.access;
+    if (access == null || access.type !== ACCESS_TYPE_PERSONAL) { return; }
+    storage.sessions.touch(access.token, () => null);
   }
 
   /**

@@ -325,7 +325,7 @@ function normalizeMfaConfig (raw: RawMfaConfig | null | undefined): NormalizedMf
  * `SingleService` through the `MfaMethod` contract, and checks the SMS send
  * limits (`smsSendLimits.ts`) before every send.
  */
-type SendLimiterLike = { reserve: (send: { sessionId: string; username: string; destination: string }) => Promise<void> };
+type SendLimiterLike = { reserve: (send: { sessionId: string; userId: string; destination: string }) => Promise<void> };
 
 class SmsMethod implements MfaMethod {
   readonly name = 'sms';
@@ -365,7 +365,13 @@ class SmsMethod implements MfaMethod {
       throw new Error('SMS MFA challenge without an MFA session');
     }
     const content = (profile as unknown as { content?: Record<string, unknown> }).content;
-    if (this.limiter != null) await this.limiter.reserve({ sessionId, username, destination: smsDestination(content) });
+    if (this.limiter != null) {
+      const userId = clientRequest?.userId;
+      if (typeof userId !== 'string' || userId === '') {
+        throw new Error('SMS MFA challenge without the account\'s user id');
+      }
+      await this.limiter.reserve({ sessionId, userId, destination: smsDestination(content) });
+    }
     await this.service.challenge(username, profile, { headers: {}, body: {}, sessionId });
     return {};
   }

@@ -237,6 +237,48 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
       'no mirror written for the failed create');
   });
 
+  it('[DLGU1] a username the registration refuses is refused: 400 for its form, 409 for a reserved name, nothing created', async function () {
+    const create = (username) => coreRequest.post(parent.delegationsPath + '/controlled')
+      .set('Authorization', parent.token).send({ username });
+    const suffix = cuid().slice(-6);
+    const malformed = ['Kid-Upper' + suffix, 'kid.dotted' + suffix, 'kid_under' + suffix, 'abc', 'k'.repeat(61), '-kid' + suffix];
+    const reserved = ['admin', 'support', 'pryvkid' + suffix, 'xn--kid' + suffix, 'ab--' + suffix, 'r-' + suffix + 'ab'];
+    for (const username of malformed) {
+      const res = await create(username);
+      assert.strictEqual(res.status, 400, username + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'delegation-invalid-username', username);
+    }
+    for (const username of reserved) {
+      const res = await create(username);
+      assert.strictEqual(res.status, 409, username + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'delegation-username-taken', username);
+    }
+    for (const username of [...malformed, ...reserved.slice(2)]) {
+      assert.ok(await usersRepository.getUserIdForUsername(username) == null, username + ' was not created');
+    }
+    const aList = await coreRequest.get(parent.delegationsPath + '/controlled').set('Authorization', parent.token);
+    for (const username of [...malformed, ...reserved]) {
+      assert.strictEqual((aList.body.controlled || []).some((c) => c.controlled.username === username), false, 'no mirror for ' + username);
+    }
+  });
+
+  it('[DLGU2] the core that creates the account applies the same rules before claiming anything', async function () {
+    const { buildSystemCreateAccountDeps } = require('api-server/src/methods/helpers/delegationAccounts.ts');
+    const { platform } = require('platform');
+    const deps = await buildSystemCreateAccountDeps();
+    const suffix = cuid().slice(-6);
+    const cases = [['Peer.Upper' + suffix, 'delegation-invalid-username'], ['xn--peer' + suffix, 'delegation-username-taken']];
+    for (const [username, id] of cases) {
+      try {
+        await assert.rejects(deps.provisionAccount({ username }), (err) => err.id === id, username);
+        assert.ok(await platform.getUserCore(username) == null, username + ': no name claimed');
+      } finally {
+        const created = await usersRepository.getUserIdForUsername(username);
+        if (created != null) await usersRepository.deleteOne(created, username);
+      }
+    }
+  });
+
   it('[DCRE-08] an unknown target core is rejected up-front', async function () {
     const res = await coreRequest.post(parent.delegationsPath + '/controlled')
       .set('Authorization', parent.token)

@@ -120,12 +120,38 @@ describe('[MCTX] MethodContext', () => {
     it('[MCSV3] accepts a session bound by user id only', async () => {
       const storage = storageWith({ userId });
       await mc.checkSessionValid(storage);
-      assert.strictEqual(storage.sessions.touch.callCount, 1);
     });
     it('[MCSV4] accepts a session bound by this username only', async () => {
       const storage = storageWith({ username });
       await mc.checkSessionValid(storage);
-      assert.strictEqual(storage.sessions.touch.callCount, 1);
+    });
+  });
+
+  describe('[MCTS] session touch', () => {
+    const username = 'mcts-user';
+    const userId = 'mcts-user-id';
+    function personalContext (customAuthStep) {
+      const mc = new MethodContext(contextSource, username, 'TOKEN', customAuthStep);
+      mc.user = { id: userId, username };
+      mc.access = { id: 'mcts-access', token: 'TOKEN', type: 'personal', isPersonal: () => true };
+      return mc;
+    }
+    function storageWithSession () {
+      return { sessions: { get: sinon.fake.yields(null, { userId }), touch: sinon.fake() } };
+    }
+    it('[MCTS1] a call the custom auth step refuses does not extend the session', async () => {
+      const mc = personalContext((context, cb) => cb(new Error('refused by policy')));
+      const storage = storageWithSession();
+      await assert.rejects(mc.retrieveExpandedAccess(storage), (err) => err.id === 'invalid-access-token');
+      assert.strictEqual(storage.sessions.touch.callCount, 0);
+    });
+    it('[MCTS2] an accepted call extends the session once, after the custom auth step', async () => {
+      const order = [];
+      const mc = personalContext((context, cb) => { order.push('custom'); cb(); });
+      const storage = storageWithSession();
+      storage.sessions.touch = sinon.fake(() => order.push('touch'));
+      await mc.retrieveExpandedAccess(storage);
+      assert.deepStrictEqual(order, ['custom', 'touch']);
     });
   });
 

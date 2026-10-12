@@ -234,6 +234,10 @@ function mapCreateFailure (peer: PeerResult): DelegationError {
     return delegationError(DelegationErrorIds.USERNAME_TAKEN,
       'The requested username is already taken', 409);
   }
+  if (bodyId === DelegationErrorIds.INVALID_USERNAME) {
+    return delegationError(DelegationErrorIds.INVALID_USERNAME,
+      'The requested username does not follow the registration rules', 400);
+  }
   if (bodyId === DelegationErrorIds.UNKNOWN_CORE) {
     return delegationError(DelegationErrorIds.UNKNOWN_CORE,
       'The target core is unknown to this platform', 400);

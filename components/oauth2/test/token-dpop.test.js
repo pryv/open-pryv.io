@@ -116,7 +116,7 @@ function tokenReq (body, dpopProof) {
   };
 }
 
-const VERIFIER = 'verifier-1234567890-abcdefg-hijklmnop';
+const VERIFIER = 'verifier-1234567890-abcdefg-hijklmnop-qrstuv';
 function challenge (verifier) {
   return crypto.createHash('sha256').update(verifier).digest('base64')
     .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');

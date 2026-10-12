@@ -401,7 +401,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // sent for this session. Nothing of the activate body is passed.
         let challengeExtra: Record<string, unknown>;
         try {
-          challengeExtra = await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: token });
+          challengeExtra = await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: token, userId: userKey });
         } catch (err) {
           await store.giveBackEnrolSlot(userKey, token, previous);
           await store.clear(token);
@@ -494,7 +494,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const backoffErr = await mfaBackoffError(user, cfg.attempts);
         if (backoffErr) return next(backoffErr);
         // Nothing of the request body is passed: a challenge needs none of it.
-        const extra = await method.challenge(user.username, session.profile, { headers: {}, body: {}, sessionId: params.mfaToken });
+        const extra = await method.challenge(user.username, session.profile, { headers: {}, body: {}, sessionId: params.mfaToken, userId: String(user.id) });
         result.message = 'Please verify the MFA challenge.';
         Object.assign(result, extra); // { method } for totp, so clients render the right prompt
         next();

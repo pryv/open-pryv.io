@@ -38,6 +38,9 @@ const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 
+/** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
+const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
+
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ParsedScope } from '../scopeRegistry.ts';
@@ -99,6 +102,11 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
     if (q.code_challenge_method !== 'S256') {
       return redirectError('invalid_request', 'PKCE code_challenge_method must be S256');
+    }
+    // An S256 challenge is the base64url SHA-256 of the verifier, unpadded:
+    // exactly 43 characters (RFC 7636 §4.2).
+    if (!PKCE_S256_CHALLENGE_RE.test(String(q.code_challenge))) {
+      return redirectError('invalid_request', 'PKCE code_challenge must be 43 base64url characters (S256)');
     }
     if (!isNonEmptyString(q.state)) {
       return redirectError('invalid_request', 'state parameter is required (CSRF defense)');

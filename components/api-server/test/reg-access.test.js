@@ -33,9 +33,22 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(res.status, 201);
       assert.strictEqual(res.body.status, 'NEED_SIGNIN');
       assert.ok(res.body.key);
-      assert.strictEqual(res.body.key.length, 16);
+      assert.strictEqual(res.body.key.length, 32);
       assert.ok(res.body.poll);
       assert.strictEqual(res.body.poll_rate_ms, 1000);
+    });
+
+    it('[RAKL1] the polling key carries 192 random bits in the base64url alphabet', async () => {
+      const keys = new Set();
+      for (let i = 0; i < 3; i++) {
+        const res = await coreRequest.post('/reg/access')
+          .send({ requestingAppId: 'test-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }] });
+        assert.strictEqual(res.status, 201);
+        assert.match(res.body.key, /^[A-Za-z0-9_-]{32}$/);
+        assert.ok(res.body.poll.endsWith(res.body.key), res.body.poll);
+        keys.add(res.body.key);
+      }
+      assert.strictEqual(keys.size, 3);
     });
 
     it('[RA02] must return 400 for missing requestingAppId', async () => {
@@ -813,6 +826,75 @@ describe('[RGAC] Register access authorization', () => {
       const pollRes = await coreRequest.get('/reg/access/' + key);
       assert.strictEqual(pollRes.status, 403);
       assert.strictEqual(pollRes.body.status, 'REFUSED');
+    });
+  });
+
+  describe('[RAD7] POST /reg/access/:key on a decided request: the first decision wins', () => {
+    async function createKey () {
+      const res = await coreRequest.post('/reg/access')
+        .send({ requestingAppId: 'test-app', requestedPermissions: [{ streamId: 'diary', level: 'read' }] });
+      assert.strictEqual(res.status, 201);
+      return res.body.key;
+    }
+    const accepted = (username, token) => ({ status: 'ACCEPTED', username, token, apiEndpoint: 'https://' + username + '.pryv.me/' });
+    const refused = (message) => ({ status: 'REFUSED', reasonId: 'USER_DENIED', message });
+    const post = (key, body) => coreRequest.post('/reg/access/' + key).send(body);
+    const poll = (key) => coreRequest.get('/reg/access/' + key);
+
+    it('[RAD71] the same decision again answers the stored outcome and writes nothing', async () => {
+      const key = await createKey();
+      assert.strictEqual((await post(key, accepted('firstuser', 'firsttoken'))).status, 200);
+      const again = await post(key, accepted('otheruser', 'othertoken'));
+      assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+      assert.strictEqual(again.body.status, 'ACCEPTED');
+      assert.strictEqual(again.body.username, 'firstuser');
+      assert.strictEqual(again.body.token, 'firsttoken');
+      const polled = await poll(key);
+      assert.strictEqual(polled.body.username, 'firstuser');
+      assert.strictEqual(polled.body.token, 'firsttoken');
+
+      const refusedKey = await createKey();
+      const first = await post(refusedKey, refused('first'));
+      assert.strictEqual(first.status, 403);
+      const second = await post(refusedKey, refused('second'));
+      assert.strictEqual(second.status, first.status);
+      assert.deepStrictEqual(second.body, first.body);
+      assert.strictEqual((await poll(refusedKey)).body.message, 'first');
+    });
+
+    it('[RAD72] a different decision after the first is refused with 409 and leaves the outcome as it was', async () => {
+      const key = await createKey();
+      assert.strictEqual((await post(key, accepted('firstuser', 'firsttoken'))).status, 200);
+      const turned = await post(key, refused('too late'));
+      assert.strictEqual(turned.status, 409, JSON.stringify(turned.body));
+      assert.strictEqual(turned.body.error.id, 'invalid-operation');
+      assert.strictEqual(turned.body.error.data.status, 'ACCEPTED');
+      assert.strictEqual(turned.body.token, undefined, 'the refusal carries no credential');
+      const polled = await poll(key);
+      assert.strictEqual(polled.body.status, 'ACCEPTED');
+      assert.strictEqual(polled.body.token, 'firsttoken');
+
+      const refusedKey = await createKey();
+      assert.strictEqual((await post(refusedKey, refused('no'))).status, 403);
+      const late = await post(refusedKey, accepted('lateuser', 'latetoken'));
+      assert.strictEqual(late.status, 409, JSON.stringify(late.body));
+      const polledRefused = await poll(refusedKey);
+      assert.strictEqual(polledRefused.body.status, 'REFUSED');
+      assert.strictEqual(polledRefused.body.token, undefined);
+    });
+
+    it('[RAD73] of two different decisions posted at once, exactly one is written', async () => {
+      const key = await createKey();
+      const [a, r] = await Promise.all([post(key, accepted('raceuser', 'racetoken')), post(key, refused('race'))]);
+      const statuses = [a.status, r.status];
+      assert.strictEqual(statuses.filter((s) => s === 409).length, 1, JSON.stringify(statuses));
+      const polled = await poll(key);
+      if (a.status === 409) {
+        assert.strictEqual(polled.body.status, 'REFUSED');
+      } else {
+        assert.strictEqual(polled.body.status, 'ACCEPTED');
+        assert.strictEqual(polled.body.token, 'racetoken');
+      }
     });
   });
 

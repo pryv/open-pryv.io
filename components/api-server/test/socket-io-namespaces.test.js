@@ -186,6 +186,51 @@ describe('[SION] socket.io namespaces', function () {
     }
   });
 
+  it('[SNNS1] a two-segment name whose segments differ is refused before any namespace or authentication step exists', async function () {
+    let authSteps = 0;
+    const extract = manager.extractUsername.bind(manager);
+    manager.extractUsername = (name) => { authSteps++; return extract(name); };
+    try {
+      const before = io._nsps.size;
+      const names = ['/someoneelse/' + username, '/' + username + '/someoneelse'];
+      const session = await openRawSession();
+      const sent = await session.send(names.map((n) => '40' + n + ','));
+      assert.strictEqual(sent.status, 200, sent.text);
+      for (const name of names) {
+        await session.waitFor((p) => p.startsWith('44' + name + ','));
+      }
+      assert.strictEqual(io._nsps.size, before, 'no namespace was created');
+      assert.strictEqual(authSteps, 0, 'the authentication step never ran');
+    } finally {
+      manager.extractUsername = extract;
+    }
+  });
+
+  it('[SNAL1] a socket connected by an alias of the account receives the account\'s notifications', async function () {
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    const userId = await usersRepository.getUserIdForUsername(username);
+    const alias = await usersRepository.mintAlias(username, userId);
+    const conn = connectClient('/' + alias);
+    try {
+      await onceEvent(conn, 'connect');
+      const changed = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no eventsChanged on the alias namespace')), 5000);
+        conn.once('eventsChanged', () => { clearTimeout(timer); resolve(); });
+      });
+      const streamId = 'snal-' + cuid.slug();
+      const created = await coreRequest.post(`/${username}/streams`).set('Authorization', personalToken).send({ id: streamId, name: streamId });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      const event = await coreRequest.post(`/${username}/events`).set('Authorization', personalToken)
+        .send({ streamIds: [streamId], type: 'note/txt', content: 'x' });
+      assert.strictEqual(event.status, 201, JSON.stringify(event.body));
+      await changed;
+    } finally {
+      conn.disconnect();
+      await usersRepository.releaseAlias(alias, userId);
+    }
+  });
+
   function emitWithAck (conn, method, params) {
     return new Promise((resolve) => conn.emit(method, params, (err, result) => resolve({ err, result })));
   }

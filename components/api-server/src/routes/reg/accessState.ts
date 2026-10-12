@@ -35,7 +35,8 @@ const require = createRequire(import.meta.url);
 const crypto = require('node:crypto');
 const { addressBucket } = require('middleware/src/clientIp.ts');
 
-const KEY_LENGTH = 16;
+/** Random bytes of a request key: 192 bits, 32 base64url characters. */
+const KEY_BYTES = 24;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
 const NAMESPACE = 'access-request/';
 /** Per-address lists of live requests. Not under NAMESPACE, so they never
@@ -153,26 +154,28 @@ const TRACK_KEYS = process.env.NODE_ENV === 'test';
 const knownKeys = new Set<string>();
 const knownIpRefs = new Set<string>();
 
-async function write (key: string, state: AccessState, expiresAt: number, maxLive?: number): Promise<boolean> {
+async function write (key: string, state: AccessState, expiresAt: number, maxLive?: number, ifEquals?: AccessState): Promise<boolean> {
   // cluster_kv treats a non-positive TTL as "never expires": clamp to 1 ms
   // so an already-past expiry drops the entry instead of pinning it.
   const ttlMs = Math.max(1, expiresAt - Date.now());
-  const opts: { ttlMs: number; ifUnderPrefix?: { prefix: string; max: number } } = { ttlMs };
+  const opts: { ttlMs: number; ifUnderPrefix?: { prefix: string; max: number }; ifEquals?: AccessState } = { ttlMs };
   if (maxLive != null && maxLive > 0) opts.ifUnderPrefix = { prefix: NAMESPACE, max: maxLive };
+  if (ifEquals != null) opts.ifEquals = ifEquals;
   const stored = await getKv().set(NAMESPACE + key, state, opts);
   // A guarded write must say it wrote. Anything else (a refusal, or a client
   // that does not report one) counts as not written, so the ceiling cannot be
-  // lifted by an answer we do not understand.
-  if (opts.ifUnderPrefix != null && stored !== true) return false;
+  // lifted, nor a compare-and-set passed, by an answer we do not understand.
+  if ((opts.ifUnderPrefix != null || opts.ifEquals != null) && stored !== true) return false;
   if (TRACK_KEYS) knownKeys.add(key);
   return true;
 }
 
 /**
- * Generate a random alphanumeric key.
+ * Generate a random key: KEY_BYTES random bytes in base64url (letters,
+ * digits, `-` and `_`).
  */
 function generateKey (): string {
-  return crypto.randomBytes(KEY_LENGTH).toString('base64url').slice(0, KEY_LENGTH);
+  return crypto.randomBytes(KEY_BYTES).toString('base64url');
 }
 
 /**
@@ -442,9 +445,22 @@ function rejection (kind: 'invalid-field' | 'too-large', message: string): Error
   return Object.assign(new Error(message), { accessStateRejection: kind });
 }
 
+/** Thrown by `update` when the request already holds a decision; carries it. */
+function decidedRejection (current: AccessState): Error {
+  return Object.assign(new Error('This access request was already decided.'), { accessStateRejection: 'decided', decidedState: current });
+}
+
+/** How many times `update` re-reads a pending request that changed under it. */
+const UPDATE_TRIES = 5;
+
 /**
  * Update an access request state (accept or refuse). Only
  * `UPDATABLE_FIELDS` are written; anything else in `update` is ignored.
+ *
+ * The first decision wins: the outcome is written only over the pending
+ * request as read (compare-and-set), so a request that holds a decision
+ * (already, or by a concurrent post) is never rewritten; `update` then
+ * throws a 'decided' rejection carrying the stored state.
  */
 async function update (key: string, update: Partial<AccessState>, opts: { maxBytes?: number } = {}): Promise<AccessState | null> {
   for (const field of STRING_UPDATABLE_FIELDS) {
@@ -452,8 +468,20 @@ async function update (key: string, update: Partial<AccessState>, opts: { maxByt
       throw rejection('invalid-field', field + ' must be a string');
     }
   }
-  const stored = await get(key);
-  if (!stored) return null;
+  for (let tries = 0; tries < UPDATE_TRIES; tries++) {
+    const stored = await get(key);
+    if (!stored) return null;
+    if (TERMINAL_STATUSES.includes(stored.status)) throw decidedRejection(stored);
+    const state = await writeOutcome(key, stored, update, opts);
+    // Not written: the request changed since it was read (a poll opened it,
+    // or another post decided it). Read it again.
+    if (state != null) return state;
+  }
+  throw new Error('access request outcome not written: the request kept changing');
+}
+
+/** One compare-and-set attempt of `update` over `stored`; null when the request changed meanwhile. */
+async function writeOutcome (key: string, stored: AccessState, update: Partial<AccessState>, opts: { maxBytes?: number }): Promise<AccessState | null> {
   // Merge into a COPY, so that a refusal below leaves the stored request
   // exactly as it was. The store now detaches what it hands back, so this is
   // defence in depth rather than the only thing standing between a rejected
@@ -478,7 +506,7 @@ async function update (key: string, update: Partial<AccessState>, opts: { maxByt
   // creation would just move the exhaustion one call later. Refusing before
   // the write leaves the stored request exactly as it was.
   assertWithinSize(state, opts.maxBytes);
-  await write(key, state, state.expiresAt);
+  if (!await write(key, state, state.expiresAt, undefined, stored)) return null;
   // A decided request no longer counts toward its creator's budget.
   if (state.ipRef != null && TERMINAL_STATUSES.includes(state.status)) await releaseIpPlace(state.ipRef, key);
   return state;

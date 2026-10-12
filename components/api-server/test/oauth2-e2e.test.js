@@ -508,7 +508,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     });
 
     it('[OE11] wrong PKCE verifier → invalid_grant', async function () {
-      const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() });
+      const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() + '-pkce' });
       assert.equal(r.tokenRes.status, 400);
       assert.equal(r.tokenRes.body.error, 'invalid_grant');
     });
@@ -532,7 +532,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const beforeLive = new Set((before.accesses ?? []).map((a) => a.id));
       const beforeDeleted = new Set((before.accessDeletions ?? []).map((d) => d.id));
 
-      const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() });
+      const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() + '-pkce' });
       assert.equal(r.tokenRes.status, 400);
       assert.equal(r.tokenRes.body.error, 'invalid_grant');
 

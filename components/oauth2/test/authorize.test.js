@@ -83,7 +83,7 @@ const VALID_QUERY = {
   redirect_uri: 'https://app.example/cb',
   response_type: 'code',
   state: 'csrf-abc',
-  code_challenge: 'cc-base64url-string',
+  code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
   code_challenge_method: 'S256',
   scope: 'cmc:study-A',
 };
@@ -222,6 +222,18 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       const res = fakeRes();
       await handler(fakeReq({ ...VALID_QUERY, code_challenge_method: 'plain' }), res);
       assert.match(res.headers.location, /error=invalid_request/);
+    });
+    it('[PKCF1] a code_challenge that is not 43 base64url characters → invalid_request', async () => {
+      const platform = fakePlatform({ myapp: VALID_CLIENT });
+      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const valid = VALID_QUERY.code_challenge;
+      for (const bad of ['cc-base64url-string', valid.slice(0, 42), valid + 'A', valid.slice(0, 42) + '=', valid.slice(0, 42) + '+', valid.slice(0, 42) + '.']) {
+        const res = fakeRes();
+        await handler(fakeReq({ ...VALID_QUERY, code_challenge: bad }), res);
+        assert.equal(res.statusCode, 302, bad);
+        assert.match(res.headers.location, /error=invalid_request/, bad);
+        assert.match(res.headers.location, /code_challenge/, bad);
+      }
     });
     it('[OA-E4] missing state → invalid_request', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });

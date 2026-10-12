@@ -425,7 +425,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // None of the login parameters is passed: the password never reaches
       // the MFA method layer. A failed challenge leaves no pending session.
       try {
-        await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: mfaToken });
+        await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: mfaToken, userId: String(context.user.id) });
       } catch (err) {
         await store.clear(mfaToken);
         throw err;

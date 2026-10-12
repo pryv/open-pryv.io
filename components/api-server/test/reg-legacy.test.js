@@ -194,6 +194,18 @@ describe('[RGLG] Legacy register routes + invitations', () => {
       assert.strictEqual(checkRes.text, 'true');
     });
 
+    it('[ADIV1] count must be an integer from 1 to 1000', async () => {
+      for (const count of ['1001', '0', '-5', 'abc', '2.5']) {
+        const res = await coreRequest.get('/reg/admin/invitations/post?count=' + count)
+          .set('Authorization', adminAccessKey);
+        assert.strictEqual(res.status, 400, count + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters-format', count);
+      }
+      const res = await coreRequest.get('/reg/admin/invitations/post').set('Authorization', adminAccessKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.data.length, 1, 'one token when count is absent');
+    });
+
     it('[LG44] must reject without admin auth', async () => {
       const res = await coreRequest.get('/reg/admin/invitations/post?count=1');
       assert.strictEqual(res.status, 404);
