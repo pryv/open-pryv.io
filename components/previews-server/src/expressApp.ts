@@ -21,6 +21,7 @@ export default function expressApp (commonHeadersMiddleware: RequestHandler, err
   const app = express();
   configureTrustedProxies(getConfigSync().get('http:trustedProxies'));
   app.set('trust proxy', expressTrustProxy);
+  app.set('query parser', middleware.queryParser);
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.
    **/

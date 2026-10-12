@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Requests
+
+- Query strings are parsed without letting a key shadow a built-in object property: parameters
+  such as `?hasOwnProperty=...`, `?toString=...` or `a[constructor]=...` are now ignored (API,
+  HF and previews servers). The bracket syntax (`streams[]=a&streams[]=b`) and repeated keys
+  work as before.
+
 ### Operators
 
 - `bin/check-config.js` now reads configuration keys set as environment variables
