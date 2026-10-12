@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Account
+
+- An account created without an email (e.g. by its delegate) that is then given one with
+  `account.update` (or `emails.setPrimary`) now stores it as its primary email. The address was
+  reserved on the platform but never stored, so the account showed no email, a password reset had
+  no recipient, and deleting the account kept the address reserved. Accounts already in that state:
+  set the email again. The platform integrity check now reports such an account as "email rows but
+  no primary email" instead of an unknown account.
+
 ### Requests
 
 - Query strings are parsed without letting a key shadow a built-in object property: parameters

@@ -159,7 +159,19 @@ export default async function platformCheckIntegrity (
     for (const field of indexedFields) {
       const valueRepo = userRepo[field];
 
-      if (valueRepo == null) continue; // we do not expect to find null values in repo
+      if (valueRepo == null) {
+        // Email rows of an account with no primary email: the account is out
+        // of sync (its primary should be set), and the rows are checked
+        // against its email records rather than reported as an unknown user.
+        const emailRows = field === EMAIL_FIELD ? platformEntryByUser[usernameKey]?.[field] : null;
+        if (emailRows != null && emailRows.length > 0) {
+          errors.push(`Account of "${username}" has email rows in the platform db but no primary email in the Repository`);
+          await crossCheckEmailRows(userRepo.id, username, emailRows, null);
+          delete platformEntryByUser[usernameKey][field];
+          if (Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
+        }
+        continue; // no other null value is expected in the repository
+      }
 
       const isUnique = accountStreams.uniqueFieldNames.includes(field);
       // Unique fields are stored hashed (key + value); indexed fields are
@@ -248,7 +260,7 @@ export default async function platformCheckIntegrity (
         errors.push(`Found data for user with username "${usernameKey}" in the platform db but cannot find this user in the Repository (System Streams)`);
       }
     } else {
-      errors.push(`Found data for user with hashed-username token "${usernameKey}" in the platform db but no matching user was found in the Repository pass above (hashed mode — cannot reverse the token)`);
+      errors.push(`Found data for user with hashed-username token "${usernameKey}" in the platform db that no Repository account accounts for (hashed mode — cannot reverse the token)`);
     }
     for (const field of Object.keys(platformEntryByUser[usernameKey])) {
       for (const leftover of platformEntryByUser[usernameKey][field]) {

@@ -628,7 +628,13 @@ class UsersRepository {
           modified: modifiedTime,
           modifiedBy: accessId
         };
-        await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null, mallTransaction);
+        const updated = await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null, mallTransaction);
+        // A field the account never had (created without it, e.g. no email):
+        // nothing to update, so write it.
+        if ((updated == null || updated.length === 0) && content != null &&
+            accountStreams.accountLeavesMap[accountStreams.toStreamId(streamIdWithoutPrefix)] != null) {
+          await this.userAccountStorage.setAccountField(user.id, streamIdWithoutPrefix, content, accessId, modifiedTime);
+        }
       }
     });
   }

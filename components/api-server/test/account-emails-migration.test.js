@@ -160,5 +160,35 @@ describe('[EMLM] account emails — migration / compat', function () {
       assert.ok(await operations.verifyToken(u.userId, token, u.username));
       assert.deepStrictEqual(await integrityErrorsFor(u.username), []);
     });
+
+    it('[EMLM15] email rows of an account with no primary email are reported as such, not as an unknown account', async function () {
+      const u = await makeUser(null);
+      const row = cuid() + '@noprimary.example.com';
+      assert.strictEqual(await container.reserveRow(u.username, row), true);
+      try {
+        const platform = await getPlatform();
+        const all = (await platform.checkIntegrity()).errors;
+        const mine = all.filter((e) => e.includes(u.username));
+        assert.ok(mine.some((e) => e.includes('no primary email in the Repository')), JSON.stringify(mine));
+        assert.ok(!all.some((e) => e.includes(platform.hashFor('username', u.username))), 'the account is not reported as unknown: ' + JSON.stringify(all));
+      } finally {
+        await container.releaseRow(u.username, row);
+      }
+    });
+  });
+
+  describe('[EMLM2] account created without an email', function () {
+    it('[EMLM16] account.update sets the primary email: stored, integrity clean, released on deletion', async function () {
+      const u = await makeUser(null);
+      const email = cuid() + '@first.example.com';
+      const res = await coreRequest.put('/' + u.username + '/account').set('Authorization', u.token).send({ email });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const usersRepository = await getUsersRepository();
+      assert.strictEqual(await usersRepository.getOnePropertyValue(u.userId, 'email'), email);
+      assert.deepStrictEqual(await integrityErrorsFor(u.username), []);
+      await usersRepository.deleteOne(u.userId, u.username);
+      const platform = await getPlatform();
+      assert.strictEqual(await platform.getUsersUniqueField('email', email), null, 'the email is free again');
+    });
   });
 });
