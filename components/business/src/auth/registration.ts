@@ -19,7 +19,9 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
 const { foundingVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { User } = require('business/src/users/index.ts');
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, getConfigSync } = require('@pryv/boiler');
+const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
+const { peerUrlProblem, peerFetchOptions, insecurePeerUrlAllowed } = require('platform/src/coreIdentity.ts');
 const { ApiEndpoint } = require('utils');
 const observability = require('business/src/observability/index.ts');
 
@@ -31,7 +33,7 @@ type Platform = {
   coreId: string;
   selectCoreForRegistration: (hosting: unknown) => Promise<string | null>;
   coreIdToUrl: (id: string) => string;
-  validateRegistration: (username: string, invitationToken: unknown, uniqueFields: Record<string, unknown>, hosting: unknown) => Promise<{ redirect?: string; invitationClaimed?: boolean } | undefined>;
+  validateRegistration: (username: string, invitationToken: unknown, uniqueFields: Record<string, unknown>, hosting: unknown, options?: { pinToSelf?: boolean }) => Promise<{ redirect?: string; invitationClaimed?: boolean } | undefined>;
   releaseInvitationToken: (token: string, username: string) => Promise<void>;
 };
 type ServicesSettings = { email?: { enabled?: boolean | { welcome?: boolean; resetPassword?: boolean }; welcomeTemplate?: string; [k: string]: unknown }; [k: string]: unknown };
@@ -150,28 +152,29 @@ class Registration {
   async forwardIfCrossCore (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
+      // Forwarded here by another core: create the account here, never forward again.
+      if (context.registrationForwardedFrom != null) return next();
       const selectedCoreId = await this.platform.selectCoreForRegistration(params.hosting);
       if (selectedCoreId == null || selectedCoreId === this.platform.coreId) {
         return next();
       }
       const targetUrl = this.platform.coreIdToUrl(selectedCoreId);
-      // 30 s timeout: a hung target must not wedge the landing worker.
-      // 30 s matches Node fetch's default connect timeout + leaves headroom
-      // for password-hashing cost on the target.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
-      let response;
-      try {
-        // targetUrl is slash-terminated (Platform.coreIdToUrl convention).
-        response = await fetch(targetUrl + 'users', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(params),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timer);
-      }
+      const config = getConfigSync();
+      const urlProblem = peerUrlProblem(targetUrl, { allowInsecure: insecurePeerUrlAllowed(config) });
+      if (urlProblem != null) throw new Error('Cross-core registration forward refused: ' + urlProblem);
+      // The target checks this signature, then records the client address the
+      // landing core saw and creates the account itself.
+      const forwardedBody = JSON.stringify(params);
+      const client = String((context.source as { ip?: string } | undefined)?.ip ?? '');
+      const forward = signRegistrationForward(String(config.get('auth:adminAccessKey')), this.platform.coreId, client, forwardedBody);
+      // 30 s timeout: a hung target must not wedge the landing worker (leaves
+      // headroom for password-hashing cost on the target); redirects refused.
+      // targetUrl is slash-terminated (Platform.coreIdToUrl convention).
+      const response = await fetch(targetUrl + 'users', peerFetchOptions({
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [REGISTRATION_FORWARD_HEADER]: forward },
+        body: forwardedBody
+      }, 30000));
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         const err: ApiError = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
@@ -212,7 +215,9 @@ class Registration {
         context.newUser.username,
         context.newUser.invitationToken,
         uniqueFields,
-        params.hosting
+        params.hosting,
+        // Forwarded by another core, which selected this one: create here.
+        { pinToSelf: context.registrationForwardedFrom != null }
       );
       // Multi-core: if registration should happen on another core, return redirect
       if (validation?.redirect) {
