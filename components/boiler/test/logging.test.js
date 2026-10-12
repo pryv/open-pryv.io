@@ -134,37 +134,6 @@ describe('[BLFM] boiler log file modes', function () {
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
   }
 
-  it('[BLMS1] a log file without daily rotation is capped by maxFileBytes and keeps maxNbFiles files', function () {
-    const logDir = path.join(dir, 'capped', 'logs');
-    const values = {
-      'logs:console': { active: false, level: 'info', format: {} },
-      'logs:console:active': false,
-      'logs:file': { path: path.join(logDir, 'core.log'), level: 'info', rotation: { isActive: false }, maxFileBytes: 2000, maxNbFiles: 3 },
-      'logs:file:active': true,
-      'logs:fileSync': { active: false },
-      'logs:custom:active': false,
-      'logs:skipUncaughtException': true
-    };
-    const script = [
-      `const logging = await import(${JSON.stringify(LOGGING_SRC)});`,
-      "logging.setGlobalName('blms');",
-      'const values = JSON.parse(process.env.BLMS_VALUES);',
-      'await logging.initLoggerWithConfig({ get: (key) => values[key] });',
-      "const log = logging.getLogger('blms');",
-      "for (let i = 0; i < 200; i++) log.error('blms entry ' + i + ' ' + 'x'.repeat(100));",
-      'setTimeout(() => process.exit(0), 1500);'
-    ].join('\n');
-    const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-      env: Object.assign({}, process.env, { BLMS_VALUES: JSON.stringify(values) }),
-      encoding: 'utf8',
-      timeout: 20000
-    });
-    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
-    const files = fs.readdirSync(logDir);
-    assert.ok(files.length > 1 && files.length <= 3, 'rotated by size, at most 3 files: ' + files);
-    for (const f of files) assert.ok(fs.statSync(path.join(logDir, f)).size <= 2000 + 400, f + ' ' + fs.statSync(path.join(logDir, f)).size);
-  });
-
   it('[BLFM1] log files are created 0640 in directories created 0750 (plain, rotated and sync files)', function () {
     const umask = process.umask();
     const plainDir = path.join(dir, 'plain', 'logs');

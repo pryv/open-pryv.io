@@ -25,7 +25,7 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   returned every event of `A` when `X` did not exist. The same holds for webhook and socket.io
   notification scopes: a scope whose streams resolve to nothing matches no event (it matched
   every event). A webhook created while its access could read no stream keeps matching no event
-  until the webhook is updated, even if streams are added later.
+  until its `scopes` are set again (`webhooks.update`), even if streams are added later.
 - Stream queries: a store root (`:local:`, `:<store>:`) stands for `*` and follows its rules: it
   can only appear alone in `any` (it was accepted mixed with other ids and in `all` / `not`). A
   stream id with a malformed store prefix (`:abc`, `::x`) is refused with
@@ -215,12 +215,7 @@ of the boot log changes (name and value); new log files are created `0640` in `0
 - Log files (`logs.file`, `logs.fileSync`, the rqlited output file) are created with mode `0640`,
   and their directory, when the core creates it, `0750`; they were created `0644` / `0755` (with
   the usual umask). Existing files and directories keep their modes. A log shipper reading them
-  as another user needs the files' group.
-- `logs.file` without daily rotation (`logs.file.rotation.isActive: false`): the file is capped at
-  `logs.file.maxFileBytes` (default 10 MB) and `logs.file.maxNbFiles` files are kept (default 14);
-  both settings were ignored, so the file grew without bound. `production-config.yml` now sets
-  10 MB (it said 4096 bytes, never applied). Daily rotation, the default, is unchanged.
-- Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
+  as another user needs the files' group.- Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
   once by the previews worker, the others wait; renders were unbounded. See also
   `eventFiles.previewsMaxInputPixels` above.
 - Docker image: `UV_THREADPOOL_SIZE=16` (Node's default is 4). Password hashing, file system

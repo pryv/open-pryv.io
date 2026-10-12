@@ -37,11 +37,7 @@
   `mfa` / `lsc`, route segments, hosted-site names); `isUsernameInReservedList` = that or the word
   list. `RestoreOrchestrator` refuses on the routing check only and logs a warning per restored
   username of the word list (`_warnListedUsernames`). Tests: platform `[PLRR1]`, `[PLRR2]`,
-  business `[BKRN2]`.
-- Boiler logging, `logs.file` without rotation: winston `File` gets `maxsize` / numeric
-  `maxFiles` (it got `maxSize` and `'14d'`, both ignored); defaults 10 MB and 14 files. Test:
-  boiler `[BLMS1]`.
-- Boiler logging: `inspectAndHide` returns a masked copy of an `Error` (`maskError`: message,
+  business `[BKRN2]`.- Boiler logging: `inspectAndHide` returns a masked copy of an `Error` (`maskError`: message,
   stack, enumerable fields, non-enumerable `cause`, nested errors bounded at 5) and turns errors
   nested in objects into plain objects before masking; an `Error` given as the message is printed
   as `Name: message`; `debug()` masks its arguments when the `debug` instance is enabled; more
