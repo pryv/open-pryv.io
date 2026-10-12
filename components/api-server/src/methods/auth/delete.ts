@@ -23,5 +23,6 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.checkIfAuthorized.bind(deletion),
     deletion.validateUserExists.bind(deletion),
     deletion.validateUserFilepaths.bind(deletion),
+    deletion.checkDeletionGuards.bind(deletion),
     ...deletion.erasureSteps());
 };

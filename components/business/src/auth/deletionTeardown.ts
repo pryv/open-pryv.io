@@ -69,5 +69,37 @@ async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLo
   }
 }
 
-export { setDeletionTeardownStep, runDeletionTeardownSteps, trackTeardownDelivery };
+/**
+ * Deletion guards: a plugin may hold a deletion that would leave another
+ * account without any way in (e.g. a controlled account with no email, whose
+ * only access was the deleted delegate). A guard answers what it objects to,
+ * or null; `auth.delete` refuses the account owner's deletion on any
+ * objection (an admin-key deletion goes through, logged).
+ */
+type DeletionObjection = { message: string; data: Record<string, unknown> };
+type DeletionGuard = (account: DeletedAccount) => Promise<DeletionObjection | null>;
+const guards = new Map<string, DeletionGuard>();
+
+function setDeletionGuard (name: string, guard: DeletionGuard): void {
+  guards.set(name, guard);
+}
+
+async function runDeletionGuards (account: DeletedAccount, logger: WarnLogger): Promise<DeletionObjection[]> {
+  const objections: DeletionObjection[] = [];
+  for (const [name, guard] of guards) {
+    try {
+      const objection = await guard(account);
+      if (objection != null) objections.push(objection);
+    } catch (err) {
+      logger.warn('account deletion: guard "' + name + '" failed (not objecting)', {
+        userId: account.id,
+        error: String((err as Error)?.message ?? err),
+      });
+    }
+  }
+  return objections;
+}
+
+export { setDeletionTeardownStep, runDeletionTeardownSteps, trackTeardownDelivery, setDeletionGuard, runDeletionGuards };
+export type { DeletionObjection };
 export type { DeletedAccount, TeardownStep };

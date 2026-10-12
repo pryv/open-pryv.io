@@ -84,6 +84,7 @@ const ALL_METHODS = [
   'delegations.issueToken',
   'delegations.notifyDetach',
   'delegations.releaseControl',
+  'delegations.controlledStatus',
   'system.checkPlatformIntegrity',
   'system.createUser',
   'system.deactivateMfa',

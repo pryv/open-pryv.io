@@ -28,6 +28,18 @@
 - SQLite: `events.get?includeDeletions` applies `limit`, `skip` and `sortAscending` to the deletion
   records, like PostgreSQL (it returned all of them, newest first).
 
+### Account deletion and delegation
+
+- `DELETE /users/:username` with the account's personal token is refused (`invalid-operation`,
+  `data.controlledAccountsWithoutEmail`) while the account is the delegate of an account with no
+  email: an account created by its delegate has no usable password until its owner sets one, so
+  deleting the delegate would leave it with no way in. Setting an email on it (proved or not)
+  lifts the refusal. A deletion with the admin key goes through and is logged.
+- New `POST /{controlled}/delegations/controlled-side/status` (control access only): answers
+  `{ hasEmail }`, so the delegate's core can apply the rule above when the controlled account is
+  on another core. A core that cannot answer (older version, unreachable) does not hold the
+  deletion.
+
 ### Webhooks
 
 - A webhook was called once per API worker for each change (twice with the default

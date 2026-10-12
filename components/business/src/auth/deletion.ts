@@ -7,13 +7,14 @@
 import { createRequire } from 'node:module';
 import type { ConfigLike as Config } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
+import type { DeletionObjection } from './deletionTeardown.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { accountSeriesNamespaces } = require('business/src/series/namespace.ts');
-const { runDeletionTeardownSteps } = require('business/src/auth/deletionTeardown.ts');
+const { runDeletionTeardownSteps, runDeletionGuards } = require('business/src/auth/deletionTeardown.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
@@ -25,6 +26,7 @@ type MethodContext = {
   access?: { id?: string; isPersonal? (): boolean };
   authorizationHeader?: string;
   source?: { ip?: string };
+  deletionByAdmin?: boolean;
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
@@ -54,6 +56,7 @@ class Deletion {
     const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
       if (isAdminKey(context.authorizationHeader, this.config.get('auth:adminAccessKey'))) {
+        context.deletionByAdmin = true;
         return setAdminAuditAccessId(context, params, result, next);
       }
       // Neither the key nor the header: a near-miss key would land in the log.
@@ -110,6 +113,20 @@ class Deletion {
       return next(errors.unexpectedError(error));
     }
     next();
+  }
+
+  // Objections of the plugins (an account that would be left without any way
+  // in): the owner's deletion is refused; an admin-key deletion goes through,
+  // logged, so the operator can act.
+  async checkDeletionGuards (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const objections: DeletionObjection[] = await runDeletionGuards({ id: context.user.id, username: context.user.username }, this.logger);
+    if (objections.length === 0) return next();
+    if (context.deletionByAdmin === true) {
+      for (const o of objections) this.logger.warn('account deletion by the admin key despite: ' + o.message, { userId: context.user.id, ...o.data });
+      return next();
+    }
+    const [first] = objections;
+    return next(errors.invalidOperation(first.message, Object.assign({}, ...objections.map((o) => o.data))));
   }
 
   // Relationships that live on other accounts (delegations, consent grants):
