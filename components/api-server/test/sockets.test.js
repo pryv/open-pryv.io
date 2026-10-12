@@ -660,6 +660,37 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SNAU1] accessUpdated reaches only the sockets of the updated access; the others get accessesChanged', function () {
+      const createApp = (name) => new Promise((resolve, reject) => {
+        superagent.post(server.url + '/' + user.username + '/accesses').set('Authorization', token)
+          .send({ name, type: 'app', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+          .end((err, res) => err ? reject(err) : resolve(res.body.access));
+      });
+      return (async () => {
+        const accA = await createApp('snau-a-' + Date.now());
+        const accB = await createApp('snau-b-' + Date.now());
+        const conA = ioCons.con1 = connect(namespace, { auth: accA.token });
+        const conB = ioCons.con2 = connect(namespace, { auth: accB.token });
+        const conP = ioCons.con3 = connect(namespace, { auth: token });
+        const received = { A: [], B: [], P: [] };
+        let personalCoarse = 0;
+        for (const [k, c] of [['A', conA], ['B', conB], ['P', conP]]) c.on('accessUpdated', (p) => received[k].push(p));
+        conP.on('accessesChanged', () => { personalCoarse++; });
+        await Promise.all([conA, conB, conP].map((c) => new Promise((resolve) => c.once('connect', resolve))));
+        await new Promise((resolve, reject) => {
+          superagent.put(server.url + '/' + user.username + '/accesses/' + accA.id).set('Authorization', token)
+            .send({ name: 'snau-a-renamed-' + Date.now() })
+            .end((err) => err ? reject(err) : resolve());
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        assert.strictEqual(received.A.length, 1, JSON.stringify(received));
+        assert.strictEqual(received.A[0].accessId.split(':')[0], accA.id.split(':')[0]);
+        assert.deepStrictEqual(received.B, []);
+        assert.deepStrictEqual(received.P, []);
+        assert.ok(personalCoarse >= 1, 'the personal socket still gets accessesChanged');
+      })();
+    });
+
     it('[SNAC1] delivers an accesses-kind scope when a matching access is created', function () {
       ioCons.con1 = connect(namespace, { auth: token }); // personal access (required for accesses-kind)
       return new Promise((resolve, reject) => {

@@ -9,6 +9,13 @@
   HF and previews servers). The bracket syntax (`streams[]=a&streams[]=b`) and repeated keys
   work as before.
 
+### Socket.IO
+
+- `accessUpdated` (access id and new serial, after `accesses.update`) is now sent only to the
+  sockets authenticated with the updated access; it was sent to every socket of the account. The
+  other sockets still get `accessesChanged`. lib-js uses `accessUpdated` to refresh the
+  connection's own access info, which is unchanged.
+
 ### Operators
 
 - `bin/check-config.js` now reads configuration keys set as environment variables

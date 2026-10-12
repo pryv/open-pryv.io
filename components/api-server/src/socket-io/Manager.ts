@@ -17,6 +17,7 @@ const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
 const { pubsub } = require('messages');
+const { parseAccessRef } = require('business/src/accesses/refs.ts');
 const notificationEngine = require('business').notificationEngine;
 const { prepareScopeQuery, prepareAccessScopeQuery } = require('../methods/helpers/scopeQueryUtils.ts');
 // socket messages reserved for the scoped-subscription protocol — handled
@@ -252,9 +253,11 @@ class NamespaceContext {
     // streamsChanged listeners called without args today).
     if (payload != null && typeof payload === 'object' && typeof payload.type === 'string') {
       const message = messageMap[payload.type];
-      if (message != null) {
+      if (message === 'accessUpdated') {
+        this.emitAccessUpdated(payload);
+        this.revalidateConnections(); // D10
+      } else if (message != null) {
         this.socketNs.emit(message, payload);
-        if (message === 'accessUpdated') this.revalidateConnections(); // D10
       } else {
         this.logger.debug('Unknown structured payload', payload);
       }
@@ -266,6 +269,23 @@ class NamespaceContext {
       if (message === 'accessesChanged') this.revalidateConnections(); // D10
     } else {
       this.logger.debug('Unknown payload', payload);
+    }
+  }
+
+  // `accessUpdated` names an access and its new serial: only the connections
+  // authenticated with that access receive it (the others get the coarse
+  // `accessesChanged` emitted with it).
+  emitAccessUpdated (payload: PubsubPayload) {
+    let base: string;
+    try {
+      base = parseAccessRef(String((payload as { accessId?: unknown }).accessId)).base;
+    } catch (err) {
+      this.logger.debug('accessUpdated without a valid access id', payload);
+      return;
+    }
+    for (const conn of this.connections.values()) {
+      const accessId = conn.methodContext.access?.id;
+      if (accessId != null && parseAccessRef(accessId).base === base) conn.socket.emit('accessUpdated', payload);
     }
   }
 
