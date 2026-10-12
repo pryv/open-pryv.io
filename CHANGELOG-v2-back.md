@@ -5,8 +5,10 @@
 - Breach-scope access index: a username change moves the account's index rows to the new name
   (`renameAccessIndexOwner`); they stayed under the former name, which a later holder of that name
   would have been resolved to. Account erasure also removes rows under the account's former names.
-  Existing renamed accounts: run `node bin/backfill-access-index.js --resync` once. Tests
-  `[ACCIDX-12]`, `[ACIX06]`.
+  Existing renamed accounts: run `node bin/backfill-access-index.js --resync` once on each core;
+  then `--prune` (counts only) lists rows naming no account (orphan) or a later holder of the name
+  (stale), and `--prune --apply` deletes them (tombstones under `audit.onUserDelete: keep`); run
+  it on every core. Tests `[ACCIDX-12]`, `[ACCIDX-13]`, `[ACIX06]`.
 
 - Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
   rejected async branch is answered 500 (or the connection closed when the answer has started) and

@@ -242,6 +242,48 @@ export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHan
   }
 }
 
+/**
+ * Index rows that name the wrong account (left by a rename or a deletion
+ * before those moved / removed every row):
+ *  - `orphan`: no account on any core holds the stored name;
+ *  - `stale`: the name is held by an account of this core that has no such
+ *    access (a later holder of a former name).
+ * Rows already stripped of their user (tombstones) are never listed.
+ * `userCoreOf(stored)` is the core holding a stored name (null when none);
+ * `ownsAccess(stored, accessId)` answers for names hosted on `coreId`, null
+ * when the name is not one of this core's account names (not judged).
+ */
+export async function findPrunableAccessIndexRows (platform: PlatformIndexHandle, opts: {
+  coreId: string;
+  userCoreOf: (stored: string) => Promise<string | null>;
+  ownsAccess: (stored: string, accessId: string) => Promise<boolean | null>;
+}): Promise<Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }>> {
+  const found: Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }> = [];
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX)) {
+    let entry: AccessIndexEntry;
+    try { entry = JSON.parse(value) as AccessIndexEntry; } catch { continue; }
+    const stored = entry != null && typeof entry === 'object' ? readStoredUser(entry) : null;
+    if (stored == null) continue;
+    const core = await opts.userCoreOf(stored);
+    if (core == null) {
+      found.push({ key, entry, reason: 'orphan' });
+    } else if (core === opts.coreId && (await opts.ownsAccess(stored, entry.accessId)) === false) {
+      found.push({ key, entry, reason: 'stale' });
+    }
+  }
+  return found;
+}
+
+/** Remove a prunable row, or under `audit.onUserDelete: keep` strip its user (tombstone). */
+export async function pruneAccessIndexRow (platform: PlatformIndexHandle, key: string, entry: AccessIndexEntry, keepMode: boolean, ts: number = timestamp.now()): Promise<void> {
+  if (!keepMode) return await platform.deletePlatformKv(key);
+  delete entry.username;
+  delete entry.usernameToken;
+  entry.userDeleted = true;
+  entry.lastModified = ts;
+  await platform.setPlatformKv(key, JSON.stringify(entry));
+}
+
 // --- Non-fatal wrappers for the mutation hooks (R4) --- //
 //
 // The index is a secondary breach-scoping artefact: a PlatformDB write

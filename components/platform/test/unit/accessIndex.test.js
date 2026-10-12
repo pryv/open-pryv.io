@@ -218,6 +218,34 @@ for (const hashed of [false, true]) {
       assert.strictEqual(accessIndex.readStoredUser(await accessIndex.getAccessIndex(platform, 'acc-b1')), storedUser(hasher, 'bob'));
     });
 
+    it('[ACCIDX-13] prune finds rows naming no account (orphan) or the wrong local account (stale), and removes them', async () => {
+      const { platform, hasher } = makePlatform({ hashed });
+      const u = (name) => storedUser(hasher, name);
+      await accessIndex.putAccessIndex(platform, 'gone', accessRow({ id: 'acc-orphan' }));
+      await accessIndex.putAccessIndex(platform, 'reused', accessRow({ id: 'acc-stale' }));
+      await accessIndex.putAccessIndex(platform, 'reused', accessRow({ id: 'acc-own' }));
+      await accessIndex.putAccessIndex(platform, 'remote', accessRow({ id: 'acc-remote' }));
+      await accessIndex.putAccessIndex(platform, 'erased', accessRow({ id: 'acc-tomb' }));
+      await accessIndex.tombstoneAccessIndexForUser(platform, 'erased');
+      const cores = { [u('reused')]: 'c1', [u('remote')]: 'c2' };
+      const opts = {
+        coreId: 'c1',
+        userCoreOf: async (stored) => cores[stored] ?? null,
+        ownsAccess: async (stored, accessId) => stored === u('reused') ? accessId === 'acc-own' : null
+      };
+      const found = await accessIndex.findPrunableAccessIndexRows(platform, opts);
+      assert.deepStrictEqual(found.map((r) => [r.entry.accessId, r.reason]).sort(), [['acc-orphan', 'orphan'], ['acc-stale', 'stale']]);
+
+      const [orphan, stale] = found.sort((a, b) => a.entry.accessId.localeCompare(b.entry.accessId));
+      await accessIndex.pruneAccessIndexRow(platform, orphan.key, orphan.entry, false);
+      assert.strictEqual(await accessIndex.getAccessIndex(platform, 'acc-orphan'), null, 'deleted');
+      await accessIndex.pruneAccessIndexRow(platform, stale.key, stale.entry, true, 1760000000);
+      const tomb = await accessIndex.getAccessIndex(platform, 'acc-stale');
+      assert.strictEqual(accessIndex.readStoredUser(tomb), null, 'keep mode strips the user');
+      assert.strictEqual(tomb.userDeleted, true);
+      assert.deepStrictEqual((await accessIndex.findPrunableAccessIndexRows(platform, opts)), []);
+    });
+
     it('[ACCIDX-11] erasure reads the index in one query, whatever its size (delete and tombstone)', async () => {
       for (const erase of ['delete', 'tombstone']) {
         const { platform, db } = makePlatform({ hashed });
