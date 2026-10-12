@@ -73,11 +73,70 @@ async function contextForAccess (source: MethodContext['source'], username: stri
   return context;
 }
 
+type ScopedWebhook = { id: string; accessId: string; scopes?: StoredScopes | null; update: (u: Record<string, unknown>) => Promise<void>; forApi: () => { id: string } };
+type WebhooksRepositoryLike = {
+  get: (user: { id: string; username: string }, access: { id?: string; isPersonal: () => boolean }) => Promise<ScopedWebhook[]>;
+  _findAccess: (user: { id: string; username: string }, accessId: string) => Promise<{ deleted?: unknown; token?: string } | null>;
+};
+
+// One pass at a time per user; changes during a pass cost one more pass.
+const rescopeInFlight = new Map<string, { again: boolean; running: Promise<void> }>();
+
+/**
+ * Resolve the scopes of a user's webhooks again after its stream tree changed
+ * (a stream created, moved, trashed or deleted): a scope on a stream covers
+ * the children created since. Changed scopes are stored and the running
+ * webhook reloaded. An access that can no longer be used is left alone (its
+ * update or the fire-time check handles it).
+ */
+async function rescopeUserWebhooks (source: MethodContext['source'], user: { id: string; username: string }, repository: WebhooksRepositoryLike, storageLayer: unknown): Promise<void> {
+  const inFlight = rescopeInFlight.get(user.id);
+  if (inFlight != null) { inFlight.again = true; return await inFlight.running; }
+  const entry = { again: false, running: Promise.resolve() };
+  entry.running = (async () => {
+    try {
+      do {
+        entry.again = false;
+        await rescopeUserWebhooksOnce(source, user, repository, storageLayer);
+      } while (entry.again);
+    } finally {
+      rescopeInFlight.delete(user.id);
+    }
+  })();
+  rescopeInFlight.set(user.id, entry);
+  return await entry.running;
+}
+
+async function rescopeUserWebhooksOnce (source: MethodContext['source'], user: { id: string; username: string }, repository: WebhooksRepositoryLike, storageLayer: unknown): Promise<void> {
+  const hooks = (await repository.get(user, { isPersonal: () => true }))
+    .filter((w) => w.scopes != null && Object.values(w.scopes).some((s) => s.kind === 'events' || s.kind === 'streams'));
+  const contexts = new Map<string, MethodContext | null>();
+  for (const hook of hooks) {
+    if (!contexts.has(hook.accessId)) {
+      const access = await repository._findAccess(user, hook.accessId);
+      let ctx: MethodContext | null = null;
+      if (access != null && access.deleted == null && typeof access.token === 'string') {
+        try { ctx = await contextForAccess(source, user.username, access.token, storageLayer); } catch (err) { ctx = null; }
+      }
+      contexts.set(hook.accessId, ctx);
+    }
+    const ctx = contexts.get(hook.accessId);
+    if (ctx == null) continue;
+    const scopes = await reprepareWebhookScopes(ctx, hook.scopes!);
+    if (JSON.stringify(scopes) === JSON.stringify(hook.scopes)) continue;
+    const update: Record<string, unknown> = { scopes };
+    if (Object.keys(scopes).length === 0) update.state = 'inactive';
+    hook.scopes = scopes;
+    await hook.update(update);
+    reloadRunningWebhook(user.username, hook.forApi());
+  }
+}
+
 /** Have the webhooks service drop its running copy of a webhook and load the stored one. */
 function reloadRunningWebhook (username: string, webhook: { id: string }): void {
   pubsub.webhooks.emit(WEBHOOKS_DELETE, { username, webhook: { id: webhook.id } });
   pubsub.webhooks.emit(WEBHOOKS_CREATE, { username, webhook });
 }
 
-export { prepareWebhookScopes, reprepareWebhookScopes, contextForAccess, reloadRunningWebhook };
+export { prepareWebhookScopes, reprepareWebhookScopes, contextForAccess, reloadRunningWebhook, rescopeUserWebhooks };
 export type { StoredScopes };

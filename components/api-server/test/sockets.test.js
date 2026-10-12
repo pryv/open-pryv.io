@@ -725,6 +725,28 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SNSK5] a scope on a stream covers a child stream created after subscribing', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      const childId = 'snsk5-' + Date.now();
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['p']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'p', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('streams.create', { id: childId, name: childId, parentId: inScopeStream }, function (err2) {
+              if (err2) return reject(err2);
+              // the scope is resolved again on the stream change (asynchronously)
+              setTimeout(() => {
+                ioCons.con1.emit('events.create', createParams(childId), function (err3) { if (err3) reject(err3); });
+              }, 300);
+            });
+          });
+        });
+      });
+    });
+
     it('[SNSK4] stops delivering after unsubscribe', function () {
       ioCons.con1 = connect(namespace, { auth: token });
       return new Promise((resolve, reject) => {

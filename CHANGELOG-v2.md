@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Notifications
+
+- Scoped Socket.IO subscriptions and scoped webhooks now cover the streams created (or moved)
+  after they were set: a scope on a stream matches events in a child created later. The scopes are
+  resolved again after each stream change (create, update, trash, delete). An event written in a
+  new child within milliseconds of its creation can still be missed by a socket while it re-resolves.
+
 ### Account
 
 - An account created without an email (e.g. by its delegate) that is then given one with
