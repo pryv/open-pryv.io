@@ -9,9 +9,10 @@
 - `workflow_dispatch` trigger and two jobs that run only then: `docker-build-check` builds the
   stock image natively on amd64 and arm64 (loaded, not pushed), checks that the native modules load
   and hands a marker artifact to `docker-check`, which builds the encryption-at-rest variant for
-  both architectures under QEMU without pushing. No registry login, signature or attestation. Run it
-  after changing the image actions or the Dockerfiles, before a tag (the tag jobs are the only other
-  place these actions run).
+  both architectures (arm64 under QEMU) from the published base, without pushing. No registry login,
+  signature or attestation. Run it after changing the image actions or the Dockerfiles, before a tag
+  (the tag jobs are the only other place the docker and artifact actions run; `scan-action` runs in
+  `sbom` on every push).
 
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 
