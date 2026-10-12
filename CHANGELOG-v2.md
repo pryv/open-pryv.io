@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- `service.assets.definitions` left unset defaulted to `<publicUrl>/www/assets/index.json`, a path
+  the core does not serve (404), which broke lib-js `ServiceAssets` / the login button on fresh
+  installs. The default is now the public Pryv assets
+  (`https://pryv.github.io/assets-pryv.me/index.json`); a configured value is kept. The install
+  wizard asks for it and writes it explicitly.
+- Install wizard, dns-active: the default `auth.trustedApps` now include `https://reg.<domain>` and
+  `https://access.<domain>`; lib-js `Service.login` from Node sends the register URL as `Origin`
+  and was refused on a fresh install.
+
 ## 2.0.0-rc.48 - 2026-10-11
 
 Events the server writes itself now carry `created`, `createdBy`, `modified` and `modifiedBy`

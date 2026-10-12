@@ -178,10 +178,10 @@ On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and
 
 ### Assets
 
-`service.assets.definitions` points to a JSON file describing UI assets (CSS, icons, login button). If not set, it auto-generates `{publicUrl}/www/assets/index.json` — but service-core does **not** serve this path.
+`service.assets.definitions` points to a JSON file describing UI assets (CSS, icons, login button). If not set, it defaults to the public Pryv assets, `https://pryv.github.io/assets-pryv.me/index.json` (the core serves none by default).
 
 Options:
-- Use the public Pryv assets: `https://pryv.github.io/assets-pryv.me/index.json`
+- Keep the public Pryv assets (the default)
 - Host your own and set the URL in config
 - Serve them from the core itself with a hosted site (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)), e.g. a `www` site whose folder holds `assets/index.json`, then set `service.assets.definitions: https://www.<dns.domain>/assets/index.json`
 
