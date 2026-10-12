@@ -339,15 +339,18 @@ function filterByQuery (events: EventLike[], query: EventQuery | null | undefine
     return [];
   }
 
+  // Same bounds as the local store (an account event's end is its time):
+  // `fromTime` and `toTime` inclusive, `modifiedSince` strict. A client paging
+  // with a moving bound reads both stores with the same rules.
   if (query.fromTime != null) {
     events = events.filter((e) => e.time >= query.fromTime!);
   }
   if (query.toTime != null) {
-    events = events.filter((e) => e.time < query.toTime!);
+    events = events.filter((e) => e.time <= query.toTime!);
   }
 
   if (query.modifiedSince != null) {
-    events = events.filter((e) => e.modified >= query.modifiedSince!);
+    events = events.filter((e) => e.modified > query.modifiedSince!);
   }
 
   if (query.content != null || query.clientData != null) {
