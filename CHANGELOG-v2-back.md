@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## Tests: delegation scenarios independent of test order; login failures name their cause
+
+- `components/api-server/test/delegation-detach.test.js` (`[DDET]`) and `delegation-create.test.js`
+  (`[DCRE]`): each scenario step (create, token, genuine login, detach) runs once, from whichever test
+  needs it first, so a filtered run (`--grep`) no longer fails on a test whose prerequisite was
+  filtered out (`[DDET-06]`, `[DCRE-04]`).
+- `test-helpers` `request.login`: a refused login reports the server's error id and message.
+
 ## CI: actions on Node 24, build-only image check on a manual run
 
 - `.github/workflows/ci.yml`: `actions/upload-artifact@v6`, `actions/download-artifact@v7`,

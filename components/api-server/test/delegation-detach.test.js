@@ -108,9 +108,26 @@ describe('[DDET] authoritative detach (in-process integration)', function () {
       'the delegation is still active after the blocked side-door');
   });
 
+  // The detach, done once by whichever test needs it first: a filtered run
+  // (`--grep`) that skips [DDET-04] still tests the post-detach state.
+  let detachDone = null;
+  /** Await a step and check its status, naming the step: in a filtered run its owning test is absent. */
+  async function prereq (pending, status, label) {
+    const res = await pending;
+    assert.strictEqual(res.status, status, label + ' (prerequisite) failed: ' + JSON.stringify(res.body));
+    return res;
+  }
+  function detach () {
+    if (detachDone == null) {
+      // A plain promise rather than the supertest thenable (same shape as the other steps).
+      detachDone = (async () => await coreRequest.delete(bob.delegationsPath + '/delegates/' + alice.username)
+        .set('Authorization', bob.token))();
+    }
+    return detachDone;
+  }
+
   it('[DDET-04] a genuine personal login on B detaches; the PAT is DEAD on the very next request', async function () {
-    const res = await coreRequest.delete(bob.delegationsPath + '/delegates/' + alice.username)
-      .set('Authorization', bob.token);
+    const res = await detach();
     assert.strictEqual(res.status, 200, 'genuine login accepted: ' + JSON.stringify(res.body));
 
     // The PAT is DEAD immediately — the access is deleted AND its session
@@ -126,6 +143,7 @@ describe('[DDET] authoritative detach (in-process integration)', function () {
   });
 
   it('[DDET-05] control access + anchor + PAT are gone on B', async function () {
+    await prereq(detach(), 200, 'detach');
     const acc = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
     const markers = (acc.body.accesses || []).filter((a) => a.clientData?.delegation != null);
     assert.strictEqual(markers.length, 0, 'no delegation-marker accesses remain on B: ' + JSON.stringify(markers));
@@ -135,11 +153,13 @@ describe('[DDET] authoritative detach (in-process integration)', function () {
   });
 
   it('[DDET-06] the delegate mirror is dropped on A (same-core notify)', async function () {
+    await prereq(detach(), 200, 'detach');
     const list = await coreRequest.get(alice.delegationsPath + '/controlled').set('Authorization', alice.token);
     assert.strictEqual((list.body.controlled || []).length, 0, 'A no longer mirrors the torn-down relationship');
   });
 
   it('[DDET-07] re-detaching the now-absent relationship is a clean 404', async function () {
+    await prereq(detach(), 200, 'detach');
     const res = await coreRequest.delete(bob.delegationsPath + '/delegates/' + alice.username)
       .set('Authorization', bob.token);
     assert.strictEqual(res.status, 404, JSON.stringify(res.body));

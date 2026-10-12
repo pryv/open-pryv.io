@@ -50,7 +50,6 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
   const LOGIN_APP_ID = 'pryv-test-no-cors'; // trusted from any origin in the test config
 
   let patToken; // the delegate PAT A issues for B
-  let bootstrapPassword; // the password the owner sets during the handover
   let genuineToken; // B's clean personal token from the genuine login
 
   before(async function () {
@@ -89,10 +88,42 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
     };
   }
 
+  // Each step runs once, by whichever test needs it first, so a filtered run
+  // (`--grep`) that skips the test owning a step still has its result.
+  const steps = new Map();
+  /** Await a step and check its status, naming the step: in a filtered run its owning test is absent. */
+  async function prereq (pending, status, label) {
+    const res = await pending;
+    assert.strictEqual(res.status, status, label + ' (prerequisite) failed: ' + JSON.stringify(res.body));
+    return res;
+  }
+  function step (name, fn) {
+    if (!steps.has(name)) steps.set(name, fn());
+    return steps.get(name);
+  }
+  const createKid = () => step('create', async () => await coreRequest.post(parent.delegationsPath + '/controlled')
+    .set('Authorization', parent.token)
+    .send({ username: kidUsername }));
+  const issuePat = () => step('pat', async () => {
+    await createKid();
+    const tokRes = await coreRequest.post(parent.delegationsPath + '/controlled/' + kidUsername + '/token')
+      .set('Authorization', parent.token).send({});
+    patToken = tokRes.body.token;
+    return tokRes;
+  });
+  const genuineLogin = () => step('genuine', async () => {
+    await createKid();
+    const bootstrapPassword = 'Handover-' + cuid().slice(-8) + '!';
+    const kidId = await usersRepository.getUserIdForUsername(kidUsername);
+    await usersRepository.setUserPassword(kidId, bootstrapPassword, 'system');
+    const login = await coreRequest.post('/' + kidUsername + '/auth/login')
+      .send({ username: kidUsername, password: bootstrapPassword, appId: LOGIN_APP_ID });
+    genuineToken = login.body.token;
+    return login;
+  });
+
   it('[DCRE-01] parent creates kid B with NO email and NO password → active at birth', async function () {
-    const res = await coreRequest.post(parent.delegationsPath + '/controlled')
-      .set('Authorization', parent.token)
-      .send({ username: kidUsername });
+    const res = await createKid();
     assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     assert.ok(res.body.delegation != null, 'delegation returned');
     assert.strictEqual(res.body.delegation.status, 'active');
@@ -111,11 +142,9 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
   });
 
   it('[DCRE-02] A getToken(B) → an owner-equivalent delegate PAT', async function () {
-    const tokRes = await coreRequest.post(parent.delegationsPath + '/controlled/' + kidUsername + '/token')
-      .set('Authorization', parent.token).send({});
+    const tokRes = await issuePat();
     assert.strictEqual(tokRes.status, 200, JSON.stringify(tokRes.body));
     assert.ok(tokRes.body.token, 'a PAT token is returned');
-    patToken = tokRes.body.token;
 
     // The PAT acts as B: it can read AND write B's data.
     const kidEventsPath = '/' + kidUsername + '/events';
@@ -135,12 +164,14 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
   });
 
   it('[DCRE-03] B cannot be logged into directly yet (no usable password)', async function () {
+    await prereq(createKid(), 201, 'create');
     const res = await coreRequest.post('/' + kidUsername + '/auth/login')
       .send({ username: kidUsername, password: 'not-the-random-one', appId: LOGIN_APP_ID });
     assert.notStrictEqual(res.status, 200, 'login must not succeed against the random password: ' + JSON.stringify(res.body));
   });
 
   it('[DCRE-04] a delegate PAT is REJECTED from detach (genuine-login gate)', async function () {
+    await prereq(issuePat(), 200, 'token');
     const res = await coreRequest.delete('/' + kidUsername + '/delegations/delegates/' + parent.username)
       .set('Authorization', patToken);
     assert.strictEqual(res.status, 403, JSON.stringify(res.body));
@@ -153,17 +184,11 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
     // production that is account.setPassword / the password-reset flow driven by
     // the PAT; here we invoke the same repository call those methods ultimately
     // make, keeping the E2E on the DELEGATION lifecycle rather than re-testing the
-    // orthogonal password-set HTTP plumbing.
-    bootstrapPassword = 'Handover-' + cuid().slice(-8) + '!';
-    const kidId = await usersRepository.getUserIdForUsername(kidUsername);
-    await usersRepository.setUserPassword(kidId, bootstrapPassword, 'system');
-
-    // B now logs in genuinely — a clean personal token, no delegation marker.
-    const login = await coreRequest.post('/' + kidUsername + '/auth/login')
-      .send({ username: kidUsername, password: bootstrapPassword, appId: LOGIN_APP_ID });
+    // orthogonal password-set HTTP plumbing (see `genuineLogin`). B then logs in
+    // genuinely — a clean personal token, no delegation marker.
+    const login = await genuineLogin();
     assert.strictEqual(login.status, 200, 'genuine login succeeds after the password is set: ' + JSON.stringify(login.body));
     assert.ok(login.body.token, 'a clean personal token is returned');
-    genuineToken = login.body.token;
 
     // The genuine token carries no delegation marker (unlike the PAT).
     const info = await coreRequest.get('/' + kidUsername + '/access-info').set('Authorization', genuineToken);
@@ -173,6 +198,8 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
   });
 
   it('[DCRE-06] B, genuinely logged in, detaches the parent → SUCCEEDS; the PAT is dead next request', async function () {
+    await prereq(issuePat(), 200, 'token');
+    await prereq(genuineLogin(), 200, 'genuine login');
     const res = await coreRequest.delete('/' + kidUsername + '/delegations/delegates/' + parent.username)
       .set('Authorization', genuineToken);
     assert.strictEqual(res.status, 200, 'genuine login can detach: ' + JSON.stringify(res.body));
