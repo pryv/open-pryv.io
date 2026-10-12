@@ -1,6 +1,17 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.49 - 2026-10-12
+
+Hardening release. Client-visible: JSON answers carry `Cache-Control: no-store` and
+`Vary: Origin`; a path id always wins over an `id` query parameter; HF series points and query
+bounds are checked strictly; `accesses.checkApp` compares feature permissions; access deletion
+records no longer carry the token. Contains 2.0.0-rc.48 (read its notes, including the
+`bin/events-stamp-backfill.js` step, if you have not deployed it). Operator steps: backups, the
+`bin/breach-scope.js --output` reports and the `config-to-env` env file are now written owner-only
+(`0600`), so adjust any process that reads them as another user; a restore refuses backups whose
+user ids or names are not one safe file name, or that keep data behind symbolic links (see
+Operators below).
+
 ### Accesses
 
 - `accesses.get?includeDeletions=true`: the deletion records in `accessDeletions` no longer carry
