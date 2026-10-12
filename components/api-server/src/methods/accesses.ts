@@ -54,8 +54,9 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
-const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
+const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
+const { localFirstFetch } = require('./helpers/localDelivery.ts');
 const { contextForAccess, reprepareWebhookScopes, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
@@ -952,15 +953,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // withdrawal is observable by the peer regardless of the revocation
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
+  // A peer account hosted on this core is reached in-process (localFirstFetch),
+  // not through the core's own public URL; globalThis.fetch is resolved per
+  // call so in-process test shims installed after registration are honoured.
+  const cmcDeliveryFetch = localFirstFetch(api, storageLayer);
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
     // The composed CMC mall (with `.accesses` and `.events`) lets the hook mark
     // the invite a deleted relationship descends from as revoked (local
     // bookkeeping) alongside the peer notify.
     mall: mallForCmc,
-    // Resolve globalThis.fetch lazily (per call) so in-process test
-    // shims installed after registration are honoured — same pattern
-    // as the events.ts cmc deps.
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-delete-hook'),
   });
@@ -971,9 +973,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // (the peer then deletes the access it holds for this account: the data
   // grant given to it, or its back-channel to it). Built WITHOUT the mall: the
   // local bookkeeping writes the account's own events, which are being erased.
-  // Sent, not awaited: a slow peer never holds the deletion.
+  // Awaited within a bound by the teardown (trackTeardownDelivery): a slow
+  // peer holds the deletion a few seconds at most.
   const cmcAccountDeletionNotice = cmc.createAccessesDeletePostHook({
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:account-deletion'),
   });
@@ -982,13 +985,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const relationships = (all || []).filter((a) => a?.deleted == null &&
       (a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role === 'counterparty');
     if (relationships.length === 0) return;
-    Promise.resolve()
+    trackTeardownDelivery(Promise.resolve()
       .then(() => cmcAccountDeletionNotice(account.id, relationships))
       .catch((err: unknown) => {
         getLogger('cmc:account-deletion').warn('cmc: revocation notices of a deleted account failed', {
           error: String((err as Error)?.message ?? err),
         });
-      });
+      }));
   });
 
   api.register(

@@ -33,7 +33,7 @@ const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildSystemCreateAccountDeps } = require('./helpers/delegationAccounts.ts');
-const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
+const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
@@ -817,9 +817,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // gone. Best-effort: a failure is logged, the deletion goes on, and a
   // delivery to another core is sent without being awaited.
   function sendWithoutWaiting (what: string, delivery: Promise<{ ok: boolean; status?: number }>): void {
-    delivery
+    trackTeardownDelivery(delivery
       .then((r) => { if (!r.ok) logger.warn('account deletion: ' + what + ' not delivered', { status: r.status }); })
-      .catch((err: unknown) => { logger.warn('account deletion: ' + what + ' failed', { error: String((err as Error)?.message ?? err) }); });
+      .catch((err: unknown) => { logger.warn('account deletion: ' + what + ' failed', { error: String((err as Error)?.message ?? err) }); }));
   }
 
   // Nothing is sent back to the account being deleted: its records are erased next.

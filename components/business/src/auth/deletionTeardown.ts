@@ -16,8 +16,10 @@
  * the account's records still name its counterparties.
  *
  * Best-effort by contract: a step that fails is logged and the deletion goes
- * on. A step must not hold the deletion on a remote peer: deliveries to
- * another core are sent without being awaited.
+ * on. A delivery to another account (often on another core) is not awaited
+ * by its step but handed to trackTeardownDelivery: once every step ran, the
+ * deliveries are awaited for DELIVERY_WAIT_MS at most, so they are sent
+ * before the deletion answers without a slow peer holding it.
  */
 
 type DeletedAccount = { id: string; username: string };
@@ -28,11 +30,20 @@ type WarnLogger = { warn: (msg: string, ctx?: Record<string, unknown>) => void }
 // step instead of running it twice.
 const steps = new Map<string, TeardownStep>();
 
+// Deliveries of the deletions in progress (a step adds them while it runs).
+const DELIVERY_WAIT_MS = 5000;
+let pendingDeliveries: Array<Promise<unknown>> = [];
+
+function trackTeardownDelivery (delivery: Promise<unknown>): void {
+  pendingDeliveries.push(delivery.catch(() => { /* each delivery logs its own failure */ }));
+}
+
 function setDeletionTeardownStep (name: string, step: TeardownStep): void {
   steps.set(name, step);
 }
 
-async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLogger): Promise<void> {
+async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLogger, waitMs = DELIVERY_WAIT_MS): Promise<void> {
+  const before = pendingDeliveries.length;
   for (const [name, step] of steps) {
     try {
       await step(account);
@@ -43,7 +54,20 @@ async function runDeletionTeardownSteps (account: DeletedAccount, logger: WarnLo
       });
     }
   }
+  // This deletion's deliveries (concurrent deletions add theirs to the list too).
+  const mine = pendingDeliveries.slice(before);
+  if (mine.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = await Promise.race([
+    Promise.allSettled(mine).then(() => false),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), waitMs); })
+  ]);
+  if (timer != null) clearTimeout(timer);
+  pendingDeliveries = pendingDeliveries.filter((p) => !mine.includes(p));
+  if (timedOut) {
+    logger.warn('account deletion: deliveries to other accounts still pending after ' + waitMs + ' ms (they go on)', { userId: account.id });
+  }
 }
 
-export { setDeletionTeardownStep, runDeletionTeardownSteps };
+export { setDeletionTeardownStep, runDeletionTeardownSteps, trackTeardownDelivery };
 export type { DeletedAccount, TeardownStep };

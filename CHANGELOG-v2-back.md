@@ -27,6 +27,13 @@
   `[URB2]` on both engines.
 - `DELETE /system/users/:username?onlyReg=true` and restore `--overwrite` keep their partial
   semantics by design (the account stays hosted; its relationships stay valid). Test `[GF34]`.
+- Account deletion, relationships: a consent revocation to an account of the same core is applied
+  in-process (`events.create` with the same token, through the whole method chain) instead of a
+  request to the core's own public URL, which a core behind a proxy without hairpin access could
+  not reach (`helpers/localDelivery.ts`, also used by the `accesses.delete` hook). The deliveries
+  to other cores (delegation releases, detach notices, revocations) are awaited for 5 s at most
+  before the deletion answers (`trackTeardownDelivery`); still pending, they go on and are logged.
+  Tests `[CN84]`, `[LDLV]`.
 - `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
 
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
