@@ -26,7 +26,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
   expressApp.get(Paths.Webhooks + '/:id', loadAccessMiddleware, setMethodId('webhooks.getOne'), function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    // The path id is assigned last: a query `id` never replaces it.
+    const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Webhooks, loadAccessMiddleware, setMethodId('webhooks.create'), function (req: PryvRequest, res: Response, next: NextFunction) {
@@ -37,11 +38,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Webhooks + '/:id', loadAccessMiddleware, setMethodId('webhooks.delete'), function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Webhooks + '/:id/test', loadAccessMiddleware, setMethodId('webhooks.test'), function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
 };

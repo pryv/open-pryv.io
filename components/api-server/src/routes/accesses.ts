@@ -31,7 +31,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, req.body, methodCallback(res, next, 201));
   });
   expressApp.get(Paths.Accesses + '/:id', setMethodId('accesses.getOne'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params: Record<string, unknown> = Object.assign({ id: req.params.id }, req.query);
+    // The path id is assigned last: a query `id` never replaces it.
+    const params: Record<string, unknown> = Object.assign({}, req.query, { id: req.params.id });
     tryCoerceStringValues(params, { includeHistory: 'boolean' });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
@@ -40,7 +41,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Accesses + '/:id', setMethodId('accesses.delete'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Accesses + '/check-app', setMethodId('accesses.checkApp'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {

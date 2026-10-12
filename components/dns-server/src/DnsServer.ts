@@ -752,13 +752,18 @@ class DnsServer {
   }
 
   /**
-   * Answer lsc.{domain} — return all core IPs for rqlite cluster discovery.
+   * Answer lsc.{domain} (rqlite cluster discovery) and the reserved service
+   * names: the IPs of every core not marked unavailable.
    */
   async #answerClusterDiscovery (response: BuiltResponse, qname: string, qtype: number) {
     const cores = await this.#platform.getAllCoreInfos();
     const ttl = this.#ttl;
 
     for (const core of cores) {
+      // A core marked unavailable (pre-registered and not yet joined, or
+      // taken out) is not serving: its address must not take a share of the
+      // traffic, credentials included.
+      if (core.available === false) continue;
       if ((qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY) && core.ip) {
         response.answers.push(buildA(qname, core.ip, ttl));
       }

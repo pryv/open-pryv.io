@@ -15,6 +15,9 @@
  *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li')
  *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
  *   ADMIN_KEY       — auth:adminAccessKey
+ *   storages__<kind>__engine — the test run's storage engines; pass
+ *                     `childStorageEngineEnv()` (test-helpers) so the core uses
+ *                     the same engines as the test process.
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
@@ -141,7 +144,7 @@ const http = require('node:http');
 
   // Signal ready to parent
   if (process.send) {
-    process.send({ type: 'ready', port, coreId });
+    process.send({ type: 'ready', port, coreId, baseEngine: config.get('storages:base:engine') });
   }
   console.log(`[${coreId}] listening on http://127.0.0.1:${port}`);
 

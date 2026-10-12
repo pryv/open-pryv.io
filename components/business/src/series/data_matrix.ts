@@ -156,6 +156,9 @@ class Parser {
     const fields = this.checkFields(objRec.fields);
     const points = objRec.points;
     if (points == null || !Array.isArray(points)) { throw error('"points" field must be a list of data points.'); }
+    // Refused before anything is written: an empty write has no extent to
+    // record on the event.
+    if (points.length === 0) { throw error('"points" field must contain at least one data point.'); }
     // assert: fields, points are both arrays
     if (!type.validateColumns(fields)) { throw error('"fields" field must contain valid field names for the series type.'); }
     if (!type.validateAllRows(points, fields)) { throw error('"points" matrix must contain correct data types according to series type.'); }
@@ -171,6 +174,7 @@ class Parser {
         throw error(`Error during field coercion of [${columnName}] => [${cellValue}]: ${e}`);
       }
     });
+    keepLastPerDeltaTime(out);
   }
 
   checkFields (val: unknown): string[] {
@@ -182,6 +186,20 @@ class Parser {
     return val;
   }
 }
+/**
+ * One point per deltaTime, the last one given winning (what a series engine
+ * keeps when the same time is written twice). Without it, a single
+ * multi-row upsert that touches one row twice fails on PostgreSQL.
+ */
+function keepLastPerDeltaTime (matrix: DataMatrix): void {
+  const idx = matrix.columns.indexOf('deltaTime');
+  if (idx < 0) return;
+  const lastRowOf = new Map<Element, number>();
+  matrix.data.forEach((row: RawRow, i: number) => lastRowOf.set(row[idx], i));
+  if (lastRowOf.size === matrix.length) return;
+  matrix.setData(matrix.data.filter((row: RawRow, i: number) => lastRowOf.get(row[idx]) === i));
+}
+
 export default DataMatrix;
 export { DataMatrix };
 export type { DataExtent };

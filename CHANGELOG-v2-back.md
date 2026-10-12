@@ -1,6 +1,6 @@
 # Changelog - Internal (no API impact)
 
-## Path containment, file modes and deletion hardening
+## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
 
 - `components/storage/src/userLocalDirectory.ts` `getPathForUser` refuses a user id holding `/`,
   `\` or NUL and checks that the resolved user directory (and the extra path) stays below the
@@ -59,6 +59,41 @@
 - `passwordResetThrottle.ipKey` hashes `addressBucket(ip)`. Tests: business `[PRTB1]`..`[PRTB3]`.
 - `AccessLogic.getForbiddenGetEventsStreamIds`: comment corrected (`create-only` is excluded from
   reads whatever a parent grants).
+- `API.has(id)` (registered method ids); `callBatch` `countCall` skips an id it does not know.
+  Test: api-server `[AU05]`.
+- Routes `accesses`, `events`, `streams`, `webhooks`: params built as
+  `Object.assign({}, req.query, { id: req.params.id })`. Tests: api-server `[HTP1]`..`[HTP3]`.
+- `middleware/src/commonHeaders.ts`: `res.vary('Origin')` on every answer (plus the two
+  `Access-Control-Request-*` headers on `OPTIONS`); `noStoreForJson` wraps `res.writeHead` to set
+  `Cache-Control: no-store` when the answer is JSON and has no `Cache-Control` of its own (same
+  middleware on api-server, hfs-server and previews-server). Tests: api-server `[HTC1]`..`[HTC4]`.
+- SQLite `UserDatabase` `typesList`: the `class/*` prefix keeps its slash (`LIKE 'class/%'`).
+  Test: api-server `[PC81]` (both engines).
+- HF series parsing (`business/src/types/series_row_type.ts`, `value_types.ts`,
+  `series/data_matrix.ts`): deltaTime strings must match `^\d+(\.\d+)?$`, deltaTimes must be
+  finite and below 2^63 ns; number cells must be finite; empty `points` refused in the parser
+  (before any write, single and batch); rows de-duplicated by deltaTime after coercion, last one
+  kept. `hfs-server` `query_series_data` requires a number (not NaN) for both bounds after
+  coercion; infinite bounds stay accepted (the series layer resolves out-of-range bounds). Tests:
+  business `[DMF1]`..`[DMF4]`; hfs-server `[HFD1]`..`[HFD3]`, `[QAR1]`.
+- `eventsGetUtils`: the stream-expansion failure is logged at debug through the logger (no more
+  `console.log`; the redundant `console.error` before the missing-store throw is gone); the
+  account-store `*` query is added for a personal access only. Tests: api-server `[EGS1]`, `[EGS2]`.
+- `dns-server` `#answerClusterDiscovery` skips core-info rows with `available === false` (lsc and
+  the reserved service names). Test: dns-server `[DN31]` (fixture gains an unavailable core;
+  `[DN11]`, `[DN30]` cover it too).
+- `config/plugins/systemStreams` `throwIfNotUnique` also refuses an unprefixed id already seen,
+  and uses the `Map` API (a custom id such as `has` or `constructor` no longer reads a `Map`
+  member). Tests: api-server `[SDB1]`, `[SDB2]`.
+- Users repository `insertOne`: an indexed field's default is read through
+  `accountStreams.toStreamId(key)`, custom (`:system:`) fields included. Test: business `[URD1]`.
+- `previews-server` event-previews route and api-server `POST /reg/records`: every step that may
+  throw runs inside the handler's `try` (`req.context` read, body destructuring and record
+  validation); `/reg/records` refuses a non-object body with `400`. Tests: previews-server
+  `[EPG1]`, api-server `[RR09]`.
+- Test harness: `reg-2core` passes `childStorageEngineEnv()` to the child cores, which report
+  their base engine in the ready message (`[2C00]`), so the multi-core suite runs on SQLite under
+  `test-sqlite`; `[SO2E]` asserts the exact set of visible events (an empty answer passed).
 
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 

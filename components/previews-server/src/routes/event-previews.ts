@@ -89,10 +89,12 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
   expressApp.get('/:username/events/:id:extension(.jpg|.jpeg|)', async function (req: PryvRequest, res: ResponseLike, next: NextFn): Promise<void> {
     let originalSize, previewPath;
     let cached = false;
-    const context = req.context;
-    const user = req.context.user;
     const id = req.params.id;
     try {
+      // Read inside the try: a throw here goes to next(), never out of the
+      // async handler (Express would leave the request hanging).
+      const context = req.context;
+      const user = req.context.user;
       // Check Event
       const event = await mall.events.getOne(user.id, id);
       if (event == null || event.deleted != null) {

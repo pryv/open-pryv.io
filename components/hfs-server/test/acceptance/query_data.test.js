@@ -193,6 +193,16 @@ describe('[HFSQ] Querying data from a HF series', function () {
         assert.strictEqual(err.id, ErrorIds.InvalidParametersFormat);
       });
   });
+  it('[QAR1] should refuse a bound given as an array or an object', async function () {
+    for (const query of ['fromDeltaTime[]=5', 'toDeltaTime[]=5', 'fromDeltaTime[a]=5', 'toDeltaTime[]=1&toDeltaTime[]=2']) {
+      const res = await server
+        .request()
+        .get(`/${userId}/events/${eventId}/series?` + query)
+        .set('authorization', accessToken);
+      assert.strictEqual(res.status, 400, query + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, ErrorIds.InvalidParametersFormat, query);
+    }
+  });
   it('[HGVV] should refuse a query when toTime is before fromTime', function () {
     return server
       .request()

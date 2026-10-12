@@ -380,9 +380,10 @@ class UsersRepository {
     const operations: Operation[] = [];
     for (const key of accountStreams.indexedFieldNames) {
       // use default value is null;
+      // Built-in (`:_system:`) and custom (`:system:`) fields alike.
       const value = user[key] != null
         ? user[key]
-        : accountStreams.accountMap[':_system:' + key]?.default;
+        : accountStreams.accountMap[accountStreams.toStreamId(key)]?.default;
       if (value != null) {
         operations.push({
           action: 'create',

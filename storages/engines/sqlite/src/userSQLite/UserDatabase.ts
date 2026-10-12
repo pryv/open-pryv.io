@@ -446,8 +446,9 @@ const converters: Record<string, (content: unknown) => string | null> = {
       // unsupported "*" query for types
       const starPos = typeCorced.indexOf('/*');
       if (starPos > 0) {
-        const classOnly = typeCorced.substring(0, starPos);
-        return `type LIKE ${classOnly}%'`;
+        // Keep the slash: `note/*` matches `note/...`, never `notebook/...`.
+        const classWithSlash = typeCorced.substring(0, starPos + 1);
+        return `type LIKE ${classWithSlash}%'`;
       }
       return `type = ${typeCorced}`;
     });

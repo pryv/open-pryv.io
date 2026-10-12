@@ -48,7 +48,8 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    // The path id is assigned last: a query `id` never replaces it.
+    const params = Object.assign({}, req.query, { id: req.params.id });
     tryCoerceStringValues(params, {
       includeHistory: 'boolean'
     });

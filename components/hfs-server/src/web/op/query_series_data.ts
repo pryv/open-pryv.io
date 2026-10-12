@@ -63,9 +63,16 @@ function coerceStringParams (params: Record<string, unknown>): SeriesQuery {
 function applyDefaultValues (query: SeriesQuery): void {
   if (query.to == null) { query.to = timestamp.now(); }
 }
+// A bound must be a number after coercion: `isNaN` alone lets a one-element
+// array (`?fromDeltaTime[]=5`) through, which the series layer would then
+// read as a date string. An infinite bound stays valid (the series layer
+// resolves bounds beyond its range).
+function isNumber (value: unknown): boolean {
+  return typeof value === 'number' && !Number.isNaN(value);
+}
 function validateQuery (query: SeriesQuery): void {
-  if (query.from != null && isNaN(query.from)) { throw errors.invalidParametersFormat("'from' must contain seconds since epoch."); }
-  if (isNaN(query.to)) { throw errors.invalidParametersFormat("'to' must contain seconds since epoch."); }
+  if (query.from != null && !isNumber(query.from)) { throw errors.invalidParametersFormat("'from' must contain seconds since epoch."); }
+  if (!isNumber(query.to)) { throw errors.invalidParametersFormat("'to' must contain seconds since epoch."); }
   if (query.from != null && query.to != null && query.to < query.from) { throw errors.invalidParametersFormat("'to' must be >= 'from'."); }
 }
 async function verifyAccess (username: string, eventId: string, authToken: string, metadata: MetadataLike, clientIp: string | null): Promise<SeriesMetaLike> {

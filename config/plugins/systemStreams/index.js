@@ -282,11 +282,14 @@ function validateOtherStreams (systemStream) {
 function throwIfNotUnique (seen, seenWithPrefix, streamId) {
   const streamIdWithoutPrefix = _removePrefixFromStreamId(streamId);
 
-  if (seenWithPrefix[streamId]) {
+  // The account store keys fields by their unprefixed name: a custom
+  // `:system:x` next to the built-in `:_system:x` would write the built-in
+  // field.
+  if (seenWithPrefix.has(streamId) || seen.has(streamIdWithoutPrefix)) {
     throw new Error(`Config error: Custom system stream id duplicate. Remove duplicate custom system stream with streamId: "${streamIdWithoutPrefix}".`);
   } else {
-    seenWithPrefix[streamId] = true;
-    seen[streamIdWithoutPrefix] = true;
+    seenWithPrefix.set(streamId, true);
+    seen.set(streamIdWithoutPrefix, true);
     return [seen, seenWithPrefix];
   }
 

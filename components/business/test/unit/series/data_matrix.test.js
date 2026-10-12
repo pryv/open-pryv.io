@@ -70,6 +70,50 @@ describe('[DMTX] DataMatrix', function () {
         points: [[0, null]]
       });
     });
+    it('[DMF1] refuses non-finite or out-of-range deltaTimes', () => {
+      const massType = typeRepo.lookup('series:mass/kg');
+      const refused = [Infinity, NaN, 2 ** 63 / 1e9, 1e300, -1, '12abc', 'abc', '1e3', ' 1'];
+      for (const deltaTime of refused) {
+        assert.throws(() => DataMatrix.parse({
+          format: 'flatJSON',
+          fields: ['deltaTime', 'value'],
+          points: [[deltaTime, 1]]
+        }, massType), ParseFailure, 'deltaTime ' + String(deltaTime));
+      }
+      const matrix = DataMatrix.parse({
+        format: 'flatJSON',
+        fields: ['deltaTime', 'value'],
+        points: [['1.5', 1], [2, 1]]
+      }, massType);
+      assert.deepStrictEqual(matrix.data.map((row) => row[0]), [1.5e9, 2e9]);
+    });
+    it('[DMF2] refuses non-finite number cells', () => {
+      const massType = typeRepo.lookup('series:mass/kg');
+      for (const value of [Infinity, -Infinity, NaN, '9'.repeat(400)]) {
+        assert.throws(() => DataMatrix.parse({
+          format: 'flatJSON',
+          fields: ['deltaTime', 'value'],
+          points: [[0, value]]
+        }, massType), ParseFailure, 'value ' + String(value).slice(0, 10));
+      }
+    });
+    it('[DMF3] refuses an empty points list', () => {
+      bad({
+        format: 'flatJSON',
+        fields: ['deltaTime', 'latitude', 'longitude'],
+        points: []
+      });
+    });
+    it('[DMF4] keeps one point per deltaTime, the last one given', () => {
+      const massType = typeRepo.lookup('series:mass/kg');
+      const matrix = DataMatrix.parse({
+        format: 'flatJSON',
+        fields: ['value', 'deltaTime'],
+        points: [[1, 0], [2, 1], [3, 0], [4, 2], [5, 1]]
+      }, massType);
+      assert.deepStrictEqual(matrix.data, [[3, 0], [4, 2e9], [5, 1e9]]);
+      assert.strictEqual(matrix.length, 3);
+    });
     function good (obj) {
       assert.doesNotThrow(() => {
         DataMatrix.parse(obj, type);

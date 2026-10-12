@@ -16,7 +16,7 @@ class NumberType {
       case 'string':
         return this.coerceString(value);
       case 'number':
-        return value;
+        return this.finite(value);
     }
     throw new errors.InputTypeError(`Unknown outer type (${typeof value}).`);
   }
@@ -26,7 +26,15 @@ class NumberType {
     if (!reNumber.test(str)) {
       throw new errors.InputTypeError(`Doesn't look like a valid number: '${str}'.`);
     }
-    return Number.parseFloat(str);
+    return this.finite(Number.parseFloat(str));
+  }
+
+  // Engines cannot store an infinite number (JSON `1e400` parses to Infinity).
+  finite (value: number): number {
+    if (!Number.isFinite(value)) {
+      throw new errors.InputTypeError(`Not a finite number: '${value}'.`);
+    }
+    return value;
   }
 }
 

@@ -719,6 +719,22 @@ describe('[EVPC] events (Pattern C)', function () {
       assert.strictEqual(res.status, 200);
       assert.ok(res.body.events.some(e => e.type.startsWith('activity/')));
     });
+
+    it('[PC81] a type wildcard matches its own class only, not a class sharing its prefix', async function () {
+      const longer = await coreRequest
+        .post(basePath)
+        .set('Authorization', token)
+        .send({ streamIds: [stream1Id], type: 'activityx/plain' });
+      assert.strictEqual(longer.status, 201);
+      const res = await coreRequest
+        .get(basePath)
+        .set('Authorization', token)
+        .query({ types: ['activity/*'], state: 'all' });
+      assert.strictEqual(res.status, 200);
+      assert.ok(res.body.events.length > 0);
+      for (const e of res.body.events) assert.ok(e.type.startsWith('activity/'), e.type);
+      assert.ok(!res.body.events.some(e => e.id === longer.body.event.id));
+    });
   });
 
   describe('[EPC08] Deletions support', function () {

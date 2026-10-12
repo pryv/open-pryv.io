@@ -26,12 +26,39 @@ export default async function (): Promise<RequestHandler> {
     // *
     res.header('Access-Control-Max-Age', (60 * 60 * 24 * 365).toString());
     res.header('Access-Control-Allow-Credentials', 'true');
+    // The CORS headers above echo the request: a shared cache must key its
+    // copies on what they echo.
+    res.vary('Origin');
+    if (req.method === 'OPTIONS') {
+      res.vary('Access-Control-Request-Method');
+      res.vary('Access-Control-Request-Headers');
+    }
     // keep API version in HTTP headers for now
     res.header('API-Version', version);
     if (req.method === 'OPTIONS') {
       res.sendStatus(200);
       return;
     }
+    noStoreForJson(res);
     next();
   };
 };
+
+/**
+ * API answers in JSON are never stored by a cache (they are per account and
+ * often carry tokens). Applied when the headers are sent, once the content
+ * type is known; an answer that set its own Cache-Control keeps it.
+ */
+function noStoreForJson (res: Response): void {
+  const writeHead = res.writeHead;
+  res.writeHead = function (this: Response, ...args: unknown[]) {
+    if (!res.hasHeader('Cache-Control') && isJson(res.getHeader('Content-Type'))) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    return (writeHead as (...a: unknown[]) => Response).apply(this, args);
+  } as Response['writeHead'];
+}
+
+function isJson (contentType: unknown): boolean {
+  return typeof contentType === 'string' && /^application\/json\b/i.test(contentType);
+}

@@ -33,7 +33,8 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
     api.call(req.context, { id: req.params.id, update: req.body }, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Streams + '/:id', loadAccessMiddleware, setMethodId('streams.delete'), function (req: PryvRequest, res: Response, next: NextFunction) {
-    const params = Object.assign({ id: req.params.id }, req.query);
+    // The path id is assigned last: a query `id` never replaces it.
+    const params = Object.assign({}, req.query, { id: req.params.id });
     tryCoerceStringValues(params, {
       mergeEventsWithParent: 'boolean'
     });

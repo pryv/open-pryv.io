@@ -31,6 +31,7 @@ const EMAILS_NS_ROOT = ':_emails:';
 const DELEGATION_INTERNAL_NS_ROOT = require('delegation').NS_INTERNAL;
 const CMC_INTERNAL_NS_ROOT = require('cmc').NS_INTERNAL;
 const integrity = require('business/src/integrity/index.ts').default;
+const { getLogger } = require('@pryv/boiler');
 import type { MethodNext } from '../_types.ts';
 import type { Readable as ReadableStream } from 'node:stream';
 
@@ -279,8 +280,10 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
     // ------------ "*" case
     if (streamQuery.any && streamQuery.any.includes('*')) {
       if (await context.access.canGetEventsOnStream('*', streamQuery.storeId)) {
-        // Personal access with '*' on local store: also query account store
-        if (streamQuery.storeId === storeDataUtils.LocalStoreId) {
+        // Personal access with '*' on local store: also query account store.
+        // Only there: for any other access the account streams are locked
+        // under '*', so the query must not rest on that lock to return nothing.
+        if (streamQuery.storeId === storeDataUtils.LocalStoreId && context.access.isPersonal()) {
           additionalStoreQueries.push({ any: ['*'], storeId: storeDataUtils.AccountStoreId });
         }
         continue;
@@ -432,7 +435,8 @@ async function streamQueryExpandStreams (context: MethodContext, params: GetEven
     params.arrayOfStreamQueriesWithStoreId =
             await streamsQueryUtils.expandAndTransformStreamQueries(params.arrayOfStreamQueriesWithStoreId, expandStreamInContext);
   } catch (e) {
-    console.log(e);
+    // The error goes to the method chain, which logs it with the request.
+    getLogger('methods:events-get').debug('stream query expansion failed', e);
     context.tracing.finishSpan('streamQueries');
     return next(e);
   }
@@ -586,7 +590,6 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     const storeId = streamQuery.storeId;
     if (storeId == null) {
-      console.error('Missing storeId' + params.arrayOfStreamQueriesWithStoreId);
       throw new Error('Missing storeId' + params.arrayOfStreamQueriesWithStoreId);
     }
     if (paramsByStoreId[storeId] == null) {

@@ -30,7 +30,7 @@ const assert = require('node:assert/strict');
 const getUpdateAccessUsageStats = require('api-server/src/methods/helpers/updateAccessUsageStats.ts').default;
 const { getStorageLayer } = require('storage');
 
-/* global initTests, initCore */
+/* global initTests, initCore, coreRequest, getNewFixture, cuid */
 
 describe('[AUST] access-usage-stats tracking', function () {
   this.timeout(20000);
@@ -88,6 +88,28 @@ describe('[AUST] access-usage-stats tracking', function () {
     assert.equal(calls[0].query.id, 'a-real-access');
     // sanitizeFieldKey maps `.` to `:` in the counter key.
     assert.equal(calls[0].update.$inc['calls.events:get'], 1);
+  });
+
+  it('[AU05] a batch counts registered methods only, never client-chosen names', async function () {
+    const username = cuid();
+    const token = cuid();
+    const user = await getNewFixture().user(username, {});
+    const access = await user.access({ type: 'personal', token });
+    await user.session(token);
+    const res = await coreRequest.post('/' + username).set('Authorization', token).send([
+      { method: 'events.get', params: {} },
+      { method: 'no.such.method', params: {} },
+      { method: 'a.b.c.d', params: {} },
+      { method: 'events.get', params: {} }
+    ]);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results.length, 4);
+    assert.ok(res.body.results[1].error, 'an unknown method still answers an error in its slot');
+    const statsUpdates = calls.filter((c) => c.query.id === access.attrs.id && c.update.$inc != null);
+    assert.ok(statsUpdates.length > 0, 'the batch usage is recorded');
+    for (const update of statsUpdates) {
+      assert.deepEqual(update.update.$inc, { 'calls.events:get': 2 });
+    }
   });
 
   it('[AU04] calls next() before doing its work (callers never wait on stats)', async function () {

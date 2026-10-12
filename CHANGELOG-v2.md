@@ -15,7 +15,45 @@
   is now answered with `checkedPermissions` (the feature entry as sent); it was refused with
   `invalid-parameters-format` (missing `defaultName`).
 
+### HTTP
+
+- **Cache directives (client-visible).** Every API answer in JSON now carries
+  `Cache-Control: no-store`, unless the route sets its own (the OAuth2 discovery document keeps
+  its `public, max-age`); a browser or a shared cache no longer keeps API answers. Every answer
+  also carries `Vary: Origin`, since the CORS headers echo the request's `Origin`; preflight
+  (`OPTIONS`) answers add `Access-Control-Request-Method` and `Access-Control-Request-Headers`.
+  Answers that are not JSON (attachments, previews, the HTML root page) are unchanged.
+- The routes that take an id in the path (`GET` / `DELETE /accesses/{id}`, `GET` /
+  `DELETE /events/{id}`, `DELETE /streams/{id}`, `GET` / `DELETE /webhooks/{id}`,
+  `POST /webhooks/{id}/test`) now always act on that id: an `id` query parameter used to replace
+  it.
+
+### HF series
+
+- Storing points: a `deltaTime` (or `timestamp`) that is not a finite number, or that falls
+  beyond the range the series store holds (about 292 years after the event time), is refused
+  with `invalid-request-structure`; a `deltaTime` given as a string must be a plain decimal
+  (`"12.5"`), as number fields already had to be (`"1e3"` or `"12abc"` were read leniently). A
+  number field holding a non-finite value (e.g. `1e400` in the JSON body) is refused the same way;
+  on PostgreSQL it was stored as `null`.
+- An empty `points` list is refused with `invalid-request-structure` before anything is written
+  (it answered `500` after the write).
+- Two points with the same `deltaTime` in one request keep the last one given, on every series
+  engine; on PostgreSQL the request failed with `500`.
+- Querying: a `fromDeltaTime` / `toDeltaTime` given as a list or an object
+  (`?fromDeltaTime[]=5`) is refused with `invalid-parameters-format`; a one-element list was read
+  as a date.
+
 ### Fixed
+
+- `callBatch` counts, in the access usage statistics (`calls`), only the calls naming an existing
+  method; an unknown method name was stored as a counter key on the access.
+- On SQLite cores, a type wildcard in `events.get` (`types[]=note/*`) matches only the types of
+  that class: it also matched the classes starting with the same letters (`notebook/...`). The
+  audit store on SQLite had the same behaviour.
+- A custom indexed account field (`custom.systemStreams.account`) with a `default` value now has
+  that default indexed at registration when the field is not given; only the built-in fields'
+  defaults were.
 
 - An `accesses.update` that fails after its write (re-reading the updated access) now drops the
   access from the access cache of every worker, as a successful update does; the previous
@@ -65,6 +103,18 @@
 - **Password reset budget per address.** The hourly budget of password reset requests per client
   address counts an IPv6 address toward its /64, like the other per-address budgets. Counters
   kept under the previous per-address keys expire within the hour.
+- **Embedded DNS.** `reg.`, `access.`, `mfa.` and `lsc.` (cluster discovery) now answer the
+  addresses of the cores not marked unavailable only. A core pre-registered by
+  `bootstrap new-core` stays out of these answers until its join is acknowledged, and a core
+  whose row says `available: false` (left behind, or `core.available: false`) stops receiving
+  a share of the registration, login and MFA traffic.
+- **System streams config.** The boot refuses a custom system stream
+  (`custom.systemStreams.account` / `other`) whose id is the id of a built-in account field
+  (`language`, `appId`, `invitationToken`, `referer`, `storageUsed`, `dbDocuments`,
+  `attachedFiles`, `account`): the account store keys fields by that name, so the custom field
+  would have written the built-in one.
+- **`POST /reg/records`** (admin key) answers `400` to a body that is not an object (e.g. a form
+  body whose `_json` is `null`); such a request was left without an answer.
 
 ## 2.0.0-rc.48 - 2026-10-11
 

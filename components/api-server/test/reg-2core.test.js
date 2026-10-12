@@ -29,6 +29,8 @@ const dns = require('node:dns');
 const rqliteProcess = require('../../../storages/engines/rqlite/src/rqliteProcess.ts');
 const { createDnsServer } = require('dns-server/src/index.ts');
 const { DBrqlite } = require('../../../storages/engines/rqlite/src/DBrqlite.ts');
+const { childStorageEngineEnv } = require('test-helpers');
+const { getConfigUnsafe } = require('@pryv/boiler');
 
 const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');
@@ -88,6 +90,9 @@ function startCore (env) {
       env: {
         ...process.env,
         NODE_ENV: 'test',
+        // Same storage engines as this test process (a `--sqlite` run
+        // must run the cores on SQLite too).
+        ...childStorageEngineEnv(),
         ...env
       },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc']
@@ -99,6 +104,7 @@ function startCore (env) {
     child.on('message', (msg) => {
       if (msg.type === 'ready') {
         clearTimeout(timeout);
+        child.readyInfo = msg;
         resolve(child);
       }
     });
@@ -294,6 +300,13 @@ describe('[RG2C] Two-core integration tests', function () {
   // --- Tests ---
 
   describe('Core startup verification', () => {
+    it('[2C00] both cores run on the storage engine of this test run', () => {
+      const expected = getConfigUnsafe(true).get('storages:base:engine');
+      assert.ok(expected, 'the test process has a base engine');
+      assert.strictEqual(coreA.readyInfo.baseEngine, expected, 'core A');
+      assert.strictEqual(coreB.readyInfo.baseEngine, expected, 'core B');
+    });
+
     it('[2C01] both cores must respond to HTTP requests', async () => {
       const resA = await httpRequest(CORE_A_PORT, 'GET', '/reg/service/info');
       assert.strictEqual(resA.status, 200, 'Core A must respond 200');

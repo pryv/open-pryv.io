@@ -189,6 +189,29 @@ describe('[SSDC] SystemStreams config', () => {
       }
     });
   });
+  describe('[SD10] When a custom system stream reuses a built-in field name', () => {
+    it('[SDB1] must throw a config error', () => {
+      for (const id of ['invitationToken', 'language', 'account']) {
+        const store = new nconf.Provider();
+        store.use('memory');
+        store.set('custom:systemStreams:account', [{ id, type: 'string/pryv', isEditable: true }]);
+        assert.throws(() => systemStreamsConfig.load(store),
+          (err) => err.message.includes(`Custom system stream id duplicate. Remove duplicate custom system stream with streamId: "${id}"`), id);
+      }
+    });
+    it('[SDB2] accepts custom ids named like object or map members', () => {
+      const store = new nconf.Provider();
+      store.use('memory');
+      store.set('custom:systemStreams:account', [
+        { id: 'constructor', type: 'string/pryv' },
+        { id: 'has', type: 'string/pryv' }
+      ]);
+      systemStreamsConfig.load(store);
+      const ids = treeUtils.flattenTree(store.get('systemStreams')).map((s) => s.id);
+      assert.ok(ids.includes(CUSTOMER_PREFIX + 'constructor'));
+      assert.ok(ids.includes(CUSTOMER_PREFIX + 'has'));
+    });
+  });
   describe('[SD04] When providing a custom system stream that is unique but not indexed', () => {
     it('[42A1] must throw a config error', () => {
       const store = new nconf.Provider();

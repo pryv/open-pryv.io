@@ -107,6 +107,18 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.strictEqual(res.body.error.id, 'invalid-parameters');
     });
 
+    it('[RR09] a body that is not an object is answered 400, never left hanging', async () => {
+      for (const json of ['null', '42', '"text"', '[1]']) {
+        const res = await coreRequest.post('/reg/records')
+          .set('Authorization', adminAccessKey)
+          .type('form')
+          .send({ _json: json })
+          .timeout(5000);
+        assert.strictEqual(res.status, 400, json);
+        assert.strictEqual(res.body.error.id, 'invalid-parameters', json);
+      }
+    });
+
     it('[RR05] must reject request with missing records', async () => {
       const res = await coreRequest.post('/reg/records')
         .set('Authorization', adminAccessKey)

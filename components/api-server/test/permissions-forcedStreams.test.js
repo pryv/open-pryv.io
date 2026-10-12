@@ -103,6 +103,8 @@ describe('[PFRC] permissions forcedStreams', function () {
         }
         assert.strictEqual(ebFound, false);
       });
+      // Every event outside B and E, so an empty answer cannot pass.
+      assert.deepStrictEqual(events.map(e => EVENT4ID[e.id]).sort(), ['a', 'ac', 'c']);
     });
 
     it('[ELFF] must refuse querying C', async function () {

@@ -111,4 +111,43 @@ describe('[USRP] Users repository', () => {
       await usersRepository.deleteOne(retry.id, uname);
     });
   });
+
+  describe('[UR03] insertOne() indexed field defaults', () => {
+    const nconf = require('nconf');
+    const systemStreamsConfig = require('../../../../../config/plugins/systemStreams');
+    const accountStreams = require('business/src/system-streams/index.ts');
+    it('[URD1] a custom indexed field left empty is indexed with its configured default', async () => {
+      const store = new nconf.Provider();
+      store.use('memory');
+      store.set('NODE_ENV', 'test');
+      store.set('custom:systemStreams:account', [
+        { id: 'region', type: 'identifier/string', isIndexed: true, default: 'zone-a' }
+      ]);
+      systemStreamsConfig.load(store);
+      await accountStreams.reloadForTests(store);
+      const usersRepository = await getUsersRepository();
+      const savedPlatform = usersRepository.platform;
+      const savedCompensate = usersRepository.compensateFailedInsert;
+      let operations = null;
+      usersRepository.platform = {
+        async updateUser (_username, ops) { operations = ops; throw new Error('stop after the platform write'); }
+      };
+      usersRepository.compensateFailedInsert = async () => {};
+      try {
+        await assert.rejects(usersRepository.insertOne(new User({
+          id: charlatan.Lorem.characters(25),
+          username: charlatan.Lorem.characters(10).toLowerCase(),
+          password: charlatan.Lorem.characters(10)
+        })), /stop after the platform write/);
+      } finally {
+        usersRepository.platform = savedPlatform;
+        usersRepository.compensateFailedInsert = savedCompensate;
+        // Back to the test configuration before the per-test hooks run.
+        await accountStreams.reloadForTests();
+      }
+      const byKey = Object.fromEntries(operations.map((op) => [op.key, op.value]));
+      assert.strictEqual(byKey.region, 'zone-a', 'custom field default');
+      assert.strictEqual(byKey.language, 'en', 'built-in field default');
+    });
+  });
 });

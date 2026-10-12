@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 require('./test-helper');
 const assert = require('node:assert');
-const { streamQueryAddForcedAndForbiddenStreams } = require('../../src/methods/helpers/eventsGetUtils.ts');
+const { streamQueryAddForcedAndForbiddenStreams, streamQueryCheckPermissionsAndReplaceStars, streamQueryExpandStreams } = require('../../src/methods/helpers/eventsGetUtils.ts');
 
 function makeContext (forced, forbidden, isPersonal = true) {
   return {
@@ -72,5 +72,55 @@ describe('[EGDU] eventsGetUtils forced / forbidden stream merge', () => {
     assert.deepStrictEqual(not, [...new Set(not)]);
     assert.ok(not.includes(':_emails:'));
     assert.ok(not.includes(':_shared-secrets:'));
+  });
+});
+
+describe('[EGSU] eventsGetUtils star query and expansion', () => {
+  const tracing = { startSpan () {}, finishSpan () {} };
+
+  function starContext (isPersonal) {
+    return {
+      tracing,
+      access: {
+        canGetEventsOnStream: () => true,
+        getStoresPermissions: () => [],
+        isPersonal: () => isPersonal
+      }
+    };
+  }
+
+  function check (ctx, params) {
+    return new Promise((resolve, reject) => {
+      streamQueryCheckPermissionsAndReplaceStars(ctx, params, null, (err) => err ? reject(err) : resolve());
+    });
+  }
+
+  it('[EGS1] a "*" read adds the account-store query for a personal access only', async () => {
+    const personal = { arrayOfStreamQueriesWithStoreId: [{ storeId: 'local', any: ['*'] }] };
+    await check(starContext(true), personal);
+    assert.deepStrictEqual(personal.arrayOfStreamQueriesWithStoreId.map((q) => q.storeId), ['local', 'account']);
+    const app = { arrayOfStreamQueriesWithStoreId: [{ storeId: 'local', any: ['*'] }] };
+    await check(starContext(false), app);
+    assert.deepStrictEqual(app.arrayOfStreamQueriesWithStoreId.map((q) => q.storeId), ['local']);
+  });
+
+  it('[EGS2] a failed expansion goes to the method chain, not to stdout', async () => {
+    const printed = [];
+    const savedLog = console.log;
+    const savedError = console.error;
+    console.log = (...args) => printed.push(args);
+    console.error = (...args) => printed.push(args);
+    let passed;
+    try {
+      // A query list that is not an array makes the expansion throw.
+      await new Promise((resolve) => {
+        streamQueryExpandStreams({ tracing }, { arrayOfStreamQueriesWithStoreId: 42 }, null, (err) => { passed = err; resolve(); });
+      });
+    } finally {
+      console.log = savedLog;
+      console.error = savedError;
+    }
+    assert.ok(passed instanceof Error, 'the error reaches next()');
+    assert.deepStrictEqual(printed, []);
   });
 });

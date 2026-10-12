@@ -54,22 +54,38 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.post('/reg/records', async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
 
-    const { subdomain, records } = req.body;
-    if (!subdomain || typeof subdomain !== 'string') {
-      return res.status(400).json({
-        error: { id: 'invalid-parameters', message: 'Missing or invalid subdomain' }
-      });
-    }
-    if (!records || typeof records !== 'object') {
-      return res.status(400).json({
-        error: { id: 'invalid-parameters', message: 'Missing or invalid records' }
-      });
-    }
-    const problems = validateDnsRecord(subdomain, records);
-    if (problems.length > 0) {
-      return res.status(400).json({
-        error: { id: 'invalid-parameters', message: 'Invalid DNS record: ' + problems[0] }
-      });
+    // Express 4 does not observe a rejected async handler: every step that
+    // may throw stays inside a try, so a failure answers instead of hanging.
+    let subdomain = '';
+    let records: object = {};
+    try {
+      const body: unknown = req.body;
+      if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: 'The body must be an object' }
+        });
+      }
+      const given = body as { subdomain?: unknown; records?: unknown };
+      if (!given.subdomain || typeof given.subdomain !== 'string') {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: 'Missing or invalid subdomain' }
+        });
+      }
+      if (!given.records || typeof given.records !== 'object') {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: 'Missing or invalid records' }
+        });
+      }
+      subdomain = given.subdomain;
+      records = given.records;
+      const problems = validateDnsRecord(subdomain, records);
+      if (problems.length > 0) {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: 'Invalid DNS record: ' + problems[0] }
+        });
+      }
+    } catch (err) {
+      return next(err);
     }
 
     try {

@@ -44,7 +44,7 @@ function countItems (obj: unknown): number {
  * Utility API methods implementations.
  *
  */
-export default async function (api: { register: (...args: unknown[]) => void; call: (ctx: unknown, params: unknown, cb: (err: unknown, res: unknown) => void) => void }) {
+export default async function (api: { register: (...args: unknown[]) => void; call: (ctx: unknown, params: unknown, cb: (err: unknown, res: unknown) => void) => void; has: (id: string) => boolean }) {
   const logger = getLogger('methods:batch');
   const config = await ready();
   const isAuditActive = config.get('audit:active');
@@ -146,6 +146,9 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
     // to avoid updatingAccess for each api call we are collecting all counter here
     context.accessUsageStats = {};
     function countCall (methodId: string) {
+      // Only registered methods are counted: the usage map is stored on the
+      // access, and a client-chosen name would become a key there.
+      if (typeof methodId !== 'string' || !api.has(methodId)) return;
       if (context.accessUsageStats![methodId] == null) { context.accessUsageStats![methodId] = 0; }
       context.accessUsageStats![methodId]++;
     }

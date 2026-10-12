@@ -745,6 +745,34 @@ describe('[SDHF] Storing data in a HF series', function () {
           assert.ok(Math.abs(expectedValue - act.value) <= 0.001);
         }
       });
+      it('[HFD1] two points with the same deltaTime keep the last one', async () => {
+        const result = await tryStore({ type: 'series:mass/kg' }, ['deltaTime', 'value'], [[1, 10], [2, 20], [1, 11]]);
+        assert.strictEqual(result.status, 200, JSON.stringify(result.body));
+        const res = await server.request()
+          .get(`/${userId}/events/${result.event.id}/series`)
+          .set('authorization', accessToken);
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(res.body.points, [[1, 11], [2, 20]]);
+      });
+      it('[HFD2] an empty points list is refused before any write', async () => {
+        const result = await tryStore({ type: 'series:mass/kg' }, ['deltaTime', 'value'], []);
+        assert.strictEqual(result.status, 400);
+        assert.strictEqual(result.body.error.id, 'invalid-request-structure');
+      });
+      it('[HFD3] non-finite or out-of-range numbers are refused', async () => {
+        const usersRepository = await getUsersRepository();
+        const user = await usersRepository.getUserById(userId);
+        const event = await mall.events.create(user.id, { streamIds: [parentStreamId], time: timestamp.now(), type: 'series:mass/kg' });
+        for (const points of ['[[0, 1e400]]', '[[1e400, 1]]', '[[1e300, 1]]', '[["1e3", 1]]']) {
+          const res = await server.request()
+            .post(`/${userId}/events/${event.id}/series`)
+            .set('authorization', accessToken)
+            .set('content-type', 'application/json')
+            .send('{"format": "flatJSON", "fields": ["deltaTime", "value"], "points": ' + points + '}');
+          assert.strictEqual(res.status, 400, points + ': ' + JSON.stringify(res.body));
+          assert.strictEqual(res.body.error.id, 'invalid-request-structure', points);
+        }
+      });
     });
     describe('[SD37] complex types such as ratio/generic', () => {
       // Spawns a server.

@@ -283,6 +283,11 @@ class API {
 
   // ----------------------------------------------------------- call statistics
 
+  /** True when `id` is a registered method id (wildcard filters are not). */
+  has (id: string): boolean {
+    return this.map.has(id);
+  }
+
   getMethodKeys () {
     const methodMap = this.map;
     return Array.from(methodMap.keys());

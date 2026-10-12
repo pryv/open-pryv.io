@@ -175,7 +175,9 @@ describe('[DNS] DNS Server', function () {
   const coreInfos = [
     { id: 'core1', ip: '10.0.0.1', ipv6: '::ffff:10.0.0.1', cname: null },
     { id: 'core2', ip: '10.0.0.2', ipv6: null, cname: null },
-    { id: 'core-cname', ip: null, ipv6: null, cname: 'core3.external.com' }
+    { id: 'core-cname', ip: null, ipv6: null, cname: 'core3.external.com' },
+    // Pre-registered by a bootstrap bundle not yet consumed: not serving.
+    { id: 'core-pending', ip: '10.0.0.9', ipv6: '::ffff:10.0.0.9', cname: null, available: false }
   ];
 
   const userCores = {
@@ -360,6 +362,15 @@ describe('[DNS] DNS Server', function () {
       const addresses = await resolver.resolve4(`lsc.${TEST_DOMAIN}`);
       assert.strictEqual(addresses.length, 2);
       assert.deepStrictEqual(addresses.sort(), ['10.0.0.1', '10.0.0.2']);
+    });
+
+    it('[DN31] cluster discovery and the reserved names leave out a core marked unavailable', async () => {
+      for (const name of ['lsc', 'reg', 'access', 'mfa']) {
+        const addresses = await resolver.resolve4(`${name}.${TEST_DOMAIN}`);
+        assert.deepStrictEqual(addresses.sort(), ['10.0.0.1', '10.0.0.2'], name);
+        const res = await rawQuery(port, `${name}.${TEST_DOMAIN}`, 'AAAA');
+        assert.strictEqual(res.answers.filter(a => a.type === Packet.TYPE.AAAA).length, 1, name + ' AAAA: core1 only');
+      }
     });
   });
 

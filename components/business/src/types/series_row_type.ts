@@ -21,6 +21,10 @@ type EventType = {
 };
 type SeriesMeta = { time: number; [k: string]: unknown };
 
+/** The series engines store deltaTimes as signed 64-bit integer nanoseconds. */
+const MAX_DELTA_TIME_NANOS = 2 ** 63;
+const NUMERIC_STRING = /^\d+(\.\d+)?$/;
+
 class SeriesDateType {
   deltaTo: number;
   constructor (eventTime: number) {
@@ -28,8 +32,11 @@ class SeriesDateType {
   }
 
   secondsToNanos (secs: number): number {
+    if (!Number.isFinite(secs)) { throw new Error('Deltatime must be a finite number'); }
     if (secs < 0) { throw new Error('Deltatime must be greater than 0'); }
-    return Math.trunc(secs * 1000 * 1000 * 1000);
+    const nanos = Math.trunc(secs * 1000 * 1000 * 1000);
+    if (nanos >= MAX_DELTA_TIME_NANOS) { throw new Error('Deltatime is out of range'); }
+    return nanos;
   }
 
   coerce (value: unknown): number {
@@ -37,8 +44,8 @@ class SeriesDateType {
       case 'number':
         return this.secondsToNanos(value - this.deltaTo);
       case 'string':
-        return this.secondsToNanos(parseFloat(value) - this.deltaTo);
-            // FALL THROUGH
+        if (!NUMERIC_STRING.test(value)) { break; }
+        return this.secondsToNanos(Number.parseFloat(value) - this.deltaTo);
     }
     throw new Error(`Cannot coerce ${value} into deltaTime.`);
   }
