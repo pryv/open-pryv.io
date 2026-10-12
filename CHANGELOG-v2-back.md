@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## CI: actions on Node 24, build-only image check on a manual run
+
+- `.github/workflows/ci.yml`: `actions/upload-artifact@v6`, `actions/download-artifact@v7`,
+  `docker/setup-buildx-action@v4`, `docker/setup-qemu-action@v4`,
+  `actions/attest-build-provenance@v3` (wraps `actions/attest` v3) and `anchore/scan-action@v7`: the
+  first majors that run on Node 24 (GitHub is retiring Node 20 for actions).
+- `workflow_dispatch` trigger and two jobs that run only then: `docker-build-check` builds the
+  stock image natively on amd64 and arm64 (loaded, not pushed), checks that the native modules load
+  and hands a marker artifact to `docker-check`, which builds the encryption-at-rest variant for
+  both architectures under QEMU without pushing. No registry login, signature or attestation. Run it
+  after changing the image actions or the Dockerfiles, before a tag (the tag jobs are the only other
+  place these actions run).
+
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 
 - `components/mall/src/MallUserEvents.ts` `prepareForStore` fills missing `created` /

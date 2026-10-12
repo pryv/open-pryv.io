@@ -9,6 +9,9 @@ on:
     # docker job below additionally requires `refs/tags/*` so it only
     # publishes on tag pushes, never on master pushes.
     tags: ['*']
+  # Manual run (Actions → Run workflow): also runs the build-only image check
+  # (`docker-build-check` / `docker-check` below), which pushes nothing.
+  workflow_dispatch:
 
 jobs:
   # PostgreSQL is the default baseStorage engine; SQLite is the
@@ -259,7 +262,7 @@ jobs:
           output-file: sbom.cyclonedx.json
           artifact-name: sbom-source.cyclonedx.json
       - name: Scan SBOM with Grype (fail on critical)
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@v7
         with:
           sbom: sbom.cyclonedx.json
           fail-build: true
@@ -311,7 +314,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # Prove the release image reports its own tag BEFORE anything is pushed.
       # Build the stock image locally (loaded into the daemon) with the release
       # build-arg, then assert the stamped `.api-version` equals the tag. A
@@ -374,12 +377,91 @@ jobs:
         run: |
           mkdir -p /tmp/digests
           touch "/tmp/digests/${DIGEST#sha256:}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: digests-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
+
+  # Build-only check of the release image path, on a manual run only: the same
+  # build, artifact and QEMU / buildx actions as the tag jobs, on both
+  # architectures, with nothing pushed, signed or attested and no registry login.
+  # Run it after changing those actions (or the Dockerfiles), before a tag.
+  docker-build-check:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build stock image (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            IMAGE_TAG=0.0.0-check
+          tags: open-pryv-check:candidate
+      - name: Assert native modules load
+        run: |
+          docker run --rm --entrypoint node open-pryv-check:candidate -e \
+            "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
+      - name: Export a marker for the next job
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p /tmp/check
+          echo "$ARCH" > "/tmp/check/$ARCH"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: check-${{ matrix.arch }}
+          path: /tmp/check/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-check:
+    needs: [docker-build-check]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: check-*
+          merge-multiple: true
+          path: /tmp/check
+      - name: Both architectures handed over
+        run: |
+          count=$(ls /tmp/check | wc -l)
+          if [ "$count" != "2" ]; then
+            echo "::error::expected 2 per-architecture markers, found $count"
+            exit 1
+          fi
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      # Built from the published base the Dockerfile defaults to; not pushed.
+      - name: Build the encryption-at-rest variant, both architectures (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.encrypted
+          platforms: linux/amd64,linux/arm64
+          push: false
 
   docker:
     needs: [docker-build]
@@ -395,7 +477,7 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: digests-*
           merge-multiple: true
@@ -405,8 +487,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       # QEMU only serves the encryption-at-rest variant's arm64 build below.
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       # One manifest list over the per-architecture digests; `docker pull`
       # picks the puller's architecture. Both architectures must be present.
       - name: Create + push multi-arch manifest
@@ -487,7 +569,7 @@ jobs:
       # SLSA build provenance attestation for the released image, signed keyless
       # and recorded so consumers can verify how + where the image was built.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-name: docker.io/pryvio/open-pryv.io
           subject-digest: ${{ steps.manifest.outputs.digest }}
