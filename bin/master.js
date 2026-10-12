@@ -391,6 +391,13 @@ if (cluster.isPrimary) {
           })
           .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
       });
+      // Platform-wide counters (e.g. the SMS budget per destination) whose
+      // window ended: they hold destination hashes, kept no longer than needed.
+      platformDB.sweepExpiredWindowedCounters()
+        .then(({ removed }) => {
+          if (removed > 0) log(`[counter-sweep] removed ${removed} expired counter(s)`);
+        })
+        .catch((err) => log(`[counter-sweep] failed: ${err.message}`));
       // Prune operator-revoke tombstones + the advisory key inventory older than
       // the max token lifetime: past it every token the revoke could have killed
       // is already expired, so the marker's job is done. Keeps the per-core-cached

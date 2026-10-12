@@ -202,6 +202,39 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('bumpWindowedCounter()', () => {
+      it('[PDWC1] counts up to max then refuses until the window ends; release gives one back', async () => {
+        const key = 'pdwc-' + cuid();
+        const now = 1_000_000;
+        for (let i = 0; i < 3; i++) assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + i), null);
+        assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + 10), now + 60_000);
+        await db.releaseWindowedCounter(key);
+        assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + 11), null);
+        assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + 12), now + 60_000);
+        // a new window opens at the first count after the end
+        assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + 60_000), null);
+        assert.strictEqual(await db.bumpWindowedCounter(key, 3, 60_000, now + 60_001), null);
+      });
+
+      it('[PDWC2] concurrent bumps at max-1: exactly one counts', async () => {
+        const key = 'pdwc-' + cuid();
+        const now = Date.now();
+        for (let i = 0; i < 4; i++) await db.bumpWindowedCounter(key, 5, 60_000, now);
+        const results = await Promise.all(Array.from({ length: 6 }, () => db.bumpWindowedCounter(key, 5, 60_000, now)));
+        assert.strictEqual(results.filter((r) => r === null).length, 1, JSON.stringify(results));
+      });
+
+      it('[PDWC3] the sweep removes only the counters whose window ended', async () => {
+        const ended = 'pdwc-' + cuid();
+        const live = 'pdwc-' + cuid();
+        await db.bumpWindowedCounter(ended, 3, 1000, 5_000);
+        await db.bumpWindowedCounter(live, 3, 1000, 9_000);
+        const { removed } = await db.sweepExpiredWindowedCounters(7_000);
+        assert.ok(removed >= 1);
+        assert.strictEqual(await db.bumpWindowedCounter(live, 1, 1000, 9_500), 10_000, 'live counter kept (still at 1)');
+      });
+    });
+
     describe('reassignInvitationConsumer()', () => {
       it('[PDIC1] must rewrite consumedBy on the invitations of that consumer only, keeping them consumed', async () => {
         const [a, b, free] = ['inv-a-' + cuid(), 'inv-b-' + cuid(), 'inv-f-' + cuid()];

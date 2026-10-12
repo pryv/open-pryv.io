@@ -88,6 +88,12 @@
   added). Already-joined cores need nothing. Docker: the entrypoint prepares
   `/app/config/bootstrap-config.yml`; a read-only `/app/config` mount needs that file writable for a
   join. `bin/check-config.js` reads `bootstrap-config.yml` next to the checked file, as boot does.
+- MFA SMS send limits: a new `services.mfa.methods.sms.sendLimits.perCorePerHour` (default 100, 0
+  disables) caps the SMS a core sends per hour, all users together, against toll fraud through many
+  accounts and premium-rate numbers; reaching it is logged (WARN). `perDestinationPerDay` is now
+  counted platform-wide (it was per core, so N cores allowed N times the budget); when the platform
+  store cannot be reached the send is refused. Expired counters are swept with the periodic
+  access-state sweep.
 
 ## 2.0.0-rc.49 - 2026-10-12
 
