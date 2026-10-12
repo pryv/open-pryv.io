@@ -12,6 +12,10 @@
 - Install wizard, dns-active: the default `auth.trustedApps` now include `https://reg.<domain>` and
   `https://access.<domain>`; lib-js `Service.login` from Node sends the register URL as `Origin`
   and was refused on a fresh install.
+- `events.get` bounds on account events (`:_system:` / `:system:` streams) now match the other
+  events: `toTime` is inclusive (it was exclusive) and `modifiedSince` is strict (it was `>=`). A
+  client paging with a moving `toTime` or `modifiedSince` bound could drop or repeat an account
+  event sitting exactly on the bound.
 
 ## 2.0.0-rc.48 - 2026-10-11
 
