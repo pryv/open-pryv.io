@@ -206,7 +206,8 @@ function getConfigUnsafe (warnOnly?: boolean): ConfigInstance {
   }
   if (!configInitialized) {
     if (warnOnly) {
-      logger.warn('Warning! config loaded before being fully initialized');
+      // The caller asked for a pre-init read (see the sites listed above): expected, not a warning.
+      logger.debug('config read before being fully initialized (accepted by the caller)');
     } else {
       throw (new Error('Config loaded before being fully initialized'));
     }

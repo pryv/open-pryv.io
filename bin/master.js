@@ -836,6 +836,7 @@ if (cluster.isPrimary) {
         // Stop ACME orchestrator (clears intervals)
         if (acmeOrchestrator) acmeOrchestrator.stop();
         if (dnsServer) await dnsServer.stop();
+        require('../components/platform/src/index.ts').platform.stopCoreUrlRefresh();
       },
       stopRqlite: () => rqliteProcess.isRunning()
         ? rqliteProcess.stop(log, (msg) => { logger.error(msg); console.error(`[master] ERROR: ${msg}`); })
