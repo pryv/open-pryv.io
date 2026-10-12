@@ -56,6 +56,7 @@ const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
+const { contextForAccess, reprepareWebhookScopes, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 // Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
@@ -80,6 +81,7 @@ import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { PermissionLevel, AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
 type MethodContext = BaseMethodContext;
+type StoredScopes = import('./helpers/webhookScopes.ts').StoredScopes;
 
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
@@ -608,6 +610,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     enforceUpdateChainRules,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
+    rescopeWebhooksOfUpdatedAccess,
     cmcAccessProvisionAppScopeHook,
     emitUpdateNotifications,
     cmcAccessesUpdatePostHookMiddleware
@@ -889,6 +892,39 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
+  /**
+   * The scopes of the updated access's webhooks were resolved against its
+   * permissions when they were set: resolve them again against the updated
+   * access. A scope now out of reach is dropped; a webhook left with none is
+   * deactivated (never turned into an unscoped one). Non-fatal: the access
+   * update stands (an unusable access deactivates its webhooks at fire time).
+   */
+  async function rescopeWebhooksOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const baseId = params.targetBase!;
+    try {
+      const hooks = (await webhooksRepository.get(context.user, { id: baseId, isPersonal: () => false }))
+        .filter((w: { scopes?: StoredScopes | null }) => w.scopes != null && Object.keys(w.scopes).length > 0);
+      if (hooks.length === 0) return next();
+      let accessContext: MethodContext | null = null;
+      try {
+        accessContext = await contextForAccess(context.source, context.user.username, params.targetAccess!.token!, storageLayer);
+      } catch (err) {
+        accessContext = null; // the access cannot be used any more: no scope is kept
+      }
+      for (const hook of hooks) {
+        const scopes = accessContext == null ? {} : await reprepareWebhookScopes(accessContext, hook.scopes);
+        const update: Record<string, unknown> = { scopes };
+        if (Object.keys(scopes).length === 0) update.state = 'inactive';
+        hook.scopes = scopes;
+        await hook.update(update);
+        reloadRunningWebhook(context.user.username, hook.forApi());
+      }
+    } catch (err) {
+      getLogger('accesses').warn(`webhooks of access ${baseId} not re-scoped after its update: ${(err as Error).message}`);
+    }
+    next();
+  }
+
   function emitUpdateNotifications (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     // Coarse-grained event — existing subscribers refetch on any access
     // change. String payload matches the legacy create/delete shape so
@@ -1092,7 +1128,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // the access still exists so a retry re-runs the cascade.
     try {
       for (const idToDelete of idsToDelete) {
+        const hooks = await webhooksRepository.get(context.user, { id: idToDelete.id, isPersonal: () => false });
         await webhooksRepository.deleteByAccess(context.user, idToDelete.id);
+        // Stop the running copies (they would otherwise stay registered until a restart).
+        for (const hook of hooks) {
+          pubsub.webhooks.emit(pubsub.WEBHOOKS_DELETE, { username: context.user.username, webhook: { id: hook.id } });
+        }
       }
     } catch (err) {
       return next(errors.unexpectedError(err));

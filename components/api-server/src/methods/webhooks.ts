@@ -36,31 +36,7 @@ const methodsSchema = require('../schema/webhooksMethods.ts');
 const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
 const { webhookUrlProblem, describeCallFailure } = require('business').webhooks.destination;
-const { prepareScopeQuery, prepareAccessScopeQuery } = require('./helpers/scopeQueryUtils.ts');
-
-// Validate + prepare a raw webhook scopes map { key -> { kind, query } } into
-// the stored form { key -> { kind, query, prepared } }. Stream resolution
-// (permission check + recursive expansion) is bound to the webhook's own
-// access (the request context). Throws on an invalid/unauthorized scope.
-async function prepareWebhookScopes (context: BaseMethodContext, rawScopes: unknown): Promise<Record<string, { kind: string; query: unknown; prepared: unknown }> | undefined> {
-  if (rawScopes == null) return undefined;
-  if (typeof rawScopes !== 'object') throw errors.invalidRequestStructure('"scopes" must be an object of named scopes.');
-  const out: Record<string, { kind: string; query: unknown; prepared: unknown }> = {};
-  for (const [key, raw] of Object.entries(rawScopes as Record<string, { kind?: string; query?: unknown }>)) {
-    const kind = raw?.kind ?? 'events';
-    const query = raw?.query ?? {};
-    let prepared;
-    if (kind === 'events' || kind === 'streams') {
-      prepared = await prepareScopeQuery(context, query as Record<string, unknown>);
-    } else if (kind === 'accesses') {
-      prepared = await prepareAccessScopeQuery(context, query as Record<string, unknown>);
-    } else {
-      throw errors.invalidRequestStructure(`scope '${key}': kind '${kind}' is not yet supported`);
-    }
-    out[key] = { kind, query, prepared };
-  }
-  return out;
-}
+const { prepareWebhookScopes, contextForAccess, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 
 const { pubsub } = require('messages');
 const { getLogger, ready } = require('@pryv/boiler');
@@ -220,13 +196,24 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       if (!isWebhookInScope(webhook, currentAccess)) {
         return next(errors.forbidden('The webhook was not created by this app access.'));
       }
-      if ('scopes' in update) {
-        const prepared = await prepareWebhookScopes(context, update.scopes);
+      const scopesChanged = 'scopes' in update;
+      if (scopesChanged) {
+        // Bound to the webhook's own access, also when its owner (personal
+        // token) makes the call.
+        let scopesContext = context;
+        if (currentAccess.id !== webhook.accessId) {
+          const access = await webhooksRepository._findAccess(user, webhook.accessId);
+          if (access == null || access.deleted != null) return next(errors.invalidOperation('The access of this webhook is deleted.'));
+          scopesContext = await contextForAccess(context.source, user.username, access.token, storageLayer);
+        }
+        const prepared = await prepareWebhookScopes(scopesContext, update.scopes);
         update.scopes = prepared ?? {};
         webhook.scopes = update.scopes; // replace the whole map (deepMerge would merge)
       }
       await webhook.update(update);
       result.webhook = webhook.forApi();
+      // The running copy was built from the previous scopes.
+      if (scopesChanged) reloadRunningWebhook(user.username, result.webhook);
     } catch (e) {
       return next(errors.unexpectedError(e));
     }

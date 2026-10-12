@@ -17,6 +17,21 @@
   `events.update`, the previous value is released only once the event is written, and a write that
   fails releases the value it had claimed. Values left reserved by earlier versions stay reserved.
 
+### Webhooks
+
+- A webhook was called once per API worker for each change (twice with the default
+  `cluster.apiWorkers: 2`): every worker ran the webhooks service with every webhook. One API
+  worker now runs it; its replacement takes over when it restarts.
+- Scoped webhooks follow their access: when `accesses.update` narrows the access, the scopes are
+  resolved again; a scope the access no longer reaches is removed, and a webhook left without any
+  scope becomes `inactive` (it is never turned into an unscoped webhook).
+- `webhooks.update` with `scopes`: the new map replaces the stored one (removed keys stayed stored)
+  and applies at once (the running webhook kept the previous scopes until a restart). Scopes set by
+  the account owner's personal token are resolved against the webhook's own access, never the
+  wider personal one.
+- Deleting an access stops its webhooks at once (they were deleted from storage but kept running
+  until the next change or a restart).
+
 ### Socket.IO
 
 - `accessUpdated` (access id and new serial, after `accesses.update`) is now sent only to the
