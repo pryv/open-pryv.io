@@ -40,7 +40,8 @@ export interface UserBackupReader {
   readAudit (): AsyncIterable<AuditExportRow>;
   /** HF series rows — engine/CSV-derived, opaque at this level. */
   readSeries (): AsyncIterable<unknown>;
-  readAttachments (): AsyncIterable<{ eventId: string, fileId: string, stream: Readable }>;
+  /** `eventId` is null for a file no event of the backup references (not to be restored). */
+  readAttachments (): AsyncIterable<{ eventId: string | null, fileId: string, stream: Readable }>;
   /** Resolves to null when the archive has no account data file. */
   readAccountData (): Promise<UserAccountStorageExport | null>;
 }
@@ -119,7 +120,7 @@ const UserBackupReader: UserBackupReader = {
   readEvents (): AsyncIterable<StoredEvent> { throw new Error('Not implemented'); },
   readAudit (): AsyncIterable<AuditExportRow> { throw new Error('Not implemented'); },
   readSeries (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readAttachments (): AsyncIterable<{ eventId: string, fileId: string, stream: Readable }> { throw new Error('Not implemented'); },
+  readAttachments (): AsyncIterable<{ eventId: string | null, fileId: string, stream: Readable }> { throw new Error('Not implemented'); },
   async readAccountData (): Promise<UserAccountStorageExport | null> { throw new Error('Not implemented'); }
 };
 

@@ -16,6 +16,9 @@ const path = require('path');
 const zlib = require('zlib');
 const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 
+// Open for reading without following a symbolic link (where the platform has the flag).
+const NO_FOLLOW_READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+
 /**
  * Create a FilesystemBackupReader that reads a backup tree rooted at `inputPath`.
  *
@@ -75,7 +78,11 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
     },
 
     async openUser (userId: string): Promise<UserBackupReader> {
-      const userDir = path.join(inputPath, 'users', userId);
+      const usersDir = path.resolve(inputPath, 'users');
+      const userDir = typeof userId === 'string' && userId !== '' ? path.resolve(usersDir, userId) : null;
+      if (userDir == null || path.dirname(userDir) !== usersDir) {
+        throw new Error('Invalid user id in the backup: ' + JSON.stringify(userId));
+      }
       return createFilesystemUserBackupReader(userDir, manifest, decryptor);
     },
 
@@ -195,20 +202,28 @@ async function * readChunkedJsonl (dir: string, baseName: string, compressed: bo
 
 /**
  * Iterate attachment files from the attachments directory.
- * Maps fileIds back to eventIds using event JSONL data.
+ * Maps fileIds back to eventIds using event JSONL data; a file no event of
+ * the backup references comes with a null eventId (the caller does not
+ * restore it). Entries are never followed: a symbolic link or any other
+ * non-regular entry is refused, it could make the restore import a file from
+ * outside the backup.
  */
-async function * readAttachmentsFromDir (attachDir: string, userDir: string, decryptor: BackupDecryptor | null): AsyncGenerator<{ eventId: string, fileId: string, stream: NodeJS.ReadableStream }> {
+async function * readAttachmentsFromDir (attachDir: string, userDir: string, decryptor: BackupDecryptor | null): AsyncGenerator<{ eventId: string | null, fileId: string, stream: NodeJS.ReadableStream }> {
   // Build fileId -> eventId mapping from events data
   const fileIdToEventId = await buildFileIdMapping(userDir, decryptor);
 
   const files = fs.readdirSync(attachDir).filter((f: string) => {
-    const stat = fs.statSync(path.join(attachDir, f));
-    return stat.isFile();
+    const stat = fs.lstatSync(path.join(attachDir, f));
+    if (stat.isDirectory()) return false;
+    if (!stat.isFile()) {
+      throw new Error(`Backup attachment ${path.join(attachDir, f)} is not a regular file (symbolic link or special file): refused`);
+    }
+    return true;
   });
 
   for (const fileId of files) {
-    const eventId = fileIdToEventId.get(fileId) || 'unknown';
-    const fileStream = fs.createReadStream(path.join(attachDir, fileId));
+    const eventId = fileIdToEventId.get(fileId) ?? null;
+    const fileStream = fs.createReadStream(path.join(attachDir, fileId), { flags: NO_FOLLOW_READ_FLAGS });
     // Decrypt the blob on the fly so the consumer receives plaintext bytes.
     const stream = decryptor ? fileStream.pipe(decryptor.decryptStream()) : fileStream;
     yield { eventId, fileId, stream };

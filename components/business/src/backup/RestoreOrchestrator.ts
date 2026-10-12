@@ -12,6 +12,29 @@ const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
 const { seriesNamespace } = require('../series/namespace.ts');
+const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
+
+// A backup can come from storage the operator does not control: its user ids
+// and usernames become local paths (user directory, series file), so only the
+// shapes this server issues are restored. Ids: cuid (older accounts) or cuid2.
+const USER_ID_RE = /^(c[a-z0-9-]{24}|[a-z][a-z0-9]{23})$/;
+const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+
+function isRestorableUser (entry: { userId?: unknown; username?: unknown } | null | undefined): boolean {
+  return entry != null &&
+    typeof entry.userId === 'string' && USER_ID_RE.test(entry.userId) &&
+    typeof entry.username === 'string' && USERNAME_RE.test(entry.username);
+}
+
+/** Refuses the whole restore when any user entry is not one this server issues. */
+function assertRestorableUsers (users: unknown): void {
+  if (!Array.isArray(users)) throw new Error('Restore aborted: the backup manifest has no user list');
+  const invalid = users.filter((u) => !isRestorableUser(u));
+  if (invalid.length > 0) {
+    const desc = invalid.map((u) => `${JSON.stringify(u?.username)} (${JSON.stringify(u?.userId)})`).join(', ');
+    throw new Error(`Restore aborted: ${invalid.length} user entry(ies) of the backup manifest with an invalid user id or username: ${desc}. Nothing was restored.`);
+  }
+}
 
 /**
  * Orchestrates restore from a backup archive into the current core.
@@ -64,6 +87,7 @@ class RestoreOrchestrator {
     }
 
     const manifest = await reader.readManifest();
+    assertRestorableUsers(manifest.users);
     this.logger.info(`Restoring from backup: format=${manifest.formatVersion} type=${manifest.backupType} users=${manifest.users.length}`);
 
     // Detect conflicts
@@ -116,6 +140,7 @@ class RestoreOrchestrator {
 
     const targetUserId = opts.remapUserId || userId;
     const { username } = userManifest;
+    assertRestorableUsers([userManifest, { userId: targetUserId, username }]);
 
     // Check conflicts
     const conflicts = await this._detectConflicts([{ userId: targetUserId, username }]);
@@ -227,9 +252,18 @@ class RestoreOrchestrator {
       await this._importEvents(user, events);
     }
 
-    // Attachments
+    // Attachments (a file no restored event references is not restored)
+    let unreferencedAttachments = 0;
     for await (const { eventId, fileId, stream } of await userReader.readAttachments()) {
+      if (eventId == null) {
+        (stream as { destroy?: () => void } | null)?.destroy?.();
+        unreferencedAttachments++;
+        continue;
+      }
       await this.eventFiles.saveAttachmentFromStream(stream, targetUserId, eventId, fileId);
+    }
+    if (unreferencedAttachments > 0) {
+      this.logger.warn(`${unreferencedAttachments} attachment file(s) of user ${targetUserId} referenced by no event of the backup: not restored`);
     }
 
     // Account data
@@ -536,7 +570,7 @@ type UserReader = {
   readProfile (): AsyncIterable<unknown>;
   readWebhooks (): AsyncIterable<unknown>;
   readEvents (): AsyncIterable<unknown>;
-  readAttachments (): AsyncIterable<{ eventId: string; fileId: string; stream: unknown }>;
+  readAttachments (): AsyncIterable<{ eventId: string | null; fileId: string; stream: unknown }>;
   readAccountData (): Promise<{ accountFields?: unknown[] } | null>;
   readAudit (): AsyncIterable<unknown>;
   readSeries (): AsyncIterable<unknown>;

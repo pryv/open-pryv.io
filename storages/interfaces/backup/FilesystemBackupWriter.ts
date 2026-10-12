@@ -46,12 +46,27 @@ interface ResolvedWriterOptions {
   encryptor: BackupEncryptor | null;
 }
 
+// A backup holds full account data: what it creates is for its owner only.
+// The modes given at creation do not apply to a file that already exists,
+// hence the chmod after each write.
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+function makePrivateDir (dirPath: string): void {
+  fs.mkdirSync(dirPath, { recursive: true, mode: PRIVATE_DIR_MODE });
+}
+
+function writePrivateFile (filePath: string, data: Buffer | string): void {
+  fs.writeFileSync(filePath, data, { mode: PRIVATE_FILE_MODE });
+  fs.chmodSync(filePath, PRIVATE_FILE_MODE);
+}
+
 /**
  * Write a buffer to disk, encrypting it first when an encryptor is configured.
  * This is the single choke point that guarantees only ciphertext is flushed.
  */
 function persist (filePath: string, buffer: Buffer, encryptor: BackupEncryptor | null): void {
-  fs.writeFileSync(filePath, encryptor ? encryptor.encryptBuffer(buffer) : buffer);
+  writePrivateFile(filePath, encryptor ? encryptor.encryptBuffer(buffer) : buffer);
 }
 
 /**
@@ -62,31 +77,33 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
     { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null },
     options
   );
-  fs.mkdirSync(outputPath, { recursive: true });
+  // An existing output directory keeps its mode (the operator chose it); the
+  // directories created below it are private.
+  makePrivateDir(outputPath);
 
   // Write the cleartext crypto envelope so restore can discover key model +
   // wrapped data key. It carries crypto headers only — never user data.
   // Ship self-recovery artifacts next to it so the backup can be decrypted by
   // the key holder even on a machine without Pryv.io installed.
   if (opts.encryptor) {
-    fs.writeFileSync(
+    writePrivateFile(
       path.join(outputPath, 'encryption.json'),
       JSON.stringify(opts.encryptor.envelope, null, 2)
     );
-    fs.writeFileSync(path.join(outputPath, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
-    fs.writeFileSync(path.join(outputPath, RESTORE_README_NAME), buildRestoreReadme(opts.encryptor.envelope));
+    writePrivateFile(path.join(outputPath, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
+    writePrivateFile(path.join(outputPath, RESTORE_README_NAME), buildRestoreReadme(opts.encryptor.envelope));
   }
 
   return createBackupWriter({
     async openUser (userId: string, username: string): Promise<UserBackupWriter> {
       const userDir = path.join(outputPath, 'users', userId);
-      fs.mkdirSync(userDir, { recursive: true });
+      makePrivateDir(userDir);
       return createFilesystemUserBackupWriter(userDir, userId, username, opts);
     },
 
     async writePlatformData (data: AsyncIterable<unknown> | unknown[]) {
       const platformDir = path.join(outputPath, 'platform');
-      fs.mkdirSync(platformDir, { recursive: true });
+      makePrivateDir(platformDir);
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
       await writeJsonlFile(filePath, data, opts.compress, opts.encryptor);
     },
@@ -152,7 +169,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
 
     async writeEvents (items: AsyncIterable<unknown> | unknown[]) {
       const eventsDir = path.join(userDir, 'events');
-      fs.mkdirSync(eventsDir, { recursive: true });
+      makePrivateDir(eventsDir);
       const result = await writeChunkedJsonlFiles(eventsDir, 'events', items, opts);
       stats.events = result.totalCount;
       chunks.events = result.chunkFiles;
@@ -160,7 +177,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
 
     async writeAudit (items: AsyncIterable<unknown> | unknown[]) {
       const auditDir = path.join(userDir, 'audit');
-      fs.mkdirSync(auditDir, { recursive: true });
+      makePrivateDir(auditDir);
       const result = await writeChunkedJsonlFiles(auditDir, 'audit', items, opts);
       stats.audit = result.totalCount;
       chunks.audit = result.chunkFiles;
@@ -168,16 +185,16 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
 
     async writeSeries (items: AsyncIterable<unknown> | unknown[]) {
       const seriesDir = path.join(userDir, 'series');
-      fs.mkdirSync(seriesDir, { recursive: true });
+      makePrivateDir(seriesDir);
       const filePath = path.join(seriesDir, jsonlFileName('series', opts.compress));
       stats.series = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
     },
 
     async writeAttachment (eventId: string, fileId: string, readStream: Readable) {
       const attachDir = path.join(userDir, 'attachments');
-      fs.mkdirSync(attachDir, { recursive: true });
+      makePrivateDir(attachDir);
       const filePath = path.join(attachDir, fileId);
-      const writeStream = fs.createWriteStream(filePath);
+      const writeStream = fs.createWriteStream(filePath, { mode: PRIVATE_FILE_MODE });
       // Insert the streaming cipher between read and write so the raw blob is
       // never written in the clear (attachments already stream; the transform
       // keeps memory bounded).
@@ -186,6 +203,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       } else {
         await pipeline(readStream, writeStream);
       }
+      fs.chmodSync(filePath, PRIVATE_FILE_MODE);
       stats.attachments++;
     },
 

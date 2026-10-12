@@ -134,7 +134,20 @@ const header = [
   ''
 ].join('\n');
 
-fs.writeFileSync(outPath, header + lines.join('\n') + '\n');
+// The env file carries every platform secret of the config: readable by its
+// owner only, like the YAML it comes from (the mode given to writeFileSync
+// applies to a new file only, hence the chmod). Run as root (the image
+// entrypoint), the file goes to the owner of the YAML.
+fs.writeFileSync(outPath, header + lines.join('\n') + '\n', { mode: 0o600 });
+fs.chmodSync(outPath, 0o600);
+if (typeof process.getuid === 'function' && process.getuid() === 0) {
+  const source = fs.statSync(absPath);
+  try {
+    fs.chownSync(outPath, source.uid, source.gid);
+  } catch (err) {
+    console.warn(`  ⚠ could not hand ${outPath} to uid ${source.uid} (${err.code}): run \`chown ${source.uid}:${source.gid}\` on it from the host.`);
+  }
+}
 console.log(`✓ Wrote ${outPath} (${lines.length} variable(s))`);
 if (skipped.length > 0) {
   console.error(`  ⚠ Skipped ${skipped.length} key(s) with multi-line values (env files are line-based):`);

@@ -45,6 +45,26 @@ describe('[ULDK] userLocalDirectory.deleteUserDirectory with entries to keep', f
     assert.strictEqual(fs.existsSync(userDir), false);
   });
 
+  it('[ULK4] a user id that is not one directory name is refused, and nothing outside its directory is deleted', async function () {
+    const canaryName = 'ulk4-canary-' + cuid().slice(-8);
+    const canary = path.join(userLocalDirectory.getBasePath(), canaryName);
+    fs.mkdirSync(canary, { recursive: true });
+    fs.writeFileSync(path.join(canary, 'data'), 'kept');
+    try {
+      // Resolves to `<base>/<canaryName>` when joined under `<base>/x/y/z/`.
+      const climbing = '../../../' + canaryName;
+      for (const badId of [climbing, 'abc/../../../x', 'abc\\def', 'ab\0cd']) {
+        assert.throws(() => userLocalDirectory.getPathForUser(badId), /Invalid/, JSON.stringify(badId));
+      }
+      await assert.rejects(() => userLocalDirectory.deleteUserDirectory(climbing), /Invalid/);
+      await assert.rejects(() => userLocalDirectory.ensureUserDirectory(climbing), /Invalid/);
+      assert.strictEqual(fs.readFileSync(path.join(canary, 'data'), 'utf8'), 'kept');
+      assert.throws(() => userLocalDirectory.getPathForUser(userId, '../../escape'), /Invalid/);
+    } finally {
+      fs.rmSync(canary, { recursive: true, force: true });
+    }
+  });
+
   it('[ULK3] removes the directory without a list, and accepts a directory already gone', async function () {
     await userLocalDirectory.deleteUserDirectory(userId);
     assert.strictEqual(fs.existsSync(userDir), false);

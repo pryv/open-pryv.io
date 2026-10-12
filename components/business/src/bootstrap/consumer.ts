@@ -122,30 +122,42 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
       'Raft quorum. Only safe at >=3 voters — two voters give a 2-of-2 cluster ' +
       'where either core dying is an outage.');
   }
-  // Secrets and the node key stay in a staging directory until the issuing
-  // core accepts the ack; any failure before that removes them.
-  const applied = await applyBundleMod.stageBundle({
-    armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter
-  });
-  log(`Staged the bundle files in ${applied.stagingDir}`);
+  // The operator's passphrase file is never removed here: name it, so the
+  // bundle and its passphrase do not stay side by side unnoticed.
+  const usesPassphraseFile = !(typeof passphrase === 'string' && passphrase.length > 0) && passphraseFile != null;
+  let applied: Awaited<ReturnType<typeof applyBundleMod.stageBundle>>;
   let ackResponse: HttpResponse;
   try {
-    ackResponse = await checkClockAndAck({ applied, trustSystemCa, clockSkewSeconds, clockProbe, httpClient, log });
-  } catch (err) {
+    // Secrets and the node key stay in a staging directory until the issuing
+    // core accepts the ack; any failure before that removes them.
+    applied = await applyBundleMod.stageBundle({
+      armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter
+    });
+    log(`Staged the bundle files in ${applied.stagingDir}`);
     try {
-      applied.discard();
-      log('Removed the staged files: nothing was written to ' + configDir + ' or ' + tlsDir);
-    } catch (cleanupErr) {
-      log(`Warning: could not remove the staging directory ${applied.stagingDir}: ${(cleanupErr as Error).message}; delete it by hand, it holds platform secrets`);
+      ackResponse = await checkClockAndAck({ applied, trustSystemCa, clockSkewSeconds, clockProbe, httpClient, log });
+    } catch (err) {
+      try {
+        applied.discard();
+        log('Removed the staged files: nothing was written to ' + configDir + ' or ' + tlsDir);
+      } catch (cleanupErr) {
+        log(`Warning: could not remove the staging directory ${applied.stagingDir}: ${(cleanupErr as Error).message}; delete it by hand, it holds platform secrets`);
+      }
+      throw err;
+    }
+
+    try {
+      applied.commit();
+    } catch (err) {
+      throw new Error(`ack accepted (the join token is spent) but moving the staged files into place failed: ${(err as Error).message}. ` +
+        `The files are in ${applied.stagingDir}: move them to ${tlsDir} and ${applied.overridePath} by hand, then start the core without --bootstrap.`);
+    }
+  } catch (err) {
+    if (usesPassphraseFile) {
+      log(`Warning: the bundle ${bundlePath} and its passphrase file ${passphraseFile} are still on this disk: ` +
+        'together they hold the platform admin key and a node identity. Delete both, or keep them on separate media until the retry.');
     }
     throw err;
-  }
-
-  try {
-    applied.commit();
-  } catch (err) {
-    throw new Error(`ack accepted (the join token is spent) but moving the staged files into place failed: ${(err as Error).message}. ` +
-      `The files are in ${applied.stagingDir}: move them to ${tlsDir} and ${applied.overridePath} by hand, then start the core without --bootstrap.`);
   }
   log(`Wrote ${applied.overridePath}`);
   log(`Wrote TLS files in ${tlsDir}`);
@@ -158,6 +170,9 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`Warning: could not delete bundle file ${bundlePath}: ${message}`);
+  }
+  if (usesPassphraseFile) {
+    log(`The passphrase file ${passphraseFile} is no longer needed and was not removed: delete it.`);
   }
 
   return {

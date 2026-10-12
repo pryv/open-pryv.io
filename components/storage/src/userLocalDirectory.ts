@@ -74,14 +74,30 @@ function getPathForUser (userId: string, extraPath = ''): string {
   if (basePath == null) {
     throw new Error('Run init() first');
   }
-  if (!userId || userId.length < 3) {
+  if (typeof userId !== 'string' || userId.length < 3) {
     throw new Error('Invalid or too short userId: ' + userId);
+  }
+  // The id names one directory: never a way to reach a parent or a sibling
+  // (the result is a target for recursive deletes and writes).
+  if (/[/\\\0]/.test(userId)) {
+    throw new Error('Invalid userId for a local path: ' + JSON.stringify(userId));
   }
   const dir1 = userId.substr(userId.length - 1, 1); // last character of id
   const dir2 = userId.substr(userId.length - 2, 1);
   const dir3 = userId.substr(userId.length - 3, 1);
   const resultPath = path.join(basePath, dir1, dir2, dir3, userId, extraPath);
+  // Whatever the id and the extra path: below the user's own directory.
+  const userPath = path.resolve(basePath, dir1, dir2, dir3, userId);
+  const resolved = path.resolve(resultPath);
+  if (!isInside(path.resolve(basePath), userPath) || (resolved !== userPath && !isInside(userPath, resolved))) {
+    throw new Error('Invalid local path for user: ' + JSON.stringify(userId));
+  }
   return resultPath;
+}
+
+/** True when `target` lies strictly below `base` (both resolved). */
+function isInside (base: string, target: string): boolean {
+  return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
 }
 
 /**

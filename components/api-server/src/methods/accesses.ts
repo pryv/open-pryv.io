@@ -173,7 +173,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     try {
       const deletions = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, query, { projection: { calls: 0 } }, cb));
-      result.accessDeletions = (deletions || []).map((d: unknown) => composeWireAccess(d));
+      // A deleted access's token no longer opens anything: never returned.
+      result.accessDeletions = (deletions || []).map((d: unknown) => withoutCredentials(composeWireAccess(d)));
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));

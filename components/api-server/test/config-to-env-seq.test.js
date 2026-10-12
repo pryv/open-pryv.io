@@ -120,6 +120,19 @@ describe('[CENV] config-to-env round-trip', () => {
     assert.deepStrictEqual(store.get('nested:list'), ['a', 'b']);
   });
 
+  it('[CEN6] the env file is readable by its owner only, also when it already existed', function () {
+    if (process.platform === 'win32') this.skip();
+    const yamlPath = path.join(tmpDir, 'fixture-config.yml');
+    const freshPath = path.join(tmpDir, 'fresh.env');
+    execFileSync('node', [path.join(ROOT, 'bin/config-to-env.js'), yamlPath, freshPath]);
+    assert.strictEqual(fs.statSync(freshPath).mode & 0o777, 0o600, 'a new env file');
+    const existingPath = path.join(tmpDir, 'existing.env');
+    fs.writeFileSync(existingPath, 'OLD=1\n');
+    fs.chmodSync(existingPath, 0o644);
+    execFileSync('node', [path.join(ROOT, 'bin/config-to-env.js'), yamlPath, existingPath]);
+    assert.strictEqual(fs.statSync(existingPath).mode & 0o777, 0o600, 'an env file written over');
+  });
+
   it('[CEN5] null, empty string and empty object round-trip', () => {
     const store = loadThroughNconf();
     assert.strictEqual(store.get('someNull'), null);

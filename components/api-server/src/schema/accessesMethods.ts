@@ -33,13 +33,23 @@ const __ex_get = {
       },
       accessDeletions: {
         type: 'array',
-        items: access(Action.READ)
+        items: accessDeletionItem()
       }
     }, {
       required: ['accesses']
     })
   };
 export { __ex_get as get };
+
+/** A deletion record: an access as read, without its (dead) token. */
+function accessDeletionItem () {
+  const schema = structuredClone(access(Action.READ));
+  schema.id = helpers.getTypeURI('accessDeletion', Action.READ);
+  for (const variant of schema.anyOf as Array<{ required?: string[] }>) {
+    variant.required = (variant.required ?? []).filter((key) => key !== 'token');
+  }
+  return schema;
+}
 const __ex_getOne = {
     params: object({
       id: string(),

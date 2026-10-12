@@ -1,5 +1,40 @@
 # Changelog - Internal (no API impact)
 
+## Path containment, file modes and deletion hardening
+
+- `components/storage/src/userLocalDirectory.ts` `getPathForUser` refuses a user id holding `/`,
+  `\` or NUL and checks that the resolved user directory (and the extra path) stays below the
+  base path; every per-user path (attachments, SQLite base / account / audit / series files, the
+  user-directory wipe at deletion) goes through it. Test: storage `[ULK4]`.
+- Restore: `RestoreOrchestrator` validates every manifest user entry (id `^c[a-z0-9-]{24}$` or
+  `^[a-z][a-z0-9]{23}$`, username `USERNAME_REGEXP_STR`) before any write, for a full restore
+  and for a single-user restore (the target id included); attachments read with a null event id
+  are skipped and counted. `FilesystemBackupReader` refuses a user id that leaves `users/`, reads
+  attachment entries with `lstat` (a symbolic link or special file is refused, directories are
+  skipped), opens them with `O_NOFOLLOW` where available, and yields `eventId: null` for a file
+  no event references (`BackupReader` type updated). Tests: business `[BKRS1]`..`[BKRS6]`.
+- `FilesystemBackupWriter` creates its directories `0700` and files `0600` (`makePrivateDir` /
+  `writePrivateFile`, chmod after write; attachments through `createWriteStream` with the mode
+  and a chmod); the standalone decrypt script and `bin/breach-scope.js` do the same for what
+  they write; `bin/config-to-env.js` writes `0600`, chmods, and chowns to the source YAML's owner
+  when run as root. Tests: storages `[BC15]`..`[BC17]`, audit `[BRSC6]`, api-server `[CEN6]`.
+- S3 engine: `keySegment` check on the user, event and file ids before any key or prefix is
+  built. Tests: `storages/engines/s3/test/key-segments.test.js` `[S3KS1]`..`[S3KS3]` (no S3
+  store needed).
+- Deletion (`business/src/auth/deletion.ts`): `validateUserFilepaths` joins the user id once;
+  `deleteUser` awaits the account removal and the accesses / profile / webhooks removals with
+  `Promise.allSettled` and throws the first failure afterwards. Tests: api-server `[DLPF1]`,
+  `[DLPF2]`.
+- `accesses.get`: deletion records go through `withoutCredentials`; the result schema's
+  `accessDeletions` items no longer require `token`. Tests: api-server `[NVCR]` (new), `[NVCQ]`
+  now matches the record by name.
+- Bootstrap consumer: logs the passphrase-file notice after a successful join and the
+  bundle-plus-passphrase warning on any failure from staging to commit, when a passphrase file
+  was used. Tests: business `[BPPF1]`, `[BPPF2]`.
+- Users repository: `releaseAttemptUniqueValues` keeps a value the winner holds through
+  `holdsUniqueValue` (its own field value, compared only when present, or, for `email`, a
+  verified entry of its e-mail container). Tests: api-server `[EML87]`, `[EML88]`.
+
 ## Server-written events: tracking properties stamped in the mall; backfill tool
 
 - `components/mall/src/MallUserEvents.ts` `prepareForStore` fills missing `created` /

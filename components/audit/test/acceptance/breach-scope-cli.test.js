@@ -136,6 +136,17 @@ describe('[BRSC] bin/breach-scope.js CLI', function () {
     assert.ok(md.includes('actual exposure per call is <= scope'));
   });
 
+  it('[BRSC6] the report files are readable by their owner only, also when they already existed', function () {
+    const jsonOut = path.join(tmpDir, 'mode-report.json');
+    const mdOut = path.join(tmpDir, 'mode-report.md');
+    fs.writeFileSync(mdOut, 'old');
+    fs.chmodSync(mdOut, 0o644);
+    const res = runCli(['--access', appAccessId, '--since', sinceIso, '--until', untilIso, '--output', jsonOut, '--output', mdOut]);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(fs.statSync(jsonOut).mode & 0o777, 0o600, 'a new report file');
+    assert.strictEqual(fs.statSync(mdOut).mode & 0o777, 0o600, 'a report file written over');
+  });
+
   it('[BRSC3] exits 3 when the accessId is not in the index', function () {
     const res = runCli(['--access', 'cnot-indexed-' + cuid(), '--since', sinceIso, '--json']);
     assert.strictEqual(res.status, 3, res.stderr);

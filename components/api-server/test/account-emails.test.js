@@ -476,6 +476,43 @@ describe('[EMLS] account emails (multiple)', function () {
       }
     });
 
+    it('[EML87] a user insert refused because its name is taken keeps the winner\'s verified secondary address', async function () {
+      const username = await registerWinner(cuid() + '@rb-sec-winner.example.com');
+      const usersRepository = await getUsersRepository();
+      const winnerId = await usersRepository.getUserIdForUsername(username);
+      try {
+        const secondary = cuid() + '@rb-sec-proved.example.com';
+        const [{ token }] = await addPending({ userId: winnerId, username }, [secondary]);
+        assert.strictEqual(await operations.verifyToken(winnerId, token, username), secondary);
+        assert.strictEqual(await rowOwner(secondary), await usernameToken(username), 'the proof claimed the row');
+
+        const attempt = new User({ id: cuid(), username, password: 'testpassw0rd', email: secondary, insurancenumber: '12345', language: 'en' });
+        await assert.rejects(() => usersRepository.insertOne(attempt), (err) => err.id === ErrorIds.ItemAlreadyExists);
+        assert.strictEqual(await rowOwner(secondary), await usernameToken(username), 'the winner keeps its verified secondary address');
+      } finally {
+        await usersRepository.deleteOne(winnerId, username);
+      }
+    });
+
+    it('[EML88] a failed same-name attempt gives back a value the winner does not hold, even the literal "null"', async function () {
+      const usersRepository = await getUsersRepository();
+      const platform = await getPlatform();
+      // A winner holding no email at all: only its index entry exists.
+      const username = 'reg' + cuid().toLowerCase().slice(1, 12);
+      const winnerId = cuid();
+      await usersRepository.usersIndex.addUser(username, winnerId);
+      try {
+        assert.strictEqual(await usersRepository.getOnePropertyValue(winnerId, 'email'), null, 'the winner holds no email');
+        assert.strictEqual(await platform.reserveUserUniqueValue(username, 'email', 'null'), true);
+        await usersRepository.compensateFailedInsert({ id: cuid(), username, email: 'null', language: 'en' });
+        assert.strictEqual(await rowOwner('null'), null, 'the attempt\'s row is released');
+      } finally {
+        await platform.releaseUserUniqueValue(username, 'email', 'null');
+        await usersRepository.usersIndex.deleteById(winnerId);
+        await platform.deleteUserCore(username);
+      }
+    });
+
     it('[EML91] two accounts updating to the same address at once: one wins, the other keeps its address', async function () {
       this.timeout(180000);
       const usersRepository = await getUsersRepository();

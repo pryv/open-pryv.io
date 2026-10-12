@@ -205,16 +205,28 @@ class EventS3Files {
   }
 
   #attachmentKey (userId: string, eventId: string, fileId: string): string {
-    return this.#eventPrefix(userId, eventId) + fileId;
+    return this.#eventPrefix(userId, eventId) + keySegment(fileId);
   }
 
   #eventPrefix (userId: string, eventId: string): string {
-    return this.#userPrefix(userId) + eventId + '/';
+    return this.#userPrefix(userId) + keySegment(eventId) + '/';
   }
 
   #userPrefix (userId: string): string {
-    return this.keyPrefix + userId + '/';
+    return this.keyPrefix + keySegment(userId) + '/';
   }
+}
+
+/**
+ * An id used as one level of an object key: refused unless it is a single
+ * segment, so no id shares its key prefix with another user's or event's
+ * objects (a prefix delete would remove them too).
+ */
+function keySegment (segment: string): string {
+  if (typeof segment !== 'string' || segment === '' || segment === '.' || segment === '..' || segment.includes('/')) {
+    throw new Error('Invalid attachment key segment: ' + JSON.stringify(segment));
+  }
+  return segment;
 }
 
 export { EventS3Files };

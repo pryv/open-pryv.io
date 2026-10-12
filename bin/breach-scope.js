@@ -214,11 +214,14 @@ require('@pryv/boiler').init({
 
     // 7. render + emit.
     const fs = require('fs');
+    // The report lists users and accesses: readable by its owner only (the
+    // mode applies to a new file only, hence the chmod).
     for (const out of args.outputs) {
       const ext = path.extname(out).toLowerCase();
-      if (ext === '.json') fs.writeFileSync(out, JSON.stringify(report, null, 2));
-      else if (ext === '.md') fs.writeFileSync(out, renderMarkdown(report));
+      if (ext === '.json') fs.writeFileSync(out, JSON.stringify(report, null, 2), { mode: 0o600 });
+      else if (ext === '.md') fs.writeFileSync(out, renderMarkdown(report), { mode: 0o600 });
       else throw usageError('unknown output extension "' + ext + '" (use .json or .md): ' + out);
+      fs.chmodSync(out, 0o600);
       trace('wrote ' + out);
     }
     if (args.outputs.length === 0) {

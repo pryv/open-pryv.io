@@ -546,6 +546,78 @@ describe('[PGTD] DELETE /users/:username', () => {
     });
   });
 
+  describe('[DLPF] deletion steps that cannot complete', function () {
+    const Deletion = require('business/src/auth/deletion.ts').default;
+
+    function runStep (deletion, step, context) {
+      return new Promise((resolve) => {
+        deletion[step](context, {}, {}, (err) => resolve(err));
+      });
+    }
+
+    it('[DLPF1] the precheck refuses a previews directory of the account the core cannot write', async function () {
+      if (typeof process.getuid === 'function' && process.getuid() === 0) this.skip(); // root writes anyway
+      const userId = 'dlpf' + cuid.slug().toLowerCase();
+      const previewsDir = path.join(config.get('storages:engines:filesystem:previewsDirPath'), userId);
+      fs.mkdirSync(previewsDir, { recursive: true });
+      fs.writeFileSync(path.join(previewsDir, 'preview.jpg'), 'p');
+      fs.chmodSync(previewsDir, 0o500);
+      try {
+        const deletion = new Deletion(null, {}, config);
+        const err = await runStep(deletion, 'validateUserFilepaths', { user: { id: userId, username: userId } });
+        assert.ok(err != null, 'the deletion stops before any step runs');
+        assert.ok(String(err.innerError?.message).includes(previewsDir), String(err.innerError?.message));
+        assert.ok(fs.existsSync(path.join(previewsDir, 'preview.jpg')), 'the previews are left in place');
+      } finally {
+        fs.chmodSync(previewsDir, 0o700);
+        fs.rmSync(previewsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('[DLPF2] when removing the account fails, every collection removal is still awaited and none is left unhandled', async function () {
+      const settledRemovals = [];
+      function collection (name, error) {
+        return {
+          removeAll (user, cb) {
+            setTimeout(() => { settledRemovals.push(name); cb(error); }, 30);
+          }
+        };
+      }
+      const storageLayer = {
+        accesses: collection('accesses', new Error('accesses removal failed')),
+        profile: collection('profile', null),
+        webhooks: collection('webhooks', null),
+        sessions: { remove (query, cb) { cb(null); } }
+      };
+      const unhandled = [];
+      const onUnhandled = (reason) => unhandled.push(reason);
+      const savedListeners = process.listeners('unhandledRejection');
+      process.removeAllListeners('unhandledRejection');
+      process.on('unhandledRejection', onUnhandled);
+      const deleteOne = usersRepository.deleteOne;
+      usersRepository.deleteOne = async () => { throw new Error('account removal failed'); };
+      try {
+        const deletion = new Deletion(null, storageLayer, config);
+        let removalsAtNext = null;
+        const err = await new Promise((resolve) => {
+          deletion.deleteUser({ user: { id: 'dlpf-' + cuid(), username: 'dlpfuser' } }, {}, {}, (e) => {
+            removalsAtNext = settledRemovals.length;
+            resolve(e);
+          });
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.ok(err != null, 'the failure is reported');
+        assert.strictEqual(err.innerError?.message, 'account removal failed');
+        assert.strictEqual(removalsAtNext, 3, 'the removals had all settled when the step answered');
+        assert.deepStrictEqual(unhandled, [], 'no rejection was left unhandled');
+      } finally {
+        usersRepository.deleteOne = deleteOne;
+        process.removeListener('unhandledRejection', onUnhandled);
+        for (const l of savedListeners) process.on('unhandledRejection', l);
+      }
+    });
+  });
+
   describe('[DL03] User - Create - Delete - Create - Login', function () {
     // Use cuid for unique username to avoid parallel test conflicts
     const usernamex = 'testdelx' + cuid.slug().toLowerCase();

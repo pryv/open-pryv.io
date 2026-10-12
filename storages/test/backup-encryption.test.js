@@ -235,5 +235,52 @@ describe('[BENC] backup encryption', () => {
       const attachPlain = fs.readFileSync(path.join(outDir, 'users', userId, 'attachments', 'att-1'));
       assert.deepStrictEqual(attachPlain, attachmentBytes);
     });
+
+    // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).
+    function nonPrivateEntries (root) {
+      const found = [];
+      (function walk (dir) {
+        for (const name of fs.readdirSync(dir)) {
+          const p = path.join(dir, name);
+          const st = fs.statSync(p);
+          const expected = st.isDirectory() ? 0o700 : 0o600;
+          if ((st.mode & 0o777) !== expected) found.push(path.relative(root, p) + ' ' + (st.mode & 0o777).toString(8));
+          if (st.isDirectory()) walk(p);
+        }
+      })(root);
+      return found;
+    }
+
+    it('[BC15] a plaintext and an encrypted backup are written for their owner only', async function () {
+      if (process.platform === 'win32') this.skip();
+      await writeBackup(null);
+      assert.deepStrictEqual(nonPrivateEntries(tmp), [], 'plaintext backup');
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.mkdirSync(tmp);
+      await writeBackup(createBackupEncryptor({ passphrase: 'pw' }));
+      assert.deepStrictEqual(nonPrivateEntries(tmp), [], 'encrypted backup');
+    });
+
+    it('[BC16] a backup file written over an existing one becomes private', async function () {
+      if (process.platform === 'win32') this.skip();
+      const manifestPath = path.join(tmp, 'manifest.json');
+      fs.writeFileSync(manifestPath, '{}');
+      fs.chmodSync(manifestPath, 0o644);
+      await writeBackup(null);
+      assert.strictEqual(fs.statSync(manifestPath).mode & 0o777, 0o600);
+    });
+
+    it('[BC17] the bundled decrypt script writes the plaintext tree for its owner only', async function () {
+      if (process.platform === 'win32') this.skip();
+      const { execFileSync } = require('node:child_process');
+      await writeBackup(createBackupEncryptor({ passphrase: 'pw' }));
+      const outDir = path.join(tmp, 'plain');
+      execFileSync(process.execPath, [
+        path.join(tmp, 'decrypt-backup.mjs'), tmp, '--passphrase', 'pw', '--out', outDir
+      ], { stdio: 'pipe' });
+      assert.ok(fs.existsSync(path.join(outDir, 'users', userId, 'attachments', 'att-1')));
+      assert.strictEqual(fs.statSync(outDir).mode & 0o777, 0o700);
+      assert.deepStrictEqual(nonPrivateEntries(outDir), []);
+    });
   });
 });

@@ -149,8 +149,10 @@ function main () {
   for (const rel of files) {
     const plain = decryptFile(dataKey, fs.readFileSync(path.join(args.dir, rel)));
     const dest = path.join(outDir, rel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, plain);
+    // Plaintext account data: for the owner only.
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(dest, plain, { mode: 0o600 });
+    fs.chmodSync(dest, 0o600);
     n++;
   }
   console.log('Decrypted ' + n + ' file(s) to ' + outDir);

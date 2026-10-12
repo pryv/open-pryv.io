@@ -96,15 +96,14 @@ class Deletion {
   }
 
   async validateUserFilepaths (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    // The user's paths (the directory deleteUserFiles removes), built once.
     const dirPaths = [
       path.join(this.config.get('storages:engines:filesystem:previewsDirPath') as string, context.user.id)
     ];
-    // NOTE User specific paths are constructed by appending the user _id_ to the
-    // `paths` constant above.
     // NOTE Since user specific paths are created lazily, we should not expect
     //  them to be there. But _if_ they are, they need be accessible.
     // Let's check if we can change into and write into the user's paths:
-    const inaccessibleDirectory = findNotAccessibleDir(dirPaths.map((p) => path.join(p, context.user.id)));
+    const inaccessibleDirectory = findNotAccessibleDir(dirPaths);
     if (inaccessibleDirectory) {
       const error = new Error(`Directory '${inaccessibleDirectory}' is inaccessible or missing.`);
       this.logger.error(error, error);
@@ -247,9 +246,17 @@ class Deletion {
       ];
       const removals = dbCollections
         .map((coll) => fromCallback((cb: (err: Error | null) => void) => coll.removeAll(context.user, cb)));
-      const usersRepository = await getUsersRepository();
-      await usersRepository.deleteOne(context.user.id, context.user.username);
-      await Promise.all(removals);
+      // Every removal is awaited whatever fails: a rejection left pending
+      // would surface as an unhandled rejection, which ends the worker.
+      const settled = await Promise.allSettled([
+        (async () => {
+          const usersRepository = await getUsersRepository();
+          await usersRepository.deleteOne(context.user.id, context.user.username);
+        })(),
+        ...removals
+      ]);
+      const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+      if (failed != null) throw failed.reason;
       await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
       await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb));
     } catch (error) {

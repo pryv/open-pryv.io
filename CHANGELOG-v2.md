@@ -1,5 +1,48 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Accesses
+
+- `accesses.get?includeDeletions=true`: the deletion records in `accessDeletions` no longer carry
+  the `token` (nor an `apiEndpoint`) of the deleted access, whoever the caller. A deleted access's
+  token opens nothing; the records keep their id, name, type, permissions and `deleted` time.
+
+### Fixed
+
+- Account deletion checks again, before anything is deleted, that the account's previews
+  directory can be written: the check looked one level too deep and never fired. An account whose
+  previews directory the core cannot write is now refused with an unexpected error before any
+  step runs, instead of failing part way.
+- An account deletion whose account removal fails no longer leaves its other removals running
+  unobserved (one of them failing could end the API worker): the failure is reported once every
+  removal has finished.
+- A registration refused because its username was just taken no longer releases the e-mail
+  address of the account that holds the name when that address is one of its verified secondary
+  addresses.
+
+### Operators
+
+- **Backup restore refusals.** A restore (`bin/backup.js --restore`) now refuses, before writing
+  anything, a backup whose manifest lists a user id or a username this server does not issue
+  (ids: cuid or cuid2; usernames: the registration pattern), and refuses a backup whose user
+  attachment folder holds a symbolic link or another non-regular file. An attachment file that
+  no event of the backup references is no longer restored (it was stored under an event id
+  `unknown`); the restore logs how many were skipped. Backups written by the server and by the
+  v1 migration tool restore as before.
+- **File modes.** Backups are written with directories `0700` and files `0600`, plaintext and
+  encrypted alike; the bundled `decrypt-backup.mjs` writes its decrypted tree the same way; the
+  `bin/breach-scope.js --output` reports and the `config-to-env` env file are written `0600`
+  (an existing file is changed to `0600`). Run as root (the image entrypoint), `config-to-env`
+  gives the env file to the owner of the source YAML. Adjust any process that read these files
+  as another user.
+- **Bootstrap passphrase file.** A core joining with `--bootstrap-passphrase-file` now logs that
+  the passphrase file can be deleted after a successful join (it is not removed automatically),
+  and, after a failed join, that the bundle and the passphrase file are both still on disk and
+  should be deleted or kept apart.
+- **S3 attachments.** The S3 attachment engine refuses a user, event or file id that is not a
+  single key segment (empty, `.`, `..`, or containing `/`).
+
 ## 2.0.0-rc.48 - 2026-10-11
 
 Events the server writes itself now carry `created`, `createdBy`, `modified` and `modifiedBy`

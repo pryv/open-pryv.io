@@ -92,7 +92,13 @@ describe('[AC01] accesses', () => {
         });
         it('[NVCQ] contains deleted accesses as well', () => {
           assert.strictEqual(deletions.length, 1);
-          assert.strictEqual(deletions[0].token, deletedToken);
+          assert.strictEqual(deletions[0].name, 'deleted access');
+        });
+        it('[NVCR] deleted accesses carry no token', () => {
+          assert.strictEqual(deletions.length, 1);
+          assert.ok(!('token' in deletions[0]), JSON.stringify(deletions[0]));
+          assert.ok(!('apiEndpoint' in deletions[0]));
+          assert.ok(!JSON.stringify(res.body).includes(deletedToken), 'the dead token appears nowhere in the answer');
         });
         it('[6ZQL] deleted access are in UTC (seconds) format', () => {
           const deletedAccess = deletions[0];

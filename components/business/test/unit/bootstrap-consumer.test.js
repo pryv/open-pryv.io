@@ -240,6 +240,46 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
       /passphrase file is empty/
     );
   });
+
+  it('[BPPF1] a join with a passphrase file names that file for deletion and leaves it in place', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    const passphraseFile = path.join(tmp, 'pass.txt');
+    fs.writeFileSync(passphraseFile, PASSPHRASE);
+    const logs = [];
+    await consume({
+      bundlePath,
+      passphraseFile,
+      configDir: path.join(tmp, 'config'),
+      tlsDir: path.join(tmp, 'tls'),
+      httpClient: async () => ({ statusCode: 200, body: { ok: true, cluster: { cores: [] } } }),
+      log: (m) => logs.push(m)
+    });
+    assert.ok(logs.some((m) => m.includes(passphraseFile) && /delete it/.test(m)), logs.join('\n'));
+    assert.equal(fs.existsSync(passphraseFile), true, 'the operator\'s file is not removed');
+  });
+
+  it('[BPPF2] a failed join with a passphrase file warns that the bundle and the passphrase are both on disk', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    const passphraseFile = path.join(tmp, 'pass.txt');
+    fs.writeFileSync(passphraseFile, PASSPHRASE);
+    for (const httpClient of [
+      async () => ({ statusCode: 401, body: { error: { id: 'token-invalid' } } }),
+      async () => { throw new Error('connect ECONNREFUSED'); }
+    ]) {
+      const logs = [];
+      await assert.rejects(consume({
+        bundlePath,
+        passphraseFile,
+        configDir: path.join(tmp, 'config'),
+        tlsDir: path.join(tmp, 'tls'),
+        httpClient,
+        log: (m) => logs.push(m)
+      }));
+      assert.ok(logs.some((m) => m.includes(bundlePath) && m.includes(passphraseFile) && /Delete both/.test(m)), logs.join('\n'));
+      assert.equal(fs.existsSync(bundlePath), true);
+      assert.equal(fs.existsSync(passphraseFile), true);
+    }
+  });
 });
 
 describe('[BSTG] consumer.consume writes nothing before an accepted ack', function () {

@@ -31,6 +31,8 @@ const { getPlatform } = require('platform');
 const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal } = require('platform/src/accessIndex.ts');
 const cache = require('cache').default;
 const cmc = require('cmc');
+const emailsContainer = require('business/src/emails/container.ts');
+const emailsConstants = require('business/src/emails/constants.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
 const logger = getLogger('users:repository');
@@ -509,16 +511,27 @@ class UsersRepository {
    * @private — release the unique values a failed registration attempt
    * reserved under its name, while another account (`winnerId`) holds that
    * name: rows under the name's token are then partly the winner's, so a
-   * value the winner holds itself (a double-submitted registration) is kept.
-   * With no winner, every value of the attempt is released.
+   * value the winner holds itself (a double-submitted registration, or one of
+   * the winner's verified secondary emails, claimed under the same name) is
+   * kept. With no winner, every value of the attempt is released.
    */
   async releaseAttemptUniqueValues (user: UserData, winnerId: string | null | undefined) {
     for (const field of accountStreams.uniqueFieldNames) {
       const value = (user as unknown as Record<string, unknown>)[field];
       if (value == null) continue;
-      if (winnerId != null && String(await this.getOnePropertyValue(winnerId, field)) === String(value)) continue;
+      if (winnerId != null && await this.holdsUniqueValue(winnerId, field, String(value))) continue;
       await this.platform.releaseUserUniqueValue(user.username, field, String(value));
     }
+  }
+
+  /** @private — true when the account holds `value` for unique `field` itself. */
+  async holdsUniqueValue (userId: string, field: string, value: string): Promise<boolean> {
+    const own = await this.getOnePropertyValue(userId, field);
+    if (own != null && String(own) === value) return true;
+    if (field !== emailsConstants.UNIQUE_FIELD) return false;
+    // A verified secondary address holds its row under the account's name too.
+    const entry = await emailsContainer.findRawByValue(userId, value);
+    return entry?.content?.status === emailsConstants.STATUS_VERIFIED;
   }
 
   /**
