@@ -44,6 +44,8 @@ const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { pubsub } = require('messages');
 
 const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream.ts').default;
+const ReadableDeletionsStream = require('./streams/ReadableDeletionsStream.ts').default;
+const { Readable } = require('node:stream');
 
 const { integrity } = require('business');
 
@@ -301,10 +303,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (params.modifiedSince == null || !params.includeDeletions) {
       return next();
     }
+    // Deletion records keep no streams (unless the deletion mode keeps
+    // everything): an access that does not read the whole store sees only the
+    // records whose kept streams it can read, so none in the other modes.
+    const wholeStore = await context.access.canReadWholeStore('local');
+    if (!wholeStore && config.get('versioning:deletionMode') !== 'keep-everything') {
+      result.addStream('eventDeletions', Readable.from([]));
+      return next();
+    }
     const deletedEvents = await mall.events.getDeletionsStreamed('local', context.user.id, { deletedSince: params.modifiedSince },
       { limit: params.limit, skip: params.skip, sortAscending: params.sortAscending });
+    const readable = wholeStore ? deletedEvents : utils.pipeThrough(deletedEvents, new ReadableDeletionsStream(context.access));
     // remove properties of events that shouldn't be exposed
-    result.addStream('eventDeletions', utils.pipeThrough(deletedEvents, new CleanDeletedEventsStream()));
+    result.addStream('eventDeletions', utils.pipeThrough(readable, new CleanDeletedEventsStream()));
     next();
   }
 

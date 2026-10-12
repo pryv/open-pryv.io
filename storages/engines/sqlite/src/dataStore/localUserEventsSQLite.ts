@@ -42,7 +42,7 @@ type UserDbLike = {
   getOneEvent: (eventId: string) => EventLike | null;
   getEvents: (params: { query: unknown[]; options: unknown }) => EventLike[];
   getEventsStreamed: (params: { query: unknown[]; options: unknown }) => ReadableType;
-  getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
+  getEventDeletionsStreamed: (deletedSince: number, options?: { sortAscending?: boolean; limit?: number; skip?: number } | null) => ReadableType;
   getEventHistory: (eventId: string) => EventLike[];
   getAllStatesPage: (afterId: string | null, limit: number) => EventLike[];
   getUnstampedPage: (afterId: string | null, limit: number) => EventLike[];
@@ -119,9 +119,9 @@ const userEvents = ds.createUserEvents({
     return db.getEventsStreamed({ query, options });
   },
 
-  async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, _options: unknown): Promise<ReadableType> {
+  async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, options: { sortAscending?: boolean; limit?: number; skip?: number } | null): Promise<ReadableType> {
     const db = await this.storage.forUser(userId);
-    return db.getEventDeletionsStreamed(query.deletedSince);
+    return db.getEventDeletionsStreamed(query.deletedSince, options);
   },
 
   async getHistory (this: Store, userId: string, eventId: string): Promise<EventLike[]> {

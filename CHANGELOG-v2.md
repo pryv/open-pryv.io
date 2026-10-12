@@ -16,6 +16,17 @@
   so nobody else could take it, and the reservations piled up); with `events.create` and
   `events.update`, the previous value is released only once the event is written, and a write that
   fails releases the value it had claimed. Values left reserved by earlier versions stay reserved.
+- `events.get?includeDeletions` and `streams.get?includeDeletionsSince`: deletion records were
+  returned to any token, whatever its permissions. They keep no streams (unless
+  `versioning.deletionMode` is `keep-everything`), so they are now returned only to an access that
+  reads the whole store: personal, or `*` read with no `none` / `create-only` exception (the
+  entries the server adds itself do not count). Another access gets an empty `eventDeletions` /
+  `streamDeletions` list; with `keep-everything`, it gets the event deletions whose kept streams it
+  can read. Effect on sync clients: a lib-js `Monitor` on a stream-scoped app token no longer
+  receives final deletions (trashing still arrives as an update); personal and `*` read tokens see
+  no change.
+- SQLite: `events.get?includeDeletions` applies `limit`, `skip` and `sortAscending` to the deletion
+  records, like PostgreSQL (it returned all of them, newest first).
 
 ### Webhooks
 

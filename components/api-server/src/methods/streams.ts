@@ -171,6 +171,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       return next();
     }
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(params.parentId || '*');
+    // Stream deletion records keep no parent: only an access reading the
+    // whole store may see them (an empty list otherwise).
+    if (!(await context.access.canReadWholeStore(storeId))) {
+      result.streamDeletions = [];
+      return next();
+    }
     try {
       const deletedStreams = await mall.streams.getDeletions(context.user.id, params.includeDeletionsSince, [storeId]);
       result.streamDeletions = deletedStreams;
