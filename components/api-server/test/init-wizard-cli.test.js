@@ -10,7 +10,9 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 /* global assert */
+const yaml = createRequire(import.meta.url)('js-yaml');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +91,25 @@ describe('[INWZ] bin/init.js generated files', function () {
     });
     assert.doesNotMatch(check.stdout + check.stderr, /letsEncrypt\.email/);
     assert.strictEqual(check.status, 0, check.stdout + check.stderr);
+  });
+
+  it('[INWZ6] UI assets are written explicitly, the public Pryv set by default', () => {
+    const res = runWizard(configDir);
+    assert.strictEqual(res.status, 0, res.output);
+    const config = fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8');
+    assert.match(config, /^ {2}assets:\n {4}definitions: https:\/\/pryv\.github\.io\/assets-pryv\.me\/index\.json$/m);
+  });
+
+  it('[INWZ7] dns-active: the default trustedApps include the register and access hosts', () => {
+    const answers = ANSWERS.replace(/^dnsless:.*\n/m, 'dnsless: false\n')
+      .replace(/^publicurl:.*\n/m, 'dnsdomain: example.invalid\npublicip: 192.0.2.10\n');
+    const res = runWizard(configDir, [], answers);
+    assert.strictEqual(res.status, 0, res.output);
+    const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
+    const trustedApps = config.auth.trustedApps.split(',').map((s) => s.trim());
+    for (const origin of ['https://core.example.invalid', 'https://reg.example.invalid', 'https://access.example.invalid']) {
+      assert.ok(trustedApps.includes('*@' + origin), origin + ' in ' + trustedApps.join(', '));
+    }
   });
 
   it('[INWZ5] a Let\'s Encrypt contact that is not an email address is refused', () => {

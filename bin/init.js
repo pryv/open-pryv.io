@@ -1291,6 +1291,12 @@ async function main () {
   const trustedOrigins = new Set();
   trustedOrigins.add(originOf(publicUrl));
   trustedOrigins.add(originOf(authUiUrl));
+  // dns-active: lib-js sends the service's register / access URLs as Origin
+  // (Node has no page origin), so a login from a script is refused without them.
+  if (!dnsLess) {
+    trustedOrigins.add(`https://reg.${dnsDomain}`);
+    trustedOrigins.add(`https://access.${dnsDomain}`);
+  }
   const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}`).join(', ');
   const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl origins)', defaultTrustedApps, 'auth.trustedapps');
 
@@ -1300,6 +1306,8 @@ async function main () {
   const serviceSupport = await ask('  service.support URL', publicUrl, 'service.support');
   const serviceTerms = await ask('  service.terms URL', publicUrl, 'service.terms');
   const serviceEventTypes = await ask('  service.eventTypes URL', 'https://pryv.github.io/event-types/flat.json', 'service.eventtypes');
+  // UI assets (login button, CSS, icons): the core serves none itself.
+  const serviceAssetsDefinitions = await ask('  service.assets.definitions URL (UI assets)', require('../config/plugins/public-url').DEFAULT_ASSETS_DEFINITIONS, 'service.assets.definitions');
   console.log();
 
   // 13. HFS workers
@@ -1503,6 +1511,7 @@ async function main () {
       home: serviceHome,
       support: serviceSupport,
       terms: serviceTerms,
+      assets: { definitions: serviceAssetsDefinitions },
       // The account app (self-service account pages) is the auth UI itself.
       account: authUiUrl
     },
