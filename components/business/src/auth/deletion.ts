@@ -237,6 +237,39 @@ class Deletion {
     }
   }
 
+  /**
+   * The erasure steps, in their (load-bearing) order: auth.delete registers
+   * them after its checks, eraseAccount runs them for the other paths that
+   * remove a whole account. `teardown: false` skips the relationship teardown
+   * (an account that never had relationships).
+   */
+  erasureSteps ({ teardown = true } = {}): Array<(context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown> {
+    return [
+      // Before anything is erased: the plugins read this account's records to
+      // reach the accounts it has relationships with.
+      ...(teardown ? [this.runTeardownSteps] : []),
+      this.deleteUserFiles,
+      this.deleteHFData,
+      this.deleteAttachments,
+      this.deleteAuditDataStorage,
+      // deleteUser opens the user's per-user SQLite files to remove its rows:
+      // after the directory wipe it would create them again, empty. Wipe last.
+      this.deleteUser,
+      this.deleteAuditData
+    ].map((step) => step.bind(this) as (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown);
+  }
+
+  /** Erase a whole account outside auth.delete, with the same steps. Throws on the first failing step. */
+  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean } = {}): Promise<void> {
+    const context: MethodContext = { user: { id: account.id, username: account.username } };
+    const result: ResultBag = {};
+    for (const step of this.erasureSteps(options)) {
+      await new Promise<void>((resolve, reject) => {
+        step(context, {}, result, (err?: unknown) => err != null ? reject(err) : resolve());
+      });
+    }
+  }
+
   async deleteUser (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
     try {
       const dbCollections = [

@@ -110,6 +110,37 @@ describe('[USRP] Users repository', () => {
       await usersRepository.insertOne(retry);
       await usersRepository.deleteOne(retry.id, uname);
     });
+
+    it('[URB2] a failure after the session and personal access were created leaves neither, nor a user directory', async () => {
+      const usersRepository = await getUsersRepository();
+      const { userLocalDirectory } = require('storage');
+      const uname = charlatan.Lorem.characters(10).toLowerCase();
+      const failing = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: charlatan.Internet.email(),
+        appId: 'urb2-app'
+      });
+      const originalSetPassword = usersRepository.setUserPassword;
+      usersRepository.setUserPassword = async () => { throw new Error('simulated password failure'); };
+      try {
+        await usersRepository.insertOne(failing, true);
+        assert.fail('should have thrown');
+      } catch (err) {
+        assert.equal(err.message, 'simulated password failure');
+      } finally {
+        usersRepository.setUserPassword = originalSetPassword;
+      }
+      // first: the lookups below open (and so create) the per-user SQLite files
+      assert.equal(require('node:fs').existsSync(userLocalDirectory.getPathForUser(failing.id)), false, 'no user directory left');
+      const session = await new Promise((resolve, reject) => usersRepository.sessionsStorage.getMatching(
+        { username: uname, appId: 'urb2-app', userId: failing.id }, (err, id) => err ? reject(err) : resolve(id)));
+      assert.equal(session, null, 'no session left');
+      const accesses = await new Promise((resolve, reject) => usersRepository.accessStorage.find(
+        { id: failing.id }, {}, null, (err, res) => err ? reject(err) : resolve(res)));
+      assert.deepEqual(accesses, [], 'no access left');
+    });
   });
 
   describe('[UR03] insertOne() indexed field defaults', () => {

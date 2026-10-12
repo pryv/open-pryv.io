@@ -461,6 +461,9 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         // (which is never written), so it missed the unique row entirely, and
         // it bypassed the hashing layer so it broke outright in hashed mode.
         await platform.deleteUser(username, null);
+        // NB: no relationship teardown either (delegations, consent grants):
+        // the account stays hosted and usable, so they stay valid. Erasing an
+        // account is DELETE /users/:username (auth.delete).
         // NB: the `user-core/` routing row is intentionally NOT removed here.
         // This route is registry-only (onlyReg): it leaves the user's local
         // index entry AND base storage on this core, so the user is still

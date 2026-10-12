@@ -574,7 +574,19 @@ class UsersRepository {
           await this.platform.deleteUserCore(user.username);
         }
       }],
-      ['mall', async () => { if (ownsId) await this.mall.deleteUser(user.id); }]
+      ['mall', async () => { if (ownsId) await this.mall.deleteUser(user.id); }],
+      // The login session and personal access of a registration with a session
+      // (created in the local transaction, which does not cover them).
+      ['sessions', async () => {
+        if (ownsId) await fromCallback((cb: (err: Error | null) => void) => this.sessionsStorage.remove({ userId: user.id }, cb));
+      }],
+      ['accesses', async () => {
+        if (ownsId) await fromCallback((cb: (err: Error | null) => void) => this.accessStorage.removeAll({ id: user.id }, cb));
+      }],
+      // Last: the cleanups above may open the per-user SQLite files.
+      ['userDirectory', async () => {
+        if (ownsId) await require('storage').userLocalDirectory.deleteUserDirectory(user.id);
+      }]
     ];
     for (const [what, cleanup] of cleanups) {
       try {

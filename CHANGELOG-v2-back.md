@@ -15,6 +15,18 @@
   PlatformDB method `reassignInvitationConsumer(from, to)` (PostgreSQL and rqlite). Tests:
   conformance `[PDIC1]`, platform `[INVT8]` `[INVT9]`. Invitations consumed by accounts deleted
   before this change keep the name (no sweep).
+- Account erasure in one place: `Deletion.erasureSteps()` is the ordered list `auth.delete`
+  registers, and `Deletion.eraseAccount()` runs it for the other whole-account removals. The
+  rollback of an account created for a delegate (a failure after its control access was minted)
+  used `deleteOne` only and left the control access, sessions, files and user directory; it now
+  erases the account like `auth.delete` (no relationship teardown: none was established). Test
+  `[DCRE-09]`.
+- Registration compensation: a registration with a session that failed after the session and
+  personal access were written (e.g. in `setUserPassword`) left them, and the user directory,
+  behind; `compensateFailedInsert` now removes them (only when the attempt owns the id). Test
+  `[URB2]` on both engines.
+- `DELETE /system/users/:username?onlyReg=true` and restore `--overwrite` keep their partial
+  semantics by design (the account stays hosted; its relationships stay valid). Test `[GF34]`.
 - `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
 
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
