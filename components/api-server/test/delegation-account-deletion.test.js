@@ -224,4 +224,69 @@ describe('[DADL] account deletion ends its delegation relationships (in-process 
       assert.deepStrictEqual((await listDelegates(bob)).map((d) => d.status), ['stale']);
     });
   });
+
+  describe('[DADL-G] a delegate controlling an account with no email', function () {
+    const { withInjectedConfig } = require('test-helpers');
+    let usersRepository;
+    before(async function () {
+      usersRepository = await require('business/src/users/index.ts').getUsersRepository();
+    });
+
+    async function createKid (parent) {
+      const username = 'kid-' + cuid().slice(-8);
+      const res = await coreRequest.post(parent.delegationsPath + '/controlled').set('Authorization', parent.token).send({ username });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return username;
+    }
+    // The way a parent gives the account an email: account.update with the
+    // delegate token (owner-equivalent) it issues on the account.
+    async function setKidEmail (parent, kid) {
+      const pat = await issueToken({ username: kid }, parent);
+      const res = await coreRequest.put('/' + kid + '/account').set('Authorization', pat).send({ email: kid + '@example.com' });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    }
+    function deleteOwnAccount (actor) {
+      return withInjectedConfig({ 'user-account': { delete: ['personalToken', 'adminToken'] } }, async () =>
+        await coreRequest.delete('/users/' + actor.username).set('Authorization', actor.token));
+    }
+
+    it('[DADL08] the owner\'s deletion is refused while a controlled account has no email, accepted once it has one', async function () {
+      const parent = await makeActor('parent');
+      const kid = await createKid(parent);
+      const refused = await deleteOwnAccount(parent);
+      assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+      assert.strictEqual(refused.body.error.id, ErrorIds.InvalidOperation);
+      assert.deepStrictEqual(refused.body.error.data.controlledAccountsWithoutEmail, [kid]);
+      await setKidEmail(parent, kid);
+      const accepted = await deleteOwnAccount(parent);
+      assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+      await deleteAccount({ username: kid });
+    });
+
+    it('[DADL09] an admin-key deletion goes through', async function () {
+      const parent = await makeActor('parent');
+      const kid = await createKid(parent);
+      await deleteAccount(parent);
+      await deleteAccount({ username: kid });
+    });
+
+    it('[DADL10] the controlled account\'s core answers the status to the control access only', async function () {
+      const parent = await makeActor('parent');
+      const kid = await createKid(parent);
+      const kidUser = await usersRepository.getUserByUsername(kid);
+      const accessesStorage = (await require('storage').getStorageLayer()).accesses;
+      const accesses = await new Promise((resolve, reject) => accessesStorage.find({ id: kidUser.id }, {}, null, (err, list) => err ? reject(err) : resolve(list)));
+      const control = accesses.find((a) => a.clientData?.delegation?.kind === 'control');
+      const status = await coreRequest.post('/' + kid + '/delegations/controlled-side/status').set('Authorization', control.token).send({});
+      assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+      assert.strictEqual(status.body.hasEmail, false);
+      const other = await coreRequest.post('/' + kid + '/delegations/controlled-side/status').set('Authorization', parent.token).send({});
+      assert.strictEqual(other.status, 403, JSON.stringify(other.body));
+      await setKidEmail(parent, kid);
+      const after = await coreRequest.post('/' + kid + '/delegations/controlled-side/status').set('Authorization', control.token).send({});
+      assert.strictEqual(after.body.hasEmail, true);
+      await deleteAccount(parent);
+      await deleteAccount({ username: kid });
+    });
+  });
 });

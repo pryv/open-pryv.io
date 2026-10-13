@@ -25,6 +25,7 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   // http.trustedProxies.
   configureTrustedProxies(config.get('http:trustedProxies'));
   app.set('trust proxy', expressTrustProxy);
+  app.set('query parser', middleware.queryParser);
   const commonHeadersMiddleware = await middleware.commonHeaders();
   const requestTraceMiddleware = middleware.requestTrace(app, logging);
   // register common middleware

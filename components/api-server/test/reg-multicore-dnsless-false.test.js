@@ -240,6 +240,57 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.ok(!res.body.core, 'response must not contain legacy `core.url` redirect');
     });
 
+    it('[MC15] the forward is signed for its body and names the landing core', async function () {
+      const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
+      const username = 'fwd15' + cuid.slug().toLowerCase();
+      forwardHandler = async () => ({ ok: true, status: 201, json: async () => ({ username, apiEndpoint: 'https://x/' }) });
+      const res = await request.post('/users').send({
+        appId: 'test-app',
+        username,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        hosting: 'eu-central-1',
+        insurancenumber: charlatan.Number.number(3)
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const { options } = forwardCalls[0];
+      assert.strictEqual(options.redirect, 'error', 'redirects are not followed');
+      const key = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+      const forward = verifyRegistrationForward(options.headers[REGISTRATION_FORWARD_HEADER], key, options.body);
+      assert.ok(forward != null, 'valid signature');
+      assert.strictEqual(forward.from, CORE_A);
+      assert.strictEqual(verifyRegistrationForward(options.headers[REGISTRATION_FORWARD_HEADER], key, options.body.replace(username, username + 'x')), null, 'bound to the body');
+    });
+
+    it('[MC16] a signed forward is created here, never forwarded again', async function () {
+      const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
+      const key = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+      const username = 'fwd16' + cuid.slug().toLowerCase();
+      // hosting maps to another core: without the forward header this core would forward it
+      const body = { appId: 'test-app', username, email: charlatan.Internet.email(), password: 'testpassword', hosting: 'eu-central-1', insurancenumber: String(charlatan.Number.number(3)) };
+      const res = await request.post('/users')
+        .set(REGISTRATION_FORWARD_HEADER, signRegistrationForward(key, CORE_B, '203.0.113.9', JSON.stringify(body)))
+        .send(body);
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(forwardCalls.length, 0, 'not forwarded again');
+      assert.ok(!res.body.core, 'no redirect');
+    });
+
+    it('[MC17] a forged or replayed forward header is refused', async function () {
+      const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
+      const key = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+      const body = { appId: 'test-app', username: 'fwd17' + cuid.slug().toLowerCase(), email: charlatan.Internet.email(), password: 'testpassword', hosting: 'eu-central-1', insurancenumber: '123' };
+      for (const header of [
+        signRegistrationForward('not-the-key-' + cuid(), CORE_B, '203.0.113.9', JSON.stringify(body)),
+        signRegistrationForward(key, CORE_B, '203.0.113.9', JSON.stringify(body), Date.now() - 5 * 60_000),
+        'v1;from=x'
+      ]) {
+        const res = await request.post('/users').set(REGISTRATION_FORWARD_HEADER, header).send(body);
+        assert.strictEqual(res.status, 403, header + ' ' + JSON.stringify(res.body));
+      }
+      assert.strictEqual(forwardCalls.length, 0);
+    });
+
     it('[MC11B] POST /reg/users alias accepts local registration', async function () {
       // `regSubdomainPathMap` in multi-core mode prepends `/reg` to every
       // path when Host is reg./access./mfa., so `POST reg.{domain}/users`

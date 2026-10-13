@@ -55,8 +55,10 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
-const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
+const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
+const { localFirstFetch } = require('./helpers/localDelivery.ts');
+const { contextForAccess, reprepareWebhookScopes, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 // Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
@@ -81,6 +83,7 @@ import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { PermissionLevel, AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
 type MethodContext = BaseMethodContext;
+type StoredScopes = import('./helpers/webhookScopes.ts').StoredScopes;
 
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
@@ -615,6 +618,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     enforceUpdateChainRules,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
+    rescopeWebhooksOfUpdatedAccess,
     cmcAccessProvisionAppScopeHook,
     emitUpdateNotifications,
     cmcAccessesUpdatePostHookMiddleware
@@ -896,6 +900,42 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
+  /**
+   * The scopes of the updated access's webhooks were resolved against its
+   * permissions when they were set: resolve them again against the updated
+   * access. A scope now out of reach is dropped; a webhook left with none is
+   * deactivated (never turned into an unscoped one). Non-fatal: the access
+   * update stands (an unusable access deactivates its webhooks at fire time).
+   */
+  async function rescopeWebhooksOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const baseId = params.targetBase!;
+    try {
+      const hooks = (await webhooksRepository.get(context.user, { id: baseId, isPersonal: () => false }))
+        .filter((w: { scopes?: StoredScopes | null }) => w.scopes != null && Object.keys(w.scopes).length > 0);
+      if (hooks.length === 0) return next();
+      let accessContext: MethodContext | null = null;
+      try {
+        accessContext = await contextForAccess(context.source, context.user.username, params.targetAccess!.token!, storageLayer);
+      } catch (err) {
+        // The access cannot be used any more: no scope is kept. Any other
+        // failure leaves the webhooks as they are (logged below).
+        if (!(err instanceof APIError)) throw err;
+        accessContext = null;
+      }
+      for (const hook of hooks) {
+        const scopes = accessContext == null ? {} : await reprepareWebhookScopes(accessContext, hook.scopes);
+        const update: Record<string, unknown> = { scopes };
+        if (Object.keys(scopes).length === 0) update.state = 'inactive';
+        hook.scopes = scopes;
+        await hook.update(update);
+        reloadRunningWebhook(context.user.username, hook.forApi());
+      }
+    } catch (err) {
+      getLogger('accesses').warn(`webhooks of access ${baseId} not re-scoped after its update: ${(err as Error).message}`);
+    }
+    next();
+  }
+
   function emitUpdateNotifications (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     // Coarse-grained event — existing subscribers refetch on any access
     // change. String payload matches the legacy create/delete shape so
@@ -923,15 +963,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // withdrawal is observable by the peer regardless of the revocation
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
+  // A peer account hosted on this core is reached in-process (localFirstFetch),
+  // not through the core's own public URL; globalThis.fetch is resolved per
+  // call so in-process test shims installed after registration are honoured.
+  const cmcDeliveryFetch = localFirstFetch(api, storageLayer);
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
     // The composed CMC mall (with `.accesses` and `.events`) lets the hook mark
     // the invite a deleted relationship descends from as revoked (local
     // bookkeeping) alongside the peer notify.
     mall: mallForCmc,
-    // Resolve globalThis.fetch lazily (per call) so in-process test
-    // shims installed after registration are honoured — same pattern
-    // as the events.ts cmc deps.
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-delete-hook'),
   });
@@ -942,9 +983,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // (the peer then deletes the access it holds for this account: the data
   // grant given to it, or its back-channel to it). Built WITHOUT the mall: the
   // local bookkeeping writes the account's own events, which are being erased.
-  // Sent, not awaited: a slow peer never holds the deletion.
+  // Awaited within a bound by the teardown (trackTeardownDelivery): a slow
+  // peer holds the deletion a few seconds at most.
   const cmcAccountDeletionNotice = cmc.createAccessesDeletePostHook({
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:account-deletion'),
   });
@@ -953,13 +995,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const relationships = (all || []).filter((a) => a?.deleted == null &&
       (a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role === 'counterparty');
     if (relationships.length === 0) return;
-    Promise.resolve()
+    trackTeardownDelivery(Promise.resolve()
       .then(() => cmcAccountDeletionNotice(account.id, relationships))
       .catch((err: unknown) => {
         getLogger('cmc:account-deletion').warn('cmc: revocation notices of a deleted account failed', {
           error: String((err as Error)?.message ?? err),
         });
-      });
+      }));
   });
 
   api.register(
@@ -1099,7 +1141,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // the access still exists so a retry re-runs the cascade.
     try {
       for (const idToDelete of idsToDelete) {
+        const hooks = await webhooksRepository.get(context.user, { id: idToDelete.id, isPersonal: () => false });
         await webhooksRepository.deleteByAccess(context.user, idToDelete.id);
+        // Stop the running copies (they would otherwise stay registered until a restart).
+        for (const hook of hooks) {
+          pubsub.webhooks.emit(pubsub.WEBHOOKS_DELETE, { username: context.user.username, webhook: { id: hook.id } });
+        }
       }
     } catch (err) {
       return next(errors.unexpectedError(err));

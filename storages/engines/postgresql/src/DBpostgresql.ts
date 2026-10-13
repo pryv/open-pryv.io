@@ -267,6 +267,15 @@ class DBpostgresql {
     );
   }
 
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> {
+    await this.db.query(
+      `UPDATE platform_kv
+       SET value = (value::jsonb || jsonb_build_object('consumedBy', $2::text))::text
+       WHERE key LIKE 'invitation/%' AND (value::jsonb ->> 'consumedBy') = $1`,
+      [from, to]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**
@@ -460,6 +469,40 @@ class DBpostgresql {
     const parsed = JSON.parse(res.rows[0].value as string);
     if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
     return parsed;
+  }
+
+  async bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null> {
+    const storeKey = 'counter/' + key;
+    const fresh = JSON.stringify({ count: 1, windowEndsAt: now + windowMs });
+    const res = await this.db.query(
+      `INSERT INTO platform_kv (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = CASE
+         WHEN (platform_kv.value::jsonb ->> 'windowEndsAt')::bigint <= $3 THEN EXCLUDED.value
+         ELSE jsonb_set(platform_kv.value::jsonb, '{count}', to_jsonb((platform_kv.value::jsonb ->> 'count')::bigint + 1))::text END
+       WHERE (platform_kv.value::jsonb ->> 'windowEndsAt')::bigint <= $3
+          OR (platform_kv.value::jsonb ->> 'count')::bigint < $4`,
+      [storeKey, fresh, now, max]
+    );
+    if ((res.rowCount ?? 0) > 0) return null;
+    const row = await this.db.query('SELECT value FROM platform_kv WHERE key = $1', [storeKey]);
+    const windowEndsAt = row.rows.length > 0 ? Number(JSON.parse(row.rows[0].value as string).windowEndsAt) : NaN;
+    return Number.isFinite(windowEndsAt) ? windowEndsAt : now + 1000;
+  }
+
+  async releaseWindowedCounter (key: string): Promise<void> {
+    await this.db.query(
+      `UPDATE platform_kv SET value = jsonb_set(value::jsonb, '{count}', to_jsonb((value::jsonb ->> 'count')::bigint - 1))::text
+       WHERE key = $1 AND (value::jsonb ->> 'count')::bigint > 0`,
+      ['counter/' + key]
+    );
+  }
+
+  async sweepExpiredWindowedCounters (now = Date.now()): Promise<{ removed: number }> {
+    const res = await this.db.query(
+      `DELETE FROM platform_kv WHERE key LIKE 'counter/%' AND (value::jsonb ->> 'windowEndsAt')::bigint <= $1`,
+      [now]
+    );
+    return { removed: res.rowCount ?? 0 };
   }
 
   async sweepExpiredAccessStates (now = Date.now()): Promise<{ removed: number }> {

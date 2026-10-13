@@ -279,6 +279,37 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
     }
   });
 
+  it('[DCRE-09] a failure after the control access was minted erases the whole new account', async function () {
+    const mall = await require('mall').getMall();
+    const { userLocalDirectory } = require('storage');
+    const storageLayer = await require('storage').getStorageLayer();
+    const username = 'kidfail-' + cuid().slice(-8);
+    const original = mall.events.create;
+    let newUserId = null;
+    mall.events.create = async function (userId, event, ...rest) {
+      if (event?.type === 'delegation/delegate') {
+        newUserId = userId;
+        throw new Error('injected anchor failure');
+      }
+      return original.call(this, userId, event, ...rest);
+    };
+    let res;
+    try {
+      res = await coreRequest.post(parent.delegationsPath + '/controlled')
+        .set('Authorization', parent.token).send({ username });
+    } finally {
+      mall.events.create = original;
+    }
+    assert.ok(res.status >= 500, JSON.stringify(res.body));
+    assert.ok(newUserId != null, 'the account was created before the failure');
+    assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'the name is free');
+    // first: the access lookup opens (and so creates) the per-user SQLite files
+    assert.strictEqual(require('node:fs').existsSync(userLocalDirectory.getPathForUser(newUserId)), false, 'no user directory left');
+    const accesses = await new Promise((resolve, reject) => storageLayer.accesses.find(
+      { id: newUserId }, {}, null, (err, list) => err ? reject(err) : resolve(list)));
+    assert.deepStrictEqual(accesses, [], 'the control access is gone');
+  });
+
   it('[DCRE-08] an unknown target core is rejected up-front', async function () {
     const res = await coreRequest.post(parent.delegationsPath + '/controlled')
       .set('Authorization', parent.token)

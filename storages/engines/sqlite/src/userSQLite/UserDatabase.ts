@@ -159,19 +159,17 @@ function prepareEventsGetQuery (params: GetParams): string {
   return 'SELECT * FROM events_fts ' + prepareQuery(params);
 }
 
-/**
- * Deletions since `deletedSince`, newest first unless `sortAscending`, paged by
- * `limit` / `skip` like the events they stand for (same as the PostgreSQL
- * engine).
- */
 UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: DeletionsOptions | null): NodeReadable {
   this.logger.debug(`GET events deletions since: ${deletedSince}`);
-  if (options == null || (options.limit == null && options.skip == null && !options.sortAscending)) {
+  if (options?.sortAscending !== true && options?.limit == null && options?.skip == null) {
     return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
   }
-  const sql = 'SELECT * from events WHERE deleted > ? ORDER BY deleted ' + (options.sortAscending ? 'ASC' : 'DESC') +
-    pagingClause(options.limit, options.skip);
-  return readableEventsStreamForIterator(this.db.prepare(sql).iterate(deletedSince));
+  // Same bound (strict), order, limit and skip as the PostgreSQL engine.
+  let sql = `SELECT * from events WHERE deleted > ? ORDER BY deleted ${options?.sortAscending === true ? 'ASC' : 'DESC'}`;
+  const params: number[] = [deletedSince];
+  if (options?.limit != null || options?.skip != null) { sql += ' LIMIT ?'; params.push(options?.limit ?? -1); }
+  if (options?.skip != null) { sql += ' OFFSET ?'; params.push(options.skip); }
+  return readableEventsStreamForIterator(this.db.prepare(sql).iterate(...params));
 };
 
 type DeletionsOptions = { sortAscending?: boolean; limit?: number | null; skip?: number | null };

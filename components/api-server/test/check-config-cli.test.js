@@ -21,10 +21,13 @@ const cuid = require('cuid');
 const CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
-function runCheck (yamlBody, nodeEnv = process.env.NODE_ENV) {
+function runCheck (yamlBody, nodeEnv = process.env.NODE_ENV, extraEnv = {}) {
   const file = path.join(os.tmpdir(), 'check-config-' + cuid.slug() + '.yml');
   fs.writeFileSync(file, yamlBody);
+  // The test runner itself sets `a__b` config variables: keep only the ones a test passes.
   const env = Object.assign({}, process.env);
+  for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
+  Object.assign(env, extraEnv);
   if (nodeEnv == null) delete env.NODE_ENV; else env.NODE_ENV = nodeEnv;
   try {
     const res = spawnSync('node', [CLI, file], {
@@ -317,5 +320,59 @@ integrity:
     assert.strictEqual(strong.status, 0, strong.stdout + strong.stderr);
     const absent = runCheck(BASE);
     assert.strictEqual(absent.status, 0, absent.stdout + absent.stderr);
+  });
+});
+
+describe('[CKEV] bin/check-config.js keys supplied by environment variables', function () {
+  this.timeout(60000);
+  const OWN_KEY = 'k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=';
+
+  it('[CKEV1] a required key set as `a__b` in the environment is not reported missing', () => {
+    const fileOnly = runCheck(BASE_WITHOUT_PII_KEY, null);
+    assert.strictEqual(fileOnly.status, 1, fileOnly.stdout + fileOnly.stderr);
+    assert.match(fileOnly.stderr, /platform\.piiHmacKey missing or unset/);
+
+    const res = runCheck(BASE_WITHOUT_PII_KEY.replace('  base:\n    engine: sqlite\n', ''), null,
+      { platform__piiHmacKey: OWN_KEY, storages__base__engine: 'sqlite' });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /Environment: 2 variable\(s\) merged under this file/);
+    assert.match(res.stdout, /platform__piiHmacKey, storages__base__engine/);
+    assert.doesNotMatch(res.stdout, new RegExp(OWN_KEY), 'values are never printed');
+  });
+
+  it('[CKEV2] the file wins over the environment, as at boot; parsed values (booleans) apply', () => {
+    const res = runCheck(BASE, null, { platform__piiHmacKey: 'REPLACE ME' });
+    assert.doesNotMatch(res.stdout + res.stderr, /piiHmacKey missing or unset/);
+
+    const dnsOff = runCheck(BASE, null, { dnsLess__isActive: 'false' });
+    assert.strictEqual(dnsOff.status, 0, 'the file sets dnsLess.isActive: true: ' + dnsOff.stdout + dnsOff.stderr);
+    const noDns = runCheck(BASE.replace('  isActive: true\n', ''), null, { dnsLess__isActive: 'false' });
+    assert.strictEqual(noDns.status, 1, noDns.stdout + noDns.stderr);
+    assert.match(noDns.stderr, /Neither dnsLess\.isActive nor dns\.active is true/);
+  });
+});
+
+describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', function () {
+  this.timeout(60000);
+
+  it('[CKBS1] keys in bootstrap-config.yml next to the file count, as at boot; the file still wins', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-config-bs-'));
+    try {
+      const file = path.join(dir, 'override-config.yml');
+      fs.writeFileSync(file, BASE_WITHOUT_PII_KEY);
+      const run = () => {
+        const env = Object.assign({}, process.env);
+        for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
+        delete env.NODE_ENV;
+        return spawnSync('node', [CLI, file], { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: 30000 });
+      };
+      assert.strictEqual(run().status, 1, 'no key anywhere');
+      fs.writeFileSync(path.join(dir, 'bootstrap-config.yml'), 'platform:\n  piiHmacKey: k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=\n');
+      const res = run();
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.match(res.stdout, /Bootstrap layer: .*bootstrap-config\.yml/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -3059,5 +3059,23 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       await deleteAccount(bob);
       assert.ok(await pollGone(requester, backChannel.id), 'the back-channel held by the deleted account is deleted');
     });
+
+    it('[CN84] same core: the revocation is applied in-process before the deletion answers', async function () {
+      await freshPair();
+      const h = await runFreshHandshake('study-del-c', 'del-app-c');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const accepter = bob;
+      const outbound = [];
+      const shim = globalThis.fetch;
+      globalThis.fetch = (url, init) => { outbound.push(String(url)); return shim(url, init); };
+      try {
+        await deleteAccount(alice);
+      } finally {
+        globalThis.fetch = shim;
+      }
+      const res = await coreRequest.get(accepter.accessesPath).set('Authorization', accepter.token);
+      assert.ok(!(res.body?.accesses || []).some((a) => a.id === dataGrant.id), 'gone when the deletion answered');
+      assert.deepStrictEqual(outbound.filter((u) => u.includes(accepter.username)), [], 'no request to this core\'s own URL');
+    });
   });
 });

@@ -6,26 +6,31 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createHash } = require('node:crypto');
+const { createHash, createHmac } = require('node:crypto');
 const errors = require('errors').factory;
 
 /**
  * Limits on SMS sends, checked before every SMS the core has sent (a login
  * challenge, an `mfa.challenge` re-send, an SMS `mfa.activate`), in both SMS
- * modes. Three budgets, each 0 to disable:
+ * modes. Four budgets, each 0 to disable:
  *  - `minIntervalSeconds` between two sends on one MFA session;
  *  - `perUserPerHour` sends for one user, in a window opened by the first
  *    (keyed by the user id: a username change does not reset it, and the
  *    next holder of a released username does not inherit it);
+ *  - `perCorePerHour` sends by this core, all users: the cap on SMS cost
+ *    (toll fraud through many accounts and premium numbers), logged when hit;
  *  - `perDestinationPerDay` sends to one destination (phone), whoever the
- *    user, in a window opened by the first.
+ *    user and whichever the core, in a window opened by the first.
  * A send over a budget is refused with 429 too-many-attempts and its
  * `retryAfterSeconds`; nothing is sent.
  *
- * The counters live in cluster_kv (shared by the API workers of the core).
- * The destination is keyed by a hash of the phone, never the phone itself: a
- * pseudonym (a phone number hash is reversible by enumeration), so that a key
- * listing does not hand over phone numbers; the entries are short-lived.
+ * The session, user and core counters live in cluster_kv (shared by the API
+ * workers of the core; a user lives on one core). The destination counter is
+ * in the platform store, shared by all cores: a platform error refuses the
+ * send (fail closed). The destination is keyed by a hash of the phone, never
+ * the phone itself: a pseudonym (a phone number hash is reversible by
+ * enumeration), so that a key listing does not hand over phone numbers; the
+ * entries are short-lived (expired ones are swept).
  * A send counts once its budgets are reserved, even when the provider then
  * fails: a failing send still reached the provider.
  */
@@ -33,12 +38,14 @@ const errors = require('errors').factory;
 type SendLimits = {
   minIntervalSeconds: number;
   perUserPerHour: number;
+  perCorePerHour: number;
   perDestinationPerDay: number;
 };
 
 const SEND_LIMIT_DEFAULTS: SendLimits = {
   minIntervalSeconds: 30,
   perUserPerHour: 5,
+  perCorePerHour: 100,
   perDestinationPerDay: 10
 };
 
@@ -53,6 +60,11 @@ interface KvLike {
 }
 
 type Counter = { count: number; windowEndsAt: number };
+/** The platform-wide counter (PlatformDB). */
+interface SharedCounters {
+  bumpWindowedCounter: (key: string, max: number, windowMs: number, now: number) => Promise<number | null>;
+  releaseWindowedCounter: (key: string) => Promise<void>;
+}
 type Send = { sessionId: string; userId: string; destination: string };
 
 function isCounter (v: unknown): v is Counter {
@@ -68,7 +80,15 @@ function smsDestination (content: Record<string, unknown> | null | undefined): s
   return JSON.stringify(sorted);
 }
 
+// Keyed with the platform's shared secret when there is one: the key is
+// replicated to every core, and an unkeyed phone hash is reversed by
+// enumerating numbers.
 function destinationKeyPart (destination: string): string {
+  let secret: unknown = null;
+  try { secret = require('@pryv/boiler').getConfigSync().get('auth:adminAccessKey'); } catch { secret = null; }
+  if (typeof secret === 'string' && secret.length > 0) {
+    return createHmac('sha256', secret).update('mfa-sms-destination:' + destination).digest('hex');
+  }
   return createHash('sha256').update('mfa-sms-destination:' + destination).digest('hex');
 }
 
@@ -84,11 +104,33 @@ class SmsSendLimiter {
   limits: SendLimits;
   kv: KvLike;
   namespace: string;
+  sharedCounters: SharedCounters | null;
+  coreLimitWarnedUntil: number;
 
-  constructor (limits: SendLimits, opts: { kvClient?: KvLike; namespace?: string } = {}) {
+  constructor (limits: SendLimits, opts: { kvClient?: KvLike; namespace?: string; sharedCounters?: SharedCounters | null } = {}) {
     this.limits = limits;
     this.kv = opts.kvClient || require('messages/src/cluster_kv.ts').clientFor();
     this.namespace = opts.namespace || 'mfa-sms-send/';
+    // undefined: the platform store, resolved at the first send; null: none
+    // (the destination budget then stays in cluster_kv, core-local)
+    this.sharedCounters = opts.sharedCounters ?? null;
+    this.resolveShared = opts.sharedCounters === undefined;
+    this.coreLimitWarnedUntil = 0;
+  }
+
+  resolveShared: boolean;
+  warnedNoShared = false;
+
+  /** The platform store (shared by all cores), else the core's own cluster_kv. */
+  shared (): SharedCounters | null {
+    if (this.resolveShared && this.sharedCounters == null) {
+      this.sharedCounters = require('storages').platformDB ?? null;
+      if (this.sharedCounters == null && !this.warnedNoShared) {
+        this.warnedNoShared = true;
+        warn('SMS send limits: no platform store, the per-destination budget is counted on this core only');
+      }
+    }
+    return this.sharedCounters;
   }
 
   /**
@@ -113,13 +155,41 @@ class SmsSendLimiter {
       if (intervalMs > 0) await this.kv.delete(sessionKey);
       throw refusal(userRefused, now);
     }
+    const coreKey = this.namespace + 'core';
+    const coreRefused = await this.bump(coreKey, this.limits.perCorePerHour, HOUR_MS, now);
+    if (coreRefused != null) {
+      if (this.coreLimitWarnedUntil < now) {
+        this.coreLimitWarnedUntil = coreRefused;
+        warn(`SMS sends refused: this core reached sendLimits.perCorePerHour (${this.limits.perCorePerHour}) until ${new Date(coreRefused).toISOString()}. Check for abuse (many accounts or numbers) before raising it.`);
+      }
+      await this.release(userKey, this.limits.perUserPerHour);
+      if (intervalMs > 0) await this.kv.delete(sessionKey);
+      throw refusal(coreRefused, now);
+    }
     const destinationKey = this.namespace + 'destination/' + destinationKeyPart(destination);
-    const destinationRefused = await this.bump(destinationKey, this.limits.perDestinationPerDay, DAY_MS, now);
+    let destinationRefused: number | null;
+    try {
+      destinationRefused = await this.bumpDestination(destinationKey, now);
+    } catch (err) {
+      // The shared budget cannot be checked: refuse rather than send uncounted.
+      warn('SMS send refused: the per-destination budget could not be checked (platform store): ' + (err as Error).message);
+      destinationRefused = now + 60_000;
+    }
     if (destinationRefused != null) {
+      await this.release(coreKey, this.limits.perCorePerHour);
       await this.release(userKey, this.limits.perUserPerHour);
       if (intervalMs > 0) await this.kv.delete(sessionKey);
       throw refusal(destinationRefused, now);
     }
+  }
+
+  /** The destination budget, in the platform store when there is one. */
+  async bumpDestination (key: string, now: number): Promise<number | null> {
+    const max = this.limits.perDestinationPerDay;
+    if (!(max > 0)) return null;
+    const shared = this.shared();
+    if (shared == null) return await this.bump(key, max, DAY_MS, now);
+    return await shared.bumpWindowedCounter(key, max, DAY_MS, now);
   }
 
   /**
@@ -149,6 +219,14 @@ class SmsSendLimiter {
       const next: Counter = { count: row.count - 1, windowEndsAt: row.windowEndsAt };
       if (await this.kv.set(key, next, { ttlMs: Math.max(1, row.windowEndsAt - now), ifEquals: row })) return;
     }
+  }
+}
+
+function warn (msg: string): void {
+  try {
+    require('@pryv/boiler').getLogger('mfa').warn(msg);
+  } catch {
+    console.warn('[mfa] ' + msg);
   }
 }
 

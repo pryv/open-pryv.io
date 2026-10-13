@@ -57,7 +57,8 @@ function makeRecordingDb () {
     setDnsRecord: record('setDnsRecord'),
     getDnsRecord: record('getDnsRecord'),
     deleteDnsRecord: record('deleteDnsRecord'),
-    getAllWithPrefix: record('getAllWithPrefix')
+    getAllWithPrefix: record('getAllWithPrefix'),
+    reassignInvitationConsumer: record('reassignInvitationConsumer')
   };
   return { db, calls };
 }

@@ -23,18 +23,6 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.checkIfAuthorized.bind(deletion),
     deletion.validateUserExists.bind(deletion),
     deletion.validateUserFilepaths.bind(deletion),
-    // Before anything is erased: the plugins read this account's records to
-    // reach the accounts it has relationships with.
-    deletion.runTeardownSteps.bind(deletion),
-    deletion.deleteUserFiles.bind(deletion),
-    deletion.deleteHFData.bind(deletion),
-    deletion.deleteAttachments.bind(deletion),
-    deletion.deleteAuditDataStorage.bind(deletion),
-    // deleteUser opens the user's per-user SQLite files to remove its rows:
-    // after the directory wipe it would create them again, empty. Wipe last.
-    deletion.deleteUser.bind(deletion),
-    deletion.deleteAuditData.bind(deletion),
-    // Last: points written while the steps above ran, through a series
-    // credential still cached by a high-frequency worker.
-    deletion.dropHFDataAgain.bind(deletion));
+    deletion.checkDeletionGuards.bind(deletion),
+    ...deletion.erasureSteps());
 };

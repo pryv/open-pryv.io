@@ -660,6 +660,37 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SNAU1] accessUpdated reaches only the sockets of the updated access; the others get accessesChanged', function () {
+      const createApp = (name) => new Promise((resolve, reject) => {
+        superagent.post(server.url + '/' + user.username + '/accesses').set('Authorization', token)
+          .send({ name, type: 'app', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+          .end((err, res) => err ? reject(err) : resolve(res.body.access));
+      });
+      return (async () => {
+        const accA = await createApp('snau-a-' + Date.now());
+        const accB = await createApp('snau-b-' + Date.now());
+        const conA = ioCons.con1 = connect(namespace, { auth: accA.token });
+        const conB = ioCons.con2 = connect(namespace, { auth: accB.token });
+        const conP = ioCons.con3 = connect(namespace, { auth: token });
+        const received = { A: [], B: [], P: [] };
+        let personalCoarse = 0;
+        for (const [k, c] of [['A', conA], ['B', conB], ['P', conP]]) c.on('accessUpdated', (p) => received[k].push(p));
+        conP.on('accessesChanged', () => { personalCoarse++; });
+        await Promise.all([conA, conB, conP].map((c) => new Promise((resolve) => c.once('connect', resolve))));
+        await new Promise((resolve, reject) => {
+          superagent.put(server.url + '/' + user.username + '/accesses/' + accA.id).set('Authorization', token)
+            .send({ name: 'snau-a-renamed-' + Date.now() })
+            .end((err) => err ? reject(err) : resolve());
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        assert.strictEqual(received.A.length, 1, JSON.stringify(received));
+        assert.strictEqual(received.A[0].accessId.split(':')[0], accA.id.split(':')[0]);
+        assert.deepStrictEqual(received.B, []);
+        assert.deepStrictEqual(received.P, []);
+        assert.ok(personalCoarse >= 1, 'the personal socket still gets accessesChanged');
+      })();
+    });
+
     it('[SNAC1] delivers an accesses-kind scope when a matching access is created', function () {
       ioCons.con1 = connect(namespace, { auth: token }); // personal access (required for accesses-kind)
       return new Promise((resolve, reject) => {
@@ -689,6 +720,28 @@ describe('[SK01] Socket.IO', function () {
               assert.ok(errObj != null, 'expected a forbidden error for a non-personal accesses scope');
               resolve();
             } catch (e) { reject(e); }
+          });
+        });
+      });
+    });
+
+    it('[SNSK5] a scope on a stream covers a child stream created after subscribing', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      const childId = 'snsk5-' + Date.now();
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['p']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'p', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('streams.create', { id: childId, name: childId, parentId: inScopeStream }, function (err2) {
+              if (err2) return reject(err2);
+              // the scope is resolved again on the stream change (asynchronously)
+              setTimeout(() => {
+                ioCons.con1.emit('events.create', createParams(childId), function (err3) { if (err3) reject(err3); });
+              }, 300);
+            });
           });
         });
       });

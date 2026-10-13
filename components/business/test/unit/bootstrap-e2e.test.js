@@ -261,7 +261,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
       // The replayed bundle was kept (operator can investigate)
       assert.equal(fs.existsSync(stash), true);
       // and nothing of it was written on the replaying host
-      assert.equal(fs.existsSync(path.join(tmp, 'cfg-2', 'override-config.yml')), false);
+      assert.equal(fs.existsSync(path.join(tmp, 'cfg-2', 'bootstrap-config.yml')), false);
       assert.equal(fs.existsSync(path.join(tmp, 'tls-2')), false);
     } finally {
       await new Promise(resolve => server.close(resolve));
@@ -375,7 +375,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
     }
   });
 
-  it('v2 bundle round-trips letsEncrypt.atRestKey into consumer override-config', async () => {
+  it('v2 bundle round-trips letsEncrypt.atRestKey into consumer bootstrap-config', async () => {
     const ATKEY = 'cm91bmQtdHJpcC1hdC1yZXN0LWtleS1mb3ItYm9vdHN0cmFw';
     const platformDB = makeFakeDB();
     const tokensPath = path.join(tmp, 'tokens.json');
@@ -411,8 +411,8 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
       });
 
       const yaml = require('js-yaml');
-      const overridePath = path.join(configDir, 'override-config.yml');
-      const parsed = yaml.load(fs.readFileSync(overridePath, 'utf8'));
+      const configPath = path.join(configDir, 'bootstrap-config.yml');
+      const parsed = yaml.load(fs.readFileSync(configPath, 'utf8'));
       // certRenewer: false stamped explicitly — the joiner is a materialize-only
       // follower; deriveHostnames uses the explicit false to watch the cluster
       // wildcard instead of the auto-derived per-core hostname.

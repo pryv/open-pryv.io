@@ -23,6 +23,9 @@ const { getLogger, ready } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
+const { getStorageLayer } = require('storage');
+const WebhooksRepository = require('business').webhooks.Repository;
+const { rescopeUserWebhooks } = require('./helpers/webhookScopes.ts');
 const Readable = require('stream').Readable;
 
 // Scoped notifications: structured stream-change signal carrying the changed
@@ -69,6 +72,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // Lazy getter instead of slice capture.
   const getUpdates = () => config.get('updates');
   const mall = await getMall();
+  const storageLayer = await getStorageLayer();
+  const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
+  // Webhook scopes are resolved to a set of streams: resolve them again after
+  // the tree changed (non-fatal, logged).
+  async function rescopeWebhooks (context: MethodContext): Promise<void> {
+    try {
+      await rescopeUserWebhooks(context.source, { id: context.user.id, username: context.user.username }, webhooksRepository, storageLayer);
+    } catch (err) {
+      logger.warn('webhook scopes not resolved again after a stream change: ' + (err as Error).message);
+    }
+  }
   // RETRIEVAL
   // Defense-in-depth: prune `:_cmc:_internal` subtree
   // from the response tree as a last step.
@@ -171,6 +185,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       return next();
     }
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(params.parentId || '*');
+    // Stream deletion records keep no parent: only an access reading the
+    // whole store may see them (an empty list otherwise).
+    if (!(await context.access.canReadWholeStore(storeId))) {
+      result.streamDeletions = [];
+      return next();
+    }
     try {
       const deletedStreams = await mall.streams.getDeletions(context.user.id, params.includeDeletionsSince, [storeId]);
       result.streamDeletions = deletedStreams;
@@ -264,6 +284,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       result.stream = newStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
       notifyScopedStreamChange(context.user.username, newStream, 'create');
+      await rescopeWebhooks(context);
       next();
     } catch (err) {
       // Already an API error
@@ -331,6 +352,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       result.stream = updatedStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
       notifyScopedStreamChange(context.user.username, updatedStream, 'update');
+      await rescopeWebhooks(context);
       return next();
     } catch (err) {
       if (err instanceof APIError) {
@@ -379,6 +401,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       result.stream = updatedStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
       notifyScopedStreamChange(context.user.username, updatedStream, 'trash');
+      await rescopeWebhooks(context);
       return next();
     } catch (err) {
       if (err instanceof APIError) {
@@ -493,6 +516,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     singleItemDeletedStream.push(null); // close stream
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
     notifyScopedStreamChange(context.user.username, { id: params.id }, 'delete');
+    rescopeWebhooks(context);
   }
 };
 

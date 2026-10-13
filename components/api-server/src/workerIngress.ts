@@ -13,6 +13,7 @@ import type { Logger } from '@pryv/boiler';
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { clientIp, trustedProxyFn } from 'middleware/src/clientIp.ts';
 import { redactUrl } from 'utils/src/redactUrl.ts';
+import { failIngress } from './ingressGuard.ts';
 
 /**
  * Proxy core shared by the in-process dispatchers that route part of the
@@ -93,7 +94,14 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
           req.resume();
         }
       });
-      res.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
+      try {
+        res.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
+      } catch (err) {
+        // A throw here is in the client request's callback: it would end the worker.
+        proxyRes.destroy();
+        failIngress(req, res, err, logger, tag);
+        return;
+      }
       // pipeline(), not .pipe(): a client that goes away mid-answer must reach the
       // upstream response and its socket, and an upstream that dies mid-answer
       // must end this response instead of leaving it open.

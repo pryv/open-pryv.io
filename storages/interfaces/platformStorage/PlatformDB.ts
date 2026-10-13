@@ -216,6 +216,18 @@ export interface PlatformDB {
   consumeAccessState (key: string): Promise<AccessStateEntry | null>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
   /**
+   * Platform-wide windowed counter (e.g. a send budget shared by all cores):
+   * count one under `key` unless `max` was reached in the current window, in
+   * one linearized statement (of N concurrent bumps at max-1, exactly one
+   * counts). A window opens at the first count and lasts `windowMs`. Answers
+   * null when counted, else the time (ms) the window ends.
+   */
+  bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null>;
+  /** Give back one count of {@link bumpWindowedCounter} (never below 0). */
+  releaseWindowedCounter (key: string): Promise<void>;
+  /** Delete the counters whose window ended. */
+  sweepExpiredWindowedCounters (now?: number): Promise<{ removed: number }>;
+  /**
    * Non-destructive listing of the EXPIRED access-state entries whose
    * (caller-facing) key starts with `prefix`. Returns each match's key and
    * parsed value — for callers that must act on an expired entry (e.g. revoke
@@ -248,6 +260,8 @@ export interface PlatformDB {
   claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean>;
   /** Clear a claim made by `consumedBy` (no-op when someone else holds it). */
   releaseInvitationToken (token: string, consumedBy: string): Promise<void>;
+  /** Set `consumedBy` to `to` on every invitation consumed by `from` (account renamed or deleted). */
+  reassignInvitationConsumer (from: string, to: string): Promise<void>;
 
   // Integrity (read-only)
   checkStoreIntegrity (): Promise<PlatformIntegrityReport>;
@@ -369,6 +383,12 @@ const PlatformDB: PlatformDB = {
 
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
 
+  async bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null> { throw new Error('Not implemented'); },
+
+  async releaseWindowedCounter (key: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async sweepExpiredWindowedCounters (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
   async listExpiredAccessStates (prefix: string, now?: number): Promise<ExpiredAccessStateEntry[]> { throw new Error('Not implemented'); },
 
   // --- Generic cluster-wide key-value --- //
@@ -398,6 +418,8 @@ const PlatformDB: PlatformDB = {
   async claimInvitationToken (token: string, consumedBy: string, consumedAt: number): Promise<boolean> { throw new Error('Not implemented'); },
 
   async releaseInvitationToken (token: string, consumedBy: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> { throw new Error('Not implemented'); },
 
   async checkStoreIntegrity (): Promise<PlatformIntegrityReport> { throw new Error('Not implemented'); }
 };

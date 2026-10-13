@@ -14,6 +14,7 @@ const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams/index.ts');
 const { parseAccessRef, managingAccessBase } = require('./refs.ts');
+const { isInjectedPermission } = require('./injectedPermissions.ts');
 
 const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
@@ -589,6 +590,25 @@ class AccessLogic {
     const level = await this._getStreamPermissionLevel(fullStreamId);
     if (level == null || level === 'create-only') return false;
     return isHigherOrEqualLevel(level, 'read');
+  }
+
+  /**
+   * Whether the access reads the whole store: personal, or `*` read with no
+   * "none" / "create-only" exception (other than the entries the server
+   * injects) and no forced streams. For records that name no stream (deletion
+   * records keep none), which cannot be filtered stream by stream.
+   */
+  async canReadWholeStore (storeId: string): Promise<boolean> {
+    if (this.isPersonal()) return true;
+    if (!(await this.canGetEventsOnStream('*', storeId))) return false;
+    const forced = this.getForcedStreamsGetEventsStreamIds(storeId);
+    if (forced != null && forced.length > 0) return false;
+    for (const perm of this.permissions ?? []) {
+      if (!('streamId' in perm) || perm.streamId == null || isInjectedPermission(perm, this.id)) continue;
+      if (perm.level !== 'none' && perm.level !== 'create-only') continue;
+      if (storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId)[0] === storeId) return false;
+    }
+    return true;
   }
 
   async canCreateEventsOnStream (streamId: string) {

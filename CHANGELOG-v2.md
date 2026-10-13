@@ -2,21 +2,29 @@
 
 ## Unreleased
 
-Hardening of API inputs and query semantics, sessions, sockets, registration and access
-requests. Client-visible: a stream query whose `all` entry names no stream now matches nothing;
-time bounds must be finite; `accesses.get` validates its options and `includeDeletions=false`
-leaves deletions out; the account root stream can no longer be granted at a writing level;
-account fields written through events follow the field's rules and take the server time; the first
-decision posted on an access request wins; OAuth2 PKCE values must have the RFC 7636 form; new
-usernames of the `xn--` / `??--` forms or of the shape of a minted alias are refused, and a
-delegated account takes a username only under the registration rules. Operations, limits, logging
-and deletion: `webhooks.test` follows the webhook's minimum interval (`429` otherwise); the
-webhooks of a renamed account follow it, those of a deleted account stop; a preview of an image
-declaring too many pixels answers `413`. Operators: run the read-only counts listed in the deploy
-notes before deploying (local events carrying an account stream id next to another stream,
-accesses granting the account root above `read`, usernames of the shapes now refused); a core
-configured with `integrity.algorithm: md5` or `sha1` refuses to boot; the admin key fingerprint
-of the boot log changes (name and value); new log files are created `0640` in `0750` directories.
+Hardening of API inputs and query semantics, sessions, sockets, registration, access requests,
+notifications and account deletion. Client-visible: a stream query whose `all` entry names no
+stream now matches nothing; time bounds must be finite; `accesses.get` validates its options and
+`includeDeletions=false` leaves deletions out; deletion records (`includeDeletions`,
+`includeDeletionsSince`) are returned only to an access reading the whole store; the account root
+stream can no longer be granted at a writing level; account fields written through events follow
+the field's rules and take the server time; query-string keys can no longer shadow built-in object
+properties; the first decision posted on an access request wins; OAuth2 PKCE values must have the
+RFC 7636 form; new usernames of the `xn--` / `??--` forms or of the shape of a minted alias are
+refused, and a delegated account takes a username only under the registration rules; the owner of
+an account that is the delegate of an account without email cannot delete it with the personal
+token. Notifications: scoped Socket.IO subscriptions and webhooks follow the stream tree and their
+access; `accessUpdated` goes only to the sockets of the updated access; each webhook is called once
+per change (it was called once per API worker); `webhooks.test` follows the webhook's minimum
+interval (`429` otherwise); the webhooks of a renamed account follow it, those of a deleted account
+stop. A preview of an image declaring too many pixels answers `413`. Operators: run the read-only
+counts listed in the deploy notes before deploying (local events carrying an account stream id
+next to another stream, accesses granting the account root above `read`, usernames of the shapes
+now refused); a core configured with `integrity.algorithm: md5` or `sha1` refuses to boot; the
+admin key fingerprint of the boot log changes (name and value); new log files are created `0640`
+in `0750` directories; `bin/check-config.js` reads keys set as environment variables;
+`--bootstrap` writes its own `bootstrap-config.yml` and no longer replaces `override-config.yml`;
+MFA SMS sends gain a per-core hourly cap and a platform-wide per-destination budget.
 
 ### Events
 
@@ -24,8 +32,10 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   now makes its query match nothing. The entry was ignored, so `{ "any": ["A"], "all": ["X"] }`
   returned every event of `A` when `X` did not exist. The same holds for webhook and socket.io
   notification scopes: a scope whose streams resolve to nothing matches no event (it matched
-  every event). A webhook created while its access could read no stream keeps matching no event
-  until its `scopes` are set again (`webhooks.update`), even if streams are added later.
+  every event). A scope set while its access could read no stream (a `*` scope on an account
+  that has no stream yet) matches no event until it is resolved again: after a stream change
+  (see Notifications) and, for a webhook, also after an `accesses.update` of its access or a
+  `webhooks.update` setting its `scopes`.
 - Stream queries: a store root (`:local:`, `:<store>:`) stands for `*` and follows its rules: it
   can only appear alone in `any` (it was accepted mixed with other ids and in `all` / `not`). A
   stream id with a malformed store prefix (`:abc`, `::x`) is refused with
@@ -51,6 +61,20 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   event was stored as an ordinary event while the platform index recorded its content as the
   field's value. Events stored that way before stay readable and updatable when the update leaves
   their stream ids alone.
+- Account fields that are unique on the platform (custom `isUnique` account fields): writing a new
+  value with `events.create` now releases the previous value (it stayed reserved for the account,
+  so nobody else could take it, and the reservations piled up); with `events.create` and
+  `events.update`, the previous value is released only once the event is written, and a write that
+  fails releases the value it had claimed. Values left reserved by earlier versions stay reserved.
+- `events.get?includeDeletions` and `streams.get?includeDeletionsSince`: deletion records were
+  returned to any token, whatever its permissions. They keep no streams (unless
+  `versioning.deletionMode` is `keep-everything`), so they are now returned only to an access that
+  reads the whole store: personal, or `*` read with no `none` / `create-only` exception (the
+  entries the server adds itself do not count). Another access gets an empty `eventDeletions` /
+  `streamDeletions` list; with `keep-everything`, it gets the event deletions whose kept streams it
+  can read. Effect on sync clients: a lib-js `Monitor` on a stream-scoped app token no longer
+  receives final deletions (trashing still arrives as an update); personal and `*` read tokens see
+  no change.
 
 ### Streams
 
@@ -69,6 +93,13 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   `invalid-operation`. A grant on the root applies to every account field below it, hidden ones
   included; grant the fields themselves to write them.
 
+### Notifications
+
+- Scoped Socket.IO subscriptions and scoped webhooks now cover the streams created (or moved)
+  after they were set: a scope on a stream matches events in a child created later. The scopes are
+  resolved again after each stream change (create, update, trash, delete). An event written in a
+  new child within milliseconds of its creation can still be missed by a socket while it re-resolves.
+
 ### HTTP
 
 - Urlencoded requests: `_method` must be one of `GET`, `POST`, `PUT`, `DELETE` and `_json` must
@@ -83,6 +114,10 @@ of the boot log changes (name and value); new log files are created `0640` in `0
 - Attachment download: an attachment whose stored file name cannot be encoded (e.g. it holds a
   lone UTF-16 surrogate, possible only through a restore) is served with
   `Content-Disposition: attachment` without a file name; the download answered `500`.
+- Query strings are parsed without letting a key shadow a built-in object property: parameters
+  such as `?hasOwnProperty=...`, `?toString=...` or `a[constructor]=...` are now ignored (API,
+  HF and previews servers). The bracket syntax (`streams[]=a&streams[]=b`) and repeated keys
+  work as before.
 
 ### Hosted sites
 
@@ -101,6 +136,10 @@ of the boot log changes (name and value); new log files are created `0640` in `0
 - A socket connected through an alias of an account (`/<alias>`) receives the account's
   notifications (`eventsChanged`, `streamsChanged`, `accessesChanged`, `accessUpdated`); it
   received none, and an access change re-checked its connection only at the periodic sweep.
+- `accessUpdated` (access id and new serial, after `accesses.update`) is now sent only to the
+  sockets authenticated with the updated access; it was sent to every socket of the account. The
+  other sockets still get `accessesChanged`. lib-js uses `accessUpdated` to refresh the
+  connection's own access info, which is unchanged.
 
 ### Access requests (`/reg/access`)
 
@@ -147,14 +186,44 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   spent one.
 - `account.changeUsername`: the account's webhooks keep firing under the new username; they
   stopped silently (they listened under the former name until the next restart of the core).
+- An account created without an email (e.g. by its delegate) that is then given one with
+  `account.update` (or `emails.setPrimary`) now stores it as its primary email. The address was
+  reserved on the platform but never stored, so the account showed no email, a password reset had
+  no recipient, and deleting the account kept the address reserved. Accounts already in that state:
+  set the email again. The platform integrity check now reports such an account as "email rows but
+  no primary email" instead of an unknown account.
+
+### Account deletion and delegation
+
 - Account deletion: the account's webhooks stop at once; they stayed loaded under the username
   until the next restart of the core.
 - Account deletion: the high-frequency series of the account are dropped again as the last step,
   so points written during the deletion (through a series credential still cached) no longer
   survive it.
+- `DELETE /users/:username` with the account's personal token is refused (`invalid-operation`,
+  `data.controlledAccountsWithoutEmail`) while the account is the delegate of an account with no
+  email: an account created by its delegate has no usable password until its owner sets one, so
+  deleting the delegate would leave it with no way in. Setting an email on it (proved or not)
+  lifts the refusal. A deletion with the admin key goes through and is logged.
+- New `POST /{controlled}/delegations/controlled-side/status` (control access only): answers
+  `{ hasEmail }`, so the delegate's core can apply the rule above when the controlled account is
+  on another core. A core that cannot answer (older version, unreachable) does not hold the
+  deletion.
 
 ### Webhooks
 
+- A webhook was called once per API worker for each change (twice with the default
+  `cluster.apiWorkers: 2`): every worker ran the webhooks service with every webhook. One API
+  worker now runs it; its replacement takes over when it restarts.
+- Scoped webhooks follow their access: when `accesses.update` narrows the access, the scopes are
+  resolved again; a scope the access no longer reaches is removed, and a webhook left without any
+  scope becomes `inactive` (it is never turned into an unscoped webhook).
+- `webhooks.update` with `scopes`: the new map replaces the stored one (removed keys stayed stored)
+  and applies at once (the running webhook kept the previous scopes until a restart). Scopes set by
+  the account owner's personal token are resolved against the webhook's own access, never the
+  wider personal one.
+- Deleting an access stops its webhooks at once (they were deleted from storage but kept running
+  until the next change or a restart).
 - `webhooks.test`: one test call per webhook per `minIntervalMs` (the interval of the webhook's
   deliveries, 5 s by default), across every worker and core; a call within the interval is
   refused with `429 too-many-attempts` and `Retry-After`, and the receiver is not called. Test
@@ -215,7 +284,8 @@ of the boot log changes (name and value); new log files are created `0640` in `0
 - Log files (`logs.file`, `logs.fileSync`, the rqlited output file) are created with mode `0640`,
   and their directory, when the core creates it, `0750`; they were created `0644` / `0755` (with
   the usual umask). Existing files and directories keep their modes. A log shipper reading them
-  as another user needs the files' group.- Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
+  as another user needs the files' group.
+- Previews: at most `eventFiles.previewsRenderConcurrency` (default 2) previews are rendered at
   once by the previews worker, the others wait; renders were unbounded. See also
   `eventFiles.previewsMaxInputPixels` above.
 - Docker image: `UV_THREADPOOL_SIZE=16` (Node's default is 4). Password hashing, file system
@@ -230,6 +300,27 @@ of the boot log changes (name and value); new log files are created `0640` in `0
   New `--passphrase-file <path>`: the passphrase on the first line of the file (encryption for a
   backup, decryption for a restore), so it shows neither in the process list nor in the shell
   history; it excludes `--encrypt-passphrase` / `--decrypt-passphrase`.
+- `bin/check-config.js` now reads configuration keys set as environment variables
+  (`platform__piiHmacKey`, `storages__base__engine`, ...) the way boot does: under the checked
+  file, above the base layer. A core configured through its environment (Docker) no longer gets
+  false "missing or unset" problems. The output names the variables it merged, never their values.
+  ([#155](https://github.com/pryv/open-pryv.io/issues/155))
+- Joining a cluster (`bin/master.js --bootstrap`) no longer replaces `override-config.yml`: the
+  cluster identity, platform secrets and rqlite mTLS settings go to a new `bootstrap-config.yml`
+  (0600) in the same directory, loaded just below `override-config.yml` (which stays the
+  operator's and wins) and above environment variables and `--config`. The join is refused while
+  `override-config.yml` sets a key the bundle provides (it lists them; `--bootstrap-force` keeps
+  them). On a core that joined with an earlier version, a re-join moves the `override-config.yml`
+  that version wrote to `override-config.yml.bootstrap-<date>.bak` (copy back any setting you had
+  added). Already-joined cores need nothing. Docker: the entrypoint prepares
+  `/app/config/bootstrap-config.yml`; a read-only `/app/config` mount needs that file writable for a
+  join. `bin/check-config.js` reads `bootstrap-config.yml` next to the checked file, as boot does.
+- MFA SMS send limits: a new `services.mfa.methods.sms.sendLimits.perCorePerHour` (default 100, 0
+  disables) caps the SMS a core sends per hour, all users together, against toll fraud through many
+  accounts and premium-rate numbers; reaching it is logged (WARN). `perDestinationPerDay` is now
+  counted platform-wide (it was per core, so N cores allowed N times the budget); when the platform
+  store cannot be reached the send is refused. Expired counters are swept with the periodic
+  access-state sweep.
 
 ## 2.0.0-rc.49 - 2026-10-12
 

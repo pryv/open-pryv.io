@@ -284,7 +284,8 @@ services:
         sendLimits:
           minIntervalSeconds: 30    # between two sends on one MFA session
           perUserPerHour: 5         # sends per user, window opened by the first
-          perDestinationPerDay: 10  # sends per phone number, window opened by the first
+          perCorePerHour: 100       # sends by this core, all users: the SMS cost cap (logged when hit)
+          perDestinationPerDay: 10  # sends per phone number, across cores, window opened by the first
         # The legacy mode (`mode` above) reads codeLength, codeTtlSeconds and
         # sendLimits from the legacy `sms` block below first, then from here.
     # LEGACY endpoints location, read by the shim (and by methods.sms when its

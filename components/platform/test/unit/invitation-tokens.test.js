@@ -46,7 +46,11 @@ function makeFakePlatformDB () {
     async releaseInvitationToken (key, consumedBy) {
       const info = invitations.get(key);
       if (info != null && info.consumedBy === consumedBy) { delete info.consumedBy; delete info.consumedAt; }
-    }
+    },
+    async reassignInvitationConsumer (from, to) {
+      for (const info of invitations.values()) if (info.consumedBy === from) info.consumedBy = to;
+    },
+    async getAllWithPrefix () { return []; }
   };
 }
 
@@ -146,5 +150,23 @@ describe('[INVT] invitation tokens stored hashed at rest', () => {
     const kept = db.invitations.get(hashedKey);
     assert.strictEqual(kept.consumedBy, 'bob', 'already-migrated consumed row must NOT be overwritten');
     assert.strictEqual(await platform.isInvitationTokenValid('shared-token'), false, 'token must stay consumed, not resurrected');
+  });
+
+  it('[INVT8] deleting the account keeps its invitation consumed, without its name', async () => {
+    const { platform, db } = makePlatform();
+    const raw = (await platform.generateInvitationTokens(1, 'admin', ''))[0].id;
+    await platform.consumeInvitationToken(raw, 'someuser');
+    await platform.deleteUser('someuser');
+    const [info] = [...db.invitations.values()];
+    assert.strictEqual(info.consumedBy, '(deleted)');
+    assert.strictEqual(await platform.isInvitationTokenValid(raw), false);
+  });
+
+  it('[INVT9] renaming the account moves its invitations to the new name', async () => {
+    const { platform, db } = makePlatform();
+    const raw = (await platform.generateInvitationTokens(1, 'admin', ''))[0].id;
+    await platform.consumeInvitationToken(raw, 'oldname');
+    await platform.renameUser('oldname', 'newname');
+    assert.strictEqual([...db.invitations.values()][0].consumedBy, 'newname');
   });
 });

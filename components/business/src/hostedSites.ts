@@ -5,6 +5,17 @@
  * Refer to LICENSE file
  */
 import path from 'node:path';
+import { validateHeaderValue } from 'node:http';
+
+/** The same rule as `res.setHeader`, which throws on any other value. */
+function isValidHeaderValue (name: string, value: string): boolean {
+  try {
+    validateHeaderValue(name, value);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 /**
  * Hosted sites: a reserved platform name that serves either a static folder
@@ -170,7 +181,7 @@ function describeHostedSites (input: HostedSitesInput): HostedSitesReport {
             siteProblems.push(`${where}.headers.${hName}: this header cannot be set by configuration`);
           } else if (lower === 'x-frame-options') {
             siteProblems.push(`${where}.headers.${hName}: framing is set with ${where}.frameAncestors (browsers follow the CSP frame-ancestors it sends, not X-Frame-Options)`);
-          } else if (typeof hValue !== 'string' || /[\r\n\0]/.test(hValue)) {
+          } else if (typeof hValue !== 'string' || !isValidHeaderValue(lower, hValue)) {
             siteProblems.push(`${where}.headers.${hName}: the value must be a single-line string`);
           } else {
             headers[lower] = hValue;

@@ -68,6 +68,7 @@ type MethodCfg = { active?: boolean; mode?: string; endpoints?: Record<string, u
 type SendLimitsCfg = {
   minIntervalSeconds: number;
   perUserPerHour: number;
+  perCorePerHour: number;
   perDestinationPerDay: number;
 };
 /** The SMS settings besides the endpoints and content keys. */
@@ -484,6 +485,8 @@ async function _resetMFASingletons (): Promise<void> {
   // Clears the whole MFA state in cluster_kv (sessions, enrolment slots, SMS
   // send counters), even when no session store was built in this process.
   try { await (_sessionStore ?? new SessionStore()).clearAll(); } catch (_) { /* may fail outside cluster: ignore */ }
+  // The per-destination SMS counters are in the platform store.
+  try { await require('storages').platformDB?.sweepExpiredWindowedCounters(Number.MAX_SAFE_INTEGER); } catch (_) { /* no platform store: ignore */ }
   _mfaService = null;
   _sessionStore = null;
   _methodCache = null;

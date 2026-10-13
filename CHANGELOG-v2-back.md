@@ -7,7 +7,8 @@
   restored on exit); `config.set` left a value above the test scope for the rest of the mocha
   process, hiding later injections of that key.
 - Deletion: `deleteHFData` keeps the namespaces it dropped on the context; the new last step
-  `dropHFDataAgain` drops them again (errors logged, never failing the deletion). `deleteUser`
+  `dropHFDataAgain` drops them again (errors logged, never failing the deletion); it closes
+  `Deletion.erasureSteps()`, so `eraseAccount` runs it too. `deleteUser`
   lists the webhook ids before the removals and signals `WEBHOOKS_DELETE` for each after them.
   `business/src/webhooks/accountSignals.ts` (`storedWebhookIds`, `signalWebhooksStopped`,
   `signalWebhooksRenamed`); `account.changeUsername` signals delete under the former name then
@@ -24,7 +25,8 @@
   `[PVPX1]`, `[PVRQ1]`, `[PVRQ2]`.
 - `business/src/workerRestartBackoff.ts` (`createWorkerRestartBackoff`, `restartDelayMs`: base
   1 s, cap 30 s, stable after 60 s, counted per worker kind); `bin/master.js` records fork times
-  (`cluster.on('fork')`) and forks the replacement after the delay unless shutting down. Tests:
+  (`cluster.on('fork')`) and forks the replacement after the delay unless shutting down; the
+  webhooks-service designation of a dead API worker is released at its exit, before the delay. Tests:
   business `[WRBO1]`..`[WRBO4]`.
 - `business/src/integrity/algorithms.ts` (`INTEGRITY_ALGORITHMS`, `integrityAlgorithmProblem`),
   used by `integrity.ts` at load (now whatever `isActive`), by `config-validation.js`
@@ -143,6 +145,59 @@
   request. Attachment download: `contentDisposition()` falls back to a bare `attachment`. Tests:
   api-server `[HSPE1]`, `[ACFN1]`, `[ACFN2]` (SQLite only: PostgreSQL refuses a lone surrogate in
   JSON).
+
+## Registration forward, breach-scope index, raw ingress, invitations, account erasure
+
+- Multi-core registration forward: the landing core signs the forward (`pryv-registration-forward`,
+  HMAC with the shared `auth.adminAccessKey` over the landing core id, the client address, a
+  timestamp and the body hash; the key never travels), checks the target with the peer-URL rule
+  and follows no redirect. The target accepts the header only with a valid signature (60 s
+  window; otherwise 403), then creates the account itself (no second forward or redirect: a
+  stale `core.url` or a concurrent selection could bounce a registration between cores) and
+  records the client address the landing core saw instead of the landing core's. Mixed versions:
+  an older target ignores the header. Tests `[MC15]`-`[MC17]`.
+
+- Breach-scope access index: a username change moves the account's index rows to the new name
+  (`renameAccessIndexOwner`); they stayed under the former name, which a later holder of that name
+  would have been resolved to. Account erasure also removes rows under the account's former names.
+  Existing renamed accounts: run `node bin/backfill-access-index.js --resync` once on each core;
+  then `--prune` (counts only) lists rows naming no account (orphan) or a later holder of the name
+  (stale), and `--prune --apply` deletes them (tombstones under `audit.onUserDelete: keep`); run
+  it on every core. Tests `[ACCIDX-12]`, `[ACCIDX-13]`, `[ACIX06]`.
+
+- Raw ingress (hosted sites, HFS / previews dispatch, before express): a synchronous throw or a
+  rejected async branch is answered 500 (or the connection closed when the answer has started) and
+  logged, instead of ending the worker (`api-server/src/ingressGuard.ts`); the worker and
+  hosted-site proxies guard their `writeHead` the same way. `hostedSites.<name>.headers` values are
+  checked with Node's own header-value rule at boot and in `check-config` (control characters and
+  non-Latin-1 text were accepted, then refused by `setHeader` at every answer). Tests: `[INGG]`,
+  business `[HSC8]`.
+- PlatformDB invitations: deleting an account rewrites `consumedBy` of the invitations it
+  consumed to `(deleted)` (they stay consumed), and renaming an account moves them to the new
+  name; the plain username no longer outlives the account in the replicated platform store. New
+  PlatformDB method `reassignInvitationConsumer(from, to)` (PostgreSQL and rqlite). Tests:
+  conformance `[PDIC1]`, platform `[INVT8]` `[INVT9]`. Invitations consumed by accounts deleted
+  before this change keep the name (no sweep).
+- Account erasure in one place: `Deletion.erasureSteps()` is the ordered list `auth.delete`
+  registers, and `Deletion.eraseAccount()` runs it for the other whole-account removals. The
+  rollback of an account created for a delegate (a failure after its control access was minted)
+  used `deleteOne` only and left the control access, sessions, files and user directory; it now
+  erases the account like `auth.delete` (no relationship teardown: none was established). Test
+  `[DCRE-09]`.
+- Registration compensation: a registration with a session that failed after the session and
+  personal access were written (e.g. in `setUserPassword`) left them, and the user directory,
+  behind; `compensateFailedInsert` now removes them (only when the attempt owns the id). Test
+  `[URB2]` on both engines.
+- `DELETE /system/users/:username?onlyReg=true` and restore `--overwrite` keep their partial
+  semantics by design (the account stays hosted; its relationships stay valid). Test `[GF34]`.
+- Account deletion, relationships: a consent revocation to an account of the same core is applied
+  in-process (`events.create` with the same token, through the whole method chain) instead of a
+  request to the core's own public URL, which a core behind a proxy without hairpin access could
+  not reach (`helpers/localDelivery.ts`, also used by the `accesses.delete` hook). The deliveries
+  to other cores (delegation releases, detach notices, revocations) are awaited for 5 s at most
+  before the deletion answers (`trackTeardownDelivery`); still pending, they go on and are logged.
+  Tests `[CN84]`, `[LDLV]`.
+- `qs` is a runtime dependency (used by the query parser; it was declared as a dev dependency).
 
 ## Hardening batch: paths, file modes, deletion, caches, credentials, request inputs
 

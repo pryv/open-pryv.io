@@ -345,6 +345,14 @@ class DBrqlite {
     );
   }
 
+  async reassignInvitationConsumer (from: string, to: string): Promise<void> {
+    await this.execute(
+      `UPDATE keyValue SET value = json_set(value, '$.consumedBy', ?)
+       WHERE key LIKE 'invitation/%' AND json_extract(value, '$.consumedBy') = ?`,
+      [to, from]
+    );
+  }
+
   // --- Integrity (read-only) --- //
 
   /**
@@ -591,6 +599,40 @@ class DBrqlite {
     const parsed = JSON.parse(values[0][0] as string);
     if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
     return parsed;
+  }
+
+  async bumpWindowedCounter (key: string, max: number, windowMs: number, now: number): Promise<number | null> {
+    const storeKey = 'counter/' + key;
+    const fresh = JSON.stringify({ count: 1, windowEndsAt: now + windowMs });
+    const result = await this.execute(
+      `INSERT INTO keyValue (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = CASE
+         WHEN CAST(json_extract(keyValue.value, '$.windowEndsAt') AS INTEGER) <= ? THEN excluded.value
+         ELSE json_set(keyValue.value, '$.count', CAST(json_extract(keyValue.value, '$.count') AS INTEGER) + 1) END
+       WHERE CAST(json_extract(keyValue.value, '$.windowEndsAt') AS INTEGER) <= ?
+          OR CAST(json_extract(keyValue.value, '$.count') AS INTEGER) < ?`,
+      [storeKey, fresh, now, now, max]
+    );
+    if ((result?.rows_affected ?? 0) > 0) return null;
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    const windowEndsAt = rows.length > 0 ? Number(JSON.parse(rows[0].value).windowEndsAt) : NaN;
+    return Number.isFinite(windowEndsAt) ? windowEndsAt : now + 1000;
+  }
+
+  async releaseWindowedCounter (key: string): Promise<void> {
+    await this.execute(
+      `UPDATE keyValue SET value = json_set(value, '$.count', CAST(json_extract(value, '$.count') AS INTEGER) - 1)
+       WHERE key = ? AND CAST(json_extract(value, '$.count') AS INTEGER) > 0`,
+      ['counter/' + key]
+    );
+  }
+
+  async sweepExpiredWindowedCounters (now = Date.now()): Promise<{ removed: number }> {
+    const result = await this.execute(
+      `DELETE FROM keyValue WHERE key LIKE 'counter/%' AND CAST(json_extract(value, '$.windowEndsAt') AS INTEGER) <= ?`,
+      [now]
+    );
+    return { removed: result?.rows_affected ?? 0 };
   }
 
   async sweepExpiredAccessStates (now = Date.now()) {

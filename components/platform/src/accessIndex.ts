@@ -214,6 +214,79 @@ export async function tombstoneAccessIndexForUser (platform: PlatformIndexHandle
   return owned.length;
 }
 
+/**
+ * Move every index row owned by `oldUsername` to `newUsername` (the
+ * change-username flow): a row left under the former name would be resolved
+ * to whoever holds that name next. Keeps `lastModified` (a routing re-key,
+ * not an access change). Returns the number of rows moved.
+ */
+export async function renameAccessIndexOwner (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<number> {
+  const owned = await entriesOwnedBy(platform, oldUsername);
+  const stored = platform.hashFor(USERNAME_FIELD, newUsername);
+  for (const { key, entry } of owned) {
+    delete entry.username;
+    delete entry.usernameToken;
+    if (platform.piiModeIsHashed) entry.usernameToken = stored;
+    else entry.username = stored;
+    await platform.setPlatformKv(key, JSON.stringify(entry));
+  }
+  return owned.length;
+}
+
+/** Non-fatal {@link renameAccessIndexOwner}: a failure leaves rows `--resync` repairs. Never rejects. */
+export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<void> {
+  try {
+    await renameAccessIndexOwner(platform, oldUsername, newUsername);
+  } catch (err) {
+    logger.warn(`[access-index] failed to move index rows to the new name of user ${platform.hashFor(USERNAME_FIELD, newUsername)}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Index rows that name the wrong account (left by a rename or a deletion
+ * before those moved / removed every row):
+ *  - `stale`: the name is held by an account of this core that has no such
+ *    access (a later holder of a former name);
+ *  - `orphan`: not an account of this core, and no core holds the name.
+ * Rows already stripped of their user (tombstones) are never listed.
+ * `userCoreOf(stored)` is the core holding a stored name (null when none);
+ * `ownsAccess(stored, accessId)` answers for names hosted on `coreId`, null
+ * when the name is not one of this core's account names (not judged).
+ */
+export async function findPrunableAccessIndexRows (platform: PlatformIndexHandle, opts: {
+  coreId: string;
+  userCoreOf: (stored: string) => Promise<string | null>;
+  ownsAccess: (stored: string, accessId: string) => Promise<boolean | null>;
+}): Promise<Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }>> {
+  const found: Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }> = [];
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX)) {
+    let entry: AccessIndexEntry;
+    try { entry = JSON.parse(value) as AccessIndexEntry; } catch { continue; }
+    const stored = entry != null && typeof entry === 'object' ? readStoredUser(entry) : null;
+    if (stored == null) continue;
+    // An account of this core is judged by its own accesses first: a live
+    // account may lack its `user-core/` row (single-core, older data, a
+    // partial restore), which must not make its rows orphans.
+    const owns = await opts.ownsAccess(stored, entry.accessId);
+    if (owns === false) {
+      found.push({ key, entry, reason: 'stale' });
+    } else if (owns == null && (await opts.userCoreOf(stored)) == null) {
+      found.push({ key, entry, reason: 'orphan' });
+    }
+  }
+  return found;
+}
+
+/** Remove a prunable row, or under `audit.onUserDelete: keep` strip its user (tombstone). */
+export async function pruneAccessIndexRow (platform: PlatformIndexHandle, key: string, entry: AccessIndexEntry, keepMode: boolean, ts: number = timestamp.now()): Promise<void> {
+  if (!keepMode) return await platform.deletePlatformKv(key);
+  delete entry.username;
+  delete entry.usernameToken;
+  entry.userDeleted = true;
+  entry.lastModified = ts;
+  await platform.setPlatformKv(key, JSON.stringify(entry));
+}
+
 // --- Non-fatal wrappers for the mutation hooks (R4) --- //
 //
 // The index is a secondary breach-scoping artefact: a PlatformDB write

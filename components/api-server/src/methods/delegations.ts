@@ -27,13 +27,14 @@ const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const emailsContainer = require('business/src/emails/container.ts');
 const { getPlatform } = require('platform');
 const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('platform/src/coreIdentity.ts');
 const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
-const { setDeletionTeardownStep } = require('business/src/auth/deletionTeardown.ts');
+const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
@@ -811,7 +812,64 @@ export default async function produceDelegationsApiMethods (api: { register (...
       } catch (err) { next(toApiError(err)); }
     });
 
+  // controlledStatus — A's core → B's core (bearer = control access): whether
+  // B has an email, i.e. a way back in (a password reset) if its delegate goes.
+  api.register('delegations.controlledStatus',
+    requireMarker('control'),
+    async function (context: MethodContext, _params: unknown, result: Record<string, unknown>, next: MethodNext) {
+      try {
+        result.hasEmail = await accountHasEmail(String(context.user.id));
+        next();
+      } catch (err) { next(toApiError(err)); }
+    });
+
+  // Any email of the account counts, proved or not (the primary one, or one
+  // added and still pending verification).
+  async function accountHasEmail (userId: string): Promise<boolean> {
+    const primary = await usersRepository.getOnePropertyValue(userId, 'email');
+    const legacy = typeof primary === 'string' && primary.trim().length > 0 ? primary : null;
+    return (await emailsContainer.listViews(userId, legacy)).length > 0;
+  }
+
   // ======================================================= account deletion
+
+  // An account this one controls as delegate, with no email, would be left
+  // without any way in once its delegate is deleted (an account created by
+  // its delegate has no usable password until its owner sets one): the
+  // deletion is held until an email is set on it. On another core the
+  // controlled account's core is asked through the control access; a core
+  // that cannot answer (older version, unreachable) does not hold it.
+  setDeletionGuard('delegation', async function controlledAccountsWithoutEmail (account: { id: string; username: string }) {
+    const withoutEmail: string[] = [];
+    for (const mirror of await delegation.store.listMirrors(mall, account.id)) {
+      const m = mirror.content;
+      if (m?.status !== delegation.STATUS.ACTIVE) continue;
+      const controlledUsername = String(m.controlled?.username ?? '');
+      let target: Awaited<ReturnType<typeof resolveTarget>> | null = null;
+      try { target = await resolveTarget(controlledUsername); } catch (_e) { /* asked through the control access below */ }
+      if (target != null && !target.found) continue;
+      if (target != null && target.isSelf && target.userId != null) {
+        if (!(await accountHasEmail(target.userId))) withoutEmail.push(controlledUsername);
+        continue;
+      }
+      if (m.controlApiEndpoint == null) continue;
+      const r = await postToPeer({
+        apiEndpoint: m.controlApiEndpoint, path: 'delegations/controlled-side/status', body: {},
+        deps: { fetch, timeoutMs: 5000, logger: getLogger('delegations:outbound') },
+      });
+      const hasEmail = (r.body as { hasEmail?: unknown } | null)?.hasEmail;
+      if (r.ok && hasEmail === false) {
+        withoutEmail.push(controlledUsername);
+      } else if (!r.ok || typeof hasEmail !== 'boolean') {
+        logger.warn('account deletion: could not check whether a controlled account on another core has an email (not holding the deletion)', { relId: m.relId, status: r.status });
+      }
+    }
+    if (withoutEmail.length === 0) return null;
+    return {
+      message: 'This account controls accounts with no email, which would be left without any way in: set an email on them first.',
+      data: { controlledAccountsWithoutEmail: withoutEmail },
+    };
+  });
 
   // What a deleted account's relationships left on OTHER accounts. As a
   // delegate it holds, on each controlled account, a control access, a
@@ -821,9 +879,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // gone. Best-effort: a failure is logged, the deletion goes on, and a
   // delivery to another core is sent without being awaited.
   function sendWithoutWaiting (what: string, delivery: Promise<{ ok: boolean; status?: number }>): void {
-    delivery
+    trackTeardownDelivery(delivery
       .then((r) => { if (!r.ok) logger.warn('account deletion: ' + what + ' not delivered', { status: r.status }); })
-      .catch((err: unknown) => { logger.warn('account deletion: ' + what + ' failed', { error: String((err as Error)?.message ?? err) }); });
+      .catch((err: unknown) => { logger.warn('account deletion: ' + what + ' failed', { error: String((err as Error)?.message ?? err) }); }));
   }
 
   // Nothing is sent back to the account being deleted: its records are erased next.

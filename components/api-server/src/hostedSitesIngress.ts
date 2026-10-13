@@ -15,6 +15,7 @@ import type { TLSSocket } from 'node:tls';
 import type { Logger } from '@pryv/boiler';
 import type { HostedSite, ProxySite, StaticSite } from 'business/src/hostedSites.ts';
 import { redactUrl } from 'utils/src/redactUrl.ts';
+import { failIngress } from './ingressGuard.ts';
 
 /**
  * In-process dispatcher for hosted sites: a reserved platform name that
@@ -345,7 +346,14 @@ function buildHostedSitesIngress (opts: {
       // The operator's headers win over the upstream's
       Object.assign(outHeaders, headersOf(site));
       addUpstreamPolicies(outHeaders, proxyRes);
-      res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
+      try {
+        res.writeHead(proxyRes.statusCode ?? 502, outHeaders);
+      } catch (err) {
+        // A throw here is in the client request's callback: it would end the worker.
+        proxyRes.destroy();
+        failIngress(req, res, err, logger, `[hosted-sites] ${site.name}:`);
+        return;
+      }
       pipeline(proxyRes, res, (err: NodeJS.ErrnoException | null) => {
         if (err != null) logger.debug(`[hosted-sites] ${site.name}: response ended early ${redactUrl(req.url)}: ${err.code ?? err.message}`);
       });
