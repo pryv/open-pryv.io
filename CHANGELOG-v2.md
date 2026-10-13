@@ -9,6 +9,11 @@
   stopped answering every other request for minutes. Such a read now walks the time index and stops
   at `limit`. Results are unchanged. The same fix speeds up `events.get` with `streams` `*` (or no
   stream filter) on the SQLite event store.
+- **Docker images:** `pryvio/open-pryv.io:latest` and `pryvio/open-pryv.io-encrypted:latest` now
+  follow every release tag, release candidates included. Until this release `pryvio/open-pryv.io:latest`
+  still pointed at the v1 image (1.7.1, 2021), so a plain `docker pull pryvio/open-pryv.io` installed
+  v1, and the encrypted image had no `latest` tag. Production deployments should keep pinning an
+  explicit version tag.
 
 ## 2.0.0-rc.50 - 2026-10-13
 
