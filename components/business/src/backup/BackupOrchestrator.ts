@@ -10,10 +10,12 @@ import type { Readable } from 'node:stream';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { AuditStorage } from '../../../../storages/interfaces/auditStorage/AuditStorage.ts';
 import type { UserManifest } from '../../../../storages/interfaces/backup/BackupWriter.ts';
+import type { Chain } from '../../../../storages/interfaces/backup/chain.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
+const { sinceByUser } = require('storages/interfaces/backup/chain.ts');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { seriesNamespace } = require('business/src/series/namespace.ts');
 
@@ -35,10 +37,13 @@ const { seriesNamespace } = require('business/src/series/namespace.ts');
  *
  * ## Incremental mode
  *
- * When `options.incremental` is true and an existing manifest is provided
- * (via `options.previousManifest`), only items modified/deleted since the
- * per-user `backupTimestamp` from the previous backup are exported.
- * Profile and account data are always fully exported (no timestamps).
+ * When `options.chain` is given (the backup chain this run is appended to),
+ * the run is incremental: for each user an earlier run exported, only the
+ * items changed (modified or deleted) after that run's `snapshotBefore`
+ * minus a one-minute overlap are exported (see `chain.ts`); a user no run
+ * exported is exported in full. Profile, account data and series are always
+ * fully exported (no timestamps). The writer puts the run in a directory of
+ * its own; restore applies the runs in order.
  */
 class BackupOrchestrator {
   // Storage handles, modelled by the `*Like` structural interfaces below
@@ -71,8 +76,7 @@ class BackupOrchestrator {
   /**
    * Backup all users and platform data.
    * @param [options]
-   * @param [options.incremental=false] - only export changes since previous backup
-   * @param [options.previousManifest] - previous backup manifest (for incremental)
+   * @param [options.chain] - the backup chain this run is appended to (incremental run)
    * @param [options.includeEphemeral=false] - include sessions and password-reset-requests
    */
   async backupAllUsers (writer: BackupWriter, options: BackupOptions = {}) {
@@ -80,20 +84,20 @@ class BackupOrchestrator {
     const coreVersion = await getAPIVersion();
     const snapshotBefore = timestamp.now();
     const allUsers = await this.usersLocalIndex.getAllByUsername();
-    const userManifests: UserManifest[] = [];
+    const userManifests: Array<UserManifest & { since: number | null }> = [];
     const userCount = Object.keys(allUsers).length;
 
-    // Build per-user "since" map from previous manifest
+    // Per-user "since" from the chain
     const perUserSince = this._buildPerUserSince(options);
 
-    const isIncremental = options.incremental && Object.keys(perUserSince).length > 0;
+    const isIncremental = options.chain != null;
     this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} backup of ${userCount} users (snapshot before ${snapshotBefore})`);
 
     for (const [username, userId] of Object.entries(allUsers)) {
-      const since = perUserSince[userId] || null;
-      this.logger.info(`Backing up user: ${username} (${userId})${since ? ' (incremental since ' + since + ')' : ''}`);
+      const since = perUserSince[userId] ?? null;
+      this.logger.info(`Backing up user: ${username} (${userId})${since != null ? ' (incremental since ' + since + ')' : ''}`);
       const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, options);
-      userManifests.push(userManifest);
+      userManifests.push({ ...userManifest, since });
     }
 
     await this._backupPlatform(writer);
@@ -122,17 +126,17 @@ class BackupOrchestrator {
     const snapshotBefore = timestamp.now();
 
     const perUserSince = this._buildPerUserSince(options);
-    const since = perUserSince[userId] || null;
-    const isIncremental = options.incremental && since != null;
+    const since = perUserSince[userId] ?? null;
+    const isIncremental = options.chain != null;
 
-    this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} single-user backup: ${username} (${userId})`);
+    this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} single-user backup: ${username} (${userId})${since != null ? ' (since ' + since + ')' : ''}`);
 
     const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, options);
 
     await writer.writeManifest({
       coreVersion,
       config,
-      userManifests: [userManifest],
+      userManifests: [{ ...userManifest, since }],
       backupType: isIncremental ? 'incremental' : 'full',
       snapshotBefore,
       backupTimestamp: Date.now()
@@ -154,22 +158,15 @@ class BackupOrchestrator {
   // -------------------------------------------------------------------------
 
   /**
-   * Build a { userId: sinceTimestamp } map from the previous manifest.
-   * Each user's "since" is their individual backupTimestamp from the last backup.
+   * Build a { userId: since } map (unix seconds) from the chain this run is
+   * appended to: the `snapshotBefore` of the latest run that exported the
+   * user, minus the overlap. Not the previous run's per-user
+   * `backupTimestamp`: that is its close time, after its export, while that
+   * run exported only what was changed up to its `snapshotBefore`.
    */
   _buildPerUserSince (options: BackupOptions): Record<string, number> {
-    const map: Record<string, number> = {};
-    if (!options.incremental || !options.previousManifest) return map;
-    const prev = options.previousManifest;
-    if (prev.users && Array.isArray(prev.users)) {
-      for (const u of prev.users) {
-        if (u.userId && u.backupTimestamp) {
-          // Convert ms timestamp to unix seconds for comparison with modified fields
-          map[u.userId] = u.backupTimestamp / 1000;
-        }
-      }
-    }
-    return map;
+    if (options.chain == null) return {};
+    return sinceByUser(options.chain);
   }
 
   /**
@@ -295,13 +292,16 @@ class BackupOrchestrator {
   // the array path (_filterByTimestamp) and the streaming path (_exportPipeline)
   // so the two can never drift.
   //
-  // - `snapshotBefore`: exclude items modified after backup start (consistency)
-  // - `since`: for incremental, only include items modified after the previous backup
-  // Items without `modified`/`created`/`time` are always included (e.g. profile
-  // data, or raw audit rows without camelCase timestamps).
+  // - `snapshotBefore`: exclude items changed after backup start (consistency)
+  // - `since`: for incremental, only include items changed after the previous backup
+  // The change time of an item is the later of `modified` and `deleted` (a
+  // deletion keeps the item's earlier `modified`, and must reach the next
+  // incremental run), else `created`, else `time`. Items without any are
+  // always included (e.g. profile data).
   _passesTimestampFilter (item: unknown, snapshotBefore: number, since: number | null): boolean {
-    const it = item as { modified?: number; created?: number; time?: number };
-    const ts = it.modified || it.created || it.time;
+    const it = item as { modified?: unknown; deleted?: unknown; created?: number; time?: number };
+    const changes = [it.modified, it.deleted].filter((t): t is number => typeof t === 'number' && t > 0);
+    const ts = changes.length > 0 ? Math.max(...changes) : (it.created || it.time);
     if (ts == null) return true; // no timestamp — always include
     if (ts > snapshotBefore) return false;
     if (since != null && ts <= since) return false;
@@ -454,12 +454,9 @@ type EventFilesLike = {
 type SeriesConnectionLike = {
   exportDatabase (namespace: string): Promise<{ measurements?: unknown[] }>;
 };
-type Manifest = {
-  users: Array<{ userId: string; backupTimestamp?: number }>;
-};
 type BackupOptions = {
-  incremental?: boolean;
-  previousManifest?: Manifest;
+  /** The backup chain this run is appended to: an incremental run. */
+  chain?: Chain | null;
   includeEphemeral?: boolean;
 };
 type UserWriter = {

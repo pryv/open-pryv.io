@@ -1,5 +1,41 @@
 # Changelog - Internal (no API impact)
 
+## Backup incremental chain
+
+- `storages/interfaces/backup/chain.ts` (new): `chain.json` read and check (run ids are one safe
+  path segment, an incremental run's path is `incrementals/<runId>`, parents in order) and atomic
+  write (temporary file + rename), run ids, recipient-key fingerprint (`sha256` of the SPKI DER,
+  `BackupCipher.recipientKeyFingerprint`; a hybrid encryptor carries it), bootstrap from a
+  pre-chain full manifest (refused when the root manifest says `incremental`), `sinceByUser`
+  (`INCREMENTAL_OVERLAP_SECONDS = 60`), run resolution with `throughRun` and the stray-directory
+  report, per-run envelope / manifest consistency checks (`chainId`, `runId`; a bootstrapped full
+  run may carry neither), `planBackupRun` (every refusal before anything is written: existing
+  backup without `--incremental`, damaged directory, key model, passphrase checked against the
+  latest run's manifest, recipient key fingerprint) and `inspectBackup`.
+- `FilesystemBackupWriter`: option `run` (`runId`, `path`, `parentRunId`, `chainId`,
+  `baseChain`); an incremental run writes only under `incrementals/<runId>/` (created with a
+  non-recursive `mkdir`, `incrementals/` refused when it is not a real directory), its own
+  envelope there, the script and README at the root for the full run only; the manifest gains
+  `chainId`, `runId`, `parentRunId`, and the run is appended to `chain.json` after it. Refuses a
+  run whose key model differs from the chain's. Without `run` the writer writes a full backup at
+  the root and no `chain.json`, as before.
+- `FilesystemBackupReader`: options `secrets`, `throughRun`, `allowIncomplete`, `onWarning`
+  (`decryptor` still accepted for the root run); one decryptor per run from its own envelope;
+  presents a merged backup (per collection newest run first with a seen-set on `id`, audit rows
+  on `eventid`; profile, account data, series and platform rows from the newest run that has
+  them; register mappings from the root run; attachments by file id, newest first, mapped to
+  their event through the merged events). A single run takes the previous code path unchanged.
+  The symbolic-link refusals apply to `incrementals/` and every run directory.
+- `BackupOrchestrator`: `since` from `options.chain` (previous run's `snapshotBefore` minus 60 s,
+  per user; a user no run exported is exported in full); `_passesTimestampFilter` reads
+  `max(modified, deleted)`; manifest users carry `since`. `RestoreOrchestrator`: the log line
+  names the runs. `bin/backup.js`: `--through-run`, `--allow-incomplete`, `--inspect` (exit 0 OK,
+  1 DAMAGED / INCOMPLETE / INVALID, 2 UNKNOWN); the hybrid incremental takes the public key only;
+  the help no longer shows a `--since` flag the parser never had. `decrypt-backup.mjs` decrypts
+  every run with its own envelope (data key cached per envelope) and writes a plaintext
+  `chain.json` into the mirror. Tests: business `[BKC1]`..`[BKC7]`, `[BKC9]`; storages `[BKC8]`;
+  api-server `[BKIC1]`..`[BKIC3]`.
+
 ## SQLite event reads: index use, audit parents
 
 - `UserDatabase` (SQLite engine) reads `events.get` from the base `events` table instead of

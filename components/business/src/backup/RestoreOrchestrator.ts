@@ -116,7 +116,9 @@ class RestoreOrchestrator {
     // Platform rows are read and checked before any user is restored, and
     // written after them.
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
-    this.logger.info(`Restoring from backup: format=${manifest.formatVersion} type=${manifest.backupType} users=${manifest.users.length}`);
+    const runs = Array.isArray(manifest.runs) ? manifest.runs : null;
+    this.logger.info(`Restoring from backup: format=${manifest.formatVersion} type=${manifest.backupType} users=${manifest.users.length}` +
+      (runs != null ? ` runs=${runs.length} (${runs.map((r) => r.runId).join(', ')})` : ''));
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
@@ -663,7 +665,8 @@ type SeriesConnectionLike = {
   dropDatabase (namespace: string): Promise<unknown>;
 };
 type UserManifest = { userId: string; username: string };
-type Manifest = { formatVersion: string; backupType: string; users: UserManifest[] };
+/** `runs`: the runs of a backup chain the reader merged (absent for one run). */
+type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }> };
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed'; reason: string };
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null };

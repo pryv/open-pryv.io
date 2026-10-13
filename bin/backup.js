@@ -13,7 +13,7 @@
 //   node bin/backup.js --output /path/to/backup
 //   node bin/backup.js --output /path/to/backup --user userId123
 //   node bin/backup.js --output /path/to/backup --no-compress
-//   node bin/backup.js --output /path/to/backup --since 1679000000
+//   node bin/backup.js --output /path/to/backup --incremental
 //   node bin/backup.js --output /path/to/backup --max-chunk-size 50
 //   node bin/backup.js --output /path/to/backup --include-ephemeral
 //   node bin/backup.js --output /path/to/backup --recipient-pubkey recipient.pub.pem
@@ -28,6 +28,15 @@
 //   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem
 //   node bin/backup.js --restore /path/to/backup --passphrase-file /root/backup-passphrase
 //   node bin/backup.js --restore /path/to/backup --require-encrypted --private-key recipient.key.pem
+//   node bin/backup.js --restore /path/to/backup --through-run 20261013T142501Z-3f9a1c7e
+//
+// Inspect (no storage access):
+//   node bin/backup.js --inspect /path/to/backup
+//
+// A full backup and the incremental runs written after it into the same
+// directory form a chain: each incremental run has its own
+// `incrementals/<runId>/` directory, `chain.json` lists the runs, and
+// `--restore` applies them in order.
 
 const path = require('path');
 const fs = require('fs');
@@ -57,6 +66,11 @@ require('@pryv/boiler').init({
     if (args.help) {
       printUsage();
       process.exit(0);
+    }
+
+    // Inspect a backup directory: reads files only, no storage.
+    if (args.inspect) {
+      process.exit(runInspect(args));
     }
 
     // Refuse an unexpected plaintext backup before touching any storage.
@@ -112,37 +126,31 @@ async function initStorage () {
 // ---------------------------------------------------------------------------
 
 async function runBackup (args) {
-  const { createFilesystemBackupWriter, createBackupDecryptor } = require('storages/interfaces/backup/index.ts');
+  const { createFilesystemBackupWriter, planBackupRun } = require('storages/interfaces/backup/index.ts');
   const BackupOrchestrator = require('business/src/backup/BackupOrchestrator.ts').default;
 
-  const encryptor = buildEncryptor(args);
-
-  const manifestPath = path.join(args.output, 'manifest.json');
-  const encryptionPath = path.join(args.output, 'encryption.json');
-  let previousManifest = null;
-
-  if (fs.existsSync(manifestPath)) {
-    if (!args.incremental) {
-      throw new Error(
-        `Backup already exists at ${args.output} (manifest.json found). ` +
-        'Use --incremental for incremental backup, or choose a different output path.'
-      );
-    }
-    // Read previous manifest for per-user timestamp detection. If the existing
-    // backup is encrypted, the matching secret is needed to read it — supply
-    // --decrypt-passphrase / --private-key alongside the encrypt option.
-    if (fs.existsSync(encryptionPath)) {
-      const envelope = JSON.parse(fs.readFileSync(encryptionPath, 'utf8'));
-      const decryptor = createBackupDecryptor(envelope, buildDecryptSecrets(args, true));
-      previousManifest = JSON.parse(decryptor.decryptBuffer(fs.readFileSync(manifestPath)).toString('utf8'));
-    } else {
-      previousManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    }
-    console.log(`Incremental backup: using previous backup timestamps from ${args.output}`);
+  // What this run writes, and every refusal (backup already there, damaged
+  // directory, another key model, wrong passphrase, other recipient key),
+  // decided before anything is written.
+  const passphrase = args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE || null;
+  const plan = planBackupRun(args.output, {
+    incremental: args.incremental,
+    passphrase,
+    recipientPubKeyPem: args.recipientPubkey ? fs.readFileSync(args.recipientPubkey, 'utf8') : null,
+    privateKeyPem: args.privateKey ? fs.readFileSync(args.privateKey, 'utf8') : null,
+    privateKeyPassphrase: args.privateKeyPassphrase || process.env.PRYV_BACKUP_PRIVATE_KEY_PASSPHRASE || null
+  });
+  if (plan.strays.length > 0) {
+    console.warn(`WARNING: ignored, not listed by chain.json (an interrupted run?): ${plan.strays.join(', ')}`);
+  }
+  if (plan.isIncremental) {
+    console.log(`Incremental backup: run ${plan.runId} of the chain at ${args.output} (after run ${plan.parentRunId})`);
   } else if (args.incremental) {
     console.log('No previous backup found — running full backup instead');
   }
 
+  // A fresh data key (hybrid) or a fresh salt (symmetric) for every run.
+  const encryptor = buildEncryptor(args);
   if (encryptor) {
     console.log(`Encryption: ${encryptor.envelope.mode} (${encryptor.envelope.alg}) — destination bytes are ciphertext only`);
   }
@@ -150,7 +158,8 @@ async function runBackup (args) {
   const writer = createFilesystemBackupWriter(args.output, {
     maxChunkSize: (args.maxChunkSize || 50) * 1024 * 1024,
     compress: args.compress,
-    encryptor
+    encryptor,
+    run: plan
   });
 
   const orchestrator = new BackupOrchestrator();
@@ -158,8 +167,7 @@ async function runBackup (args) {
 
   const options = {
     includeEphemeral: args.includeEphemeral,
-    incremental: args.incremental && previousManifest != null,
-    previousManifest
+    chain: plan.baseChain
   };
 
   if (args.user) {
@@ -210,11 +218,11 @@ function warnIfPlaintextBackup (args) {
 }
 
 async function runRestore (args) {
-  const { createFilesystemBackupReader, createBackupDecryptor } = require('storages/interfaces/backup/index.ts');
+  const { createFilesystemBackupReader } = require('storages/interfaces/backup/index.ts');
   const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
 
-  // Encrypted backups carry a cleartext `encryption.json` envelope at the root.
-  let decryptor = null;
+  // Encrypted backups carry a cleartext `encryption.json` envelope at the root
+  // (and one per incremental run of a chain).
   const encryptionPath = path.join(args.restore, 'encryption.json');
   if (fs.existsSync(encryptionPath)) {
     // Not followed when it is a symbolic link, like every other file of the backup.
@@ -227,10 +235,16 @@ async function runRestore (args) {
     }
     const envelope = JSON.parse(envelopeText);
     console.log(`Encrypted backup detected: ${envelope.mode} (${envelope.alg})`);
-    decryptor = createBackupDecryptor(envelope, buildDecryptSecrets(args, false));
   }
 
-  const reader = createFilesystemBackupReader(args.restore, { decryptor });
+  // The reader resolves the chain (every run, each decrypted with its own
+  // envelope and the secret) and presents one merged backup.
+  const reader = createFilesystemBackupReader(args.restore, {
+    secrets: buildDecryptSecrets(args),
+    throughRun: args.throughRun,
+    allowIncomplete: args.allowIncomplete,
+    onWarning: (message) => console.warn('WARNING: ' + message)
+  });
 
   const orchestrator = new RestoreOrchestrator();
   await orchestrator.init();
@@ -408,21 +422,34 @@ function buildEncryptor (args) {
   return null;
 }
 
-/** Build the secrets needed to decrypt an encrypted backup (restore or incremental). */
-function buildDecryptSecrets (args, forIncremental) {
+/** Build the secrets needed to decrypt an encrypted backup (restore or inspect). */
+function buildDecryptSecrets (args) {
   const passphrase = args.decryptPassphrase || args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE;
   const secrets = { passphrase };
   if (args.privateKey) {
     secrets.privateKeyPem = fs.readFileSync(args.privateKey, 'utf8');
     secrets.privateKeyPassphrase = args.privateKeyPassphrase || process.env.PRYV_BACKUP_PRIVATE_KEY_PASSPHRASE;
   }
-  if (forIncremental && !secrets.passphrase && !secrets.privateKeyPem) {
-    throw new Error(
-      'The existing backup is encrypted; incremental backup needs the matching secret ' +
-      'to read its previous manifest. Pass --decrypt-passphrase or --private-key.'
-    );
-  }
   return secrets;
+}
+
+// ---------------------------------------------------------------------------
+// Inspect
+// ---------------------------------------------------------------------------
+
+/**
+ * Print what a backup directory holds (the runs of its chain, or the one run
+ * of a full backup written before chains) and one verdict. Exit code: 0 OK,
+ * 1 DAMAGED / INCOMPLETE / INVALID, 2 UNKNOWN (the secret is needed).
+ */
+function runInspect (args) {
+  const { inspectBackup } = require('storages/interfaces/backup/index.ts');
+  const report = inspectBackup(args.inspect, { secrets: buildDecryptSecrets(args) });
+  for (const line of report.lines) console.log(line);
+  console.log(report.verdict);
+  if (report.status === 'ok') return 0;
+  if (report.status === 'unknown') return 2;
+  return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +478,9 @@ function parseArgs (argv) {
     passphraseFile: null,
     allowPlaintext: false,
     requireEncrypted: false,
+    throughRun: null,
+    allowIncomplete: false,
+    inspect: null,
     help: false
   };
 
@@ -521,6 +551,15 @@ function parseArgs (argv) {
       case '--require-encrypted':
         args.requireEncrypted = true;
         break;
+      case '--through-run':
+        args.throughRun = argv[++i];
+        break;
+      case '--allow-incomplete':
+        args.allowIncomplete = true;
+        break;
+      case '--inspect':
+        args.inspect = argv[++i];
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -555,7 +594,7 @@ function parseArgs (argv) {
       console.error(`Error: --passphrase-file ${args.passphraseFile} is empty`);
       process.exit(1);
     }
-    if (args.restore) args.decryptPassphrase = passphrase; else args.encryptPassphrase = passphrase;
+    if (args.restore || args.inspect) args.decryptPassphrase = passphrase; else args.encryptPassphrase = passphrase;
   }
   if (args.recipientPubkey && args.encryptPassphrase) {
     console.error('Error: --recipient-pubkey and --encrypt-passphrase are mutually exclusive (pick one key model)');
@@ -579,7 +618,15 @@ Backup:
   --no-compress             Disable gzip compression (for debugging)
   --max-chunk-size <MB>     Target chunk size in MB of raw (pre-gzip) data (default: 50)
   --include-ephemeral       Include sessions and password-reset-requests
-  --incremental             Only export changes since previous backup (auto-detects per-user)
+  --incremental             Into an existing backup directory: export only what
+                            changed since the previous run (per user), as a new
+                            run of the directory's chain: its own
+                            incrementals/<runId>/ directory, listed by
+                            chain.json. Earlier runs are never rewritten. Use the
+                            same key model as the full backup (same passphrase,
+                            or same recipient public key: the private key is not
+                            needed, except once for a hybrid full backup written
+                            before 2.0.0-rc.51).
 
 Encryption (opt-in — without these flags output is plaintext, with a warning):
   --recipient-pubkey <pem>  Encrypt output with a recipient RSA public key
@@ -592,11 +639,16 @@ Encryption (opt-in — without these flags output is plaintext, with a warning):
                             then shows in the process list and the shell
                             history: prefer --passphrase-file).
                             Also read from PRYV_BACKUP_PASSPHRASE if omitted.
-                            (Encrypting an existing incremental backup needs the
-                            matching secret to read the previous manifest.)
 
 Restore:
-  --restore, -r <path>      Restore from backup directory
+  --restore, -r <path>      Restore from backup directory (a chain: the full
+                            backup, then every incremental run in order; a newer
+                            version of an item replaces the older one)
+  --through-run <runId>     Apply the chain up to this run only (the state as of
+                            that run; see --inspect for the run ids)
+  --allow-incomplete        Restore a directory damaged by an incremental run of
+                            a version before 2.0.0-rc.51 anyway (it holds only
+                            the last delta; refused by default)
   --user, -u <userId>       Restore a single user (default: all users)
   --overwrite               Clear existing data before import
   --skip-conflicts          Skip users with username/email conflicts
@@ -617,6 +669,15 @@ Restore:
   --allow-plaintext         Restore a plaintext backup even though a decryption
                             secret was supplied (refused by default)
 
+Inspect (reads the directory only; no storage access):
+  --inspect <path>          List the runs of a backup directory (id, type,
+                            snapshot time, users, encryption, stray directories)
+                            and print one verdict: OK, DAMAGED (an incremental run
+                            of a version before 2.0.0-rc.51 overwrote the full
+                            backup), INCOMPLETE (a run is missing), or UNKNOWN
+                            (an encrypted backup without chain.json: pass the
+                            restore secret, --passphrase-file or --private-key)
+
 General:
   --help, -h                Show this help
 
@@ -624,5 +685,10 @@ Restore exit codes (with --verify-integrity):
   0   all restored users verified clean (or nothing to verify)
   1   an integrity failure was found and rolled back
   2   restored, but one or more users could not be verified
+
+Inspect exit codes:
+  0   OK
+  1   DAMAGED, INCOMPLETE or INVALID
+  2   UNKNOWN (the secret is needed to read the manifest)
 `);
 }

@@ -236,6 +236,50 @@ describe('[BENC] backup encryption', () => {
       assert.deepStrictEqual(attachPlain, attachmentBytes);
     });
 
+    it('[BKC8] the bundled decrypt script decrypts every run of a chain, and its plaintext mirror restores as a plaintext chain', async () => {
+      const { execFileSync } = require('node:child_process');
+      const chainId = 'ab'.repeat(16);
+      const incId = '20261013T142501Z-3f9a1c7e';
+      // The full run, then an incremental run (its own directory, its own envelope).
+      const full = createFilesystemBackupWriter(tmp, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run: { runId: 'full', path: '.', parentRunId: null, chainId } });
+      const fu = await full.openUser(userId, username);
+      await fu.writeStreams(streams);
+      await fu.writeEvents([{ ...events[0], attachments: [{ id: 'att-1' }] }]);
+      await fu.writeAttachment('e1', 'att-1', Readable.from(attachmentBytes));
+      await full.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', snapshotBefore: 100, backupTimestamp: 1, userManifests: [await fu.close()] });
+      const inc = createFilesystemBackupWriter(tmp, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run: { runId: incId, path: 'incrementals/' + incId, parentRunId: 'full', chainId } });
+      const iu = await inc.openUser(userId, username);
+      await iu.writeStreams([{ id: 's1', name: 'Diary renamed' }]);
+      await iu.writeEvents([{ id: 'e2', streamIds: ['s2'], type: 'note/txt', content: 'PLAINMARK_new_event' }]);
+      await inc.writeManifest({ coreVersion: 'test', config: {}, backupType: 'incremental', snapshotBefore: 200, backupTimestamp: 2, userManifests: [await iu.close()] });
+
+      const outDir = path.join(os.tmpdir(), 'pryv-backup-enc-plain-' + process.pid + '-' + Date.now());
+      try {
+        execFileSync(process.execPath, [path.join(tmp, 'decrypt-backup.mjs'), tmp, '--passphrase', 'pw', '--out', outDir], { stdio: 'pipe' });
+        const incStreams = fs.readFileSync(path.join(outDir, 'incrementals', incId, 'users', userId, 'streams.jsonl'), 'utf8');
+        assert.deepStrictEqual(incStreams.trim().split('\n').map((l) => JSON.parse(l)), [{ id: 's1', name: 'Diary renamed' }]);
+        assert.deepStrictEqual(fs.readFileSync(path.join(outDir, 'users', userId, 'attachments', 'att-1')), attachmentBytes);
+        assert.ok(!fs.existsSync(path.join(outDir, 'encryption.json')) && !fs.existsSync(path.join(outDir, 'incrementals', incId, 'encryption.json')), 'no envelope in the plaintext mirror');
+        assert.strictEqual(JSON.parse(fs.readFileSync(path.join(outDir, 'chain.json'), 'utf8')).encryption, null);
+
+        // The mirror is a plaintext chain: no secret, both runs merged.
+        const reader = createFilesystemBackupReader(outDir);
+        assert.deepStrictEqual((await reader.readManifest()).runs.map((r) => r.runId), ['full', incId]);
+        const ur = await reader.openUser(userId);
+        const gotStreams = [];
+        for await (const s of ur.readStreams()) gotStreams.push(s);
+        assert.deepStrictEqual(gotStreams, [{ id: 's1', name: 'Diary renamed' }, { id: 's2', name: 'Health' }]);
+        const gotEvents = [];
+        for await (const e of ur.readEvents()) gotEvents.push(e.id);
+        assert.deepStrictEqual(gotEvents, ['e2', 'e1']);
+        let gotAttachment = null;
+        for await (const a of ur.readAttachments()) gotAttachment = { eventId: a.eventId, data: await collectAttachment(a.stream) };
+        assert.deepStrictEqual(gotAttachment, { eventId: 'e1', data: attachmentBytes });
+      } finally {
+        fs.rmSync(outDir, { recursive: true, force: true });
+      }
+    });
+
     // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).
     function nonPrivateEntries (root) {
       const found = [];

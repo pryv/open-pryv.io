@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+Backup and restore: an incremental backup no longer overwrites the full backup it continues.
+Operators who ran `bin/backup.js --incremental` with an earlier release must check those
+directories (see the operator step below) and take a new full backup.
+
+### Backup and restore
+- **Operator step: check every directory that ever received `--incremental` before this release.**
+  It is damaged, and nothing in it can be repaired: it holds only the last delta. Signs: no
+  `chain.json`, and its `manifest.json` says `"backupType": "incremental"` (`node bin/backup.js
+  --inspect <dir>` prints `DAMAGED`; for an encrypted directory pass the same secret as for a
+  restore). `--restore` of such a directory is now refused with that message
+  (`--allow-incomplete` restores the delta anyway). Take a new full backup into a new directory
+  and continue with `--incremental` from there. Full backups written by earlier releases are not
+  affected and restore unchanged.
+- **Incremental backups are now written next to the full backup, never over it.** Until this
+  release, `bin/backup.js --output <dir> --incremental` wrote the changes since the previous run
+  into the SAME files as the full backup in `<dir>`, replacing them, and `--restore` of such a
+  directory reported success while restoring only the last delta. With encryption, every run also
+  minted a new key, so files the delta did not rewrite (attachments of unchanged events) were left
+  under a key no longer described by `encryption.json`. An incremental run now writes its own
+  `incrementals/<runId>/` directory with its own manifest and its own `encryption.json`, and
+  `chain.json` at the root lists the runs; `--restore` applies the full backup and then every
+  incremental in order (a newer version of a stream, access, event or attachment replaces the
+  older one; deletions included); `--through-run <runId>` restores up to a given run;
+  `--inspect <dir>` lists a backup directory and says whether it is sound.
+- An incremental run no longer misses the items changed between the start and the end of the
+  previous run (its window now starts at the previous run's snapshot time, with a one-minute
+  overlap that restore merges away), and it now carries the deletion of streams, accesses and
+  webhooks (their deletion time counts as a change).
+- Continuing an encrypted chain needs the same key model: the passphrase is checked against the
+  previous run before anything is written; for a recipient public key, the same key (the private
+  key is no longer needed on the backup host, which was the point of that model).
+
+### Audit and event reads
 - `events.get` on the audit streams no longer stalls the API worker on a large audit log
   (issue #156). With the SQLite audit engine, a read such as an account export
   (`streams=[":_audit:accesses",":_audit:actions"]` with an open time range) scanned and sorted the

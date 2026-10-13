@@ -43,6 +43,11 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // Writes a plaintext mirror of the backup tree to --out (default: <dir>-decrypted).
 // The plaintext files are JSONL (optionally gzip-compressed, *.jsonl.gz) plus
 // raw attachment blobs, exactly as an unencrypted backup would contain.
+//
+// A backup chain (a full backup plus incremental runs, listed by chain.json)
+// is decrypted whole: each run (the root, and every incrementals/<runId>/)
+// with its own encryption.json. The mirror keeps the tree and a plaintext
+// chain.json, so it can be restored as a plaintext chain.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,7 +58,7 @@ const TAG = 16;
 const NONCE = 12;
 const KEY = 32;
 const HKDF_INFO = Buffer.from('pryv-backup-file-v1', 'utf8');
-const SKIP = new Set(['encryption.json', 'RESTORE-README.md', 'decrypt-backup.mjs']);
+const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs']);
 
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 
@@ -131,29 +136,60 @@ function walk (dir, base, files) {
     const p = path.join(dir, name);
     const rel = path.relative(base, p);
     if (fs.statSync(p).isDirectory()) walk(p, base, files);
-    else if (!SKIP.has(rel)) files.push(rel);
+    else files.push(rel);
   }
   return files;
+}
+
+// The run root of a file: the nearest ancestor, among the backup root and
+// incrementals/<runId>, that holds an encryption.json.
+function runRootOf (dir, rel) {
+  const parts = rel.split(path.sep);
+  if (parts[0] === 'incrementals' && parts.length > 2) {
+    const runRoot = path.join(parts[0], parts[1]);
+    if (fs.existsSync(path.join(dir, runRoot, 'encryption.json'))) return runRoot;
+  }
+  return '.';
+}
+
+function writePrivate (dest, data) {
+  // Plaintext account data: for the owner only.
+  fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(dest, data, { mode: 0o600 });
+  fs.chmodSync(dest, 0o600);
 }
 
 function main () {
   const args = parseArgs(process.argv.slice(2));
   const envPath = path.join(args.dir, 'encryption.json');
   if (!fs.existsSync(envPath)) fail('no encryption.json found in ' + args.dir + ' (not an encrypted backup?)');
-  const envelope = JSON.parse(fs.readFileSync(envPath, 'utf8'));
-  const dataKey = resolveDataKey(envelope, args);
   const outDir = args.out || (path.resolve(args.dir) + '-decrypted');
+
+  // One data key per run, resolved once (the same passphrase or private key).
+  const dataKeys = new Map();
+  function dataKeyOf (runRoot) {
+    const p = path.join(args.dir, runRoot, 'encryption.json');
+    if (!dataKeys.has(p)) dataKeys.set(p, resolveDataKey(JSON.parse(fs.readFileSync(p, 'utf8')), args));
+    return dataKeys.get(p);
+  }
 
   const files = walk(args.dir, args.dir, []);
   let n = 0;
   for (const rel of files) {
-    const plain = decryptFile(dataKey, fs.readFileSync(path.join(args.dir, rel)));
-    const dest = path.join(outDir, rel);
-    // Plaintext account data: for the owner only.
-    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(dest, plain, { mode: 0o600 });
-    fs.chmodSync(dest, 0o600);
+    const runRoot = runRootOf(args.dir, rel);
+    // Cleartext files, and a chain.json temporary file an interrupted run left.
+    if (SKIP.has(path.relative(runRoot, rel)) || path.basename(rel).startsWith('.chain.json.')) continue;
+    const plain = decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, rel)));
+    writePrivate(path.join(outDir, rel), plain);
     n++;
+  }
+  // The mirror of a chain is a plaintext chain.
+  const chainPath = path.join(args.dir, 'chain.json');
+  if (fs.existsSync(chainPath)) {
+    const chain = JSON.parse(fs.readFileSync(chainPath, 'utf8'));
+    chain.encryption = null;
+    writePrivate(path.join(outDir, 'chain.json'), JSON.stringify(chain, null, 2));
+    console.log('Backup chain: ' + chain.runs.length + ' run(s)');
   }
   console.log('Decrypted ' + n + ' file(s) to ' + outDir);
 }
@@ -204,6 +240,23 @@ function buildRestoreReadme (envelope: Record<string, unknown>): string {
     '',
     'The output is plaintext JSONL (optionally gzip-compressed `*.jsonl.gz`) plus raw',
     'attachment blobs — the same layout an unencrypted backup would have.',
+    '',
+    '## Incremental chain',
+    '',
+    'When incremental backups (`--incremental`) were written into this directory, it holds',
+    'a chain of runs: the full backup at this root, and each incremental run in its own',
+    '`incrementals/<runId>/` directory. The cleartext `chain.json` lists the runs in order',
+    '(run ids, snapshot times, user ids, key model). Each incremental run has its own',
+    '`encryption.json` (its own data key), under the SAME ' + (isHybrid ? 'recipient key pair' : 'passphrase') + '.',
+    '',
+    '- `--restore` applies the whole chain: the full backup, then every incremental run in',
+    '  order (a newer version of a stream, access, event or attachment replaces the older',
+    '  one; deletions included). `--through-run <runId>` restores the state as of that run.',
+    '- `node bin/backup.js --inspect /path/to/this-backup` lists the runs and says whether',
+    '  the chain is sound.',
+    '- `decrypt-backup.mjs` decrypts every run with its own `encryption.json` and writes the',
+    '  plaintext mirror with the same tree and a plaintext `chain.json`, which `--restore`',
+    '  reads as a plaintext chain.',
     ''
   ].join('\n');
 }

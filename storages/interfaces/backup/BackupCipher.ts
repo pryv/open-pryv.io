@@ -224,8 +224,20 @@ function createDecryptStream (dataKey: Buffer): NodeJS.ReadWriteStream {
 interface BackupEncryptor {
   envelope: Envelope;
   chunk: number;
+  /** Hybrid model only: `sha256:<hex>` of the recipient public key (SPKI DER). */
+  recipientKeyFingerprint?: string;
   encryptBuffer: (buf: Buffer) => Buffer;
   encryptStream: () => NodeJS.ReadWriteStream;
+}
+
+/**
+ * `sha256:<hex>` of the SPKI DER of a public key, or of the public half of a
+ * private key: names the recipient key of a hybrid backup chain without
+ * holding any secret.
+ */
+function recipientKeyFingerprint (key: string | Buffer | { key: string | Buffer, passphrase?: string }): string {
+  const der = crypto.createPublicKey(key).export({ type: 'spki', format: 'der' });
+  return 'sha256:' + crypto.createHash('sha256').update(der).digest('hex');
 }
 
 interface BackupDecryptor {
@@ -260,6 +272,7 @@ function createBackupEncryptor (opts: EncryptorOptions): BackupEncryptor {
   return {
     envelope,
     chunk,
+    ...(opts.recipientPubKeyPem ? { recipientKeyFingerprint: recipientKeyFingerprint(opts.recipientPubKeyPem) } : {}),
     encryptBuffer: (buf: Buffer) => encryptBuffer(dataKey, chunk, buf),
     encryptStream: () => createEncryptStream(dataKey, chunk)
   };
@@ -294,5 +307,5 @@ function createBackupDecryptor (envelope: Envelope, secrets: DecryptorSecrets): 
   };
 }
 
-export { createBackupEncryptor, createBackupDecryptor, DEFAULT_CHUNK };
+export { createBackupEncryptor, createBackupDecryptor, recipientKeyFingerprint, DEFAULT_CHUNK };
 export type { BackupEncryptor, BackupDecryptor, EncryptorOptions, DecryptorSecrets, Envelope };

@@ -8,6 +8,7 @@
 import type { Readable } from 'stream';
 import type { BackupWriter, UserBackupWriter, BackupWriteManifestParams } from './BackupWriter.js';
 import type { BackupEncryptor } from './BackupCipher.js';
+import type { Chain, ChainRun } from './chain.ts';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -18,8 +19,25 @@ const zlib = require('zlib');
 const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
+const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
+
+/**
+ * The run of a backup chain this writer writes. The full run writes at the
+ * root and creates `chain.json`; an incremental run writes only under
+ * `incrementals/<runId>/` and appends itself to the chain. Without a run, the
+ * writer writes a full backup at the root and no `chain.json`.
+ */
+interface WriterRun {
+  runId: string;
+  /** `.` for the full run, `incrementals/<runId>` for an incremental run. */
+  path: string;
+  parentRunId: string | null;
+  chainId: string;
+  /** The chain an incremental run is appended to (default: the directory's `chain.json`). */
+  baseChain?: Chain | null;
+}
 
 interface WriterOptions {
   /**
@@ -38,6 +56,8 @@ interface WriterOptions {
    * encrypted for restore.
    */
   encryptor?: BackupEncryptor | null;
+  /** The chain run written (see WriterRun). */
+  run?: WriterRun | null;
 }
 
 interface ResolvedWriterOptions {
@@ -77,50 +97,117 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
     { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null },
     options
   );
+  const run: WriterRun | null = options?.run ?? null;
+  const isIncrementalRun = run != null && run.path !== '.';
+  let baseChain: Chain | null = null;
+  if (run != null) {
+    if (isIncrementalRun) {
+      if (typeof run.runId !== 'string' || !RUN_ID_RE.test(run.runId) || run.runId === FULL_RUN_ID || run.path !== INCREMENTALS_DIR_NAME + '/' + run.runId) {
+        throw new Error('Backup writer: invalid incremental run ' + JSON.stringify({ runId: run.runId, path: run.path }));
+      }
+      baseChain = run.baseChain ?? readChain(outputPath);
+      if (baseChain == null) throw new Error(`Backup writer: no chain to append run ${run.runId} to at ${outputPath}`);
+      const last = baseChain.runs[baseChain.runs.length - 1];
+      if (baseChain.chainId !== run.chainId || last.runId !== run.parentRunId) {
+        throw new Error(`Backup writer: run ${run.runId} does not follow the last run of the chain at ${outputPath}`);
+      }
+      // The run encrypts like the chain, or not at all (checked before anything is written).
+      const own = chainEncryptionOf(opts.encryptor);
+      const chainEnc = baseChain.encryption;
+      const sameModel = own == null || chainEnc == null
+        ? own == null && chainEnc == null
+        : own.mode === chainEnc.mode && (own.mode !== 'hybrid' || (chainEnc.mode === 'hybrid' && own.recipientKeyFingerprint === chainEnc.recipientKeyFingerprint));
+      if (!sameModel) {
+        throw new Error(`Backup writer: the key model of run ${run.runId} differs from the chain's at ${outputPath}`);
+      }
+    } else if (run.runId !== FULL_RUN_ID || run.path !== '.') {
+      throw new Error('Backup writer: invalid full run ' + JSON.stringify({ runId: run.runId, path: run.path }));
+    }
+  }
+
   // An existing output directory keeps its mode (the operator chose it); the
   // directories created below it are private.
   makePrivateDir(outputPath);
 
+  // Every file of this run goes under `runDir`: the root for the full run, a
+  // new directory of its own for an incremental run (created here, so no
+  // file of an earlier run is ever opened for writing).
+  let runDir = outputPath;
+  if (isIncrementalRun) {
+    const incDir = path.join(outputPath, INCREMENTALS_DIR_NAME);
+    let incStat = null;
+    try { incStat = fs.lstatSync(incDir); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+    if (incStat == null) makePrivateDir(incDir);
+    else if (!incStat.isDirectory()) throw new Error(`Backup writer: ${incDir} is not a directory (symbolic link or special file): refused`);
+    runDir = path.join(incDir, run!.runId);
+    fs.mkdirSync(runDir, { mode: PRIVATE_DIR_MODE }); // fails when it exists
+  }
+
   // Write the cleartext crypto envelope so restore can discover key model +
   // wrapped data key. It carries crypto headers only — never user data.
   // Ship self-recovery artifacts next to it so the backup can be decrypted by
-  // the key holder even on a machine without Pryv.io installed.
+  // the key holder even on a machine without Pryv.io installed (the full run
+  // only: the root copies serve the whole chain).
   if (opts.encryptor) {
     writePrivateFile(
-      path.join(outputPath, 'encryption.json'),
+      path.join(runDir, 'encryption.json'),
       JSON.stringify(opts.encryptor.envelope, null, 2)
     );
-    writePrivateFile(path.join(outputPath, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
-    writePrivateFile(path.join(outputPath, RESTORE_README_NAME), buildRestoreReadme(opts.encryptor.envelope));
+    if (!isIncrementalRun) {
+      writePrivateFile(path.join(outputPath, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
+      writePrivateFile(path.join(outputPath, RESTORE_README_NAME), buildRestoreReadme(opts.encryptor.envelope));
+    }
   }
 
   return createBackupWriter({
     async openUser (userId: string, username: string): Promise<UserBackupWriter> {
-      const userDir = path.join(outputPath, 'users', userId);
+      const userDir = path.join(runDir, 'users', userId);
       makePrivateDir(userDir);
       return createFilesystemUserBackupWriter(userDir, userId, username, opts);
     },
 
     async writePlatformData (data: AsyncIterable<unknown> | unknown[]) {
-      const platformDir = path.join(outputPath, 'platform');
+      const platformDir = path.join(runDir, 'platform');
       makePrivateDir(platformDir);
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
       await writeJsonlFile(filePath, data, opts.compress, opts.encryptor);
     },
 
     async writeManifest (params: BackupWriteManifestParams) {
-      const manifest = {
+      const manifest: Record<string, unknown> = {
         formatVersion: 1,
         coreVersion: params.coreVersion,
         config: params.config,
-        backupType: params.backupType,
+        backupType: run != null ? (isIncrementalRun ? 'incremental' : 'full') : params.backupType,
         backupTimestamp: params.backupTimestamp,
         snapshotBefore: params.snapshotBefore || null,
         users: params.userManifests,
         compressed: opts.compress
       };
-      const filePath = path.join(outputPath, 'manifest.json');
+      if (run != null) {
+        manifest.chainId = run.chainId;
+        manifest.runId = run.runId;
+        manifest.parentRunId = run.parentRunId;
+      }
+      const filePath = path.join(runDir, 'manifest.json');
       persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts.encryptor);
+      if (run == null) return;
+
+      // The run joins the chain only once its manifest is written.
+      const entry: ChainRun = {
+        runId: run.runId,
+        path: run.path,
+        backupType: isIncrementalRun ? 'incremental' : 'full',
+        parentRunId: run.parentRunId,
+        snapshotBefore: params.snapshotBefore ?? null,
+        backupTimestamp: params.backupTimestamp,
+        coreVersion: params.coreVersion,
+        users: params.userManifests.map((u) => u.userId)
+      };
+      const chain: Chain = isIncrementalRun
+        ? { ...baseChain!, runs: [...baseChain!.runs, entry] }
+        : { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };
+      writeChainAtomic(outputPath, chain);
     },
 
     async close () { /* no-op for filesystem */ }
