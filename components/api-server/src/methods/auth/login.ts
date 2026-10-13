@@ -93,11 +93,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     checkPassword,
     mfaResolveForLogin,
     mfaOpenLoginSession,
-    openSession,
-    updateOrCreatePersonalAccess,
-    addApiEndpoint,
+    endsMfaLoginOnError(openSession),
+    endsMfaLoginOnError(updateOrCreatePersonalAccess),
+    endsMfaLoginOnError(addApiEndpoint),
     setAuditAccessId(AuditAccessIds.VALID_PASSWORD),
-    setAdditionalInfo,
+    endsMfaLoginOnError(setAdditionalInfo),
     mfaCheckIfActive);
 
   // Third-party sign-in mint. It is the auth.login chain minus the params-schema,
@@ -121,11 +121,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     applyPrerequisitesForLogin,
     mfaResolveForLogin,
     mfaOpenLoginSession,
-    openSession,
-    updateOrCreatePersonalAccess,
-    addApiEndpoint,
+    endsMfaLoginOnError(openSession),
+    endsMfaLoginOnError(updateOrCreatePersonalAccess),
+    endsMfaLoginOnError(addApiEndpoint),
     setAuditAccessId(AuditAccessIds.VALID_SSO),
-    setAdditionalInfo,
+    endsMfaLoginOnError(setAdditionalInfo),
     mfaCheckIfActive);
 
   // Confine auth.ssoLogin to the server-internal mint context: that context is
@@ -507,6 +507,48 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     try {
       await getMFASessionStore(mfaCfg).clear(mfaToken);
     } catch (_err) { /* the MFA session expires on its own */ }
+  }
+
+  /**
+   * A step of a login that runs after `mfaOpenLoginSession`, wrapped so that
+   * a refusal of the step (its error, a throw or a rejection) ends the MFA
+   * login session it opened: nothing else reads that session, and it would
+   * otherwise hold one of the account's pending places until it expires.
+   * The session this login generated, if any, is ended too
+   * (`endUnreleasedLogin`). An SMS already sent for the login is not taken
+   * back. The step itself is unchanged.
+   */
+  function endsMfaLoginOnError<P> (step: (context: MethodContext, params: P, result: ResultBag, next: Next) => unknown) {
+    const wrapped = function (context: MethodContext, params: P, result: ResultBag, next: Next) {
+      let settled = false;
+      const done = async (err?: unknown) => {
+        if (settled) return;
+        settled = true;
+        const pending = context.mfaLogin as MfaLoginState | undefined;
+        if (err != null && pending?.mfaToken != null) {
+          const mfaToken = pending.mfaToken;
+          pending.mfaToken = undefined;
+          await endUnreleasedLogin(context, result, pending.cfg, mfaToken);
+        }
+        next(err);
+      };
+      let returned: unknown;
+      try {
+        returned = step(context, params, result, done);
+      } catch (err) {
+        return done(err);
+      }
+      if (returned != null && typeof (returned as PromiseLike<unknown>).then === 'function') {
+        // A rejection after the step advanced is left to the API runner (it
+        // logs it); one before is the step's refusal.
+        return Promise.resolve(returned).then(null, (err: unknown) => {
+          if (settled) throw err;
+          return done(err);
+        });
+      }
+    };
+    Object.defineProperty(wrapped, 'name', { value: step.name });
+    return wrapped;
   }
 
   // LOGOUT

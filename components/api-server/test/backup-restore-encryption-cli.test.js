@@ -149,3 +149,17 @@ describe('[BKPW] bin/backup.js backup without a key model', function () {
     assert.match(encrypted.stdout, /Encryption: /, encrypted.stdout + encrypted.stderr);
   });
 });
+
+describe('[BKHL] bin/backup.js --help', function () {
+  this.timeout(120000);
+
+  it('[BKHL1] --help and -h print the backup usage and exit 0, without touching any storage', () => {
+    for (const flag of ['--help', '-h']) {
+      const res = runCli([flag]);
+      assert.strictEqual(res.status, 0, flag + ': ' + res.stdout + res.stderr);
+      assert.match(res.stdout, /Usage: node bin\/backup\.js \[options\]/, flag + ': ' + res.stdout + res.stderr);
+      assert.match(res.stdout, /--restore, -r <path>/, flag);
+      assert.doesNotMatch(res.stdout, /Storage initialized/, flag);
+    }
+  });
+});

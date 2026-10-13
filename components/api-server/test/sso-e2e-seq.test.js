@@ -36,6 +36,7 @@ const { getPlatform } = require('platform');
 const storage = require('storage');
 const { injectTestConfigSnapshot } = require('test-helpers');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
+const { _resetMFASingletons } = require('business/src/mfa/index.ts');
 const timestamp = require('unix-timestamp');
 
 const LANDING = 'https://auth.example.com/sso-signin';
@@ -308,6 +309,47 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(mint.err?.httpStatus, 403);
 
     assert.deepStrictEqual(await footprint(), before, 'the refused sign-in wrote no session and no access');
+  });
+
+  it('[MLSX2] a sign-in refused after its MFA session opened ends that session, which then holds no pending place', async function () {
+    const email = cuid() + '@mlsx2.example.com';
+    const u = await makeProvedUser(email, { password: PASSWORD });
+    idp.control.email = email;
+    const login = await coreRequest.post(`/${u.username}/auth/login`).set('Origin', TRUSTED_ORIGIN)
+      .send({ username: u.username, password: PASSWORD, appId: TRUSTED_APP });
+    assert.strictEqual(login.status, 200, 'password login: ' + JSON.stringify(login.body));
+    const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', login.body.token).send({});
+    assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
+    const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+      .send({ code: await previousStepCodeFor(act.body.secret) });
+    assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
+
+    // One pending MFA session on the whole core (no per-account eviction): a
+    // session left behind by the refused sign-in refuses the next one.
+    const restoreCaps = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPending: 1, maxPendingPerUser: 0 } } } });
+    try {
+      await _resetMFASingletons();
+      const sessions = (await storage.getStorageLayer()).sessions;
+      const ownGenerate = Object.hasOwn(sessions, 'generate');
+      const generate = sessions.generate;
+      // The session write fails, after the MFA session of the sign-in opened.
+      sessions.generate = (_data, _opts, callback) => callback(new Error('injected session storage failure'));
+      let refused;
+      try {
+        refused = hashParams(await runCallback());
+      } finally {
+        if (ownGenerate) sessions.generate = generate;
+        else delete sessions.generate;
+      }
+      assert.strictEqual(refused.ssoError, 'sso-failed', JSON.stringify(refused));
+      assert.strictEqual(refused.ssoMfaToken, undefined);
+      const next = hashParams(await runCallback());
+      assert.strictEqual(next.ssoStatus, 'mfa', JSON.stringify(next));
+      assert.ok(next.ssoMfaToken && next.ssoMfaToken.length > 0, JSON.stringify(next));
+    } finally {
+      restoreCaps();
+      await _resetMFASingletons();
+    }
   });
 
   it('[SSOE5] auth.ssoLogin is refused when reached with an access token (callBatch), and mints nothing', async function () {

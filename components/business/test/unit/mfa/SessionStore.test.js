@@ -248,7 +248,7 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.lengthOf(alive, 1, JSON.stringify(alive));
   });
 
-  it('[MT7D] claimEnrolSlot() clears nothing; giveBackEnrolSlot() hands the slot back, or clears the previous one once a later claim superseded both', async () => {
+  it('[MT7D] claimEnrolSlot() clears nothing; giveBackEnrolSlot() hands the slot back, or relinks a later claim to the previous one', async () => {
     const store = new SessionStore(1800, { kvClient: harness.kvClient });
     const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
     const first = await enrol(1);
@@ -257,17 +257,105 @@ describe('[MFAT] mfa/SessionStore', () => {
     assert.equal(await store.claimEnrolSlot('u1', second), first);
     assert.isTrue(await store.has(first), 'a claim alone clears nothing');
     // Refused: the slot goes back to the first, which stays the pending one.
-    await store.giveBackEnrolSlot('u1', second, first);
+    await store.giveBackEnrolSlot('u1', second);
     await store.clear(second);
     assert.isTrue(await store.has(first));
     const third = await enrol(3);
     assert.equal(await store.claimEnrolSlot('u1', third), first);
-    // A later claim came in meanwhile: the refused one's previous is cleared.
+    // A later claim came in meanwhile: it now displaces the refused one's previous.
     const fourth = await enrol(4);
     assert.equal(await store.claimEnrolSlot('u1', fourth), third);
-    await store.giveBackEnrolSlot('u1', third, first);
+    await store.giveBackEnrolSlot('u1', third);
+    await store.clear(third);
+    assert.isTrue(await store.has(first));
+    // The later one goes through: the first is cleared then.
+    assert.equal(await store.clearDisplacedEnrolment(fourth), first);
     assert.isFalse(await store.has(first));
     assert.equal(await store.takeEnrolSlot('u1', await enrol(5)), fourth);
+    assert.isFalse(await store.has(fourth));
+  });
+
+  /** The holder of `userKey`'s enrolment slot, or null. */
+  async function slotOf (store, userKey) {
+    const holder = await store.kv.get(store.enrolSlotNamespace + userKey);
+    return typeof holder === 'string' ? holder : null;
+  }
+  /** The enrolment `id` displaced when it claimed the slot (null: none). */
+  async function displacedBy (store, id) {
+    return (await store.get(id))?.context?.displaced ?? null;
+  }
+
+  it('[MSLT1] claimEnrolSlot() records in the claiming session the enrolment it displaced', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const pending = await enrol(1);
+    assert.isNull(await store.claimEnrolSlot('u1', pending));
+    const second = await enrol(2);
+    assert.equal(await store.claimEnrolSlot('u1', second), pending);
+    assert.isNull(await displacedBy(store, pending));
+    assert.equal(await displacedBy(store, second), pending);
+    assert.equal(await slotOf(store, 'u1'), second);
+  });
+
+  it('[MSLT2] a refused activation that no longer holds the slot unlinks itself and leaves the earlier enrolment pending', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const pending = await enrol(1);
+    await store.claimEnrolSlot('u1', pending);
+    const a = await enrol(2);
+    await store.claimEnrolSlot('u1', a);
+    const b = await enrol(3);
+    await store.claimEnrolSlot('u1', b);
+    // A is refused first: B now displaces the pending enrolment directly.
+    await store.giveBackEnrolSlot('u1', a);
+    await store.clear(a);
+    assert.isTrue(await store.has(pending), 'the earlier pending enrolment is kept');
+    assert.equal(await slotOf(store, 'u1'), b);
+    assert.equal(await displacedBy(store, b), pending);
+    // B is refused too: the earlier enrolment holds the slot again.
+    await store.giveBackEnrolSlot('u1', b);
+    await store.clear(b);
+    assert.isTrue(await store.has(pending));
+    assert.equal(await slotOf(store, 'u1'), pending);
+  });
+
+  it('[MSLT3] a refused activation that holds the slot hands it back to the enrolment it displaced', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const pending = await enrol(1);
+    await store.claimEnrolSlot('u1', pending);
+    const a = await enrol(2);
+    await store.claimEnrolSlot('u1', a);
+    await store.giveBackEnrolSlot('u1', a);
+    await store.clear(a);
+    assert.isTrue(await store.has(pending));
+    assert.equal(await slotOf(store, 'u1'), pending);
+    // The first enrolment refused in turn: the slot is free.
+    await store.giveBackEnrolSlot('u1', pending);
+    assert.isNull(await slotOf(store, 'u1'));
+  });
+
+  it('[MSLT4] of three activations over a pending enrolment, the middle one refused: the chain skips it, and a success clears only what it displaces', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const pending = await enrol(0);
+    await store.claimEnrolSlot('u1', pending);
+    const [a, b, c] = [await enrol(1), await enrol(2), await enrol(3)];
+    for (const id of [a, b, c]) await store.claimEnrolSlot('u1', id);
+    await store.giveBackEnrolSlot('u1', b);
+    await store.clear(b);
+    assert.equal(await slotOf(store, 'u1'), c);
+    assert.equal(await displacedBy(store, c), a);
+    assert.equal(await displacedBy(store, a), pending);
+    for (const id of [pending, a, c]) assert.isTrue(await store.has(id));
+    // A succeeds: it clears the pending enrolment it displaced.
+    await store.clearDisplacedEnrolment(a);
+    assert.isFalse(await store.has(pending));
+    // C succeeds: it clears A, and nothing else.
+    await store.clearDisplacedEnrolment(c);
+    assert.isFalse(await store.has(a));
+    assert.isTrue(await store.has(c));
+    assert.equal(await slotOf(store, 'u1'), c);
   });
 
   it('[MT10A] addToContext() adds to the context of a live session, keeps its code and attempts, and answers false once it is gone', async () => {

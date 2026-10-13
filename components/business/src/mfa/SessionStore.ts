@@ -326,7 +326,7 @@ class SessionStore {
    */
   async takeEnrolSlot (userKey: string, id: string): Promise<string | null> {
     const previous = await this.claimEnrolSlot(userKey, id);
-    if (previous != null) await this.clear(previous);
+    await this.clearDisplacedEnrolment(id);
     return previous;
   }
 
@@ -334,19 +334,23 @@ class SessionStore {
    * The first half of `takeEnrolSlot`: `id` holds the user's slot from now
    * on, and the session that held it before is NOT cleared yet, so the caller
    * can still be refused without touching it: it then hands the slot back
-   * with `giveBackEnrolSlot`, else clears the previous session itself.
+   * with `giveBackEnrolSlot`, else clears the displaced session with
+   * `clearDisplacedEnrolment`. The session `id` records the holder it
+   * displaces (`displaced` in its context) BEFORE it becomes the holder, so
+   * the holders form a chain a refused activation can unlink itself from.
    * Compare-and-set on the slot; throws 429 (and clears `id`) when it keeps
    * losing to concurrent activations. Answers the previous holder, or null.
    */
   async claimEnrolSlot (userKey: string, id: string): Promise<string | null> {
     const key = this.enrolSlotNamespace + userKey;
     for (let tries = 0; tries < 20; tries++) {
-      const previous = await this.kv.get(key);
-      if (await this.kv.set(key, id, { ttlMs: this.ttlMilliseconds, ifEquals: previous ?? null })) {
-        return (typeof previous === 'string' && previous !== id) ? previous : null;
-      }
+      const holder = await this.kv.get(key);
+      const previous = (typeof holder === 'string' && holder !== id) ? holder : null;
+      if (!(await this.addToContext(id, { displaced: previous }))) break;
+      if (await this.kv.set(key, id, { ttlMs: this.ttlMilliseconds, ifEquals: holder ?? null })) return previous;
     }
-    // Kept losing to concurrent activations: this one does not get the slot.
+    // Kept losing to concurrent activations (or the session is gone): this
+    // one does not get the slot.
     await this.clear(id);
     throw errors.tooManyAttempts(1, {
       message: 'Too many concurrent MFA activations for this account; retry in 1 s.',
@@ -355,17 +359,56 @@ class SessionStore {
   }
 
   /**
-   * Hand the slot claimed by `id` back to `previous` (from
-   * `claimEnrolSlot`), for an activation refused after its claim: the
-   * previous pending enrolment stays the user's one. When a later activation
-   * claimed the slot meanwhile, that one supersedes both, so `previous` is
-   * cleared rather than left pending beside it.
+   * Take `id` out of the user's slot chain, for an activation refused after
+   * its claim; `id` must still be live (clear it afterwards). The enrolment
+   * it displaced is never cleared here:
+   * - when `id` holds the slot, the slot goes back to that enrolment;
+   * - when a later activation displaced `id` meanwhile, that one now
+   *   displaces what `id` displaced, so whichever of them succeeds clears it,
+   *   and a refusal of both leaves it the user's pending enrolment.
    */
-  async giveBackEnrolSlot (userKey: string, id: string, previous: string | null): Promise<void> {
-    if (previous == null) return;
+  async giveBackEnrolSlot (userKey: string, id: string): Promise<void> {
     const key = this.enrolSlotNamespace + userKey;
-    if (await this.kv.set(key, previous, { ttlMs: this.ttlMilliseconds, ifEquals: id })) return;
-    await this.clear(previous);
+    for (let tries = 0; tries < 20; tries++) {
+      const own = await this._read(id);
+      const displaced = displacedOf(own);
+      const holder = await this.kv.get(key);
+      if (typeof holder !== 'string') return;
+      if (holder === id) {
+        if (await this.kv.set(key, displaced, { ttlMs: this.ttlMilliseconds, ifEquals: id })) return;
+        continue;
+      }
+      // Walk from the holder to the session that displaced `id`.
+      let current: string = holder;
+      let retry = false;
+      for (let hops = 0; hops < 20; hops++) {
+        const session = await this._read(current);
+        // Gone: it is being handed back itself, or cleared; read again.
+        if (session == null) { retry = true; break; }
+        const next = displacedOf(session);
+        if (next === id) {
+          if (await this.addToContext(current, { displaced })) return;
+          retry = true;
+          break;
+        }
+        if (next == null) return; // `id` is not in the chain
+        current = next;
+      }
+      if (!retry) return;
+    }
+  }
+
+  /**
+   * The second half of `takeEnrolSlot`, once the activation `id` went
+   * through: clear the enrolment it displaces (read now, as a refused
+   * activation may have relinked it since the claim).
+   */
+  async clearDisplacedEnrolment (id: string): Promise<string | null> {
+    const displaced = displacedOf(await this._read(id));
+    if (displaced == null) return null;
+    await this.addToContext(id, { displaced: null });
+    await this.clear(displaced);
+    return displaced;
   }
 
   /**
@@ -427,6 +470,12 @@ class SessionStore {
   async clearAll () {
     await this.kv.clear();
   }
+}
+
+/** The enrolment a session displaced when it claimed the slot, or null. */
+function displacedOf (session: StoredSession | null): string | null {
+  const displaced = (session?.context as { displaced?: unknown } | null | undefined)?.displaced;
+  return typeof displaced === 'string' ? displaced : null;
 }
 
 /** A stored per-user list as entries; anything unreadable counts as empty. */

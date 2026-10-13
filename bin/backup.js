@@ -41,6 +41,13 @@
 const path = require('path');
 const fs = require('fs');
 
+// The usage of this tool, before boiler init: boiler parses the command line
+// too and would answer --help with its own (empty) option list.
+if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h')) {
+  printUsage();
+  process.exit(0);
+}
+
 // Initialize boiler (same config plugins as api-server, minus express/routes)
 require('@pryv/boiler').init({
   appName: 'backup',

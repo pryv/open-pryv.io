@@ -120,18 +120,9 @@ function load (config) {
         defaultAccountStreams[0].children.concat(customAccountStreams);
   const fullAccountStreams = defaultAccountStreams; // for readability
 
-  let otherCustomStreams = config.get('custom:systemStreams:other');
-  if (otherCustomStreams == null) { otherCustomStreams = []; }
-  otherCustomStreams = extendSystemStreamsWithDefaultValues(otherCustomStreams);
-  otherCustomStreams = ensurePrefixForStreamIds(otherCustomStreams, CUSTOMER_PREFIX);
-  treeUtils.cloneAndApply(otherCustomStreams, (s) => {
-    // ugly reuse of treeUtils.cloneAndApply() because we don't modify the array
-    validateOtherStreams(s);
-    return s;
-  });
+  throwIfOtherStreams(config.get('custom:systemStreams:other'));
 
-  let systemStreams = fullAccountStreams
-    .concat(otherCustomStreams);
+  let systemStreams = fullAccountStreams;
   systemStreams = addParentIdAndChildren(systemStreams);
 
   let seen = new Map();
@@ -231,46 +222,20 @@ function validateSystemStreamWithSchema (systemStream) {
 }
 
 /**
- * @param {SystemStream} systemStream
+ * Streams declared under `custom.systemStreams.other` would be listed among
+ * the system streams without any storage behind them (no event can be
+ * written in them, and streams.get does not return them): refused. An empty
+ * list is accepted.
+ * @param {unknown} otherStreams
  * @returns {void}
  */
-function validateOtherStreams (systemStream) {
-  throwIfUnique(systemStream);
-  throwIfIndexed(systemStream);
-  throwIfNonEditable(systemStream);
-  throwIfRequiredAtRegistration(systemStream);
-  throwIfNonVisible(systemStream);
-
-  function throwIfUnique (systemStream) {
-    if (systemStream.isUnique) {
-      throw new Error('Config error: custom "other" system stream cannot be unique. Only "account" streams can be unique. Stream: ' +
-                JSON.stringify(systemStream, null, 2));
-    }
-  }
-  function throwIfIndexed (systemStream) {
-    if (systemStream.isIndexed) {
-      throw new Error('Config error: custom "other" system stream cannot be indexed. Only "account" streams can be indexed. Stream: ' +
-                JSON.stringify(systemStream, null, 2));
-    }
-  }
-  function throwIfNonEditable (systemStream) {
-    if (!systemStream.isEditable) {
-      throw new Error('Config error: custom "other" system stream cannot be non-editable. Only "account" streams can be non-editable. Stream: ' +
-                JSON.stringify(systemStream, null, 2));
-    }
-  }
-  function throwIfRequiredAtRegistration (systemStream) {
-    if (systemStream.isRequiredInValidation) {
-      throw new Error('Config error: custom "other" system stream cannot be required at registration. Only "account" streams can be required at registration. Stream: ' +
-                JSON.stringify(systemStream, null, 2));
-    }
-  }
-  function throwIfNonVisible (systemStream) {
-    if (!systemStream.isShown) {
-      throw new Error('Config error: custom "other" system stream cannot be non visible. Only "account" streams can non visible. Stream: ' +
-                JSON.stringify(systemStream, null, 2));
-    }
-  }
+function throwIfOtherStreams (otherStreams) {
+  if (otherStreams == null) return;
+  if (Array.isArray(otherStreams) && otherStreams.length === 0) return;
+  throw new Error('Config error: custom.systemStreams.other is not supported: a stream declared there ' +
+    'is listed among the system streams but has no storage (no event can be written in it, and it is ' +
+    'not returned by streams.get). Remove the "other" section; account fields go under ' +
+    'custom.systemStreams.account.');
 }
 
 /**

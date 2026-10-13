@@ -511,6 +511,38 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.ok(!JSON.stringify(res.body).includes('sms-down'), JSON.stringify(res.body));
         assert.strictEqual(res.body.mfaToken, undefined);
       });
+
+      function activateSms (phone) {
+        return coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ phone });
+      }
+
+      it('[MACC1] an activation refused by the provider keeps the enrolment pending before it', async function () {
+        nock(SMS_HOST).post('/challenge').reply(200, {});
+        const pending = await activateSms('+41791234501');
+        assert.strictEqual(pending.status, 302, JSON.stringify(pending.body));
+        nock(SMS_HOST).post('/challenge').reply(500, { id: 'sms-down', message: 'down' });
+        const refused = await activateSms('+41791234502');
+        assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+        nock(SMS_HOST).post('/verify').reply(204);
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', pending.body.mfaToken)
+          .send({ code: '1234' });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+      });
+
+      it('[MACC2] two concurrent activations refused by the provider keep the enrolment pending before them', async function () {
+        nock(SMS_HOST).post('/challenge').reply(200, {});
+        const pending = await activateSms('+41791234501');
+        assert.strictEqual(pending.status, 302, JSON.stringify(pending.body));
+        // Slow failures, so both activations claim the slot before either is refused.
+        nock(SMS_HOST).post('/challenge').times(2).delay(800).reply(500, { id: 'sms-down', message: 'down' });
+        const [a, b] = await Promise.all([activateSms('+41791234502'), activateSms('+41791234503')]);
+        assert.strictEqual(a.status, 400, JSON.stringify(a.body));
+        assert.strictEqual(b.status, 400, JSON.stringify(b.body));
+        nock(SMS_HOST).post('/verify').reply(204);
+        const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', pending.body.mfaToken)
+          .send({ code: '1234' });
+        assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+      });
     });
 
     // ----- inputs of the SMS provider requests -----------------------
@@ -1550,6 +1582,34 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         // The account's other tokens are untouched.
         const who = await coreRequest.get(`/${username}/access-info`).set('Authorization', personalToken);
         assert.strictEqual(who.status, 200, JSON.stringify(who.body));
+      });
+
+      it('[MLSX1] a login refused after its MFA session opened ends that session, which then holds no pending place', async function () {
+        // One pending MFA session on the whole core (no per-account eviction):
+        // a session left behind by the refused login refuses the next login.
+        const restoreCaps = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPending: 1, maxPendingPerUser: 0 } } } });
+        try {
+          await _resetMFASingletons();
+          const sessions = (await storage.getStorageLayer()).sessions;
+          const ownGenerate = Object.hasOwn(sessions, 'generate');
+          const generate = sessions.generate;
+          // The session write fails, after the MFA session of the login opened.
+          sessions.generate = (_data, _opts, callback) => callback(new Error('injected session storage failure'));
+          let refused;
+          try {
+            refused = await loginToApp(username, FRESH_APP_ID);
+          } finally {
+            if (ownGenerate) sessions.generate = generate;
+            else delete sessions.generate;
+          }
+          assert.strictEqual(refused.status, 500, JSON.stringify(refused.body));
+          assert.strictEqual(refused.body.mfaToken, undefined);
+          const next = await loginToApp(username, FRESH_APP_ID);
+          assert.strictEqual(next.status, 200, JSON.stringify(next.body));
+          assert.ok(next.body.mfaToken != null, JSON.stringify(next.body));
+        } finally {
+          restoreCaps();
+        }
       });
     });
 

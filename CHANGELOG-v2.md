@@ -33,6 +33,22 @@ directories (see the operator step below) and take a new full backup.
 - Continuing an encrypted chain needs the same key model: the passphrase is checked against the
   previous run before anything is written; for a recipient public key, the same key (the private
   key is no longer needed on the backup host, which was the point of that model).
+- `node bin/backup.js --help` (and `-h`) prints the usage of the backup tool; it printed an
+  empty generic option list.
+
+### Login and MFA
+- A login refused after its MFA session was opened (a storage error while the session or the
+  personal access is written) now ends that MFA session; it no longer holds one of the account's
+  pending-session places until it expires.
+- Two concurrent `mfa.activate` calls that both fail (provider error) no longer discard the
+  enrolment that was pending before them; a single failed activation already left it in place.
+
+### Configuration
+- **A config declaring `custom.systemStreams.other` with any entry is refused at boot** (and by
+  `bin/check-config.js`) with a message. Such streams were listed among the system streams but
+  had no storage: `streams.get` did not return them and no event could be written in them. Remove
+  the section (an empty list is accepted); account fields belong under
+  `custom.systemStreams.account`. The shipped `development-config.yml` no longer declares one.
 
 ### Audit and event reads
 - `events.get` on the audit streams no longer stalls the API worker on a large audit log

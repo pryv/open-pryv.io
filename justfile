@@ -110,7 +110,7 @@ test component *params:
     # bundle. Degrades to no extra CA if backloop can't provision.
     CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
-    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
 # Same as `test` but with the PostgreSQL AUDIT engine.
 #
@@ -128,7 +128,7 @@ test-pg-audit component *params:
     CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=postgresql NODE_ENV=test storages__audit__engine=postgresql \
-        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+        COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
 # Same as `test` but using the SQLite baseStorage engine
 [positional-arguments]
@@ -139,7 +139,7 @@ test-sqlite component *params:
     # See `test` — trust backloop.dev's cert for the lib-js integration suite.
     CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
-    STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+    STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
 # Same as `test` (PostgreSQL baseStorage) but with InfluxDB as the seriesStorage.
 # Needs a running influxd at storages.engines.influxdb.{host,port}
@@ -152,7 +152,7 @@ test-pg-influx component *params:
     CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=postgresql storages__series__engine=influxdb NODE_ENV=test \
-        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+        COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
 # Same as `test-sqlite` (SQLite baseStorage) but with InfluxDB as the seriesStorage.
 # Needs a running influxd, as for `test-pg-influx`.
@@ -164,7 +164,7 @@ test-sqlite-influx component *params:
     CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=sqlite storages__series__engine=influxdb NODE_ENV=test \
-        COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
+        COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
 # Backup/restore round trip across engines: PG -> SQLite -> PG -> SQLite with
 # bin/backup.js, on a fixture covering every collection (events, streams,
@@ -187,7 +187,7 @@ test-detailed component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --reporter=spec "$@"
+        npx mocha --reporter=spec "$@"
 
 # Run tests with detailed output for debugging (PG default)
 [positional-arguments]
@@ -196,7 +196,7 @@ test-debug component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --timeout 3600000 --reporter=spec --inspect-brk=40000 "$@"
+        npx mocha --timeout 3600000 --reporter=spec --inspect-brk=40000 "$@"
 
 # Run tests with parallel file execution (PG default; excludes tests that can't parallelize)
 # Uses MOCHA_PARALLEL=1 to enable parallel mode in .mocharc.js
@@ -206,7 +206,7 @@ test-parallel component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- "$@"
+        npx mocha "$@"
 
 # Run parallel tests first, then sequential tests (PG default)
 [positional-arguments]
@@ -215,9 +215,9 @@ test-fast component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- "$@"
+        npx mocha "$@"
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- "$@"
+        npx mocha "$@"
 
 # Run only non-parallel tests (PG default; use after test-parallel to run the remaining tests sequentially)
 [positional-arguments]
@@ -226,7 +226,7 @@ test-non-parallel component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- "$@"
+        npx mocha "$@"
 
 # ⚠️  OBSOLETE?: Run tests for profiling (PG default)
 [positional-arguments]
@@ -235,7 +235,7 @@ test-profile component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- --profile=true "$@"
+        npx mocha --profile=true "$@"
     tick-processor > profiling-output.txt
     open profiling-output.txt
 
@@ -246,7 +246,7 @@ test-cover component *params:
     set -euo pipefail
     shift
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} c8 \
-        scripts/components-run npx mocha -- "$@"
+        scripts/components-run npx mocha "$@"
 
 # Run all tests across supported engines (PG + SQLite) and generate coverage report
 test-cover-all: test-cover-full

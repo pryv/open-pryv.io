@@ -323,6 +323,40 @@ integrity:
   });
 });
 
+describe('[CKSS] bin/check-config.js custom system streams', function () {
+  this.timeout(60000);
+
+  it('[ESOT3] an "other" custom system stream is a problem; account streams and an empty "other" list pass', () => {
+    const other = runCheck(BASE + `
+custom:
+  systemStreams:
+    other:
+      - id: my-stream
+        type: string/pryv
+`);
+    assert.strictEqual(other.status, 1, other.stdout + other.stderr);
+    assert.match(other.stderr, /custom\.systemStreams\.other is not supported/);
+    const account = runCheck(BASE + `
+custom:
+  systemStreams:
+    account:
+      - id: phone
+        type: string/pryv
+    other: []
+`);
+    assert.strictEqual(account.status, 0, account.stdout + account.stderr);
+    const invalid = runCheck(BASE + `
+custom:
+  systemStreams:
+    account:
+      - id: bad-type
+        type: hellow
+`);
+    assert.strictEqual(invalid.status, 1, invalid.stdout + invalid.stderr);
+    assert.match(invalid.stderr, /invalid custom system stream/);
+  });
+});
+
 describe('[CKEV] bin/check-config.js keys supplied by environment variables', function () {
   this.timeout(60000);
   const OWN_KEY = 'k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=';

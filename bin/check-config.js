@@ -482,6 +482,23 @@ if (get('http.trustedProxies') != null) {
   }
 }
 
+// custom.systemStreams: the same loader boot runs (config/plugins/systemStreams),
+// which refuses an invalid custom stream and any "other" stream. The base layer
+// may supply part of it.
+{
+  const value = merge(get('custom.systemStreams', baseLayer) ?? undefined, get('custom.systemStreams'));
+  if (value != null) {
+    const store = new (require('nconf').Provider)();
+    store.use('memory');
+    store.set('custom:systemStreams', value);
+    try {
+      require('../config/plugins/systemStreams').load(store);
+    } catch (e) {
+      problems.push(e.message);
+    }
+  }
+}
+
 // storages.engines.rqlite.url: the spawned rqlited's HTTP API listens on
 // 127.0.0.1 unless httpBindAddr is set, so the core's own client must use loopback.
 {

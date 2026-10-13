@@ -394,20 +394,21 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // one, whatever its method. The slot is claimed before anything is
         // sent, so an activation that loses it to concurrent ones (429) sends
         // nothing; the earlier enrolment is cleared only once the challenge
-        // went out, so a refused activation leaves it usable.
+        // went out, so a refused activation leaves it usable (also when
+        // several concurrent activations are refused).
         const userKey = String(user.id);
-        const previous = await store.claimEnrolSlot(userKey, token);
+        await store.claimEnrolSlot(userKey, token);
         // The first challenge of the enrolment (an SMS for the SMS method),
         // sent for this session. Nothing of the activate body is passed.
         let challengeExtra: Record<string, unknown>;
         try {
           challengeExtra = await method.challenge(context.user.username, profile, { headers: {}, body: {}, sessionId: token, userId: userKey });
         } catch (err) {
-          await store.giveBackEnrolSlot(userKey, token, previous);
+          await store.giveBackEnrolSlot(userKey, token);
           await store.clear(token);
           throw err;
         }
-        if (previous != null) await store.clear(previous);
+        await store.clearDisplacedEnrolment(token);
         result.mfaToken = token;
         Object.assign(result, challengeExtra, extra);
         next();

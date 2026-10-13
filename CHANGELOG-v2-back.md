@@ -36,6 +36,30 @@
   `chain.json` into the mirror. Tests: business `[BKC1]`..`[BKC7]`, `[BKC9]`; storages `[BKC8]`;
   api-server `[BKIC1]`..`[BKIC3]`.
 
+## MFA login cleanup; other system streams refused; justfile; backup --help
+
+- `methods/auth/login.ts`: `endsMfaLoginOnError` wraps the steps after `mfaOpenLoginSession`
+  (`openSession`, `updateOrCreatePersonalAccess`, `addApiEndpoint`, `setAdditionalInfo`) in both
+  login chains (`auth.login`, `auth.ssoLogin`): an error, a throw or a rejection of the step runs
+  `endUnreleasedLogin` before the chain fails. `business/src/mfa/SessionStore.ts`: the claiming
+  session records the holder it displaces (`displaced` in its context) before it takes the
+  enrolment slot; `giveBackEnrolSlot(userKey, id)` (no `previous` argument) unlinks a refused
+  activation from the chain (the holder hands the slot back to what it displaced; a non-holder
+  relinks the session that displaced it) instead of clearing the earlier enrolment;
+  `clearDisplacedEnrolment(id)` at success (`mfa.activate`, `takeEnrolSlot`). Tests: api-server
+  `[MLSX1]`, `[MLSX2]` (SSO), `[MACC1]`, `[MACC2]`; business `[MSLT1]`..`[MSLT4]`, `[MT7D]`
+  updated.
+- `config/plugins/systemStreams/index.js`: a non-empty `custom:systemStreams:other` throws at
+  load; `validateOtherStreams` removed; `development-config.yml` sample removed.
+  `bin/check-config.js` runs the same loader on `custom.systemStreams` (base layer included).
+  Tests `[SD06]` `[ESOT1]` / `[ESOT2]` replace `[GZEK]` `[2IBL]` `[655X]` `[OJJ0]`; check-config
+  `[ESOT3]`; `[KMT3]` / `[PVDC]` now search the loaded tree (they passed a stream id as the tree
+  and matched anything).
+- `justfile`: the 13 mocha recipes pass `"$@"` without a `--`, so `just test <c> --grep 7SGO`
+  works (mocha's post-`--` positional check read a digit-leading code as a number).
+- `bin/backup.js`: `--help` / `-h` handled before boiler init (boiler parsed the command line
+  first and answered with its own help). Test `[BKHL1]`.
+
 ## SQLite event reads: index use, audit parents
 
 - `UserDatabase` (SQLite engine) reads `events.get` from the base `events` table instead of
