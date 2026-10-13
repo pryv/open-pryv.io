@@ -65,6 +65,15 @@ describe('[USQL] userSQLite toSqliteQuery()', function () {
     assert.strictEqual(sqllite, '("A" OR "E") AND "D" AND "C" NOT "D" NOT "F"');
   });
 
+  it('[WCN1] must give no filter (null) for "*" alone, and keep NOT next to "*"', async function () {
+    assert.strictEqual(toSQLiteQuery([[{ any: ['*'] }]]), null);
+    assert.strictEqual(toSQLiteQuery([[{ any: ['*'] }, { not: ['E'] }]]), '".." NOT "E"');
+  });
+
+  it('[WCN2] must give no filter (null) when one block of an OR matches everything', async function () {
+    assert.strictEqual(toSQLiteQuery([[{ any: ['B'] }], [{ any: ['*'] }]]), null);
+  });
+
   it('[1ZJU] must handle array of queries', async function () {
     const clean = [[{ any: ['B'] }], [{ any: ['D'] }, { not: ['E'] }]];
     const sqllite = toSQLiteQuery(clean);

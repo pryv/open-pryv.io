@@ -110,7 +110,8 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   await concurrentSafeWrite.execute(() => {
     fullTextSearch.setupForTable(this.db, 'events', tableSchemas.events, ['streamIds']);
   });
-  this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term like ?');
+  // A range on `term` narrows the vocabulary scan; `LIKE 'prefix%'` read every term.
+  this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term >= ? AND term < ?');
 
   this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ?');
   this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE deleted > ? ORDER BY deleted DESC');
@@ -155,8 +156,23 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
   return readableEventsStreamForIterator(query.iterate());
 };
 
+/**
+ * Reads the base table, where the column indexes apply. Reading `events_fts`
+ * directly could use no index at all: every matching row was loaded and sorted
+ * before `LIMIT`, synchronously, which blocked the worker for minutes on a
+ * multi-GB audit file.
+ *
+ * - No stream filter: the planner walks the `time` index and stops at `LIMIT`.
+ * - Stream filter: a rowid set from the full-text index (see `streamsQuery`),
+ *   and `NOT INDEXED` so the rows are always read from that set (cost follows
+ *   the matches). When the planner walks the `time` index instead, a stream
+ *   holding few events costs a scan of the whole index (measured 128 ms vs
+ *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out.
+ */
 function prepareEventsGetQuery (params: GetParams): string {
-  return 'SELECT * FROM events_fts ' + prepareQuery(params);
+  const hasStreamFilter = (params.query || []).some((item) =>
+    item.type === 'streamsQuery' && toSQLiteQuery(item.content as Parameters<typeof toSQLiteQuery>[0]) !== null);
+  return 'SELECT * FROM events ' + (hasStreamFilter ? 'NOT INDEXED ' : '') + prepareQuery(params);
 }
 
 UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: DeletionsOptions | null): NodeReadable {
@@ -211,11 +227,11 @@ function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): No
 }
 
 UserDatabase.prototype.getAllActions = function (this: UserDatabaseInstance): EventRow[] {
-  return this.eventQueries.getTerms.all('action-%');
+  return this.eventQueries.getTerms.all('action-', 'action.'); // '.' follows '-'
 };
 
 UserDatabase.prototype.getAllAccesses = function (this: UserDatabaseInstance): EventRow[] {
-  return this.eventQueries.getTerms.all('access-%');
+  return this.eventQueries.getTerms.all('access-', 'access.');
 };
 
 UserDatabase.prototype.getOneEvent = function (this: UserDatabaseInstance, eventId: string): DomainEvent | null {
@@ -424,9 +440,17 @@ const converters: Record<string, (content: unknown) => string | null> = {
   equal: (content: unknown) => {
     const c = content as { field: string, value: unknown };
     const realField = (c.field === 'id') ? 'eventid' : c.field;
-    if (c.value === null) return `${realField} IS NULL`;
+    // Unary `+` keeps the planner off an index for conditions nearly every row
+    // meets (not deleted, head version, not trashed). Without statistics it
+    // picked those indexes, then scanned and sorted the whole table before
+    // `LIMIT`, instead of walking the `time` index and stopping at the limit.
+    // `trashed = 1` keeps its index: few rows are trashed, so it is selective.
+    const nonSelective = (c.value === null && (realField === 'deleted' || realField === 'headId')) ||
+      (realField === 'trashed' && c.value === false);
+    const column = nonSelective ? '+' + realField : realField;
+    if (c.value === null) return `${column} IS NULL`;
     const value = eventsSchema.coerceValueForColumn(realField, c.value);
-    return `${realField} = ${value}`;
+    return `${column} = ${value}`;
   },
   greater: (content: unknown) => {
     const c = content as { field: string, value: unknown };
@@ -467,7 +491,7 @@ const converters: Record<string, (content: unknown) => string | null> = {
   streamsQuery: (content: unknown) => {
     const str = toSQLiteQuery(content);
     if (str === null) return null;
-    return 'streamIds MATCH \'' + str + '\'';
+    return 'rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH \'' + str + '\')';
   },
   jsonCondition: (content: unknown) => {
     return jsonConditionToSql(content as NormalizedCondition);

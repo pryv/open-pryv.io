@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## SQLite event reads: index use, audit parents
+
+- `UserDatabase` (SQLite engine) reads `events.get` from the base `events` table instead of
+  `events_fts`, on which no column index applied. A stream filter becomes
+  `rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH …)` read `NOT INDEXED` (cost follows
+  the matches); with no stream filter the planner walks `events_time` and stops at `LIMIT`. The
+  always-true conditions (`deleted IS NULL`, `headId IS NULL`, `trashed = 0`) are written with a
+  unary `+`: without statistics the planner chose their indexes and sorted the whole table. Measured
+  on a 500k-row audit file: 2.5 s per page before, 7 ms after for the whole log; 131 ms -> 32 ms for
+  one access. Tests: storages:sqlite `[SQQP1]`..`[SQQP4]`.
+- `toSQLiteQuery`: a block that matches every event (`any: ['*']`) returns no filter. It compared
+  the quoted tag with the unquoted one and never matched, so `*` was a full-text match on every row;
+  an OR with such a block is now no filter either. Tests: `[WCN1]`, `[WCN2]`.
+- Audit store (`auditUserEvents.getStreamed`, both engines): an `any` naming the `actions` parent
+  reads as `*` (every audit row carries an `action-…` stream id), instead of matching every expanded
+  child term on every row; an export names `accesses` and `actions` in one `any`, so it reads by
+  time. `accesses` alone stays an exact match (MFA, SSO and some OAuth2 rows have no access). `not`
+  items stay; the parent only reaches the store when the access may read it. Tests: audit
+  `[WLW1]`..`[WLW4]`, `[WLP1]`..`[WLP3]`.
+- `getAllAccesses` / `getAllActions` (SQLite) read the term vocabulary by range (`term >= 'access-'
+  AND term < 'access.'`) instead of `LIKE`, which read every term (93 ms -> 13 ms on 500k rows).
+
 ## Hardening batch: operations, limits, logging, deletion
 
 - Tests: the resend-cooldown tests of `account-emails-verify` and `[EMRV1]` set

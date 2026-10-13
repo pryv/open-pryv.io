@@ -201,6 +201,36 @@ describe('[ASTE] Audit Streams and Events', function () {
       validateResults(logs, appAccess.id);
     });
 
+    it('[WLP1] the accesses / actions parents read the whole log, as an account export pages it', async () => {
+      // Each read below is audited too: bound the time so they all see the same log.
+      const query = { modifiedSince: 1, fromTime: -1000000000000, toTime: timestamp.now() - 0.001, limit: 1000 };
+      const all = await coreRequest.get(eventsPath).set('Authorization', personalToken)
+        .query(Object.assign({ streams: [':_audit:'] }, query));
+      assert.strictEqual(all.status, 200);
+      assert.ok(all.body.events.length >= 5);
+      const ids = (events) => events.map((e) => e.id).sort();
+      for (const streams of [[':_audit:accesses', ':_audit:actions'], [':_audit:accesses'], [':_audit:actions']]) {
+        const res = await coreRequest.get(eventsPath).set('Authorization', personalToken)
+          .query(Object.assign({ streams }, query));
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.deepStrictEqual(ids(res.body.events), ids(all.body.events), JSON.stringify(streams));
+      }
+    });
+
+    it('[WLP2] an app access still cannot read the accesses parent', async () => {
+      const res = await coreRequest.get(eventsPath).set('Authorization', appAccess.token)
+        .query({ streams: [':_audit:accesses'] });
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[WLP3] a parent AND-ed with one access returns only that access\'s rows', async () => {
+      const res = await coreRequest.get(eventsPath).set('Authorization', personalToken)
+        .query({ streams: JSON.stringify([{ any: [':_audit:actions'], all: [':_audit:access-' + anotherAppAccess.id] }]) });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.events.length >= 1);
+      validateResults(res.body.events, anotherAppAccess.id);
+    });
+
     it('[BLR4]  Invalid token should return an error', async () => {
       const res = await coreRequest
         .get(eventsPath)

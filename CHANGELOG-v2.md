@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- `events.get` on the audit streams no longer stalls the API worker on a large audit log
+  (issue #156). With the SQLite audit engine, a read such as an account export
+  (`streams=[":_audit:accesses",":_audit:actions"]` with an open time range) scanned and sorted the
+  user's whole audit file before applying `limit`, synchronously: with a file of a few GB the worker
+  stopped answering every other request for minutes. Such a read now walks the time index and stops
+  at `limit`. Results are unchanged. The same fix speeds up `events.get` with `streams` `*` (or no
+  stream filter) on the SQLite event store.
+
 ## 2.0.0-rc.50 - 2026-10-13
 
 Hardening of API inputs and query semantics, sessions, sockets, registration, access requests,

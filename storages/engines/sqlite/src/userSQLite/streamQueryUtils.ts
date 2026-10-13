@@ -23,7 +23,10 @@ function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
   if (streamQuery.length === 1) {
     return processAndBlock(streamQuery[0]);
   } else { // pack in $or
-    return '(' + streamQuery.map(processAndBlock).join(') OR (') + ')';
+    const blocks = streamQuery.map(processAndBlock);
+    // one block matching every event makes the whole OR match every event
+    if (blocks.includes(null)) return null;
+    return '(' + blocks.join(') OR (') + ')';
   }
 
   function processAndBlock (andBlock: AndBlock): string | null {
@@ -51,7 +54,9 @@ function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
     }
 
     const res = anys.join(' AND ') + nots.join('');
-    if (res === ALL_EVENTS_TAG) return null;
+    // Every event carries the tag: no filter. (This compared against the
+    // unquoted tag and never matched, so `*` was a full-text match on every row.)
+    if (res === '"' + ALL_EVENTS_TAG + '"') return null;
     return res;
   }
 }
