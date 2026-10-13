@@ -93,7 +93,7 @@ type Chain = {
   runs: ChainRun[];
 };
 
-type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted';
+type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent';
 
 class BackupChainError extends Error {
   code: BackupChainErrorCode;
@@ -418,9 +418,9 @@ function runDirectory (root: string, run: ChainRun): string {
 
 /**
  * The manifest of a run of a chain: present, readable with the run's
- * decryptor, and naming this chain and this run (a run directory grafted from
- * another chain, or a swapped `chain.json`, is refused). A consistency check,
- * not an authentication.
+ * decryptor, and naming this chain, this run and its parent run (a run
+ * directory grafted from another chain, or a swapped or reordered
+ * `chain.json`, is refused). A consistency check, not an authentication.
  */
 function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun, previousRunId: string | null, decryptor: BackupDecryptor | null): Record<string, unknown> {
   const runDir = runDirectory(root, run);
@@ -430,8 +430,8 @@ function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun
   }
   const manifest = JSON.parse(readBackupBytes(manifestPath, decryptor).toString('utf8'));
   const pre = run.bootstrapped === true && manifest.chainId == null && manifest.runId == null;
-  if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId)) {
-    throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain or run): refused.`);
+  if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
+    throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
   }
   return manifest;
 }

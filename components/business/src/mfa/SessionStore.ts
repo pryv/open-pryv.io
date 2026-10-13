@@ -339,13 +339,17 @@ class SessionStore {
    * displaces (`displaced` in its context) BEFORE it becomes the holder, so
    * the holders form a chain a refused activation can unlink itself from.
    * Compare-and-set on the slot; throws 429 (and clears `id`) when it keeps
-   * losing to concurrent activations. Answers the previous holder, or null.
+   * losing to concurrent activations. Answers the previous holder, or null
+   * (also when `id` already holds the slot).
    */
   async claimEnrolSlot (userKey: string, id: string): Promise<string | null> {
     const key = this.enrolSlotNamespace + userKey;
     for (let tries = 0; tries < 20; tries++) {
       const holder = await this.kv.get(key);
-      const previous = (typeof holder === 'string' && holder !== id) ? holder : null;
+      // Already the holder: what it displaced stays recorded (overwriting it
+      // with null would drop that enrolment from the chain).
+      if (holder === id) return null;
+      const previous = typeof holder === 'string' ? holder : null;
       if (!(await this.addToContext(id, { displaced: previous }))) break;
       if (await this.kv.set(key, id, { ttlMs: this.ttlMilliseconds, ifEquals: holder ?? null })) return previous;
     }

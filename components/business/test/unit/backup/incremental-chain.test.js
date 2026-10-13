@@ -448,6 +448,35 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
     const m = JSON.parse(fs.readFileSync(inc2Manifest, 'utf8'));
     fs.writeFileSync(inc2Manifest, JSON.stringify({ ...m, chainId: 'f'.repeat(32) }));
     await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), new RegExp(`Run ${INC2_ID} of the backup chain at .* does not belong to this chain`));
+    fs.writeFileSync(inc2Manifest, JSON.stringify(m));
+
+    // Two incremental runs swapped in chain.json, their parents rewritten to
+    // keep it consistent: the older delta would be applied over the newer one.
+    const chainPath = path.join(dir, 'chain.json');
+    const chain = JSON.parse(fs.readFileSync(chainPath, 'utf8'));
+    const [full, run1, run2] = chain.runs;
+    fs.writeFileSync(chainPath, JSON.stringify({ ...chain, runs: [full, { ...run2, parentRunId: 'full' }, { ...run1, parentRunId: INC2_ID }] }));
+    await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /does not belong to this chain/);
+  });
+
+  it('[BKCC1] two incremental runs started from the same chain: the second to finish is refused and left as a stray, the chain keeps the first', async function () {
+    const dir = path.join(tmp, 'backup');
+    await writeRun(dir, { run: FULL, users: fullUsers() });
+    const siblingId = '20261013T142502Z-0b0b0b0b';
+    const sibling = { runId: siblingId, path: 'incrementals/' + siblingId, parentRunId: 'full', chainId: CHAIN_ID };
+    // Both planned before either joined the chain, as two overlapping cron runs would be.
+    const first = createFilesystemBackupWriter(dir, { compress: false, run: INC1 });
+    const second = createFilesystemBackupWriter(dir, { compress: false, run: sibling });
+    const manifest = (snapshotBefore) => ({ coreVersion: 'test', config: {}, backupType: 'incremental', snapshotBefore, backupTimestamp: snapshotBefore * 1000, userManifests: [] });
+    await first.writeManifest(manifest(2000));
+    await assert.rejects(() => second.writeManifest(manifest(2001)), (err) => {
+      assert.strictEqual(err.name, 'BackupChainError');
+      assert.match(err.message, new RegExp(`another run joined the backup chain .* run ${siblingId} is left as a stray`));
+      return true;
+    });
+    const chain = JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8'));
+    assert.deepStrictEqual(chain.runs.map((r) => r.runId), ['full', INC1_ID]);
+    assert.match(chainApi().inspectBackup(dir).lines.join('\n'), new RegExp(`stray .*incrementals/${siblingId}`));
   });
 
   it('[BKC9] every run directory of a chain is a real directory of the backup, and a run id is one safe segment', async function () {

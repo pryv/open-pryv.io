@@ -333,6 +333,24 @@ describe('[MFAT] mfa/SessionStore', () => {
     // The first enrolment refused in turn: the slot is free.
     await store.giveBackEnrolSlot('u1', pending);
     assert.isNull(await slotOf(store, 'u1'));
+    // A slot handed back to "nothing" is claimed again at once.
+    const third = await enrol(3);
+    assert.isNull(await store.claimEnrolSlot('u1', third));
+    assert.equal(await slotOf(store, 'u1'), third);
+  });
+
+  it('[MSLT5] a session claiming the slot it already holds keeps the enrolment it displaced', async () => {
+    const store = new SessionStore(1800, { kvClient: harness.kvClient });
+    const enrol = (i) => store.create(new Profile({ i }), { kind: 'enroll' });
+    const pending = await enrol(1);
+    await store.claimEnrolSlot('u1', pending);
+    const a = await enrol(2);
+    assert.equal(await store.claimEnrolSlot('u1', a), pending);
+    assert.isNull(await store.claimEnrolSlot('u1', a));
+    assert.equal(await displacedBy(store, a), pending, 'the earlier enrolment is still in the chain');
+    assert.equal(await slotOf(store, 'u1'), a);
+    await store.clearDisplacedEnrolment(a);
+    assert.isFalse(await store.has(pending), 'and is cleared when the activation goes through');
   });
 
   it('[MSLT4] of three activations over a pending enrolment, the middle one refused: the chain skips it, and a success clears only what it displaces', async () => {

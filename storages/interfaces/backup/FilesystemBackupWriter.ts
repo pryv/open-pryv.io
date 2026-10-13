@@ -19,7 +19,7 @@ const zlib = require('zlib');
 const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
-const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
+const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, BackupChainError, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
 
@@ -207,9 +207,24 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         users: params.userManifests.map((u) => u.userId)
       };
       if (params.scope != null) entry.scope = params.scope;
-      const chain: Chain = isIncrementalRun
-        ? { ...baseChain!, runs: [...baseChain!.runs, entry] }
-        : { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };
+      let chain: Chain;
+      if (isIncrementalRun) {
+        // Another run into this directory (an overlapping schedule) may have
+        // joined the chain since this one was planned: appending to the chain
+        // read then would drop that run's entry.
+        const current = readChain(outputPath);
+        const unchanged = current == null
+          ? baseChain!.runs.length === 1 && baseChain!.runs[0].bootstrapped === true
+          : current.chainId === run.chainId && current.runs[current.runs.length - 1].runId === run.parentRunId;
+        if (!unchanged) {
+          throw new BackupChainError('concurrent', `Backup writer: another run joined the backup chain at ${outputPath} (or its chain.json changed) while this one was written: ` +
+            `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
+        }
+        const base = current ?? baseChain!;
+        chain = { ...base, runs: [...base.runs, entry] };
+      } else {
+        chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };
+      }
       writeChainAtomic(outputPath, chain);
     },
 

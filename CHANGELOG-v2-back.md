@@ -31,7 +31,7 @@
   `max(modified, deleted)`; manifest users carry `since`. `RestoreOrchestrator`: the log line
   names the runs. `bin/backup.js`: `--through-run`, `--allow-incomplete`, `--inspect` (exit 0 OK,
   1 DAMAGED / INCOMPLETE / INVALID, 2 UNKNOWN); the hybrid incremental takes the public key only;
-  the help no longer shows a `--since` flag the parser never had. `decrypt-backup.mjs` decrypts
+  the header comment no longer shows a `--since` flag the parser never had. `decrypt-backup.mjs` decrypts
   every run with its own envelope (data key cached per envelope) and writes a plaintext
   `chain.json` into the mirror. Tests: business `[BKC1]`..`[BKC7]`, `[BKC9]`; storages `[BKC8]`;
   api-server `[BKIC1]`..`[BKIC3]`.
@@ -46,6 +46,15 @@
   measurements; a failed export still writes nothing (absent = not exported, the older run stands;
   a run on a core without a series engine therefore keeps the earlier run's series). Tests
   `[BKCE1]`, `[BKCE2]`.
+- `FilesystemBackupWriter.writeManifest` of an incremental run re-reads `chain.json` and refuses
+  (`BackupChainError` `concurrent`) when its last run is no longer this run's parent (another run
+  joined meanwhile; a chain bootstrapped from a pre-chain full backup expects no `chain.json` yet);
+  the refused run stays a stray. `chain.ts readRunManifest` also compares the manifest's
+  `parentRunId` with the chain entry's, so a reordered `chain.json` is refused. The decrypt script
+  run on a run directory without its chain defaults `--out` to
+  `<directory holding incrementals>-<runId>-decrypted`. Tests `[BKCC1]`, `[BKC7]` (reorder case),
+  `[BKCS2]` (default mirror), `[BKIC1]` (CLI incremental with a wrong passphrase: exit 1,
+  `incrementals/` and `chain.json` unchanged).
 
 ## MFA login cleanup; other system streams refused; justfile; backup --help
 
@@ -57,8 +66,10 @@
   enrolment slot; `giveBackEnrolSlot(userKey, id)` (no `previous` argument) unlinks a refused
   activation from the chain (the holder hands the slot back to what it displaced; a non-holder
   relinks the session that displaced it) instead of clearing the earlier enrolment;
-  `clearDisplacedEnrolment(id)` at success (`mfa.activate`, `takeEnrolSlot`). Tests: api-server
-  `[MLSX1]`, `[MLSX2]` (SSO), `[MACC1]`, `[MACC2]`; business `[MSLT1]`..`[MSLT4]`, `[MT7D]`
+  `clearDisplacedEnrolment(id)` at success (`mfa.activate`, `takeEnrolSlot`); a session claiming
+  the slot it already holds keeps its `displaced`. Tests: api-server `[MLSX1]`, `[MLSX2]` (SSO),
+  `[MLSX3]` (a step that throws, a step whose promise rejects), `[MACC1]`, `[MACC2]`; business
+  `[MSLT1]`..`[MSLT5]` (`[MSLT3]` claims again after the slot was handed back to nothing), `[MT7D]`
   updated.
 - `config/plugins/systemStreams/index.js`: a non-empty `custom:systemStreams:other` throws at
   load; `validateOtherStreams` removed; `development-config.yml` sample removed.
@@ -70,6 +81,17 @@
   works (mocha's post-`--` positional check read a digit-leading code as a number).
 - `bin/backup.js`: `--help` / `-h` handled before boiler init (boiler parsed the command line
   first and answered with its own help). Test `[BKHL1]`.
+
+## SQLite account store follows its file on disk
+
+- `storages/engines/sqlite/src/userAccountStorage.ts`: the cached connection of an account file
+  (`account-1.0.0.sqlite`) is reused only while `fileIdentity` (device + inode) of the path still
+  matches the one recorded at open, as `userSQLite/Storage.forUser`, `UserBaseStorageDb.forUser`
+  and the SQLite series connection already do; otherwise it is closed and the file opened again
+  (one `stat` per call). Concurrent first opens share one connection (`pendingOpens`). An account
+  deleted in this process (`deleteUserDirectory`) leaves its connection cached until the next
+  access reopens or the LRU evicts it. Tests: storage `[UASF1]` (file deleted by another
+  process), `[UASF2]` (file replaced), `[UASF3]` (concurrent first opens).
 
 ## SQLite event reads: index use, audit parents
 

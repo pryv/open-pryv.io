@@ -321,7 +321,10 @@ describe('[BENC] backup encryption', () => {
       fs.cpSync(runDir, copy, { recursive: true });
       const aloneOut = execFileSync(process.execPath, ['decrypt-backup.mjs', '--passphrase', 'pw'], { cwd: copy, stdio: 'pipe', encoding: 'utf8' });
       assert.match(aloneOut, /Decrypting this run alone \(no chain.json at .*\); pass the chain's root directory to decrypt the whole chain/);
-      const aloneStreams = fs.readFileSync(path.join(copy + '-decrypted', 'users', userId, 'streams.jsonl'), 'utf8');
+      // Its default mirror lands next to the backup directory, not inside its incrementals/.
+      assert.deepStrictEqual(fs.readdirSync(path.join(tmp, 'elsewhere', 'incrementals')), [incId], 'no plaintext inside incrementals/');
+      const aloneMirror = path.join(tmp, 'elsewhere-' + incId + '-decrypted');
+      const aloneStreams = fs.readFileSync(path.join(aloneMirror, 'users', userId, 'streams.jsonl'), 'utf8');
       assert.deepStrictEqual(aloneStreams.trim().split('\n').map((l) => JSON.parse(l)), [{ id: 's1', name: 'Diary renamed' }]);
     });
 

@@ -13,6 +13,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { fileIdentity } from './fileIdentity.ts';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -30,7 +31,12 @@ const DB_OPTIONS = {};
 type Sqlite3Db = ReturnType<typeof openUserDB> extends Promise<infer T> ? T : never;
 type SQLite3Instance = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[]; get: (...args: unknown[]) => Record<string, unknown> | undefined; iterate: (...args: unknown[]) => Iterable<Record<string, unknown>> }; pragma: (s: string) => unknown; unsafeMode: (b: boolean) => unknown; close: () => void };
 
+/** A cached connection and the identity of the file it was opened on. */
+interface CachedAccountDb { db: SQLite3Instance; dbPath: string; fileId: string | null }
+
 let dbCache: InstanceType<typeof LRU> | null = null;
+/** Opens in progress, shared by concurrent callers for the same account. */
+const pendingOpens: Map<string, Promise<SQLite3Instance>> = new Map();
 
 const InitStates = {
   NOT_INITIALIZED: -1,
@@ -76,7 +82,7 @@ async function init () {
 
   dbCache = new LRU({
     max: CACHE_SIZE,
-    dispose: function (db: SQLite3Instance/* , key */) { db.close(); }
+    dispose: function (entry: CachedAccountDb/* , key */) { entry.db.close(); }
   });
 
   initState = InitStates.READY;
@@ -359,14 +365,36 @@ async function _clearAll (userId: string): Promise<void> {
 
 // DB HELPERS
 
+/**
+ * A cached connection is only reused while it still points at the file on
+ * disk (see `fileIdentity`): when another process deleted or replaced the
+ * account file (account deletion, restore), the stale connection is closed
+ * and the file opened again. Costs one `stat` per call.
+ */
 async function getUserDB (userId: string): Promise<SQLite3Instance> {
-  return (dbCache!.get(userId) as SQLite3Instance) || (await openUserDB(userId));
+  const cached = dbCache!.get(userId) as CachedAccountDb | undefined;
+  if (cached != null) {
+    if (cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId) return cached.db;
+    // Another caller may have reopened it while we were checking.
+    if (dbCache!.get(userId) === cached) dbCache!.delete(userId); // dispose closes the stale connection
+  }
+  const current = dbCache!.get(userId) as CachedAccountDb | undefined;
+  if (current != null) return current.db;
+  // Open once for all concurrent callers: a second `set` would dispose
+  // (close) the first connection while its caller still uses it.
+  let pending = pendingOpens.get(userId);
+  if (pending == null) {
+    pending = openUserDB(userId).finally(() => { pendingOpens.delete(userId); });
+    pendingOpens.set(userId, pending);
+  }
+  return await pending;
 }
 
 async function openUserDB (userId: string): Promise<SQLite3Instance> {
   const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
   const dbPath = path.join(userPath, `account-${VERSION}.sqlite`);
   const db = new SQLite3(dbPath, DB_OPTIONS);
+  let fileId: string | null;
   try {
     // Like the other per-user files: no busy timeout (it would block the event
     // loop while another process writes this account), every write retries
@@ -383,16 +411,11 @@ async function openUserDB (userId: string): Promise<SQLite3Instance> {
       db.prepare('CREATE TABLE IF NOT EXISTS account_fields (field TEXT NOT NULL, value TEXT, time REAL NOT NULL, createdBy TEXT NOT NULL, PRIMARY KEY (field, time));').run();
       db.prepare('CREATE INDEX IF NOT EXISTS account_fields_field ON account_fields(field);').run();
     });
+    fileId = await fileIdentity(dbPath);
   } catch (err) {
     db.close();
     throw err;
   }
-  // A concurrent open of the same account may have finished first: keep one connection.
-  const cached = dbCache!.get(userId) as SQLite3Instance | undefined;
-  if (cached != null) {
-    db.close();
-    return cached;
-  }
-  dbCache!.set(userId, db);
+  dbCache!.set(userId, { db, dbPath, fileId });
   return db;
 }

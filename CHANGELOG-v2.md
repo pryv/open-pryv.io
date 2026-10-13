@@ -32,11 +32,20 @@ directories (see the operator step below) and take a new full backup.
   webhooks (their deletion time counts as a change).
 - Continuing an encrypted chain needs the same key model: the passphrase is checked against the
   previous run before anything is written; for a recipient public key, the same key (the private
-  key is no longer needed on the backup host, which was the point of that model).
-- Each incremental run also carries the current `decrypt-backup.mjs` and `RESTORE-README.md`. On a
-  chain, use the newest run's script (it finds the chain root when run from a run directory): the
-  root copy of a backup started before this release does not know incremental runs and is kept as
-  written.
+  key is no longer needed on the backup host, which was the point of that model; it is needed
+  once, to continue a backup written before this release: the chain start reads its manifest).
+- Two incremental runs into the same directory at the same time (an overlapping schedule): the
+  second to finish is refused, its directory is left aside (reported as not listed, never
+  restored), and the chain keeps the first; the next run covers the changes. Before, the second
+  silently replaced the first in `chain.json`. A restore also refuses a `chain.json` whose runs
+  were reordered.
+- The decrypt script run from a run directory copied out of its chain (decrypted alone) no longer
+  writes its plaintext mirror inside the backup's `incrementals/` by default: it goes next to the
+  backup directory (`<backup dir>-<runId>-decrypted`).
+- Each incremental run of an encrypted backup also carries the current `decrypt-backup.mjs` and
+  `RESTORE-README.md`. On a chain, use the newest run's script (it finds the chain root when run
+  from a run directory): the root copy of a backup started before this release does not know
+  incremental runs and is kept as written.
 - A restore no longer re-creates an account deleted between two runs of a chain: a run made
   without `--user` records that it covers the whole core, and an account such a run does not list
   is dropped from the restore (logged by name; `--through-run <the run that last held it>`
@@ -47,6 +56,12 @@ directories (see the operator step below) and take a new full backup.
   file in the run, and the restore took the previous run's).
 - `node bin/backup.js --help` (and `-h`) prints the usage of the backup tool; it printed an
   empty generic option list.
+- SQLite: a core running while `bin/backup.js --restore` (or any other process) deletes or
+  replaces an account's `account-1.0.0.sqlite` now reads the new file. Until this release it kept
+  reading the deleted one through its open connection, for as long as that connection stayed open
+  (the account looked unknown, or kept its old password and account fields), and an account-field
+  or password change made in that window was written into the deleted file and lost. Other per-user SQLite files already
+  followed their file on disk.
 
 ### Login and MFA
 - A login refused after its MFA session was opened (a storage error while the session or the

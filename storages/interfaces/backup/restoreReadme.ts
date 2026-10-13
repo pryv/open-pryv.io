@@ -41,7 +41,8 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 //   node decrypt-backup.mjs --passphrase 'your-passphrase'     [--out DIR]
 //   PRYV_BACKUP_PASSPHRASE=... node decrypt-backup.mjs          [--out DIR]
 //
-// Writes a plaintext mirror of the backup tree to --out (default: <dir>-decrypted).
+// Writes a plaintext mirror of the backup tree to --out (default: <dir>-decrypted;
+// for a run directory decrypted alone, <backup dir>-<runId>-decrypted).
 // The plaintext files are JSONL (optionally gzip-compressed, *.jsonl.gz) plus
 // raw attachment blobs, exactly as an unencrypted backup would contain.
 //
@@ -159,18 +160,20 @@ function runRootOf (dir, rel) {
 // A run directory of a chain stands for the chain: its root (two levels up,
 // where chain.json is) is decrypted, so the mirror lands next to the chain and
 // never inside incrementals/. A run directory without its chain is decrypted
-// alone.
+// alone; its default mirror goes next to the directory holding incrementals/
+// (<that directory>-<runId>-decrypted), not inside it: plaintext never lands
+// in an encrypted backup.
 function resolveBackupDir (dir) {
   const abs = path.resolve(dir);
   const parent = path.dirname(abs);
-  if (path.basename(parent) !== 'incrementals' || fs.existsSync(path.join(abs, 'chain.json'))) return dir;
+  if (path.basename(parent) !== 'incrementals' || fs.existsSync(path.join(abs, 'chain.json'))) return { dir, defaultOut: abs + '-decrypted' };
   const root = path.dirname(parent);
   if (fs.existsSync(path.join(root, 'chain.json'))) {
     console.log('Run directory given: decrypting the whole chain at ' + root);
-    return root;
+    return { dir: root, defaultOut: root + '-decrypted' };
   }
   console.log('Decrypting this run alone (no chain.json at ' + root + "); pass the chain's root directory to decrypt the whole chain");
-  return dir;
+  return { dir, defaultOut: root + '-' + path.basename(abs) + '-decrypted' };
 }
 
 function writePrivate (dest, data) {
@@ -182,10 +185,11 @@ function writePrivate (dest, data) {
 
 function main () {
   const args = parseArgs(process.argv.slice(2));
-  args.dir = resolveBackupDir(args.dir);
+  const resolved = resolveBackupDir(args.dir);
+  args.dir = resolved.dir;
   const envPath = path.join(args.dir, 'encryption.json');
   if (!fs.existsSync(envPath)) fail('no encryption.json found in ' + args.dir + ' (not an encrypted backup?)');
-  const outDir = args.out || (path.resolve(args.dir) + '-decrypted');
+  const outDir = args.out || resolved.defaultOut;
 
   // One data key per run, resolved once (the same passphrase or private key).
   const dataKeys = new Map();

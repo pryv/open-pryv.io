@@ -1611,6 +1611,55 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           restoreCaps();
         }
       });
+
+      it('[MLSX3] a step that throws, or whose promise rejects, after the MFA session opened ends that session too', async function () {
+        const restoreCaps = injectTestConfigSnapshot({ services: { mfa: { sessions: { maxPending: 1, maxPendingPerUser: 0 } } } });
+        try {
+          await _resetMFASingletons();
+          // A synchronous throw: the session lookup of the login throws instead of calling back.
+          const sessions = (await storage.getStorageLayer()).sessions;
+          const ownGetMatching = Object.hasOwn(sessions, 'getMatching');
+          const getMatching = sessions.getMatching;
+          sessions.getMatching = () => { throw new Error('injected synchronous failure'); };
+          let thrown;
+          try {
+            thrown = await loginToApp(username, FRESH_APP_ID);
+          } finally {
+            if (ownGetMatching) sessions.getMatching = getMatching;
+            else delete sessions.getMatching;
+          }
+          assert.strictEqual(thrown.status, 500, JSON.stringify(thrown.body));
+          assert.strictEqual(thrown.body.mfaToken, undefined);
+          const afterThrow = await loginToApp(username, FRESH_APP_ID);
+          assert.strictEqual(afterThrow.status, 200, JSON.stringify(afterThrow.body));
+          assert.ok(afterThrow.body.mfaToken != null, JSON.stringify(afterThrow.body));
+          await getMFASessionStore(totpTestConfig.services.mfa).clear(afterThrow.body.mfaToken);
+
+          // A rejection: the last step of the login (an async function) fails
+          // before it advances. Only its own lookup of the account fails.
+          const usersRepository = await getUsersRepository();
+          const ownLookup = Object.hasOwn(usersRepository, 'getUserByUsername');
+          const lookup = usersRepository.getUserByUsername;
+          usersRepository.getUserByUsername = function (...args) {
+            if (new Error().stack.includes('setAdditionalInfo')) return Promise.reject(new Error('injected rejection'));
+            return lookup.apply(this, args);
+          };
+          let rejected;
+          try {
+            rejected = await loginToApp(username, FRESH_APP_ID);
+          } finally {
+            if (ownLookup) usersRepository.getUserByUsername = lookup;
+            else delete usersRepository.getUserByUsername;
+          }
+          assert.strictEqual(rejected.status, 500, JSON.stringify(rejected.body));
+          assert.strictEqual(rejected.body.mfaToken, undefined);
+          const afterRejection = await loginToApp(username, FRESH_APP_ID);
+          assert.strictEqual(afterRejection.status, 200, JSON.stringify(afterRejection.body));
+          assert.ok(afterRejection.body.mfaToken != null, JSON.stringify(afterRejection.body));
+        } finally {
+          restoreCaps();
+        }
+      });
     });
 
     describe('[MA13] deactivate', function () {

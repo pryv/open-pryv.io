@@ -125,6 +125,17 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     const inc = runCli(['--output', dir, '--user', username, '--incremental', '--passphrase-file', passphraseFile]);
     assertOk(inc, 'incremental backup');
 
+    // A wrong passphrase is refused before the run writes anything.
+    const wrongFile = path.join(tmpDir, 'wrong-passphrase');
+    fs.writeFileSync(wrongFile, 'not-the-passphrase\n', { mode: 0o600 });
+    const runsBefore = fs.readdirSync(path.join(dir, 'incrementals')).sort();
+    const chainBefore = fs.readFileSync(path.join(dir, 'chain.json'));
+    const wrong = runCli(['--output', dir, '--user', username, '--incremental', '--passphrase-file', wrongFile]);
+    assert.strictEqual(wrong.status, 1, wrong.stdout + wrong.stderr);
+    assert.match(wrong.stderr, /passphrase does not decrypt/);
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'incrementals')).sort(), runsBefore, 'no run directory written');
+    assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'chain.json')), chainBefore, 'chain.json unchanged');
+
     const restore = runCli(['--restore', dir, '--user', username, '--passphrase-file', passphraseFile, '--overwrite']);
     assertOk(restore, 'restore');
     assert.match(restore.stdout, /Restored: 1 users/);
