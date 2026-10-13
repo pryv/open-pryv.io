@@ -1,9 +1,10 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.50 - 2026-10-13
 
 Hardening of API inputs and query semantics, sessions, sockets, registration, access requests,
-notifications and account deletion. Client-visible: a stream query whose `all` entry names no
+notifications and account deletion. Contains 2.0.0-rc.49 (read its notes if you have not deployed
+it); the Docker image no longer ships `npm` / `npx`. Client-visible: a stream query whose `all` entry names no
 stream now matches nothing; time bounds must be finite; `accesses.get` validates its options and
 `includeDeletions=false` leaves deletions out; deletion records (`includeDeletions`,
 `includeDeletionsSince`) are returned only to an access reading the whole store; the account root
