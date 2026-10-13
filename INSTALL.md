@@ -485,6 +485,8 @@ server {
 
 **Hosted sites behind nginx** - the in-process dispatcher recognises a hosted site by the `Host` header, so the `location /` block must keep `proxy_set_header Host $http_host;` (as in the sample). nginx terminates TLS there, so a site sends HSTS only with `hsts: always` (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)). Alternatively serve the folder from nginx with its own `server` block and leave `hostedSites` for the name reservation and the DNS answer.
 
+**Rate limiting** - the sample vhost only rate limits OAuth2. For per-route and per-token limits, fail2ban jails, and the list of limits the core already applies in-process, see [Rate limiting and DoS protection](https://pryv.github.io/customer-resources/rate-limiting/).
+
 ## Hosted sites (static folder or fixed proxy on a reserved name)
 
 A platform name can serve a web site instead of a user account: a folder of static files
