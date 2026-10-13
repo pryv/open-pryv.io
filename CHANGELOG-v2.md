@@ -216,8 +216,10 @@ MFA SMS sends gain a per-core hourly cap and a platform-wide per-destination bud
   `cluster.apiWorkers: 2`): every worker ran the webhooks service with every webhook. One API
   worker now runs it; its replacement takes over when it restarts.
 - Scoped webhooks follow their access: when `accesses.update` narrows the access, the scopes are
-  resolved again; a scope the access no longer reaches is removed, and a webhook left without any
-  scope becomes `inactive` (it is never turned into an unscoped webhook).
+  resolved again; a scope naming a stream the access no longer reaches is removed, and a webhook
+  left without any scope becomes `inactive` (it is never turned into an unscoped webhook). A `*`
+  scope of an access narrowed to no readable stream stays, and matches no event until the access
+  can read a stream again.
 - `webhooks.update` with `scopes`: the new map replaces the stored one (removed keys stayed stored)
   and applies at once (the running webhook kept the previous scopes until a restart). Scopes set by
   the account owner's personal token are resolved against the webhook's own access, never the

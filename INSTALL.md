@@ -1193,6 +1193,8 @@ Previews are served by the previews worker on port 3001 (`cluster.previewsWorker
 
 ### Previews: "Could not load the sharp module"
 
+On a native install (the Docker image builds sharp during its own build and ships no `npm`):
+
 ```bash
 npm install --os=linux --cpu=x64 sharp
 ```
