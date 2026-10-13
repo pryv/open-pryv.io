@@ -49,7 +49,10 @@
 - `FilesystemBackupWriter.writeManifest` of an incremental run re-reads `chain.json` and refuses
   (`BackupChainError` `concurrent`) when its last run is no longer this run's parent (another run
   joined meanwhile; a chain bootstrapped from a pre-chain full backup expects no `chain.json` yet);
-  the refused run stays a stray. `chain.ts readRunManifest` also compares the manifest's
+  the refused run stays a stray. This narrows the race, it is not a lock: the re-read and the
+  rename are a few synchronous calls apart, and two runs that both bootstrap the same pre-chain
+  full backup at the same time both see no `chain.json`, so the second one's `chain.json` replaces
+  the first and the first run is left a stray (reported by `--inspect`, covered by the next run). `chain.ts readRunManifest` also compares the manifest's
   `parentRunId` with the chain entry's, so a reordered `chain.json` is refused. The decrypt script
   run on a run directory without its chain defaults `--out` to
   `<directory holding incrementals>-<runId>-decrypted`. Tests `[BKCC1]`, `[BKC7]` (reorder case),

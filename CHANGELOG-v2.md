@@ -1,10 +1,13 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.51 - 2026-10-13
 
 Backup and restore: an incremental backup no longer overwrites the full backup it continues.
 Operators who ran `bin/backup.js --incremental` with an earlier release must check those
-directories (see the operator step below) and take a new full backup.
+directories (see the operator step below) and take a new full backup. Also: a config declaring
+`custom.systemStreams.other` streams is refused at boot; MFA login and enrolment cleanups; SQLite
+audit and event reads use the indexes; Docker Hub `latest` follows the release tags. Contains
+2.0.0-rc.50 .. rc.46 (read their notes if you have not deployed them).
 
 ### Backup and restore
 - **Operator step: check every directory that ever received `--incremental` before this release.**
@@ -60,8 +63,8 @@ directories (see the operator step below) and take a new full backup.
   replaces an account's `account-1.0.0.sqlite` now reads the new file. Until this release it kept
   reading the deleted one through its open connection, for as long as that connection stayed open
   (the account looked unknown, or kept its old password and account fields), and an account-field
-  or password change made in that window was written into the deleted file and lost. Other per-user SQLite files already
-  followed their file on disk.
+  or password change made in that window was written into the deleted file and lost. Other
+  per-user SQLite files already followed their file on disk.
 
 ### Login and MFA
 - A login refused after its MFA session was opened (a storage error while the session or the
@@ -85,7 +88,9 @@ directories (see the operator step below) and take a new full backup.
   stopped answering every other request for minutes. Such a read now walks the time index and stops
   at `limit`. Results are unchanged. The same fix speeds up `events.get` with `streams` `*` (or no
   stream filter) on the SQLite event store.
-- **Docker images:** `pryvio/open-pryv.io:latest` and `pryvio/open-pryv.io-encrypted:latest` now
+
+### Docker images
+- **`latest`:** `pryvio/open-pryv.io:latest` and `pryvio/open-pryv.io-encrypted:latest` now
   follow every release tag, release candidates included. Until this release `pryvio/open-pryv.io:latest`
   still pointed at the v1 image (1.7.1, 2021), so a plain `docker pull pryvio/open-pryv.io` installed
   v1, and the encrypted image had no `latest` tag. Production deployments should keep pinning an
