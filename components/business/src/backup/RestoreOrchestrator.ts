@@ -12,6 +12,7 @@ const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
 const { seriesNamespace } = require('../series/namespace.ts');
+const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
 
 // A backup can come from storage the operator does not control: its user ids
 // and usernames become local path segments (user directory, series file), so
@@ -119,10 +120,13 @@ class RestoreOrchestrator {
     const runs = Array.isArray(manifest.runs) ? manifest.runs : null;
     this.logger.info(`Restoring from backup: format=${manifest.formatVersion} type=${manifest.backupType} users=${manifest.users.length}` +
       (runs != null ? ` runs=${runs.length} (${runs.map((r) => r.runId).join(', ')})` : ''));
+    // Accounts deleted along the chain are restored nowhere: say so, by name.
+    const deleted = Array.isArray(manifest.deletedUsers) ? manifest.deletedUsers : [];
+    for (const d of deleted) this.logger.info(deletedUserMessage(d));
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[] } = { restored: [], skipped: [], conflicts };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[] } = { restored: [], skipped: [], conflicts, deleted };
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -163,6 +167,8 @@ class RestoreOrchestrator {
     const opts: RestoreOptions = Object.assign({ overwrite: false, skipPlatform: true }, options);
     const manifest = await reader.readManifest();
 
+    const deleted = (Array.isArray(manifest.deletedUsers) ? manifest.deletedUsers : []).find((d) => d.userId === userId);
+    if (deleted != null) throw new Error(deletedUserMessage(deleted));
     const userManifest = manifest.users.find((u: UserManifest) => u.userId === userId);
     if (!userManifest) {
       throw new Error(`User ${userId} not found in backup manifest`);
@@ -665,8 +671,13 @@ type SeriesConnectionLike = {
   dropDatabase (namespace: string): Promise<unknown>;
 };
 type UserManifest = { userId: string; username: string };
-/** `runs`: the runs of a backup chain the reader merged (absent for one run). */
-type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }> };
+/** An account deleted along a backup chain: not restored. */
+type DeletedUserRef = { userId: string; username: string | null; lastRunId: string; deletedBeforeRunId: string };
+/**
+ * `runs`: the runs of a backup chain the reader merged (absent for one run);
+ * `deletedUsers`: the accounts deleted along them, not in `users`.
+ */
+type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }>; deletedUsers?: DeletedUserRef[] };
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed'; reason: string };
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null };

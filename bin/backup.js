@@ -374,6 +374,12 @@ async function runRestore (args) {
       console.log(`    - ${u.username} (${u.userId})`);
     }
   }
+  if (report.deleted && report.deleted.length > 0) {
+    console.log(`  Deleted along the chain (not restored): ${report.deleted.length} users`);
+    for (const u of report.deleted) {
+      console.log(`    - ${u.userId}: deleted before run ${u.deletedBeforeRunId} (last in run ${u.lastRunId}; --through-run ${u.lastRunId} restores it as of then)`);
+    }
+  }
   if (report.conflicts.length > 0) {
     console.log(`  Conflicts: ${report.conflicts.length}`);
     for (const c of report.conflicts) {
@@ -650,7 +656,11 @@ Encryption (opt-in — without these flags output is plaintext, with a warning):
 Restore:
   --restore, -r <path>      Restore from backup directory (a chain: the full
                             backup, then every incremental run in order; a newer
-                            version of an item replaces the older one)
+                            version of an item replaces the older one). An
+                            account a later run of the whole core (no --user)
+                            does not list was deleted: it is not restored
+                            (listed in the report; --through-run <the run that
+                            last held it> restores it as of then)
   --through-run <runId>     Apply the chain up to this run only (the state as of
                             that run; see --inspect for the run ids)
   --allow-incomplete        Restore a directory damaged by an incremental run of
@@ -677,8 +687,9 @@ Restore:
                             secret was supplied (refused by default)
 
 Inspect (reads the directory only; no storage access):
-  --inspect <path>          List the runs of a backup directory (id, type,
-                            snapshot time, users, encryption, stray directories)
+  --inspect <path>          List the runs of a backup directory (id, type, scope,
+                            snapshot time, users, encryption, stray directories,
+                            accounts deleted along the chain)
                             and print one verdict: OK, DAMAGED (an incremental run
                             of a version before 2.0.0-rc.51 overwrote the full
                             backup), INCOMPLETE (a run is missing), or UNKNOWN

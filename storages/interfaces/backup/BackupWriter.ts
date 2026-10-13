@@ -49,6 +49,12 @@ export interface BackupWriteManifestParams {
   /** Consistency cutoff: items modified after this are excluded. */
   snapshotBefore?: number;
   backupTimestamp: number;
+  /**
+   * `all`: the run covers the whole core (an account it does not list did not
+   * exist when it ran); `users`: the run covers the accounts named. Recorded
+   * in the manifest and in the run's `chain.json` entry; absent: unknown.
+   */
+  scope?: 'all' | 'users';
 }
 
 /** Top-level manifest as persisted by writeManifest (the archive's

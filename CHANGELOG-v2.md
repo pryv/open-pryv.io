@@ -33,6 +33,18 @@ directories (see the operator step below) and take a new full backup.
 - Continuing an encrypted chain needs the same key model: the passphrase is checked against the
   previous run before anything is written; for a recipient public key, the same key (the private
   key is no longer needed on the backup host, which was the point of that model).
+- Each incremental run also carries the current `decrypt-backup.mjs` and `RESTORE-README.md`. On a
+  chain, use the newest run's script (it finds the chain root when run from a run directory): the
+  root copy of a backup started before this release does not know incremental runs and is kept as
+  written.
+- A restore no longer re-creates an account deleted between two runs of a chain: a run made
+  without `--user` records that it covers the whole core, and an account such a run does not list
+  is dropped from the restore (logged by name; `--through-run <the run that last held it>`
+  restores it as of then). `--inspect` shows each run's scope and the accounts deleted along the
+  chain.
+- Series emptied after a run no longer come back on restore: every run records the series of each
+  user it exports, an empty series included (before, a user without measurements had no series
+  file in the run, and the restore took the previous run's).
 - `node bin/backup.js --help` (and `-h`) prints the usage of the backup tool; it printed an
   empty generic option list.
 

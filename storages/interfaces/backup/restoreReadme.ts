@@ -10,7 +10,8 @@
  *
  * The goal of encrypted backups is that the holder of the key can always get
  * the data back — even on a machine that does not have Pryv.io installed. So
- * every encrypted backup ships two extra cleartext files at its root:
+ * every encrypted backup ships two extra cleartext files at its root (and each
+ * incremental run of a chain, in its own directory):
  *
  *   - `decrypt-backup.mjs` — a zero-dependency Node script (stdlib `crypto`
  *     only) that decrypts the whole tree into a plaintext mirror. It is a
@@ -47,7 +48,10 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // A backup chain (a full backup plus incremental runs, listed by chain.json)
 // is decrypted whole: each run (the root, and every incrementals/<runId>/)
 // with its own encryption.json. The mirror keeps the tree and a plaintext
-// chain.json, so it can be restored as a plaintext chain.
+// chain.json, so it can be restored as a plaintext chain. Run from a run
+// directory (incrementals/<runId>), the script decrypts the whole chain at
+// its root, two levels up; a run directory copied out of its chain is
+// decrypted alone.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -152,6 +156,23 @@ function runRootOf (dir, rel) {
   return '.';
 }
 
+// A run directory of a chain stands for the chain: its root (two levels up,
+// where chain.json is) is decrypted, so the mirror lands next to the chain and
+// never inside incrementals/. A run directory without its chain is decrypted
+// alone.
+function resolveBackupDir (dir) {
+  const abs = path.resolve(dir);
+  const parent = path.dirname(abs);
+  if (path.basename(parent) !== 'incrementals' || fs.existsSync(path.join(abs, 'chain.json'))) return dir;
+  const root = path.dirname(parent);
+  if (fs.existsSync(path.join(root, 'chain.json'))) {
+    console.log('Run directory given: decrypting the whole chain at ' + root);
+    return root;
+  }
+  console.log('Decrypting this run alone (no chain.json at ' + root + "); pass the chain's root directory to decrypt the whole chain");
+  return dir;
+}
+
 function writePrivate (dest, data) {
   // Plaintext account data: for the owner only.
   fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
@@ -161,6 +182,7 @@ function writePrivate (dest, data) {
 
 function main () {
   const args = parseArgs(process.argv.slice(2));
+  args.dir = resolveBackupDir(args.dir);
   const envPath = path.join(args.dir, 'encryption.json');
   if (!fs.existsSync(envPath)) fail('no encryption.json found in ' + args.dir + ' (not an encrypted backup?)');
   const outDir = args.out || (path.resolve(args.dir) + '-decrypted');
@@ -197,8 +219,12 @@ function main () {
 main();
 `;
 
-/** Build the human-facing restore instructions for a given envelope. */
-function buildRestoreReadme (envelope: Record<string, unknown>): string {
+/**
+ * Build the human-facing restore instructions for a given envelope. With
+ * `runId`, the instructions of an incremental run's directory: they open by
+ * saying where the chain root is.
+ */
+function buildRestoreReadme (envelope: Record<string, unknown>, options: { runId?: string } = {}): string {
   const isHybrid = envelope.mode === 'hybrid';
   const secretLine = isHybrid
     ? '- **Key:** the RSA **private key** matching the public key used to create this backup.'
@@ -210,9 +236,19 @@ function buildRestoreReadme (envelope: Record<string, unknown>): string {
     ? '--private-key /path/to/private.pem'
     : "--passphrase 'your-passphrase'";
 
+  const runIntro = options.runId == null
+    ? []
+    : [
+        'This directory is run `' + options.runId + '` of a backup chain. Its root is two levels up',
+        '(`../..`); the restore tool and this script work on the root. Run `node decrypt-backup.mjs` from',
+        'here without argument: it finds the root itself.',
+        ''
+      ];
+
   return [
     '# Restoring this encrypted backup',
     '',
+    ...runIntro,
     'This backup is **encrypted** (' + String(envelope.mode) + ', ' + String(envelope.alg) + ').',
     'Every data file is ciphertext; the cleartext `encryption.json` here holds only',
     'the crypto headers and the wrapped data key — no user data.',
@@ -256,7 +292,10 @@ function buildRestoreReadme (envelope: Record<string, unknown>): string {
     '  the chain is sound.',
     '- `decrypt-backup.mjs` decrypts every run with its own `encryption.json` and writes the',
     '  plaintext mirror with the same tree and a plaintext `chain.json`, which `--restore`',
-    '  reads as a plaintext chain.',
+    '  reads as a plaintext chain. Each run carries its own copy: use the one of the newest',
+    '  run (run from a run directory, it decrypts the whole chain at the root). A full backup',
+    '  taken before 2.0.0-rc.51 keeps an older script at its root, which does not know',
+    '  incremental runs.',
     ''
   ].join('\n');
 }

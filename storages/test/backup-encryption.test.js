@@ -280,6 +280,51 @@ describe('[BENC] backup encryption', () => {
       }
     });
 
+    it('[BKCS2] the script of a run directory decrypts the whole chain from its root, or the run alone when it was copied out of its chain', async () => {
+      const { execFileSync } = require('node:child_process');
+      const chainId = 'cd'.repeat(16);
+      const incId = '20261013T142501Z-5e6f7a8b';
+      // A chain under its own directory, so its mirror `<root>-decrypted` lands inside tmp.
+      const root = path.join(tmp, 'chain');
+      const full = createFilesystemBackupWriter(root, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run: { runId: 'full', path: '.', parentRunId: null, chainId } });
+      const fu = await full.openUser(userId, username);
+      await fu.writeStreams(streams);
+      await fu.writeEvents(events);
+      await full.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', snapshotBefore: 100, backupTimestamp: 1, userManifests: [await fu.close()] });
+      const inc = createFilesystemBackupWriter(root, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run: { runId: incId, path: 'incrementals/' + incId, parentRunId: 'full', chainId } });
+      const iu = await inc.openUser(userId, username);
+      await iu.writeStreams([{ id: 's1', name: 'Diary renamed' }]);
+      await iu.writeEvents([{ id: 'e2', streamIds: ['s2'], type: 'note/txt', content: 'PLAINMARK_new_event' }]);
+      await inc.writeManifest({ coreVersion: 'test', config: {}, backupType: 'incremental', snapshotBefore: 200, backupTimestamp: 2, userManifests: [await iu.close()] });
+
+      // Run from the run directory, without any directory argument.
+      const runDir = path.join(root, 'incrementals', incId);
+      const out = execFileSync(process.execPath, ['decrypt-backup.mjs', '--passphrase', 'pw'], { cwd: runDir, stdio: 'pipe', encoding: 'utf8' });
+      assert.match(out, /Run directory given: decrypting the whole chain at /);
+      const mirror = root + '-decrypted';
+      assert.ok(fs.existsSync(path.join(mirror, 'users', userId, 'streams.jsonl')), 'the full run is in the mirror');
+      assert.ok(fs.existsSync(path.join(mirror, 'incrementals', incId, 'users', userId, 'streams.jsonl')), 'the incremental run is in the mirror');
+      assert.deepStrictEqual(fs.readdirSync(path.join(root, 'incrementals')), [incId], 'nothing written next to the run');
+      for (const d of [mirror, path.join(mirror, 'incrementals', incId)]) {
+        for (const name of ['decrypt-backup.mjs', 'RESTORE-README.md', 'encryption.json']) {
+          assert.ok(!fs.existsSync(path.join(d, name)), 'no ' + name + ' in the mirror: ' + d);
+        }
+      }
+      const reader = createFilesystemBackupReader(mirror);
+      assert.deepStrictEqual((await reader.readManifest()).runs.map((r) => r.runId), ['full', incId]);
+      const gotStreams = [];
+      for await (const s of (await reader.openUser(userId)).readStreams()) gotStreams.push(s);
+      assert.deepStrictEqual(gotStreams, [{ id: 's1', name: 'Diary renamed' }, { id: 's2', name: 'Health' }]);
+
+      // The run directory copied out of its chain: decrypted alone, saying so.
+      const copy = path.join(tmp, 'elsewhere', 'incrementals', incId);
+      fs.cpSync(runDir, copy, { recursive: true });
+      const aloneOut = execFileSync(process.execPath, ['decrypt-backup.mjs', '--passphrase', 'pw'], { cwd: copy, stdio: 'pipe', encoding: 'utf8' });
+      assert.match(aloneOut, /Decrypting this run alone \(no chain.json at .*\); pass the chain's root directory to decrypt the whole chain/);
+      const aloneStreams = fs.readFileSync(path.join(copy + '-decrypted', 'users', userId, 'streams.jsonl'), 'utf8');
+      assert.deepStrictEqual(aloneStreams.trim().split('\n').map((l) => JSON.parse(l)), [{ id: 's1', name: 'Diary renamed' }]);
+    });
+
     // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).
     function nonPrivateEntries (root) {
       const found = [];

@@ -32,7 +32,7 @@ const INC1 = { runId: INC1_ID, path: 'incrementals/' + INC1_ID, parentRunId: 'fu
 const INC2 = { runId: INC2_ID, path: 'incrementals/' + INC2_ID, parentRunId: INC1_ID, chainId: CHAIN_ID };
 
 /** Write one run with the filesystem writer: `users` per user, then platform rows and the manifest. */
-async function writeRun (dir, { run = null, encryptor = null, compress = false, snapshotBefore = 1000, users = [], platform = null, backupType } = {}) {
+async function writeRun (dir, { run = null, encryptor = null, compress = false, snapshotBefore = 1000, users = [], platform = null, backupType, scope } = {}) {
   const writer = createFilesystemBackupWriter(dir, { compress, encryptor, run });
   const manifests = [];
   for (const u of users) {
@@ -55,7 +55,8 @@ async function writeRun (dir, { run = null, encryptor = null, compress = false, 
     backupType: backupType ?? (run != null && run.path !== '.' ? 'incremental' : 'full'),
     snapshotBefore,
     backupTimestamp: snapshotBefore * 1000 + 5000,
-    userManifests: manifests
+    userManifests: manifests,
+    scope
   });
   await writer.close();
 }
@@ -491,5 +492,196 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
       fs.writeFileSync(chainPath, JSON.stringify({ ...chain, runs: [chain.runs[0], { ...chain.runs[1], ...run }] }));
       await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /chain.json of the backup .* is not valid/, JSON.stringify(run));
     }
+  });
+
+  it('[BKCS1] every encrypted run carries the current decrypt script and a README naming the run; the root copies stay as the full run wrote them', async function () {
+    const { STANDALONE_DECRYPT_SCRIPT } = require('storages/interfaces/backup/restoreReadme.ts');
+    const dir = path.join(tmp, 'backup');
+    await writeRun(dir, { run: FULL, encryptor: createBackupEncryptor({ passphrase: 'pw' }), users: fullUsers() });
+    const rootScript = fs.readFileSync(path.join(dir, 'decrypt-backup.mjs'));
+    const rootReadme = fs.readFileSync(path.join(dir, 'RESTORE-README.md'));
+    await writeRun(dir, { run: INC1, encryptor: createBackupEncryptor({ passphrase: 'pw' }), snapshotBefore: 2000, users: incUsers() });
+
+    const runDir = path.join(dir, 'incrementals', INC1_ID);
+    assert.strictEqual(fs.readFileSync(path.join(runDir, 'decrypt-backup.mjs'), 'utf8'), STANDALONE_DECRYPT_SCRIPT);
+    const readme = fs.readFileSync(path.join(runDir, 'RESTORE-README.md'), 'utf8');
+    assert.ok(readme.includes('run `' + INC1_ID + '`'), 'the README names the run');
+    assert.ok(readme.includes('`../..`'), 'the README says where the chain root is');
+    assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'decrypt-backup.mjs')), rootScript, 'the root script is the full run\'s');
+    assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'RESTORE-README.md')), rootReadme, 'the root README is the full run\'s');
+    assert.ok(!rootReadme.toString('utf8').includes('This directory is run'), 'the full run\'s README is the chain root\'s');
+    if (process.platform !== 'win32') {
+      for (const name of ['decrypt-backup.mjs', 'RESTORE-README.md']) {
+        assert.strictEqual(fs.statSync(path.join(runDir, name)).mode & 0o777, 0o600, name + ' is private');
+      }
+    }
+
+    // A plaintext chain writes no script anywhere.
+    const plain = path.join(tmp, 'plain');
+    await writeRun(plain, { run: FULL, users: fullUsers() });
+    await writeRun(plain, { run: INC1, snapshotBefore: 2000, users: incUsers() });
+    for (const d of [plain, path.join(plain, 'incrementals', INC1_ID)]) {
+      assert.ok(!fs.existsSync(path.join(d, 'decrypt-backup.mjs')) && !fs.existsSync(path.join(d, 'RESTORE-README.md')), d);
+    }
+  });
+
+  describe('[BKCU] accounts deleted along the chain', function () {
+    const U1 = 'u1-scope';
+    const U2 = 'u2-scope';
+    const U3 = 'u3-scope';
+    const u = (userId, username) => ({ userId, username, streams: [{ id: 'st-' + username, name: username, modified: 10 }] });
+
+    // full (whole core): u1, u2; inc1 (one account): u3; inc2 (whole core): u1, u3. u2 was deleted before inc2.
+    async function writeScopedChain (dir) {
+      await writeRun(dir, { run: FULL, scope: 'all', users: [u(U1, 'alice'), u(U2, 'bob')] });
+      await writeRun(dir, { run: INC1, scope: 'users', snapshotBefore: 2000, users: [u(U3, 'carol')] });
+      await writeRun(dir, { run: INC2, scope: 'all', snapshotBefore: 3000, users: [u(U1, 'alice'), u(U3, 'carol')] });
+    }
+
+    it('[BKCU1] a whole-core run drops from the restore an account it does not list; a one-account run or a run without scope drops nobody', async function () {
+      const dir = path.join(tmp, 'backup');
+      await writeScopedChain(dir);
+
+      const reader = createFilesystemBackupReader(dir);
+      const manifest = await reader.readManifest();
+      assert.deepStrictEqual(manifest.users.map((x) => x.userId), [U1, U3]);
+      assert.deepStrictEqual(manifest.deletedUsers, [{ userId: U2, username: 'bob', lastRunId: 'full', deletedBeforeRunId: INC2_ID }]);
+      const chain = JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8'));
+      assert.deepStrictEqual(chain.runs.map((r) => r.scope), ['all', 'users', 'all'], 'chain.json records the scope of each run');
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'incrementals', INC1_ID, 'manifest.json'), 'utf8')).scope, 'users', 'and so does the run\'s manifest');
+      await assert.rejects(() => reader.openUser(U2),
+        new RegExp(`User ${U2} was deleted before run ${INC2_ID} of the chain \\(last exported by run full\\): not restored; --through-run full restores the account as of that run`));
+      assert.deepStrictEqual((await collect((await reader.openUser(U3)).readStreams())).map((x) => x.id), ['st-carol']);
+
+      // The state as of inc1: u2 still there.
+      const prefix = createFilesystemBackupReader(dir, { throughRun: INC1_ID });
+      const pm = await prefix.readManifest();
+      assert.deepStrictEqual(pm.users.map((x) => x.userId), [U1, U2, U3]);
+      assert.deepStrictEqual(pm.deletedUsers, []);
+      assert.deepStrictEqual((await collect((await prefix.openUser(U2)).readStreams())).map((x) => x.id), ['st-bob']);
+
+      // A run without scope is evidence of nothing.
+      delete chain.runs[2].scope;
+      fs.writeFileSync(path.join(dir, 'chain.json'), JSON.stringify(chain));
+      const noScope = await createFilesystemBackupReader(dir).readManifest();
+      assert.deepStrictEqual(noScope.users.map((x) => x.userId), [U1, U2, U3]);
+      assert.deepStrictEqual(noScope.deletedUsers, []);
+
+      // An unknown scope value is refused.
+      chain.runs[2].scope = 'some';
+      fs.writeFileSync(path.join(dir, 'chain.json'), JSON.stringify(chain));
+      await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /chain.json of the backup .* is not valid \(run .*: scope\)/);
+
+      // deletedUsersOf: only a whole-core run newer than the last listing deletes.
+      const { deletedUsersOf } = chainApi();
+      const run = (runId, users, scope) => ({ runId, users, ...(scope ? { scope } : {}) });
+      // The root run of a chain started from an older full backup has no scope.
+      assert.deepStrictEqual(deletedUsersOf([run('full', ['a', 'b']), run('i1', ['c'], 'users'), run('i2', ['a'])]), []);
+      assert.deepStrictEqual(deletedUsersOf([run('full', ['a', 'b']), run('i1', ['c'], 'users'), run('i2', ['a']), run('i3', ['a'], 'all'), run('i4', ['a'], 'all')]), [
+        { userId: 'b', lastRunId: 'full', deletedBeforeRunId: 'i3' },
+        { userId: 'c', lastRunId: 'i1', deletedBeforeRunId: 'i3' }
+      ]);
+      assert.deepStrictEqual(deletedUsersOf([run('full', ['a'], 'all'), run('i1', [], 'all'), run('i2', ['a'], 'users')]), [], 'listed again after the whole-core run that omitted it');
+    });
+
+    it('[BKCU2] --inspect shows the scope of each run and the accounts deleted along the chain', async function () {
+      const dir = path.join(tmp, 'backup');
+      await writeScopedChain(dir);
+      const report = chainApi().inspectBackup(dir);
+      const text = report.lines.join('\n');
+      assert.strictEqual(report.status, 'ok', report.verdict);
+      assert.strictEqual(text.match(/ scope all\b/g)?.length, 2, text);
+      assert.strictEqual(text.match(/ scope users\b/g)?.length, 1, text);
+      assert.ok(text.includes(`deleted before run ${INC2_ID}: ${U2} (last in run full)`), text);
+
+      const chain = JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8'));
+      delete chain.runs[0].scope;
+      fs.writeFileSync(path.join(dir, 'chain.json'), JSON.stringify(chain));
+      assert.match(chainApi().inspectBackup(dir).lines.join('\n'), / scope unknown\b/);
+    });
+  });
+
+  describe('[BKCE] series emptied after a run', function () {
+    const SERIES = [{ measurement: 'm', points: [{ time: 1000, value: 1 }] }];
+
+    // An orchestrator over stub stores: one user, no item but its series.
+    function stubOrchestrator (exportDatabase) {
+      const orch = Object.create(BackupOrchestrator.prototype);
+      const store = { exportAll: (user, cb) => cb(null, []) };
+      orch.storageLayer = { streams: store, accesses: store, profile: store, webhooks: store, events: store, engine: 'test' };
+      orch.userAccountStorage = { _exportAll: async () => ({}) };
+      orch.eventFiles = { getAttachmentStream: async () => { throw new Error('no attachment'); } };
+      orch.auditStorage = null;
+      orch.seriesConnection = exportDatabase == null ? null : { exportDatabase };
+      const warnings = [];
+      orch.logger = { info () {}, debug () {}, error () {}, warn: (m) => warnings.push(m) };
+      return { orch, warnings };
+    }
+
+    // A user writer recording the series it is given.
+    function recordingWriter () {
+      const series = [];
+      const noop = async () => {};
+      const drain = async (items) => { for await (const item of items) assert.ok(item != null); };
+      const userWriter = {
+        writeStreams: noop,
+        writeAccesses: noop,
+        writeProfile: noop,
+        writeWebhooks: drain,
+        writeEvents: drain,
+        writeAttachment: noop,
+        writeAccountData: noop,
+        writeAudit: noop,
+        writeSeries: async (items) => { series.push(items); },
+        close: async () => ({ userId: 'u1-series', username: 'alice' })
+      };
+      return { series, writer: { openUser: async () => userWriter } };
+    }
+
+    it('[BKCE1] the series file is written whenever the export returns, empty included; a failed export writes nothing', async function () {
+      const empty = stubOrchestrator(async () => ({ measurements: [] }));
+      const rec = recordingWriter();
+      await empty.orch._backupSingleUser(rec.writer, 'u1-series', 'alice', 1000, null, {});
+      assert.deepStrictEqual(rec.series, [[]], 'an empty series is written');
+
+      const failing = stubOrchestrator(async () => { throw new Error('series engine down'); });
+      const rec2 = recordingWriter();
+      await failing.orch._backupSingleUser(rec2.writer, 'u1-series', 'alice', 1000, null, {});
+      assert.deepStrictEqual(rec2.series, [], 'a failed export is not an empty one');
+      assert.strictEqual(failing.warnings.length, 1);
+      assert.match(failing.warnings[0], /Series export failed for user u1-series: series engine down/);
+
+      const none = stubOrchestrator(null);
+      const rec3 = recordingWriter();
+      await none.orch._backupSingleUser(rec3.writer, 'u1-series', 'alice', 1000, null, {});
+      assert.deepStrictEqual(rec3.series, [], 'no series engine, no series file');
+
+      const some = stubOrchestrator(async () => ({ measurements: SERIES }));
+      const rec4 = recordingWriter();
+      await some.orch._backupSingleUser(rec4.writer, 'u1-series', 'alice', 1000, null, {});
+      assert.deepStrictEqual(rec4.series, [SERIES]);
+    });
+
+    it('[BKCE2] series emptied after the full run do not come back on restore; a later failed export keeps the newest empty file', async function () {
+      const dir = path.join(tmp, 'backup');
+      async function runWith (run, exportDatabase, snapshotBefore) {
+        const { orch } = stubOrchestrator(exportDatabase);
+        const writer = createFilesystemBackupWriter(dir, { compress: false, run });
+        const userManifest = await orch._backupSingleUser(writer, 'u1-series', 'alice', snapshotBefore, null, {});
+        await writer.writeManifest({ coreVersion: 'test', config: {}, backupType: 'unused', snapshotBefore, backupTimestamp: snapshotBefore * 1000, userManifests: [userManifest], scope: 'all' });
+      }
+      const seriesOf = async () => {
+        const reader = createFilesystemBackupReader(dir);
+        await reader.readManifest();
+        return await collect((await reader.openUser('u1-series')).readSeries());
+      };
+
+      await runWith(FULL, async () => ({ measurements: SERIES }), 1000);
+      assert.deepStrictEqual(await seriesOf(), SERIES, 'control: the full run holds the series');
+      await runWith(INC1, async () => ({ measurements: [] }), 2000);
+      assert.deepStrictEqual(await seriesOf(), [], 'emptied after the full run');
+      await runWith(INC2, async () => { throw new Error('series engine down'); }, 3000);
+      assert.deepStrictEqual(await seriesOf(), [], 'the newest run with a series file is the second one');
+    });
   });
 });

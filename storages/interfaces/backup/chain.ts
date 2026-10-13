@@ -65,8 +65,25 @@ type ChainRun = {
   coreVersion?: string;
   /** The ids of the users this run exported. */
   users: string[];
+  /**
+   * `all`: a run of the whole core, so a user it does not list no longer
+   * existed when it ran; `users`: a run of the accounts named (`--user`).
+   * Absent (a full backup written before chains): unknown, never evidence.
+   */
+  scope?: RunScope;
   /** The full run predates chains: its manifest carries no chain fields. */
   bootstrapped?: boolean;
+};
+
+type RunScope = 'all' | 'users';
+
+/** A user an applied run exported and a later whole-core run no longer listed. */
+type DeletedUser = {
+  userId: string;
+  /** The latest run listing the user. */
+  lastRunId: string;
+  /** The first whole-core run after it (it did not list the user). */
+  deletedBeforeRunId: string;
 };
 
 type Chain = {
@@ -76,7 +93,7 @@ type Chain = {
   runs: ChainRun[];
 };
 
-type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret';
+type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted';
 
 class BackupChainError extends Error {
   code: BackupChainErrorCode;
@@ -101,6 +118,12 @@ function damagedContinueMessage (dir: string): string {
   return `The backup at ${dir} was damaged by an incremental run of a version before ${CHAIN_RELEASE} ` +
     '(its full backup was overwritten by a delta): it cannot be continued or repaired. ' +
     'Take a new full backup into a new directory.';
+}
+
+/** Why a user of a chain is not restored (log, report, refusal of a single-user restore). */
+function deletedUserMessage (deleted: DeletedUser): string {
+  return `User ${deleted.userId} was deleted before run ${deleted.deletedBeforeRunId} of the chain ` +
+    `(last exported by run ${deleted.lastRunId}): not restored; --through-run ${deleted.lastRunId} restores the account as of that run.`;
 }
 
 function missingRunMessage (dir: string, runId: string, previousRunId: string | null, what: string): string {
@@ -228,6 +251,7 @@ function validateChain (chain: unknown, dir: string): asserts chain is Chain {
     seen.add(run.runId);
     if (!Array.isArray(run.users) || !run.users.every((u) => typeof u === 'string')) throw invalidChain(dir, `run ${run.runId}: users`);
     if (run.snapshotBefore != null && typeof run.snapshotBefore !== 'number') throw invalidChain(dir, `run ${run.runId}: snapshotBefore`);
+    if (run.scope != null && run.scope !== 'all' && run.scope !== 'users') throw invalidChain(dir, `run ${run.runId}: scope`);
   });
 }
 
@@ -321,6 +345,25 @@ function sinceByUser (chain: Chain): Record<string, number> {
     for (const userId of run.users) map[userId] = run.snapshotBefore - INCREMENTAL_OVERLAP_SECONDS;
   }
   return map;
+}
+
+/**
+ * The users deleted along the runs given (the applied runs of a restore, in
+ * chain order): a user is deleted when a whole-core run (`scope: 'all'`)
+ * newer than the latest run listing the user does not list them. A run of
+ * the accounts named, or a run without scope, is evidence of nothing. Over a
+ * prefix of the chain (`--through-run`), a user deleted later is present.
+ */
+function deletedUsersOf (runs: Array<Pick<ChainRun, 'runId' | 'users' | 'scope'>>): DeletedUser[] {
+  // Insertion order of a Map: the order in which the runs first list the users.
+  const lastIndex = new Map<string, number>();
+  runs.forEach((run, i) => { for (const userId of run.users) lastIndex.set(userId, i); });
+  const deleted: DeletedUser[] = [];
+  for (const [userId, last] of lastIndex) {
+    const later = runs.findIndex((run, i) => i > last && run.scope === 'all');
+    if (later >= 0) deleted.push({ userId, lastRunId: runs[last].runId, deletedBeforeRunId: runs[later].runId });
+  }
+  return deleted;
 }
 
 /** Directories under `incrementals/` that the chain does not list (crashed runs, foreign files): ignored. */
@@ -598,7 +641,10 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
     lines.push(`Encryption: ${describeEncryption(chain.encryption)}`);
     lines.push(`Runs: ${chain.runs.length}`);
     for (const run of chain.runs) {
-      lines.push(`  ${run.runId}  ${run.backupType}  snapshot ${isoOf(run.snapshotBefore)}  ${run.users.length} user(s)`);
+      lines.push(`  ${run.runId}  ${run.backupType}  scope ${run.scope ?? 'unknown'}  snapshot ${isoOf(run.snapshotBefore)}  ${run.users.length} user(s)`);
+    }
+    for (const d of deletedUsersOf(chain.runs)) {
+      lines.push(`  deleted before run ${d.deletedBeforeRunId}: ${d.userId} (last in run ${d.lastRunId})`);
     }
     const strays = listStrays(root, chain);
     for (const stray of strays) lines.push(`  stray (not in the chain, ignored): ${stray}`);
@@ -657,6 +703,8 @@ export {
   RUN_ID_RE,
   BackupChainError,
   damagedRestoreMessage,
+  deletedUserMessage,
+  deletedUsersOf,
   readChain,
   writeChainAtomic,
   validateChain,
@@ -677,4 +725,4 @@ export {
   planBackupRun,
   inspectBackup
 };
-export type { Chain, ChainRun, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };
+export type { Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };

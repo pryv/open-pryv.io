@@ -7,7 +7,7 @@
 
 import type { BackupReader, UserBackupReader } from './BackupReader.js';
 import type { BackupDecryptor, DecryptorSecrets } from './BackupCipher.js';
-import type { Chain, ChainRun } from './chain.ts';
+import type { Chain, ChainRun, DeletedUser } from './chain.ts';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -18,8 +18,8 @@ const zlib = require('zlib');
 const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 const { createBackupDecryptor } = require('./BackupCipher.ts');
 const {
-  BackupChainError, damagedRestoreMessage, resolveRuns, runDirectory, readRunManifest,
-  readEnvelope, checkRunEnvelope, isRealDirectory, readBackupBytes
+  BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
+  readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readBackupBytes
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -74,7 +74,10 @@ function userIdsOf (manifest: Manifest | null): Set<string> {
  * is no `chain.json`. The reader presents one merged backup: per collection
  * the items of the newest run first, an id seen in a newer run hiding the
  * older version; whole-collection files (profile, account data, series,
- * platform rows) from the newest run that has them.
+ * platform rows) from the newest run that has them. A user a whole-core run
+ * newer than their last listing omits was deleted along the chain:
+ * `readManifest` lists them under `deletedUsers` instead of `users`, and
+ * `openUser` refuses them.
  *
  * For encrypted backups, pass the `secrets` (or the root run's `decryptor`):
  * every run is decrypted with its own `encryption.json`.
@@ -87,6 +90,9 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
 
   let handles: RunHandle[] | null = null;
   let chain: Chain | null = null;
+  // Users deleted along the applied runs (a whole-core run newer than their
+  // last listing omits them): left out of the restore, by name.
+  let deleted = new Map<string, DeletedUser>();
   // A backup without chain.json whose manifest cannot be read: kept for readManifest.
   let rootManifestError: Error | null = null;
 
@@ -129,6 +135,9 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       }
       out.push({ run, dir, decryptor, manifest, compressed: manifest?.compressed !== false, userIds: userIdsOf(manifest), isRoot });
     });
+    if (out.length > 1) {
+      deleted = new Map(deletedUsersOf(resolved.runs).map((d: DeletedUser) => [d.userId, d]));
+    }
     handles = out;
     return handles;
   }
@@ -138,7 +147,8 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       const runs = openRuns();
       if (rootManifestError != null) throw rootManifestError;
       if (runs.length === 1) return runs[0].manifest;
-      // Every user of the applied runs, the newest entry of each.
+      // Every user of the applied runs, the newest entry of each; the users
+      // deleted along the chain apart.
       const users: unknown[] = [];
       const index = new Map<string, number>();
       for (const h of runs) {
@@ -152,9 +162,16 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
           }
         }
       }
+      const deletedUsers = [...deleted.values()].map((d) => {
+        const lastRun = runs.find((h) => h.run.runId === d.lastRunId);
+        const entry = (Array.isArray(lastRun?.manifest?.users) ? lastRun!.manifest!.users as Array<{ userId?: unknown, username?: unknown }> : [])
+          .find((u) => u?.userId === d.userId);
+        return { userId: d.userId, username: typeof entry?.username === 'string' ? entry.username : null, lastRunId: d.lastRunId, deletedBeforeRunId: d.deletedBeforeRunId };
+      });
       return {
         ...runs[0].manifest,
-        users,
+        users: users.filter((u) => !deleted.has((u as { userId?: unknown } | null)?.userId as string)),
+        deletedUsers,
         runs: runs.map((h) => ({ runId: h.run.runId, backupType: h.run.backupType, snapshotBefore: h.manifest?.snapshotBefore ?? null, users: h.userIds.size }))
       };
     },
@@ -202,6 +219,8 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       // the user directory of each must be real directories of the backup: a
       // link there would make every read of this user leave the backup.
       const runs = openRuns();
+      const deletedUser = deleted.get(userId);
+      if (deletedUser != null) throw new BackupChainError('deleted', deletedUserMessage(deletedUser));
       const userRuns: UserRun[] = [];
       for (let i = runs.length - 1; i >= 0; i--) {
         const h = runs[i];

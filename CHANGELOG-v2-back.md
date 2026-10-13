@@ -15,7 +15,7 @@
 - `FilesystemBackupWriter`: option `run` (`runId`, `path`, `parentRunId`, `chainId`,
   `baseChain`); an incremental run writes only under `incrementals/<runId>/` (created with a
   non-recursive `mkdir`, `incrementals/` refused when it is not a real directory), its own
-  envelope there, the script and README at the root for the full run only; the manifest gains
+  envelope there (and the script and README, see below); the manifest gains
   `chainId`, `runId`, `parentRunId`, and the run is appended to `chain.json` after it. Refuses a
   run whose key model differs from the chain's. Without `run` the writer writes a full backup at
   the root and no `chain.json`, as before.
@@ -35,6 +35,17 @@
   every run with its own envelope (data key cached per envelope) and writes a plaintext
   `chain.json` into the mirror. Tests: business `[BKC1]`..`[BKC7]`, `[BKC9]`; storages `[BKC8]`;
   api-server `[BKIC1]`..`[BKIC3]`.
+- `FilesystemBackupWriter`: script and README in every encrypted run's directory; the script
+  resolves a run directory to its chain root (`chain.json` two levels up) or decrypts the run
+  alone, saying which. Tests `[BKCS1]`, `[BKCS2]`.
+- `scope: 'all' | 'users'` in the manifest and the `chain.json` entry (absent: unknown, never
+  evidence); `chain.ts deletedUsersOf`; reader `readManifest().deletedUsers`, `openUser` refuses a
+  deleted user; `RestoreOrchestrator` logs them, `report.deleted`; `--inspect` scope and deleted
+  lines. Tests `[BKCU1]`, `[BKCU2]`, `[BKIC4]`.
+- `BackupOrchestrator` writes the series file on every successful export, empty when there are no
+  measurements; a failed export still writes nothing (absent = not exported, the older run stands;
+  a run on a core without a series engine therefore keeps the earlier run's series). Tests
+  `[BKCE1]`, `[BKCE2]`.
 
 ## MFA login cleanup; other system streams refused; justfile; backup --help
 

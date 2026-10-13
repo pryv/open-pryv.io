@@ -137,8 +137,8 @@ service:
   api: http://127.0.0.1:$PORT/{username}/
   register: http://127.0.0.1:$PORT/reg/
 auth:
-  adminAccessKey: rt-admin
-  filesReadTokenSecret: rt-files-secret
+  adminAccessKey: rt-admin-roundtrip-key
+  filesReadTokenSecret: rt-files-secret-roundtrip
   passwordResetPageURL: http://127.0.0.1:$PORT/reset
   trustedApps: "*@*"
 platform:
@@ -218,7 +218,7 @@ wait_for_ready () {
 # Seed the fixture user (see the header for what it contains).
 # Progress goes to stderr; nothing is printed on stdout.
 seed_fixture () {
-  local ADMIN="rt-admin"
+  local ADMIN="rt-admin-roundtrip-key"
   local USERNAME="rtuser$(date +%s | tail -c 7)"
   local PASSWORD="rt-secret-pass"
   local EMAIL="${USERNAME}@example.com"

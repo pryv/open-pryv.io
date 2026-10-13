@@ -146,17 +146,18 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
   // Write the cleartext crypto envelope so restore can discover key model +
   // wrapped data key. It carries crypto headers only — never user data.
   // Ship self-recovery artifacts next to it so the backup can be decrypted by
-  // the key holder even on a machine without Pryv.io installed (the full run
-  // only: the root copies serve the whole chain).
+  // the key holder even on a machine without Pryv.io installed. Every run
+  // carries its own copies, in its own directory: the root copies of a full
+  // backup written by an earlier version may not know incremental runs, and
+  // no run rewrites a file of an earlier one.
   if (opts.encryptor) {
     writePrivateFile(
       path.join(runDir, 'encryption.json'),
       JSON.stringify(opts.encryptor.envelope, null, 2)
     );
-    if (!isIncrementalRun) {
-      writePrivateFile(path.join(outputPath, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
-      writePrivateFile(path.join(outputPath, RESTORE_README_NAME), buildRestoreReadme(opts.encryptor.envelope));
-    }
+    writePrivateFile(path.join(runDir, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
+    writePrivateFile(path.join(runDir, RESTORE_README_NAME),
+      buildRestoreReadme(opts.encryptor.envelope, isIncrementalRun ? { runId: run!.runId } : {}));
   }
 
   return createBackupWriter({
@@ -184,6 +185,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         users: params.userManifests,
         compressed: opts.compress
       };
+      if (params.scope != null) manifest.scope = params.scope;
       if (run != null) {
         manifest.chainId = run.chainId;
         manifest.runId = run.runId;
@@ -204,6 +206,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         coreVersion: params.coreVersion,
         users: params.userManifests.map((u) => u.userId)
       };
+      if (params.scope != null) entry.scope = params.scope;
       const chain: Chain = isIncrementalRun
         ? { ...baseChain!, runs: [...baseChain!.runs, entry] }
         : { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };

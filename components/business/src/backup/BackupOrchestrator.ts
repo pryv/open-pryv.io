@@ -108,7 +108,9 @@ class BackupOrchestrator {
       userManifests,
       backupType: isIncremental ? 'incremental' : 'full',
       snapshotBefore,
-      backupTimestamp: Date.now()
+      backupTimestamp: Date.now(),
+      // The whole core: an account this run does not list no longer exists.
+      scope: 'all'
     });
 
     this.logger.info(`Backup complete: ${userManifests.length} users`);
@@ -139,7 +141,9 @@ class BackupOrchestrator {
       userManifests: [{ ...userManifest, since }],
       backupType: isIncremental ? 'incremental' : 'full',
       snapshotBefore,
-      backupTimestamp: Date.now()
+      backupTimestamp: Date.now(),
+      // The account named only: says nothing about the others.
+      scope: 'users'
     });
 
     this.logger.info(`Single-user backup complete: ${username}`);
@@ -255,13 +259,16 @@ class BackupOrchestrator {
       await userWriter.writeAudit(auditPipeline);
     }
 
-    // Series (optional — skip if no series engine configured)
+    // Series (optional — skip if no series engine configured). Written whenever
+    // the export returns, an empty list included: series are a
+    // whole-collection file, and restore takes the newest run that has it, so
+    // a run without the file would bring back the series of an earlier run.
+    // A failed export writes nothing (it is not an empty one): the earlier
+    // run's series then stand.
     if (this.seriesConnection) {
       try {
         const seriesData = await this.seriesConnection.exportDatabase(seriesNamespace(username));
-        if (seriesData.measurements && seriesData.measurements.length > 0) {
-          await userWriter.writeSeries(seriesData.measurements);
-        }
+        await userWriter.writeSeries(seriesData.measurements ?? []);
       } catch (e: unknown) {
         this.logger.warn(`Series export failed for user ${userId}: ${(e as Error).message}`);
       }

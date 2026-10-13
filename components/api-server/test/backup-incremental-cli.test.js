@@ -203,4 +203,45 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     assert.strictEqual(events[ids.e2]?.content, 'e2 new');
     assert.deepStrictEqual(await attachmentOf(ids.e2, ids.fileId), attachmentBytes);
   });
+
+  it('[BKIC4] an account deleted between two whole-core runs is not re-created by the restore; --through-run restores it as of the run that held it', async function () {
+    // Whole-core runs: every account of the test core, plaintext, in a directory removed in `after`.
+    const dir = path.join(tmpDir, 'whole-core');
+    const userB = 'bkicb' + cuid.slug().toLowerCase();
+    const streamB = 'bkic-b-' + cuid.slug();
+    const b = await fixtures.user(userB);
+    await b.stream({ id: streamB, name: 'BKIC B stream' });
+    const streamsOfB = async () => (await fromCallback((cb) => storageLayer.streams.exportAll({ id: userB }, cb))).map((s) => s.id);
+    assert.ok((await streamsOfB()).includes(streamB), 'control: B has its stream');
+
+    assertOk(runCli(['--output', dir]), 'whole-core full backup');
+    await require('api-server/src/methods/auth/delete.ts').default(global.app.api);
+    const adminKey = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+    const del = await coreRequest.delete('/users/' + userB).set('Authorization', adminKey);
+    assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+    assertOk(runCli(['--output', dir, '--incremental']), 'whole-core incremental run');
+
+    const inspect = runCli(['--inspect', dir]);
+    assertOk(inspect, 'inspect');
+    assert.match(inspect.stdout, new RegExp(`deleted before run \\S+: ${userB} \\(last in run full\\)`));
+
+    const refused = runCli(['--restore', dir, '--user', userB, '--overwrite']);
+    assert.strictEqual(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, new RegExp(`User ${userB} was deleted before run \\S+ of the chain \\(last exported by run full\\): not restored; --through-run full restores the account as of that run`));
+    assert.doesNotMatch(refused.stdout, /Restored:/);
+    assert.ok(!(await streamsOfB()).includes(streamB), 'B not re-created');
+
+    const asOfFull = runCli(['--restore', dir, '--user', userB, '--through-run', 'full', '--overwrite']);
+    assertOk(asOfFull, 'restore as of the full run');
+    assert.match(asOfFull.stdout, /Restored: 1 users/);
+    assert.ok((await streamsOfB()).includes(streamB), 'B is back with its stream');
+    // A single-account restore leaves the platform rows out: delete B again so
+    // the platform and the users repository agree for the checks after this
+    // test. Through the repository with the username given: on SQLite this
+    // process still holds its handle on B's account file from before the
+    // deletion, so it does not see the account fields the restore (another
+    // process) wrote, and the API answers "Unknown user".
+    const usersRepository = await require('business/src/users/repository.ts').getUsersRepository();
+    await usersRepository.deleteOne(userB, userB);
+  });
 });
