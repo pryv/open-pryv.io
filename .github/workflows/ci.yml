@@ -269,7 +269,7 @@ jobs:
           severity-cutoff: critical
 
   # OFFICIAL release path: tag-push → CI runs tests → builds + pushes
-  # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub, as one
+  # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` and `:latest` to Docker Hub, as one
   # multi-arch image (linux/amd64 + linux/arm64).
   # This is the channel implementers + downstream consumers pull from.
   #
@@ -491,6 +491,10 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       # One manifest list over the per-architecture digests; `docker pull`
       # picks the puller's architecture. Both architectures must be present.
+      # `latest` follows the release tag being pushed (release candidates
+      # included), so a plain `docker pull pryvio/open-pryv.io` no longer gets
+      # the v1 image. Nothing compares versions: a tag pushed on an older line
+      # would move `latest` (and `2.0.0-pre`) back to it.
       - name: Create + push multi-arch manifest
         id: manifest
         env:
@@ -505,6 +509,7 @@ jobs:
           docker buildx imagetools create \
             -t "pryvio/open-pryv.io:${TAG}" \
             -t pryvio/open-pryv.io:2.0.0-pre \
+            -t pryvio/open-pryv.io:latest \
             $(printf 'pryvio/open-pryv.io@sha256:%s ' *)
           docker buildx imagetools inspect "pryvio/open-pryv.io:${TAG}"
           digest=$(docker buildx imagetools inspect "pryvio/open-pryv.io:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)
@@ -530,6 +535,7 @@ jobs:
           tags: |
             pryvio/open-pryv.io-encrypted:${{ github.ref_name }}
             pryvio/open-pryv.io-encrypted:2.0.0-pre
+            pryvio/open-pryv.io-encrypted:latest
       # Container-image SBOM (CycloneDX) for the released image, published as a
       # build artifact so downstream consumers / procurement can ingest the
       # exact shipped composition (base image layers + npm tree). Resolved from
