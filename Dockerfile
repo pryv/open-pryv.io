@@ -71,10 +71,13 @@ COPY . .
 RUN npm install --omit=dev --ignore-scripts && \
     npm rebuild --foreground-scripts
 
-# Clean up build deps
+# Clean up build deps. npm (and npx) are needed only for the install above:
+# the server never runs them, and the copy bundled with the Node base image
+# carries its own dependencies (tar, undici, ...) with their own advisories.
 RUN apt-get -y --purge autoremove python3 build-essential curl && \
     apt-get autoremove -y && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /root/.npm
 
 ENV NODE_ENV=production
 

@@ -291,6 +291,9 @@ MFA SMS sends gain a per-core hourly cap and a platform-wide per-destination bud
 - Docker image: `UV_THREADPOOL_SIZE=16` (Node's default is 4). Password hashing, file system
   calls (attachments, SQLite files), DNS lookups (webhook targets) and compression share that
   pool: a burst of logins no longer stalls the rest. Override with `-e UV_THREADPOOL_SIZE=<n>`.
+- Docker image: `npm` and `npx` are removed once the dependencies are installed. The server never
+  runs them, and the copy bundled with the Node base image carried its own vulnerable
+  dependencies. A script that ran `npm` inside the container must run it elsewhere.
 - `bin/master.js`: a worker that keeps dying soon after it started is replaced after a delay
   doubling from 1 s up to 30 s (the first replacement is immediate, a worker that stayed up a
   minute resets the delay); the master logs the delay. Crashed workers were replaced at once,
