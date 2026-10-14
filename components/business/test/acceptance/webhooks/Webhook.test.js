@@ -471,18 +471,16 @@ describe('[WHBK] Webhook', () => {
   describe('[WXB0] when the destination is refused', () => {
     const postPath = '/refused-destination';
     const user = { id: 'wxb-user', username: 'wxb-user' };
-    let mockServer, config, savedAllowList, webhook;
+    let mockServer, restoreAllowList, webhook;
 
     before(async () => {
-      config = require('@pryv/boiler').getConfigSync();
-      savedAllowList = config.get('webhooks:allowedPrivateHosts');
-      config.set('webhooks:allowedPrivateHosts', []);
+      restoreAllowList = require('test-helpers').injectTestConfigSnapshot({ webhooks: { allowedPrivateHosts: [] } });
       mockServer = new HttpServer(postPath, 200);
       await mockServer.listen();
     });
 
     after(async () => {
-      config.set('webhooks:allowedPrivateHosts', savedAllowList);
+      if (restoreAllowList != null) restoreAllowList();
       if (webhook != null) webhook.stop();
       await mockServer.close();
     });

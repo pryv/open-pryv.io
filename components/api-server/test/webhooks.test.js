@@ -19,7 +19,7 @@ const HttpServer = require('business/test/acceptance/webhooks/support/httpServer
 
 const { ErrorIds } = require('errors/src/index.ts');
 const dependencies = require('test-helpers').dependencies;
-const { withInjectedConfig } = require('test-helpers');
+const { withInjectedConfig, injectTestConfigSnapshot } = require('test-helpers');
 // Use a getter to access webhooks storage after dependencies.init() runs
 const getWebhooksStorage = () => dependencies.storage.user.webhooks;
 const { Webhook } = require('business').webhooks;
@@ -1205,11 +1205,18 @@ describe('[WH01] webhooks', () => {
 
   describe('[WV00] create input and destination rules', () => {
     const http = require('node:http');
-    let vUsername, vAppToken, vAppId, vOtherAppId, config, savedAllowList;
+    let vUsername, vAppToken, vAppId, vOtherAppId, restoreAllowList;
     let receiver, receivedCount, receiverStatus;
 
+    // Through the test config scope: a config.set() value, even a restored
+    // one, would outrank every later injection for the rest of the run.
     function setAllowList (list) {
-      config.set('webhooks:allowedPrivateHosts', list);
+      resetAllowList();
+      restoreAllowList = injectTestConfigSnapshot({ webhooks: { allowedPrivateHosts: list } });
+    }
+    function resetAllowList () {
+      if (restoreAllowList != null) restoreAllowList();
+      restoreAllowList = null;
     }
     function create (body) {
       return coreRequest
@@ -1224,8 +1231,6 @@ describe('[WH01] webhooks', () => {
 
     before(async () => {
       await fixtures.clean();
-      config = require('@pryv/boiler').getConfigSync();
-      savedAllowList = config.get('webhooks:allowedPrivateHosts');
       vUsername = cuid();
       vAppToken = cuid();
       vAppId = cuid();
@@ -1246,7 +1251,7 @@ describe('[WH01] webhooks', () => {
       await new Promise((resolve) => receiver.listen(0, resolve));
     });
     after(async () => {
-      setAllowList(savedAllowList);
+      resetAllowList();
       receiver.closeAllConnections();
       await new Promise((resolve) => receiver.close(resolve));
       await fixtures.clean();
@@ -1254,7 +1259,7 @@ describe('[WH01] webhooks', () => {
 
     describe('[WV01] without allowed private hosts', () => {
       before(() => setAllowList([]));
-      after(() => setAllowList(savedAllowList));
+      after(() => resetAllowList());
 
       it('[WVA1] refuses a URL with a loopback, private, link-local or metadata IP address', async () => {
         for (const url of [
@@ -1315,7 +1320,7 @@ describe('[WH01] webhooks', () => {
         const res = await coreRequest.post(`/${vUsername}/webhooks/${created.body.webhook.id}/test`).set('Authorization', vAppToken);
         assert.strictEqual(res.status, 200);
         assert.strictEqual(receivedCount, before + 1);
-        setAllowList(savedAllowList);
+        resetAllowList();
       });
 
       it('[WHTT1] webhooks.test follows the webhook\'s minimum interval: a second test right away is refused, the receiver is not called', async () => {
@@ -1334,7 +1339,7 @@ describe('[WH01] webhooks', () => {
           assert.ok(Number(second.headers['retry-after']) >= 1, JSON.stringify(second.headers));
           assert.strictEqual(receivedCount, before + 1, 'the refused test never reaches the receiver');
         } finally {
-          setAllowList(savedAllowList);
+          resetAllowList();
         }
       });
 
@@ -1344,7 +1349,7 @@ describe('[WH01] webhooks', () => {
         assert.strictEqual(res.status, 201);
         const other = await create({ url: 'http://10.21.1.2/wva5' });
         assert.strictEqual(other.status, 400);
-        setAllowList(savedAllowList);
+        resetAllowList();
       });
     });
 
@@ -1371,6 +1376,7 @@ describe('[WH01] webhooks', () => {
         const res = await create({ url: 'https://wvb3.example.com/hook' });
         assert.strictEqual(res.status, 201);
         const w = res.body.webhook;
+        const config = require('@pryv/boiler').getConfigSync();
         assert.strictEqual(w.accessId, vAppId);
         assert.strictEqual(w.state, 'active');
         assert.strictEqual(w.maxRetries, config.get('webhooks:maxRetries'));

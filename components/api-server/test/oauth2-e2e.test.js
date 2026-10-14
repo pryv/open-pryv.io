@@ -37,7 +37,6 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const storage = require('oauth2/src/storage.ts');
-const { getConfig } = require('@pryv/boiler');
 const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
 const REDIRECT_URI = 'https://app.example/cb';
@@ -98,7 +97,7 @@ async function ensureStream (path, token, params) {
 describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer scope)', function () {
   this.timeout(60000);
 
-  let username, personalToken, clientId, fixtures, savedConsentUrl, endUser;
+  let username, personalToken, clientId, fixtures, restoreConsentUrl, endUser;
   let appUsername, appToken, capabilityUrl, originalFetch;
   // Event id of the offer a runFullFlow() grant descends from (publishOffer sets
   // `offerEventId` for its own offer; the main one is kept separately).
@@ -109,9 +108,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     await initCore();
     fixtures = getNewFixture();
 
-    const config = await getConfig();
-    savedConsentUrl = config.get('oauth:consentUrl');
-    config.set('oauth:consentUrl', CONSENT_URL);
+    restoreConsentUrl = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
 
     // Outbound HTTP (offer resolution via capability URL + CMC
     // delivery) routes through the in-process server.
@@ -201,8 +198,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
   });
 
   after(async function () {
-    const config = await getConfig();
-    if (savedConsentUrl != null) config.set('oauth:consentUrl', savedConsentUrl);
+    if (restoreConsentUrl != null) restoreConsentUrl();
     if (originalFetch != null) globalThis.fetch = originalFetch;
     if (clientId != null) {
       const platformDB = require('storages').platformDB;
