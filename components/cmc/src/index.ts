@@ -49,6 +49,8 @@ const handleMemberAccess = require('./handleMemberAccess.ts');
 const memberAccessHooks = require('./memberAccessHooks.ts');
 const memberMintRegistry = require('./memberMintRegistry.ts');
 const memberLedger = require('./memberLedger.ts');
+const handleMemberRevoke = require('./handleMemberRevoke.ts');
+const memberSweep = require('./memberSweep.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -60,12 +62,15 @@ export {
   mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
   credentialStashHook, acceptServerOwnedFieldsHook, acceptWithdrawal,
   handleMemberAccess, memberAccessHooks, memberMintRegistry, memberLedger,
+  handleMemberRevoke, memberSweep,
 };
 // Group accounts: the mint's write-time gate and server-owned-fields hooks,
-// the per-worker registry (rate limit + in-flight locks), the config reader.
+// the per-worker registry (rate limit + in-flight locks), the config reader,
+// the sweep entry points.
 export const { createMemberAccessGateHook, createMemberAccessServerOwnedFieldsHook } = memberAccessHooks;
 export const { createMemberMintRegistry } = memberMintRegistry;
 export const { memberAccessOptionsFromConfig } = handleMemberAccess;
+export const { createMemberSweep } = memberSweep;
 export const CmcErrorIds = errorIds.CmcErrorIds;
 export const { createCapabilityResponseHook } = capabilityResponseHook;
 

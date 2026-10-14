@@ -26,6 +26,8 @@ const ALLOWED_QUERY_PARAMS = new Set([
   'toTime',
   'skip',
   'sortAscending',
+  // accesses.get, read by the group-account sweep's read-back.
+  'includeExpired',
 ]);
 
 /**

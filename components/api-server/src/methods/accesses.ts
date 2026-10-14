@@ -56,6 +56,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { localFirstFetch } = require('./helpers/localDelivery.ts');
@@ -123,6 +124,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const storageLayer = await getStorageLayer();
   // Composed CMC mall (with `.accesses`) for the accesses.delete post-hook.
   const mallForCmc = await buildMallForCmc();
+  // Group accounts: a deleted or narrowed membership is offboarded, a deleted
+  // patient relationship has its member children swept through the grant.
+  const cmcMemberSweep = await buildMemberSweep();
   const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
 
   // RETRIEVAL
@@ -600,6 +604,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-update-hook'),
+    memberSweep: cmcMemberSweep,
   });
 
   api.register(
@@ -978,6 +983,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-delete-hook'),
+    memberSweep: cmcMemberSweep,
+    sweepReason: 'accesses.delete',
   });
 
   // Account deletion: the account's CMC relationship accesses are erased with
@@ -992,6 +999,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:account-deletion'),
+    // A group account deleted: its memberships are offboarded (the member
+    // children on patient cores deleted through the grants) without a sweep
+    // record, since the account's streams are being erased.
+    memberSweep: cmcMemberSweep,
+    sweepReason: 'account-deleted',
+    sweepPersist: false,
   });
   setDeletionTeardownStep('cmc', async function revokeCmcRelationshipsOfDeletedAccount (account: { id: string }) {
     const all = (await mallForCmc.accesses.get(account.id, {})) as AccessLike[];

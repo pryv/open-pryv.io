@@ -54,8 +54,29 @@ function runWithSuppression<T> (fn: () => Promise<T>): Promise<T> {
 }
 
 import type { CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 type MallLike = { events: MallEventsLike; accesses?: MallAccessesLike };
+
+/**
+ * Group accounts: the scope streams a membership still covers after an
+ * update (its `read` / `contribute` permissions on user-creatable
+ * `:_cmc:apps:*` ids). A ledger record whose relationship scope is under none
+ * of them is swept (`narrowed`).
+ */
+function coveredScopesOf (access: AccessLike): string[] {
+  const out: string[] = [];
+  for (const p of access?.permissions ?? []) {
+    const sid = (p as { streamId?: unknown })?.streamId;
+    const level = (p as { level?: unknown })?.level;
+    if (typeof sid === 'string' && C.isUserCreatableStreamId(sid) && (level === 'read' || level === 'contribute' || level === 'manage')) out.push(sid);
+  }
+  return out;
+}
+
+function isUnderAny (scope: string, roots: string[]): boolean {
+  return roots.some((r) => scope === r || scope.startsWith(r + ':'));
+}
 
 
 
@@ -93,6 +114,9 @@ function localCollectorStreamFor (before: AccessLike | undefined, after: AccessL
 
 type PostHookDeps = {
   mall: MallLike;
+  // Group accounts (memberSweep.ts): a narrowed membership is swept for the
+  // relationships it no longer covers.
+  memberSweep?: Pick<MemberSweep, 'sweepMembership'>;
 } & OutboundDeps;
 
 type PostHookResult = {
@@ -125,8 +149,24 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
     const cmc = after?.clientData?.cmc;
     // Only counterparty / data-grant accesses matter to CMC. Other roles
     // (e.g. capability) don't get scope-update notifications.
-    if (cmc?.role !== 'counterparty' && cmc?.role !== 'data-grant' && cmc?.role !== C.ROLE_MEMBER) {
+    if (cmc == null || (cmc.role !== 'counterparty' && cmc.role !== 'data-grant' && cmc.role !== C.ROLE_MEMBER)) {
       return { ran: false, reason: 'not-a-cmc-managed-access' };
+    }
+
+    // A membership narrowed: what was minted for the member under a scope it
+    // no longer holds is swept (the member keeps what the membership still
+    // covers). Runs before the member is told of the change.
+    if (cmc.role === C.ROLE_MEMBER && deps.memberSweep != null) {
+      const covered = coveredScopesOf(after);
+      try {
+        await deps.memberSweep.sweepMembership(userId, after, 'narrowed', {
+          recordFilter: (record) => typeof record.scopeStreamId === 'string' && !isUnderAny(record.scopeStreamId, covered),
+        });
+      } catch (err: unknown) {
+        deps.logger?.warn?.('cmc/accessesUpdateHook: the member sweep failed (the periodic pass will retry)', {
+          accessId: after.id, error: String((err as Error)?.message ?? err),
+        });
+      }
     }
 
     // Requester side stores the peer path on `counterparty.apiEndpoint`;
@@ -230,4 +270,5 @@ export {
   createAccessesUpdatePostHook,
   isSuppressed,
   runWithSuppression,
+  coveredScopesOf,
 };

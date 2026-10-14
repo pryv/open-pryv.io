@@ -54,6 +54,7 @@ import { CmcErrorIds } from './errorIds.ts';
 
 import type { LogFn } from '@pryv/boiler';
 import type { MallLike, CmcAccessLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 type LoggerLike = { debug?: LogFn; warn?: LogFn; info?: LogFn; error?: LogFn };
 type EventLike = {
@@ -68,6 +69,9 @@ type Deps = {
   logger?: LoggerLike;
   now?: () => number;
   notifyEventChanged?: (userId: string, event: EventLike) => void;
+  // Group accounts (memberSweep.ts): a member leaving is offboarded; a
+  // patient ending the relationship took the member children with the grant.
+  memberSweep?: Pick<MemberSweep, 'sweepMembership' | 'relationshipEnded'>;
 };
 
 async function handleIncomingRevoke (params: {
@@ -152,6 +156,27 @@ async function handleIncomingRevoke (params: {
     logger,
   });
   const deletedAccessIds = teardown.deleted;
+
+  // Step 1b (group accounts). A member leaving: everything minted for them is
+  // swept now that the membership is gone. A patient revoking: the grant on
+  // their core went with the children; the records are settled as absent.
+  if (deps.memberSweep != null) {
+    for (const accessId of deletedAccessIds) {
+      const deleted = accessId === createdByAccess.id ? createdByAccess : accessList.find((a) => a?.id === accessId);
+      if (deleted == null) continue;
+      try {
+        if (deleted.clientData?.cmc?.role === C.ROLE_MEMBER) {
+          await deps.memberSweep.sweepMembership(userId, deleted, 'revoke');
+        } else {
+          await deps.memberSweep.relationshipEnded(userId, accessId);
+        }
+      } catch (err: unknown) {
+        logger?.warn?.('cmc/handleIncomingRevoke: the member sweep failed (the periodic pass will retry)', {
+          accessId, error: String((err as Error)?.message || err),
+        });
+      }
+    }
+  }
 
   // Step 2 — BOOKKEEP. On the requester side, mark the single-use invite this
   // relationship descends from as `revoked`. For an open-link invite the

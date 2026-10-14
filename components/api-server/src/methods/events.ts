@@ -40,6 +40,7 @@ const { getLogger, ready } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMemberSweep, cmcSelfIdentityFor: sharedCmcSelfIdentityFor } = require('./helpers/cmcMemberSweep.ts');
 
 const { pubsub } = require('messages');
 
@@ -412,6 +413,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     logger: getLogger('cmc:member-access-gate'),
   });
   const cmcMemberAccessServerOwnedFieldsHook = cmc.createMemberAccessServerOwnedFieldsHook();
+  // The offboarding sweep (shared with the accesses and delegations wiring).
+  const cmcMemberSweep = await buildMemberSweep();
   // Account-delegation namespace + lifecycle guards. Gated on the same
   // `delegationActive` flag resolved in the RETRIEVAL section above; when
   // inactive each slot is a passthrough so the register chains stay
@@ -480,33 +483,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // between — a window `notify` actively advertises to socket subscribers.
   const cmcCredentialStashHook = cmc.createCredentialStashHook();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
-  const cmcSelfIdentityFor = async (userId: string) => {
-    // username: pull from the users repository (cached behind the scenes).
-    // host: the canonical hostname clients see when calling this api.
-    // Priority:
-    //   1. dns.domain (multi-core deploys serve from <id>.<domain>; the
-    //      bare domain is the counterparty-facing identity).
-    //   2. URL host extracted from service.api or service.register —
-    //      a real URL with a hostname (and optional port).
-    //   3. 'localhost' as last-resort dev fallback.
-    // service.name is a HUMAN LABEL ("Local Dev", "Health Data Safe")
-    // — NEVER use it as a host; the slug builder will reject anything
-    // with spaces.
-    const user = await usersRepository.getUserById(userId);
-    const username = user?.username || 'unknown';
-    let host = config.get('dns:domain');
-    if (host == null || host === '') {
-      const apiUrl = config.get('service:api') || config.get('service:register');
-      if (typeof apiUrl === 'string' && apiUrl.length > 0) {
-        try {
-          const u = new URL(apiUrl.replace('{username}', 'x'));
-          host = u.host;
-        } catch (_e) { /* fall through to localhost */ }
-      }
-    }
-    if (host == null || host === '') host = 'localhost';
-    return { username, host };
-  };
+  // The identity this core presents for an account (username + canonical
+  // host); shared with the member sweep, see helpers/cmcMemberSweep.ts.
+  const cmcSelfIdentityFor = sharedCmcSelfIdentityFor;
   // capabilityMintHook needs cmcSelfIdentityFor to stamp the canonical
   // requester host on the offer event (so accepter's inferCounterparty
   // doesn't fall back to the per-user URL hostname). Wired AFTER
@@ -539,6 +518,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     relationshipExists: delegationRelationshipExists,
     memberAccess: cmcMemberAccessOptions,
     mintRegistry: cmcMemberMintRegistry,
+    memberSweep: cmcMemberSweep,
   }, (context: MethodContext) => {
     // Per-request: bind a notifyEventChanged that fires pubsub for THIS
     // user. The dispatch loop's fire-and-forget events.update calls
@@ -629,6 +609,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     selfIdentityFor: cmcSelfIdentityFor,
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
+    memberSweep: cmcMemberSweep,
     fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {

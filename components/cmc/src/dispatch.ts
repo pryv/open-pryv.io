@@ -40,9 +40,11 @@ const handleIncomingRefuseMod = require('./handleIncomingRefuse.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const handleMemberAccessMod: typeof import('./handleMemberAccess.ts') = require('./handleMemberAccess.ts');
+const handleMemberRevokeMod: typeof import('./handleMemberRevoke.ts') = require('./handleMemberRevoke.ts');
 const retryQueueMod = require('./retryQueue.ts');
 import type { MemberAccessOptions } from './handleMemberAccess.ts';
 import type { MemberMintRegistry } from './memberMintRegistry.ts';
+import type { MemberSweep } from './memberSweep.ts';
 const outbound = require('./outbound.ts');
 const credentialScrub = require('./credentialScrub.ts');
 
@@ -147,6 +149,10 @@ type DispatchDeps = {
   // mint settled (the gate hook took it at write time).
   memberAccess?: MemberAccessOptions;
   mintRegistry?: MemberMintRegistry;
+  // The sweep entry points (memberSweep.ts), for the revoke handlers: a
+  // membership that ends is swept, a patient relationship that ends has its
+  // member children swept through the grant first.
+  memberSweep?: MemberSweep;
 };
 
 type DispatchResult = {
@@ -170,6 +176,8 @@ type HandlerResult = {
   memberAccess?: { accessId: string; name: string; expires: number; attribution: string };
   member?: { username: string; host: string };
   relationshipAccessId?: string;
+  outcome?: Array<{ childAccessId: string; result: string; reason?: string }>;
+  residuals?: Array<{ counterparty: { username: string; host: string }; childAccessId: string; expires: number; reason: string }>;
   dataGrantApiEndpoint?: string;
   dataGrantAccessId?: string;
   offerEventId?: string;
@@ -309,6 +317,7 @@ async function dispatch (params: {
               mall: deps.mall,
               logger: deps.logger,
               notifyEventChanged: deps.notifyEventChanged,
+              memberSweep: deps.memberSweep,
             },
           });
         } catch (err: unknown) {
@@ -415,6 +424,16 @@ async function dispatch (params: {
           userId, triggerEvent: event, deps,
         });
         break;
+      case C.ET_MEMBER_REVOKE:
+        // Group accounts: offboarding, server-written (memberSweep.ts).
+        // Retryable: a patient core that is down leaves residuals the queue
+        // re-sweeps from the snapshot.
+        result = await handleMemberRevokeMod.handleMemberRevoke({
+          userId,
+          triggerEvent: event as Parameters<typeof handleMemberRevokeMod.handleMemberRevoke>[0]['triggerEvent'],
+          deps: { mall: deps.mall, fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger },
+        });
+        break;
       case C.ET_MEMBER_ACCESS:
         // Group accounts: mint a member's access on the patient's core
         // through the grant. Synchronous (the token is answered once), never
@@ -488,6 +507,9 @@ async function dispatch (params: {
       memberAccess: result?.memberAccess,
       member: result?.member,
       relationshipAccessId: result?.relationshipAccessId,
+      // The sweep's per-child outcome (handleMemberRevoke).
+      outcome: result?.outcome,
+      residuals: result?.residuals,
     });
     return { handled: true, eventType: event.type, status: 'completed', ...(result?.response != null ? { response: result.response } : {}) };
   }

@@ -77,6 +77,7 @@ const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acce
 const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps, RetryContext } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 type Counterparty = { username: string; host: string };
 
@@ -130,6 +131,10 @@ async function handleRevoke (params: {
     // Set on a re-dispatch by the retry loop (see peerAlreadyNotified).
     retryContext?: RetryContext;
     notifyEventChanged?: (userId: string, event: { id?: string }) => void;
+    // Group accounts (memberSweep.ts): the member children minted through a
+    // patient relationship are swept before its revoke is delivered; a
+    // membership revoked here is swept once it is gone.
+    memberSweep?: Pick<MemberSweep, 'sweepMembership' | 'sweepRelationship'>;
   } & OutboundDeps;
 }): Promise<RevokeHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
@@ -312,6 +317,22 @@ async function handleRevoke (params: {
     }
   }
 
+  // Step 3b (group accounts): a patient relationship ending takes the member
+  // children minted through its grant with it, swept through the grant
+  // BEFORE the revoke is delivered and the grant endpoint is lost, so they die
+  // even against a patient core that does not cascade. Best-effort: the
+  // patient core of this release cascades on receipt anyway.
+  const isMembership = counterpartyAccess.clientData?.cmc?.role === C.ROLE_MEMBER;
+  if (!isMembership && deps.memberSweep != null) {
+    try {
+      await deps.memberSweep.sweepRelationship(userId, counterpartyAccess);
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/handleRevoke: the member sweep of the relationship failed (continuing)', {
+        accessId: counterpartyAccess.id, error: String((err as Error)?.message || err),
+      });
+    }
+  }
+
   // Step 4: deliver to peer via stored back-channel apiEndpoint. Best
   // effort — local revocation is authoritative even on delivery failure.
   // Requester side stores the peer path on `counterparty.apiEndpoint`;
@@ -395,6 +416,19 @@ async function handleRevoke (params: {
     }
   }
   const counterpartyDeleted = deletedIds.includes(counterpartyAccess.id);
+
+  // Step 5b (group accounts): a membership revoked by the group is offboarded
+  // once the membership access is gone (so a mint racing this revoke finds no
+  // membership and deletes what it minted).
+  if (isMembership && counterpartyDeleted && deps.memberSweep != null) {
+    try {
+      await deps.memberSweep.sweepMembership(userId, counterpartyAccess, 'revoke');
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/handleRevoke: the member sweep failed (the periodic pass will retry)', {
+        accessId: counterpartyAccess.id, error: String((err as Error)?.message || err),
+      });
+    }
+  }
 
   // Step 6: on the requester side, mark the single-use invite this relationship
   // descends from as `revoked`. Nothing to do for an open-link invite: the

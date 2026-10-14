@@ -32,6 +32,8 @@ const { dispatch } = require('./dispatch.ts');
 // Mall handle — pure pass-through to dispatch/retryScheduler (untyped
 // requires); never inspected here.
 import type { MallLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
+import * as C from './constants.ts';
 type Identity = { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
 type BootDeps = {
   config: { get: (key: string) => unknown };
@@ -48,6 +50,11 @@ type BootDeps = {
   // and its relationship.
   lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
+  // Group accounts (memberSweep.ts): forwarded to the dispatch (a retried
+  // revoke sweeps), and its periodic ledger pass runs on its own scheduler
+  // beside the retry loop (`cmc:memberAccess:sweepIntervalMs`), once at boot
+  // then on the interval, on the same designated worker.
+  memberSweep?: MemberSweep;
 };
 
 function defaultIsLoopWorker (): boolean {
@@ -100,6 +107,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
       selfIdentityFor: deps.selfIdentityFor,
       lineageOf: deps.lineageOf,
       relationshipExists: deps.relationshipExists,
+      memberSweep: deps.memberSweep,
       // The retry loop OWNS the retry lifecycle: processRetryEvent
       // reschedules (or retires) the very event it is re-dispatching. The
       // dispatch it calls must therefore NOT also auto-enqueue a fresh retry
@@ -119,6 +127,28 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
   });
   scheduler.start(intervalMs);
   deps.logger?.info?.('cmc/bootRetryLoop: started', { intervalMs, perUserLimit });
+
+  // The member ledger pass: expired memberships swept, settled records
+  // pruned. Its own scheduler (its own interval), eager first run.
+  if (deps.memberSweep != null) {
+    const sweep = deps.memberSweep;
+    const sweepIntervalMs = (deps.config.get('cmc:memberAccess:sweepIntervalMs') as number) || C.MEMBER_ACCESS_CONFIG_DEFAULTS.sweepIntervalMs;
+    const ledgerScheduler = new RetryScheduler({
+      retryDeps,
+      userIdsProvider: deps.userIdsProvider,
+      logger: deps.logger,
+      runRetryLoop: async ({ userId }: { userId: string }) => {
+        const r = await sweep.runLedgerPass(userId);
+        return { processed: r.swept + r.expired + r.pruned, succeeded: r.swept, rescheduled: 0, failedPermanent: 0, skipped: 0 };
+      },
+    });
+    ledgerScheduler.start(sweepIntervalMs);
+    ledgerScheduler.tick().catch((err: unknown) => {
+      deps.logger?.warn?.('cmc/bootRetryLoop: the first member ledger pass failed', { error: String((err as Error)?.message || err) });
+    });
+    (scheduler as { ledgerScheduler?: unknown }).ledgerScheduler = ledgerScheduler;
+    deps.logger?.info?.('cmc/bootRetryLoop: member ledger pass started', { sweepIntervalMs });
+  }
   return scheduler;
 }
 

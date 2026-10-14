@@ -33,6 +33,7 @@ const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('pl
 const { getStorageLayer } = require('storage');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
@@ -415,6 +416,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
     fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     logger: getLogger('cmc:delegation-detach'),
+    // A membership of a group account the detached administrator approved is
+    // offboarded with the delegation.
+    memberSweep: await buildMemberSweep(),
+    sweepReason: 'detach',
   });
   function notifyConsentGrantsRevoked (bUserId: string, grants: unknown[]): void {
     Promise.resolve()

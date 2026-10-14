@@ -56,11 +56,22 @@ import * as relationshipKey from './relationshipKey.ts';
 import * as inviteState from './inviteState.ts';
 import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 // Outbound delivery deps + an optional mall so the hook can also do local
 // invite bookkeeping (marking a single-use invite revoked). mall is optional:
 // older unit constructions pass none and just skip it.
-type DeleteHookDeps = OutboundDeps & { mall?: MallLike };
+// Group accounts (memberSweep.ts): a deleted membership is offboarded
+// (`sweepReason` names the path: the route, a delegation detach, the
+// account's deletion; `sweepPersist: false` on the latter, whose streams are
+// being erased); a deleted patient relationship has its member children swept
+// through the grant before the revoke is delivered.
+type DeleteHookDeps = OutboundDeps & {
+  mall?: MallLike;
+  memberSweep?: Pick<MemberSweep, 'sweepMembership' | 'sweepRelationship'>;
+  sweepReason?: string;
+  sweepPersist?: boolean;
+};
 
 type DeleteHookResult = {
   accessId: string;
@@ -109,6 +120,23 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         // counterparty to notify).
         results.push({ accessId: access.id, attempted: false, reason: 'not-a-cmc-relationship-access' });
         continue;
+      }
+
+      // Group accounts: the sweep, before the peer is told (a patient
+      // relationship's grant must still be live on the patient core for the
+      // children to be reachable through it).
+      if (deps.memberSweep != null) {
+        try {
+          if (cmc.role === C.ROLE_MEMBER) {
+            await deps.memberSweep.sweepMembership(userId, access, deps.sweepReason ?? 'accesses.delete', { persist: deps.sweepPersist !== false });
+          } else {
+            await deps.memberSweep.sweepRelationship(userId, access);
+          }
+        } catch (err: unknown) {
+          deps.logger?.warn?.('cmc/accessesDeleteHook: the member sweep failed (the periodic pass will retry)', {
+            accessId: access.id, error: String((err as Error)?.message ?? err),
+          });
+        }
       }
 
       // Local bookkeeping, independent of peer delivery: on the requester side,
