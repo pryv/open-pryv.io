@@ -14,6 +14,143 @@
   `integrity-check.js`, `observability.js` and `oauth-client.js` now write their logs to stderr, so
   their stdout holds only their output (a `bin/mail.js templates get … > file` backup used to start
   with a log line). Scripts that read these tools' logs from stdout read them from stderr now.
+Group accounts in consent (CMC): a practice or a research team shares one Pryv account, its members
+join it from their own accounts, and each member reads a patient's data under a short-lived access
+that names them, created by the group's core on the patient's core through the patient's consent
+grant; when a membership ends, those accesses are deleted and the deletion is recorded. Behaviour
+changes for every CMC user: every consent and delegation teardown is now a soft delete with the
+side effects of `accesses.delete` (deletion records visible with `includeDeletions`), and an app
+token may delete only the `shared` accesses it created. Operators hosting a group account: set
+`cmc.retryLoop.enabled: true` on its core. No migration.
+
+### Consent (CMC): group accounts
+- **Membership requests.** `consent/request-cmc` gains `request.membership: true`: the writer (the
+  future member) asks to join the account that will accept the offer (the group). Such an offer may
+  hold stream permissions only on the group's user-creatable `:_cmc:apps:<app>[:<path>]` streams
+  (not the plugin's `chats` / `collectors` streams, not `:_cmc:inbox`, not `*`), at level `read` or
+  `contribute`, with no feature permission and `accessType` absent or `'shared'`. A violation is
+  refused at write with 400 `invalid-operation`, `error.data.id: 'cmc-membership-permissions-invalid'`
+  (the list in `error.data.errors`); the group's accept applies the same rule again to the offer it
+  reads and fails with the same id. On an admissible offer the server sets `request.allowUserChoice`
+  to `true` (the administrator picks the teams) and `request.features.chat` to `false` (no chat
+  channel; alerts from the group to the member stay). The hand-off is the capability URL (a link or
+  a QR code), as for any invite.
+- **The membership access.** The access minted by the group's accept is a `shared` access named
+  `cmc-member:<appId>:<username>@<host>`, with the new role `clientData.cmc.role: 'member'` and
+  `clientData.cmc.membership = { approvedBy, requestedScopes }`: `approvedBy` is
+  `{ delegate: { username, hostSlug? }, relId }` when a delegate of the group account accepted,
+  `null` when the owner did; `requestedScopes` lists the team streams the member asked for (the
+  access's permissions are what was granted). The granted team streams are created on the group
+  account. The accept that arrives in the member's `:_cmc:inbox` carries `membership: true`. A
+  membership is not exempt from the personal-token gate: it cannot write `consent/accept-cmc` or
+  `consent/scope-update-cmc` on the group account (`cmc-accept-requires-personal-token`). A chat,
+  alert or ack written through a membership is refused with 403 `forbidden`,
+  `error.data.id: 'cmc-member-channel-not-supported'`; a chat the group addresses to a member fails
+  its trigger with the same id.
+- **New event type `consent/member-access-cmc`: a member's access on a patient's account.** Written
+  through a membership access on a team stream of the group:
+  `{ counterparty: { username, host }, scopeStreamId?, permissions?, expireAfter? }`. The group's core
+  creates a `shared` access on the patient's core through the consent grant the patient gave the
+  group, which must be delegable (the group's invite asked `accessType: 'app'`). The access is
+  bounded by the stream permissions the group's invite offered outside `:_cmc:` (default: those
+  streams at `read`; the patient's core checks the grant again), lives `expireAfter` seconds
+  (default `cmc.memberAccess.defaultTtl`, 24 h; within `minTtl` and `maxTtl`, 60 s and 7 d by
+  default) and is named by the server (`cmc-member--<member slug>--<hash>`). `events.create` answers
+  synchronously `{ event, memberAccess: { apiEndpoint, accessId, name, expires, attribution } }`.
+  `apiEndpoint` carries the access's token and is returned in this answer only: never stored,
+  logged or retried. `event` is the row as stored after the mint: `content.status` is `completed`
+  (with `memberAccess` minus the endpoint, `member` and `relationshipAccessId`) or `failed` (no
+  `memberAccess` in the answer). Asking again for the same patient with the same permissions returns
+  the same access while it has more than five minutes left; other permissions replace it.
+  `attribution` is `'stamped'`, or `'name-only'` against a patient core of an earlier release (see
+  the member stamp below). `memberAccess`, `member`, `relationshipAccessId`, `status` and `failure`
+  are server-owned: dropped from a client create, kept on update.
+- **New event type `consent/member-revoke-cmc`: the offboarding record.** Written by the server on
+  the membership's team stream when a membership ends, however it ends:
+  `{ member, membershipAccessId, reason, records, status, outcome, residuals, failure }`, `reason`
+  one of `revoke` (an administrator revoked it, or the member left), `accesses.delete`, `expired`,
+  `narrowed` (an `accesses.update` removed teams: only the patients outside the remaining teams),
+  `detach`, `account-deleted` (no record is kept: the account is erased). Each access minted for
+  that member is deleted on its patient's core through the grant, then read back:
+  `outcome[].result` is `deleted`, `absent` (already gone, or expired) or `residual` (the patient's
+  core could not be reached or refused). A residual fails the record with
+  `cmc-member-revoke-residual` and is retried; the access's own expiry bounds its life. A client
+  write of this type is refused with 403 `forbidden`, `cmc-protected-event-write`. A patient
+  relationship the group ends has its member accesses deleted through the grant before the revoke
+  is delivered (no record is written for that pass).
+- **The member stamp on the patient's account.** An `accesses.create` made with a delegable (`app`)
+  consent grant may send exactly `clientData: { cmc: { role: 'member-child', member: { username,
+  host } } }` (two strings of 1 to 200 characters, no other key). The server stores
+  `{ role: 'member-child', member, group: { username, host }, viaAccessId, scopeStreamId, appCode }`,
+  the group identity and the rest copied field by field from the authenticated grant (never an
+  endpoint). Any other `clientData.cmc` sent by such a grant is refused with 400
+  `invalid-operation`, `cmc-member-stamp-invalid`; from any other caller it is still
+  `cmc-clientdata-cmc-forbidden` (which an earlier release answers to the stamp too: the group's core
+  then creates the access once more without it, reported `name-only`, when
+  `cmc.memberAccess.allowNameOnly` is true, and fails it otherwise).
+- **Error ids.** Refused at write, 400 `invalid-operation` with the id in `error.data.id`:
+  `cmc-member-access-not-member` (not written through a membership access; personal and delegate
+  tokens included), `cmc-member-access-relationship-not-found` (no relationship with that patient
+  under the scope, or its handshake is not complete), `cmc-member-access-scope-outside-membership`,
+  `cmc-member-access-permissions-not-subset`, `cmc-member-access-expiry-out-of-range`,
+  `cmc-member-access-rate-limited` (ask again after the minute), `cmc-member-access-in-flight` (ask
+  again shortly), `cmc-membership-permissions-invalid`, `cmc-member-stamp-invalid`. On the trigger,
+  in `content.failure.reason`: `cmc-member-access-grant-not-delegable` (invite the patient again with
+  `accessType: 'app'`), `cmc-member-access-peer-rejected`, `cmc-member-access-peer-unreachable` (ask
+  again shortly), `cmc-member-access-membership-gone` (the membership ended during the mint; the
+  access was deleted), `cmc-member-access-not-retryable`, `cmc-member-revoke-residual`; and
+  `cmc-member-channel-not-supported` (above). A `forbidden` answer of the patient's core to the
+  create is reported as `cmc-member-access-permissions-not-subset`. `content.failure.detail` never
+  carries the patient core's answer body, only its error id and HTTP status.
+- **Configuration (operators).** New `cmc.memberAccess.*`, read on the group's core: `defaultTtl`
+  (86400 s), `minTtl` (60 s), `maxTtl` (604800 s; also the longest a residual can last),
+  `ratePerMinute` (30 mint triggers per membership per minute, per worker process),
+  `maxInFlightPerMembership` (1 mint at a time per membership and patient, per worker process),
+  `allowNameOnly` (`true`: accept the name-only fallback against a patient core of an earlier
+  release; meant to become `false` in a later release), `sweepIntervalMs` (60000, the periodic
+  ledger pass). `cmc.retryLoop.*` (`enabled: false`, `intervalMs: 60000`, `perUserLimit: 100`) is now
+  declared in `default-config.yml`, defaults unchanged. **A group's core needs
+  `cmc.retryLoop.enabled: true`:** the retry of a sweep that left residuals (6 attempts, about 30
+  minutes) and the periodic ledger pass (memberships that expired or vanished, run once at boot
+  then every `sweepIntervalMs`) run only with it; without it, a residual stays until the access
+  expires.
+- **Versions.** The group's core and the member's core need this release (the member's core
+  checks the membership request at write and marks the accept in the member's inbox; an earlier
+  member core ignores `request.membership`, and the group's accept still applies the rule). A
+  patient core of an earlier release gets name-only attribution (above). The deletion of the member
+  accesses when a patient withdraws through `consent/revoke-cmc` needs 2.0.0-rc.52 or later on the
+  patient's core.
+
+### Consent (CMC), delegation and accesses: behaviour changes
+- **Behaviour change (every CMC user): every consent and delegation teardown is now the
+  `accesses.delete` deletion.** Accesses removed by the server outside the route (a
+  `consent/revoke-cmc` written by either side, a revocation received from the counterparty, a
+  delegation detach, the teardown at account deletion, a capability collected by an operator, a
+  member offboarding sweep) were removed outright: no deletion record, their webhooks kept, their
+  aliases held, the breach-scope index not tombstoned. They are now soft-deleted exactly as
+  `accesses.delete` does: they appear in `accesses.get` with `includeDeletions: true` (name kept,
+  token never), their webhooks are deleted and stopped, their aliases released, the breach-scope
+  index tombstoned, the access dropped from every worker's cache, and the accesses they manage are
+  deleted in the same pass. A re-accept after a revoke mints a fresh access: a deleted access is
+  never reused and never blocks a name. Apps that list deletions will see these records.
+- **Behaviour change: an app token may delete only the `shared` accesses it created.**
+  `accesses.delete` with an app token now refuses (403 `forbidden`) an access of another type
+  whose `createdBy` names it, the rule `accesses.update` already applied. An app can only create
+  `shared` accesses, so no regular caller is affected.
+- **Behaviour change: `accesses.update` refuses `clientData` on an access managed by the CMC
+  plugin.** An update that sends `clientData` (any value, `null` included) for an access carrying
+  `clientData.cmc` (consent grants, back-channels, capabilities, memberships, member accesses) is
+  refused with 400 `invalid-operation`, `cmc-clientdata-cmc-forbidden`. Before, `{ clientData:
+  null }` or `{ clientData: { cmc: null } }` removed the plugin's record (through a delegable grant,
+  the member stamp of an access it created). Updates that leave `clientData` out are unaffected.
+- **Behaviour change (delegation): a membership approved by a delegate administrator ends with the
+  delegation.** It carries the delegation lineage, so detaching that delegate deletes it (unless the
+  owner keeps it in `keepAccessIds`), tells the member and sweeps the member's accesses (reason
+  `detach`). It is not a delegate token for what the member publishes: the delegation grant guard
+  (`delegation-grant-requires-owner`) does not apply to the patient invites written through it.
+- **Directed invites were never routed.** `consent/request-cmc` `content.to` is recorded, not
+  delivered, on the same platform as across platforms; the component's README and implementer's
+  guide described a same-platform inbox delivery that does not exist. Hand the capability URL over.
 
 ## 2.0.0-rc.52 - 2026-10-14
 

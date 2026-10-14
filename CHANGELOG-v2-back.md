@@ -26,6 +26,91 @@
   and inside multi-core child processes.
 - Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
   written to `/var/run/syslog` are not observable there.
+## CMC group accounts; one deletion for every access teardown
+
+- `api-server/src/methods/helpers/accessDeletion.ts` (new): `deleteAccessChain(user, { id,
+  accessToDelete?, relatedAccessesToDelete? })` is the body of `accesses.delete` moved out of
+  `methods/accesses.ts`: managed accesses found with `managedAccessesOf` (non-personal accesses
+  only), webhooks deleted and their running copies stopped (`WEBHOOKS_DELETE`), soft delete
+  (`storage.delete`), the cache bust after the write on every worker, the final pass for an access
+  created through the deleted one meanwhile, alias release, breach-scope tombstone,
+  `USERNAME_BASED_ACCESSES_CHANGED` and the scoped notification (`notifyScopedAccessChange` moved
+  there too). The route calls it with the rows it already read; `helpers/cmcMall.ts` wires it as the
+  mall accesses adapter's new `deleteAccess` dep, so every CMC and delegation delete
+  (`mallAccessesAdapter.delete`: `handleRevoke`, `handleIncomingRevoke`, the detach sweep, the
+  account-deletion teardown, `gcCapability`, the member sweep) is that deletion. The adapter's bare
+  `removeOne` path with its own cascade stays as the fallback of a wiring without the dep (unit
+  fakes). The helper does not run the route's post-hooks, so a plugin delete never re-enters the
+  CMC accesses-delete hook. Storage reads and the uniqueness indexes see live rows only, so the
+  heal-in-place lookups (`handleIncomingAccept`, `handleAccept`) never reuse a deleted row.
+- `business/src/accesses/AccessLogic.ts` `canDeleteAccess`: an app access matches only `shared`
+  targets it manages, like `canUpdateAccess`.
+- CMC constants: `ET_MEMBER_ACCESS`, `ET_MEMBER_REVOKE`, `ET_MEMBER_LEDGER`
+  (`cmc-internal/member-cmc`, never published), roles `ROLE_COUNTERPARTY` / `ROLE_MEMBER` /
+  `ROLE_MEMBER_CHILD`, `RELATIONSHIP_ROLES`, `MEMBER_ACCESS_SERVER_OWNED_FIELDS`,
+  `MEMBER_REVOKE_REASONS`, `MEMBER_ACCESS_CONFIG_DEFAULTS`; `NS_INTERNAL_MEMBERS`
+  (`:_cmc:_internal:members`) is the sixth reserved parent (`provisioning.ts`), also created lazily by
+  `memberLedger.ts` on accounts provisioned before it (the reserved-parents memo probes `:_cmc:`
+  only). New error ids in `errorIds.ts`; the member mint reasons are listed in
+  `retryQueue.NON_RETRYABLE_REASONS`.
+- `validators.ts`: `request.membership` type check, `membershipOfferViolations` (shared by the
+  write hook and `handleAccept`), `validateMemberAccess`, `validateMemberRevoke`.
+- `hooks.ts`: `createMembershipOfferHook` (rule + rewrite of `allowUserChoice` / `features.chat`),
+  `createMemberRevokeWriteGuardHook`, `memberChildStamp` in the access-create forge hook (admitted
+  for an `app` access with `role: 'counterparty'` only; the stamp rebuilt field by field),
+  `createAccessUpdateStampGuardHook` (wired in `accesses.update` after `loadAccessForUpdate`, reads
+  `params.targetAccess`); the from-stamping hook and the inbox write hook admit `member`; the
+  feature gate refuses a member's chat / alert / ack first.
+- `memberAccessHooks.ts` (new): `createMemberAccessServerOwnedFieldsHook` and
+  `createMemberAccessGateHook` (rate limit, `resolveMintTarget`, in-flight lock left on
+  `context.cmc.memberMintLock`); `memberMintRegistry.ts` (new): per-worker sliding-minute counter
+  per membership and in-flight locks per (membership, relationship), a lock older than 60 s counted
+  as released. `acceptServerOwnedFieldsHook.preserveServerOwnedContent` keeps the mint's outcome
+  fields and the whole sweep record on update.
+- `handleMemberAccess.ts` (new): `resolveMintTarget` (the gate, run by the hook and again by the
+  handler; the bound is the group's invite to the patient, found through the relationship access's
+  `inviteEventId` then `offerEventId`), the mint through the grant with `outbound.requestPeer`
+  (new: any method, `postToPeer` is its `POST` case) under one timeout overall, ledger-keyed reuse by
+  id, name-only fallback on `cmc-clientdata-cmc-forbidden`, ledger write then membership re-read
+  before the token is returned, refusal to run with a `retryContext`.
+- `dispatch.ts`: `consent/member-access-cmc` joins `SYNC_DISPATCH_TYPES`; `DispatchResult.response`
+  carries a handler's one-shot payload, copied by the middleware to `result.memberAccess` and read by
+  no stamp, log line or retry snapshot; after a sync dispatch the middleware re-reads the trigger
+  (`replaceWithStoredRow`, also for `consent/back-channel-cmc`) and releases the mint lock in
+  `finally`; `NEVER_ENQUEUE_TYPES` is checked in `markFailed` before `isRetryableReason`;
+  `isPeerDeliveredEvent` treats a `member` writer as a peer; the outcome fields of the mint and the
+  sweep are stamped with the status.
+- `memberLedger.ts` (new): one `cmc-internal/member-cmc` event per minted child, keyed by
+  (membership, relationship), states `live` / `deleted` / `absent` / `residual`, no token;
+  `pruneExpired` for settled records past expiry.
+- `memberSweep.ts` + `handleMemberRevoke.ts` (new): `sweepMembership` (writes and dispatches the
+  sweep record; `persist: false` for account deletion), `sweepRelationship` (patient relationship
+  ended by the group: records swept through the grant before the revoke, no record),
+  `relationshipEnded` (ended by the patient: records settled `absent`), `runLedgerPass`; the handler
+  deletes each child through the grant, reads back with `includeExpired`, re-reads the ledger for
+  records added meanwhile. Entry points wired in `accessesDeleteHook` (route delete, detach,
+  account deletion, each with its `sweepReason`), `accessesUpdateHook` (`narrowed`), `handleRevoke`
+  (relationship sweep before delivery; membership sweep after its delete), `handleIncomingRevoke`.
+  `api-server/src/methods/helpers/cmcMemberSweep.ts` (new) builds the sweep once and holds
+  `cmcSelfIdentityFor` (moved from `methods/events.ts`).
+- `bootRetryLoop.ts`: when the retry loop is enabled and a sweep is wired, a second
+  `RetryScheduler` runs `runLedgerPass` per user every `cmc:memberAccess:sweepIntervalMs`, with an
+  eager first tick.
+- Relationship lookups take `role: string | string[]` (`relationshipKey.selectRelationshipAccess`);
+  the group side passes `RELATIONSHIP_ROLES` where a membership can serve (back-channel stamping,
+  revoke, alerts and acks, `findDataGrantByAcceptEventId`, the account-deletion filter, the
+  incoming revoke teardown). `acceptOrchestration.buildDataGrantPayload` takes `membership`;
+  `deliverAcceptViaCapability` carries `membership: true`; `handleIncomingAccept` marks the mirror.
+- Delegation: `createDelegatedGrantGuardHook` takes `{ exempt }` (events.ts exempts `member`
+  accesses); `detach.isConsentGrant` includes memberships; the detach notification hook is wired
+  with the member sweep (`sweepReason: 'detach'`).
+- Config: `cmc.retryLoop.*` and `cmc.memberAccess.*` declared in `default-config.yml` and in the
+  `bin/init.js` appendix.
+- Tests: cmc `[CMCMB]` (offer rule, accept, peer deliveries, stamp, ends), `[CMCMA]` (gate,
+  registry, ledger, mint, hooks, dispatch), `[CMCMR]` (handler, records, entry points, sweep,
+  retry), `[MA17]`; delegation `[DDG04]`; api-server `[CMCGA]` (in-process e2e: joining, the mint,
+  offboarding by every path, the route deletion on every CMC teardown, `[GA31]` app delete rule).
+  `cmc/test/_fake-assertions.cjs` accepts `includeExpired`.
 
 ## Erased accounts stay erased on disk; SQLite handle caches
 

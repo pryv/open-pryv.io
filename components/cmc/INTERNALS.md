@@ -8,7 +8,7 @@
 
 **Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process, NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / SQLite)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
 
-**CMC introduces zero new storage primitives.** Internal plugin state, the outbound-delivery retry queue (flow 4), lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all**, same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
+**CMC introduces zero new storage primitives.** Internal plugin state, the outbound-delivery retry queue (flow 4) and a group account's member ledger (flow 15), lives as events in **hidden companion streams `:_cmc:_internal:retries` and `:_cmc:_internal:members`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all**, same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
 
 ## Conventions
 
@@ -29,6 +29,8 @@ The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc
 | `:_cmc:apps:<app>:[<path>:]chats:<slug>` | `message/chat-cmc` |
 | `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc` |
 | `:_cmc:_internal:retries` | `cmc-internal/retry-cmc` (plugin-managed; loop consumer) |
+| `:_cmc:apps:<app>:[<path>]` (a group's team stream) | `consent/member-access-cmc` (written by a membership access, dispatched synchronously), `consent/member-revoke-cmc` (server-written), see flow 15 |
+| `:_cmc:_internal:members` | `cmc-internal/member-cmc` (the member ledger; never dispatched) |
 
 **Why nest under `:_cmc:apps:<app-code>:[<path>:]`**: an app's access can be scoped to all of its data (`:_cmc:apps:<app-code>:*`) or more granularly to a single per-request sub-tree (`:_cmc:apps:<app-code>:<request-slug>:*`). Chats / collectors lifetime under whichever stream the trigger event was written to is a natural permission prefix-match.
 
@@ -541,8 +543,10 @@ does three things, in this order:
 
 The order is deliberate. A failure between 1 and 2 leaves a stale invite
 status, which is cosmetic; the reverse order would leave a live token. The handler issues no outbound call, and its
-deletes go through the mall rather than the api-server route, so they do not
-fire the accesses-delete hook and cannot loop.
+deletes go through the mall accesses adapter rather than the api-server route:
+they are the route's deletion (flow 16: soft delete, deletion record, webhooks,
+alias, tombstone, managed accesses) without the route's post-hooks, so they do
+not fire the accesses-delete hook and cannot loop.
 
 **Correlation ids on the arrival.** `content.accessId` is the SENDER's access id
 and means nothing on the receiving account, so the receiver adds the ids its own
@@ -628,6 +632,120 @@ sequenceDiagram
 
 ---
 
+# 15. Group accounts: members, member accesses, offboarding
+
+Wire shapes: [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md#reference-group-accounts). Three accounts on up to three cores: the **member** (requester of the membership), the **group** (accepter of the membership, requester toward patients), the **patient** (accepter of the group's invite, holder of the delegable `app` grant). Code: `handleMemberAccess.ts`, `memberAccessHooks.ts`, `memberMintRegistry.ts`, `memberLedger.ts`, `memberSweep.ts`, `handleMemberRevoke.ts`; wiring in `api-server/src/methods/events.ts`, `accesses.ts`, `delegations.ts`, `helpers/cmcMemberSweep.ts`.
+
+## The membership: role `member`
+
+`handleAccept` reads `request.membership === true` on the offer, re-applies `validators.membershipOfferViolations` (the same rule `createMembershipOfferHook` applies at the requester's write; violation: `cmc-membership-permissions-invalid`, non-retryable), forces `features.chat = false`, provisions the granted team streams, and mints the grant through `acceptOrchestration.buildDataGrantPayload({ membership })`: always `type: 'shared'`, `clientData.cmc.role: 'member'`, `clientData.cmc.membership = { approvedBy, requestedScopes }` (`approvedBy` from `approvedByFromLineage(lineage)`, identity fields only), consent-grant rule with `allowUserChoice` treated as true. `deliverAcceptViaCapability` adds `membership: true` to the delivered accept, and `handleIncomingAccept` (member side) stamps `membership: true` on the inbox mirror, from its own copy of the offer when it has one, else from the delivered accept.
+
+**Admission list.** `member` is "a peer for protocol deliveries, a local actor for triggers":
+
+| Where | Behaviour for `role: 'member'` |
+|---|---|
+| `inboxWriteHook` | admitted for the inbox types (back-channel, revoke), like `counterparty` |
+| `createCounterpartyFromStampingHook` | `content.from` stamped from `clientData.cmc.counterparty` |
+| `createCounterpartyFeatureGateHook` | chat, alert and ack refused first, 403 `cmc-member-channel-not-supported`; other types pass |
+| `dispatch.isPeerDeliveredEvent` | true: a member's write of a loopable type is peer-delivered |
+| `selectRelationshipAccess` callers (role `RELATIONSHIP_ROLES`) | `handleIncomingBackChannel` (stamping), `handleRevoke` (by id and by counterparty), `handleSystem` for alerts and acks to a member, `findDataGrantByAcceptEventId`; `handleChat` looks for a member after no counterparty matched and fails with `cmc-member-channel-not-supported`; scope requests and updates stay `counterparty` only |
+| `accessesDeleteHook`, `handleIncomingRevoke` (writer and sibling teardown), the account-deletion teardown filter, `detach.isConsentGrant` | both roles; the member is told like any peer |
+| `accessesUpdateHook` | runs for `member` (the `narrowed` sweep, then the usual notification) |
+| `cmcAcceptAccessGate` | **not** exempt |
+| `createMemberAccessGateHook` | the only role admitted to write `consent/member-access-cmc` |
+
+**Delegation.** A membership accepted with a delegate token carries `clientData.delegation` (it ends at detach). `delegation.createDelegatedGrantGuardHook(deps, types, { exempt })` takes a host-declared exemption; `events.ts` exempts `role === 'member'` accesses, so a delegate-approved membership is delegation-derived for its own lifetime but not for the patient invites the member publishes through it (those belong to the group, as under an owner-approved membership).
+
+## Hook order on `events.create`
+
+After `applyPrerequisitesForCreation` and `delegationDelegatedGrantGuardHook` (with the exemption above), `cmcEnsureReservedParentsHook` and `verifyCanCreateEventsOnStream`:
+
+1. `cmcInternalWriteGuard` (no client write under `:_cmc:_internal:*`, the ledger included);
+2. `cmcMemberRevokeWriteGuard`: any client write of `consent/member-revoke-cmc` refused, 403 `cmc-protected-event-write`;
+3. `cmcContentValidationHook` (`validateMemberAccess`, `validateMemberRevoke`, the `request.membership` type);
+4. `cmcMembershipOfferHook`: the offer rule, then `allowUserChoice: true` and `features.chat: false` rewritten;
+5. `cmcMemberAccessServerOwnedFieldsHook`: `status`, `failure`, `memberAccess`, `member`, `relationshipAccessId` dropped from a client create (on `events.update`, `preserveServerOwnedContent` keeps them from storage, and keeps a sweep record whole);
+6. `cmcMemberAccessGateHook`: membership access only (`cmc-member-access-not-member`), then the per-membership rate limit (`memberMintRegistry.hit`), then `resolveMintTarget` (scope, relationship with a completed handshake, permissions within the group's invite to the patient found by the relationship's `inviteEventId` / `offerEventId`, lifetime), then the in-flight lock per (membership, relationship) (`acquire`); the lock key is left on `context.cmc.memberMintLock`. Every refusal is `invalid-operation` with the id in `error.data.id`;
+7. `cmcAcceptAccessGateHook`, then the existing chain, then the store, then the dispatch middleware.
+
+## Synchronous mint dispatch
+
+`consent/member-access-cmc` is in `SYNC_DISPATCH_TYPES`: the dispatch middleware awaits the handler before answering.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant MemberApp
+    participant GroupCore as Group core<br/>(gate, dispatch, ledger)
+    participant PatientCore as Patient core
+
+    MemberApp->>GroupCore: events.create consent/member-access-cmc<br/>(membership token)
+    GroupCore->>GroupCore: gate hook (rate, target, in-flight lock), store trigger
+    GroupCore->>GroupCore: handleMemberAccess: resolveMintTarget again,<br/>ledger record (membership, relationship)?
+    opt live record
+        GroupCore->>PatientCore: GET accesses/<childId> (grant token)
+        PatientCore-->>GroupCore: child (token) / 404
+    end
+    GroupCore->>PatientCore: POST accesses {type: shared, name, permissions,<br/>expireAfter, clientData.cmc member stamp}
+    PatientCore->>PatientCore: forge hook: stamp rebuilt from the grant
+    PatientCore-->>GroupCore: access (token)
+    GroupCore->>GroupCore: ledger write, membership re-read
+    GroupCore->>GroupCore: stamp trigger completed (no token),<br/>re-read row, release lock
+    GroupCore-->>MemberApp: { event, memberAccess: { apiEndpoint, ... } }
+```
+
+- `DispatchResult.response` carries the handler's one-shot payload (the child's endpoint). The middleware copies it to `result.memberAccess`; no stamp, log line or retry snapshot reads it. The stamp on the trigger takes `memberAccess` without the endpoint, `member`, `relationshipAccessId`.
+- After the dispatch the middleware re-reads the trigger (`replaceWithStoredRow`) and answers the stored row, `completed` or `failed`, not the pre-dispatch `pending` (the same re-read serves `consent/back-channel-cmc`). The mint lock is released in `finally`; a lock never released (a write that failed between the gate and the dispatch) is treated as released after 60 s.
+- **Never retried.** `NEVER_ENQUEUE_TYPES` (the mint type) is checked in `markFailed` before `isRetryableReason`, which treats an unknown reason as retryable; the handler refuses to run with a `retryContext` (`cmc-member-access-not-retryable`); the mint reasons are also in `NON_RETRYABLE_REASONS`. A token minted on a replay would reach nobody.
+- **One timeout overall** for the (at most two) peer calls (`outbound.requestPeer`, deadline shared).
+- **No peer body persisted.** A failure detail holds the peer's error id and HTTP status (or the kind of transport failure), never its body: the trigger sits on a stream every member of the team can read.
+
+## The ledger and its idempotency
+
+`memberLedger.ts`: one `cmc-internal/member-cmc` event per minted child in `:_cmc:_internal:members`, `{ membershipAccessId, member, relationshipAccessId, counterparty, scopeStreamId, childAccessId, childName, expires, attribution, state, stateChangedAt }`, `state` one of `live`, `deleted`, `absent`, `residual`; never a token. The stream is a reserved parent for new accounts and is created lazily (`ensureLedgerStream`) on older ones, since the reserved-parents memo probes `:_cmc:` only.
+
+Idempotency is keyed by the ledger record of (membership, relationship) and verified **by id through the grant**, never by name: through one grant every member's children are visible with their tokens and deletable, so a name match would let one member reach another's child (confused deputy). A live record is read with `GET accesses/<childAccessId>`: reused (token re-read) when it carries the asked permissions and has more than 300 s left; otherwise deleted through the grant and marked `deleted`; a 404 marks it `absent`. Then `POST accesses`. A duplicate-name refusal is reported (`cmc-member-access-peer-rejected`), never answered with a delete. `cmc-clientdata-cmc-forbidden` from the patient core (an earlier release) is the one answer that leads to a second, stampless create (`name-only`, when `allowNameOnly`); `cmc-member-stamp-invalid` and everything else fail.
+
+**Mint versus revoke.** `finish` writes the ledger record **before** returning the token, then re-reads the membership: gone (a sweep ran meanwhile), the child is deleted through the grant, the record marked `deleted`, the trigger failed with `cmc-member-access-membership-gone`. A full sweep re-reads the ledger at the end of its pass and takes the records added meanwhile.
+
+## The sweep: entry points
+
+`createMemberSweep(deps)` (built once by `api-server/src/methods/helpers/cmcMemberSweep.ts`) returns four functions:
+
+| Function | Called from | Effect |
+|---|---|---|
+| `sweepMembership(userId, membership, reason, { recordFilter?, persist? })` | `accessesDeleteHook` (route delete: `accesses.delete`; detach wiring: `detach`; account deletion: `account-deleted`, `persist: false`), `handleRevoke` (the group revokes a membership, after its delete: `revoke`), `handleIncomingRevoke` (the member leaves: `revoke`), `accessesUpdateHook` (`narrowed`, records whose scope is no longer under the membership's team streams), `runLedgerPass` (`expired`) | writes `consent/member-revoke-cmc` on the membership's team stream through the mall (no record when `persist: false` or the write fails, then `enqueueRetries: false`) and dispatches it: `handleMemberRevoke` deletes each child through its relationship's grant (`deleted`; 404 or a grant that no longer authenticates: `absent`; anything else: `residual`), reads back with `accesses.get { includeExpired: true }`, re-reads the ledger, stamps `outcome` / `residuals`; a residual fails the record with `cmc-member-revoke-residual`, retried by the queue from the snapshot (records already settled are skipped) |
+| `sweepRelationship(userId, relationshipAccess)` | `handleRevoke` before the revoke is delivered (step 3b), `accessesDeleteHook` for a deleted patient relationship before the peer is told | the relationship's live and residual records deleted through the grant **before the grant endpoint is lost**, so children die even against a patient core that does not cascade; no record is written (its `reason` enum names membership ends only), residuals are logged and bounded by the children's expiry |
+| `relationshipEnded(userId, relationshipAccessId)` | `handleIncomingRevoke` when the patient ended the relationship | records settled `absent`: the patient's core deleted the children with the grant |
+| `runLedgerPass(userId)` | the ledger scheduler | live records past `expires` marked `absent`; memberships expired or gone swept (`expired`); settled records past expiry pruned |
+
+Every sweep failure in a hook is logged and does not fail the delete, the revoke or the update that triggered it.
+
+**The periodic pass shares the retry loop's gate.** `bootRetryLoop.startRetryLoopIfEnabled` starts, beside the retry scheduler and on the same designated worker, a second `RetryScheduler` whose per-user step is `runLedgerPass`, every `cmc:memberAccess:sweepIntervalMs`, with an eager first tick at boot. It is one `events.get` per user per interval, too costly to run unconditionally; with `cmc:retryLoop:enabled` false neither the sweep retries nor the pass run, and an expired membership's children expire on their own (at most `maxTtl`).
+
+## The member stamp on the patient's core
+
+`createAccessCreateForgePreventionHook` calls `memberChildStamp(access, payload)`: admitted only when the caller is an `app` access with `clientData.cmc.role === 'counterparty'` (a delegable consent grant); the payload must be exactly `{ role: 'member-child', member: { username, host } }` (strings of 1 to 200 characters, no other key), else `cmc-member-stamp-invalid`; the stored stamp is rebuilt **field by field**: `member` from the payload, `group: { username, host }` from the grant's `counterparty` (never the object, which carries the group's back-channel endpoint, token included, readable by the child through `/access-info`), `viaAccessId`, `scopeStreamId`, `appCode` from the grant. Every other caller keeps `cmc-clientdata-cmc-forbidden`. `createAccessUpdateStampGuardHook`, wired after `loadAccessForUpdate`, refuses any `accesses.update` carrying `clientData` for an access whose stored row carries `clientData.cmc` (the merge would let `null` remove it); the plugin's own writes go through the mall and never reach it.
+
+---
+
+# 16. Access deletion: one implementation for the route and the plugins
+
+`api-server/src/methods/helpers/accessDeletion.ts` `deleteAccessChain(user, { id, accessToDelete?, relatedAccessesToDelete? })` is the one deletion of an access:
+
+1. the managed accesses (`managedAccessesOf`, matched on the access id inside `createdBy`, a caller id included), for a non-personal access only;
+2. per deleted access, its webhooks deleted and their running copies stopped (before the rows, so a partial failure is retried with the access still present);
+3. a soft delete of the rows (`storage.delete`: a deletion record readable with `includeDeletions`, token never returned);
+4. the access cache dropped on every worker, after the write;
+5. a final pass for an access created through the deleted one meanwhile;
+6. aliases released, breach-scope index tombstoned, the accesses-changed and scoped notifications emitted.
+
+The `accesses.delete` route calls it with the rows it already read for its checks and answer, then runs its post-hooks. `helpers/cmcMall.ts` wires it as the mall accesses adapter's `deleteAccess` dep, so `mallAccessesAdapter.delete` (`handleRevoke`, `handleIncomingRevoke`, the delegation detach through its store, the account-deletion teardown, `gcCapability`, the member sweep's local deletes) is the same deletion, without the route's post-hooks (no loop through `accessesDeleteHook`). The adapter's bare `removeOne` path, with its own cascade, stays only as the fallback of a wiring without the dep (unit fakes). Storage reads (`find` / `findOne`) and the uniqueness indexes see live rows only, so the heal-in-place lookups (`handleIncomingAccept` back-channel reuse, `handleAccept` data-grant reuse) and the member ledger reuse never resurrect a deleted row, and a re-accept mints a fresh access.
+
+`AccessLogic.canDeleteAccess` is aligned on `canUpdateAccess`: an app access deletes the `shared` accesses it manages only.
+
+---
+
 # Access-state-mutating triggers: token-class + access-permission gates
 
 The CMC lifecycle triggers that **mint, widen, or delete** data-grant accesses on the recipient's account are gated. Two distinct gate shapes, chosen per trigger by what the orchestrator does with the access state:
@@ -682,14 +800,16 @@ Both markers are plugin-stamped at mint time (`capability.ts` / `acceptOrchestra
 
 Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited as `'skipped'` by dispatch's `isPeerDeliveredEvent` check on `OUTBOUND_LOOPABLE_TYPES` before `handleRevoke` runs.
 
+A group's membership access (`clientData.cmc.role === 'member'`) is deliberately **not** exempt, although it is treated as a peer for protocol deliveries elsewhere (flow 15): a member may not accept consents or scope updates on the group's behalf.
+
 ## Accept by a delegate (account delegation)
 
-A delegate token (account delegation) is personal-type, so it passes the mint gate. The delegation plugin's own events.create guard (`delegation-grant-requires-owner`) is fed `consent/scope-update-cmc` and `consent/request-cmc` only: the accept's grant records the delegation lineage, the other two paths do not.
+A delegate token (account delegation) is personal-type, so it passes the mint gate. The delegation plugin's own events.create guard (`delegation-grant-requires-owner`) is fed `consent/scope-update-cmc` and `consent/request-cmc` only: the accept's grant records the delegation lineage, the other two paths do not. The guard takes a host-declared exemption, and `events.ts` exempts membership accesses (flow 15, "Delegation").
 
 - **Stamp at write time** (`acceptServerOwnedFieldsHook.ts`, wired after the mint gate): the server-owned fields of an accept (`constants.ACCEPT_SERVER_OWNED_FIELDS`: `approvedBy`, `ownerConfirmedAt`, `withdrawal`) are deleted from any client create; when the writing access is delegation-derived, `approvedBy = { delegate: { username, hostSlug? }, relId }` is set from its marker. The marker is read by the delegation plugin's `lineageOf`, injected by the api-server (this plugin imports nothing from the delegation plugin). On `events.update` the stored values are put back (`createAcceptPreserveHook`). Server writers (dispatch status stamps, the incoming accept, detach, the withdrawal marker) go through the mall and never reach these hooks.
 - **Lineage on the grant** (`handleAccept`, step 3c): `lineageOf(triggerAccess)` on live dispatch; on a retry (no request context) the access named by the trigger's `createdBy`, kept in the retry snapshot as `originalCreatedBy`. The marker `{ kind: 'delegated-child', relId, delegate, viaAccessId }` goes on `clientData.delegation` beside `clientData.cmc`; a grant reused from an earlier dispatch of the same accept is updated with it. A recorded `approvedBy` whose lineage cannot be resolved, or names another relationship, fails the accept.
 - **The delegation must stand when the grant exists**: `relationshipExists(userId, relId)` (the api-server wires the relationship anchor lookup) before the mint; after it, the anchor again plus the approving access with the same marker (detach deletes that access first, then sweeps the relationship's marked accesses). A failed check deletes a freshly minted grant. Failure: `cmc-handler-delegation-ended`, non-retryable. Deps not wired: never mint a delegate's grant.
-- **Detach** (delegation plugin): deletes the relationship's marked accesses, consent grants included, then hands the consent grants (as they were before deletion) to the api-server, which runs the `accesses.delete` post-hook on them (flow 13's raw-delete notification): the requester receives `consent/revoke-cmc`. A `consent/revoke-cmc` trigger through `handleRevoke` was not used: its local delete runs after the delivery attempts, and the dispatch middleware does not await it. A grant deleted by a detach between the post-mint check and the back-channel handshake (delivery to the requester, up to the 15 s timeout, plus the requester's processing) is revoked without notice: the raw-delete forwarding has no peer endpoint yet (`cmc-revoke-no-peer-endpoint` in the log) and the requester learns of it on first use of the token (401/403).
+- **Detach** (delegation plugin): deletes the relationship's marked accesses, consent grants and group memberships included (`detach.isConsentGrant` takes both relationship roles; a membership's member accesses are then swept with reason `detach`, flow 15), then hands the consent grants (as they were before deletion) to the api-server, which runs the `accesses.delete` post-hook on them (flow 13's raw-delete notification): the requester receives `consent/revoke-cmc`. A `consent/revoke-cmc` trigger through `handleRevoke` was not used: its local delete runs after the delivery attempts, and the dispatch middleware does not await it. A grant deleted by a detach between the post-mint check and the back-channel handshake (delivery to the requester, up to the 15 s timeout, plus the requester's processing) is revoked without notice: the raw-delete forwarding has no peer endpoint yet (`cmc-revoke-no-peer-endpoint` in the log) and the requester learns of it on first use of the token (401/403).
 - **The owner's review at detach** (`keepAccessIds`): a kept grant loses `clientData.delegation` and its accept event gets `ownerConfirmedAt`; a dropped one is deleted as above and its accept event gets `withdrawal = { at, by: 'delegation-detach', relId }`. Both markers are written by the delegation plugin through the mall, best-effort, and are server-owned (above), so the per-grant record on the managed account cannot be written or erased through the API.
 - **Withdrawal on every teardown path** (`acceptWithdrawal.ts`): detach is not the only way a consent ends, and the accept event is the person's own record of it, so every path marks it the same way: `content.withdrawal = { at, by, accessId, revokeEventId? }` (`at` in seconds), with `by: 'accesses.delete'` (the data grant deleted through the API, accesses-delete post-hook), `'revoke-cmc'` (a `consent/revoke-cmc` written by the person, `handleRevoke`; `revokeEventId` is the trigger) or `'peer-revoke'` (the requester withdrew, `handleIncomingRevoke`, once per grant the teardown destroyed; `revokeEventId` is the inbox arrival). Detach keeps its own `{ at, by: 'delegation-detach', relId }`. Rules: accepter side only (the grant's `acceptEventId` is local; the requester's back-channel carries a `capabilityId` key and the peer's id, and its record is the invite stamped `revoked`); the target must be a `consent/accept-cmc`; the first writer wins among writers in sequence (detach stamps before it hands the grants to the post-hook, and a hook that fires twice in sequence writes once); the check is a read then a write, not a compare-and-set, so concurrent stampers (a raw delete racing a `consent/revoke-cmc` for the same grant) may both write, the later record winning with the same `accessId`; `handleRevoke` stamps only once the grant's delete succeeded; the write is versioned (no `skipVersioning`) and goes through the mall, so integrity is recomputed; best-effort, it never fails the delete, the peer delivery or the trigger. A relationship minted before `acceptEventId` was stamped on the grant has nothing to mark. The accesses-delete post-hook is fire-and-forget, so the mark may land shortly after the delete answers; the api-server passes it a per-call `notifyEventChanged`, so the user's socket clients receive `eventsChanged` when it does.
 

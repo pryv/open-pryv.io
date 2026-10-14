@@ -789,14 +789,14 @@ The walkthroughs above work **identically** whether the parties are on:
 
 **Topology variation** (`dnsLess: true` vs `false`) is invisible because all addressing is through `apiEndpoint` URLs.
 
-## The one limitation: directed cross-platform invites
+## The one limitation: directed invites are not routed
 
-If the provider writes `consent/request-cmc` with `to: 'alice@example.com'` while sitting on `example.com`:
+If the provider writes `consent/request-cmc` with `to: 'alice@example.com'`:
 
-- The plugin on `example.com` can mint the capability access (local action) but cannot push a notification into Alice's `:_cmc:inbox` on `pryv.me`, no access pair exists yet, so the plugin has no apiEndpoint to deliver to.
+- The plugin mints the capability access (local action) and records `to`, but delivers nothing to Alice's `:_cmc:inbox`: no access pair exists yet, so the plugin has no apiEndpoint to deliver to.
 - The capability URL is still minted. Hand-off via email/QR/operator-specific channel is required.
 
-**Same-platform directed invites** (where the recipient is local) DO auto-deliver because the plugin can write in-process. The capability URL still works as a fallback.
+**This holds on the same platform too.** No in-process delivery of a directed invite into a local recipient's inbox exists; `to` is the requester's own bookkeeping.
 
 When the future OAuth2 / app-accounts work ships signed inter-platform notifications + `/.well-known/cmc-invite-webhook`, this gets resolved as a follow-on.
 
@@ -852,6 +852,10 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
     allowUserChoice?: boolean,
     features?:   { chat?: boolean, systemMessaging?: boolean },  // each defaults to true
     expiresAt?:  number | null,  // null: no expiry (open-link only)
+    // true: the writer asks to JOIN the accepting account as a member of a
+    // group account (see "Reference: Group accounts"). Restricts
+    // `permissions` and `accessType`, forces allowUserChoice / features.chat.
+    membership?: boolean,
     customData?: object
   },
   requesterMeta?: { displayName, appId?, appUrl? }
@@ -1332,6 +1336,225 @@ Combined with the capability `state` (`'open'` / `'invalidated'`), this gives a 
 
 ---
 
+# Reference: Group accounts
+
+A **group account** (a practice, a research team, a bridge) is an ordinary Pryv account shared by an organisation. Its **members** are ordinary Pryv accounts, one per person, on any core. A member joins the group through a CMC relationship, invites patients in the group's name, and reads a patient's data under a short-lived access that names them, created by the group's core on the patient's core through the consent grant the patient gave the group. The member's app needs no backend: it talks to the member's own core, to the group's core through the membership, and to the patient's core with the access it is handed.
+
+Accounts and streams involved:
+
+| Who | Where | What |
+|---|---|---|
+| Group account | team streams `:_cmc:apps:<app>:<team>[:<sub>]` | Created by the owner (or by the approval of a membership). A membership covers its team streams and every stream under them. |
+| Administrators | the group's owner, or a delegate of the group account | Accept and revoke memberships with their own token. A delegate cannot publish invites (members do). |
+| Member | own account | Writes the membership request; its app holds `read` on `:_cmc:inbox` and `contribute` on `:_cmc:apps:<app>` (auto-provisioned when that access is created). |
+| Patient | own account | Accepts the group's invite; the grant must be delegable (`type: 'app'`). |
+
+## Joining: the membership request
+
+The member is the **requester**, the group the **accepter**. The member writes on their own account:
+
+```ts
+{
+  streamIds: [':_cmc:apps:<app>'],
+  type: 'consent/request-cmc',
+  content: {
+    to: null,
+    capabilityRequested: true,
+    request: {
+      title, description, consent,          // LocalizableText, shown to the administrator
+      membership: true,
+      permissions: [                         // the GROUP's team streams
+        { streamId: ':_cmc:apps:practice:team-a', level: 'contribute' }
+      ]
+    },
+    requesterMeta: { username, appId }
+  }
+}
+```
+
+Rule for a membership offer, applied by the member's core when the offer is written and by the group's core when it is accepted (`cmc-membership-permissions-invalid` otherwise: 400 at write with the list in `error.data.errors`, a `failed` accept trigger at accept):
+
+- stream permissions only, on user-creatable `:_cmc:apps:<app>[:<path>]` ids (not `:_cmc:inbox`, not `*`, not a `chats` / `collectors` stream);
+- level `read` or `contribute`; no feature permission;
+- `accessType` absent or `'shared'` (a membership is never delegable);
+- `allowUserChoice` is set to `true` (the administrator picks the teams) and `features.chat` to `false` whatever is sent; `systemMessaging` keeps its value, so the group can send alerts to the member.
+
+The hand-off is the **capability URL** (QR code or link) the member shows to an administrator; nothing is delivered to the group automatically. The administrator accepts it like any invite (`consent/accept-cmc`, `grantedPermissions` to narrow the teams) with the group's personal token or a delegate token. A membership access cannot accept (`cmc-accept-requires-personal-token`).
+
+**The membership access** minted on the group account:
+
+```ts
+{
+  type: 'shared',
+  name: 'cmc-member:<appId>:<member username>@<member host>',
+  permissions: [ /* the granted team streams + the relationship's channel streams */ ],
+  clientData: { cmc: {
+    role: 'member',
+    counterparty: { username, host, ... },   // the member
+    features: { chat: false, systemMessaging: true },
+    membership: {
+      approvedBy: { delegate: { username: string, hostSlug?: string }, relId: string } | null,  // null: the owner
+      requestedScopes: string[]               // the team streams the member asked for
+    }
+  } }
+}
+```
+
+The granted team streams are created on the group account if missing. On the member's account, the accept mirrored into `:_cmc:inbox` carries `membership: true` and `grantedAccess.apiEndpoint`, the membership's endpoint: the member's app opens a `pryv.Connection` on it to act in the group. Match the mirror on `from` (the group) and `requesterAppCode`, and require `membership: true` when present.
+
+What a membership can do on the group account: read and write events in its teams (patient invites, mint triggers). What it cannot: accept invites or scope updates, read the group's other accesses, read `:_cmc:inbox`, chat with the group or send it alerts (`cmc-member-channel-not-supported`, 403).
+
+**Leaving** = the member revokes its own half of the relationship (`consent/revoke-cmc` with the `backChannelAccessId` of the mirror); the group's core deletes the membership and sweeps. An unaccepted request simply expires.
+
+## Inviting a patient
+
+The member writes a `consent/request-cmc` on a team stream **of the group account**, through the membership, with `request.accessType: 'app'` (a delegable grant). The requester is the group. Members of a team see each other's invites, capability URLs included; give each member a sub-stream of the team for isolation.
+
+## Opening a patient's data: `consent/member-access-cmc`
+
+```ts
+// Written through the membership, on a team stream of the group
+{
+  streamIds: [':_cmc:apps:practice:team-a'],
+  type: 'consent/member-access-cmc',
+  content: {
+    counterparty: { username: string, host: string },  // the patient, required
+    scopeStreamId?: string,      // the relationship's scope: the trigger's stream (default) or under it
+    permissions?: Array<{ streamId: string, level: string }>,
+                                 // stream permissions only, each on a stream the group's invite
+                                 // offered outside :_cmc:, level not above the offered one;
+                                 // default: the offered streams at 'read'
+    expireAfter?: number         // seconds; default cmc:memberAccess:defaultTtl (24 h),
+                                 // within [minTtl, maxTtl] (60 s, 7 d); never beyond the grant
+  }
+}
+```
+
+There is no `name`: the server names the access `cmc-member--<member slug>--<hash>`.
+
+**The answer** (synchronous):
+
+```ts
+{
+  event: { /* the trigger as stored after the mint */ },
+  memberAccess?: {
+    apiEndpoint: string,     // the access on the patient's core, token included
+    accessId: string,
+    name: string,
+    expires: number,
+    attribution: 'stamped' | 'name-only'
+  }
+}
+```
+
+`memberAccess` is present on success only. Its `apiEndpoint` is returned in this answer and nowhere else: never stored on the event, logged or retried. Use it against the patient's core directly; do not store it beyond the session; ask again when it expires.
+
+`event.content` after dispatch (server-owned fields, dropped from a client create and kept on update):
+
+```ts
+{
+  // ... as written ...
+  status: 'completed' | 'failed',
+  memberAccess?: { accessId, name, expires, attribution },   // never the endpoint
+  member?: { username, host },                               // from the membership
+  relationshipAccessId?: string,                             // the group's access toward the patient
+  failure?: { reason: string, detail? }                      // never the patient core's answer body
+}
+```
+
+**Asking again** for the same patient with the same permissions returns the same access while it has more than 5 minutes left (its token re-read through the grant); other permissions, or an access about to expire, are replaced; one the patient deleted is minted again while the grant lasts. Idempotency is keyed by (membership, patient relationship), never by name.
+
+**The access on the patient's account** is `shared`, created by the grant (`createdBy` = the grant), cannot call `accesses.*`, and carries:
+
+```ts
+// as sent by the group's core
+clientData: { cmc: { role: 'member-child', member: { username, host } } }
+// as stored by the patient's core
+clientData: { cmc: {
+  role: 'member-child',
+  member: { username, host },          // from the group's core (the membership)
+  group: { username, host },           // from the authenticated grant
+  viaAccessId: string,                 // the grant
+  scopeStreamId: string | null,
+  appCode: string | null
+} }
+```
+
+An `accesses.create` through a delegable consent grant may send exactly the first shape (two strings of 1 to 200 characters, no other key); anything else is `cmc-member-stamp-invalid` (400). Any other caller sending `clientData.cmc` gets `cmc-clientdata-cmc-forbidden`, and no API call can change or remove a stored `clientData.cmc`.
+
+## Offboarding: `consent/member-revoke-cmc`
+
+Written by the server on the membership's team stream when a membership ends (client writes refused, 403 `cmc-protected-event-write`):
+
+```ts
+{
+  member: { username, host },
+  membershipAccessId: string,
+  reason: 'revoke' | 'accesses.delete' | 'expired' | 'narrowed' | 'detach' | 'account-deleted',
+  records: Array<{ relationshipAccessId, counterparty: { username, host }, childAccessId, expires }>,
+  status: 'pending' | 'delivered' | 'completed' | 'failed',
+  outcome?: Array<{ childAccessId, result: 'deleted' | 'absent' | 'residual', reason? }>,
+  residuals?: Array<{ counterparty, childAccessId, expires, reason }>,
+  failure?: { reason: string,        // 'cmc-member-revoke-residual' when accesses were left in place
+              detail?: { childAccessId?, peerErrorId?, httpStatus? } }
+}
+```
+
+| `reason` | The membership ended because |
+|---|---|
+| `revoke` | an administrator revoked it (`consent/revoke-cmc` naming the membership), or the member left |
+| `accesses.delete` | the membership access was deleted through the API |
+| `expired` | the membership access expired or is gone (found by the periodic pass) |
+| `narrowed` | an `accesses.update` removed teams: only the patients outside the remaining teams are swept |
+| `detach` | the delegate administrator who approved it was detached and the owner did not keep it |
+| `account-deleted` | the group account is deleted (the sweep runs, no record is kept) |
+
+Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes) when the group's core runs it (`cmc:retryLoop:enabled: true`); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
+
+## Error ids
+
+Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.data.id`.
+
+| Id | Meaning |
+|---|---|
+| `cmc-member-access-not-member` | Not written through a membership access (personal and delegate tokens are refused too). |
+| `cmc-member-access-relationship-not-found` | No relationship with this patient under the scope, or its handshake is not complete. |
+| `cmc-member-access-scope-outside-membership` | `scopeStreamId` is not the trigger's stream or under it, or the trigger is not on a team stream. |
+| `cmc-member-access-permissions-not-subset` | Not stream permissions, or beyond what the group's invite offered the patient. |
+| `cmc-member-access-expiry-out-of-range` | `expireAfter` outside [`minTtl`, `maxTtl`]. |
+| `cmc-member-access-rate-limited` | More than `ratePerMinute` triggers for this membership in the last minute on this server process: ask again after the minute. |
+| `cmc-member-access-in-flight` | A mint for this membership and patient is running: ask again shortly. |
+| `cmc-membership-permissions-invalid` | A membership request breaks the membership rule. |
+| `cmc-member-stamp-invalid` | (patient's core, `accesses.create`) A consent grant sent a `clientData.cmc` that is not the member stamp. |
+
+Recorded on the trigger, in `content.failure.reason` (the answer then has no `memberAccess`):
+
+| Id | Meaning |
+|---|---|
+| `cmc-member-access-grant-not-delegable` | The patient's grant is `shared`: invite the patient again with `accessType: 'app'`. |
+| `cmc-member-access-permissions-not-subset` | The patient's core refused the access as beyond the grant (`forbidden`). |
+| `cmc-member-access-peer-rejected` | The patient's core refused the access otherwise (detail: its error id and HTTP status). |
+| `cmc-member-access-peer-unreachable` | The patient's core could not be reached (5xx, network, timeout): ask again shortly. |
+| `cmc-member-access-membership-gone` | The membership ended during the mint; the access was deleted. |
+| `cmc-member-access-not-retryable` | A mint is never replayed from the retry queue. |
+| `cmc-member-revoke-residual` | (sweep record) At least one access could not be deleted; see `residuals`. |
+| `cmc-member-channel-not-supported` | A chat addressed to a member (on the trigger), or a chat / alert / ack written by a member (403 at write). |
+
+"Ask again shortly" means `cmc-member-access-in-flight` and `cmc-member-access-peer-unreachable`; `cmc-member-access-rate-limited` means after the minute.
+
+## Versions and older cores
+
+- **Group's core:** this release, with `cmc:retryLoop:enabled: true`. An older group core does not know `consent/member-access-cmc`: it stores the event as a plain one and answers without `memberAccess`.
+- **Member's core:** this release. It checks the membership request at write and marks the mirrored accept `membership: true`. An older member core ignores `request.membership` (no check at write, no marker); the group's core still applies the rule at accept.
+- **Patient's core of an earlier release** refuses the member stamp with `cmc-clientdata-cmc-forbidden`. The group's core then creates the access once more without the stamp and reports `attribution: 'name-only'` (the name still names the member) when `cmc:memberAccess:allowNameOnly` is true (the default for now), and fails the trigger with `cmc-member-access-peer-rejected` otherwise. Any other refusal is a failure, never a silent fallback. On such a core, accesses removed by the consent pages leave no deletion record.
+- **Patient's core older than 2.0.0-rc.52** does not delete the member accesses when the patient withdraws through `consent/revoke-cmc`: they live until they expire.
+
+Configuration of the group's core (`cmc:memberAccess:*`): `defaultTtl` 86400, `minTtl` 60, `maxTtl` 604800, `ratePerMinute` 30 (per membership, per server process), `maxInFlightPerMembership` 1 (per membership and patient, per server process), `allowNameOnly` true, `sweepIntervalMs` 60000 (periodic ledger pass, run with the retry loop).
+
+**Trust boundary.** Any access with `read` on the group's `:_cmc:inbox` holds every patient grant (the accept mirrors keep `grantedAccess.apiEndpoint`), and so do the group's owner and delegates; a membership can never be granted it. Members of a team read the team's mint triggers (who opened which patient, when, with the access id and expiry, never the token).
+
+---
+
 # Reference: Counterparty accesses (plugin-internal)
 
 After acceptance, two standard Pryv shared accesses exist (one on each side). They serve as the plugin's outbound-delivery credentials. **You generally don't interact with them from app code.**
@@ -1408,8 +1631,10 @@ npm package.
 | `CAPABILITY_NO_EXPIRY_NOT_ALLOWED` | `cmc-capability-no-expiry-not-allowed` | `request.expiresAt: null` (no expiry) on a single-use invite. Use `capability.mode: 'open-link'`, or give a bounded `expiresAt`. |
 | `CHAT_DISABLED` | `cmc-chat-disabled` | The offer negotiated `features.chat: false`; chat write rejected at send time. Also answered as HTTP 403 `forbidden` with `data.id` set to this id when a counterparty writes the event directly. Re-issue the request with chat enabled, or use the system channel. |
 | `SYSTEM_MESSAGING_DISABLED` | `cmc-system-messaging-disabled` | The offer negotiated `features.systemMessaging: false`; alert/ack write rejected. Also answered as HTTP 403 `forbidden` with `data.id` set to this id when a counterparty writes the event directly. Scope-request / scope-update are protocol-level and remain permitted regardless. |
-| `CLIENTDATA_CMC_FORBIDDEN` | `cmc-clientdata-cmc-forbidden` | User code tried to write under `clientData.cmc.*` via `accesses.create` / `accesses.update`. That namespace is plugin-owned end-to-end; remove the field. |
+| `CLIENTDATA_CMC_FORBIDDEN` | `cmc-clientdata-cmc-forbidden` | User code tried to write under `clientData.cmc.*` via `accesses.create` / `accesses.update`, or sent any `clientData` (`null` included) in an `accesses.update` of an access that carries `clientData.cmc` (it would remove it). That namespace is plugin-owned end-to-end; remove the field. |
 | `COUNTERPARTY_IDENTITY_MISSING` | `cmc-counterparty-identity-missing` | A counterparty-marked access reached the events-create stamping hook with no stored `{username,host}` identity. Wiring bug, surface for ops; usually a back-channel access that failed to receive its identity stamp at handshake. |
+
+The group-account ids (`cmc-member-*`, `cmc-membership-permissions-invalid`) are listed in [Group accounts, Error ids](#error-ids).
 
 **Gaps under discussion** (HANDOVER follow-up):
 
