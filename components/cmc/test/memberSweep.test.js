@@ -326,7 +326,9 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       await seed(mall2);
       const { sweep: sweep2 } = sweepOf(mall2, cores);
       assert.equal(await sweep2.relationshipEnded('group', 'acc-rel'), 1);
-      assert.equal((await ledger.listRecords({ mall: mall2 }, 'group'))[0].state, 'absent');
+      const ended = (await ledger.listRecords({ mall: mall2 }, 'group'))[0];
+      assert.equal(ended.state, 'absent');
+      assert.equal(ended.absentReason, 'relationship-ended-by-peer', 'the claim is left to the patient core');
     });
 
     it('[MR24] the periodic pass sweeps an expired or vanished membership, settles children past their expiry, prunes settled records', async () => {

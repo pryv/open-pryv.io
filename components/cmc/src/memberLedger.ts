@@ -52,6 +52,12 @@ type LedgerRecord = {
   attribution: string;
   state: LedgerState;
   stateChangedAt: number;
+  // Why a record is `absent` without a read-back, when the reason is not the
+  // sweep's own verdict: `relationship-ended-by-peer` (the patient ended the
+  // relationship; a patient core of this release deleted the children with
+  // the grant, an older one leaves them until their expiry, unreachable
+  // either way).
+  absentReason?: string;
 };
 
 /** A record as read back: the stored content plus the event that holds it. */

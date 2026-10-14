@@ -175,7 +175,9 @@ function createMemberSweep (deps: SweepDeps) {
     const records = (await ledger.recordsOfRelationship(ledgerDeps, userId, relationshipAccessId))
       .filter((r) => r.state === 'live' || r.state === 'residual');
     for (const r of records) {
-      try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId); } catch (_e) { /* best-effort */ }
+      try {
+        await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId, { absentReason: 'relationship-ended-by-peer' });
+      } catch (_e) { /* best-effort */ }
     }
     return records.length;
   }

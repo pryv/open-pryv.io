@@ -1464,7 +1464,7 @@ There is no `name`: the server names the access `cmc-member--<member slug>--<has
 
 **Asking again** for the same patient with exactly the same permissions returns the same access while it has more than 5 minutes left (its token re-read through the grant); other permissions (more or fewer), or an access about to expire, are replaced; one the patient deleted is minted again while the grant lasts. Idempotency is keyed by (membership, patient relationship), never by name. An access is never minted over one the patient's core did not confirm gone: if that core cannot be reached while the previous access is replaced, the ask fails (`cmc-member-access-peer-unreachable`) and the previous access stays recorded.
 
-**Bounds.** A member asks for named data streams only (the stream ids the group's invite offered, at a level not above the offered one): never `*`, never a `:_cmc:` stream. The access never outlives the membership: when the membership access has an expiry, `expireAfter` is capped at what is left of it, and an ask is refused with `cmc-member-access-expiry-out-of-range` when less than `minTtl` remains.
+**Bounds.** A member asks for named data streams only (exactly the stream ids the group's invite offered, at a level not above the offered one; a descendant of an offered stream is refused as outside the bound): never `*`, never a `:_cmc:` stream. The access never outlives the membership: when the membership access has an expiry, `expireAfter` is capped at what is left of it, and an ask is refused with `cmc-member-access-expiry-out-of-range` when less than `minTtl` remains.
 
 **The access on the patient's account** is `shared`, created by the grant (`createdBy` = the grant), cannot call `accesses.*`, and carries:
 
@@ -1482,7 +1482,7 @@ clientData: { cmc: {
 } }
 ```
 
-An `accesses.create` through a delegable consent grant may send exactly the first shape (two strings of 1 to 200 characters, no other key); anything else is `cmc-member-stamp-invalid` (400). Any other caller sending `clientData.cmc` gets `cmc-clientdata-cmc-forbidden`, and no API call can change or remove a stored `clientData.cmc`.
+An `accesses.create` through a delegable consent grant may send exactly the first shape (two strings of 1 to 200 characters without whitespace or control characters, no other key); anything else is `cmc-member-stamp-invalid` (400). Any other caller sending `clientData.cmc` gets `cmc-clientdata-cmc-forbidden`, and no API call can change or remove a stored `clientData.cmc`.
 
 ## Offboarding: `consent/member-revoke-cmc`
 
@@ -1513,6 +1513,8 @@ Written by the server on the membership's team stream when a membership ends (cl
 | `account-deleted` | the group account is deleted (its accesses on patient cores are deleted through the grants before the erasure; no record is kept) |
 
 Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes), then re-swept by the periodic ledger pass (fifty per pass) as long as the retry loop runs (`cmc:retryLoop:enabled`, `true` by default); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
+
+The records live on the team stream. A member holding `contribute` there can delete them, and can edit or delete the patient invite the mint reads its bound from (which blocks every member's asks for that patient with `cmc-member-access-relationship-not-found` until the group invites the patient again; the patient core's grant stays the real bound, so nothing widens). Give `contribute` on team streams to members you trust with the team's records; the patient's own audit trail (the deletion records and the `member-child` stamps on the patient's core) does not depend on it.
 
 ## Error ids
 

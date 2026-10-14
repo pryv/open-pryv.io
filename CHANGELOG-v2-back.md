@@ -58,6 +58,9 @@
   `mall.events.getOne`); otherwise, or when the invite cannot be read,
   `CmcErrorIds.INVALIDATE_LINK_SCOPE_MISMATCH` (`cmc-invalidate-link-scope-mismatch`, in
   `NON_RETRYABLE_REASONS`).
+- `cmc/src/hooks.ts` `isStampString`: a stamp string holds no whitespace and no control
+  character (`STAMP_STRING`); `cmc/src/memberSweep.ts` `relationshipEnded` settles the records
+  with `absentReason: 'relationship-ended-by-peer'` (new optional ledger field, `memberLedger.ts`).
 - Tests: cmc `[RQ20]`..`[RQ24]`, `[HR25]`..`[HR27]`, `[DH25]`, `[DH26]`, `[MR24]` (two passes),
   `[MR25]`..`[MR28]`, `[MR42]`, `[CMCIL-G]`; api-server `[CN60]`, `[CN61]` (a requester down
   during a revoke, the notice delivered by the loop once it is back; failed-permanent when it

@@ -85,7 +85,8 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   deleted through the grant before the revoke is delivered (no record is written for that pass).
 - **The member stamp on the patient's account.** An `accesses.create` made with a delegable (`app`)
   consent grant may send exactly `clientData: { cmc: { role: 'member-child', member: { username,
-  host } } }` (two strings of 1 to 200 characters, no other key). The server stores
+  host } } }` (two strings of 1 to 200 characters without whitespace or control characters, no
+  other key). The server stores
   `{ role: 'member-child', member, group: { username, host }, viaAccessId, scopeStreamId, appCode }`,
   the group identity and the rest copied field by field from the authenticated grant (never an
   endpoint). Any other `clientData.cmc` sent by such a grant is refused with 400

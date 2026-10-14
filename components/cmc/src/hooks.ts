@@ -850,8 +850,12 @@ type MemberChildStamp = {
 
 const STAMP_FIELD_MAX = 200;
 
+// No whitespace and no control character: the stamp is rendered by the
+// patient's audit page and exported as is.
+const STAMP_STRING = /^[^\s\x00-\x1f\x7f]+$/;
+
 function isStampString (v: unknown): v is string {
-  return typeof v === 'string' && v.length >= 1 && v.length <= STAMP_FIELD_MAX;
+  return typeof v === 'string' && v.length >= 1 && v.length <= STAMP_FIELD_MAX && STAMP_STRING.test(v);
 }
 
 /**
