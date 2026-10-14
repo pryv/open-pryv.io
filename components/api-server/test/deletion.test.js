@@ -253,7 +253,12 @@ describe('[PGTD] DELETE /users/:username', () => {
           const userDir = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
           assert.strictEqual(fs.existsSync(userDir), false, fs.existsSync(userDir) ? fs.readdirSync(userDir).join(', ') : '');
         });
+        // The checks below read the deleted user's stores to see they are
+        // empty; the erasure mark would refuse those opens (that refusal is
+        // tested in [DKP2], [DKP3] and [UDRE]).
+        function readDeletedUser () { require('storage').userLocalDirectory.forgetErasedTestOnly(userToDelete.attrs.id); }
         it(`[${testIDs[i][1]}] should delete user entries from impacted collections`, async function () {
+          readDeletedUser();
           const user = await usersRepository.getUserById(username1);
           assert.ok(user == null);
           const dbCollections = [
@@ -281,6 +286,7 @@ describe('[PGTD] DELETE /users/:username', () => {
           assert(sessions == null || sessions.length === 0);
         });
         it(`[${testIDs[i][2]}] should delete user event files`, async function () {
+          readDeletedUser();
           const infos = await mall.getUserStorageInfos(userToDelete.attrs.id);
           assert.strictEqual(infos.local.files.sizeKb, 0);
         });
@@ -310,6 +316,7 @@ describe('[PGTD] DELETE /users/:username', () => {
           // user after auth.delete (the gap on PG where the shared
           // audit_events table previously survived erasure).
           if (auditStorage != null) {
+            readDeletedUser();
             const userDb = await auditStorage.forUser(userToDelete.attrs.id);
             const count = await userDb.countEvents();
             assert.strictEqual(count, 0, 'audit events for the deleted user must be 0');
@@ -329,7 +336,10 @@ describe('[PGTD] DELETE /users/:username', () => {
           const config = await getConfig();
           if (config.get('caching:isActive') && pubsub.isTransportEnabled()) {
             // (the webhooks scope carries the stop of the account's webhooks)
-            const cacheMessages = delivered.filter((d) => d.scopeName.startsWith('cache'));
+            // the erasure is announced on the cache scope too, with the user id
+            const erasures = delivered.filter((d) => d.scopeName.startsWith('cache') && d.eventName === 'user-erased');
+            assert.ok(erasures.some((d) => d.payload.userId === userToDelete.attrs.id), 'erasure announced');
+            const cacheMessages = delivered.filter((d) => d.scopeName.startsWith('cache') && d.eventName !== 'user-erased');
             const busts = delivered.filter((d) => d.scopeName === 'cache.' + MESSAGES.UNSET_USER);
             assert.strictEqual(busts.length, cacheMessages.length, 'only name/user busts are sent');
             for (const b of busts) assert.strictEqual(b.eventName, MESSAGES.UNSET_USER);
@@ -457,12 +467,25 @@ describe('[PGTD] DELETE /users/:username', () => {
         await deleteWithMode(mode, username);
         const userDir = userLocalDirectory.getPathForUser(userId);
         assert.strictEqual(fs.existsSync(userDir), false, fs.existsSync(userDir) ? fs.readdirSync(userDir).join(', ') : '');
-        const count = await (await auditStorage.forUser(userId)).countEvents();
-        assert.strictEqual(count, 0, 'no audit entry left for the deleted account');
-        await auditStorage.deleteUser(userId);
-        await userLocalDirectory.deleteUserDirectory(userId);
+        if (typeof auditStorage.existingPathForUser === 'function') {
+          // File-backed audit: opening it again for the erased id is refused.
+          await assert.rejects(auditStorage.forUser(userId), /erased/);
+          assert.strictEqual(fs.existsSync(userDir), false, 'the refused open created nothing');
+        } else {
+          const count = await (await auditStorage.forUser(userId)).countEvents();
+          assert.strictEqual(count, 0, 'no audit entry left for the deleted account');
+        }
       });
     }
+
+    it('[UDRE] a late read of the erased account (a login in flight) creates no directory again', async function () {
+      const { username, userId } = await createUserWithAudit();
+      await deleteWithMode('erase', username);
+      const userDir = userLocalDirectory.getPathForUser(userId);
+      const accountStorage = await require('storage').getUserAccountStorage();
+      await accountStorage.getPasswordHash(userId).catch(() => {});
+      assert.strictEqual(fs.existsSync(userDir), false, 'the erased account directory stays absent');
+    });
   });
   // HF series are stored under a namespace derived from a name of the account
   // (`user.<name>`). An account holds its current username plus aliases (minted

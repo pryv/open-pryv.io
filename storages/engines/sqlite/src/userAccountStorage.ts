@@ -14,6 +14,7 @@
 
 import { createRequire } from 'node:module';
 import { fileIdentity } from './fileIdentity.ts';
+import { closeQuietly } from './closeQuietly.ts';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -25,6 +26,7 @@ const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 const encryption = require('utils').encryption;
 
 const CACHE_SIZE = 100;
+const logger = _internals.lazyLogger('sqlite-account-storage');
 const VERSION = '1.0.0';
 const DB_OPTIONS = {};
 
@@ -64,7 +66,8 @@ const userAccountStorage = _internals.createUserAccountStorage({
   _clearStoreData,
   _exportAll,
   _importAll,
-  _clearAll
+  _clearAll,
+  closeUser
 });
 
 export { userAccountStorage };
@@ -82,7 +85,7 @@ async function init () {
 
   dbCache = new LRU({
     max: CACHE_SIZE,
-    dispose: function (entry: CachedAccountDb/* , key */) { entry.db.close(); }
+    dispose: function (entry: CachedAccountDb, key: string) { closeQuietly(() => entry.db.close(), logger, 'account database of ' + key); }
   });
 
   initState = InitStates.READY;
@@ -361,6 +364,15 @@ async function _clearAll (userId: string): Promise<void> {
   await concurrentSafeWrite.execute(() => {
     db.prepare('DELETE FROM account_fields').run();
   });
+}
+
+/**
+ * Drop this process's cached connection to the user's account file (the
+ * account deletion calls it before wiping the user directory), so the
+ * erased file is not held open here.
+ */
+function closeUser (userId: string): void {
+  dbCache?.delete(userId); // dispose closes the connection
 }
 
 // DB HELPERS

@@ -194,7 +194,8 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
       const { getStorage } = require('./userSQLite/index.ts');
       const userStorage = await getStorage('local');
       if (!create) {
-        const dbPath = await userStorage.dbgetPathForUser(userId);
+        // `existingPathForUser` creates nothing (`dbgetPathForUser` makes the directory).
+        const dbPath = userStorage.existingPathForUser(userId);
         if (!fs.existsSync(dbPath)) return null;
       }
       return await userStorage.forUser(userId);

@@ -20,11 +20,76 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly };
+export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED };
 
 
 let config: ConfigLike;
 let basePath: string | undefined;
+
+// ----- Erased accounts
+//
+// Once the account erasure has wiped a user's directory, no process of this
+// core creates it again: a request that already held the id (a login in
+// flight, a cached handle) would otherwise re-create an empty directory and
+// database for an erased account. Every per-user directory is created
+// through `ensureUserDirectory`, so the refusal lives there. The erasure
+// marks the id here and tells the other workers of the core over the
+// `cache` pub/sub scope. The set is per process and bounded: after a restart
+// nothing holds an erased id any more.
+
+const USER_ERASED = 'user-erased';
+const ERASED_MAX = 10000;
+const erased = new Set<string>();
+let listening = false;
+
+class ErasedUserError extends Error {
+  code = 'USER_ERASED';
+  constructor (userId: string) {
+    super('user directory erased: ' + userId);
+    this.name = 'ErasedUserError';
+  }
+}
+
+function eraseLocally (userId: string): void {
+  erased.delete(userId);
+  erased.add(userId);
+  if (erased.size > ERASED_MAX) erased.delete(erased.values().next().value as string);
+}
+
+function markErased (userId: string): void {
+  eraseLocally(userId);
+  try {
+    require('messages').pubsub.cache.emit(USER_ERASED, { userId });
+  } catch (err: unknown) {
+    // No pub/sub in this process (an operator tool): the local mark stands.
+  }
+}
+
+function listenForErasures (): void {
+  if (listening) return;
+  listening = true;
+  try {
+    require('messages').pubsub.cache.on(USER_ERASED, (msg: { userId?: unknown }) => {
+      if (typeof msg?.userId === 'string') eraseLocally(msg.userId);
+    });
+  } catch (err: unknown) {
+    listening = false; // no pub/sub in this process
+  }
+}
+
+function isErased (userId: string): boolean {
+  return erased.has(userId);
+}
+
+function clearErasedTestOnly (): void {
+  erased.clear();
+}
+
+// Test fixtures re-create accounts with fixed ids (`id === username`); the
+// API never lets a caller choose an id, so production never needs this.
+function forgetErasedTestOnly (userId: string): void {
+  erased.delete(userId);
+}
 
 // temporarly set baseBath for tests;
 function setBasePathTestOnly (path: string | undefined) {
@@ -44,6 +109,7 @@ function setBasePathTestOnly (path: string | undefined) {
  * This could also handle eventual migrations.
  */
 async function init () {
+  listenForErasures();
   if (basePath) return;
   config = await getConfig();
   const candidateBasePath = config.get('storages:engines:sqlite:path') as string | undefined;
@@ -61,6 +127,16 @@ async function init () {
  */
 async function ensureUserDirectory (userId: string, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
+  if (erased.has(userId)) {
+    // An erased account's directory is never created again; one kept by the
+    // erasure (audit `keep` mode) stays usable.
+    try {
+      await fs.stat(getPathForUser(userId));
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new ErasedUserError(userId);
+      throw err;
+    }
+  }
   await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
 }
@@ -107,9 +183,14 @@ function isInside (base: string, target: string): boolean {
  * @param [keep] -- names of entries directly in the user folder to retain:
  *   everything else in it is removed. When none of them exists, the folder
  *   itself is removed, as without `keep`.
+ * @param [options.erased] -- the account is erased: its directory is never
+ *   created again by this core (see `ensureUserDirectory`). Marked before the
+ *   removal, so a request landing in between is refused once its handle is
+ *   found stale.
  */
-async function deleteUserDirectory (userId: string, keep: string[] = []): Promise<void> {
+async function deleteUserDirectory (userId: string, keep: string[] = [], options: { erased?: boolean } = {}): Promise<void> {
   const userFolder = getPathForUser(userId);
+  if (options.erased) markErased(userId);
   if (keep.length > 0) {
     let entries: string[];
     try {

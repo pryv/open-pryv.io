@@ -44,6 +44,10 @@ require('@pryv/boiler').init({
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
     plugin: require('../config/plugins/core-identity')
+  }, {
+    // stdout carries the command's output (`templates get > file`): logs go to stderr.
+    scope: 'mail-cli-logs',
+    data: { logs: { console: { stderr: true } } }
   }]
 });
 

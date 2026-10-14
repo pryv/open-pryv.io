@@ -72,3 +72,54 @@ describe('[ULDK] userLocalDirectory.deleteUserDirectory with entries to keep', f
     assert.strictEqual(fs.existsSync(userDir), false);
   });
 });
+
+describe('[ULDE] userLocalDirectory: an erased account directory is not created again', function () {
+  before(async function () {
+    await userLocalDirectory.init();
+  });
+
+  afterEach(function () {
+    userLocalDirectory.clearErasedTestOnly();
+  });
+
+  it('[ULE1] after an erasure, ensureUserDirectory refuses and creates nothing', async function () {
+    const userId = cuid();
+    const userDir = await userLocalDirectory.ensureUserDirectory(userId);
+    await userLocalDirectory.deleteUserDirectory(userId, [], { erased: true });
+    assert.strictEqual(userLocalDirectory.isErased(userId), true);
+    await assert.rejects(userLocalDirectory.ensureUserDirectory(userId), (err) => err.code === 'USER_ERASED');
+    await assert.rejects(userLocalDirectory.ensureUserDirectory(userId, 'attachments'), (err) => err.code === 'USER_ERASED');
+    assert.strictEqual(fs.existsSync(userDir), false);
+  });
+
+  it('[ULE2] a directory kept by the erasure stays usable', async function () {
+    const userId = cuid();
+    const userDir = await userLocalDirectory.ensureUserDirectory(userId);
+    fs.writeFileSync(path.join(userDir, 'audit.sqlite'), 'a');
+    fs.writeFileSync(path.join(userDir, 'other.sqlite'), 'o');
+    try {
+      await userLocalDirectory.deleteUserDirectory(userId, ['audit.sqlite'], { erased: true });
+      assert.strictEqual(await userLocalDirectory.ensureUserDirectory(userId), userDir);
+      assert.deepStrictEqual(fs.readdirSync(userDir), ['audit.sqlite']);
+    } finally {
+      await userLocalDirectory.deleteUserDirectory(userId);
+    }
+  });
+
+  it('[ULE3] a plain removal (not an erasure) lets the directory be created again', async function () {
+    const userId = cuid();
+    const userDir = await userLocalDirectory.ensureUserDirectory(userId);
+    await userLocalDirectory.deleteUserDirectory(userId);
+    assert.strictEqual(await userLocalDirectory.ensureUserDirectory(userId), userDir);
+    assert.strictEqual(fs.existsSync(userDir), true);
+    await userLocalDirectory.deleteUserDirectory(userId);
+  });
+
+  it('[ULE4] an erasure announced by another worker is refused here too', async function () {
+    const userId = cuid();
+    require('messages').pubsub.cache._emit(userLocalDirectory.USER_ERASED, { userId });
+    assert.strictEqual(userLocalDirectory.isErased(userId), true);
+    await assert.rejects(userLocalDirectory.ensureUserDirectory(userId), (err) => err.code === 'USER_ERASED');
+    assert.strictEqual(fs.existsSync(userLocalDirectory.getPathForUser(userId)), false);
+  });
+});

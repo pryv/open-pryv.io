@@ -230,7 +230,9 @@ class Deletion {
           }
         }
       }
-      await userLocalDirectory.deleteUserDirectory(context.user.id, keep);
+      // Let go of this process's account-file handle before the file goes.
+      require('storages').userAccountStorage?.closeUser?.(context.user.id);
+      await userLocalDirectory.deleteUserDirectory(context.user.id, keep, { erased: true });
     } catch (err: unknown) {
       this.logger.error(err, err);
       return next(errors.unexpectedError(err));

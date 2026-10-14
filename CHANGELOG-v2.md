@@ -10,6 +10,10 @@
   its templates, the request now answers 503 `api-unavailable` (the template is stored; repeat the
   request). Workers of the other cores still load it at their next start, and `bin/mail.js` writes
   still need a restart.
+- Operators: the command-line tools `bin/mail.js`, `dns-records.js`, `breach-scope.js`,
+  `integrity-check.js`, `observability.js` and `oauth-client.js` now write their logs to stderr, so
+  their stdout holds only their output (a `bin/mail.js templates get … > file` backup used to start
+  with a log line). Scripts that read these tools' logs from stdout read them from stderr now.
 
 ## 2.0.0-rc.52 - 2026-10-14
 

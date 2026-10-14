@@ -23,6 +23,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 import { fileIdentity } from '../fileIdentity.ts';
+import { closeQuietly } from '../closeQuietly.ts';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 
@@ -59,7 +60,7 @@ class SeriesConnectionSQLite {
     this.logger = _internals.getLogger('sqlite-series');
     this.cache = new LRU({
       max: CACHE_SIZE,
-      dispose: (db: SeriesDb) => db.close()
+      dispose: (db: SeriesDb, key: string) => closeQuietly(() => db.close(), this.logger, 'series database ' + key)
     });
   }
 
@@ -84,11 +85,8 @@ class SeriesConnectionSQLite {
    */
   async dropDatabase (name: string): Promise<void> {
     this.logger.debug(`dropDatabase: ${name}`);
-    const cached = this.cache.get(name);
-    if (cached) {
-      cached.close();
-      this.cache.delete(name);
-    }
+    // Removing the entry closes the handle (dispose), before the files go.
+    this.cache.delete(name);
     const dbPath = this.existingPathForUser(name);
     const dirPath = path.dirname(dbPath);
     for (const file of [dbPath, dbPath + '-wal', dbPath + '-shm']) {

@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const cuid = require('cuid');
 const SQLite3 = require('better-sqlite3');
+const fs = require('node:fs');
 
 const helpers = require('../../../test/helpers');
 const { SqliteStorage: Storage } = require('../src/userSQLite/Storage.ts');
@@ -101,7 +102,8 @@ describe('[SQXH] SQLite per-user handles follow the file on disk', function () {
 
   // Account deletion wipes the whole user directory, in whichever process
   // handles the request; the baseStorage handle cache of every process must
-  // let go of the erased file.
+  // let go of the erased file. (A plain wipe, as here, lets the file be
+  // created again; an erasure-marked one does not, see [SQXE].)
   it('[SQXR] a baseStorage file erased with the user directory is not served from a cached handle', async function () {
     const userId = cuid();
     const opts = { withDeleted: true, withHeadId: false };
@@ -125,6 +127,34 @@ describe('[SQXH] SQLite per-user handles follow the file on disk', function () {
       }
     } finally {
       UserBaseStorageDb.evict(userId);
+      await userLocalDirectory.deleteUserDirectory(userId);
+    }
+  });
+
+  // After an account erasure, a request still holding the id must not create
+  // the user's directory and databases again: every opener refuses.
+  it('[SQXE] after an account erasure, no per-user database is opened or created again', async function () {
+    const userId = cuid();
+    const storage = new Storage('sqxe-' + cuid.slug());
+    await storage.init();
+    // The SQLite account store itself (the barrel picks the base storage engine's).
+    const { userAccountStorage: accountStorage } = require('../src/userAccountStorage.ts');
+    await accountStorage.init();
+    try {
+      await (await UserBaseStorageDb.forUser(userId)).ensureTable('sqxe', { withDeleted: true, withHeadId: false });
+      await (await storage.forUser(userId)).createEvent(event('before'));
+      await accountStorage.addPasswordHash(userId, 'hash', 'test');
+
+      await userLocalDirectory.deleteUserDirectory(userId, [], { erased: true });
+
+      await assert.rejects(UserBaseStorageDb.forUser(userId), /erased/);
+      await assert.rejects(storage.forUser(userId), /erased/);
+      await assert.rejects(accountStorage.getPasswordHash(userId), /erased/);
+      assert.strictEqual(fs.existsSync(userLocalDirectory.getPathForUser(userId)), false, 'nothing was created again');
+      assert.strictEqual(UserBaseStorageDb.cache.has(userId), false, 'the stale base storage handle was dropped');
+      assert.strictEqual(storage.userDBsCache.has(userId), false, 'the stale events handle was dropped');
+    } finally {
+      userLocalDirectory.clearErasedTestOnly();
       await userLocalDirectory.deleteUserDirectory(userId);
     }
   });

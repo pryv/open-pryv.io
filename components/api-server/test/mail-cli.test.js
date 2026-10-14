@@ -22,10 +22,10 @@ const cuid = require('cuid');
 const CLI = path.resolve(__dirname, '../../../bin/mail.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
-function runCli (args) {
+function runCli (args, extraEnv = {}) {
   const res = spawnSync('node', [CLI, ...args], {
     cwd: REPO_ROOT,
-    env: { ...process.env, ...childStorageEngineEnv() },
+    env: { ...process.env, ...childStorageEngineEnv(), ...extraEnv },
     encoding: 'utf8',
     timeout: 30000
   });
@@ -133,6 +133,23 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'subject'), '| from-disk');
 
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('[MCL10] templates get prints only the template on stdout, logs go to stderr', async () => {
+    const type = 'welcome-' + cuid();
+    const tmpFile = path.join(os.tmpdir(), 'pryv-mailcli-' + cuid() + '.pug');
+    const src = 'p Hello from MAILCLI ' + cuid();
+    await fs.writeFile(tmpFile, src, 'utf8');
+    try {
+      assert.strictEqual(runCli(['templates', 'set', type, 'en', 'html', '--file', tmpFile]).status, 0);
+      // Console logs forced on: a `get > file` backup must still hold the template alone.
+      const getRes = runCli(['templates', 'get', type, 'en', 'html'], { LOGS: 'debug' });
+      assert.strictEqual(getRes.status, 0, getRes.stderr);
+      assert.strictEqual(getRes.stdout, src + '\n');
+      assert.ok(getRes.stderr.length > 0, 'the logs are on stderr');
+    } finally {
+      await fs.unlink(tmpFile);
+    }
   });
 
   it('[MCL08] templates get on missing row exits non-zero with a diagnostic', () => {

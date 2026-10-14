@@ -553,6 +553,9 @@ logs:
   console:
     active: false
     level: info
+    # true: every console level goes to stderr instead of stdout (set by
+    # command-line tools whose stdout is their output, e.g. bin/mail.js)
+    stderr: false
   file:
     active: false
     path: "var-pryv/logs/core.log"

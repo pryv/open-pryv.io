@@ -305,8 +305,11 @@ describe('[DCRE] create-from-delegate + majority handover (in-process integratio
     assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'the name is free');
     // first: the access lookup opens (and so creates) the per-user SQLite files
     assert.strictEqual(require('node:fs').existsSync(userLocalDirectory.getPathForUser(newUserId)), false, 'no user directory left');
+    // A per-user store refuses to open the erased account's files again
+    // (SQLite); a shared store finds nothing (PostgreSQL).
     const accesses = await new Promise((resolve, reject) => storageLayer.accesses.find(
-      { id: newUserId }, {}, null, (err, list) => err ? reject(err) : resolve(list)));
+      { id: newUserId }, {}, null, (err, list) => err ? reject(err) : resolve(list)))
+      .catch((err) => { if (/erased/.test(err?.message)) return []; throw err; });
     assert.deepStrictEqual(accesses, [], 'the control access is gone');
   });
 

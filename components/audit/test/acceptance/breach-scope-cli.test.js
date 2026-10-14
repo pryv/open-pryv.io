@@ -22,13 +22,13 @@ const { childStorageEngineEnv } = require('test-helpers');
 const CLI = path.resolve(__dirname, '../../../../bin/breach-scope.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../../');
 
-function runCli (args) {
+function runCli (args, extraEnv = {}) {
   const res = spawnSync('node', [CLI, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 60000,
     // inherit NODE_ENV=test + rqlite/PG/pepper injection, and the run's storage engines
-    env: { ...process.env, ...childStorageEngineEnv() }
+    env: { ...process.env, ...childStorageEngineEnv(), ...extraEnv }
   });
   return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
 }
@@ -122,6 +122,13 @@ describe('[BRSC] bin/breach-scope.js CLI', function () {
     assert.ok(yoStream, 'yo stream present in dataCategories');
     assert.strictEqual(yoStream.name, 'YO', 'stream-name resolution filled the name');
     assert.strictEqual(yoStream.resolvedAtReportTime, true);
+  });
+
+  it('[BRSC7] --json output stays parseable with console logs on (logs go to stderr)', function () {
+    const res = runCli(['--access', appAccessId, '--since', sinceIso, '--until', untilIso, '--json'], { LOGS: 'debug' });
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(JSON.parse(res.stdout).reportVersion, 1);
+    assert.ok(res.stderr.length > 0, 'the logs are on stderr');
   });
 
   it('[BRSC2] --output writes both a .json and a .md file', function () {

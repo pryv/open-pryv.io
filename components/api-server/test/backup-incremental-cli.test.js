@@ -222,7 +222,16 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     const streamB = 'bkic-b-' + cuid.slug();
     const b = await fixtures.user(userB);
     await b.stream({ id: streamB, name: 'BKIC B stream' });
-    const streamsOfB = async () => (await fromCallback((cb) => storageLayer.streams.exportAll({ id: userB }, cb))).map((s) => s.id);
+    // After the deletion this process refuses to open B's files while they are
+    // absent (the account was erased here): read that as "no streams".
+    const streamsOfB = async () => {
+      try {
+        return (await fromCallback((cb) => storageLayer.streams.exportAll({ id: userB }, cb))).map((s) => s.id);
+      } catch (err) {
+        if (err?.code === 'USER_ERASED' || /erased/.test(err?.message)) return [];
+        throw err;
+      }
+    };
     assert.ok((await streamsOfB()).includes(streamB), 'control: B has its stream');
 
     assertOk(runCli(['--output', dir]), 'whole-core full backup');

@@ -53,6 +53,10 @@ require('@pryv/boiler').init({
   baseFilesDir: path.resolve(__dirname, '../'),
   baseConfigDir: path.resolve(__dirname, '../config/'),
   extraConfigs: [{
+    // stdout carries the command's output: logs go to stderr.
+    scope: 'cli-logs-stderr',
+    data: { logs: { console: { stderr: true } } }
+  }, {
     scope: 'default-paths',
     file: path.resolve(__dirname, '../config/plugins/paths-config.js')
   }, {

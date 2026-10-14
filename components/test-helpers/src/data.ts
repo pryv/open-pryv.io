@@ -47,6 +47,7 @@ export const resetUsers = async () => {
   await usersRepository.deleteAll();
   for (const user of users) {
     const userObj = new User(deepMerge(customAccountProperties, user)); // might alter storage "dump data" script
+    userLocalDirectory.forgetErasedTestOnly(userObj.id); // fixed ids, possibly erased by an earlier test
     await usersRepository.insertOne(userObj, false, true);
   }
 };
@@ -240,4 +241,5 @@ function buildCustomAccountProperties () {
 function deleteUsersDataDirectory () {
   const basePath = userLocalDirectory.getBasePath();
   fs.rmSync(basePath, { recursive: true, force: true });
+  userLocalDirectory.clearErasedTestOnly();
 }

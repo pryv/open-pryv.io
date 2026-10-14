@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 import { fileIdentity } from '../fileIdentity.ts';
+import { closeQuietly } from '../closeQuietly.ts';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -18,6 +19,7 @@ const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { _internals } = require('../_internals.ts');
 
 const CACHE_SIZE = 500;
+const baseStorageLogger = _internals.lazyLogger('sqlite-base-storage');
 const VERSION = '1.0.0';
 
 /**
@@ -48,7 +50,7 @@ type UserDbLRU = {
 class UserBaseStorageDb {
   static cache: UserDbLRU = new LRU({
     max: CACHE_SIZE,
-    dispose (db: UserBaseStorageDb, _key: string) { db.db?.close(); }
+    dispose (db: UserBaseStorageDb, key: string) { closeQuietly(() => db.db?.close(), baseStorageLogger, 'base storage database of ' + key); }
   });
 
   /** Opens in progress, shared by concurrent callers for the same user. */

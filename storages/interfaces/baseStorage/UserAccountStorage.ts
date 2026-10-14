@@ -69,6 +69,13 @@ export interface UserAccountStorage {
   _exportAll (userId: string): Promise<UserAccountStorageExport>;
   _importAll (userId: string, data: UserAccountStorageExport): Promise<void>;
   _clearAll (userId: string): Promise<void>;
+
+  /**
+   * Release whatever this process holds open for the user (the account
+   * deletion calls it before wiping the user directory). Engines with no
+   * per-user handle keep the default no-op.
+   */
+  closeUser (userId: string): void;
 }
 
 /**
@@ -110,7 +117,9 @@ const UserAccountStorage: UserAccountStorage = {
 
   async _importAll (userId: string, data: UserAccountStorageExport): Promise<void> { throw new Error('Not implemented'); },
 
-  async _clearAll (userId: string): Promise<void> { throw new Error('Not implemented'); }
+  async _clearAll (userId: string): Promise<void> { throw new Error('Not implemented'); },
+
+  closeUser (userId: string): void {}
 };
 
 // Limit tampering on existing properties

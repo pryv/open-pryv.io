@@ -286,7 +286,10 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   // LOG_FORMAT env var can force the structured console output
   const jsonMode = process.env.LOG_FORMAT === 'json' || logConsole.format?.json === true;
   const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(logConsole.format);
-  const myconsole = new winston.transports.Console({ format: consoleFormat, level: logConsole.level, silent: isSilent });
+  // `logs.console.stderr`: every level on stderr, for a CLI whose stdout is
+  // its output (e.g. `bin/mail.js templates get > file`).
+  const stderrLevels = config.get('logs:console:stderr') === true ? Object.keys(winston.config.npm.levels) : undefined;
+  const myconsole = new winston.transports.Console({ format: consoleFormat, level: logConsole.level, silent: isSilent, stderrLevels });
   winstonInstance!.add(myconsole);
 
   rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', logConsole.level);

@@ -286,6 +286,9 @@ class FixtureUser extends FixtureItem {
     const attributes = this.attrs;
     const usersRepository = await getUsersRepository();
     const userObj = new User(attributes);
+    // Fixture ids are fixed (id === username): a test may erase an account
+    // and create it again under the same id.
+    require('storage').userLocalDirectory.forgetErasedTestOnly(userObj.id);
     await usersRepository.insertOne(userObj, false, true);
     return this.attrs;
   }
@@ -293,6 +296,9 @@ class FixtureUser extends FixtureItem {
   async remove () {
     const username = this.context.userName;
     const usersRepository = await getUsersRepository();
+    // Fixture ids are fixed (id === username): an earlier test may have
+    // erased this account; its leftovers are cleaned like any other.
+    require('storage').userLocalDirectory.forgetErasedTestOnly(this.context.user.id);
     // Delete user FIRST while events still exist — deleteOne calls getUserById
     // which reads system-stream events (including email) so that
     // platform.deleteUser can properly clean up unique fields.

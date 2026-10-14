@@ -27,6 +27,38 @@
 - Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
   written to `/var/run/syslog` are not observable there.
 
+## Erased accounts stay erased on disk; SQLite handle caches
+
+- Account erasure: no process of the core creates an erased account's per-user directory again.
+  `userLocalDirectory.deleteUserDirectory(id, keep, { erased: true })` (the erasure chain; not the
+  failed-registration rollback, whose id nobody outside holds) marks the id before the removal and announces it to the other
+  workers on the `cache` pub/sub scope (`user-erased`); `ensureUserDirectory`, through which every
+  per-user directory is created, then refuses that id (`ErasedUserError`, code `USER_ERASED`)
+  unless the directory still exists (audit `keep` mode). Before, a request already holding the id
+  (a login in flight, a cached handle) re-created an empty directory and database. Residuals: a
+  worker that opens within the pub/sub propagation window, the per-process set (bounded at 10 000,
+  forgotten at restart, when nothing holds the id any more), a `bin/backup.js` run started before
+  the erasure, and series namespaces (still handled by the second drop). A request racing its own
+  account's erasure now fails (500) instead of answering from an empty file. Tests: storage
+  `[ULE1]`..`[ULE4]`, sqlite `[SQXE]`, api-server `[DKP2]`, `[DKP3]`, `[UDRE]`.
+- `UserAccountStorage.closeUser(userId)` (interface, default no-op; SQLite drops the cached
+  connection), called by the erasure before the wipe.
+- SQLite read-only exports (`openUserEventsDbSafe` with `create=false`) no longer create the user
+  directory.
+- SQLite per-user handle caches (events / audit, account, base storage, series): a `close()` that
+  throws in the LRU `dispose` (better-sqlite3 refuses while a statement iterator is open) is logged
+  and the entry still leaves the cache; it used to make `delete()` throw and keep the stale handle.
+  Tests: sqlite `[SQDC1]`..`[SQDC3]`.
+- Test fixtures (fixed ids, `id === username`) forget an id's erasure mark when they re-create or
+  remove that account (`forgetErasedTestOnly`); the test-data reset clears the marks. The deletion
+  tests that read a deleted user's stores to check they are empty do the same before reading.
+- Command-line tools whose stdout is their output (`bin/mail.js`, `dns-records.js`,
+  `breach-scope.js`, `integrity-check.js`, `observability.js`, `oauth-client.js`) send their logs to
+  stderr (new boiler option `logs.console.stderr`, set by each tool's extra config), so `templates
+  get > file`, `breach-scope --json | jq` and the like carry the output alone; before, a log line
+  ("PostgreSQL schema initialized", or any line when console logs are active) landed in it. Tests:
+  api-server `[MCL10]`, audit `[BRSC7]`.
+
 ## Log file size cap, admin username reservation shape
 
 - `boiler/src/logging.ts`: the rotating transport takes `rotation.maxSize` (validated: a number

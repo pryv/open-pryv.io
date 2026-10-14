@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import { fileIdentity } from '../fileIdentity.ts';
+import { closeQuietly } from '../closeQuietly.ts';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -47,9 +48,10 @@ class SqliteStorage {
     this.id = id;
     this.logger = _internals.getLogger(this.id + ':storage');
     this.options = options || {};
+    const logger = this.logger;
     this.userDBsCache = new LRU({
       max: this.options.max || CACHE_SIZE,
-      dispose: function (db: UserDbLike, _key: string) { db.close(); }
+      dispose: function (db: UserDbLike, key: string) { closeQuietly(() => db.close(), logger, 'database of ' + key); }
     });
   }
 
