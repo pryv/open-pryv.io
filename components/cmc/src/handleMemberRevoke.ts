@@ -37,6 +37,7 @@
 import * as C from './constants.ts';
 import * as outbound from './outbound.ts';
 import * as ledger from './memberLedger.ts';
+import { coveredScopesOf } from './accessesUpdateHook.ts';
 import { CmcErrorIds } from './errorIds.ts';
 import type { CmcLogger, MallLike, OutboundDeps } from './_types.ts';
 import type { StoredLedgerRecord } from './memberLedger.ts';
@@ -119,30 +120,38 @@ async function revokeRecords (params: {
   const residuals: Residual[] = [];
   let firstResidual: (ChildVerdict & { childAccessId: string }) | undefined;
 
-  // The grant of each relationship, read once.
-  const grants = new Map<string, string | null>();
-  async function grantOf (relationshipAccessId: string): Promise<string | null> {
-    if (grants.has(relationshipAccessId)) return grants.get(relationshipAccessId)!;
-    let endpoint: string | null = null;
+  // The grant of each relationship, read once. Three outcomes: the endpoint;
+  // `gone` (no such live access, or one without an endpoint); `unreadable`
+  // (the read failed: nothing can be concluded, the record stays residual
+  // and is retried).
+  type GrantLookup = { endpoint: string } | { endpoint: null; why: 'gone' | 'unreadable' };
+  const grants = new Map<string, GrantLookup>();
+  async function grantOf (relationshipAccessId: string): Promise<GrantLookup> {
+    const cached = grants.get(relationshipAccessId);
+    if (cached != null) return cached;
+    let lookup: GrantLookup;
     try {
       const rel = deps.mall.accesses.getOne != null
         ? await deps.mall.accesses.getOne(userId, { id: relationshipAccessId })
         : (await deps.mall.accesses.get(userId, {})).find((a) => a?.id === relationshipAccessId) ?? null;
       const ep = rel?.clientData?.cmc?.counterparty?.apiEndpoint;
-      endpoint = typeof ep === 'string' && ep.length > 0 ? ep : null;
+      lookup = typeof ep === 'string' && ep.length > 0 ? { endpoint: ep } : { endpoint: null, why: 'gone' };
     } catch (_e) {
-      endpoint = null;
+      lookup = { endpoint: null, why: 'unreadable' };
     }
-    grants.set(relationshipAccessId, endpoint);
-    return endpoint;
+    grants.set(relationshipAccessId, lookup);
+    return lookup;
   }
 
   const verdicts = new Map<string, { record: StoredLedgerRecord; verdict: ChildVerdict; grant: string | null }>();
   for (const record of records) {
     if (record.state === 'deleted' || record.state === 'absent') continue;
-    const grant = await grantOf(record.relationshipAccessId);
+    const lookup = await grantOf(record.relationshipAccessId);
+    const grant = lookup.endpoint;
     let verdict: ChildVerdict;
-    if (grant == null) {
+    if (grant == null && lookup.why === 'unreadable') {
+      verdict = { result: 'residual', reason: 'relationship-unreadable' };
+    } else if (grant == null) {
       // The relationship ended on this side: its grant was revoked and the
       // patient core took the children with it (a core of an older release
       // leaves them until their own expiry; nothing can reach them any more).
@@ -222,14 +231,35 @@ async function handleMemberRevoke (params: {
   const limitTo = content.reason === 'narrowed'
     ? new Set(snapshot.map((s) => s.relationshipAccessId))
     : null;
+  // A narrowed membership judged at handling time, not only from the
+  // snapshot: a membership widened again since (or a mint that passed the
+  // gate after the narrowing) keeps what the live membership still covers.
+  let stillCovered: string[] | null = null;
+  if (limitTo != null && membershipAccessId != null) {
+    try {
+      const membership = deps.mall.accesses.getOne != null
+        ? await deps.mall.accesses.getOne(userId, { id: membershipAccessId })
+        : (await deps.mall.accesses.get(userId, {})).find((a) => a?.id === membershipAccessId) ?? null;
+      if (membership != null && Array.isArray(membership.permissions)) stillCovered = coveredScopesOf(membership);
+    } catch (_e) { /* judged from the snapshot */ }
+  }
+  const coveredNow = (scope: unknown): boolean =>
+    stillCovered != null && typeof scope === 'string' && stillCovered.some((s) => scope === s || scope.startsWith(s + ':'));
   const settled = new Set<string>();
+  // Children a narrowed sweep keeps: the live membership covers their scope.
+  const kept = new Set<string>();
   const outcome: Outcome[] = [];
   const residuals: Residual[] = [];
   let firstResidual: (ChildVerdict & { childAccessId: string }) | undefined;
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const all = membershipAccessId == null ? [] : await ledger.recordsOfMembership(ledgerDeps, userId, membershipAccessId);
-    const wanted = all.filter((r) => !settled.has(r.eventId) && (r.state === 'live' || r.state === 'residual') &&
-      (limitTo == null || limitTo.has(r.relationshipAccessId)));
+    const wanted = all.filter((r) => {
+      if (settled.has(r.eventId) || (r.state !== 'live' && r.state !== 'residual')) return false;
+      if (limitTo == null) return true;
+      if (!limitTo.has(r.relationshipAccessId)) return false;
+      if (coveredNow(r.scopeStreamId)) { kept.add(r.childAccessId); return false; }
+      return true;
+    });
     if (wanted.length === 0) break;
     const r = await revokeRecords({ userId, records: wanted, deps });
     for (const w of wanted) settled.add(w.eventId);
@@ -240,6 +270,7 @@ async function handleMemberRevoke (params: {
   // Snapshot records the ledger no longer has (pruned between the write and
   // a retry): reported absent so the trigger's record is complete.
   for (const s of snapshot) {
+    if (kept.has(s.childAccessId)) continue;
     if (!outcome.some((o) => o.childAccessId === s.childAccessId)) {
       outcome.push({ childAccessId: s.childAccessId, result: 'absent', reason: 'not-in-ledger' });
     }

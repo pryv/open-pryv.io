@@ -338,16 +338,94 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       await seed(mall, { childAccessId: 'c-settled', expires: NOW - 5, state: 'deleted' });
       await seed(mall, { childAccessId: 'c-live' });
       const cores = fakeCores();
-      const { sweep } = sweepOf(mall, cores);
-      const r = await sweep.runLedgerPass('group');
-      assert.deepEqual(r, { swept: 2, expired: 1, pruned: 2 });
+      let clock = NOW;
+      const { sweep } = sweepOf(mall, cores, { now: () => clock });
+      // The vanished membership is left to the path that deleted it on the
+      // pass that first sees it gone, and swept on a later pass.
+      let r = await sweep.runLedgerPass('group');
+      assert.deepEqual(r, { swept: 1, expired: 1, residuals: 0, pruned: 2 });
+      assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/accesses/c-exp-m']);
+      clock = NOW + 31;
+      r = await sweep.runLedgerPass('group');
+      assert.deepEqual(r, { swept: 1, expired: 0, residuals: 0, pruned: 0 });
       const deleted = cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path).sort();
       assert.deepEqual(deleted, ['/accesses/c-exp-m', '/accesses/c-gone-m']);
       const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
       assert.deepEqual(left, { 'c-exp-m': 'deleted', 'c-gone-m': 'deleted', 'c-live': 'live' });
       const sweeps = mall.calls.eventsCreated.filter((e) => e.type === C.ET_MEMBER_REVOKE);
-      assert.deepEqual(sweeps.map((e) => e.content.reason), ['expired', 'expired']);
+      assert.deepEqual(sweeps.map((e) => e.content.reason), ['expired', 'vanished']);
       assert.deepEqual(sweeps.find((e) => e.content.membershipAccessId === 'acc-gone').content.member, MEMBER, 'a vanished membership is named from its records');
+    });
+
+    it('[MR25] the periodic pass re-sweeps the residuals of earlier sweeps through their grants, a bounded number per pass, and writes no new record', async () => {
+      const mall = fakeMall();
+      await seed(mall, { childAccessId: 'c-res', state: 'residual' });
+      await seed(mall, { childAccessId: 'c-res-old', state: 'residual', expires: NOW - 1 });
+      await seed(mall, { childAccessId: 'c-still', state: 'residual', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
+      const cores = fakeCores({ deletes: { 'c-still': { status: 503, body: {} } }, remaining: { 'grant2-tok': ['c-still'] } });
+      const { sweep } = sweepOf(mall, cores);
+      const r = await sweep.runLedgerPass('group');
+      assert.deepEqual(r, { swept: 0, expired: 0, residuals: 1, pruned: 1 });
+      const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
+      assert.deepEqual(left, { 'c-res': 'deleted', 'c-still': 'residual' });
+      assert.equal(mall.calls.eventsCreated.filter((e) => e.type === C.ET_MEMBER_REVOKE).length, 0);
+    });
+
+    it('[MR26] a relationship that cannot be read leaves the record residual (retried), unlike one that is gone (absent)', async () => {
+      const mall = fakeMall();
+      const rec = await seed(mall);
+      const getOne = mall.accesses.getOne;
+      mall.accesses.getOne = async (u, p) => { if (p.id === 'acc-rel') throw new Error('storage down'); return getOne(u, p); };
+      const cores = fakeCores();
+      const r = await revokeRecords({ userId: 'group', records: [rec], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [{ childAccessId: 'child-1', result: 'residual', reason: 'relationship-unreadable' }]);
+      assert.equal(cores.calls.length, 0);
+      assert.equal((await ledger.listRecords({ mall }, 'group'))[0].state, 'residual');
+    });
+
+    it('[MR27] a narrowed sweep keeps the children whose scope the live membership covers at handling time, with no outcome entry for them', async () => {
+      const mall = fakeMall();
+      await seed(mall);
+      await seed(mall, { childAccessId: 'c-b', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
+      const cores = fakeCores();
+      const trigger = {
+        id: 'sweep-n',
+        type: C.ET_MEMBER_REVOKE,
+        streamIds: [TEAM],
+        content: {
+          member: MEMBER,
+          membershipAccessId: 'acc-membership',
+          reason: 'narrowed',
+          status: 'pending',
+          records: [
+            { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'child-1', expires: NOW + 3600 },
+            { relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, childAccessId: 'c-b', expires: NOW + 3600 },
+          ],
+        },
+      };
+      mall.eventsMap.set('sweep-n', trigger);
+      const r = await handleMemberRevoke({ userId: 'group', triggerEvent: trigger, deps: revokeDeps(mall, cores) });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(r.outcome, [{ childAccessId: 'c-b', result: 'deleted' }], 'team A is still covered: child-1 kept');
+      assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/accesses/c-b']);
+      const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
+      assert.deepEqual(left, { 'child-1': 'live', 'c-b': 'deleted' });
+    });
+
+    it('[MR28] an erased group account: its children deleted through the grants from one ledger read, concurrently, nothing written', async () => {
+      const mall = fakeMall();
+      await seed(mall);
+      await seed(mall, { childAccessId: 'c-b', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
+      await seed(mall, { childAccessId: 'c-orphan', relationshipAccessId: 'acc-unknown' });
+      await seed(mall, { childAccessId: 'c-done', state: 'deleted' });
+      const cores = fakeCores({ deletes: { 'c-b': { status: 503, body: {} } } });
+      const created = mall.calls.eventsCreated.length;
+      const { sweep } = sweepOf(mall, cores);
+      const r = await sweep.sweepErasedAccount('group', [REL, REL2]);
+      assert.deepEqual(r, { records: 3, residuals: 1 });
+      assert.deepEqual(cores.calls.map((c) => c.method + ' ' + c.path).sort(), ['DELETE /accesses/c-b', 'DELETE /accesses/child-1']);
+      assert.equal(mall.calls.eventsCreated.length, created, 'nothing written');
+      assert.equal(mall.calls.eventsUpdated.length, 0);
     });
   });
 
@@ -453,7 +531,7 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
 
     it('[MR41] the boot starts the ledger pass beside the retry loop, eagerly then on its interval', async () => {
       const passes = [];
-      const memberSweep = { async runLedgerPass (userId) { passes.push(userId); return { swept: 0, expired: 0, pruned: 0 }; } };
+      const memberSweep = { async runLedgerPass (userId) { passes.push(userId); return { swept: 0, expired: 0, residuals: 0, pruned: 0 }; } };
       const config = { get: (k) => ({ 'cmc:retryLoop:enabled': true, 'cmc:retryLoop:intervalMs': 60_000, 'cmc:memberAccess:sweepIntervalMs': 60_000 })[k] };
       const scheduler = startRetryLoopIfEnabled({ config, mall: fakeMall(), selfIdentityFor: () => GROUP, fetch: async () => ({}), userIdsProvider: async () => ['u1', 'u2'], isLoopWorker: () => true, memberSweep });
       assert.ok(scheduler != null);
@@ -461,6 +539,15 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual(passes, ['u1', 'u2']);
       await scheduler.stop();
       await scheduler.ledgerScheduler.stop();
+    });
+
+    it('[MR42] the loop off is a warning at boot naming what is not retried', async () => {
+      const warned = [];
+      const config = { get: (k) => ({ 'cmc:retryLoop:enabled': false })[k] };
+      const scheduler = startRetryLoopIfEnabled({ config, mall: fakeMall(), selfIdentityFor: () => GROUP, fetch: async () => ({}), userIdsProvider: async () => [], logger: { warn: (m) => warned.push(m), info () {}, debug () {} } });
+      assert.equal(scheduler, null);
+      assert.equal(warned.length, 1);
+      assert.ok(warned[0].includes('revoke notices are not retried'));
     });
   });
 });

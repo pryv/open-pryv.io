@@ -32,10 +32,11 @@
  * structurally: an access can only be deleted once, so at most one
  * revoke delivery is ever attempted per access.
  *
- * Delivery is best-effort + fire-and-forget: by the time the hook runs
- * the access is already deleted (the authoritative signal); a delivery
- * failure only delays the peer's bookkeeping — mirroring handleRevoke's
- * "local revocation is authoritative" semantics.
+ * Delivery is fire-and-forget: by the time the hook runs the access is
+ * already deleted (the authoritative signal); a delivery failure only
+ * delays the peer's bookkeeping — mirroring handleRevoke's "local
+ * revocation is authoritative" semantics — and a peer still down after
+ * the in-request attempts gets the notice queued for the retry loop.
  *
  * What the peer does with the delivery: `handleIncomingRevoke` deletes the
  * access the revoke arrived through, which is our access on their account. So
@@ -55,6 +56,7 @@ import * as outbound from './outbound.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as inviteState from './inviteState.ts';
 import * as acceptWithdrawal from './acceptWithdrawal.ts';
+import * as retryQueue from './retryQueue.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
 import type { MemberSweep } from './memberSweep.ts';
 
@@ -71,6 +73,10 @@ type DeleteHookDeps = OutboundDeps & {
   memberSweep?: Pick<MemberSweep, 'sweepMembership' | 'sweepRelationship'>;
   sweepReason?: string;
   sweepPersist?: boolean;
+  // A notice the peer could not take is queued for the retry loop (needs
+  // `mall`); false when the loop is off, so the queue does not grow for
+  // nothing.
+  enqueueRetries?: boolean;
 };
 
 type DeleteHookResult = {
@@ -79,6 +85,7 @@ type DeleteHookResult = {
   reason?: string;
   peerNotified?: boolean;
   peerDeliveryStatus?: number;
+  deliveryQueued?: boolean;
   /** Whether the withdrawal was recorded on the accept event: false when
    * nothing was written (requester side, a skip, a failure), absent when no
    * `mall` dep was wired. */
@@ -133,7 +140,9 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
             await deps.memberSweep.sweepRelationship(userId, access);
           }
         } catch (err: unknown) {
-          deps.logger?.warn?.('cmc/accessesDeleteHook: the member sweep failed (the periodic pass will retry)', {
+          // A membership: the periodic pass sweeps it as vanished. A
+          // relationship: the patient core of this release cascades anyway.
+          deps.logger?.warn?.('cmc/accessesDeleteHook: the member sweep failed', {
             accessId: access.id, error: String((err as Error)?.message ?? err),
           });
         }
@@ -225,23 +234,21 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
       if (typeof revokedScope === 'string') content.scopeStreamId = revokedScope;
 
       // Bounded in-request retry, same rationale as handleRevoke: the
-      // access is already deleted, so a queued retry could not re-derive
-      // the endpoint without persisting a peer token in user data.
+      // access is already deleted, so a queued retry of the DELETE could
+      // not re-derive the endpoint; a peer still down afterwards gets the
+      // notice itself queued (endpoint included) for the retry loop.
       let delivered = false;
+      let retryable = true;
       let lastStatus: number | undefined;
       let lastReason = 'cmc-revoke-delivery-failed';
+      const body = { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content };
       for (let attempt = 1; attempt <= 3 && !delivered; attempt++) {
         try {
-          const delivery = await outbound.postToPeer({
-            apiEndpoint,
-            path: 'events',
-            body: { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content },
-            deps,
-          });
+          const delivery = await outbound.postToPeer({ apiEndpoint, path: 'events', body, deps });
           lastStatus = delivery.status;
           if (delivery.ok) { delivered = true; break; }
           lastReason = (delivery as { reason?: string }).reason ?? lastReason;
-          if (!outbound.isRetryableFailure(delivery)) break;
+          if (!outbound.isRetryableFailure(delivery)) { retryable = false; break; }
         } catch (err: unknown) {
           lastReason = 'cmc-revoke-delivery-threw';
           deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery threw', {
@@ -254,7 +261,26 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
         }
       }
-      if (!delivered) {
+      let deliveryQueued: boolean | undefined;
+      if (!delivered && retryable && deps.enqueueRetries !== false && deps.mall?.events?.create != null) {
+        try {
+          await retryQueue.enqueueDelivery({
+            userId,
+            delivery: { apiEndpoint, path: 'events', body },
+            originalEventId: null,
+            originalType: C.ET_REVOKE,
+            failureReason: lastReason,
+            failureDetail: { status: lastStatus },
+            deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
+          });
+          deliveryQueued = true;
+        } catch (err: unknown) {
+          deps.logger?.error?.('cmc/accessesDeleteHook: the revoke notice could not be queued', {
+            accessId: access.id, error: String((err as Error)?.message ?? err),
+          });
+        }
+      }
+      if (!delivered && deliveryQueued !== true) {
         // Same reasoning as the no-endpoint branch: no trigger event
         // exists to carry this, so the log is the only place a lost
         // consent-withdrawal notification can surface.
@@ -270,6 +296,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         peerNotified: delivered,
         peerDeliveryStatus: lastStatus,
         ...(delivered ? {} : { reason: lastReason }),
+        ...(deliveryQueued === true ? { deliveryQueued } : {}),
         ...stampedField,
       });
     }

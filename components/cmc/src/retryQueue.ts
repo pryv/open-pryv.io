@@ -32,19 +32,33 @@ const require = createRequire(import.meta.url);
  * marked 'failed-permanent' and stops getting picked up; operator can
  * decide whether to delete or hand-process.
  *
+ * A second kind of record, the DELIVERY (`content.delivery`), queues one
+ * outbound request rather than a trigger: a `consent/revoke-cmc` notice
+ * whose counterparty could not be reached. The trigger it came from is
+ * already complete (the local teardown is authoritative) and the access
+ * that held the peer endpoint is gone, so the record carries the endpoint
+ * and the body itself; it is re-sent as is, on its own, longer schedule
+ * (DELIVERY_BACKOFF_BASE_MS × 5^n capped at DELIVERY_MAX_DELAY_MS: 1 min,
+ * 5 min, 25 min, about 2 h, then 6 h; DELIVERY_MAX_ATTEMPTS = 8, about
+ * 20 h in all) and marked 'failed-permanent' past it, the endpoint's
+ * credential removed on either terminal state.
+ *
  * The loop is run by master workers on an interval; the actual
  * scheduling is wired separately. This module is pure: it depends only
  * on mall and an injected dispatch function.
  */
 
 const C = require('./constants.ts');
-const { isRetryableFailure } = require('./outbound.ts');
+const { isRetryableFailure, postToPeer, stripCredentials } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 
 const MAX_ATTEMPTS = 6;
 const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MULTIPLIER = 5;
+const DELIVERY_MAX_ATTEMPTS = 8;
+const DELIVERY_MAX_DELAY_MS = 6 * 60 * 60 * 1000; // 6 h
+const DELIVERY_BACKOFF_BASE_MS = 60_000;
 
 
 type EventLike = {
@@ -71,6 +85,11 @@ type RetryContent = {
   lastFailureDetail?: unknown;
   nextAttemptAfter?: number;
   status: 'pending' | 'succeeded' | 'failed-permanent';
+  // A delivery record: the one request to re-send. `apiEndpoint` carries
+  // the peer token while the record is pending (this stream is unreadable
+  // by any API path); it is replaced by the credential-free URL once the
+  // record is terminal.
+  delivery?: { apiEndpoint: string; path: string; body: unknown } | null;
 };
 
 type MallParams = Record<string, unknown>;
@@ -80,6 +99,11 @@ type MallLike = {
     update: (userId: string, params: MallParams) => Promise<unknown>;
     get: (userId: string, params?: MallParams) => Promise<RetryEvent[]>;
   };
+};
+type DeliveryDeps = {
+  fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>;
+  timeoutMs?: number;
+  logger?: CmcLogger;
 };
 
 type DispatchFn = (params: {
@@ -168,6 +192,130 @@ async function enqueueRetry (params: {
   return event;
 }
 
+/** The next attempt of a delivery record (minutes, then hours). */
+function nextDeliveryAttemptAt (params: { attempts: number; now: number }): number {
+  const { attempts, now } = params;
+  const delay = Math.min(
+    DELIVERY_BACKOFF_BASE_MS * Math.pow(BACKOFF_MULTIPLIER, Math.max(0, attempts - 1)),
+    DELIVERY_MAX_DELAY_MS
+  );
+  return now + delay;
+}
+
+/**
+ * Queue one outbound request whose first attempts failed retryably (the
+ * peer down, a 5xx, a timeout): a revoke notice. `originalEventId` and
+ * `originalType` name the trigger it came from, for the operator; the
+ * request itself (`delivery`) is what the loop re-sends. Returns the record.
+ */
+async function enqueueDelivery (params: {
+  userId: string;
+  delivery: { apiEndpoint: string; path: string; body: unknown };
+  originalEventId?: string | null;
+  originalType: string;
+  failureReason: string;
+  failureDetail?: unknown;
+  deps: { mall: MallLike; now?: () => number; logger?: CmcLogger };
+}): Promise<EventLike> {
+  const { userId, delivery, deps } = params;
+  const now = (deps.now ?? Date.now)();
+  const content: RetryContent = {
+    originalEventId: params.originalEventId ?? null,
+    originalType: params.originalType,
+    originalStreamIds: [],
+    originalContent: null,
+    originalCreatedBy: null,
+    delivery,
+    attempts: 1,
+    lastFailureReason: params.failureReason,
+    lastFailureDetail: params.failureDetail ?? null,
+    nextAttemptAfter: nextDeliveryAttemptAt({ attempts: 1, now }),
+    status: 'pending',
+  };
+  const event = await deps.mall.events.create(userId, {
+    streamIds: [C.NS_INTERNAL_RETRIES],
+    type: C.ET_RETRY,
+    time: now / 1000,
+    content,
+  });
+  deps.logger?.info?.('cmc/retry: delivery queued', {
+    userId,
+    retryEventId: event?.id,
+    originalType: params.originalType,
+    host: stripCredentials(delivery.apiEndpoint),
+    nextAttemptAfter: content.nextAttemptAfter,
+  });
+  return event;
+}
+
+/** A terminal delivery record keeps the host, not the token. */
+function terminalDelivery (c: RetryContent): RetryContent['delivery'] {
+  if (c.delivery == null) return c.delivery;
+  return { ...c.delivery, apiEndpoint: stripCredentials(c.delivery.apiEndpoint) };
+}
+
+/**
+ * One attempt of a delivery record: the request re-sent as stored. A 2xx
+ * settles it; a 4xx (the peer's considered answer) retires it at once;
+ * anything else reschedules it on the delivery schedule until
+ * DELIVERY_MAX_ATTEMPTS.
+ */
+async function processDeliveryEvent (params: {
+  userId: string;
+  retryEvent: RetryEvent;
+  deps: RetryDeps;
+  now: number;
+}): Promise<{ outcome: 'succeeded' | 'rescheduled' | 'failed-permanent'; retryEventId?: string; attempts?: number }> {
+  const { userId, retryEvent, deps, now } = params;
+  const c = retryEvent.content;
+  const d = c.delivery!;
+  const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
+  const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
+  let result: { ok: boolean; status?: number; reason?: string };
+  try {
+    result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
+  } catch (err: unknown) {
+    result = { ok: false, reason: 'network' };
+    deps.logger?.warn?.('cmc/retry: delivery threw', { retryEventId: retryEvent.id, error: String((err as Error)?.message || err) });
+  }
+  if (result.ok) {
+    await deps.mall.events.update(userId, {
+      ...retryEvent,
+      ...serverModification(deps),
+      content: { ...c, status: 'succeeded', delivery: terminalDelivery(c) },
+    });
+    deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: c.attempts ?? 1 });
+    return { outcome: 'succeeded', retryEventId: retryEvent.id };
+  }
+  const nextAttempts = (c.attempts ?? 1) + 1;
+  const detail = { peerReason: result.reason, status: result.status };
+  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx') {
+    await deps.mall.events.update(userId, {
+      ...retryEvent,
+      ...serverModification(deps),
+      content: {
+        ...c,
+        status: 'failed-permanent',
+        attempts: nextAttempts - 1,
+        lastFailureReason: c.lastFailureReason ?? 'cmc-revoke-delivery-failed',
+        lastFailureDetail: detail,
+        delivery: terminalDelivery(c),
+      },
+    });
+    deps.logger?.warn?.('cmc/retry: delivery failed-permanent (the counterparty was never told)', {
+      retryEventId: retryEvent.id, originalType: c.originalType, attempts: nextAttempts - 1, reason: result.reason, status: result.status,
+    });
+    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: nextAttempts - 1 };
+  }
+  await deps.mall.events.update(userId, {
+    ...retryEvent,
+    ...serverModification(deps),
+    content: { ...c, attempts: nextAttempts, lastFailureDetail: detail, nextAttemptAfter: nextDeliveryAttemptAt({ attempts: nextAttempts, now }) },
+  });
+  deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: nextAttempts });
+  return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
+}
+
 /** `modified` (write time, unix seconds) and `modifiedBy` for a retry event the plugin updates. */
 function serverModification (deps: RetryDeps): { modified: number; modifiedBy: string } {
   return { modified: (deps.now ?? Date.now)() / 1000, modifiedBy: C.SYSTEM_ACCESS_ID };
@@ -197,6 +345,9 @@ async function processRetryEvent (params: {
   const now = (deps.now ?? Date.now)();
   if (typeof c.nextAttemptAfter === 'number' && c.nextAttemptAfter > now) {
     return { outcome: 'skipped-not-due', retryEventId: retryEvent?.id };
+  }
+  if (c.delivery != null) {
+    return await processDeliveryEvent({ userId, retryEvent, deps, now });
   }
 
   const syntheticTrigger: EventLike = {
@@ -432,10 +583,15 @@ export {
   MAX_DELAY_MS,
   BACKOFF_BASE_MS,
   BACKOFF_MULTIPLIER,
+  DELIVERY_MAX_ATTEMPTS,
+  DELIVERY_MAX_DELAY_MS,
+  DELIVERY_BACKOFF_BASE_MS,
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
+  nextDeliveryAttemptAt,
   isRetryableReason,
   enqueueRetry,
+  enqueueDelivery,
   processRetryEvent,
   runRetryLoop,
 };

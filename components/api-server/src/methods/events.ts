@@ -527,6 +527,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     memberAccess: cmcMemberAccessOptions,
     mintRegistry: cmcMemberMintRegistry,
     memberSweep: cmcMemberSweep,
+    // Nothing is queued for a loop that is off: the queue would only grow.
+    enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
   }, (context: MethodContext) => {
     // Per-request: bind a notifyEventChanged that fires pubsub for THIS
     // user. The dispatch loop's fire-and-forget events.update calls

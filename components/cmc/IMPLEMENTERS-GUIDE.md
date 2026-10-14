@@ -415,7 +415,7 @@ One write; the local access is destroyed server-side, which is what actually cut
 
 A field that could not be resolved is absent rather than null. Against an older peer you may see only `accessId`, `appCode` and `offerEventId`.
 
-> Delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is only logged, not retried. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
+> Delivery requires the back-channel handshake to have completed (that is what stores the peer's endpoint; without it the trigger completes with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing is retried). A peer that cannot be reached after the in-request attempts gets the notice queued (the trigger says `deliveryQueued: true` beside `peerNotified: false`) and re-sent by the sender's retry loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 attempts in all, then given up as `failed-permanent` for the operator; a 4xx is your answer and is not retried, and the notices of an account being deleted are not queued. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible after a day-long outage, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 
@@ -1506,12 +1506,13 @@ Written by the server on the membership's team stream when a membership ends (cl
 |---|---|
 | `revoke` | an administrator revoked it (`consent/revoke-cmc` naming the membership), or the member left |
 | `accesses.delete` | the membership access was deleted through the API |
-| `expired` | the membership access expired or is gone (found by the periodic pass) |
-| `narrowed` | an `accesses.update` removed teams: only the patients outside the remaining teams are swept |
+| `expired` | the membership access expired (found by the periodic pass) |
+| `vanished` | the membership access is gone but its records were still live (found by the periodic pass: a deletion whose own sweep did not complete) |
+| `narrowed` | an `accesses.update` removed teams: only the patients outside the teams the membership still covers when the sweep runs |
 | `detach` | the delegate administrator who approved it was detached and the owner did not keep it |
-| `account-deleted` | the group account is deleted (the sweep runs, no record is kept) |
+| `account-deleted` | the group account is deleted (its accesses on patient cores are deleted through the grants before the erasure; no record is kept) |
 
-Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes) when the group's core runs it (`cmc:retryLoop:enabled: true`); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
+Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes), then re-swept by the periodic ledger pass (fifty per pass) as long as the retry loop runs (`cmc:retryLoop:enabled`, `true` by default); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
 
 ## Error ids
 

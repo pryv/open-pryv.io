@@ -81,7 +81,11 @@ function defaultIsLoopWorker (): boolean {
 function startRetryLoopIfEnabled (deps: BootDeps): unknown {
   const enabled = deps.config.get('cmc:retryLoop:enabled');
   if (enabled !== true) {
-    deps.logger?.debug?.('cmc/bootRetryLoop: disabled by config');
+    // Worth the operator's eye: a consent revoke that could not reach its
+    // counterparty is not retried, a member offboarding that left residuals
+    // on a patient core is not re-swept, memberships that expired or vanished
+    // are not swept (their children expire on their own, within maxTtl).
+    deps.logger?.warn?.('cmc/bootRetryLoop: cmc.retryLoop.enabled is false: undeliverable revoke notices are not retried, residual member accesses are not re-swept, expired memberships are not swept');
     return null;
   }
   if (deps.userIdsProvider == null) {
@@ -139,7 +143,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
       logger: deps.logger,
       runRetryLoop: async ({ userId }: { userId: string }) => {
         const r = await sweep.runLedgerPass(userId);
-        return { processed: r.swept + r.expired + r.pruned, succeeded: r.swept, rescheduled: 0, failedPermanent: 0, skipped: 0 };
+        return { processed: r.swept + r.expired + r.residuals + r.pruned, succeeded: r.swept + r.residuals, rescheduled: 0, failedPermanent: 0, skipped: 0 };
       },
     });
     ledgerScheduler.start(sweepIntervalMs);

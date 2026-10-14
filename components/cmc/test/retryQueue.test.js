@@ -20,9 +20,14 @@ const {
   MAX_DELAY_MS,
   BACKOFF_BASE_MS,
   BACKOFF_MULTIPLIER,
+  DELIVERY_MAX_ATTEMPTS,
+  DELIVERY_MAX_DELAY_MS,
+  DELIVERY_BACKOFF_BASE_MS,
   nextAttemptAt,
+  nextDeliveryAttemptAt,
   isRetryableReason,
   enqueueRetry,
+  enqueueDelivery,
   processRetryEvent,
   runRetryLoop,
 } = require('../src/retryQueue.ts');
@@ -378,6 +383,118 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       });
       assert.equal(summary.processed, 2);
       assert.equal(summary.succeeded, 1);
+    });
+  });
+
+  describe('[CMCRQ-DV] delivery records: a notice re-sent as stored, minutes then hours apart', () => {
+    const ENDPOINT = 'https://peer-tok@peer.example.com/';
+    const BODY = { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: { accessId: 'acc-1' } };
+    function peer (plan) {
+      const calls = [];
+      return {
+        calls,
+        async fetch (url, init) {
+          calls.push({ url, init });
+          const spec = typeof plan === 'function' ? plan(calls.length) : plan;
+          if (spec instanceof Error) throw spec;
+          return { status: spec.status, ok: spec.status < 300, async json () { return {}; }, async text () { return '{}'; } };
+        },
+      };
+    }
+    function depsOf (mall, p, now) { return { mall, dispatch: async () => { throw new Error('a delivery record is never dispatched'); }, dispatchDeps: { fetch: p.fetch }, now }; }
+
+    it('[RQ20] the schedule runs from a minute to six hours; eight attempts in all', () => {
+      const t = 1_000_000;
+      assert.equal(nextDeliveryAttemptAt({ attempts: 1, now: t }), t + DELIVERY_BACKOFF_BASE_MS);
+      assert.equal(nextDeliveryAttemptAt({ attempts: 2, now: t }), t + 5 * 60_000);
+      assert.equal(nextDeliveryAttemptAt({ attempts: 3, now: t }), t + 25 * 60_000);
+      assert.equal(nextDeliveryAttemptAt({ attempts: 5, now: t }), t + DELIVERY_MAX_DELAY_MS);
+      assert.equal(DELIVERY_MAX_DELAY_MS, 6 * 60 * 60 * 1000);
+      assert.equal(DELIVERY_MAX_ATTEMPTS, 8);
+    });
+
+    it('[RQ21] queued with the endpoint and the body, due a minute later; the log names the host, never the token', async () => {
+      const mall = fakeMall();
+      const logged = [];
+      const t = 5_000_000;
+      const ev = await enqueueDelivery({
+        userId: 'u1',
+        delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY },
+        originalEventId: 'rv-1',
+        originalType: 'consent/revoke-cmc',
+        failureReason: 'http-5xx',
+        failureDetail: { status: 503 },
+        deps: { mall, now: () => t, logger: { info: (m, d) => logged.push(JSON.stringify([m, d])) } },
+      });
+      assert.deepEqual(ev.streamIds, [':_cmc:_internal:retries']);
+      assert.equal(ev.type, 'cmc-internal/retry-cmc');
+      assert.deepEqual(ev.content.delivery, { apiEndpoint: ENDPOINT, path: 'events', body: BODY });
+      assert.equal(ev.content.status, 'pending');
+      assert.equal(ev.content.attempts, 1);
+      assert.equal(ev.content.nextAttemptAfter, t + 60_000);
+      assert.equal(ev.content.originalEventId, 'rv-1');
+      assert.equal(logged.join('').includes('peer-tok'), false);
+      assert.equal(logged.join('').includes('peer.example.com'), true);
+    });
+
+    it('[RQ22] once the peer is back the notice lands as stored (the token on the request, the body unchanged), the record is settled and keeps the host only', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => 0 } });
+      const p = peer({ status: 201 });
+      const out = await processRetryEvent({ userId: 'u1', retryEvent: ev, deps: depsOf(mall, p, () => 10 * 60_000) });
+      assert.equal(out.outcome, 'succeeded');
+      assert.equal(p.calls.length, 1);
+      assert.equal(p.calls[0].url, 'https://peer.example.com/events');
+      assert.equal(p.calls[0].init.headers.authorization, 'peer-tok');
+      assert.deepEqual(JSON.parse(p.calls[0].init.body), BODY);
+      const stored = mall._events.get(ev.id).content;
+      assert.equal(stored.status, 'succeeded');
+      assert.equal(stored.delivery.apiEndpoint, 'https://peer.example.com/');
+      assert.equal(JSON.stringify(stored).includes('peer-tok'), false, 'no credential on a settled record');
+    });
+
+    it('[RQ23] a peer still down reschedules on the delivery schedule, then failed-permanent after the last attempt; not due is skipped', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => 0 } });
+      const p = peer(new Error('ECONNREFUSED'));
+      let out = await processRetryEvent({ userId: 'u1', retryEvent: ev, deps: depsOf(mall, p, () => 30_000) });
+      assert.equal(out.outcome, 'skipped-not-due');
+      assert.equal(p.calls.length, 0);
+      let t = 60_000;
+      for (let attempt = 2; attempt <= DELIVERY_MAX_ATTEMPTS; attempt++) {
+        out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: depsOf(mall, p, () => t) });
+        assert.equal(out.outcome, 'rescheduled', 'attempt ' + attempt);
+        const c = mall._events.get(ev.id).content;
+        assert.equal(c.attempts, attempt);
+        assert.equal(c.nextAttemptAfter, nextDeliveryAttemptAt({ attempts: attempt, now: t }));
+        assert.equal(c.delivery.apiEndpoint, ENDPOINT, 'the token stays while pending');
+        t = c.nextAttemptAfter;
+      }
+      out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: depsOf(mall, p, () => t) });
+      assert.equal(out.outcome, 'failed-permanent');
+      const c = mall._events.get(ev.id).content;
+      assert.equal(c.status, 'failed-permanent');
+      assert.equal(c.attempts, DELIVERY_MAX_ATTEMPTS);
+      assert.equal(c.lastFailureReason, 'network');
+      assert.deepEqual(c.lastFailureDetail, { peerReason: 'network', status: 0 });
+      assert.equal(JSON.stringify(c).includes('peer-tok'), false);
+      assert.equal(p.calls.length, DELIVERY_MAX_ATTEMPTS);
+    });
+
+    it('[RQ24] a 4xx is the peer\'s answer: failed-permanent at once; the loop carries delivery and trigger records alike', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'http-5xx', deps: { mall, now: () => 0 } });
+      mall._events.set('r-t', { id: 'r-t', content: { originalEventId: 'a', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      const p = peer({ status: 400 });
+      const dispatched = [];
+      const summary = await runRetryLoop({
+        userId: 'u1',
+        deps: { mall, dispatch: async ({ event }) => { dispatched.push(event.type); return { handled: true, status: 'completed' }; }, dispatchDeps: { fetch: p.fetch }, now: () => 120_000 },
+      });
+      assert.deepEqual(summary, { processed: 2, succeeded: 1, rescheduled: 0, failedPermanent: 1, skipped: 0 });
+      assert.deepEqual(dispatched, ['message/chat-cmc'], 'the delivery record never goes through the dispatch');
+      assert.equal(mall._events.get(ev.id).content.status, 'failed-permanent');
+      assert.equal(mall._events.get(ev.id).content.attempts, 1);
     });
   });
 });

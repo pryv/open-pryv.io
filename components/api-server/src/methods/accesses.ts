@@ -974,6 +974,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     logger: getLogger('cmc:accesses-delete-hook'),
     memberSweep: cmcMemberSweep,
     sweepReason: 'accesses.delete',
+    enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
   });
 
   // Account deletion: the account's CMC relationship accesses are erased with
@@ -981,19 +982,15 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // tell the counterparties. The same revocation is sent for each of them
   // (the peer then deletes the access it holds for this account: the data
   // grant given to it, or its back-channel to it). Built WITHOUT the mall: the
-  // local bookkeeping writes the account's own events, which are being erased.
-  // Awaited within a bound by the teardown (trackTeardownDelivery): a slow
-  // peer holds the deletion a few seconds at most.
+  // local bookkeeping writes the account's own events, which are being erased,
+  // and so is the retry queue: a notice the peer cannot take during the
+  // in-request attempts is logged and lost (there is no account left to hold
+  // it). Awaited within a bound by the teardown (trackTeardownDelivery): a
+  // slow peer holds the deletion a few seconds at most.
   const cmcAccountDeletionNotice = cmc.createAccessesDeletePostHook({
     fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:account-deletion'),
-    // A group account deleted: its memberships are offboarded (the member
-    // children on patient cores deleted through the grants) without a sweep
-    // record, since the account's streams are being erased.
-    memberSweep: cmcMemberSweep,
-    sweepReason: 'account-deleted',
-    sweepPersist: false,
   });
   setDeletionTeardownStep('cmc', async function revokeCmcRelationshipsOfDeletedAccount (account: { id: string }) {
     const all = (await mallForCmc.accesses.get(account.id, {})) as AccessLike[];
@@ -1001,6 +998,17 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const relationships = (all || []).filter((a) => a?.deleted == null &&
       cmc.RELATIONSHIP_ROLES.includes((a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role));
     if (relationships.length === 0) return;
+    // A group account: what its memberships minted on patient cores is
+    // deleted through the grants NOW, before anything is erased (one ledger
+    // read, nothing written to the account, a short timeout per call), so
+    // the children die even against a patient core that does not cascade.
+    try {
+      await cmcMemberSweep.sweepErasedAccount(account.id, relationships);
+    } catch (err: unknown) {
+      getLogger('cmc:account-deletion').warn('cmc: the member sweep of a deleted account failed (its children expire on their own)', {
+        error: String((err as Error)?.message ?? err),
+      });
+    }
     trackTeardownDelivery(Promise.resolve()
       .then(() => cmcAccountDeletionNotice(account.id, relationships))
       .catch((err: unknown) => {

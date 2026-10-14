@@ -171,7 +171,10 @@ async function handleIncomingRevoke (params: {
           await deps.memberSweep.relationshipEnded(userId, accessId);
         }
       } catch (err: unknown) {
-        logger?.warn?.('cmc/handleIncomingRevoke: the member sweep failed (the periodic pass will retry)', {
+        // A membership: the periodic pass sweeps it as vanished. A
+        // relationship: its records stay live until they expire (the grant
+        // went with the children on the patient core).
+        logger?.warn?.('cmc/handleIncomingRevoke: the member sweep failed', {
           accessId, error: String((err as Error)?.message || err),
         });
       }

@@ -163,7 +163,9 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
           recordFilter: (record) => typeof record.scopeStreamId === 'string' && !isUnderAny(record.scopeStreamId, covered),
         });
       } catch (err: unknown) {
-        deps.logger?.warn?.('cmc/accessesUpdateHook: the member sweep failed (the periodic pass will retry)', {
+        // Not retried by the periodic pass (the membership is live): the
+        // children of the scopes it dropped expire on their own, within maxTtl.
+        deps.logger?.warn?.('cmc/accessesUpdateHook: the member sweep failed (the children expire on their own)', {
           accessId: after.id, error: String((err as Error)?.message ?? err),
         });
       }

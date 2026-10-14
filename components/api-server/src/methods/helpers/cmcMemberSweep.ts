@@ -56,12 +56,15 @@ async function buildMemberSweep (): Promise<MemberSweep> {
   const mall = await buildMallForCmc();
   const logger = getLogger('cmc:member-sweep');
   const fetch = (url: string, init?: RequestInit) => globalThis.fetch(url, init);
+  const config = await getConfig();
   const dispatchDeps = {
     mall,
     fetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:dispatch'),
     selfIdentityFor: cmcSelfIdentityFor,
+    // Nothing is queued for a loop that is off.
+    enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
   };
   const built: MemberSweep = cmc.createMemberSweep({
     mall,

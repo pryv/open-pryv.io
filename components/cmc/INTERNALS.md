@@ -234,9 +234,11 @@ sequenceDiagram
     Note over Plugin: max attempts reached then<br/>status='failed', reason='cmc-delivery-failed'
 ```
 
-**Retry policy** (proposed):
-- Attempts: 1 immediate + N retries with exponential backoff (1m, 5m, 30m, 2h, 6h, 24h, total ~32h).
-- Audit: every attempt logs (apiEndpoint host, payload type, attempt#, outcome) to the standard Pryv audit stream. Bodies redacted.
+**Retry policy** (`retryQueue.ts`):
+- A trigger re-dispatched: 1 immediate attempt + retries at 1 s, 5 s, 25 s, 125 s, then 10 min (`MAX_ATTEMPTS` 6), then `failed-permanent`. The synthetic trigger is rebuilt from the record's snapshot of the original content.
+- A revoke notice re-sent (`content.delivery`, written by `handleRevoke` and the accesses-delete hook after their in-request attempts): the stored request is posted again at 1 min, 5 min, 25 min, about 2 h, then every 6 h (`DELIVERY_MAX_ATTEMPTS` 8, about 20 h in all), then `failed-permanent`; a 4xx retires it at once. The endpoint keeps its token while the record is pending (the stream is unreadable by any API path) and loses it at either terminal state.
+- Nothing is queued when `cmc.retryLoop.enabled` is false (the dispatch deps carry `enqueueRetries: false`); the loop's own re-dispatch passes `enqueueRetries: false` too, so a failing trigger never re-queues itself, but a revoke it re-dispatches still queues its notice (`retryContext` present).
+- Every attempt logs the host (never the token), the record type, the attempt number and the outcome.
 - Cross-cluster vs cross-platform: same code path; only the destination host differs.
 
 **v1 limitation (acknowledged, not solved):** the retry queue lives with the user's data. If the user's home core dies, pending retries wait for the core to recover, same failure mode as every other piece of user state. Cross-core failover for users is a platform-wide problem outside CMC's scope.
@@ -586,7 +588,7 @@ is the residual cost of best-effort delivery.
 
 **Anchor stream history preservation:** chat + collector streams are NOT deleted on revoke. They become orphan-but-readable; the user can still scroll history. If the two parties later re-accept, the plugin re-creates the access pair pointing at the existing streams. (Re-acceptance is exercised by the handshake suite's revoke and re-accept cases.)
 
-**Delivery is best-effort and requires a peer endpoint.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, or if delivery fails, the revoke currently no-ops with a log warning, no error surfaced to the caller and no retry. Retry-queue integration is planned.
+**Delivery requires a peer endpoint, and is retried for hours.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, the revoke completes locally with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing can be retried. If the peer could not be reached (`network`, `timeout`, `http-5xx`) after the three in-request attempts, the notice is queued as a delivery record with its endpoint and body (the access that held the endpoint is deleted in the same handler) and the trigger reports `deliveryQueued: true`; the retry loop re-sends it over about 20 hours (retry policy above), then marks it `failed-permanent`. A 4xx is the peer's answer and is reported, not queued. The accesses-delete post-hook queues the same way; the account-deletion notices cannot (no account is left to hold the record) and stay best-effort.
 
 ---
 
@@ -710,18 +712,19 @@ Idempotency is keyed by the ledger record of (membership, relationship) and veri
 
 ## The sweep: entry points
 
-`createMemberSweep(deps)` (built once by `api-server/src/methods/helpers/cmcMemberSweep.ts`) returns four functions:
+`createMemberSweep(deps)` (built once by `api-server/src/methods/helpers/cmcMemberSweep.ts`) returns five functions:
 
 | Function | Called from | Effect |
 |---|---|---|
 | `sweepMembership(userId, membership, reason, { recordFilter?, persist? })` | `accessesDeleteHook` (route delete: `accesses.delete`; detach wiring: `detach`; account deletion: `account-deleted`, `persist: false`), `handleRevoke` (the group revokes a membership, after its delete: `revoke`), `handleIncomingRevoke` (the member leaves: `revoke`), `accessesUpdateHook` (`narrowed`, records whose scope is no longer under the membership's team streams), `runLedgerPass` (`expired`) | writes `consent/member-revoke-cmc` on the membership's team stream through the mall (no record when `persist: false` or the write fails, then `enqueueRetries: false`) and dispatches it: `handleMemberRevoke` deletes each child through its relationship's grant (`deleted`; 404 or a grant that no longer authenticates: `absent`; anything else: `residual`), reads back with `accesses.get { includeExpired: true }`, re-reads the ledger, stamps `outcome` / `residuals`; a residual fails the record with `cmc-member-revoke-residual`, retried by the queue from the snapshot (records already settled are skipped) |
 | `sweepRelationship(userId, relationshipAccess)` | `handleRevoke` before the revoke is delivered (step 3b), `accessesDeleteHook` for a deleted patient relationship before the peer is told | the relationship's live and residual records deleted through the grant **before the grant endpoint is lost**, so children die even against a patient core that does not cascade; no record is written (its `reason` enum names membership ends only), residuals are logged and bounded by the children's expiry |
 | `relationshipEnded(userId, relationshipAccessId)` | `handleIncomingRevoke` when the patient ended the relationship | records settled `absent`: the patient's core deleted the children with the grant |
-| `runLedgerPass(userId)` | the ledger scheduler | live records past `expires` marked `absent`; memberships expired or gone swept (`expired`); settled records past expiry pruned |
+| `runLedgerPass(userId)` | the ledger scheduler | live records past `expires` marked `absent`; memberships expired swept (`expired`) and memberships gone swept (`vanished`) on a pass at least 30 s after the pass that first saw them gone (the deleting path's own sweep gets that long); residual records re-swept through their grants, fifty per pass, with no new record; settled records past expiry pruned |
+| `sweepErasedAccount(userId, relationships)` | the account-deletion teardown step, before the notices go out | one ledger read; every live or residual child deleted through its grant, concurrently, 5 s per call; nothing written (the account is being erased); residuals logged, they expire on their own |
 
-Every sweep failure in a hook is logged and does not fail the delete, the revoke or the update that triggered it.
+Every sweep failure in a hook is logged and does not fail the delete, the revoke or the update that triggered it. A `narrowed` sweep re-reads the membership when it runs and keeps the records whose scope it covers by then (no outcome entry for them). A relationship that cannot be read leaves its records `residual` (`relationship-unreadable`), to be retried; one that is gone settles them `absent`.
 
-**The periodic pass shares the retry loop's gate.** `bootRetryLoop.startRetryLoopIfEnabled` starts, beside the retry scheduler and on the same designated worker, a second `RetryScheduler` whose per-user step is `runLedgerPass`, every `cmc:memberAccess:sweepIntervalMs`, with an eager first tick at boot. It is one `events.get` per user per interval, too costly to run unconditionally; with `cmc:retryLoop:enabled` false neither the sweep retries nor the pass run, and an expired membership's children expire on their own (at most `maxTtl`).
+**The periodic pass shares the retry loop's gate.** `bootRetryLoop.startRetryLoopIfEnabled` starts, beside the retry scheduler and on the same designated worker, a second `RetryScheduler` whose per-user step is `runLedgerPass`, every `cmc:memberAccess:sweepIntervalMs`, with an eager first tick at boot. It is one `events.get` per user per interval; `cmc:retryLoop:enabled` is `true` by default, and with it false neither the sweep retries nor the pass run, nothing is queued, a warning is logged at boot, and an expired membership's children expire on their own (at most `maxTtl`).
 
 ## The member stamp on the patient's core
 

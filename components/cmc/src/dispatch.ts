@@ -192,6 +192,7 @@ type HandlerResult = {
   // the counterparty was actually reached.
   peerNotified?: boolean;
   deliveryFailure?: { reason: string; status?: number };
+  deliveryQueued?: boolean;
 };
 
 // Middleware-fire-time context shape. The api-server passes its
@@ -502,6 +503,7 @@ async function dispatch (params: {
       // an unqualified success. `deliveryFailure.reason` names which.
       peerNotified: result?.peerNotified,
       deliveryFailure: result?.deliveryFailure,
+      deliveryQueued: result?.deliveryQueued,
       // The member access mint's record: which child, for whom, through
       // which relationship. The token travels on `response` below only.
       memberAccess: result?.memberAccess,

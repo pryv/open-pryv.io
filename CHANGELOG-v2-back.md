@@ -26,6 +26,32 @@
   and inside multi-core child processes.
 - Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
   written to `/var/run/syslog` are not observable there.
+## CMC: delivery records in the retry queue, the sweep after review
+
+- `cmc/src/retryQueue.ts`: a second record kind, `content.delivery = { apiEndpoint, path, body }`,
+  written by `enqueueDelivery` (a `consent/revoke-cmc` notice from `handleRevoke` or
+  `accessesDeleteHook` after a retryable failure, gated on `enqueueRetries !== false`, or on
+  `retryContext` for a loop re-dispatch) and processed by `processDeliveryEvent` (one `postToPeer`
+  as stored; `DELIVERY_BACKOFF_BASE_MS` 60 s × 5^n capped at `DELIVERY_MAX_DELAY_MS` 6 h,
+  `DELIVERY_MAX_ATTEMPTS` 8; `stripCredentials` on the endpoint at either terminal state). The
+  api-server passes `enqueueRetries: config cmc:retryLoop:enabled` to the dispatch deps
+  (`events.ts`, `helpers/cmcMemberSweep.ts`) and to the route delete hook (`accesses.ts`).
+- `cmc/src/memberSweep.ts`: `runLedgerPass` re-sweeps up to `RESIDUALS_PER_PASS` (50) residual
+  records through `revokeRecords` (no new sweep record), sweeps a vanished membership with reason
+  `vanished` only on a pass at least `VANISHED_GRACE_S` (30 s) after first seeing it gone
+  (`goneSince`, per worker), and returns `{ swept, expired, residuals, pruned }`;
+  `sweepErasedAccount(userId, relationships)` (the account-deletion teardown step, before
+  `trackTeardownDelivery`): one ledger read, `deleteChildThroughGrant` per live or residual record
+  concurrently under `ERASURE_TIMEOUT_MS` (5 s), nothing written. The account-deletion notice hook
+  no longer carries `memberSweep`. `bootRetryLoop.ts` warns at boot when the loop is off.
+- `cmc/src/handleMemberRevoke.ts`: `grantOf` is a tri-state (`endpoint`, `gone`, `unreadable`);
+  an unreadable relationship is a `residual` with reason `relationship-unreadable`. A `narrowed`
+  sweep re-reads the membership and keeps (no outcome entry) the records whose scope it still
+  covers (`coveredScopesOf`). `MEMBER_REVOKE_REASONS` gains `vanished`.
+- Tests: cmc `[RQ20]`..`[RQ24]`, `[HR25]`..`[HR27]`, `[DH25]`, `[DH26]`, `[MR24]` (two passes),
+  `[MR25]`..`[MR28]`, `[MR42]`; api-server `[CN60]`, `[CN61]` (a requester down during a revoke,
+  the notice delivered by the loop once it is back; failed-permanent when it never is).
+
 ## CMC group accounts; one deletion for every access teardown
 
 - `api-server/src/methods/helpers/accessDeletion.ts` (new): `deleteAccessChain(user, { id,

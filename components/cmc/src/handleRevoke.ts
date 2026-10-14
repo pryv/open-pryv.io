@@ -75,6 +75,7 @@ const relationshipKey = require('./relationshipKey.ts');
 const inviteState = require('./inviteState.ts');
 const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acceptWithdrawal.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
+const retryQueue: typeof import('./retryQueue.ts') = require('./retryQueue.ts');
 
 import type { OutboundDeps, RetryContext } from './_types.ts';
 import type { MemberSweep } from './memberSweep.ts';
@@ -101,6 +102,10 @@ type RevokeHandlerResult =
       // told, so the trigger event can report it instead of looking like
       // an unqualified success.
       deliveryFailure?: { reason: string; status?: number };
+      // The notice is queued for the retry loop (minutes, then hours; then
+      // `failed-permanent` for the operator). Absent when it was delivered,
+      // when the failure is not retryable, or when the loop is off.
+      deliveryQueued?: boolean;
     }
   | {
       ok: false;
@@ -130,6 +135,11 @@ async function handleRevoke (params: {
     mall: MallLike;
     // Set on a re-dispatch by the retry loop (see peerAlreadyNotified).
     retryContext?: RetryContext;
+    // False when the retry loop is off (nothing would ever re-send a queued
+    // notice). The loop's own re-dispatch passes false too, to keep a
+    // failing trigger from re-queueing itself; it still queues a notice,
+    // since the loop that re-dispatched it is the one that will send it.
+    enqueueRetries?: boolean;
     notifyEventChanged?: (userId: string, event: { id?: string }) => void;
     // Group accounts (memberSweep.ts): the member children minted through a
     // patient relationship are swept before its revoke is delivered; a
@@ -345,6 +355,7 @@ async function handleRevoke (params: {
   let peerNotified = false;
   let peerDeliveryStatus: number | undefined;
   let deliveryFailure: { reason: string; status?: number } | undefined;
+  let deliveryQueued: boolean | undefined;
   const priorDelivery = peerAlreadyNotified(deps.retryContext, counterpartyAccess.id);
   if (priorDelivery != null) {
     // A retry of a revoke whose previous attempt reached the peer and then
@@ -379,6 +390,7 @@ async function handleRevoke (params: {
     // the arrival against the request it already holds even when it is running
     // a build older than the receiver-side enrichment.
     if (typeof cpCmc?.inviteEventId === 'string') revokeContent.inviteEventId = cpCmc.inviteEventId;
+    const body = { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content: revokeContent };
     const delivery = await deliverRevokeWithRetry({
       apiEndpoint: remoteApiEndpoint,
       content: revokeContent,
@@ -386,7 +398,31 @@ async function handleRevoke (params: {
     });
     peerNotified = delivery.ok;
     peerDeliveryStatus = delivery.status;
-    if (!delivery.ok) deliveryFailure = { reason: delivery.reason, status: delivery.status };
+    if (!delivery.ok) {
+      deliveryFailure = { reason: delivery.reason, status: delivery.status };
+      // The peer is down (not a 4xx, which is its considered answer): the
+      // notice is queued with its endpoint, since the access that held it
+      // is deleted below, and re-sent by the retry loop over the next hours.
+      const loopWillSend = deps.enqueueRetries !== false || deps.retryContext != null;
+      if (loopWillSend && delivery.reason !== 'http-4xx' && mall.events?.create != null) {
+        try {
+          await retryQueue.enqueueDelivery({
+            userId,
+            delivery: { apiEndpoint: remoteApiEndpoint, path: 'events', body },
+            originalEventId: triggerEvent.id ?? null,
+            originalType: C.ET_REVOKE,
+            failureReason: delivery.reason,
+            failureDetail: { status: delivery.status },
+            deps: { mall: mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
+          });
+          deliveryQueued = true;
+        } catch (err: unknown) {
+          deps.logger?.error?.('cmc/handleRevoke: the revoke notice could not be queued, the counterparty is NOT told', {
+            accessId: counterpartyAccess.id, error: String((err as Error)?.message || err),
+          });
+        }
+      }
+    }
   } else {
     // No endpoint stored on the relationship access — this side has never
     // been told where the peer lives, so the revocation CANNOT be
@@ -424,7 +460,7 @@ async function handleRevoke (params: {
     try {
       await deps.memberSweep.sweepMembership(userId, counterpartyAccess, 'revoke');
     } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/handleRevoke: the member sweep failed (the periodic pass will retry)', {
+      deps.logger?.warn?.('cmc/handleRevoke: the member sweep failed (the periodic pass sweeps the vanished membership)', {
         accessId: counterpartyAccess.id, error: String((err as Error)?.message || err),
       });
     }
@@ -476,7 +512,7 @@ async function handleRevoke (params: {
       return {
         ok: false,
         reason: CmcErrorIds.REVOKE_DELETE_FAILED,
-        detail: { accessIds: surviving, deletedAccessIds: deletedIds, peerNotified, peerDeliveryStatus, deliveryFailure },
+        detail: { accessIds: surviving, deletedAccessIds: deletedIds, peerNotified, peerDeliveryStatus, deliveryFailure, deliveryQueued },
       };
     }
   }
@@ -487,6 +523,7 @@ async function handleRevoke (params: {
     peerNotified,
     peerDeliveryStatus,
     deliveryFailure,
+    deliveryQueued,
   };
 }
 
@@ -529,11 +566,10 @@ async function survivingAccessIds (mall: MallLike, userId: string, ids: string[]
  * immediately — it cannot wait on a peer). A queued retry re-runs the
  * original trigger, which would then find no relationship access and fail
  * with `cmc-revoke-counterparty-access-not-found` — it can never converge.
- * Queueing the endpoint instead would mean persisting a peer TOKEN inside
- * a user event, i.e. a credential at rest, which is not acceptable.
- * Durable cross-restart retry therefore needs its own design; until then a
- * short bounded retry absorbs the common transient blip, and anything
- * longer is reported rather than silently dropped.
+ * So the short bounded retry here absorbs the common transient blip, and a
+ * peer still down afterwards gets the notice itself queued (the endpoint
+ * with it) in `:_cmc:_internal:retries`, which no API read path reaches,
+ * for the retry loop to re-send over the next hours (retryQueue.ts).
  */
 async function deliverRevokeWithRetry (params: {
   apiEndpoint: string;

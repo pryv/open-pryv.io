@@ -487,4 +487,51 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(mall.calls.eventsGot ?? 0, 0, 'no accept lookup');
     assert.equal(mall.eventById('evt-accept-x').content.withdrawal, undefined);
   });
+
+  describe('[CMCDH-RQ] a notice the peer could not take is queued for the retry loop', () => {
+    function mallWithQueue () {
+      const created = [];
+      const mall = fakeMallWithInvite();
+      mall.events.create = async (userId, params) => { created.push(params); return { id: 'r-1', ...params }; };
+      mall.created = created;
+      return mall;
+    }
+
+    it('[DH25] after the in-request attempts the notice is queued with its endpoint and body, and the result says so', async () => {
+      const mall = mallWithQueue();
+      const { fetch, calls } = fakeFetch({ status: 503, body: {} });
+      const errors = [];
+      const hook = createAccessesDeletePostHook({ fetch, mall, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } });
+      const results = await hook('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(calls.length, 3);
+      assert.equal(results[0].peerNotified, false);
+      assert.equal(results[0].deliveryQueued, true);
+      assert.equal(mall.created.length, 1);
+      const q = mall.created[0];
+      assert.deepEqual(q.streamIds, [':_cmc:_internal:retries']);
+      assert.equal(q.content.delivery.apiEndpoint, 'https://peer-tok@peer.example.org/');
+      assert.equal(q.content.delivery.body.type, 'consent/revoke-cmc');
+      assert.equal(q.content.delivery.body.content.accessId, REQUESTER_SIDE_ACCESS.id);
+      assert.equal(q.content.originalEventId, null);
+      assert.equal(errors.some((m) => m.includes('NOT notified')), false, 'queued is not lost');
+    });
+
+    it('[DH26] not queued for a 4xx, without a mall, or with the loop off; then the loss is logged', async () => {
+      let mall = mallWithQueue();
+      let results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 404, body: {} }).fetch, mall })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(mall.created.length, 0);
+
+      const errors = [];
+      const logger = { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} };
+      results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, logger })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.ok(errors.some((m) => m.includes('NOT notified')));
+
+      mall = mallWithQueue();
+      results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, mall, enqueueRetries: false })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(mall.created.length, 0);
+    });
+  });
 });

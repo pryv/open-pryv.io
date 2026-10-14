@@ -975,10 +975,14 @@ delegation:
 # Cross-account messaging and consent (the `:_cmc:` namespace plugin).
 cmc:
   # Durable retry of failed deliveries (one worker re-dispatches from the
-  # per-user `:_cmc:_internal:retries` queue). Off by default; a group
-  # account's offboarding sweeps need it to retry a patient core that is down.
+  # per-user `:_cmc:_internal:retries` queue): a consent revoke whose
+  # counterparty could not be reached, an offboarding sweep that left member
+  # accesses on a patient core that was down, and the periodic ledger pass of
+  # group accounts. On by default (one queue read per account per interval on
+  # the designated worker); with it off, nothing is queued and a warning is
+  # logged at boot.
   retryLoop:
-    enabled: false
+    enabled: true
     intervalMs: 60000
     perUserLimit: 100
   # Group accounts: the accesses a group's core mints on patients' accounts

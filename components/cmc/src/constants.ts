@@ -242,8 +242,10 @@ const RELATIONSHIP_ROLES: readonly string[] = [ROLE_COUNTERPARTY, ROLE_MEMBER];
 // (beside `status` / `failure`): dropped from a client create and kept from
 // storage on update (memberAccessServerOwnedFieldsHook).
 const MEMBER_ACCESS_SERVER_OWNED_FIELDS: readonly string[] = ['memberAccess', 'member', 'relationshipAccessId'];
-// What ended a membership, as recorded on the sweep trigger.
-const MEMBER_REVOKE_REASONS: readonly string[] = ['revoke', 'accesses.delete', 'expired', 'narrowed', 'detach', 'account-deleted'];
+// What ended a membership, as recorded on the sweep trigger. `vanished`: the
+// membership access no longer exists but its records do (deleted by a path
+// that did not sweep, or a crash between the delete and the sweep).
+const MEMBER_REVOKE_REASONS: readonly string[] = ['revoke', 'accesses.delete', 'expired', 'narrowed', 'detach', 'account-deleted', 'vanished'];
 // How a minted child names its member on the patient's core.
 const MEMBER_ATTRIBUTION_STAMPED = 'stamped';
 const MEMBER_ATTRIBUTION_NAME_ONLY = 'name-only';

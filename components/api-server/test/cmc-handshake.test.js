@@ -2997,6 +2997,123 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
   // Defined last: it deletes accounts. Each test hands the shared helpers two
   // fresh accounts in place of alice and bob, and puts them back after.
+  describe('[CMCHS-RQ] a revoke notice the counterparty cannot take is queued and re-sent by the retry loop', function () {
+    // The counterparty "down": every request to its account fails at the
+    // socket while the outage lasts; the rest of the shim is untouched.
+    function outageOf (username) {
+      const shim = globalThis.fetch;
+      let down = true;
+      globalThis.fetch = async (url, init) => {
+        if (down && String(url).includes(username)) throw new Error('ECONNREFUSED (simulated outage)');
+        return shim(url, init);
+      };
+      return { up () { down = false; }, restore () { globalThis.fetch = shim; } };
+    }
+    async function pollTriggerCompleted (actor, streamId, eventId) {
+      return await pollStreamFor(actor.eventsPath, actor.token, streamId, 'consent/revoke-cmc',
+        (e) => e.id === eventId && e.content?.status === 'completed');
+    }
+    async function queuedNotices (mall, userId) {
+      const rows = await mall.events.get(userId, { streams: [{ any: [C.NS_INTERNAL_RETRIES] }], limit: 100 });
+      return rows.filter((e) => e.type === C.ET_RETRY && e.content?.delivery != null);
+    }
+    // One pass of the loop as the designated worker runs it, with a clock
+    // set past the record's next attempt.
+    async function runLoop (mall, userId, atMs) {
+      return await C.retryQueue.runRetryLoop({
+        userId,
+        deps: {
+          mall,
+          dispatch: C.dispatch.dispatch,
+          dispatchDeps: { mall, fetch: (url, init) => globalThis.fetch(url, init), selfIdentityFor: () => ({ username: userId, host: 'x.pryv.me' }), enqueueRetries: false },
+          now: () => atMs,
+        },
+      });
+    }
+
+    it('[CN60] the requester down: the revoke completes locally and queues the notice; once the requester is back, the loop delivers it to their inbox', async function () {
+      const { getMall } = require('mall');
+      const mall = await getMall();
+      const h = await runFreshHandshake('study-rq-a', 'rq-app-a');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const outage = outageOf(alice.username);
+      let trigger;
+      try {
+        const revRes = await coreRequest.post(bob.eventsPath)
+          .set('Authorization', bob.token)
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN60 revoke during an outage' } } });
+        assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+        trigger = await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
+      } finally {
+        outage.up();
+      }
+      assert.equal(trigger.content.peerNotified, false);
+      assert.equal(trigger.content.deliveryQueued, true, JSON.stringify(trigger.content));
+      assert.equal(trigger.content.deliveryFailure?.reason, 'network');
+      const r = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
+      assert.equal((r.body?.accesses || []).some((a) => a.id === dataGrant.id), false, 'the local teardown is authoritative');
+      const queued = (await queuedNotices(mall, bob.username)).filter((e) => e.content.status === 'pending');
+      const mine = queued.find((e) => e.content.delivery.body?.content?.accessId === dataGrant.id);
+      assert.ok(mine != null, 'the notice is queued with its body');
+      assert.equal(mine.content.attempts, 1);
+      assert.ok(mine.content.delivery.apiEndpoint.includes('@'), 'the endpoint carries the token while pending');
+      assert.equal(mine.content.nextAttemptAfter > Date.now(), true, 'due a minute later');
+      let revokes = (await coreRequest.get(alice.eventsPath).set('Authorization', alice.token)
+        .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 })).body.events
+        .filter((e) => e.content?.accessId === dataGrant.id);
+      assert.equal(revokes.length, 0, 'nothing reached the requester during the outage');
+
+      // The requester is back; the loop's next due tick.
+      try {
+        const summary = await runLoop(mall, bob.username, Date.now() + 2 * 60_000);
+        assert.ok(summary.succeeded >= 1, JSON.stringify(summary));
+      } finally {
+        outage.restore();
+      }
+      const settled = (await queuedNotices(mall, bob.username)).find((e) => e.id === mine.id);
+      assert.equal(settled.content.status, 'succeeded');
+      assert.equal(settled.content.delivery.apiEndpoint.includes('@'), false, 'the token leaves the settled record');
+      revokes = (await coreRequest.get(alice.eventsPath).set('Authorization', alice.token)
+        .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 })).body.events
+        .filter((e) => e.content?.accessId === dataGrant.id);
+      assert.equal(revokes.length, 1, 'the requester got the notice once the outage ended');
+      assert.equal(revokes[0].content.from?.username, bob.username);
+      assert.equal(revokes[0].content.appCode, 'rq-app-a');
+    });
+
+    it('[CN61] the requester never back: the notice is failed-permanent after the last attempt, the record keeps the host without the token', async function () {
+      const { getMall } = require('mall');
+      const mall = await getMall();
+      const h = await runFreshHandshake('study-rq-b', 'rq-app-b');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const outage = outageOf(alice.username);
+      try {
+        const revRes = await coreRequest.post(bob.eventsPath)
+          .set('Authorization', bob.token)
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN61 revoke, requester gone' } } });
+        assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+        await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
+        const mine = (await queuedNotices(mall, bob.username)).find((e) => e.content.delivery.body?.content?.accessId === dataGrant.id);
+        assert.ok(mine != null);
+        let at = mine.content.nextAttemptAfter;
+        let last;
+        for (let i = 0; i < C.retryQueue.DELIVERY_MAX_ATTEMPTS + 1; i++) {
+          await runLoop(mall, bob.username, at);
+          last = (await queuedNotices(mall, bob.username)).find((e) => e.id === mine.id);
+          if (last.content.status !== 'pending') break;
+          at = last.content.nextAttemptAfter;
+        }
+        assert.equal(last.content.status, 'failed-permanent', JSON.stringify(last.content));
+        assert.equal(last.content.attempts, C.retryQueue.DELIVERY_MAX_ATTEMPTS);
+        assert.equal(last.content.delivery.apiEndpoint.includes('@'), false);
+        assert.equal(last.content.delivery.apiEndpoint.includes(alice.username), true, 'the operator sees the host');
+        assert.equal(last.content.lastFailureDetail?.peerReason, 'network');
+      } finally {
+        outage.restore();
+      }
+    });
+  });
+
   describe('[CMCHS-DEL] deleting an account revokes its relationships on the counterparty', function () {
     let savedAlice, savedBob, adminKey;
 

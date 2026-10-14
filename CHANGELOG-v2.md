@@ -19,9 +19,10 @@ join it from their own accounts, and each member reads a patient's data under a 
 that names them, created by the group's core on the patient's core through the patient's consent
 grant; when a membership ends, those accesses are deleted and the deletion is recorded. Behaviour
 changes for every CMC user: every consent and delegation teardown is now a soft delete with the
-side effects of `accesses.delete` (deletion records visible with `includeDeletions`), and an app
-token may delete only the `shared` accesses it created. Operators hosting a group account: set
-`cmc.retryLoop.enabled: true` on its core. No migration.
+side effects of `accesses.delete` (deletion records visible with `includeDeletions`), an app
+token may delete only the `shared` accesses it created, a revoke notice the counterparty could not
+take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now defaults to `true`
+(the retry loop runs on every core; set it to `false` to keep it off). No migration.
 
 ### Consent (CMC): group accounts
 - **Membership requests.** `consent/request-cmc` gains `request.membership: true`: the writer (the
@@ -69,15 +70,18 @@ token may delete only the `shared` accesses it created. Operators hosting a grou
   the membership's team stream when a membership ends, however it ends:
   `{ member, membershipAccessId, reason, records, status, outcome, residuals, failure }`, `reason`
   one of `revoke` (an administrator revoked it, or the member left), `accesses.delete`, `expired`,
-  `narrowed` (an `accesses.update` removed teams: only the patients outside the remaining teams),
-  `detach`, `account-deleted` (no record is kept: the account is erased). Each access minted for
-  that member is deleted on its patient's core through the grant, then read back:
-  `outcome[].result` is `deleted`, `absent` (already gone, or expired) or `residual` (the patient's
-  core could not be reached or refused). A residual fails the record with
-  `cmc-member-revoke-residual` and is retried; the access's own expiry bounds its life. A client
-  write of this type is refused with 403 `forbidden`, `cmc-protected-event-write`. A patient
-  relationship the group ends has its member accesses deleted through the grant before the revoke
-  is delivered (no record is written for that pass).
+  `narrowed` (an `accesses.update` removed teams: only the patients outside the remaining teams
+  that the membership no longer covers when the sweep runs), `detach`, `vanished` (the membership
+  access is gone but its records were still live: found by the periodic pass), `account-deleted`
+  (no record is kept: the account is erased; its accesses on patient cores are deleted through the
+  grants before the erasure). Each access minted for that member is deleted on its patient's core
+  through the grant, then read back: `outcome[].result` is `deleted`, `absent` (already gone, or
+  expired) or `residual` (the patient's core could not be reached or refused, or the relationship
+  could not be read). A residual fails the record with `cmc-member-revoke-residual` and is retried
+  (the retry queue, then the periodic pass, up to fifty residuals per pass); the access's own expiry
+  bounds its life. A client write of this type is refused with 403 `forbidden`,
+  `cmc-protected-event-write`. A patient relationship the group ends has its member accesses
+  deleted through the grant before the revoke is delivered (no record is written for that pass).
 - **The member stamp on the patient's account.** An `accesses.create` made with a delegable (`app`)
   consent grant may send exactly `clientData: { cmc: { role: 'member-child', member: { username,
   host } } }` (two strings of 1 to 200 characters, no other key). The server stores
@@ -108,12 +112,23 @@ token may delete only the `shared` accesses it created. Operators hosting a grou
   `maxInFlightPerMembership` (1 mint at a time per membership and patient, per worker process),
   `allowNameOnly` (`true`: accept the name-only fallback against a patient core of an earlier
   release; meant to become `false` in a later release), `sweepIntervalMs` (60000, the periodic
-  ledger pass). `cmc.retryLoop.*` (`enabled: false`, `intervalMs: 60000`, `perUserLimit: 100`) is now
-  declared in `default-config.yml`, defaults unchanged. **A group's core needs
-  `cmc.retryLoop.enabled: true`:** the retry of a sweep that left residuals (6 attempts, about 30
-  minutes) and the periodic ledger pass (memberships that expired or vanished, run once at boot
-  then every `sweepIntervalMs`) run only with it; without it, a residual stays until the access
-  expires.
+  ledger pass). `cmc.retryLoop.*` (`intervalMs: 60000`, `perUserLimit: 100`) is now declared in
+  `default-config.yml`, and **`cmc.retryLoop.enabled` now defaults to `true`** (behaviour change
+  for every core: one read of each account's retry queue per interval on the designated worker):
+  it carries the retry of a sweep that left residuals (6 attempts, about 30 minutes), the periodic
+  ledger pass (memberships that expired or vanished, residuals re-swept, run once at boot then
+  every `sweepIntervalMs`) and the re-sending of revoke notices (below). With it set to `false`
+  nothing is queued at all (the queue no longer grows for a loop that never runs), a residual
+  stays until the access expires, and a warning is logged at boot.
+- **Revoke notices are re-sent until they land (issue 157).** A `consent/revoke-cmc` whose
+  counterparty could not be reached (socket error, timeout, 5xx) after the in-request attempts is
+  now queued, endpoint and body, in the account's hidden retry stream and re-sent by the retry
+  loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 attempts in all (about 20
+  hours), then marked `failed-permanent` for the operator with the host but no token. The trigger
+  reports `content.deliveryQueued: true` beside `peerNotified: false` and `deliveryFailure`. A raw
+  `accesses.delete` of a relationship access queues its notice the same way. A 4xx is the peer's
+  answer and is not retried. Not queued: the notices of an account being deleted (no account is
+  left to hold them; logged), and anything when `cmc.retryLoop.enabled` is `false`.
 - **Versions.** The group's core and the member's core need this release (the member's core
   checks the membership request at write and marks the accept in the member's inbox; an earlier
   member core ignores `request.membership`, and the group's accept still applies the rule). A

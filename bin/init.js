@@ -854,9 +854,10 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   accessMaxAgeSeconds: 60
 
 # # cmc.retryLoop.enabled — durable retry of failed cross-account deliveries
-# # (one worker re-dispatches from each user's retry queue). Off by default;
-# # a group account's offboarding sweeps need it to retry a patient core that
-# # is down. cmc.memberAccess.* — the accesses a group's core mints on
+# # (one worker re-dispatches from each user's retry queue): consent revokes
+# # whose counterparty was down, offboarding sweeps of group accounts, the
+# # periodic ledger pass. On by default; off = nothing queued, a warning at
+# # boot. cmc.memberAccess.* — the accesses a group's core mints on
 # # patients' accounts for its members: default / min / max lifetime in
 # # seconds (24 h, 60 s, 7 d), mint triggers per membership per minute per
 # # worker, concurrent mints per (membership, patient) per worker, whether to
@@ -864,7 +865,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # access then names the member only), and the ledger pass interval.
 # # cmc:
 # #   retryLoop:
-# #     enabled: false
+# #     enabled: true
 # #     intervalMs: 60000
 # #     perUserLimit: 100
 # #   memberAccess:

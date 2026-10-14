@@ -425,6 +425,68 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(calls.length, 1);
       assert.equal(r.peerNotified, false);
     });
+
+    function mallWithQueue (accesses) {
+      const mall = fakeMall(accesses);
+      mall.calls.eventsCreated = [];
+      mall.events = { async create (userId, params) { mall.calls.eventsCreated.push(params); return { id: 'r-1', ...params }; } };
+      return mall;
+    }
+    const TRIGGER = { id: 'rv-9', type: 'consent/revoke-cmc', streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'], content: {} };
+
+    it('[HR25] a peer still down after the in-request attempts gets the notice queued for the retry loop, endpoint and body included; the trigger says so', async () => {
+      const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch(new Error('ECONNREFUSED'));
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch } });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 3, 'the in-request attempts first');
+      assert.equal(r.peerNotified, false);
+      assert.equal(r.deliveryQueued, true);
+      assert.equal(mall.calls.eventsCreated.length, 1);
+      const q = mall.calls.eventsCreated[0];
+      assert.deepEqual(q.streamIds, [':_cmc:_internal:retries']);
+      assert.equal(q.content.delivery.apiEndpoint, COUNTERPARTY_ACCESS.clientData.cmc.counterparty.apiEndpoint);
+      assert.equal(q.content.delivery.path, 'events');
+      assert.deepEqual(q.content.delivery.body.streamIds, [':_cmc:inbox']);
+      assert.equal(q.content.delivery.body.type, 'consent/revoke-cmc');
+      assert.equal(q.content.delivery.body.content.accessId, COUNTERPARTY_ACCESS.id);
+      assert.equal(q.content.originalEventId, 'rv-9');
+      assert.equal(q.content.status, 'pending');
+      assert.ok(mall.calls.deleted.some((d) => d.id === COUNTERPARTY_ACCESS.id), 'the local teardown is done regardless');
+    });
+
+    it('[HR26] nothing is queued for a 4xx (the peer answered), nor when the retry loop is off; a loop re-dispatch still queues', async () => {
+      let mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      let r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 400, body: {} }).fetch } });
+      assert.equal(r.deliveryQueued, undefined);
+      assert.equal(mall.calls.eventsCreated.length, 0);
+
+      mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: false } });
+      assert.equal(r.deliveryQueued, undefined);
+      assert.equal(r.deliveryFailure?.status, 503, 'still reported');
+      assert.equal(mall.calls.eventsCreated.length, 0);
+
+      mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: false, retryContext: { attempts: 2, lastFailureReason: 'cmc-revoke-delete-failed', lastFailureDetail: { accessIds: ['x'], peerNotified: false } } },
+      });
+      assert.equal(r.deliveryQueued, true);
+      assert.equal(mall.calls.eventsCreated.length, 1);
+    });
+
+    it('[HR27] a queue write that fails is reported as a lost notice, never thrown', async () => {
+      const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      mall.events.create = async () => { throw new Error('disk full'); };
+      const errors = [];
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } } });
+      assert.equal(r.ok, true);
+      assert.equal(r.deliveryQueued, undefined);
+      assert.ok(errors.some((m) => m.includes('could not be queued')));
+    });
   });
 
   describe('[CMCHR-ID] explicit content.accessId targeting', () => {
