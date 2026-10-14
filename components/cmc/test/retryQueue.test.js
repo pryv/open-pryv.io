@@ -362,10 +362,11 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         userId: 'u1',
         deps: { mall, dispatch, dispatchDeps: {}, now: () => 1_000 },
       });
-      assert.equal(summary.processed, 3); // r-1, r-2, r-3 (all pending)
+      assert.equal(summary.processed, 2); // r-1, r-2 (pending and due); r-3 is not due
       assert.equal(summary.succeeded, 1);
       assert.equal(summary.rescheduled, 1);
       assert.equal(summary.skipped, 2);   // r-3 not-due + r-4 already-succeeded
+      assert.equal(summary.pendingTotal, 3);
       assert.equal(calls, 2);              // only r-1 + r-2 dispatched
     });
 
@@ -491,7 +492,7 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         userId: 'u1',
         deps: { mall, dispatch: async ({ event }) => { dispatched.push(event.type); return { handled: true, status: 'completed' }; }, dispatchDeps: { fetch: p.fetch }, now: () => 120_000 },
       });
-      assert.deepEqual(summary, { processed: 2, succeeded: 1, rescheduled: 0, failedPermanent: 1, skipped: 0 });
+      assert.deepEqual(summary, { processed: 2, succeeded: 1, rescheduled: 0, failedPermanent: 1, skipped: 0, pendingTotal: 2 });
       assert.deepEqual(dispatched, ['message/chat-cmc'], 'the delivery record never goes through the dispatch');
       assert.equal(mall._events.get(ev.id).content.status, 'failed-permanent');
       assert.equal(mall._events.get(ev.id).content.attempts, 1);
@@ -545,18 +546,24 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(mall._events.get(ev.id).content.attempts, 2);
     });
 
-    it('[RQ27] the loop reads the whole stream in pages: a pending delivery behind 150 newer terminal records is processed, succeeded records are pruned, failed-permanent ones past their retention too', async () => {
-      const mall = fakeMall();
-      const deleted = [];
-      mall.events.delete = async (userId, ev) => { deleted.push(ev.id); mall._events.delete(ev.id); };
+    // A paged read of the fake, newest first, like the real mall.
+    function paged (mall) {
       const get = mall.events.get.bind(mall.events);
       mall.events.get = async (userId, params) => {
         const all = (await get(userId, params)).slice().reverse();
         return all.slice(params.skip ?? 0, (params.skip ?? 0) + (params.limit ?? all.length));
       };
+    }
+
+    it('[RQ27] the loop reads the whole stream in pages: a pending delivery behind 450 newer terminal records is processed; succeeded records and failed-permanent ones past their retention are pruned after the paging, so no page shifts under the read', async () => {
+      const mall = fakeMall();
+      const deleted = [];
+      mall.events.delete = async (userId, ev) => { deleted.push(ev.id); mall._events.delete(ev.id); };
+      paged(mall);
       const now = 100 * 24 * 60 * 60 * 1000;
       const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => now - 120_000 } });
-      for (let i = 0; i < 150; i++) {
+      // 450 newer terminal records: three pages, prunable ones on every page.
+      for (let i = 0; i < 450; i++) {
         const old = i % 3 === 0;
         mall._events.set('t-' + i, { id: 't-' + i, time: (now - (old ? 40 : 1) * 24 * 60 * 60 * 1000) / 1000, content: { originalType: 'message/chat-cmc', attempts: 1, status: i % 2 === 0 ? 'succeeded' : 'failed-permanent' } });
       }
@@ -564,10 +571,25 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async () => { throw new Error('no trigger here'); }, dispatchDeps: { fetch: p.fetch }, now: () => now }, limit: 100 });
       assert.equal(summary.succeeded, 1, JSON.stringify(summary));
       assert.equal(mall._events.get(ev.id).content.status, 'succeeded');
-      const succeededCount = 75;
-      const oldFailed = [...Array(150).keys()].filter((i) => i % 2 === 1 && i % 3 === 0).length;
-      assert.equal(deleted.length, succeededCount + oldFailed, 'succeeded pruned at once, failed-permanent past 30 days pruned');
+      const succeededCount = 225;
+      const oldFailed = [...Array(450).keys()].filter((i) => i % 2 === 1 && i % 3 === 0).length;
+      assert.equal(deleted.length, succeededCount + oldFailed, 'succeeded pruned at once, failed-permanent past 30 days pruned, none missed across the page boundaries');
       assert.equal(mall._events.has('t-1'), true, 'a recent failed-permanent record stays for the operator');
+    });
+
+    it('[RQ28] only due records fill the window: 150 newer pending records scheduled hours ahead do not hide one older due delivery', async () => {
+      const mall = fakeMall();
+      paged(mall);
+      const now = 100 * 24 * 60 * 60 * 1000;
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => now - 120_000 } });
+      for (let i = 0; i < 150; i++) {
+        mall._events.set('d-' + i, { id: 'd-' + i, time: (now - 60_000) / 1000, content: { originalType: 'consent/revoke-cmc', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, attempts: 2, nextAttemptAfter: now + 5 * 60 * 60 * 1000, status: 'pending' } });
+      }
+      const p = peer({ status: 201 });
+      const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async () => { throw new Error('no trigger here'); }, dispatchDeps: { fetch: p.fetch }, now: () => now }, limit: 100 });
+      assert.equal(p.calls.length, 1, 'the one due delivery was sent');
+      assert.equal(mall._events.get(ev.id).content.status, 'succeeded');
+      assert.deepEqual([summary.processed, summary.succeeded, summary.skipped, summary.pendingTotal], [1, 1, 150, 151], JSON.stringify(summary));
     });
   });
 });

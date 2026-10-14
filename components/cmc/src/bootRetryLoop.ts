@@ -28,6 +28,7 @@ const require = createRequire(import.meta.url);
 
 const { RetryScheduler } = require('./retryScheduler.ts');
 const { dispatch } = require('./dispatch.ts');
+const retryQueue: typeof import('./retryQueue.ts') = require('./retryQueue.ts');
 
 // Mall handle — pure pass-through to dispatch/retryScheduler (untyped
 // requires); never inspected here.
@@ -57,7 +58,18 @@ type BootDeps = {
   memberSweep?: MemberSweep;
 };
 
-function defaultIsLoopWorker (): boolean {
+/**
+ * Which process runs the loop. The master names it (`PRYV_CMC_LOOP_WORKER`
+ * `'1'` on the API worker it designates, `'0'` on the others; the
+ * replacement of a dead designated worker gets `'1'`, like the webhooks
+ * service), so a worker crash never stops the loop for good. Without the
+ * variable (an older master, a test harness): cluster worker id 1, or a
+ * standalone process.
+ */
+function defaultIsLoopWorker (env: Record<string, string | undefined> = process.env): boolean {
+  const named = env.PRYV_CMC_LOOP_WORKER;
+  if (named === '1') return true;
+  if (named === '0') return false;
   try {
     const cluster = require('node:cluster');
     // Worker mode → only worker id 1 runs the loop.
@@ -106,13 +118,14 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
 
   const intervalMs = deps.config.get('cmc:retryLoop:intervalMs') || 60_000;
   const perUserLimit = deps.config.get('cmc:retryLoop:perUserLimit') || 100;
-  // Both passes visit the accounts that hold CMC state only: the hidden
-  // retries stream exists once the account made its first CMC write (the
-  // reserved parents are provisioned together), so its absence is "nothing
-  // to do", cached for CMC_STATE_RECHECK_MS; its presence is kept for the
-  // life of the process. Without a stream probe on the mall, every account
-  // is visited.
-  const userIdsProvider = withCmcState(deps.userIdsProvider, deps.mall, deps.logger);
+  // Each pass backs off from the accounts it found idle: a pass that saw no
+  // pending retry record (the retry loop) or no live or residual ledger
+  // record (the ledger pass) marks the account idle for IDLE_RECHECK_MS and
+  // skips it until then. Every account has the hidden streams, so presence
+  // tells nothing; idleness does. A record queued meanwhile waits at most
+  // that long for its first loop attempt (its schedule runs in hours).
+  const retryIdle = idleBackoff(deps.userIdsProvider);
+  const ledgerIdle = idleBackoff(deps.userIdsProvider);
 
   const retryDeps = {
     mall: deps.mall,
@@ -138,9 +151,14 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
 
   const scheduler = new RetryScheduler({
     retryDeps,
-    userIdsProvider,
+    userIdsProvider: retryIdle.provider,
     perUserLimit,
     logger: deps.logger,
+    runRetryLoop: async (params: { userId: string; deps: unknown; limit?: number }) => {
+      const summary = await retryQueue.runRetryLoop(params as Parameters<typeof retryQueue.runRetryLoop>[0]);
+      retryIdle.note(params.userId, summary.pendingTotal === 0);
+      return summary;
+    },
   });
   scheduler.start(intervalMs);
   deps.logger?.info?.('cmc/bootRetryLoop: started', { intervalMs, perUserLimit });
@@ -152,11 +170,12 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     const sweepIntervalMs = (deps.config.get('cmc:memberAccess:sweepIntervalMs') as number) || C.MEMBER_ACCESS_CONFIG_DEFAULTS.sweepIntervalMs;
     const ledgerScheduler = new RetryScheduler({
       retryDeps,
-      userIdsProvider,
+      userIdsProvider: ledgerIdle.provider,
       logger: deps.logger,
       runRetryLoop: async ({ userId }: { userId: string }) => {
         const r = await sweep.runLedgerPass(userId);
-        return { processed: r.swept + r.expired + r.residuals + r.pruned, succeeded: r.swept + r.residuals, rescheduled: 0, failedPermanent: 0, skipped: 0 };
+        ledgerIdle.note(userId, r.records === 0);
+        return { processed: r.swept + r.expired + r.residuals + r.pruned, succeeded: r.swept + r.residuals, rescheduled: 0, failedPermanent: 0, skipped: 0, pendingTotal: r.records };
       },
     });
     ledgerScheduler.start(sweepIntervalMs);
@@ -175,50 +194,40 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
   return scheduler;
 }
 
-const CMC_STATE_RECHECK_MS = 10 * 60 * 1000;
+const IDLE_RECHECK_MS = 10 * 60 * 1000;
 
 /**
- * The provider filtered to the accounts whose hidden retries stream exists
- * (the probe is `streams.getOneWithNoChildren`; absent on the mall, no
- * filtering). A negative verdict is re-checked after CMC_STATE_RECHECK_MS,
- * a positive one kept; a probe that throws counts as "has state" (the loop
- * then reads the queue, which reports the real error).
+ * An idle back-off over a user list: `provider()` leaves out the accounts
+ * noted idle less than IDLE_RECHECK_MS ago; `note(userId, idle)` is called
+ * by the pass with what it found (an active account is visited again on the
+ * next tick). Accounts gone from the list leave the map.
  */
-function withCmcState (provider: () => Promise<string[]> | string[], mall: MallLike, logger?: CmcLogger): () => Promise<string[]> {
-  const probe = (mall as { streams?: { getOneWithNoChildren?: (userId: string, streamId: string) => Promise<unknown> } }).streams?.getOneWithNoChildren;
-  if (typeof probe !== 'function') return async () => await Promise.resolve(provider());
-  const verdicts = new Map<string, { has: boolean; at: number }>();
-  return async () => {
-    const ids = await Promise.resolve(provider());
-    const now = Date.now();
-    const out: string[] = [];
-    for (const userId of ids) {
-      const v = verdicts.get(userId);
-      if (v != null && (v.has || now - v.at < CMC_STATE_RECHECK_MS)) {
-        if (v.has) out.push(userId);
-        continue;
+function idleBackoff (provider: () => Promise<string[]> | string[], now: () => number = Date.now): { provider: () => Promise<string[]>; note: (userId: string, idle: boolean) => void } {
+  const idleSince = new Map<string, number>();
+  return {
+    provider: async () => {
+      const ids = await Promise.resolve(provider());
+      const t = now();
+      const out = ids.filter((userId) => {
+        const since = idleSince.get(userId);
+        return since == null || t - since >= IDLE_RECHECK_MS;
+      });
+      if (idleSince.size > ids.length * 2 + 100) {
+        const keep = new Set(ids);
+        for (const k of idleSince.keys()) if (!keep.has(k)) idleSince.delete(k);
       }
-      let has = true;
-      try {
-        has = (await probe(userId, C.NS_INTERNAL_RETRIES)) != null;
-      } catch (err: unknown) {
-        logger?.debug?.('cmc/bootRetryLoop: the CMC state probe failed, the account is visited', { userId, error: String((err as Error)?.message || err) });
-      }
-      verdicts.set(userId, { has, at: now });
-      if (has) out.push(userId);
-    }
-    // Accounts gone from the provider leave the cache.
-    if (verdicts.size > ids.length * 2 + 100) {
-      const keep = new Set(ids);
-      for (const k of verdicts.keys()) if (!keep.has(k)) verdicts.delete(k);
-    }
-    return out;
+      return out;
+    },
+    note: (userId, idle) => {
+      if (idle) idleSince.set(userId, now());
+      else idleSince.delete(userId);
+    },
   };
 }
 
 export {
   startRetryLoopIfEnabled,
   defaultIsLoopWorker,
-  withCmcState,
-  CMC_STATE_RECHECK_MS,
+  idleBackoff,
+  IDLE_RECHECK_MS,
 };

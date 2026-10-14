@@ -714,6 +714,7 @@ if (cluster.isPrimary) {
     cluster.setupPrimary({ args: process.argv.slice(2) });
 
     let webhooksWorkerId = null; // cluster id of the API worker running the webhooks service
+    let cmcLoopWorkerId = null; // cluster id of the API worker running the CMC retry loop
     log(`Forking ${numApiWorkers} API worker(s)`);
     for (let i = 0; i < numApiWorkers; i++) {
       forkApiWorker();
@@ -725,15 +726,21 @@ if (cluster.isPrimary) {
       // change notification and every webhook, so a service in each worker
       // would call each webhook once per worker. Its replacement takes over.
       const runsWebhooks = webhooksWorkerId == null;
+      // One API worker runs the CMC retry loop and ledger pass, for the same
+      // reason; its replacement takes over too, so a worker crash never
+      // stops the loop until the master restarts.
+      const runsCmcLoop = cmcLoopWorkerId == null;
       const worker = cluster.fork({
         PRYV_WORKER_TYPE: 'api',
         PRYV_BOILER_SUFFIX: `-w${id}`,
         PRYV_WEBHOOKS_WORKER: runsWebhooks ? '1' : '0',
+        PRYV_CMC_LOOP_WORKER: runsCmcLoop ? '1' : '0',
         ...observabilityEnv
       });
       workerTypes.set(worker.id, 'api');
       if (runsWebhooks) webhooksWorkerId = worker.id;
-      log(`API worker w${id} started (pid ${worker.process.pid})${runsWebhooks ? ', runs the webhooks service' : ''}`);
+      if (runsCmcLoop) cmcLoopWorkerId = worker.id;
+      log(`API worker w${id} started (pid ${worker.process.pid})${runsWebhooks ? ', runs the webhooks service' : ''}${runsCmcLoop ? ', runs the CMC retry loop' : ''}`);
     }
 
     // --- HFS workers ---
@@ -882,6 +889,7 @@ if (cluster.isPrimary) {
       // Released at once, not after the delay: the next API worker forked
       // (this one's replacement or another's) takes over the webhooks service.
       if (worker.id === webhooksWorkerId) webhooksWorkerId = null;
+      if (worker.id === cmcLoopWorkerId) cmcLoopWorkerId = null;
       log(`${type ?? 'unknown'} worker pid ${worker.process.pid} died (code=${code} signal=${signal}) after ${Math.round(uptimeMs / 1000)}s, ` +
         (delayMs > 0 ? `restarting in ${Math.round(delayMs / 1000)}s (it keeps dying soon after start)` : 'restarting'));
       setTimeout(() => {

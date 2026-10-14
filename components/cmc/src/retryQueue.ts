@@ -486,6 +486,8 @@ async function runRetryLoop (params: {
   rescheduled: number;
   failedPermanent: number;
   skipped: number;
+  // Pending records seen, due or not (the idle back-off reads it).
+  pendingTotal: number;
 }> {
   const { userId, deps } = params;
   const limit = params.limit ?? 100;
@@ -495,8 +497,14 @@ async function runRetryLoop (params: {
   // collected up to `limit`, terminal ones pruned on the way (a succeeded
   // record at once, a failed-permanent one past its retention). A read that
   // fails (an account without the stream yet) is an empty queue.
-  const summary = { processed: 0, succeeded: 0, rescheduled: 0, failedPermanent: 0, skipped: 0 };
+  // Only DUE pending records are collected (a record scheduled hours ahead
+  // must not fill the window and hide an older one that is due); the paging
+  // goes on until `limit` due records or the end of the stream. Terminal
+  // records to prune are collected and deleted AFTER the paging (a delete
+  // while paging by skip would shift the later pages).
+  const summary = { processed: 0, succeeded: 0, rescheduled: 0, failedPermanent: 0, skipped: 0, pendingTotal: 0 };
   const pending: RetryEvent[] = [];
+  const toPrune: RetryEvent[] = [];
   const seen = new Set<string>();
   for (let page = 0; page < MAX_PAGES && pending.length < limit; page++) {
     let events: RetryEvent[];
@@ -520,17 +528,24 @@ async function runRetryLoop (params: {
       }
       const status = ev?.content?.status;
       if (status === 'pending') {
-        if (pending.length < limit) pending.push(ev);
+        summary.pendingTotal += 1;
+        const after = ev?.content?.nextAttemptAfter;
+        const due = typeof after !== 'number' || after <= now;
+        if (due && pending.length < limit) pending.push(ev);
+        else summary.skipped += 1;
         continue;
       }
       summary.skipped += 1;
       const retired = status === 'succeeded' ||
         (status === 'failed-permanent' && typeof ev?.time === 'number' && now - ev.time * 1000 > FAILED_RETENTION_MS);
-      if (retired && deps.mall.events.delete != null && ev?.id != null) {
-        try { await deps.mall.events.delete(userId, ev); } catch (_e) { /* pruned on a later pass */ }
-      }
+      if (retired && ev?.id != null) toPrune.push(ev);
     }
     if (list.length < PAGE_SIZE) break;
+  }
+  if (deps.mall.events.delete != null) {
+    for (const ev of toPrune) {
+      try { await deps.mall.events.delete(userId, ev); } catch (_e) { /* pruned on a later pass */ }
+    }
   }
   for (const ev of pending) {
     summary.processed += 1;

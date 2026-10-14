@@ -9,6 +9,7 @@ import timestamp from 'unix-timestamp';
 import { fromCallback } from 'utils';
 import { pubsub, WEBHOOKS_DELETE, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { getStorageLayer } from 'storage';
+import { getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { managedAccessesOf } from 'business/src/accesses/refs.ts';
 import { withoutCredentialUrls } from 'business/src/accesses/credentialUrls.ts';
@@ -101,6 +102,22 @@ async function scrubCredentialUrls (accessesRepository: ScrubRepository, user: D
   }
 }
 
+/**
+ * The scrub runs after the delete: a failure leaves the credential at rest
+ * (the exposure that existed before the scrub) and must not abort the rest
+ * of the chain (the late pass, the alias release, the tombstones, the
+ * notifications), so it is logged per row and swallowed.
+ */
+async function scrubOrWarn (accessesRepository: ScrubRepository, user: DeletionUser, access: AccessRow): Promise<void> {
+  try {
+    await scrubCredentialUrls(accessesRepository, user, access);
+  } catch (err: unknown) {
+    getLogger('accesses:deletion').warn('the credential scrub of a deleted access failed; its deletion record keeps the peer endpoint', {
+      accessId: access.id, error: String((err as Error)?.message ?? err),
+    });
+  }
+}
+
 type DeletionOutcome = {
   // False when no such live access exists (nothing was done).
   deleted: boolean;
@@ -189,7 +206,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     cache.unsetAccessLogic(user.id, logic);
   }
   if (deleteErr != null) throw deleteErr;
-  for (const row of rowsToScrub) await scrubCredentialUrls(accessesRepository as unknown as ScrubRepository, user, row);
+  for (const row of rowsToScrub) await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, row);
   // An access created through the deleted one between the find above and
   // the delete (or by a request that authenticated before the cache bust)
   // would survive it unmanaged. The deleted access can create nothing any
@@ -202,7 +219,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });
         rowsToTombstone.push(a as IndexAccessInput);
-        await scrubCredentialUrls(accessesRepository as unknown as ScrubRepository, user, a);
+        await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, a);
       }
       related = related.concat(late);
       idsToDelete = idsToDelete.concat(late.map((a) => ({ id: a.id })));

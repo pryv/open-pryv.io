@@ -402,6 +402,8 @@ One write; the local access is destroyed server-side, which is what actually cut
 
 **The peer's half is deleted too, by their own server.** When the revoke lands in the doctor's `:_cmc:inbox`, the receiving server deletes the access the revoke arrived through, which is the access the withdrawing side held on that account. You do not have to delete your half yourself, and a build that made you do so is older than this behaviour. What you SHOULD do on observing a `consent/revoke-cmc` arrival is drop your cached endpoints for that relationship: the tokens in them are dead.
 
+**A superseded arrival.** A revoke notice can land hours after it was issued (the sender's retry loop) and after the two of you re-established the relationship under the same scope. Your server then tears nothing down and marks the arrival `content.superseded: 'relationship-re-established'`: ignore such an arrival, keep the endpoints you hold for that counterparty and scope, and do not present the relationship as withdrawn.
+
 **What the arrival tells you.** `content.accessId` is the SENDER's access id on their own account, so it will not match anything you hold. Match on the ids your own server adds instead:
 
 | Field | Present for | Meaning |
@@ -1515,7 +1517,7 @@ Written by the server on the membership's team stream when a membership ends (cl
 
 Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes), then re-swept by the periodic ledger pass (fifty per pass) as long as the retry loop runs (`cmc:retryLoop:enabled`, `true` by default); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
 
-The records live on the team stream. A member holding `contribute` there can delete them, and can edit or delete the patient invite the mint reads its bound from (which blocks every member's asks for that patient with `cmc-member-access-relationship-not-found` until the group invites the patient again; the patient core's grant stays the real bound, so nothing widens). Give `contribute` on team streams to members you trust with the team's records; the patient's own audit trail (the deletion records and the `member-child` stamps on the patient's core) does not depend on it.
+The records live on the team stream. They are the owner's: an app or shared access, a membership access included, cannot update or delete a `consent/member-access-cmc` or `consent/member-revoke-cmc` event (403 `forbidden`, `cmc-protected-event-write`); the owner's personal token can. A member holding `contribute` there can still edit or delete the patient invite the mint reads its bound from (which blocks every member's asks for that patient with `cmc-member-access-relationship-not-found` until the group invites the patient again; the patient core's grant stays the real bound, so nothing widens), and a holder of `manage` who deletes the team stream with `mergeEventsWithParent: false` removes its records with it (the memberships covering the stream are swept as `narrowed` when the deletion goes through). The patient's own audit trail (the deletion records and the `member-child` stamps on the patient's core) does not depend on any of this.
 
 ## Error ids
 
@@ -1524,7 +1526,7 @@ Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.
 | Id | Meaning |
 |---|---|
 | `cmc-member-access-not-member` | Not written through a membership access (personal and delegate tokens are refused too). |
-| `cmc-member-access-relationship-not-found` | No relationship with this patient under the scope, its handshake is not complete, or the invite it descends from was deleted (`detail.reason: 'offer-not-found'`): invite the patient again. |
+| `cmc-member-access-relationship-not-found` | No relationship with this patient under the scope, its handshake is not complete, or the invite it descends from was deleted (`error.data.reason: 'offer-not-found'`): invite the patient again. |
 | `cmc-member-access-scope-outside-membership` | `scopeStreamId` is not the trigger's stream or under it, or the trigger is not on a team stream. |
 | `cmc-member-access-permissions-not-subset` | Not stream permissions, or beyond what the group's invite offered the patient. |
 | `cmc-member-access-expiry-out-of-range` | `expireAfter` outside [`minTtl`, `maxTtl`]. |

@@ -140,22 +140,29 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   record older than its whole schedule (2 hours for a trigger, 30 hours for a revoke notice) is
   marked `failed-permanent` with `lastFailureReason: 'cmc-retry-stale'` and never dispatched;
   nothing months old reaches a counterparty. Settled records are pruned by the loop (a succeeded
-  one on the next pass, a `failed-permanent` one after 30 days), the stream is read in pages so a
-  pending record is never hidden behind newer ones, every write of the loop on a record skips
-  event versioning (a record holds a peer token: no history row keeps a copy), and the two passes
-  (retries, member ledger) visit only the accounts that have CMC state (the hidden retries
-  stream; an account without it is re-checked every 10 minutes), not every account on the core
-  each minute. New `cmc.retryLoop.startScheduler` (default `true`): `false` queues records but
-  starts no scheduler in this process. Operators: size the backlog before upgrading a core that
-  ran with the loop off; the retired records stay readable for 30 days.
+  one on the next pass, a `failed-permanent` one after 30 days, deleted after the read so no page
+  shifts under it), the stream is read in pages and only records that are due fill a pass (a
+  record scheduled hours ahead never hides an older one that is due), every write of the loop on
+  a record skips event versioning (a record holds a peer token: no history row keeps a copy), and
+  each pass backs off from the accounts it found idle (no pending retry record, no open ledger
+  record): such an account is read again after 10 minutes, an active one every minute, so a core
+  with many dormant accounts reads each of them six times an hour instead of sixty; a record
+  queued on an idle account waits at most those 10 minutes for its first loop attempt. In a
+  cluster the master names the API worker that runs the loop (`PRYV_CMC_LOOP_WORKER`) and the
+  replacement of a crashed one takes over, as for the webhooks service; until now the loop ran on
+  cluster worker 1 only and stopped for good when that worker was restarted. New
+  `cmc.retryLoop.startScheduler` (default `true`): `false` queues records but starts no scheduler
+  in this process. Operators: size the backlog before upgrading a core that ran with the loop
+  off; the retired records stay readable for 30 days.
 - **A late revoke notice never takes a relationship re-established meanwhile.** The accept
   delivered to the requester now carries the accepter's `acceptEventId`, recorded on the
   requester's relationship access (`clientData.cmc.peerAcceptEventId`), and a revoke notice names
   the accept it ends and when it was issued (`content.acceptEventId`, `content.revokedAt`). A
-  notice that lands hours later (the retry loop) after the parties accepted the same link again is
-  recorded in the inbox but tears nothing down when it names an earlier accept than the one the
-  access pairs with, and a sibling access created after `revokedAt` is kept. Peers of earlier
-  releases stamp neither and are handled as before.
+  notice that lands hours later (the retry loop) after the parties re-established the relationship
+  under the same scope tears nothing down when it names an earlier accept than the one the access
+  pairs with: it stays in the inbox marked `content.superseded: 'relationship-re-established'`
+  (apps: ignore such an arrival, keep the endpoints you hold); a sibling access created after
+  `revokedAt` is kept. Peers of earlier releases stamp neither and are handled as before.
 - **A group account's member records are the owner's.** An app or shared access, a membership
   access included, can no longer update or delete a `consent/member-access-cmc` or
   `consent/member-revoke-cmc` event (403 `forbidden`, `cmc-protected-event-write`), nor delete an
@@ -300,7 +307,9 @@ admin pre-registration refuses badly shaped usernames. No migration.
   response, and since this release the credentials also leave the stored row itself: every URL
   user part in `clientData` is removed once the access is marked deleted (host and path kept),
   from the deletion row and from the history rows its earlier updates snapshotted, and the
-  deletion row's own token is unset, so a backup or an export of deletion records holds no token.
+  deletion row of such a relationship access loses its own token too, so a backup or an export
+  of deletion records holds no credential of a consent relationship (other deletion records keep
+  their token as before).
 
 ## 2.0.0-rc.51 - 2026-10-13
 

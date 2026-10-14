@@ -406,6 +406,20 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       r = await mint(mall3, core, {});
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_MEMBERSHIP_GONE);
       assert.deepEqual(core.calls.map((c) => c.method), ['POST', 'DELETE']);
+      assert.deepEqual((await ledger.listRecords({ mall: mall3 }, 'group')).map((x) => x.state), ['deleted']);
+    });
+
+    it('[MA1F] a child the finished mint could not delete after its membership ended is left residual, for the periodic pass', async () => {
+      const mall = fakeMall({ accesses: [{ ...MEMBERSHIP, expires: 1_000_000 + 7200 }, RELATIONSHIP] });
+      const core = fakePatientCore(({ n }) => {
+        if (n === 0) { mall.accessesMap.get('acc-membership').expires = 1_000_000 - 1; return created201(); }
+        return { status: 503, body: {} };
+      });
+      const r = await mint(mall, core, {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_MEMBERSHIP_GONE);
+      assert.deepEqual(core.calls.map((c) => c.method), ['POST', 'DELETE']);
+      const records = await ledger.listRecords({ mall }, 'group');
+      assert.deepEqual(records.map((x) => [x.childAccessId, x.state]), [[records[0].childAccessId, 'residual']]);
     });
 
     it('[MA1E] a star ask is refused, the default set never carries it, and a reused child must carry exactly the permissions asked', async () => {

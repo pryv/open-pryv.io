@@ -37,9 +37,16 @@
   the optional `mall.events.delete`, and treats a failing read as an empty queue.
   `DELIVERY_MAX_ATTEMPTS` stays 8 (docs now say "8 re-sends, about 27 h").
 - `cmc/src/bootRetryLoop.ts`: `cmc:retryLoop:startScheduler === false` returns null after the
-  enabled check (queueing stays on); `withCmcState(provider, mall)` filters the user list by the
-  presence of `:_cmc:_internal:retries` (`streams.getOneWithNoChildren`), negative verdicts
-  re-checked after `CMC_STATE_RECHECK_MS` (10 min); the returned scheduler carries `stopAll()`.
+  enabled check (queueing stays on); `idleBackoff(provider)` wraps each scheduler's user list:
+  the pass notes an account idle (`runRetryLoop` summary `pendingTotal === 0`; `runLedgerPass`
+  `records === 0`, a new field) and the account is left out until `IDLE_RECHECK_MS` (10 min)
+  has passed (every account holds the hidden streams, so their presence filters nothing);
+  `defaultIsLoopWorker(env)` honours `PRYV_CMC_LOOP_WORKER` (`'1'` / `'0'`, set by
+  `bin/master.js` on the designated API worker and on its replacement, like
+  `PRYV_WEBHOOKS_WORKER`) before the cluster-id-1 rule; the returned scheduler carries
+  `stopAll()`. `runRetryLoop` collects due pending records only (`nextAttemptAfter <= now`),
+  keeps paging until `limit` of them, and prunes after the paging loop (no delete while paging
+  by `skip`).
   `api-server/src/methods/events.ts` keeps the handle (`stopCmcRetryLoop`) and, when a scheduler
   runs in the process, drains it on SIGTERM / SIGINT then re-raises the signal (bounded 2 s).
   `test-helpers` `initCore` injects `cmc.retryLoop.startScheduler: false` into the test core.
@@ -57,8 +64,15 @@
   (`createEventUpdateGuardHook`) and on delete (`createEventDeleteGuardHook`, wired after
   `checkEventForDelete`), with inbox / internal events; `STAMP_STRING` also refuses C1, bidi
   and zero-width characters.
-- `accessesUpdateHook.ts` `createStreamDeleteNarrowingHook({ mall, memberSweep })`, wired in
-  `streams.ts` after `verifyStreamExistenceAndPermissions`: on the final delete of a user-creatable
+- `handleIncomingRevoke.ts`: a dropped stale notice is marked on the inbox arrival
+  (`content.superseded: 'relationship-re-established'`, best effort, `updateWithMerge`).
+  `accessDeletion.ts` `scrubOrWarn`: a scrub that throws after the soft delete is logged per row
+  and never aborts the late pass, the alias release, the tombstones or the notifications.
+  `hooks.ts` `STAMP_STRING` is built from `\u` escapes (no raw bidi or zero-width code point in
+  source).
+- `accessesUpdateHook.ts` `createStreamDeleteNarrowing({ mall, memberSweep })` returns
+  `narrowOnStreamDeleted(userId, stream)`, called by `streams.ts` `deleteWithData` once every
+  check passed (a refused delete narrows nothing): on the final delete of a user-creatable
   `:_cmc:apps:*` stream, every live `member` access whose covered scopes touch it is swept
   `narrowed` with `recordFilter` (records under the stream), `uncovered: [streamId]`, `streamId`
   (the parent when user-creatable, else `:_cmc:apps`); `memberSweep.ts` `SweepOptions` gains

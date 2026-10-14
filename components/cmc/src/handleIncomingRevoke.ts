@@ -142,6 +142,22 @@ async function handleIncomingRevoke (params: {
     logger?.info?.('cmc/handleIncomingRevoke: the revoke names an earlier accept than the one this access pairs with; the relationship was re-established since, nothing is torn down', {
       accessId: createdByAccess.id, noticeAcceptEventId: noticeAccept, pairedAcceptEventId: pairedAccept,
     });
+    // The arrival stays in the inbox; marked so an app does not read it as
+    // the end of the relationship it names by scope. Best effort.
+    if (typeof event.id === 'string' && mall.events?.updateWithMerge != null) {
+      try {
+        await mall.events.updateWithMerge(userId, event.id, (stored) => ({
+          ...stored,
+          content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), superseded: 'relationship-re-established' },
+          modified: Date.now() / 1000,
+          modifiedBy: C.SYSTEM_ACCESS_ID,
+        }));
+        event.content = { ...(event.content ?? {}), superseded: 'relationship-re-established' };
+        try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
+      } catch (err: unknown) {
+        logger?.warn?.('cmc/handleIncomingRevoke: could not mark the superseded revoke arrival', { eventId: event.id, error: String((err as Error)?.message || err) });
+      }
+    }
     return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'relationship-re-established' };
   }
   // When the notice says when it was issued, a sibling created after that is

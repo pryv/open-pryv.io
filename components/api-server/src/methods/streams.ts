@@ -373,14 +373,15 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
   // Group accounts: a team stream deleted for good narrows every membership
   // covering it (the member accesses minted under it are deleted on the
-  // patient cores, recorded on the parent stream).
-  const cmcStreamDeleteNarrowingHook = cmc.createStreamDeleteNarrowingHook({
+  // patient cores, recorded on the parent stream). Called by deleteWithData
+  // once every check passed, never for a refused delete nor for trashing.
+  const cmcNarrowOnStreamDeleted = cmc.createStreamDeleteNarrowing({
     mall: await buildMallForCmc(),
     memberSweep: await buildMemberSweep(),
     logger: getLogger('cmc:stream-delete-narrowing'),
   });
   const sharedSecretsStreamDeleteGuard = sharedSecrets.createStreamDeleteGuard({ errors });
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, delegationStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, cmcStreamDeleteNarrowingHook, deleteStream);
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, delegationStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id!, null);
@@ -471,6 +472,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
 
     // --- all tests are passed
+    // A group's team stream going for good: the memberships covering it are
+    // narrowed (fire and forget; the deletion below proceeds regardless).
+    cmcNarrowOnStreamDeleted(context.user.id, { id: params.id, parentId });
     // --- create result streams and start send result as they come
     const updatedEventsStream = new ItemsStream();
     result.addStream!('updatedEvents', updatedEventsStream);

@@ -3127,8 +3127,8 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       } finally {
         outage.restore();
       }
-      const arrival = await pollInboxFor(alice.eventsPath, alice.token, 'consent/revoke-cmc', (e) => e.content?.accessId === firstGrant.id);
-      assert.ok(arrival != null, 'the notice landed in the requester inbox');
+      const arrival = await pollInboxFor(alice.eventsPath, alice.token, 'consent/revoke-cmc', (e) => e.content?.accessId === firstGrant.id && e.content?.superseded != null);
+      assert.equal(arrival.content.superseded, 'relationship-re-established', 'the arrival is marked so an app does not read it as the end of the current relationship');
       assert.strictEqual((await coreRequest.get('/' + alice.username + '/access-info').set('Authorization', bobToken)).status, 200, 'the re-established relationship stands on the requester side');
       const bobSide = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
       assert.ok((bobSide.body.accesses || []).some((a) => a.id === secondGrant.id), 'and on the accepter side');

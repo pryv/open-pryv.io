@@ -189,9 +189,11 @@ function createMemberSweep (deps: SweepDeps) {
     return records.length;
   }
 
-  async function runLedgerPass (userId: string): Promise<{ swept: number; expired: number; residuals: number; pruned: number }> {
+  async function runLedgerPass (userId: string): Promise<{ swept: number; expired: number; residuals: number; pruned: number; records: number }> {
     const records = await ledger.listRecords(ledgerDeps, userId);
     const t = now();
+    // Live and residual records seen (the idle back-off reads it).
+    const open = records.filter((r) => r.state === 'live' || r.state === 'residual').length;
     let expired = 0;
     const byMembership = new Map<string, StoredLedgerRecord[]>();
     const residuals: StoredLedgerRecord[] = [];
@@ -256,7 +258,7 @@ function createMemberSweep (deps: SweepDeps) {
       }
     }
     const pruned = await ledger.pruneExpired(ledgerDeps, userId);
-    return { swept, expired, residuals: residualsSwept, pruned };
+    return { swept, expired, residuals: residualsSwept, pruned, records: open };
   }
 
   /**

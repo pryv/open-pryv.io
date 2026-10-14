@@ -52,40 +52,67 @@ describe('[CMCBRL] cmc/bootRetryLoop', () => {
     assert.ok(logged.some((m) => m.includes('startScheduler')));
   });
 
-  it('[BRL08] both passes visit the accounts that hold CMC state only: the retries stream probed once, a negative verdict re-checked after a while, a positive one kept; stopAll stops both schedulers', async () => {
-    const { withCmcState, CMC_STATE_RECHECK_MS } = require('../src/bootRetryLoop.ts');
-    const probes = [];
-    const has = new Set(['u2']);
-    const mall = { streams: { async getOneWithNoChildren (userId, streamId) { probes.push(userId + ' ' + streamId); return has.has(userId) ? { id: streamId } : null; } } };
-    const provider = withCmcState(() => ['u1', 'u2', 'u3'], mall);
-    assert.deepEqual(await provider(), ['u2']);
-    assert.deepEqual(probes, ['u1 :_cmc:_internal:retries', 'u2 :_cmc:_internal:retries', 'u3 :_cmc:_internal:retries']);
-    has.add('u1');
-    assert.deepEqual(await provider(), ['u2'], 'the negative verdict is cached');
-    assert.equal(probes.length, 3);
-    const realNow = Date.now;
-    Date.now = () => realNow() + CMC_STATE_RECHECK_MS + 1;
-    try {
-      assert.deepEqual(await provider(), ['u1', 'u2'], 'the negative verdicts are re-checked, the positive one is kept');
-      assert.equal(probes.length, 5);
-    } finally {
-      Date.now = realNow;
-    }
+  it('[BRL08] each pass backs off from the accounts it found idle (no pending retry record, no open ledger record) and visits them again after the re-check window; an active account is visited every tick; stopAll stops both schedulers', async () => {
+    const { idleBackoff, IDLE_RECHECK_MS } = require('../src/bootRetryLoop.ts');
+    let t = 1_000_000;
+    const backoff = idleBackoff(() => ['u1', 'u2', 'u3'], () => t);
+    assert.deepEqual(await backoff.provider(), ['u1', 'u2', 'u3']);
+    backoff.note('u1', true);
+    backoff.note('u2', false);
+    backoff.note('u3', true);
+    assert.deepEqual(await backoff.provider(), ['u2'], 'idle accounts are skipped');
+    t += IDLE_RECHECK_MS - 1;
+    assert.deepEqual(await backoff.provider(), ['u2']);
+    t += 1;
+    assert.deepEqual(await backoff.provider(), ['u1', 'u2', 'u3'], 'and re-checked after the window');
+    backoff.note('u1', true);
+    backoff.note('u1', false);
+    assert.deepEqual(await backoff.provider(), ['u1', 'u2', 'u3'], 'an account found active is visited again at once');
+
+    // Wired: a user whose retry stream holds nothing is left out of the next tick.
+    const reads = [];
+    const mall = {
+      events: {
+        async get (userId) { reads.push(userId); return []; },
+        async create () { throw new Error('unused'); },
+        async update () { throw new Error('unused'); },
+      },
+    };
     const passes = [];
-    const memberSweep = { async runLedgerPass (userId) { passes.push(userId); return { swept: 0, expired: 0, residuals: 0, pruned: 0 }; } };
+    const memberSweep = { async runLedgerPass (userId) { passes.push(userId); return { swept: 0, expired: 0, residuals: 0, pruned: 0, records: userId === 'u2' ? 1 : 0 }; } };
     const sched = startRetryLoopIfEnabled({
       ...STUB_DEPS,
       mall,
       config: fakeConfig({ cmc: { retryLoop: { enabled: true, intervalMs: 60_000 }, memberAccess: { sweepIntervalMs: 60_000 } } }),
-      userIdsProvider: () => ['u1', 'u2', 'u3'],
+      userIdsProvider: () => ['u1', 'u2'],
       isLoopWorker: () => true,
       memberSweep,
     });
+    await sched.tick();
+    assert.deepEqual(reads, ['u1', 'u2'], 'the first tick reads every account');
+    await sched.tick();
+    assert.deepEqual(reads, ['u1', 'u2'], 'both idle: the second tick reads none');
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.deepEqual(passes, ['u1', 'u2'], 'the eager ledger pass skipped the account without CMC state');
+    assert.deepEqual(passes, ['u1', 'u2'], 'the eager ledger pass visited both');
+    await sched.ledgerScheduler.tick();
+    assert.deepEqual(passes, ['u1', 'u2', 'u2'], 'u2 holds an open record: visited again; u1 is idle');
     await sched.stopAll();
     assert.equal(sched.stats().running, false);
     assert.equal(sched.ledgerScheduler.stats().running, false);
+  });
+
+  it('[BRL09] the master names the loop worker (PRYV_CMC_LOOP_WORKER), so a restarted designated worker keeps the loop running; without it, cluster worker 1 or a standalone process', () => {
+    const { defaultIsLoopWorker } = require('../src/bootRetryLoop.ts');
+    assert.equal(defaultIsLoopWorker({ PRYV_CMC_LOOP_WORKER: '1' }), true);
+    assert.equal(defaultIsLoopWorker({ PRYV_CMC_LOOP_WORKER: '0' }), false);
+    assert.equal(defaultIsLoopWorker({}), true, 'this test process is standalone');
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true } } }),
+      userIdsProvider: () => [],
+      isLoopWorker: () => defaultIsLoopWorker({ PRYV_CMC_LOOP_WORKER: '0' }),
+    });
+    assert.equal(sched, null, 'a worker the master did not designate starts nothing');
   });
 
   it('[BRL01] returns null when config gate is off (default)', () => {

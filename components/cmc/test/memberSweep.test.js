@@ -28,7 +28,7 @@ const { createMemberSweep, sweepStreamOf } = require('../src/memberSweep.ts');
 const { handleRevoke } = require('../src/handleRevoke.ts');
 const { handleIncomingRevoke } = require('../src/handleIncomingRevoke.ts');
 const { createAccessesDeletePostHook } = require('../src/accessesDeleteHook.ts');
-const { createAccessesUpdatePostHook, createStreamDeleteNarrowingHook } = require('../src/accessesUpdateHook.ts');
+const { createAccessesUpdatePostHook, createStreamDeleteNarrowing } = require('../src/accessesUpdateHook.ts');
 const dispatchMod = require('../src/dispatch.ts');
 const { startRetryLoopIfEnabled } = require('../src/bootRetryLoop.ts');
 const { assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
@@ -345,11 +345,11 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       // The vanished membership is left to the path that deleted it on the
       // pass that first sees it gone, and swept on a later pass.
       let r = await sweep.runLedgerPass('group');
-      assert.deepEqual(r, { swept: 1, expired: 1, residuals: 0, pruned: 2 });
+      assert.deepEqual(r, { swept: 1, expired: 1, residuals: 0, pruned: 2, records: 4 });
       assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/accesses/c-exp-m']);
       clock = NOW + 31;
       r = await sweep.runLedgerPass('group');
-      assert.deepEqual(r, { swept: 1, expired: 0, residuals: 0, pruned: 0 });
+      assert.deepEqual(r, { swept: 1, expired: 0, residuals: 0, pruned: 0, records: 2 });
       const deleted = cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path).sort();
       assert.deepEqual(deleted, ['/accesses/c-exp-m', '/accesses/c-gone-m']);
       const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
@@ -367,7 +367,7 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       const cores = fakeCores({ deletes: { 'c-still': { status: 503, body: {} } }, remaining: { 'grant2-tok': ['c-still'] } });
       const { sweep } = sweepOf(mall, cores);
       const r = await sweep.runLedgerPass('group');
-      assert.deepEqual(r, { swept: 0, expired: 0, residuals: 1, pruned: 1 });
+      assert.deepEqual(r, { swept: 0, expired: 0, residuals: 1, pruned: 1, records: 3 });
       const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
       assert.deepEqual(left, { 'c-res': 'deleted', 'c-still': 'residual' });
       assert.equal(mall.calls.eventsCreated.filter((e) => e.type === C.ET_MEMBER_REVOKE).length, 0);
@@ -430,21 +430,37 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.equal(mall.calls.eventsUpdated.length, 0);
     });
 
+    it('[MR29] the erasure sweep keeps at most sixteen deletions in flight', async () => {
+      const mall = fakeMall();
+      for (let i = 0; i < 40; i++) await seed(mall, { childAccessId: 'c-' + i });
+      let inFlight = 0;
+      let peak = 0;
+      const fetch = async (url, init) => {
+        inFlight += 1; peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return { status: 200, ok: true, async json () { return {}; }, async text () { return '{}'; } };
+      };
+      const sweep = createMemberSweep({ mall, fetch, now: () => NOW, dispatch: async () => ({ status: 'completed' }), dispatchDeps: {} });
+      const r = await sweep.sweepErasedAccount('group', [REL]);
+      assert.deepEqual(r, { records: 40, residuals: 0 });
+      assert.equal(peak, 16, 'sixteen at a time, never more');
+    });
+
     it('[MR34] a team stream deleted for good narrows every membership covering it: swept as narrowed on the parent stream, the dead scope named as uncovered, nothing kept under it', async () => {
       const mall = fakeMall();
       await seed(mall);
       await seed(mall, { childAccessId: 'c-b', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
       const cores = fakeCores();
       const { sweep, dispatched } = sweepOf(mall, cores);
-      const hook = createStreamDeleteNarrowingHook({ mall, memberSweep: sweep });
-      let called = false;
-      // Trashing is not a narrowing.
-      hook({ user: { id: 'group' }, stream: { id: TEAM, parentId: ':_cmc:apps:practice', trashed: null } }, { id: TEAM }, {}, () => { called = true; });
-      assert.equal(called, true);
+      const narrow = createStreamDeleteNarrowing({ mall, memberSweep: sweep });
+      // A stream outside the apps tree, or a plugin-managed one, is nobody's team.
+      narrow('group', { id: 'data', parentId: null });
+      narrow('group', { id: ':_cmc:inbox', parentId: ':_cmc' });
       await new Promise((resolve) => setTimeout(resolve, 20));
       assert.equal(dispatched.length, 0);
-      // The real deletion sweeps.
-      hook({ user: { id: 'group' }, stream: { id: TEAM, parentId: ':_cmc:apps:practice', trashed: true } }, { id: TEAM }, {}, () => {});
+      // The deletion, once certain, sweeps.
+      narrow('group', { id: TEAM, parentId: ':_cmc:apps:practice' });
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.equal(dispatched.length, 1);
       const trigger = dispatched[0].event;

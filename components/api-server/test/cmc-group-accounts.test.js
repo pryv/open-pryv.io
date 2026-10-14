@@ -640,6 +640,13 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       const trash = await coreRequest.delete(path).set('Authorization', group.token);
       assert.strictEqual(trash.status, 200, JSON.stringify(trash.body));
       assert.ok((await tokenLivesOn(patient, childToken)) != null, 'trashing is not a narrowing');
+      // A refused deletion (the stream holds events and mergeEventsWithParent is missing) narrows nothing.
+      const refused = await coreRequest.delete(path).set('Authorization', group.token);
+      assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+      await sleep(500);
+      assert.ok((await tokenLivesOn(patient, childToken)) != null, 'a refused delete revokes nobody');
+      const none = await coreRequest.get(group.eventsPath).set('Authorization', group.token).query({ streams: [APP_ROOT], types: ['consent/member-revoke-cmc'], limit: 100 });
+      assert.ok(!(none.body.events || []).some((e) => e.content?.membershipAccessId === m.membershipAccess.id), 'and writes no record');
       const gone = await coreRequest.delete(path).query({ mergeEventsWithParent: false }).set('Authorization', group.token);
       assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
       await pollTokenDead(patient, childToken, 'GA41 child');
