@@ -77,7 +77,7 @@ its applicability is stated with it.
 | 2.0.0-rc.48 | 2026-10-11 | 1 Low | yes (2026-10-14) |
 | 2.0.0-rc.49 | 2026-10-12 | 1 Medium, lower-severity fixes | yes (2026-10-14) |
 | 2.0.0-rc.50 | 2026-10-13 | lower-severity fixes | yes (2026-10-14) |
-| 2.0.0-rc.51 | 2026-10-14 | 1 High, lower-severity fixes | yes (2026-10-14) |
+| 2.0.0-rc.51 | 2026-10-13 | 1 High, lower-severity fixes | yes (2026-10-14) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
