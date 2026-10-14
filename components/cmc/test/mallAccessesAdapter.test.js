@@ -96,3 +96,133 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     assert.equal(await adapter.getOne('user-1', { id: 'no-such' }), null);
   });
 });
+
+/**
+ * [MAAC] mall-accesses adapter — deleting a non-personal access takes the
+ * accesses it manages with it.
+ *
+ * A consent grant minted as `app` lets the requester create `shared`
+ * sub-accesses from it. A revoke through the consent helpers deletes the
+ * grant through this adapter, so the sub-accesses must go the same way the
+ * `accesses.delete` route takes them: not expired, `createdBy` naming the
+ * grant (bare or with a caller id), each one's cache invalidated with its
+ * token, and removed BEFORE the grant.
+ */
+describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
+  const now = Date.now() / 1000;
+  let rows, invalidations, removed, adapter;
+  beforeEach(() => {
+    rows = {
+      grant: { id: 'grant', type: 'app', token: 'tok-grant', createdBy: 'pat', permissions: [] },
+      pat: { id: 'pat', type: 'personal', token: 'tok-pat', permissions: [] },
+      'child-a': { id: 'child-a', type: 'shared', token: 'tok-a', createdBy: 'grant', permissions: [] },
+      'child-b': { id: 'child-b', type: 'shared', token: 'tok-b', createdBy: 'grant caller-7', permissions: [] },
+      'child-x': { id: 'child-x', type: 'shared', token: 'tok-x', createdBy: 'grant', expires: now - 60, permissions: [] },
+      other: { id: 'other', type: 'shared', token: 'tok-o', createdBy: 'another-app', permissions: [] },
+      'of-pat': { id: 'of-pat', type: 'app', token: 'tok-p', createdBy: 'pat', permissions: [] },
+    };
+    invalidations = [];
+    removed = [];
+    const storage = fakeStorageAccesses(rows);
+    storage.removeOne = (userOrId, query, cb) => { removed.push(query.id); delete rows[query.id]; cb(null); };
+    adapter = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      invalidateAccessCache: (userId, accessId, accessToken) => {
+        invalidations.push({ userId, accessId, accessToken });
+      }
+    });
+  });
+
+  it('[MA10] deleting an app access removes the live accesses it manages, with or without a caller id, before itself', async () => {
+    const res = await adapter.delete('user-1', { id: 'grant' });
+    assert.deepEqual(removed, ['child-a', 'child-b', 'grant']);
+    assert.equal(rows['child-a'], undefined);
+    assert.equal(rows['child-b'], undefined);
+    assert.equal(rows.grant, undefined);
+    assert.deepEqual(res, { id: 'grant', relatedDeletions: [{ id: 'child-a' }, { id: 'child-b' }] });
+  });
+
+  it('[MA11] an expired managed access and the accesses of other creators are left alone', async () => {
+    await adapter.delete('user-1', { id: 'grant' });
+    assert.ok(rows['child-x'] != null, 'the expired one stays (it opens nothing)');
+    assert.ok(rows.other != null, 'another creator\'s access stays');
+    assert.ok(rows['of-pat'] != null && rows.pat != null);
+  });
+
+  it('[MA12] every removed access is invalidated with its own token', async () => {
+    await adapter.delete('user-1', { id: 'grant' });
+    assert.deepEqual(invalidations, [
+      { userId: 'user-1', accessId: 'child-a', accessToken: 'tok-a' },
+      { userId: 'user-1', accessId: 'child-b', accessToken: 'tok-b' },
+      { userId: 'user-1', accessId: 'grant', accessToken: 'tok-grant' },
+    ]);
+  });
+
+  it('[MA13] deleting a personal access cascades to nothing', async () => {
+    const res = await adapter.delete('user-1', { id: 'pat' });
+    assert.deepEqual(removed, ['pat']);
+    assert.ok(rows.grant != null && rows['of-pat'] != null, 'what the personal access created stays');
+    assert.deepEqual(res, { id: 'pat', relatedDeletions: [] });
+  });
+
+  it('[MA14] a failure removing a managed access leaves the managing access in place for a retry', async () => {
+    const storage = fakeStorageAccesses(rows);
+    storage.removeOne = (userOrId, query, cb) => {
+      if (query.id === 'child-b') return cb(new Error('storage down'));
+      removed.push(query.id); delete rows[query.id]; cb(null);
+    };
+    adapter = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      invalidateAccessCache: (userId, accessId, accessToken) => {
+        invalidations.push({ userId, accessId, accessToken });
+      }
+    });
+    await assert.rejects(adapter.delete('user-1', { id: 'grant' }), /storage down/);
+    assert.ok(rows.grant != null, 'the grant survives, so the next revoke attempt completes the cascade');
+    assert.deepEqual(removed, ['child-a']);
+    assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'child-a', accessToken: 'tok-a' }]);
+  });
+
+  it('[MA15] a row that cannot be read is not deleted: the call rejects and nothing is removed', async () => {
+    const storage = fakeStorageAccesses(rows);
+    storage.findOne = (userOrId, query, options, cb) => cb(new Error('read failed'));
+    storage.removeOne = (userOrId, query, cb) => { removed.push(query.id); cb(null); };
+    adapter = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      invalidateAccessCache: (userId, accessId, accessToken) => { invalidations.push({ userId, accessId, accessToken }); }
+    });
+    await assert.rejects(adapter.delete('user-1', { id: 'grant' }), /read failed/);
+    assert.deepEqual(removed, []);
+    assert.deepEqual(invalidations, []);
+    assert.ok(rows.grant != null && rows['child-a'] != null && rows['child-b'] != null);
+  });
+
+  it('[MA16] an access created through the grant while it was being removed is removed by the final pass', async () => {
+    const storage = fakeStorageAccesses(rows);
+    storage.removeOne = (userOrId, query, cb) => {
+      removed.push(query.id);
+      delete rows[query.id];
+      // minted through the grant right before its row went: the request had
+      // authenticated before the cache bust
+      if (query.id === 'grant') rows.late = { id: 'late', type: 'shared', token: 'tok-late', createdBy: 'grant', permissions: [] };
+      cb(null);
+    };
+    adapter = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      invalidateAccessCache: (userId, accessId, accessToken) => { invalidations.push({ userId, accessId, accessToken }); }
+    });
+    const res = await adapter.delete('user-1', { id: 'grant' });
+    assert.deepEqual(removed, ['child-a', 'child-b', 'grant', 'late']);
+    assert.equal(rows.late, undefined);
+    assert.deepEqual(res.relatedDeletions, [{ id: 'child-a' }, { id: 'child-b' }, { id: 'late' }]);
+    assert.deepEqual(invalidations.at(-1), { userId: 'user-1', accessId: 'late', accessToken: 'tok-late' });
+  });
+});

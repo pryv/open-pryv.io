@@ -26,8 +26,16 @@
 // Output: counts, then one line per access found (username, access id,
 // creator id). Tokens are never printed.
 //
+// It also lists the live accesses whose non-personal creator is gone ("no
+// longer managed"): before this release a consent grant revoked through the
+// consent helpers (not through accesses.delete) left the sub-accesses created
+// from it in place, still usable until their own expiry. A creator that was
+// personal is not reported: deleting a personal access keeps what it created.
+//
 // What to do with a finding is the account owner's or operator's decision:
 // narrow the access with accesses.update (a personal token), or delete it.
+// A no-longer-managed access is deleted the same way (accesses.delete with the
+// owner's personal token); this tool never deletes anything.
 //
 // Usage:
 //   node bin/access-scope-audit.js                      # all local users
@@ -108,6 +116,7 @@ require('@pryv/boiler').init({
 
     const counts = { users: usernames.length, usersConcerned: 0, checked: 0, carveOut: 0, exceedsLevel: 0, creatorGone: 0 };
     const lines = [];
+    const orphanLines = [];
     for (const username of usernames) {
       const userId = byUsername[username];
       const user = { id: userId, username };
@@ -128,6 +137,13 @@ require('@pryv/boiler').init({
             '): exceeds its creator\'s level');
         }
       }
+      for (const o of res.orphans) {
+        const expiry = o.expires == null
+          ? 'no expiry'
+          : (o.expires * 1000 < Date.now() ? 'expired ' : 'expires ') + new Date(o.expires * 1000).toISOString();
+        orphanLines.push('    ' + username + ' access ' + o.accessId + ' (' + o.type + ', created by ' + o.creatorId +
+          '): no longer managed (creator ' + o.creator + '; ' + expiry + ')');
+      }
     }
 
     console.log('access-scope-audit: REPORT ONLY (no writes)');
@@ -136,12 +152,22 @@ require('@pryv/boiler').init({
     console.log('  reaching a carve-out        ' + counts.carveOut);
     console.log('  exceeding creator\'s level   ' + counts.exceedsLevel);
     console.log('  users concerned             ' + counts.usersConcerned);
-    console.log('  creator not found (skipped) ' + counts.creatorGone);
+    console.log('  no longer managed           ' + counts.creatorGone);
     for (const line of lines) console.log(line);
     if (lines.length > 0) {
       console.log('');
       console.log('  The accesses listed above reach data their creator cannot. Narrow them');
       console.log('  (accesses.update with a personal token) or delete them; this tool changes nothing.');
+    }
+    if (orphanLines.length > 0) {
+      console.log('');
+      console.log('  No longer managed (the access that created them is gone and not known to be personal):');
+      for (const line of orphanLines) console.log(line);
+      console.log('');
+      console.log('  These are typically sub-accesses of a consent grant revoked through the consent');
+      console.log('  helpers before the grant\'s revocation removed them too. Unless expired, they still');
+      console.log('  open what they name. Review them with the account owner and delete the ones');
+      console.log('  that should not survive (accesses.delete with a personal token); this tool changes nothing.');
     }
     process.exit(0);
   } catch (err) {

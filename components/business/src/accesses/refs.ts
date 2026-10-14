@@ -60,6 +60,46 @@ export function managingAccessBase (createdBy: string): string {
 }
 
 /**
+ * The accesses a non-personal access manages, out of `accesses`: those whose
+ * `createdBy` names it (bare id, `<id> <callerId>` or a composite ref), the
+ * access itself excluded, and only the ones not yet expired (an expired one
+ * opens nothing any more). Deleting a managing access takes these with it,
+ * whichever path deletes it: an `app` access can only have been created by
+ * the account owner and can only manage `shared` accesses, which manage
+ * nothing, so one level is the whole chain.
+ *
+ * Not for a personal access: deleting one keeps the accesses it created
+ * (the owner keeps the apps they granted while logged in).
+ */
+export function managedAccessesOf<T extends { id?: string; createdBy?: unknown; expires?: number | null }> (
+  accesses: T[], managingId: string, now: number
+): T[] {
+  return accesses.filter((access) => access != null && access.id !== managingId &&
+    isManagedBy(access, managingId) && !(access.expires != null && now > access.expires));
+}
+
+/**
+ * Whether `access` was created by the access `managingId`, whatever form its
+ * `createdBy` took (bare id, `<id> <callerId>`, composite ref). This is the
+ * match to use wherever "the accesses an app created" are selected; an exact
+ * match on the stored `createdBy` misses the ones created under a caller id.
+ */
+export function isManagedBy (access: { createdBy?: unknown }, managingId: string): boolean {
+  if (typeof access?.createdBy !== 'string') return false;
+  // Minted by the platform itself (consent grants, OAuth / SSO / MFA sessions,
+  // delegation markers): managed by no access.
+  if (access.createdBy === SYSTEM_CREATED_BY) return false;
+  try {
+    return managingAccessBase(access.createdBy) === managingId;
+  } catch {
+    return false; // malformed reference
+  }
+}
+
+/** The `createdBy` of an access the platform minted (no creating access). */
+export const SYSTEM_CREATED_BY = 'system';
+
+/**
  * Render an `{ base, serial }` pair back to the wire format. Bare cuid
  * when serial is null/undefined; `<base>:<serial>` otherwise.
  */

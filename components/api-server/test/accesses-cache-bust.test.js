@@ -127,14 +127,16 @@ describe('[ACBU] access writes bust the cache when a later step fails', function
       'without a token the bust is keyed by user id: ' + JSON.stringify(busts));
   });
 
-  it('[ACBU3] a CMC / delegation access delete whose pre-read fails busts the user\'s access cache', async function () {
+  it('[ACBU3] a CMC / delegation access delete whose pre-read fails deletes nothing and reports the failure', async function () {
+    // Without the row, the adapter cannot tell whether the accesses created
+    // through this one go with it: deleting it alone would leave them
+    // unmanaged, so nothing is deleted and the caller's retry applies.
     const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
     const mall = await buildMallForCmc();
-    const busts = recordCacheBusts();
     failBeforeWrite('removeOne', (cb) => cb(new Error('pre-read failed')));
-    await mall.accesses.delete(userId, { id: sharedId });
-    assert.ok(busts.some((b) => b.kind === 'user' && b.userId === userId),
-      'without a token the bust is keyed by user id: ' + JSON.stringify(busts));
+    await assert.rejects(mall.accesses.delete(userId, { id: sharedId }), /pre-read failed/);
+    const res = await coreRequest.get('/' + username + '/access-info').set('Authorization', sharedToken);
+    assert.strictEqual(res.status, 200, 'the access is still there: ' + JSON.stringify(res.body));
   });
 
   it('[ACBU4] with the token known, the CMC bust stays on the one access', async function () {

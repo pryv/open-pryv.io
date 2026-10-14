@@ -50,6 +50,7 @@ import * as inviteState from './inviteState.ts';
 import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as slugMod from './slug.ts';
+import { CmcErrorIds } from './errorIds.ts';
 
 import type { LogFn } from '@pryv/boiler';
 import type { MallLike, CmcAccessLike } from './_types.ts';
@@ -79,6 +80,7 @@ async function handleIncomingRevoke (params: {
   deletedAccessIds?: string[];
   enriched?: boolean;
   reason?: string;
+  detail?: Record<string, unknown>;
 }> {
   const { userId, event, deps } = params;
   const { mall, logger } = deps;
@@ -138,7 +140,7 @@ async function handleIncomingRevoke (params: {
       accessId: createdByAccess.id,
     });
   }
-  const deletedAccessIds = await tearDownRelationship({
+  const teardown = await tearDownRelationship({
     userId,
     createdByAccess,
     accessList,
@@ -147,6 +149,7 @@ async function handleIncomingRevoke (params: {
     mall,
     logger,
   });
+  const deletedAccessIds = teardown.deleted;
 
   // Step 2 — BOOKKEEP. On the requester side, mark the single-use invite this
   // relationship descends from as `revoked`. For an open-link invite the
@@ -190,6 +193,19 @@ async function handleIncomingRevoke (params: {
     notifyEventChanged: deps.notifyEventChanged,
   });
 
+  if (teardown.failed.length > 0) {
+    // An access this side holds for the withdrawn relationship is still live:
+    // a retryable failure (the bookkeeping above covers what was deleted; the
+    // retry finds the rest).
+    return {
+      ok: false,
+      reason: CmcErrorIds.REVOKE_DELETE_FAILED,
+      detail: { failedAccessIds: teardown.failed, deletedAccessIds },
+      inviteRevoked,
+      deletedAccessIds,
+      enriched,
+    };
+  }
   return { ok: true, inviteRevoked, deletedAccessIds, enriched, ...(reason != null ? { reason } : {}) };
 }
 
@@ -309,9 +325,11 @@ async function enrichArrival (params: {
  * relationship with the same peer under the same app code, and tearing down the
  * wrong one is precisely the defect class this component already paid for once.
  *
- * Every delete is best-effort and independent: a "unknown resource" race with a
- * local delete is expected and tolerated per item, and a failure here never
- * prevents the invite bookkeeping that follows.
+ * Every delete is independent: a "unknown resource" race with a local delete
+ * is expected and tolerated per item; any other failure leaves that access
+ * in place and is returned in `failed`, so the arrival is reported as failed
+ * (and retried) rather than recorded as applied. Neither prevents the
+ * invite bookkeeping that follows for what was deleted.
  */
 async function tearDownRelationship (params: {
   userId: string;
@@ -321,16 +339,17 @@ async function tearDownRelationship (params: {
   counterparty?: { username?: string; host?: string } | null;
   mall: MallLike;
   logger?: LoggerLike;
-}): Promise<string[]> {
+}): Promise<{ deleted: string[]; failed: string[] }> {
   const { userId, createdByAccess, accessList, scopeStreamId, counterparty, mall, logger } = params;
   const deleted: string[] = [];
+  const failed: string[] = [];
   if (mall.accesses?.delete == null) {
     // `_types.ts` declares `delete` required, so this is a unit fake, not
     // production. Say so rather than silently reporting a teardown that did
     // not happen.
     logger?.warn?.('cmc/handleIncomingRevoke: mall has no accesses.delete; ' +
       'the peer-held access was NOT torn down', { accessId: createdByAccess.id });
-    return deleted;
+    return { deleted, failed };
   }
 
   const targets: CmcAccessLike[] = [createdByAccess];
@@ -355,11 +374,20 @@ async function tearDownRelationship (params: {
       await mall.accesses.delete(userId, { id: target.id });
       deleted.push(target.id);
     } catch (err: unknown) {
-      // Raced with a local delete, or the row is already gone: the end state we
-      // wanted is the end state we have.
-      logger?.debug?.('cmc/handleIncomingRevoke: access delete failed (tolerated)', {
-        accessId: target.id,
-        error: String((err as Error)?.message || err),
+      const message = String((err as Error)?.message || err);
+      if (/unknown resource|not found/i.test(message)) {
+        // Raced with a local delete, or the row is already gone: the end state
+        // we wanted is the end state we have.
+        logger?.debug?.('cmc/handleIncomingRevoke: access delete failed (tolerated)', {
+          accessId: target.id, error: message,
+        });
+        continue;
+      }
+      // The access is still live while the peer considers the relationship
+      // withdrawn: reported, so the arrival is retried.
+      failed.push(target.id);
+      logger?.warn?.('cmc/handleIncomingRevoke: access delete failed; the access is still in place', {
+        accessId: target.id, error: message,
       });
     }
   }
@@ -369,7 +397,7 @@ async function tearDownRelationship (params: {
       scopeStreamId,
     });
   }
-  return deleted;
+  return { deleted, failed };
 }
 
 export { handleIncomingRevoke };

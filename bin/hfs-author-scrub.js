@@ -95,6 +95,7 @@ require('@pryv/boiler').init({
     const { convertEventFromStore } = require('mall/src/helpers/eventsUtils.ts');
     const { fromCallback } = require('utils');
     const { authorFor, pagedRows } = require('hfs-server/src/author_scrub.ts');
+    const { isManagedBy } = require('business/src/accesses/refs.ts');
     const WebhooksRepository = require('business').webhooks.Repository;
     const { getUsersRepository } = require('business/src/users/index.ts');
     const { getPlatform } = require('platform');
@@ -132,8 +133,10 @@ require('@pryv/boiler').init({
     }
 
     async function createdAccessesCount (user, accessId) {
-      const created = await fromCallback((cb) => storageLayer.accesses.find(user, { createdBy: accessId }, null, cb));
-      return (created || []).filter((a) => a.id !== accessId).length;
+      // Matched on the access id inside `createdBy`: an access created under
+      // a caller id is recorded as `<id> <callerId>`.
+      const all = await fromCallback((cb) => storageLayer.accesses.find(user, {}, null, cb));
+      return (all || []).filter((a) => a.id !== accessId && isManagedBy(a, accessId)).length;
     }
 
     const byUsername = await usersIndex.getAllByUsername(); // { username: userId }

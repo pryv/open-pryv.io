@@ -234,6 +234,34 @@ describe('[ACCV] accesses: creator carve-outs carried into child accesses', func
       assert.strictEqual(after.serial ?? null, before.serial ?? null);
     });
 
+    it('[ACCV10D] lists a live access whose non-personal creator is gone, not one whose personal creator was deleted', async function () {
+      const t = await tree();
+      // A grant removed without its sub-access (a revoke through the consent
+      // helpers used to leave it behind): the creator row is gone altogether.
+      const gone = await appAccess([{ streamId: t.A, level: 'read' }]);
+      const orphan = await createShared(gone.token, [{ streamId: t.A, level: 'read' }]);
+      await fromCallback((cb) => accessStorage.removeOne(user, { id: gone.id }, cb));
+      // An app created while logged in, whose login session was deleted: kept
+      // on purpose, so not reported.
+      const patId = cuid();
+      await fixtureUser.access({ id: patId, token: cuid(), type: 'personal' });
+      const appOfPat = cuid();
+      await fixtureUser.access({ id: appOfPat, token: cuid(), name: 'app ' + appOfPat, type: 'app', permissions: [{ streamId: t.A, level: 'read' }], createdBy: patId });
+      await fromCallback((cb) => accessStorage.delete(user, { id: patId }, cb));
+      // Minted by the platform itself (a consent grant, an OAuth session...):
+      // managed by no access, and not an orphan.
+      const systemMinted = cuid();
+      await fixtureUser.access({ id: systemMinted, token: cuid(), name: 'grant ' + systemMinted, type: 'app', permissions: [{ streamId: t.A, level: 'read' }], createdBy: 'system', modifiedBy: 'system' });
+
+      const out = await runTool();
+      assert.ok(out.includes('access ' + orphan.id + ' (shared, created by ' + gone.id + '): no longer managed (creator absent; no expiry)'), out);
+      assert.ok(!out.includes(appOfPat), 'the app of a deleted personal access is not listed: ' + out);
+      assert.ok(!out.includes(systemMinted), 'a platform-minted access is not listed: ' + out);
+      assert.ok(!out.includes(orphan.token), 'tokens are never printed');
+      const still = await fromCallback((cb) => accessStorage.findOne(user, { id: orphan.id }, null, cb));
+      assert.ok(still != null, 'the tool deletes nothing');
+    });
+
     it('[ACCV10C] checks a child of an app access holding an audit stream permission', async function () {
       const t = await tree();
       const app = await appAccess([

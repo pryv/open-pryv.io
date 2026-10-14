@@ -16,6 +16,34 @@
   setting `maxSize` (like changing `days` or `level`) starts a new list of files to prune, so the
   daily files written before are no longer deleted after `days`: delete them once by hand.
 
+### Consent (CMC) and accesses
+- **Security fix: withdrawing a consent now also ends the sub-accesses created from it, whichever
+  path withdraws it.** A consent grant minted as an `app` access (offer `request.accessType:
+  'app'`) lets the requester create `shared` sub-accesses on the account. Until this release only
+  a plain `accesses.delete` of the grant took them with it: a withdrawal written as
+  `consent/revoke-cmc` (by either side), a revocation received from the counterparty, the end of
+  a delegation and the deletion of the counterparty's account removed the grant alone, and the
+  sub-accesses kept opening the data until their own expiry, which they need not have. Every one
+  of these paths now removes the grant's live sub-accesses first, then the grant, and drops each
+  from the access cache of every worker; a sub-access created through the grant while it was
+  being removed is removed by a final pass (the same pass was added to `accesses.delete`). A
+  revocation received from the counterparty whose local deletion fails is now reported as a
+  failure of the arrival (and retried) instead of being recorded as applied. Operators:
+  sub-accesses left behind by an earlier withdrawal are not removed automatically;
+  `node bin/access-scope-audit.js` (read-only) now lists every live access whose creator is gone
+  and not known to be personal, under "no longer managed", with its expiry, so they can be
+  reviewed with the account owner and deleted with `accesses.delete`; accesses minted by the
+  platform itself (consent grants, OAuth, SSO and MFA sessions, delegation markers) are not
+  counted as "creator not found" any more.
+- An access created under a caller id (`Authorization: <token> <callerId>`, recorded as
+  `createdBy: '<id> <callerId>'`) was invisible to the access that created it: `accesses.delete`
+  of that creator did not cascade to it, the creator could not delete it itself (403), the
+  creator's `accesses.get` (live and `includeDeletions`) did not list it, and the chain
+  revocation that answers a reused OAuth refresh token did not reach it. All of these now match
+  on the creating access's id, as `accesses.update` already did (`bin/hfs-author-scrub.js`
+  counts such accesses the same way). What a caller may see or delete is unchanged: its own
+  creations only.
+
 ## 2.0.0-rc.51 - 2026-10-13
 
 Backup and restore: an incremental backup no longer overwrites the full backup it continues.
