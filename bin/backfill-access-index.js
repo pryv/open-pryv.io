@@ -23,12 +23,14 @@
 //     logged [access-index] live-write failure).
 //   - --dry-run: report the counts without writing.
 //   - --prune: list (counts only) the index rows that name the wrong account:
-//     no account on any core holds the stored name (orphan), or the name
-//     belongs to an account of this core that has no such access (stale: a
-//     later holder of a renamed or deleted account's former name). Nothing is
-//     changed unless --apply is given: then they are deleted (tombstoned under
-//     audit.onUserDelete: keep). Run on every core (stale rows are judged by
-//     the name's home core).
+//     no account on any core holds the stored name (orphan), or another
+//     account of this core holds the access (stale: a later holder of a
+//     renamed account's former name). Nothing is changed unless --apply is
+//     given: then they are deleted (tombstoned under audit.onUserDelete:
+//     keep). Rows whose access no account of this core holds any more
+//     (missing: removed accesses, the history the index keeps) are counted,
+//     never changed. Run on every core (rows are judged by the name's home
+//     core).
 //
 // Usage:
 //   node bin/backfill-access-index.js            # write-if-absent
@@ -88,23 +90,35 @@ require('@pryv/boiler').init({
 
     if (args.prune) {
       const { findPrunableAccessIndexRows, pruneAccessIndexRow } = require('platform/src/accessIndex.ts');
+      // Every base access of every account of this core (deleted heads
+      // included), read once: accessId -> userId.
+      const holderOf = new Map();
+      for (const username of usernames) {
+        const userId = byUsername[username];
+        const accesses = await fromCallback((cb) =>
+          accessesStorage.findIncludingDeletionsAndVersions({ id: userId }, { headId: null }, null, cb));
+        for (const access of (accesses || [])) if (access != null && access.id != null) holderOf.set(access.id, userId);
+      }
       const rows = await findPrunableAccessIndexRows(platform, {
         coreId: platform.coreId,
         userCoreOf: (stored) => platform.getUserCoreByPreHashedUsername(stored),
-        ownsAccess: async (stored, accessId) => {
+        accessHolder: async (stored, accessId) => {
           const name = await platform.resolveLocalUsernameFromToken(stored);
           const userId = name != null ? byUsername[name] : null;
           if (userId == null) return null;
-          const found = await fromCallback((cb) =>
-            accessesStorage.findIncludingDeletionsAndVersions({ id: userId }, { id: accessId }, null, cb));
-          return (found || []).length > 0;
+          const holder = holderOf.get(accessId);
+          if (holder == null) return 'missing';
+          return holder === userId ? 'owned' : 'other-account';
         }
       });
+      const prunable = rows.filter((r) => r.reason !== 'missing');
       const keepMode = config.get('audit:onUserDelete') === 'keep';
-      if (args.apply) for (const { key, entry } of rows) await pruneAccessIndexRow(platform, key, entry, keepMode);
+      if (args.apply) for (const { key, entry } of prunable) await pruneAccessIndexRow(platform, key, entry, keepMode);
       console.log('backfill-access-index: prune ' + (args.apply ? (keepMode ? '(applied: tombstoned)' : '(applied: deleted)') : '(listing only; --apply to change)'));
-      console.log('  orphan rows (no account holds the name)        ' + rows.filter((r) => r.reason === 'orphan').length);
-      console.log('  stale rows (name now held by another account)  ' + rows.filter((r) => r.reason === 'stale').length);
+      console.log('  orphan rows (no account holds the name)              ' + rows.filter((r) => r.reason === 'orphan').length);
+      console.log('  stale rows (access held by another account here)     ' + rows.filter((r) => r.reason === 'stale').length);
+      console.log('  missing rows (no account here holds the access;      ' + rows.filter((r) => r.reason === 'missing').length);
+      console.log('    removed accesses kept as history, never pruned)');
       process.exit(0);
     }
 

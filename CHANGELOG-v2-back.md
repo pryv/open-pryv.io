@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## Mail template reload, access-index prune classes
+
+- `mail/src/emailTemplatesDelivery.ts`: `refresh()` materialises into a new directory with a new
+  `email-templates` renderer and swaps them in (the previous directory is removed at the next
+  refresh, for a send still reading it); compiled-template caching is off. The admin template
+  routes refresh the serving worker before answering and still nudge the others through the
+  master. Tests: `[MA12]`, `[MADP8]` (production mode, child process).
+- `bin/backfill-access-index.js --prune`: rows are judged against one map of every access held by
+  the core's accounts (one storage walk instead of a query per row) and reported in three classes:
+  `orphan` (no account holds the name), `stale` (another account of this core holds the access) and
+  `missing` (no account of this core holds the access: removed accesses, the history the index
+  keeps). `--apply` changes `orphan` and `stale` rows only; until now an access removed from its
+  account's storage was labelled stale and `--apply` deleted its row.
+  `findPrunableAccessIndexRows` takes `accessHolder` (`owned` / `other-account` / `missing`)
+  instead of `ownsAccess`. Test: `[ACC14]`.
+
 ## Log file size cap, admin username reservation shape
 
 - `boiler/src/logging.ts`: the rotating transport takes `rotation.maxSize` (validated: a number

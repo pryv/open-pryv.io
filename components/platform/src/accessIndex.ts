@@ -242,23 +242,30 @@ export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHan
   }
 }
 
+/** Where an indexed access is held, for a name of one of this core's accounts. */
+export type LocalAccessHolder = 'owned' | 'other-account' | 'missing';
+
 /**
- * Index rows that name the wrong account (left by a rename or a deletion
- * before those moved / removed every row):
- *  - `stale`: the name is held by an account of this core that has no such
- *    access (a later holder of a former name);
- *  - `orphan`: not an account of this core, and no core holds the name.
+ * Index rows to review:
+ *  - `stale`: another account of this core holds the access (the row names a
+ *    later holder of a renamed account's former name): prunable;
+ *  - `orphan`: not an account of this core, and no core holds the name (an
+ *    account deleted before deletion removed its rows): prunable;
+ *  - `missing`: the name's account has no such access and no other account
+ *    of this core holds it (a removed access: the history this index keeps).
+ *    Reported only, never pruned: nothing tells it apart from the access of
+ *    an account deleted before its name was taken again.
  * Rows already stripped of their user (tombstones) are never listed.
  * `userCoreOf(stored)` is the core holding a stored name (null when none);
- * `ownsAccess(stored, accessId)` answers for names hosted on `coreId`, null
+ * `accessHolder(stored, accessId)` answers for names hosted on `coreId`, null
  * when the name is not one of this core's account names (not judged).
  */
 export async function findPrunableAccessIndexRows (platform: PlatformIndexHandle, opts: {
   coreId: string;
   userCoreOf: (stored: string) => Promise<string | null>;
-  ownsAccess: (stored: string, accessId: string) => Promise<boolean | null>;
-}): Promise<Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }>> {
-  const found: Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' }> = [];
+  accessHolder: (stored: string, accessId: string) => Promise<LocalAccessHolder | null>;
+}): Promise<Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' | 'missing' }>> {
+  const found: Array<{ key: string, entry: AccessIndexEntry, reason: 'orphan' | 'stale' | 'missing' }> = [];
   for (const { key, value } of await platform.listPlatformKvEntries(PREFIX)) {
     let entry: AccessIndexEntry;
     try { entry = JSON.parse(value) as AccessIndexEntry; } catch { continue; }
@@ -267,10 +274,12 @@ export async function findPrunableAccessIndexRows (platform: PlatformIndexHandle
     // An account of this core is judged by its own accesses first: a live
     // account may lack its `user-core/` row (single-core, older data, a
     // partial restore), which must not make its rows orphans.
-    const owns = await opts.ownsAccess(stored, entry.accessId);
-    if (owns === false) {
+    const holder = await opts.accessHolder(stored, entry.accessId);
+    if (holder === 'other-account') {
       found.push({ key, entry, reason: 'stale' });
-    } else if (owns == null && (await opts.userCoreOf(stored)) == null) {
+    } else if (holder === 'missing') {
+      found.push({ key, entry, reason: 'missing' });
+    } else if (holder == null && (await opts.userCoreOf(stored)) == null) {
       found.push({ key, entry, reason: 'orphan' });
     }
   }
