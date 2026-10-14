@@ -34,6 +34,7 @@ const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
 const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase, managedAccessesOf, isManagedBy } = require('business/src/accesses/refs.ts');
+const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 // Scoped notifications: structured access-change signal carrying the changed
@@ -1263,9 +1264,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     return typeof access.createdBy === 'string' && managingAccessBase(access.createdBy) === caller.id;
   }
 
-  function withoutCredentials<T extends { token?: unknown; apiEndpoint?: unknown }> (wire: T): T {
+  function withoutCredentials<T extends { token?: unknown; apiEndpoint?: unknown; clientData?: unknown }> (wire: T): T {
     delete wire.token;
     delete wire.apiEndpoint;
+    // A consent (CMC) relationship access keeps the counterparty's endpoints
+    // in `clientData.cmc` (`counterparty.apiEndpoint`,
+    // `backChannelApiEndpoint`), tokens included: those are credentials to
+    // the peer's data and go with the access's own. Every URL user part
+    // inside clientData is removed (a copy: the row may be cached); host and
+    // path still say which endpoint is meant.
+    if (wire.clientData != null) wire.clientData = withoutCredentialUrls(wire.clientData);
     return wire;
   }
 

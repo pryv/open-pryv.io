@@ -44,6 +44,28 @@
   counts such accesses the same way). What a caller may see or delete is unchanged: its own
   creations only.
 
+### Accesses, webhooks and delegation
+- **Security fix: a delegate no longer reads the consent counterparties' tokens, nor the
+  credentials in the owner's webhook URLs.** A delegated personal access is handed no credential
+  of the owner's accesses (`accesses.get`, `getOne`, `update`, `checkApp` return them without
+  `token` and `apiEndpoint`), but a consent (CMC) relationship access also keeps the
+  counterparty's endpoints in `clientData.cmc` (`counterparty.apiEndpoint`,
+  `backChannelApiEndpoint`), with their tokens, and those were returned as stored; likewise
+  `webhooks.get`, `getOne`, `update` and `test` returned every webhook's `url` as stored,
+  receiver secret included. Now, wherever an access is returned without its credentials, every
+  URL inside its `clientData` comes without its user part: as a whole string, inside a longer
+  text, percent-encoded in a query, or in a spelling the URL parser accepts (`https:\\token@host`).
+  Host and path are kept, so the record still says which endpoint it means. And a webhook
+  returned to such a caller (one that neither owns the webhook's access nor created it) carries
+  its `url` reduced to scheme, host and path: the user part, the query and the fragment are
+  removed, since a receiver secret is usually one of them; a secret placed in the path is not
+  recognised. Limits: only URL user parts are redacted in `clientData`; any other value an app
+  stores there (a bare token, for example) is returned as stored; a delegate writing back a
+  `clientData` it read persists the redacted URLs. The owner's own reads are unchanged, and so is
+  what is stored: a deletion record (`accesses.get` with `includeDeletions`), which never
+  carried the access's own token, is now redacted the same way for every caller, in the
+  response only.
+
 ## 2.0.0-rc.51 - 2026-10-13
 
 Backup and restore: an incremental backup no longer overwrites the full backup it continues.

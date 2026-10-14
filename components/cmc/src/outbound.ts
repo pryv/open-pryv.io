@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { CmcLogger, OutboundDeps } from './_types.ts';
 const require = createRequire(import.meta.url);
+const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts');
 
 /**
  * Outbound HTTPS client.
@@ -72,14 +73,7 @@ function parseApiEndpoint (apiEndpoint: string): { token: string; base: string }
  * meant, which is all a bookkeeping record needs.
  */
 function stripCredentials (url: string): string {
-  try {
-    const u = new URL(url);
-    u.username = '';
-    u.password = '';
-    return u.toString();
-  } catch (_e) {
-    return url;
-  }
+  return withoutUrlUserinfo(url);
 }
 
 /**
