@@ -112,9 +112,13 @@ function preserveServerOwnedContent (storedEvent: EventLike | null | undefined, 
   if (!C.isCmcEventType(event?.type) || !isPlainObject(event.content)) return event?.content;
   const storedContent = storedEvent?.type === event.type ? storedEvent?.content : undefined;
   const stored = isPlainObject(storedContent) ? storedContent : {};
+  // The offboarding record is server-written whole: an update keeps it as stored.
+  if (event.type === C.ET_MEMBER_REVOKE) return { ...stored };
   const fields = event.type === C.ET_ACCEPT
     ? [...C.CMC_SERVER_OWNED_FIELDS, ...C.ACCEPT_SERVER_OWNED_FIELDS, ...C.ACCEPT_UPDATE_PRESERVED_FIELDS]
-    : C.CMC_SERVER_OWNED_FIELDS;
+    : event.type === C.ET_MEMBER_ACCESS
+      ? [...C.CMC_SERVER_OWNED_FIELDS, ...C.MEMBER_ACCESS_SERVER_OWNED_FIELDS]
+      : C.CMC_SERVER_OWNED_FIELDS;
   // Copy: the merged event may share the content object with the update.
   const content: Record<string, unknown> = { ...event.content };
   for (const field of fields) {

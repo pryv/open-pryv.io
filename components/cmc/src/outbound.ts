@@ -98,7 +98,23 @@ async function postToPeer (params: {
   body: unknown;
   deps: OutboundDeps;
 }): Promise<DeliverResult> {
-  const { apiEndpoint, path, body, deps } = params;
+  return requestPeer({ ...params, method: 'POST' });
+}
+
+/**
+ * Call a Pryv API method on the counterparty's platform with any method
+ * (`GET` / `DELETE` carry no body). Same contract as `postToPeer`, which is
+ * the `POST` case. Used by the group-account mint and sweep, which read,
+ * create and delete accesses on a patient's core through the consent grant.
+ */
+async function requestPeer (params: {
+  apiEndpoint: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  path: string;
+  body?: unknown;
+  deps: OutboundDeps;
+}): Promise<DeliverResult> {
+  const { apiEndpoint, method, path, body, deps } = params;
   const { token, base } = parseApiEndpoint(apiEndpoint);
   const url = base + path;
 
@@ -110,15 +126,17 @@ async function postToPeer (params: {
   }
 
   try {
-    const res = await deps.fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: token,
-      },
-      body: JSON.stringify(body),
+    const headers: Record<string, string> = { authorization: token };
+    const init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal } = {
+      method,
+      headers,
       signal: controller?.signal,
-    });
+    };
+    if (body !== undefined) {
+      headers['content-type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await deps.fetch(url, init);
 
     if (timer != null) clearTimeout(timer);
 
@@ -167,6 +185,7 @@ export {
   parseApiEndpoint,
   stripCredentials,
   postToPeer,
+  requestPeer,
   isRetryableFailure,
 };
 export type { DeliverResult };

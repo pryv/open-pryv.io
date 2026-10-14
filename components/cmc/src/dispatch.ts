@@ -39,7 +39,10 @@ const handleIncomingRevokeMod = require('./handleIncomingRevoke.ts');
 const handleIncomingRefuseMod = require('./handleIncomingRefuse.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
+const handleMemberAccessMod: typeof import('./handleMemberAccess.ts') = require('./handleMemberAccess.ts');
 const retryQueueMod = require('./retryQueue.ts');
+import type { MemberAccessOptions } from './handleMemberAccess.ts';
+import type { MemberMintRegistry } from './memberMintRegistry.ts';
 const outbound = require('./outbound.ts');
 const credentialScrub = require('./credentialScrub.ts');
 
@@ -139,6 +142,11 @@ type DispatchDeps = {
   // reported. Handlers read it to skip a step that already took effect
   // (handleRevoke: a delivery the peer already received). Absent live.
   retryContext?: RetryContext;
+  // Group accounts: the per-core settings of the member access mint and the
+  // per-worker registry whose in-flight lock the middleware releases once a
+  // mint settled (the gate hook took it at write time).
+  memberAccess?: MemberAccessOptions;
+  mintRegistry?: MemberMintRegistry;
 };
 
 type DispatchResult = {
@@ -147,12 +155,21 @@ type DispatchResult = {
   status: 'pending' | 'delivered' | 'completed' | 'failed' | 'skipped';
   reason?: string;
   detail?: unknown;
+  // A handler's payload for the synchronous caller only (the member access
+  // mint's endpoint, token included): copied to the events.create response
+  // by the middleware, read by no stamp, log line or retry snapshot.
+  response?: Record<string, unknown>;
 };
 
 type HandlerResult = {
   ok?: boolean;
   reason?: string;
   detail?: unknown;
+  response?: Record<string, unknown>;
+  // The member access mint's record on the trigger (never the token).
+  memberAccess?: { accessId: string; name: string; expires: number; attribution: string };
+  member?: { username: string; host: string };
+  relationshipAccessId?: string;
   dataGrantApiEndpoint?: string;
   dataGrantAccessId?: string;
   offerEventId?: string;
@@ -398,6 +415,25 @@ async function dispatch (params: {
           userId, triggerEvent: event, deps,
         });
         break;
+      case C.ET_MEMBER_ACCESS:
+        // Group accounts: mint a member's access on the patient's core
+        // through the grant. Synchronous (the token is answered once), never
+        // from the retry queue.
+        result = await handleMemberAccessMod.handleMemberAccess({
+          userId,
+          triggerEvent: event as Parameters<typeof handleMemberAccessMod.handleMemberAccess>[0]['triggerEvent'],
+          selfIdentity,
+          deps: {
+            mall: deps.mall,
+            fetch: deps.fetch,
+            timeoutMs: deps.timeoutMs,
+            logger: deps.logger,
+            memberAccess: deps.memberAccess ?? memberAccessDefaults(),
+            retryContext: deps.retryContext,
+            triggerAccess: deps.triggerAccess as { id?: string } | undefined,
+          },
+        });
+        break;
       default:
         return { handled: false, eventType: event.type, status: 'skipped', reason: 'unknown-cmc-event' };
     }
@@ -447,8 +483,13 @@ async function dispatch (params: {
       // an unqualified success. `deliveryFailure.reason` names which.
       peerNotified: result?.peerNotified,
       deliveryFailure: result?.deliveryFailure,
+      // The member access mint's record: which child, for whom, through
+      // which relationship. The token travels on `response` below only.
+      memberAccess: result?.memberAccess,
+      member: result?.member,
+      relationshipAccessId: result?.relationshipAccessId,
     });
-    return { handled: true, eventType: event.type, status: 'completed' };
+    return { handled: true, eventType: event.type, status: 'completed', ...(result?.response != null ? { response: result.response } : {}) };
   }
 
   return await markFailed(
@@ -497,8 +538,11 @@ async function markFailed (
   detail?: unknown
 ): Promise<DispatchResult> {
   // Auto-enqueue a retry for retryable failures (default on; tests opt out
-  // by setting enqueueRetries=false).
+  // by setting enqueueRetries=false). Some types are never queued, whatever
+  // the reason: checked before the reason classifier, which treats an
+  // unknown reason as retryable.
   const shouldQueue = deps.enqueueRetries !== false &&
+    !NEVER_ENQUEUE_TYPES.has(event.type) &&
     retryQueueMod.isRetryableReason(reason, detail) &&
     deps.mall.events.create != null;
   if (shouldQueue) {
@@ -592,9 +636,28 @@ function isOnInbox (event: CmcEvent): boolean {
 // commits, and any chat / system delivery the accepter triggers
 // immediately afterwards finds the data-grant without an apiEndpoint
 // (`cmc-chat-no-remote-apiendpoint`).
+//
+// ET_MEMBER_ACCESS: the member access mint answers the child's endpoint
+// once, in this response, and nowhere else.
 const SYNC_DISPATCH_TYPES = new Set<string>([
   'consent/back-channel-cmc',
+  'consent/member-access-cmc',
 ]);
+
+/**
+ * Event types never put on the retry queue, whatever the failure reason. A
+ * member access mint re-dispatched from a snapshot has no caller to hand the
+ * token to (and no writing access for its gate): a child minted on a retry
+ * would be a live credential nobody holds. The member simply asks again.
+ */
+const NEVER_ENQUEUE_TYPES = new Set<string>([
+  'consent/member-access-cmc',
+]);
+
+function memberAccessDefaults (): MemberAccessOptions {
+  const d = C.MEMBER_ACCESS_CONFIG_DEFAULTS;
+  return { defaultTtl: d.defaultTtl, minTtl: d.minTtl, maxTtl: d.maxTtl, allowNameOnly: d.allowNameOnly };
+}
 
 /**
  * Event types whose handlers ALWAYS POST outbound and would re-trigger on
@@ -691,8 +754,20 @@ function createDispatchMiddleware (
     if (SYNC_DISPATCH_TYPES.has(event.type)) {
       // Synchronous dispatch — await before returning so the response
       // reflects the side-effect.
+      const mintLock = (context as { cmc?: { memberMintLock?: string } })?.cmc?.memberMintLock;
+      const releaseLock = () => {
+        if (typeof mintLock === 'string') requestDeps.mintRegistry?.release(mintLock);
+      };
       dispatch({ userId, event, deps: requestDeps })
-        .then(() => next())
+        .then(async (dispatched) => {
+          // The handler's one-shot payload (the member access endpoint)
+          // beside the event, for this caller only.
+          if (dispatched.response != null) result.memberAccess = dispatched.response;
+          // The row as stored once the dispatch settled, instead of the
+          // pre-dispatch copy: the response then says `completed` (or
+          // `failed`) and carries the outcome fields, not `pending`.
+          await replaceWithStoredRow(requestDeps, userId, event.id, result);
+        })
         .catch((err: unknown) => {
           deps.logger?.warn?.('cmc/dispatch: sync handler failed', {
             type: event.type,
@@ -703,6 +778,9 @@ function createDispatchMiddleware (
           // re-processes from its own snapshot in the internal retries
           // stream, which is the ONLY re-dispatch source: the stored trigger
           // carries no usable endpoint at any point in its life.
+        })
+        .finally(() => {
+          releaseLock();
           next();
         });
       return;
@@ -720,7 +798,26 @@ function createDispatchMiddleware (
   };
 }
 
+/**
+ * Replace `result.event` with the trigger as stored now (status and
+ * outcome fields stamped). Best-effort: on a failed read the pre-dispatch
+ * copy stays.
+ */
+async function replaceWithStoredRow (deps: DispatchDeps, userId: string, eventId: string | undefined, result: MiddlewareResult): Promise<void> {
+  if (eventId == null || deps.mall.events.getOne == null) return;
+  try {
+    const stored = await deps.mall.events.getOne(userId, eventId);
+    if (stored != null) result.event = stored as CmcEvent;
+  } catch (err: unknown) {
+    deps.logger?.debug?.('cmc/dispatch: could not re-read the trigger after the sync dispatch', {
+      eventId, error: String((err as Error)?.message ?? err),
+    });
+  }
+}
+
 export {
   dispatch,
   createDispatchMiddleware,
+  SYNC_DISPATCH_TYPES,
+  NEVER_ENQUEUE_TYPES,
 };

@@ -144,6 +144,9 @@ export type MallEventsLike = {
   getOne?: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
   update: (userId: string, params: MallParams, transaction?: null, opts?: MallEventUpdateOpts) => Promise<unknown>;
   updateWithMerge: (userId: string, eventId: string, merge: (stored: MallStoredEventLike) => MallStoredEventLike | null, transaction?: null, opts?: MallEventUpdateOpts) => Promise<MallStoredEventLike | null>;
+  // The real mall's delete takes the stored event. Optional so unit fakes
+  // may omit it (the ledger then skips pruning).
+  delete?: (userId: string, event: MallStoredEventLike) => Promise<unknown>;
 };
 
 export type MallStreamsLike = {

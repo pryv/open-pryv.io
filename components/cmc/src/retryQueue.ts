@@ -396,6 +396,22 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-scope-update-target-not-counterparty',
   'cmc-scope-update-target-stream-mismatch',
   'cmc-scope-update-nothing-to-apply',
+  // Group accounts. The mint type is never queued at all (dispatch
+  // NEVER_ENQUEUE_TYPES); its reasons are listed as belt and braces. A
+  // membership offer that asks too much, or a channel a member does not
+  // have, do not change by re-running.
+  'cmc-membership-permissions-invalid',
+  'cmc-member-channel-not-supported',
+  'cmc-member-access-not-member',
+  'cmc-member-access-relationship-not-found',
+  'cmc-member-access-scope-outside-membership',
+  'cmc-member-access-permissions-not-subset',
+  'cmc-member-access-expiry-out-of-range',
+  'cmc-member-access-grant-not-delegable',
+  'cmc-member-access-peer-rejected',
+  'cmc-member-access-peer-unreachable',
+  'cmc-member-access-membership-gone',
+  'cmc-member-access-not-retryable',
 ]);
 
 function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {

@@ -393,6 +393,25 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // hold; the server's offboarding record is never written by a client.
   const cmcMembershipOfferHook = cmc.createMembershipOfferHook({ errors });
   const cmcMemberRevokeWriteGuard = cmc.createMemberRevokeWriteGuardHook({ errors });
+  // The member access mint: its per-core settings, the per-worker registry
+  // (rate limit per membership, in-flight lock per membership and patient),
+  // the write-time gate (a refused ask is an API error) and the strip of the
+  // outcome fields a client may not write.
+  const cmcMemberAccessOptions = cmc.memberAccessOptionsFromConfig(config);
+  const positiveOr = (value: unknown, fallback: number): number =>
+    (typeof value === 'number' && Number.isFinite(value) && value > 0) ? value : fallback;
+  const cmcMemberMintRegistry = cmc.createMemberMintRegistry({
+    ratePerMinute: positiveOr(config.get('cmc:memberAccess:ratePerMinute'), cmc.constants.MEMBER_ACCESS_CONFIG_DEFAULTS.ratePerMinute),
+    maxInFlightPerMembership: positiveOr(config.get('cmc:memberAccess:maxInFlightPerMembership'), cmc.constants.MEMBER_ACCESS_CONFIG_DEFAULTS.maxInFlightPerMembership),
+  });
+  const cmcMemberAccessGateHook = cmc.createMemberAccessGateHook({
+    errors,
+    mall: mallForCmc,
+    options: cmcMemberAccessOptions,
+    registry: cmcMemberMintRegistry,
+    logger: getLogger('cmc:member-access-gate'),
+  });
+  const cmcMemberAccessServerOwnedFieldsHook = cmc.createMemberAccessServerOwnedFieldsHook();
   // Account-delegation namespace + lifecycle guards. Gated on the same
   // `delegationActive` flag resolved in the RETRIEVAL section above; when
   // inactive each slot is a passthrough so the register chains stay
@@ -518,6 +537,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     selfIdentityFor: cmcSelfIdentityFor,
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
+    memberAccess: cmcMemberAccessOptions,
+    mintRegistry: cmcMemberMintRegistry,
   }, (context: MethodContext) => {
     // Per-request: bind a notifyEventChanged that fires pubsub for THIS
     // user. The dispatch loop's fire-and-forget events.update calls
@@ -566,6 +587,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcMemberRevokeWriteGuard,
     cmcContentValidationHook,
     cmcMembershipOfferHook,
+    cmcMemberAccessServerOwnedFieldsHook,
+    cmcMemberAccessGateHook,
     cmcAcceptAccessGateHook,
     // After the gate, so a refused write is never stamped; before the store.
     cmcAcceptStampingHook,
