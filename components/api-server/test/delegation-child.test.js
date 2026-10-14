@@ -426,7 +426,18 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     const list = await coreRequest.get(kid.delegationsPath + '/delegates').set('Authorization', kid.token);
     const record = (list.body.delegates || []).find((d) => d.delegate?.username === delegate.username);
     assert.ok(record != null && typeof record.relId === 'string', JSON.stringify(list.body));
-    return { patToken: tokRes.body.token, patAccessId: base(info.body.id), relId: record.relId };
+    const patAccessId = base(info.body.id);
+    // the delegate as recorded on the delegate token's marker: an accept made
+    // with that token is stamped from it
+    const accesses = await coreRequest.get(kid.accessesPath).set('Authorization', kid.token);
+    const pat = (accesses.body.accesses || []).find((a) => base(a.id) === patAccessId);
+    assert.ok(pat?.clientData?.delegation?.delegate != null, JSON.stringify(pat));
+    return {
+      patToken: tokRes.body.token,
+      patAccessId,
+      relId: record.relId,
+      delegateHostSlug: pat.clientData.delegation.delegate.hostSlug,
+    };
   }
 
   /** Detach `delegate` (the carer by default); `keepAccessIds` are the consent grants the owner keeps. */
@@ -565,7 +576,7 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     assert.strictEqual(approvedBy?.delegate?.username, carer.username, JSON.stringify(event.content));
     assert.strictEqual(approvedBy.relId, rel.relId);
     assert.deepStrictEqual(Object.keys(approvedBy).sort(), ['delegate', 'relId']);
-    rel.delegateHostSlug = approvedBy.delegate.hostSlug;
+    assert.deepStrictEqual(approvedBy, expectedApprovedBy());
 
     const settled = await settledTrigger(event.id);
     assert.strictEqual(settled.status, 'completed', JSON.stringify(settled));
@@ -664,7 +675,7 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
   });
 
   it('[DCH19] an accept still in progress when the delegation is detached does not complete and leaves no grant', async function () {
-    rel = await attach();
+    await freshRelationship();
     const inv = await invite('dch19-' + cuid().slice(-6));
     let reached;
     const atOfferRead = new Promise((resolve) => { reached = resolve; });

@@ -68,39 +68,50 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     };
   }
 
-  let patToken;
-  let patApiEndpoint;
-  let patAccessId;
+  // The attach handshake and the PAT it issues run once, in whichever test
+  // needs them first, so every test also passes when selected on its own.
+  let handshake = null;
+  function delegatePat () {
+    if (handshake == null) handshake = runHandshake();
+    return handshake;
+  }
 
-  it('[DPAT-01] full handshake same-core: request → accept → getToken issues a PAT', async function () {
+  async function runHandshake () {
     // B requests to be controlled by A.
     const reqRes = await coreRequest.post(bob.delegationsPath + '/attach-request')
       .set('Authorization', bob.token)
       .send({ delegateUsername: alice.username });
     assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
-    assert.strictEqual(reqRes.body.delegation.status, 'invite');
 
     // A accepts.
     const accRes = await coreRequest.post(alice.delegationsPath + '/controlled/' + bob.username + '/accept')
       .set('Authorization', alice.token)
       .send({});
     assert.strictEqual(accRes.status, 200, JSON.stringify(accRes.body));
-    assert.strictEqual(accRes.body.delegation.status, 'active');
 
     // A issues a delegate PAT for B.
     const tokRes = await coreRequest.post(alice.delegationsPath + '/controlled/' + bob.username + '/token')
       .set('Authorization', alice.token)
       .send({});
     assert.strictEqual(tokRes.status, 200, JSON.stringify(tokRes.body));
+
+    const info = await coreRequest.get(bob.accessInfoPath).set('Authorization', tokRes.body.token);
+    assert.strictEqual(info.status, 200, JSON.stringify(info.body));
+    return { reqRes, accRes, tokRes, token: tokRes.body.token, accessId: info.body.id };
+  }
+
+  it('[DPAT-01] full handshake same-core: request → accept → getToken issues a PAT', async function () {
+    const { reqRes, accRes, tokRes } = await delegatePat();
+    assert.strictEqual(reqRes.body.delegation.status, 'invite');
+    assert.strictEqual(accRes.body.delegation.status, 'active');
     assert.ok(tokRes.body.token, 'a PAT token is returned to A');
     assert.ok(typeof tokRes.body.apiEndpoint === 'string', 'B apiEndpoint returned');
     assert.ok(tokRes.body.apiEndpoint.includes(bob.username), 'apiEndpoint targets the controlled account');
-    patToken = tokRes.body.token;
-    patApiEndpoint = tokRes.body.apiEndpoint;
-    assert.ok(patApiEndpoint.includes(patToken), 'apiEndpoint carries the PAT token');
+    assert.ok(tokRes.body.apiEndpoint.includes(tokRes.body.token), 'apiEndpoint carries the PAT token');
   });
 
   it('[DPAT-02] the PAT is an owner-equivalent personal token on B', async function () {
+    const { token: patToken } = await delegatePat();
     // streams.create on B via the PAT.
     const streamId = 'dpat-stream-' + cuid().slice(-6);
     const sRes = await coreRequest.post(bob.streamsPath)
@@ -127,6 +138,7 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
   });
 
   it('[DPAT-03] access-info surfaces the additive delegation field for the PAT', async function () {
+    const { token: patToken, accessId } = await delegatePat();
     const res = await coreRequest.get(bob.accessInfoPath).set('Authorization', patToken);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(res.body.type, 'personal', 'the PAT is a personal-class token');
@@ -136,10 +148,11 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     assert.strictEqual(res.body.delegation.delegate.username, alice.username);
     // The token acts AS the controlled account.
     assert.strictEqual(res.body.user.username, bob.username, 'user.username stays the controlled account');
-    patAccessId = res.body.id;
+    assert.strictEqual(res.body.id, accessId);
   });
 
   it('[DPAT-04] getToken is idempotent — re-issue returns the same PAT, no second access', async function () {
+    const { token: patToken } = await delegatePat();
     const before = await coreRequest.get(bob.accessesPath).set('Authorization', patToken);
     const patCountBefore = (before.body.accesses || []).filter(isDelegatePat).length;
 
@@ -162,10 +175,22 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
   it('[DPAT-05] the PAT actions are audited on B with delegate attribution under the PAT stream', async function () {
     const auditStorage = require('storages').auditStorage;
     if (auditStorage == null) { this.skip(); return; }
+    const { token: patToken, accessId: patAccessId } = await delegatePat();
+    const streamId = 'dpat05-stream-' + cuid().slice(-6);
+    const sRes = await coreRequest.post(bob.streamsPath).set('Authorization', patToken)
+      .send({ id: streamId, name: 'Audited Stream' });
+    assert.strictEqual(sRes.status, 201, JSON.stringify(sRes.body));
+    const eRes = await coreRequest.post(bob.eventsPath).set('Authorization', patToken)
+      .send({ streamIds: [streamId], type: 'note/txt', content: 'audited delegate action' });
+    assert.strictEqual(eRes.status, 201, JSON.stringify(eRes.body));
     const userDb = await auditStorage.forUser(bob.username);
-    const events = await userDb.getEvents({ query: [] });
-    assert.ok(Array.isArray(events) && events.length >= 1, 'audit events recorded on B');
-    const stamped = events.find((e) => e.content?.action === 'events.create' && e.content?.delegation != null);
+    // audit records are written asynchronously
+    let stamped = null;
+    for (let i = 0; i < 30 && stamped == null; i++) {
+      const events = await userDb.getEvents({ query: [] });
+      stamped = events.find((e) => e.content?.action === 'events.create' && e.content?.delegation != null) ?? null;
+      if (stamped == null) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     assert.ok(stamped != null, 'at least one events.create carries content.delegation');
     assert.strictEqual(stamped.content.delegation.delegateUsername, alice.username,
       'audit attributes the action to the named delegate');
@@ -179,6 +204,7 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     // emit the equivalent issuance record itself — one per getToken call.
     const auditStorage = require('storages').auditStorage;
     if (auditStorage == null) { this.skip(); return; }
+    await delegatePat();
     const userDb = await auditStorage.forUser(bob.username);
     const issuanceRecords = async () => {
       const events = await userDb.getEvents({ query: [] });
@@ -205,6 +231,7 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     // its payload carries the control endpoint, which must never reach a client.
     // A direct-target events.get for the internal stream returns nothing (single
     // value AND array forms), and streams.get does not expose the internal subtree.
+    await delegatePat();
     const single = await coreRequest.get(alice.eventsPath)
       .set('Authorization', alice.token)
       .query({ streams: ':_delegation:_internal:controlled' });
@@ -239,6 +266,7 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
       const bearer = arr.filter((e) => e.content != null && typeof e.content === 'object' && e.content.controlApiEndpoint != null);
       return { mirror, internal, bearer };
     }
+    await delegatePat();
 
     // Personal-token default: `streams` omitted resolves to `*`.
     const def = await coreRequest.get(alice.eventsPath)
@@ -273,6 +301,7 @@ describe('[DPAT] delegate PAT (in-process integration)', function () {
     let visibleId; // id of an event filed on the namespace root itself
 
     before(async function () {
+      await delegatePat();
       const { getMall } = require('mall');
       const mall = await getMall();
       const visible = await mall.events.create(alice.username, {
