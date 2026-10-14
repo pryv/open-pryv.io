@@ -1,6 +1,13 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.52 - 2026-10-14
+
+Two security fixes in consent (CMC) and delegation: withdrawing a consent now also ends the
+sub-accesses created from it, whichever path withdraws it, and a delegate no longer reads the
+consent counterparties' tokens nor the credentials in the owner's webhook URLs. Operators: after
+deploying, run `node bin/access-scope-audit.js` (read-only) to list sub-accesses left behind by
+earlier withdrawals. Also: `logs.file.rotation.maxSize` caps the size of each daily log file;
+admin pre-registration refuses badly shaped usernames. No migration.
 
 - `POST /system/users/validate` (admin) refuses a username account creation would refuse (5 to 60
   lowercase letters, digits or dashes, starting and ending with a letter or digit) with 400
