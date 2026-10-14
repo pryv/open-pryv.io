@@ -14,6 +14,7 @@
   `integrity-check.js`, `observability.js` and `oauth-client.js` now write their logs to stderr, so
   their stdout holds only their output (a `bin/mail.js templates get … > file` backup used to start
   with a log line). Scripts that read these tools' logs from stdout read them from stderr now.
+
 Group accounts in consent (CMC): a practice or a research team shares one Pryv account, its members
 join it from their own accounts, and each member reads a patient's data under a short-lived access
 that names them, created by the group's core on the patient's core through the patient's consent

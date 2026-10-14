@@ -26,6 +26,7 @@
   and inside multi-core child processes.
 - Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
   written to `/var/run/syslog` are not observable there.
+
 ## CMC: delivery records in the retry queue, the sweep after review
 
 - `cmc/src/retryQueue.ts`: a second record kind, `content.delivery = { apiEndpoint, path, body }`,
