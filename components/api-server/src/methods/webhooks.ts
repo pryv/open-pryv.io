@@ -43,6 +43,9 @@ const { reserveWebhookTestCall } = require('business/src/webhooks/testThrottle.t
 const { pubsub } = require('messages');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
+const delegation = require('delegation');
+const { managingAccessBase } = require('business/src/accesses/refs.ts');
+const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts');
 
 type WebhooksSettingsHolder = {
   minIntervalMs: number;
@@ -70,14 +73,54 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     const currentAccess = context.access;
     try {
       const webhooks = await webhooksRepository.get(context.user, currentAccess);
-      result.webhooks = webhooks.map(forApi);
+      const wires = [];
+      for (const webhook of webhooks) wires.push(await forApi(context, webhook));
+      result.webhooks = wires;
     } catch (error) {
       return next(errors.unexpectedError(error));
     }
     next();
+  }
 
-    function forApi (webhook: WebhookInstance) {
-      return webhook.forApi();
+  // A delegated personal access (account delegation) sees the credentials of
+  // the webhooks of its own accesses only: a webhook URL usually carries the
+  // receiver's secret, and the owner's are not handed to a delegate (the
+  // same rule as for the owner's access tokens). Such a caller gets the url
+  // reduced to scheme, host and path: user part, query and fragment removed.
+  async function forApi (context: MethodContext, webhook: WebhookInstance): Promise<Record<string, unknown>> {
+    const wire = webhook.forApi() as Record<string, unknown>;
+    if (await mayShowWebhookCredentials(context, webhook)) return wire;
+    if (typeof wire.url === 'string') wire.url = withoutUrlSecrets(wire.url);
+    return wire;
+  }
+
+  async function mayShowWebhookCredentials (context: MethodContext, webhook: WebhookInstance): Promise<boolean> {
+    const caller = context.access;
+    if (caller == null || caller.type !== 'personal' || delegation.isGenuineLoginAccess(caller)) return true;
+    if (webhook.accessId === caller.id) return true;
+    if (createdByBase((webhook as { createdBy?: unknown }).createdBy) === caller.id) return true;
+    // the webhook of an access the delegate created
+    const access = await webhooksRepository._findAccess(context.user, webhook.accessId);
+    return access != null && createdByBase((access as { createdBy?: unknown }).createdBy) === caller.id;
+  }
+
+  // The id of the access `createdBy` names (`<id>` or `<id> <callerId>`), null
+  // when it names none (the platform, or a malformed value).
+  function createdByBase (createdBy: unknown): string | null {
+    if (typeof createdBy !== 'string' || createdBy === 'system') return null;
+    try {
+      return managingAccessBase(createdBy);
+    } catch {
+      return null;
+    }
+  }
+
+  function withoutUrlSecrets (url: string): string {
+    try {
+      const u = new URL(url);
+      return u.protocol + '//' + u.host + u.pathname;
+    } catch {
+      return withoutUrlUserinfo(url);
     }
   }
 
@@ -99,7 +142,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       if (!isWebhookInScope(webhook, currentAccess)) {
         return next(errors.forbidden('The webhook was not created by this access.'));
       }
-      result.webhook = webhook.forApi();
+      result.webhook = await forApi(context, webhook);
     } catch (error) {
       return next(errors.unexpectedError(error));
     }
@@ -213,7 +256,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
         webhook.scopes = update.scopes; // replace the whole map (deepMerge would merge)
       }
       await webhook.update(update);
-      result.webhook = webhook.forApi();
+      result.webhook = await forApi(context, webhook);
       // The running copy was built from the previous scopes.
       if (scopesChanged) reloadRunningWebhook(user.username, result.webhook);
     } catch (e) {
@@ -313,9 +356,10 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       // Same answer whatever the failure (refused destination, connection
       // error, timeout, non-2xx); the reason is logged here only.
       logger.info(`webhooks.test ${checkedWebhook.id} failed: ${describeCallFailure(e)}`);
-      return next(errors.unknownReferencedResource('webhook', 'url', checkedWebhook.url));
+      const shownUrl = (await mayShowWebhookCredentials(context, checkedWebhook)) ? checkedWebhook.url : withoutUrlSecrets(checkedWebhook.url);
+      return next(errors.unknownReferencedResource('webhook', 'url', shownUrl));
     }
-    result.webhook = checkedWebhook.forApi();
+    result.webhook = await forApi(context, checkedWebhook);
     next();
   }
 
