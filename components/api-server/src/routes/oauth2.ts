@@ -46,7 +46,7 @@ const storages = require('storages');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 // Permission-lexicon single point + composite access refs.
 const { permissionKey } = require('business/src/accesses/permissionSet.ts');
-const { parseAccessRef } = require('business/src/accesses/refs.ts');
+const { parseAccessRef, isManagedBy } = require('business/src/accesses/refs.ts');
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
@@ -672,10 +672,15 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     const sessions: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
       accessesRepository.find(user, { type: 'app', name: 'oauth:' + clientId, deleted: null }, null, cb))) ?? [];
     for (const s of sessions) if (typeof s.id === 'string') ids.add(s.id);
+    // Descendants are matched on the creating access's id inside `createdBy`
+    // (an access created under a caller id is recorded as `<id> <callerId>`),
+    // expired ones included: the whole chain is revoked.
+    const live: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
+      accessesRepository.find(user, { deleted: null }, null, cb))) ?? [];
     for (const id of [...ids]) {
-      const kids: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
-        accessesRepository.find(user, { createdBy: id, deleted: null }, null, cb))) ?? [];
-      for (const k of kids) if (typeof k.id === 'string') ids.add(k.id);
+      for (const k of live) {
+        if (typeof k.id === 'string' && k.id !== id && isManagedBy(k, id)) ids.add(k.id);
+      }
     }
     const idList = [...ids];
 

@@ -79,6 +79,7 @@ type AdapterDeps = {
 };
 
 const { fromCallback } = require('utils');
+const { managedAccessesOf } = require('business/src/accesses/refs.ts');
 
 /**
  * Build a `mall.accesses`-shaped object backed by storageLayer.accesses.
@@ -214,32 +215,79 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * Delete an access. Storage layer removes the row + access cache
      * is invalidated so a subsequent token-auth resolution doesn't
      * resurrect the access from cache.
+     *
+     * Deleting a non-personal access (a data grant minted as `app`, which
+     * the requester may have used to create `shared` sub-accesses) takes
+     * the accesses it manages with it, as the `accesses.delete` route does:
+     * a consent withdrawn through any CMC path must leave no credential
+     * derived from the grant behind. The managed accesses are removed
+     * FIRST, so a failure part-way leaves the grant in place for a retry
+     * rather than live sub-accesses whose grant is gone; once the grant is
+     * gone from storage and from every worker's cache, a second pass removes
+     * what was created through it in the meantime. Each removal invalidates
+     * the access cache with the token, like the parent's. The ids removed
+     * this way are returned as `relatedDeletions`.
+     *
+     * A row that cannot be read is not deleted: without its type the
+     * cascade cannot be decided, and a grant removed alone is exactly what
+     * this cascade exists to prevent. The caller's retry path applies.
+     *
+     * Parity gap with the route, for the access and its managed ones alike:
+     * the row is removed outright (no deletion record, so neither appears
+     * under `includeDeletions`), and the route's webhook cascade, alias
+     * release, breach-scope index tombstone and accesses-changed
+     * notification are not done here. Known; to be closed by deleting
+     * through the route's own teardown.
      */
-    async delete (userId: string, params: { id: string }): Promise<{ id: string }> {
+    async delete (userId: string, params: { id: string }): Promise<{ id: string; relatedDeletions: Array<{ id: string }> }> {
       if (storageAccesses.removeOne == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.removeOne not available');
       }
-      // Capture the token BEFORE removal so the cache invalidation can be
-      // broadcast cross-worker (a sibling worker serving a deleted access
-      // from cache is the security-relevant variant of the stale read).
-      let token: string | undefined;
+      // Read the row BEFORE removal: its token lets the cache invalidation
+      // be broadcast cross-worker (a sibling worker serving a deleted access
+      // from cache is the security-relevant variant of the stale read), and
+      // its type says whether the accesses it created go with it.
+      let row: AccessRow | null = null;
       if (storageAccesses.findOne != null) {
-        try {
-          const row = await fromCallback((cb: Cb<AccessRow | null>) =>
-            storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
-          token = row?.token ?? undefined;
-        } catch (err: unknown) { /* best-effort — fall back to id-only invalidation */ }
+        row = await fromCallback((cb: Cb<AccessRow | null>) =>
+          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
       }
+      const cascades = row != null && row.type !== 'personal' && storageAccesses.find != null;
+      const removed: AccessRow[] = [];
+      if (cascades) await removeManaged();
       await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.removeOne!({ id: userId }, { id: params.id }, cb));
-      try {
-        await deps.invalidateAccessCache?.(userId, params.id, token);
-      } catch (err: unknown) {
-        deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (delete)', {
-          userId, accessId: params.id, error: String((err as Error)?.message || err),
+      await invalidate(params.id, row?.token ?? undefined);
+      // Created through the grant between the pass above and its removal:
+      // nothing can be minted through it any more, so this pass is final.
+      if (cascades) await removeManaged();
+      if (removed.length > 0) {
+        deps.logger?.info?.('cmc/mall-accesses-adapter: deleted the accesses managed by the deleted access', {
+          userId, accessId: params.id, relatedAccessIds: removed.map((a) => a.id),
         });
       }
-      return { id: params.id };
+      return { id: params.id, relatedDeletions: removed.map((a) => ({ id: a.id })) };
+
+      async function removeManaged (): Promise<void> {
+        const all = await fromCallback((cb: Cb<AccessRow[]>) =>
+          storageAccesses.find!({ id: userId }, {}, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow[];
+        for (const child of managedAccessesOf(all ?? [], params.id, Date.now() / 1000)) {
+          await fromCallback((cb: Cb<unknown>) =>
+            storageAccesses.removeOne!({ id: userId }, { id: child.id }, cb));
+          await invalidate(child.id, child.token ?? undefined);
+          removed.push(child);
+        }
+      }
+
+      async function invalidate (accessId: string, accessToken: string | undefined): Promise<void> {
+        try {
+          await deps.invalidateAccessCache?.(userId, accessId, accessToken);
+        } catch (err: unknown) {
+          deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (delete)', {
+            userId, accessId, error: String((err as Error)?.message || err),
+          });
+        }
+      }
     },
   };
 }

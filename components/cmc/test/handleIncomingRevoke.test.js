@@ -310,6 +310,29 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.deepEqual(res.deletedAccessIds, ['grant-13a']);
   });
 
+  it('[CIR15] a delete that fails for a real reason is reported as a retryable failure, warned, and not claimed', async () => {
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    const mall = fakeMall();
+    seedBackChannel(mall, 'grant-15a', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    seedBackChannel(mall, 'grant-15b', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    const realDelete = mall.accesses.delete;
+    mall.accesses.delete = async (userId, params) => {
+      if (params.id === 'grant-15b') throw new Error('storage down');
+      return realDelete(userId, params);
+    };
+    const warns = [];
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'grant-15a', content: {} },
+      deps: { mall, logger: { warn: (msg, data) => warns.push({ msg, data }), debug: () => {}, info: () => {} } },
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'cmc-revoke-delete-failed');
+    assert.deepEqual(res.deletedAccessIds, ['grant-15a']);
+    assert.deepEqual(res.detail.failedAccessIds, ['grant-15b']);
+    assert.equal(warns.some((w) => String(w.msg).includes('access delete failed')), true, JSON.stringify(warns));
+  });
+
   it('[CIR14] a mall without accesses.delete cannot enforce, and says so', async () => {
     // Guards against a wiring site handing the handler a mall that silently
     // skips the teardown while the result still looks successful.

@@ -389,6 +389,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
             permissions: [{ streamId: 'fertility', level: 'read' }],
             ...(opts.expiresAt !== undefined ? { expiresAt: opts.expiresAt } : {}),
             ...(opts.features !== undefined ? { features: opts.features } : {}),
+            ...(opts.accessType !== undefined ? { accessType: opts.accessType } : {}),
           },
           requesterMeta: { username: alice.username, appId },
         },
@@ -3076,6 +3077,142 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const res = await coreRequest.get(accepter.accessesPath).set('Authorization', accepter.token);
       assert.ok(!(res.body?.accesses || []).some((a) => a.id === dataGrant.id), 'gone when the deletion answered');
       assert.deepStrictEqual(outbound.filter((u) => u.includes(accepter.username)), [], 'no request to this core\'s own URL');
+    });
+  });
+
+  // A consent grant minted as `app` (offer `request.accessType: 'app'`) lets
+  // the requester create `shared` sub-accesses on the accepter's account. When
+  // the grant goes, whichever path takes it, the sub-accesses must go with it:
+  // a withdrawn consent leaves no credential derived from it behind.
+  describe('[CMCHS-APPGRANT] revoking an app consent grant ends the sub-accesses created from it', function () {
+    const FERTILITY = 'fertility';
+
+    before(async function () {
+      await ensureStream(bob.streamsPath, bob.token, { id: FERTILITY, name: 'Fertility' });
+    });
+
+    async function tokenLivesOn (owner, token) {
+      const res = await coreRequest.get('/' + owner.username + '/access-info')
+        .set('Authorization', token);
+      return res.status === 200;
+    }
+
+    async function pollTokenDead (owner, token, label) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        if (!await tokenLivesOn(owner, token)) return;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ': the token still authenticates on ' + owner.username + ' after the revoke');
+    }
+
+    async function accessExists (owner, accessId) {
+      const res = await coreRequest.get(owner.accessesPath).set('Authorization', owner.token);
+      return (res.body?.accesses || []).some((a) => a.id === accessId);
+    }
+
+    // The requester's relationship access for the handshake's scope.
+    async function backChannelFor (actor, triggerStreamId) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.accessesPath).set('Authorization', actor.token);
+        const hit = (res.body?.accesses || []).find((a) => {
+          if (a?.clientData?.cmc?.role !== 'counterparty') return false;
+          return (a.permissions || []).some((p) =>
+            typeof p?.streamId === 'string' && p.streamId.startsWith(triggerStreamId + ':'));
+        });
+        if (hit != null) return hit;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('no counterparty access found under ' + triggerStreamId);
+    }
+
+    // An app grant with a sub-access the requester created from it, verified
+    // live before anything is revoked (so the assertions below cannot pass on
+    // a token that never worked).
+    async function grantWithSubAccess (studyId, appId, callerId) {
+      const h = await runFreshHandshake(studyId, appId, { accessType: 'app' });
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      assert.strictEqual(dataGrant.type, 'app', 'premise: the grant is minted as an app access');
+      const authorization = callerId == null ? dataGrant.token : dataGrant.token + ' ' + callerId;
+      const res = await coreRequest.post(bob.accessesPath)
+        .set('Authorization', authorization)
+        .send({ name: 'sub-' + studyId, type: 'shared', permissions: [{ streamId: FERTILITY, level: 'read' }] });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const child = res.body.access;
+      assert.strictEqual(child.createdBy, callerId == null ? dataGrant.id : dataGrant.id + ' ' + callerId,
+        'premise: the sub-access is recorded as created by the grant');
+      assert.strictEqual(await tokenLivesOn(bob, child.token), true, 'premise: the sub-access authenticates');
+      return { h, dataGrant, child };
+    }
+
+    it('[CN60] the accepter withdraws (consent/revoke-cmc): the sub-access dies with the grant', async function () {
+      const { h, dataGrant, child } = await grantWithSubAccess('study-ag-a', 'ag-app-a');
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN60 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      await pollTokenDead(bob, child.token, 'CN60');
+      assert.strictEqual(await accessExists(bob, dataGrant.id), false, 'the grant is gone');
+      assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
+    });
+
+    it('[CN61] the requester withdraws: the revoke received by the accepter ends the sub-access too', async function () {
+      const { h, dataGrant, child } = await grantWithSubAccess('study-ag-b', 'ag-app-b');
+      const backChannel = await backChannelFor(alice, h.triggerStreamId);
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: backChannel.id, reason: { en: 'CN61 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      await pollTokenDead(bob, child.token, 'CN61');
+      assert.strictEqual(await accessExists(bob, dataGrant.id), false, 'the grant is gone');
+      assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
+    });
+
+    it('[CN62] accesses.delete of the grant takes a sub-access created under a caller id with it', async function () {
+      const { dataGrant, child } = await grantWithSubAccess('study-ag-c', 'ag-app-c', 'caller-cn62');
+
+      // The grant lists what it created, caller id or not.
+      const listRes = await coreRequest.get(bob.accessesPath).set('Authorization', dataGrant.token);
+      assert.strictEqual(listRes.status, 200, JSON.stringify(listRes.body));
+      assert.ok(listRes.body.accesses.some((a) => a.id === child.id),
+        'the grant must list the sub-access it created under a caller id: ' + JSON.stringify(listRes.body.accesses.map((a) => a.id)));
+
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+      assert.deepStrictEqual(delRes.body.relatedDeletions, [{ id: child.id }]);
+
+      assert.strictEqual(await tokenLivesOn(bob, child.token), false, 'CN62: the sub-access token is dead');
+      assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
+    });
+
+    it('[CN63] a sub-access created under a caller id, deleted by the grant, is among the grant\'s deletions', async function () {
+      const { dataGrant, child } = await grantWithSubAccess('study-ag-d', 'ag-app-d', 'caller-cn63');
+
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + child.id)
+        .set('Authorization', dataGrant.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+
+      const listRes = await coreRequest.get(bob.accessesPath)
+        .set('Authorization', dataGrant.token).query({ includeDeletions: true });
+      assert.strictEqual(listRes.status, 200, JSON.stringify(listRes.body));
+      assert.ok(!listRes.body.accesses.some((a) => a.id === child.id), 'no longer listed as live');
+      const deletion = (listRes.body.accessDeletions || []).find((a) => a.id === child.id);
+      assert.ok(deletion != null, 'listed among the grant\'s deletions: ' + JSON.stringify(listRes.body.accessDeletions));
+      assert.strictEqual(deletion.token, undefined, 'a deletion record carries no token');
     });
   });
 });

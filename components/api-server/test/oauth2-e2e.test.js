@@ -766,6 +766,35 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(typeof revoke.content.reason, 'object');
     });
 
+    it('[OE27] refresh-token reuse also revokes a sub-access the session created under a caller id', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const bearer = r.tokenRes.body.access_token;
+      // A thief holding the session mints a sub-access, labelled with a caller
+      // id so it is recorded as `createdBy: '<session id> <callerId>'`.
+      const createRes = await coreRequest.post('/' + username + '/accesses')
+        .set('Authorization', bearer + ' thief')
+        .send({ name: 'oe27-sub-' + cuid(), type: 'shared', permissions: [{ streamId: 'health', level: 'read' }] });
+      assert.equal(createRes.status, 201, JSON.stringify(createRes.body));
+      const sub = createRes.body.access;
+      assert.ok(sub.createdBy.endsWith(' thief'), 'premise: created under a caller id: ' + sub.createdBy);
+      assert.equal((await coreRequest.get('/' + username + '/access-info').set('Authorization', sub.token)).status, 200,
+        'premise: the sub-access authenticates');
+
+      const params = { grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId };
+      assert.equal((await coreRequest.post('/oauth2/token').type('form').send(params)).status, 200);
+      const { withInjectedConfig } = require('test-helpers');
+      await withInjectedConfig({ oauth: { refreshReuseGraceSeconds: 0 } }, async () => {
+        const replay = await coreRequest.post('/oauth2/token').type('form').send(params);
+        assert.equal(replay.status, 400);
+      });
+
+      const after = await coreRequest.get('/' + username + '/access-info').set('Authorization', sub.token);
+      assert.notEqual(after.status, 200, 'the sub-access must be revoked with the chain: ' + describeRes(after));
+      const listed = (await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken)).body.accesses ?? [];
+      assert.ok(!listed.some((a) => a.id === sub.id), 'the sub-access is no longer live');
+    });
+
     it('[OE21] revoking the consent data-grant kills the refresh chain (invalid_grant)', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200);

@@ -33,7 +33,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
-const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase } = require('business/src/accesses/refs.ts');
+const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase, managedAccessesOf, isManagedBy } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 // Scoped notifications: structured access-change signal carrying the changed
@@ -137,14 +137,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   async function findAccessibleAccesses (context: MethodContext, params: AccessesGetParams, result: AccessesGetResult, next: MethodNext) {
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
-    const query: Record<string, unknown> = {};
     if (currentAccess == null) { return next(new Error('AF: Access cannot be null at this point.')); }
-    if (!currentAccess.canListAnyAccess()) {
-      // app -> only access it created
-      query.createdBy = currentAccess.id;
-    }
     try {
-      let accesses: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, query, dbFindOptions, cb));
+      let accesses: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, {}, dbFindOptions, cb));
+      if (!currentAccess.canListAnyAccess()) {
+        // app -> only the accesses it created, including those created under
+        // a caller id (`createdBy` is then `<id> <callerId>`)
+        accesses = accesses.filter((a: AccessLike) => isManagedBy(a, currentAccess.id));
+      }
       if (excludeExpired(params)) {
         accesses = accesses.filter((a: AccessLike) => !isAccessExpired(a));
       }
@@ -170,15 +170,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
-    const query: Record<string, unknown> = {};
-    if (!currentAccess.canListAnyAccess()) {
-      // app -> only access it created
-      query.createdBy = currentAccess.id;
-    }
     try {
-      const deletions = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, query, { projection: { calls: 0 } }, cb));
+      let deletions: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, {}, { projection: { calls: 0 } }, cb));
+      if (!currentAccess.canListAnyAccess()) {
+        // app -> only the accesses it created (caller-id forms included)
+        deletions = (deletions || []).filter((d: AccessLike) => isManagedBy(d, currentAccess.id));
+      }
       // A deleted access's token no longer opens anything: never returned.
-      result.accessDeletions = (deletions || []).map((d: unknown) => withoutCredentials(composeWireAccess(d)));
+      result.accessDeletions = (deletions || []).map((d: AccessLike) => withoutCredentials(composeWireAccess(d)));
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -1090,17 +1089,18 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (accessToDelete.type === 'personal') {
       return next();
     }
+    // Matched on the access id inside `createdBy`, not on the whole value: an
+    // access created under a caller id is recorded as `<id> <callerId>`.
     let accesses: AccessLike[] = [];
     try {
       accesses = await fromCallback((cb: NodeCallback) => {
-        accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
+        accessesRepository.find(context.user, {}, dbFindOptions, cb);
       });
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
+    accesses = managedAccessesOf(accesses, params.id, timestamp.now());
     if (accesses.length === 0) { return next(); }
-    accesses = accesses.filter((a) => a.id !== params.id);
-    accesses = accesses.filter((a) => !isAccessExpired(a));
     result.relatedDeletions = accesses.map((a) => ({ id: a.id! }));
     params.relatedAccessesToDelete = accesses;
     next();
@@ -1168,6 +1168,34 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       cache.unsetAccessLogic(context.user.id, logic);
     }
     if (deleteErr != null) { return next(errors.unexpectedError(deleteErr)); }
+    // An access created through the deleted one between findRelatedAccesses
+    // and the delete above (or by a request that authenticated before the
+    // cache bust) would survive it unmanaged. The deleted access can create
+    // nothing any more, so one more pass is final. Reported like the others.
+    if (params.accessToDelete?.type !== 'personal') {
+      let late: AccessLike[] = [];
+      try {
+        const all: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, {}, dbFindOptions, cb));
+        late = managedAccessesOf(all, params.id, timestamp.now());
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+      if (late.length > 0) {
+        try {
+          await fromCallback((cb: NodeCallback) => {
+            accessesRepository.delete(context.user, { $or: late.map((a) => ({ id: a.id })) }, cb);
+          });
+        } catch (err) {
+          return next(errors.unexpectedError(err));
+        }
+        for (const a of late) {
+          if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(context.user.id, { id: a.id, token: a.token });
+          rowsToTombstone.push(a as IndexAccessInput);
+        }
+        result.relatedDeletions = (result.relatedDeletions ?? []).concat(late.map((a) => ({ id: a.id! })));
+        params.relatedAccessesToDelete = (params.relatedAccessesToDelete ?? []).concat(late);
+      }
+    }
     if (aliasesToRelease.length > 0) {
       const usersRepository = await getUsersRepository();
       for (const alias of aliasesToRelease) {

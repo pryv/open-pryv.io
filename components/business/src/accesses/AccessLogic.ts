@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams/index.ts');
-const { parseAccessRef, managingAccessBase } = require('./refs.ts');
+const { parseAccessRef, managingAccessBase, isManagedBy } = require('./refs.ts');
 const { isInjectedPermission } = require('./injectedPermissions.ts');
 
 const { getConfigSync } = require('@pryv/boiler');
@@ -379,8 +379,9 @@ class AccessLogic {
 
     if (this.isShared()) return false;
 
-    // App token can delete the one they created
-    return this.id === access.createdBy;
+    // App token can delete the ones it created, under a caller id included
+    // (`createdBy` is then `<id> <callerId>`): the same match as canUpdateAccess.
+    return isManagedBy(access, this.id);
   }
 
   // Whether the current access can update the given target access.
