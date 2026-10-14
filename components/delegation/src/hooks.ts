@@ -164,11 +164,17 @@ function isDelegationDerivedAccess (access: AccessLike | null | undefined): bool
  * owner may write it. The host leaves out the trigger types whose grant path
  * does record lineage (the CMC accept).
  */
-function createDelegatedGrantGuardHook (deps: Deps, gatedEventTypes: ReadonlySet<string>): Middleware {
+function createDelegatedGrantGuardHook (deps: Deps, gatedEventTypes: ReadonlySet<string>, options: { exempt?: (access: unknown) => boolean } = {}): Middleware {
   return function delegationDelegatedGrantGuard (context, _params, _result, next) {
     const type = context?.newEvent?.type;
     if (typeof type !== 'string' || !gatedEventTypes.has(type)) return next();
-    if (!isDelegationDerivedAccess((context as LineageContext).access)) return next();
+    const access = (context as LineageContext).access;
+    if (!isDelegationDerivedAccess(access)) return next();
+    // An access the caller declares exempt: a membership of a group account
+    // approved by a delegate administrator carries the lineage so that it
+    // ends with the delegation, but what the member publishes through it
+    // belongs to the group, as it would under an owner-approved membership.
+    if (options.exempt != null && options.exempt(access)) return next();
     return next(deps.errors.invalidOperation(
       'Writing "' + type + '" with a token obtained through account delegation is not allowed: ' +
       'the account owner must accept this themselves.',

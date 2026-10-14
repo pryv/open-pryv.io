@@ -441,8 +441,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // this account. The accept is NOT in the set: its data grant carries the
   // delegation lineage (handleAccept, from `triggerAccess`), so a delegate may
   // accept a consent for the account it manages and detach revokes it.
+  // A group membership approved by a delegate administrator carries the
+  // delegation lineage (it ends at detach) but is not a delegate token: the
+  // patient invites a member publishes through it are the group's.
   const delegationDelegatedGrantGuardHook = delegationActive
-    ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([cmc.ET_SYSTEM_SCOPE_UPDATE, cmc.ET_REQUEST]))
+    ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([cmc.ET_SYSTEM_SCOPE_UPDATE, cmc.ET_REQUEST]), {
+      exempt: (access: unknown) => (access as { clientData?: { cmc?: { role?: unknown } } } | null | undefined)?.clientData?.cmc?.role === cmc.ROLE_MEMBER,
+    })
     : delegationPassthrough;
   // Delegation lineage reader for the CMC accept (approvedBy stamp + data
   // grant marker). Null for every access when delegation is inactive, like
