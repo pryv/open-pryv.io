@@ -118,11 +118,12 @@ describe('[RGMC] register: multi-core', function () {
     }, extra);
     config.injectTestConfig(inject);
     // core-identity plugin used config.set() at boot (highest nconf priority);
-    // must also use config.set() to override
+    // must also use config.set() to override. Other keys (dns:domain) go
+    // through the test scope only: a set() value would outrank every later
+    // injection for the rest of the run.
     config.set('core:isSingleCore', false);
     config.set('core:url', buildCoreUrl(selfId));
     config.set('core:id', selfId);
-    config.set('dns:domain', DOMAIN);
     await platform.registerSelf();
     // Disable the default 'single' core entry (registered at Platform.init())
     // so it doesn't interfere with multi-core selection
@@ -149,7 +150,6 @@ describe('[RGMC] register: multi-core', function () {
     config.injectTestConfig({});
     config.set('core:isSingleCore', true);
     config.set('core:url', null);
-    config.set('dns:domain', null);
   }
 
   // ----------------------------------------------------------------
@@ -903,7 +903,7 @@ describe('[RGMC] register: multi-core', function () {
     let request;
 
     before(async function () {
-      config.set('auth:adminAccessKey', 'some_key_yo');
+      // auth:adminAccessKey is 'some_key_yo' in test-config.yml
       await setupMultiCore(CORE_A);
       await seedCore(CORE_B, { hosting: 'us-east-1' });
       await platform.setUserCore('mc07alice', CORE_A);
@@ -1079,7 +1079,8 @@ describe('[RGMC] register: multi-core', function () {
       // `coreIdToUrl` falls through cache -> dns domain -> `core:url`, so
       // BOTH of the latter must be absent for it to yield nothing. That is
       // the default install: neither the wizard nor the bootstrap sets one.
-      config.set('dns:domain', null);
+      // (The next setupMultiCore() replaces the test scope: no restore needed.)
+      require('test-helpers').injectTestConfigSnapshot({ dns: { domain: null } });
       config.set('core:url', null);
       await platform._refreshCoreUrlCache();
 

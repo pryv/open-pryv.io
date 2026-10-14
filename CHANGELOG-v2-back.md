@@ -1,5 +1,32 @@
 # Changelog - Internal (no API impact)
 
+## Mail template reload, access-index prune classes
+
+- `mail/src/emailTemplatesDelivery.ts`: `refresh()` materialises into a new directory with a new
+  `email-templates` renderer and swaps them in (the previous directory is removed at the next
+  refresh, for a send still reading it); refreshes run one after the other, so overlapping ones
+  cannot leave the older templates in place; compiled-template caching is off. The admin template
+  routes refresh the serving worker before answering (503 when it cannot) and still nudge the
+  others through the master. Tests: `[MA12]`, `[MA13]`, `[MADP8]` (production mode, child
+  process), `[MADP9]`.
+- `bin/backfill-access-index.js --prune`: rows are judged against one map of every access held by
+  the core's accounts (one storage walk instead of a query per row) and reported in three classes:
+  `orphan` (no account holds the name), `stale` (another account of this core holds the access) and
+  `missing` (no account of this core holds the access: an access removed without a deletion
+  record, an older backup restored, or a former name taken again). `--apply` changes `orphan` and
+  `stale` rows only, `--list-missing` prints the `missing` rows; until now all of them were
+  labelled stale and `--apply` deleted them. `findPrunableAccessIndexRows` takes `accessHolder`
+  (`owned` / `other-account` / `missing`) instead of `ownsAccess`. Test: `[ACC14]`.
+- Tests: settings changed for a case or a suite go through the test config scope
+  (`injectTestConfigSnapshot` / `withInjectedConfig`) and are restored, instead of `config.set()`
+  then a "restoring" `config.set()`, which left an explicit value in the memory scope that outranked
+  every later injection for the rest of the mocha process (webhooks allow-list, OAuth consent URL,
+  email-challenge budgets, `dns:domain` in the multi-core suites, `cluster.allowInsecurePeerUrl`).
+  `config.set()` stays only for the keys config plugins claim with it at boot (`core:*`, `service`)
+  and inside multi-core child processes.
+- Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
+  written to `/var/run/syslog` are not observable there.
+
 ## Log file size cap, admin username reservation shape
 
 - `boiler/src/logging.ts`: the rotating transport takes `rotation.maxSize` (validated: a number

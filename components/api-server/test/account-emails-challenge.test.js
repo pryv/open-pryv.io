@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
 
 const challenge = require('business/src/emails/challenge.ts');
 const { hashToken } = require('business/src/emails/tokens.ts');
+const { injectTestConfigSnapshot } = require('test-helpers');
 
 const CFG = {
   maxAge: 'account:emailVerification:registrationCodeMaxAgeMs',
@@ -38,28 +39,34 @@ const CFG = {
 describe('[EMCH] registration email challenge', function () {
   this.timeout(30000);
   let platformDB;
-  let saved;
+  let restoreSuite;
+  const caseRestores = [];
+
+  // Settings go through the test config scope and are restored: a
+  // config.set() value, even a restored one, would outrank every later
+  // injection for the rest of the run.
+  function scoped (key, value) {
+    return key.split(':').reduceRight((inner, k) => ({ [k]: inner }), value);
+  }
+  /** Override a setting for the current case only. */
+  function setForCase (key, value) {
+    caseRestores.push(injectTestConfigSnapshot(scoped(key, value)));
+  }
 
   before(async function () {
     await initTests();
     await initCore();
     platformDB = require('storages').platformDB;
-    saved = {};
-    for (const key of Object.values(CFG)) saved[key] = config.get(key);
     // Most cases are not about the cooldown; the ones that are set it themselves.
-    config.set(CFG.cooldown, 0);
+    restoreSuite = injectTestConfigSnapshot(scoped(CFG.cooldown, 0));
   });
 
   after(function () {
-    for (const [key, value] of Object.entries(saved)) config.set(key, value);
+    if (restoreSuite != null) restoreSuite();
   });
 
   afterEach(function () {
-    config.set(CFG.cooldown, 0);
-    config.set(CFG.attempts, saved[CFG.attempts]);
-    config.set(CFG.maxAge, saved[CFG.maxAge]);
-    config.set(CFG.daily, saved[CFG.daily]);
-    config.set(CFG.fails, saved[CFG.fails]);
+    while (caseRestores.length > 0) caseRestores.pop()();
   });
 
   /** A fresh address per case, so the per-address budgets never interfere. */
@@ -108,7 +115,7 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH3] wrong codes count down and the code is spent when they run out', async function () {
-    config.set(CFG.attempts, 3);
+    setForCase(CFG.attempts, 3);
     const email = anEmail();
     const created = await challenge.createChallenge(email);
     assert.deepStrictEqual(await challenge.verifyChallenge(email, 'AAAAAAAA'),
@@ -129,7 +136,7 @@ describe('[EMCH] registration email challenge', function () {
     // exactly one caller of each racing batch is evaluated and the losers get
     // nothing back. Firing guesses in parallel therefore gains an attacker
     // nothing: it costs them guesses rather than saving them.
-    config.set(CFG.attempts, 5);
+    setForCase(CFG.attempts, 5);
     const email = anEmail();
     await challenge.createChallenge(email);
 
@@ -165,7 +172,7 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH6] an expired code is gone', async function () {
-    config.set(CFG.maxAge, 1);
+    setForCase(CFG.maxAge, 1);
     const email = anEmail();
     const created = await challenge.createChallenge(email);
     await sleep(20);
@@ -184,7 +191,7 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH8] a second code within the cooldown is refused', async function () {
-    config.set(CFG.cooldown, 60000);
+    setForCase(CFG.cooldown, 60000);
     const email = anEmail();
     assert.strictEqual((await challenge.createChallenge(email)).ok, true);
     assert.deepStrictEqual(await challenge.createChallenge(email),
@@ -192,7 +199,7 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH9] the daily cap stops bulk requests for one address', async function () {
-    config.set(CFG.daily, 2);
+    setForCase(CFG.daily, 2);
     const email = anEmail();
     assert.strictEqual((await challenge.createChallenge(email)).ok, true);
     assert.strictEqual((await challenge.createChallenge(email)).ok, true);
@@ -203,8 +210,8 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH10] the daily failure budget blocks NEW codes, so guessing cannot reset the counter', async function () {
-    config.set(CFG.fails, 2);
-    config.set(CFG.attempts, 5);
+    setForCase(CFG.fails, 2);
+    setForCase(CFG.attempts, 5);
     const email = anEmail();
     await challenge.createChallenge(email);
     await challenge.verifyChallenge(email, 'AAAAAAAA');
@@ -233,7 +240,7 @@ describe('[EMCH] registration email challenge', function () {
   });
 
   it('[EMCH13] discarding a challenge frees the cooldown, so a failed send is not a lockout', async function () {
-    config.set(CFG.cooldown, 60000);
+    setForCase(CFG.cooldown, 60000);
     const email = anEmail();
     assert.strictEqual((await challenge.createChallenge(email)).ok, true);
     await challenge.discardChallenge(email);

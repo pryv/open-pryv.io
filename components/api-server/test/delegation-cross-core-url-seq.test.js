@@ -213,8 +213,7 @@ describe('[DXCU] cross-core delegation peer-URL resolution', function () {
   });
 
   it('[DXCU-05] an http url in a peer row is ignored unless cluster.allowInsecurePeerUrl', async function () {
-    const saved = config.get('cluster:allowInsecurePeerUrl');
-    config.set('cluster:allowInsecurePeerUrl', false);
+    const restoreInsecure = injectTestConfigSnapshot({ cluster: { allowInsecurePeerUrl: false } });
     try {
       await seedPeerCore({ url: 'http://plain-b.example.org/' });
       const res = await attachRequest();
@@ -224,7 +223,7 @@ describe('[DXCU] cross-core delegation peer-URL resolution', function () {
         'the http url is not used: the derived https endpoint is');
       await cancelInvite();
     } finally {
-      config.set('cluster:allowInsecurePeerUrl', saved);
+      restoreInsecure();
       await platform._refreshCoreUrlCache();
     }
   });

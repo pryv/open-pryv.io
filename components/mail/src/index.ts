@@ -21,7 +21,8 @@ const require = createRequire(import.meta.url);
  *     Silent no-op (returns `{ sent: false, skipped: 'not-active' }`) when
  *     the module wasn't initialised — callers don't need to guard.
  *   - `refresh()` re-materialises the tmp template dir from PlatformDB
- *     (admin CLI / admin API write path calls this on invalidation).
+ *     (the admin API write path calls this, and every sibling worker on its
+ *     invalidation nudge; `bin/mail.js` writes notify no worker).
  *
  * Current scope: façade + ports only. Callers still go through the
  * microservice HTTP path; flipping `services.email.method` to `in-process`

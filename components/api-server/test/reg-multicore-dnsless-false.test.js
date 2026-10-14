@@ -48,7 +48,6 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
   let savedService;
   let savedCoreUrl;
   let savedCoreId;
-  let savedDnsDomain;
   let savedIsSingleCore;
 
   function getPlatformDB () {
@@ -63,13 +62,12 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     await app.initiate();
     await platform.init();
     // Snapshot config keys we mutate so later tests (e.g. [SINF], [SVIF]) see
-    // the original `service.*` / `core.*` / `dns.domain` / `core:isSingleCore`
-    // values — without this the multi-core URL rewrites and single-core
-    // resets leak across describes.
+    // the original `service.*` / `core.*` / `core:isSingleCore` values —
+    // without this the multi-core URL rewrites and single-core resets leak
+    // across describes. (`dns.domain` only lives in the test scope.)
     savedService = config.get('service');
     savedCoreUrl = config.get('core:url');
     savedCoreId = config.get('core:id');
-    savedDnsDomain = config.get('dns:domain');
     savedIsSingleCore = config.get('core:isSingleCore');
     const allData = await getPlatformDB().exportAll();
     savedPlatformData = allData.filter(e => e.username != null);
@@ -95,11 +93,12 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       await getPlatformDB().importAll(savedPlatformData);
     }
     config.injectTestConfig({});
-    // Restore mutated keys to their pre-describe values.
+    // Restore mutated keys to their pre-describe values. Only the keys config
+    // plugins claim with set() at boot (service, core:*) are restored with
+    // set(); dns:domain came from the test scope, emptied above.
     config.set('service', savedService);
     config.set('core:url', savedCoreUrl || null);
     config.set('core:id', savedCoreId || null);
-    config.set('dns:domain', savedDnsDomain || null);
     config.set('core:isSingleCore', savedIsSingleCore != null ? savedIsSingleCore : true);
     await platform.registerSelf();
     await accessState.clear();
@@ -124,7 +123,6 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     config.set('core:isSingleCore', false);
     config.set('core:url', buildCoreUrl(selfId));
     config.set('core:id', selfId);
-    config.set('dns:domain', DOMAIN);
     await platform.registerSelf();
     await getPlatformDB().setCoreInfo('single', {
       id: 'single', available: false
@@ -508,7 +506,6 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       config.set('core:isSingleCore', false);
       config.set('core:url', buildCoreUrl(CORE_A));
       config.set('core:id', CORE_A);
-      config.set('dns:domain', DOMAIN);
       // public-url.js config plugin is NOT loaded in the test boiler init
       // (tests use a minimal plugin set). Invoke it manually so `service.register`
       // / `service.access` reflect the current multi-core config instead of

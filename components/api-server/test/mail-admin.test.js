@@ -149,4 +149,67 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     }
     assert.deepStrictEqual((await platformDB.getAllMailTemplates()).length, 0);
   });
+
+  it('[MA12] the process that served a PUT or DELETE sends the new template right away', async () => {
+    // The test core is the serving worker: no master relays anything here.
+    const mail = require('mail');
+    await mail.close();
+    await mail.init({
+      getAllMailTemplates: () => platformDB.getAllMailTemplates(),
+      smtp: { jsonTransport: true },
+      from: { name: 'Pryv Test', address: 'test@example.com' },
+      defaultLang: 'en'
+    });
+    const type = 'reload-' + cuid();
+    async function put (lang, part, pug) {
+      const res = await coreRequest.put(`/system/admin/mail/templates/${type}/${lang}/${part}`).set(authHeaders()).send({ pug });
+      assert.strictEqual(res.status, 204, JSON.stringify(res.body));
+    }
+    async function subject (lang) {
+      const { sent, result } = await mail.send({ type, lang, recipient: { email: 'ma12@example.com', name: 'ma12' } });
+      assert.strictEqual(sent, true);
+      return JSON.parse(result.message).subject;
+    }
+    try {
+      await put('en', 'subject', '| Version one');
+      await put('en', 'html', 'p Hello');
+      assert.strictEqual(await subject('en'), 'Version one');
+      await put('en', 'subject', '| Version two');
+      assert.strictEqual(await subject('en'), 'Version two', 'a PUT is used by the process that served it');
+
+      await put('fr', 'subject', '| Version française');
+      await put('fr', 'html', 'p Bonjour');
+      assert.strictEqual(await subject('fr'), 'Version française');
+      for (const part of ['subject', 'html']) {
+        const res = await coreRequest.delete(`/system/admin/mail/templates/${type}/fr/${part}`).set(authHeaders());
+        assert.strictEqual(res.status, 204);
+      }
+      assert.strictEqual(await subject('fr'), 'Version two', 'after a DELETE the default language is used');
+    } finally {
+      await mail.close();
+    }
+  });
+
+  it('[MA13] a PUT whose reload fails answers 503, with the template stored', async () => {
+    const mail = require('mail');
+    await mail.close();
+    let reads = 0;
+    await mail.init({
+      getAllMailTemplates: async () => {
+        if (reads++ > 0) throw new Error('MA13 reload failure');
+        return [];
+      },
+      smtp: { jsonTransport: true },
+      from: { name: 'Pryv Test', address: 'test@example.com' }
+    });
+    const type = 'reloadfail-' + cuid();
+    try {
+      const res = await coreRequest.put(`/system/admin/mail/templates/${type}/en/subject`).set(authHeaders()).send({ pug: '| Stored' });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'api-unavailable');
+      assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'subject'), '| Stored');
+    } finally {
+      await mail.close();
+    }
+  });
 });

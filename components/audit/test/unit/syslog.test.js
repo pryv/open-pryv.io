@@ -12,15 +12,15 @@ const os = require('os');
 
 const SyslogWatch = require('storages/engines/sqlite/test/support/SyslogWatch').default;
 
-describe('[SYSL] Syslog', function () {
+// Skipped on macOS, so its cases show as pending: datagrams written to
+// /var/run/syslog reach neither `log stream` nor /var/log/system.log on
+// current macOS, so nothing can observe them. Linux CI runs it.
+const describeSyslog = os.type() === 'Darwin' ? describe.skip : describe;
+
+describeSyslog('[SYSL] Syslog', function () {
   const userId = cuid();
   const createdBy = cuid();
   let syslogWatch;
-
-  if (os.type() === 'Darwin') {
-    console.log('** to fix - sylog monitoring not working anymore on OSX **');
-    return;
-  }
 
   before(async () => {
     await initTests();

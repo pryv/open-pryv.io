@@ -25,6 +25,12 @@ const logger = getLogger('mail-delivery');
  * `views.root` pointing at that tmp dir, and re-materialize on demand when
  * templates change.
  *
+ * Each refresh materialises into a NEW directory with a new renderer, then
+ * swaps them in: compiled templates are cached by file name (consolidate and
+ * pug, on whenever NODE_ENV is not development/test), so rewriting the same
+ * files would keep rendering the old template. The previous directory stays
+ * until the next refresh, for a send still reading it.
+ *
  * This avoids forking `email-templates` while still keeping PlatformDB as
  * the authoritative template store cluster-wide.
  *
@@ -33,7 +39,8 @@ const logger = getLogger('mail-delivery');
  * @param opts.from                  default `from` (name + address)
  * @param [opts.tmpDirRoot]          override tmpdir (tests)
  * @returns delivery handle — { send, templateExists, refresh, close, tmpDir }
- *          (signatures are in the TS types below)
+ *          (signatures are in the TS types below; tmpDir is the current
+ *          directory, it changes on refresh)
  */
 type TemplateRow = { type: string; lang: string; part: string; pug: string };
 type MailFrom = string | { name?: string; address: string };
@@ -59,39 +66,66 @@ async function createEmailTemplatesDelivery (opts: DeliveryOpts): Promise<Delive
   if (!smtp) throw new Error('emailTemplatesDelivery: smtp transport config is required');
 
   const tmpDirRoot = opts.tmpDirRoot || os.tmpdir();
-  const tmpDir = await fs.mkdtemp(path.join(tmpDirRoot, 'pryv-mail-'));
-  logger.info(`materialising templates under ${tmpDir}`);
 
-  await materialiseTemplates(tmpDir, getAllMailTemplates);
-
-  const delivery = new EmailTemplates({
-    message: { from: formatFrom(from) },
-    views: { root: tmpDir },
-    transport: smtp,
-    preview: false,
-    send: true,
-    // CSS inlining only: never fetch or read a stylesheet, script or image a
-    // rendered template points at. `inlineAttribute` is the per-element
-    // override (`data-inline` by default) that would force a fetch anyway;
-    // it is used as a regular expression, and this one never matches.
-    juiceResources: {
-      applyStyleTags: false,
-      removeStyleTags: false,
-      webResources: { relativeTo: tmpDir, images: false, svgs: false, scripts: false, links: false, inlineAttribute: '(?!)' }
+  async function build (): Promise<{ dir: string; renderer: Pick<DeliveryReturn, 'send' | 'templateExists'> }> {
+    const dir = await fs.mkdtemp(path.join(tmpDirRoot, 'pryv-mail-'));
+    logger.info(`materialising templates under ${dir}`);
+    try {
+      await materialiseTemplates(dir, getAllMailTemplates);
+      const renderer = new EmailTemplates({
+        message: { from: formatFrom(from) },
+        // No compiled-template cache: every refresh brings new file names, so
+        // a cache would only grow. Compiling per send is cheap at mail volume.
+        views: { root: dir, locals: { cache: false } },
+        transport: smtp,
+        preview: false,
+        send: true,
+        // CSS inlining only: never fetch or read a stylesheet, script or image a
+        // rendered template points at. `inlineAttribute` is the per-element
+        // override (`data-inline` by default) that would force a fetch anyway;
+        // it is used as a regular expression, and this one never matches.
+        juiceResources: {
+          applyStyleTags: false,
+          removeStyleTags: false,
+          webResources: { relativeTo: dir, images: false, svgs: false, scripts: false, links: false, inlineAttribute: '(?!)' }
+        }
+      });
+      return { dir, renderer };
+    } catch (err) {
+      await fs.rm(dir, { recursive: true, force: true });
+      throw err;
     }
-  });
+  }
+
+  let current = await build();
+  let previousDir: string | null = null;
+  // Refreshes run one after the other: overlapping ones could finish out of
+  // order and leave the older templates in place.
+  let queue: Promise<void> = Promise.resolve();
+  function enqueue (step: () => Promise<void>): Promise<void> {
+    const run = queue.then(step);
+    queue = run.catch(() => {});
+    return run;
+  }
 
   return {
-    send: delivery.send.bind(delivery),
-    templateExists: delivery.templateExists.bind(delivery),
-    async refresh () {
-      await clearDir(tmpDir);
-      await materialiseTemplates(tmpDir, getAllMailTemplates);
+    send: (...args: unknown[]) => current.renderer.send(...args),
+    templateExists: (...args: unknown[]) => current.renderer.templateExists(...args),
+    refresh () {
+      return enqueue(async () => {
+        const next = await build();
+        if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
+        previousDir = current.dir;
+        current = next;
+      });
     },
-    async close () {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+    close () {
+      return enqueue(async () => {
+        if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
+        await fs.rm(current.dir, { recursive: true, force: true });
+      });
     },
-    tmpDir
+    get tmpDir () { return current.dir; }
   };
 }
 
@@ -123,13 +157,6 @@ async function materialiseTemplates (tmpDir: string, getAllMailTemplates: () => 
     count++;
   }
   logger.debug(`materialised ${count} template file(s)`);
-}
-
-async function clearDir (dir: string): Promise<void> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const e of entries as Array<{ name: string }>) {
-    await fs.rm(path.join(dir, e.name), { recursive: true, force: true });
-  }
 }
 
 function formatFrom (from: MailFrom | undefined): string | undefined {
