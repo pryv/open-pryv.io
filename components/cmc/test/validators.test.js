@@ -253,6 +253,19 @@ describe('[CMCVAL] cmc/validators', () => {
       });
     });
 
+    it('[VC09] an offer may not ask a stream the plugin manages on the accepter\'s account; star and the accepter\'s own app streams pass', () => {
+      const withPerms = (permissions) => ({ ...VALID_REQUEST, request: { ...VALID_REQUEST.request, permissions } });
+      for (const bad of [':_cmc:inbox', ':_cmc:_internal:retries', ':_cmc:_internal:members', ':_cmc:apps', ':_cmc:apps:my-app:study:chats:x--y', ':_cmc:apps:my-app:study:collectors:x--y']) {
+        const r = V.validate('consent/request-cmc', withPerms([{ streamId: 'fertility', level: 'read' }, { streamId: bad, level: 'read' }]));
+        assert.equal(r.valid, false, bad + ' must be refused');
+        assert.ok(r.errors.some((e) => e.includes(bad) && e.includes('managed by the plugin')), r.errors.join('; '));
+      }
+      for (const ok of ['*', ':_cmc:apps:my-app', ':_cmc:apps:my-app:study', 'fertility']) {
+        assert.equal(V.validate('consent/request-cmc', withPerms([{ streamId: ok, level: 'read' }])).valid, true, ok + ' must pass');
+      }
+      assert.deepEqual(V.offerPermissionViolations([{ feature: 'selfRevoke', setting: 'forbidden' }, { streamId: 'x', level: 'read' }]), []);
+    });
+
     it('[VC08] rejects scope-update with neither request-ref nor newPermissions', () => {
       expectInvalid('consent/scope-update-cmc', { accept: true }, 'scopeRequestEventId');
     });

@@ -48,9 +48,21 @@
   an unreadable relationship is a `residual` with reason `relationship-unreadable`. A `narrowed`
   sweep re-reads the membership and keeps (no outcome entry) the records whose scope it still
   covers (`coveredScopesOf`). `MEMBER_REVOKE_REASONS` gains `vanished`.
+- `api-server/src/methods/helpers/accessDeletion.ts` `scrubCredentialUrls`: one `updateOne`
+  (`clientData: withoutCredentialUrls(clientData)`, `modified`) per row that holds a credential
+  URL, before the soft delete (the final pass included), so the deletion record never holds a
+  peer token at rest.
+- `cmc/src/handleInvalidateLink.ts`: the trigger's `:_cmc:apps` stream must equal, or be an
+  ancestor of, a stream of the invite the capability's `requestEventId` names (read with
+  `mall.events.getOne`); otherwise, or when the invite cannot be read,
+  `CmcErrorIds.INVALIDATE_LINK_SCOPE_MISMATCH` (`cmc-invalidate-link-scope-mismatch`, in
+  `NON_RETRYABLE_REASONS`).
 - Tests: cmc `[RQ20]`..`[RQ24]`, `[HR25]`..`[HR27]`, `[DH25]`, `[DH26]`, `[MR24]` (two passes),
-  `[MR25]`..`[MR28]`, `[MR42]`; api-server `[CN60]`, `[CN61]` (a requester down during a revoke,
-  the notice delivered by the loop once it is back; failed-permanent when it never is).
+  `[MR25]`..`[MR28]`, `[MR42]`, `[CMCIL-G]`; api-server `[CN60]`, `[CN61]` (a requester down
+  during a revoke, the notice delivered by the loop once it is back; failed-permanent when it
+  never is), `[CN70]`, `[CN71]` (an offer asking `:_cmc:inbox` or `*` reads neither the inbox nor
+  the plugin-internal subtree through the grant), `[CN72]` (invalidate scope), `[CN73]` (the
+  deletion record at rest).
 
 ## CMC group accounts; one deletion for every access teardown
 

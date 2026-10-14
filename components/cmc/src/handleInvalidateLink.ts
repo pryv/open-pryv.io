@@ -34,6 +34,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
 
@@ -90,6 +91,26 @@ async function handleInvalidateLink (params: {
   });
   if (acc == null) {
     return { ok: false, reason: 'capability-access-not-found', detail: { capabilityId } };
+  }
+
+  // The scope check: the trigger's stream must hold the invite this
+  // capability was minted for (the invite's stream, or an ancestor of it),
+  // so a token with contribute on one app scope cannot close the invites of
+  // another by guessing their capability ids. An invite that cannot be read
+  // cannot be judged, and is refused.
+  const triggerScopes = (Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [])
+    .filter((s): s is string => typeof s === 'string' && s.startsWith(C.NS_APPS + ':'));
+  const requestEventId = acc.clientData?.cmc?.requestEventId;
+  let inviteStreams: string[] | null = null;
+  if (typeof requestEventId === 'string' && requestEventId.length > 0 && mall.events?.getOne != null) {
+    try {
+      const invite = await mall.events.getOne(userId, requestEventId);
+      if (invite != null && Array.isArray(invite.streamIds)) inviteStreams = invite.streamIds.filter((s): s is string => typeof s === 'string');
+    } catch (_e) { inviteStreams = null; }
+  }
+  const inScope = inviteStreams != null && inviteStreams.some((s) => triggerScopes.some((t) => s === t || s.startsWith(t + ':')));
+  if (!inScope) {
+    return { ok: false, reason: CmcErrorIds.INVALIDATE_LINK_SCOPE_MISMATCH, detail: { capabilityId } };
   }
 
   // Defensive: single-use capabilities auto-consume on first accept;

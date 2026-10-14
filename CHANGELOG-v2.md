@@ -148,6 +148,22 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   index tombstoned, the access dropped from every worker's cache, and the accesses they manage are
   deleted in the same pass. A re-accept after a revoke mints a fresh access: a deleted access is
   never reused and never blocks a name. Apps that list deletions will see these records.
+- **An offer cannot ask a stream the plugin manages on the accepter's account.** A
+  `consent/request-cmc` whose `request.permissions` names `:_cmc:inbox` (which holds every grant
+  endpoint the accepter received), the `:_cmc:_internal` subtree, a chats / collectors leaf or the
+  `:_cmc:apps` root is refused at write with 400 `invalid-operation`,
+  `error.data.id: 'cmc-invalid-event-content'` (the stream named in `error.data.errors`), and the
+  accepter's core refuses such an offer again at accept (`content.failure.reason:
+  'cmc-offer-permissions-invalid'`, not retried), whatever the requester's core checked. `*` and
+  the accepter's own `:_cmc:apps:<app>[:<path>]` streams stay offerable. Before this release such an
+  offer was accepted; the grant then carried both the offered `read` and the plugin's own
+  `create-only` on the inbox, and only the order of the two entries kept the inbox unreadable.
+- **`consent/invalidate-link-cmc` is scoped to the invite's stream.** The trigger must be written
+  on the `:_cmc:apps:*` stream that holds the invite it names, or on an ancestor of it (the app
+  root included). Written elsewhere, it fails with `content.failure.reason:
+  'cmc-invalidate-link-scope-mismatch'` (not retried) and the link stays open, so a token with
+  write access to one app scope cannot close the invites of another by naming their capability
+  ids. An invite whose request event cannot be found is refused the same way.
 - **Behaviour change: an app token may delete only the `shared` accesses it created.**
   `accesses.delete` with an app token now refuses (403 `forbidden`) an access of another type
   whose `createdBy` names it, the rule `accesses.update` already applied. An app can only create
@@ -239,9 +255,11 @@ admin pre-registration refuses badly shaped usernames. No migration.
   recognised. Limits: only URL user parts are redacted in `clientData`; any other value an app
   stores there (a bare token, for example) is returned as stored; a delegate writing back a
   `clientData` it read persists the redacted URLs. The owner's own reads are unchanged, and so is
-  what is stored: a deletion record (`accesses.get` with `includeDeletions`), which never
-  carried the access's own token, is now redacted the same way for every caller, in the
-  response only.
+  what is stored for a live access. A deletion record (`accesses.get` with `includeDeletions`),
+  which never carried the access's own token, is redacted the same way for every caller in the
+  response, and since this release the credentials also leave the stored row itself: every URL
+  user part in `clientData` is removed just before the access is marked deleted (host and path
+  kept), so a backup or an export of deletion records holds no peer token.
 
 ## 2.0.0-rc.51 - 2026-10-13
 

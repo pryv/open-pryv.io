@@ -11,6 +11,7 @@ import { pubsub, WEBHOOKS_DELETE, USERNAME_BASED_ACCESSES_CHANGED } from 'messag
 import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { managedAccessesOf } from 'business/src/accesses/refs.ts';
+import { withoutCredentialUrls } from 'business/src/accesses/credentialUrls.ts';
 import WebhooksRepository from 'business/src/webhooks/repository.ts';
 import { tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 
@@ -40,6 +41,7 @@ type AccessRow = {
   modified?: number;
   createdBy?: string;
   permissions?: Array<{ streamId?: string }>;
+  clientData?: Record<string, unknown> | null;
 };
 
 type DeletionUser = { id: string; username: string };
@@ -63,6 +65,23 @@ function notifyScopedAccessChange (username: string, access: { id?: string; type
     changeType,
     access: { id: access.id, type: access.type, streamIds }
   });
+}
+
+/**
+ * A consent (CMC) relationship access keeps the counterparty's endpoints in
+ * `clientData.cmc`, tokens included. The deletion record outlives the access
+ * (`includeDeletions`, backups, exports), so the credentials leave the row
+ * BEFORE the soft delete: every URL user part in `clientData` is removed,
+ * host and path kept. One write, only for a row that holds one.
+ */
+async function scrubCredentialUrls (accessesRepository: { updateOne: (user: DeletionUser, query: Record<string, unknown>, update: Record<string, unknown>, cb: NodeCallback) => void }, user: DeletionUser, access: AccessRow): Promise<void> {
+  if (access.clientData == null) return;
+  const scrubbed = withoutCredentialUrls(access.clientData);
+  if (JSON.stringify(scrubbed) === JSON.stringify(access.clientData)) return;
+  await fromCallback((cb: NodeCallback) => {
+    accessesRepository.updateOne(user, { id: access.id }, { clientData: scrubbed, modified: timestamp.now() }, cb);
+  });
+  access.clientData = scrubbed as AccessRow['clientData'];
 }
 
 type DeletionOutcome = {
@@ -118,6 +137,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const access = await fromCallback((cb: NodeCallback) => accessesRepository.findOne(user, { id: idToDelete.id }, dbFindOptions, cb)) as AccessRow | null;
     if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
     if (access != null) { rowsToTombstone.push(access as IndexAccessInput); } else if (idToDelete.id != null) { rowsToTombstone.push({ id: idToDelete.id }); }
+    if (access != null) await scrubCredentialUrls(accessesRepository, user, access);
     if (access != null && typeof access.id === 'string' && typeof access.token === 'string') {
       logicsToUnset.push({ id: access.id, token: access.token });
     } else {
@@ -159,6 +179,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const all = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
     const late = managedAccessesOf(all, params.id, timestamp.now());
     if (late.length > 0) {
+      for (const a of late) await scrubCredentialUrls(accessesRepository, user, a);
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });

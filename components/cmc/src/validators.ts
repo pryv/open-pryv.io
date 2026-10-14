@@ -105,6 +105,9 @@ function validateRequest (content: unknown): ValidationResult {
 
     const permCheck = isPermissionArray(r.permissions);
     if (!permCheck.ok) errors.push(`content.request.permissions: ${permCheck.reason}`);
+    // A membership offer is judged by its own, stricter rule (the offer hook,
+    // `cmc-membership-permissions-invalid`).
+    else if (r.membership !== true) errors.push(...offerPermissionViolations(r.permissions));
 
     if (r.features != null) {
       if (!isPlainObject(r.features)) {
@@ -347,6 +350,30 @@ function validateSystemScopeUpdate (content: unknown): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
+/**
+ * What no offer may ask of the accepter: a stream permission on a stream the
+ * plugin manages on the accepter's account (`:_cmc:inbox`, which holds every
+ * grant endpoint the accepter received, the `:_cmc:_internal` subtree, a
+ * chats / collectors leaf, the apps root). The grant minted at accept adds
+ * its own create-only on the inbox and contribute on the relationship's
+ * channels; an offer naming them would only confuse the grant (two entries
+ * for one stream). Enforced at write and again by the accept. `*` is a
+ * legitimate ask (the accepter's data): the plugin-managed streams are kept
+ * out of its reach by the grant's explicit inbox entry and by the read
+ * layer's internal-subtree filter.
+ */
+function offerPermissionViolations (permissions: unknown): string[] {
+  if (!Array.isArray(permissions)) return [];
+  const errors: string[] = [];
+  for (const p of permissions) {
+    if (!isPlainObject(p) || typeof p.streamId !== 'string') continue;
+    if (C.isPluginManagedStreamId(p.streamId)) {
+      errors.push('content.request.permissions: ' + p.streamId + ' is managed by the plugin on the accepter\'s account and cannot be offered');
+    }
+  }
+  return errors;
+}
+
 // --- Group accounts ---
 
 /** A stream-permission level a membership may hold on the group account. */
@@ -531,4 +558,5 @@ export {
   validateMemberAccess,
   validateMemberRevoke,
   membershipOfferViolations,
+  offerPermissionViolations,
 };

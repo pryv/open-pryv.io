@@ -508,6 +508,8 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-wrong-type',
   'cmc-handler-missing-capability-url',
   'cmc-incoming-refuse-missing-capability-id',
+  // The invalidate trigger's stream does not hold the invite it names.
+  'cmc-invalidate-link-scope-mismatch',
   // The capability URL no longer authenticates (unknown or expired token):
   // re-running cannot change that.
   'cmc-capability-invalid',
@@ -521,6 +523,7 @@ const NON_RETRYABLE_REASONS = new Set([
   // The capability's own refusals, reported instead of delivery-rejected.
   ...CAPABILITY_REFUSAL_IDS,
   'cmc-offer-empty-permissions',
+  'cmc-offer-permissions-invalid',
   'cmc-system-counterparty-access-not-found',
   'cmc-system-no-remote-apiendpoint',
   'cmc-system-no-remote-collector-stream',

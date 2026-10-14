@@ -1317,7 +1317,7 @@ For per-relationship teardown, "I want to terminate my relationship with alice s
 
 | To... | Write |
 |---|---|
-| Stop accepting NEW patients via this link | `consent/invalidate-link-cmc` (capabilityId) |
+| Stop accepting NEW patients via this link | `consent/invalidate-link-cmc` (capabilityId), written on the invite's stream or an ancestor of it (elsewhere: `cmc-invalidate-link-scope-mismatch`, the link stays open) |
 | Terminate ONE existing relationship | `consent/revoke-cmc` (anchored on the per-counterparty stream) |
 | Terminate ALL relationships from this link | Loop `consent/revoke-cmc` per counterparty (no batch primitive in v1) |
 
@@ -1612,6 +1612,8 @@ npm package.
 | `HANDLER_MISSING_CAPABILITY_URL` | `cmc-handler-missing-capability-url` | The `consent/accept-cmc` (or `consent/refuse-cmc`) trigger event omitted `capabilityUrl`. |
 | `HANDLER_OFFER_MISSING_CAPABILITY_ID` | `cmc-handler-offer-missing-capability-id` | The offer event lacked the server-stamped `capabilityId`. |
 | `OFFER_EMPTY_PERMISSIONS` | `cmc-offer-empty-permissions` | The offer carried no `request.permissions` array. |
+| `OFFER_PERMISSIONS_INVALID` | `cmc-offer-permissions-invalid` | The offer asks a stream the plugin manages on the accepter's account (`:_cmc:inbox`, the `:_cmc:_internal` subtree, a chats / collectors leaf, the `:_cmc:apps` root). Refused at write too (`cmc-invalid-event-content`); the accepter's core applies the rule again on the offer it reads. `*` and the accepter's own `:_cmc:apps:<app>[:<path>]` streams are fine. |
+| `INVALIDATE_LINK_SCOPE_MISMATCH` | `cmc-invalidate-link-scope-mismatch` | The `consent/invalidate-link-cmc` trigger was written on a stream that does not hold the invite it names (write it on the invite's stream or an ancestor), or the invite cannot be read. The link stays open. |
 | `HANDLER_WRONG_TYPE` | `cmc-handler-wrong-type` | Dispatch invoked a handler with a trigger whose `.type` doesn't match (defensive, should be unreachable). |
 | `HANDLER_THREW` | `cmc-handler-threw` | The handler threw an unexpected exception not classified above. |
 | `HANDLER_OFFER_READ_FAILED` | `cmc-handler-offer-read-failed` | `readOfferViaCapability` threw without a more specific id. |

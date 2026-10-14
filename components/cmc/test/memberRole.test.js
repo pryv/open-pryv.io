@@ -391,6 +391,22 @@ describe('[CMCMB] cmc group accounts: the member role and the membership offer',
       assert.deepEqual(r.features, { chat: false, systemMessaging: true });
     });
 
+    it('[MB35] any offer asking a stream the plugin manages on the accepter\'s account fails the accept with cmc-offer-permissions-invalid, minting nothing', async () => {
+      const mall = fakeMall();
+      const offer = { ...MEMBERSHIP_OFFER, content: { ...MEMBERSHIP_OFFER.content, request: { ...MEMBERSHIP_OFFER.content.request, membership: false, permissions: [{ streamId: 'fertility', level: 'read' }, { streamId: ':_cmc:inbox', level: 'read' }] } } };
+      const { fetch } = fakeFetch([{ status: 200, body: { events: [offer] } }]);
+      const r = await handleAccept({
+        userId: 'group',
+        triggerEvent: { id: 'evt-acc-p', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:practice'], content: { capabilityUrl: 'https://Tok@member.example.com/' } },
+        selfIdentity: GROUP_ID,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, CmcErrorIds.OFFER_PERMISSIONS_INVALID);
+      assert.ok(r.detail.errors[0].includes(':_cmc:inbox'));
+      assert.equal(mall.calls.accessesCreated.length, 0);
+    });
+
     it('[MB31] an offer that asks more than a membership may hold fails the accept with cmc-membership-permissions-invalid, minting nothing', async () => {
       const mall = fakeMall();
       const offer = { ...MEMBERSHIP_OFFER, content: { ...MEMBERSHIP_OFFER.content, request: { ...MEMBERSHIP_OFFER.content.request, accessType: 'app' } } };

@@ -619,4 +619,31 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     });
   });
+
+  describe('[CMCGA-ERASE] the group account is deleted while a member access lives on a patient core', function () {
+    // Last in the file: it erases the group, so it takes a fresh one.
+    let adminKey;
+    before(async function () {
+      await require('api-server/src/methods/auth/delete.ts').default(global.app.api);
+      adminKey = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
+      group = await makeActor('practice-erase-' + cuid().slice(-8));
+    });
+
+    it('[GA40] the child is deleted on the patient core through the grant before the erasure; the grant itself dies with the account-deletion notice', async function () {
+      const m = await joinGroup('team-erase');
+      const p = await invitePatient(m.teamStream, m.membershipToken);
+      const { res } = await mint(m.teamStream, m.membershipToken);
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const childToken = new URL(res.body.memberAccess.apiEndpoint).username;
+      assert.ok((await tokenLivesOn(patient, childToken)) != null, 'premise: the child works');
+      const del = await coreRequest.delete('/users/' + group.username).set('Authorization', adminKey);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      await pollTokenDead(patient, childToken, 'GA40 child');
+      await pollUntil('GA40: the patient still holds the grant to the erased group', async () => {
+        const { accesses } = await accessesOf(patient);
+        return !accesses.some((a) => a.id === p.grant.id);
+      });
+      assert.strictEqual((await coreRequest.get(group.accessInfoPath).set('Authorization', m.membershipToken)).status, 404, 'the group is gone');
+    });
+  });
 });

@@ -163,6 +163,13 @@ async function handleAccept (params: {
       return { ok: false, reason: CmcErrorIds.MEMBERSHIP_PERMISSIONS_INVALID, detail: { errors: violations } };
     }
   }
+  // Any offer: nothing the plugin manages on this account can be offered
+  // (validators.offerPermissionViolations), whatever the requester's core
+  // checked at write.
+  const offerViolations = validators.offerPermissionViolations((offerRequest as { permissions?: unknown } | null | undefined)?.permissions);
+  if (offerViolations.length > 0) {
+    return { ok: false, reason: CmcErrorIds.OFFER_PERMISSIONS_INVALID, detail: { errors: offerViolations } };
+  }
 
   // The relationship's features: the offer's, narrowed by what the accept
   // asks (a `true` there never turns on a feature the offer turned off).

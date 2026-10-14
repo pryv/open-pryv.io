@@ -376,7 +376,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
             title: { en: studyId },
             description: { en: 'fresh handshake for in-process test' },
             consent: { en: 'I consent.' },
-            permissions: [{ streamId: 'fertility', level: 'read' }],
+            permissions: opts.permissions ?? [{ streamId: 'fertility', level: 'read' }],
             ...(opts.expiresAt !== undefined ? { expiresAt: opts.expiresAt } : {}),
             ...(opts.features !== undefined ? { features: opts.features } : {}),
             ...(opts.accessType !== undefined ? { accessType: opts.accessType } : {}),
@@ -3111,6 +3111,99 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       } finally {
         outage.restore();
       }
+    });
+  });
+
+  describe('[CMCHS-GUARD] what an offer can reach, where an invite can be closed, what a deletion record keeps', function () {
+    // The data grant bob gave alice, token included (the requester's inbox
+    // mirror keeps it: apps open a connection with it), found through the
+    // back-channel access the mirror names for this handshake's scope.
+    async function grantTokenOf (h) {
+      let bc = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS && bc == null) {
+        const res = await coreRequest.get(alice.accessesPath).set('Authorization', alice.token);
+        bc = (res.body?.accesses || []).find((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+          (a.permissions || []).some((p) => typeof p?.streamId === 'string' && p.streamId.startsWith(h.triggerStreamId + ':')));
+        if (bc == null) await sleep(POLL_INTERVAL_MS);
+      }
+      assert.ok(bc != null, 'no back-channel access under ' + h.triggerStreamId);
+      const mirror = await pollInboxFor(alice.eventsPath, alice.token, 'consent/accept-cmc',
+        (e) => e.content?.backChannelAccessId === bc.id && e.content?.grantedAccess?.apiEndpoint != null);
+      return decodeURIComponent(new URL(mirror.content.grantedAccess.apiEndpoint).username);
+    }
+    async function readWith (token, streams) {
+      return await coreRequest.get(bob.eventsPath).set('Authorization', token).query({ streams, limit: 100 });
+    }
+
+    it('[CN70] an offer asking the accepter\'s :_cmc:inbox (every grant endpoint they received) is refused at write', async function () {
+      await ensureStream(alice.streamsPath, alice.token, { id: ':_cmc:apps:guard-app-a', parentId: ':_cmc:apps', name: 'guard-app-a' });
+      for (const streamId of [':_cmc:inbox', ':_cmc:_internal:retries', ':_cmc:apps:guard-app-a:s:chats:bob--x-pryv-me']) {
+        const res = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
+          streamIds: [':_cmc:apps:guard-app-a'],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            request: { title: { en: 't' }, description: { en: 'd' }, consent: { en: 'c' }, permissions: [{ streamId: 'fertility', level: 'read' }, { streamId, level: 'read' }] },
+            requesterMeta: { username: alice.username, appId: 'guard-app-a' },
+          },
+        });
+        assert.strictEqual(res.status, 400, streamId + ': ' + JSON.stringify(res.body));
+        assert.equal(res.body.error?.data?.id, 'cmc-invalid-event-content', streamId);
+        assert.ok(JSON.stringify(res.body.error.data.errors).includes(streamId));
+      }
+    });
+
+    it('[CN71] an offer asking star reads the accepter\'s data, never the inbox nor the plugin-internal subtree', async function () {
+      const h = await runFreshHandshake('study-guard-b', 'guard-app-b', { permissions: [{ streamId: '*', level: 'read' }] });
+      const token = await grantTokenOf(h);
+      const all = await readWith(token, ['*']);
+      assert.strictEqual(all.status, 200, JSON.stringify(all.body));
+      const hidden = (all.body.events || []).filter((e) => (e.streamIds || []).some((s) => s === ':_cmc:inbox' || s.startsWith(':_cmc:_internal')));
+      assert.equal(hidden.length, 0, 'star reached a hidden stream: ' + JSON.stringify(hidden.map((e) => [e.type, e.streamIds])));
+      for (const target of [[':_cmc:inbox'], [':_cmc:_internal:retries'], [':_cmc:_internal:members']]) {
+        const res = await readWith(token, target);
+        const got = (res.body?.events || []).filter((e) => (e.streamIds || []).some((s) => target.includes(s)));
+        assert.equal(got.length, 0, target[0] + ' read through star: ' + res.status + ' ' + JSON.stringify(got.map((e) => e.type)));
+      }
+    });
+
+    it('[CN72] an invite is closed from its own app scope only: an invalidate written on another app scope is refused and the link still accepts', async function () {
+      const h = await runFreshHandshake('study-guard-c', 'guard-app-c', { mode: 'open-link' });
+      await ensureStream(alice.streamsPath, alice.token, { id: ':_cmc:apps:guard-app-other', parentId: ':_cmc:apps', name: 'other' });
+      const wrong = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [':_cmc:apps:guard-app-other'], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
+      assert.strictEqual(wrong.status, 201, JSON.stringify(wrong.body));
+      const settled = await pollStreamFor(alice.eventsPath, alice.token, ':_cmc:apps:guard-app-other', 'consent/invalidate-link-cmc',
+        (e) => e.id === wrong.body.event.id && (e.content?.status === 'failed' || e.content?.status === 'completed'));
+      assert.equal(settled.content.status, 'failed', JSON.stringify(settled.content));
+      assert.equal(settled.content.failure?.reason, 'cmc-invalidate-link-scope-mismatch');
+      const cap = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses
+        .find((a) => a?.clientData?.cmc?.kind === 'capability' && a?.clientData?.cmc?.capabilityId === h.capabilityId);
+      assert.equal(cap?.clientData?.cmc?.capability?.state, 'open', 'the link stays open');
+      const right = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [h.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
+      assert.strictEqual(right.status, 201, JSON.stringify(right.body));
+      const done = await pollStreamFor(alice.eventsPath, alice.token, h.triggerStreamId, 'consent/invalidate-link-cmc',
+        (e) => e.id === right.body.event.id && e.content?.status === 'completed');
+      assert.equal(done.content.status, 'completed');
+    });
+
+    it('[CN73] a deleted relationship access keeps no credential in its deletion record, at rest', async function () {
+      const { getStorageLayer } = require('storage');
+      const storageLayer = await getStorageLayer();
+      const h = await runFreshHandshake('study-guard-d', 'guard-app-d');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const live = await new Promise((resolve, reject) => storageLayer.accesses.findOne(bob.username, { id: dataGrant.id }, {}, (err, row) => err ? reject(err) : resolve(row)));
+      assert.ok(live?.clientData?.cmc?.counterparty?.apiEndpoint?.includes('@'), 'the live row holds the peer endpoint with its token: ' + JSON.stringify(live?.clientData));
+      const del = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id).set('Authorization', bob.token);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      const records = await new Promise((resolve, reject) => storageLayer.accesses.findDeletionRecords(bob.username, { id: dataGrant.id }, {}, (err, rows) => err ? reject(err) : resolve(rows)));
+      assert.equal(records.length, 1);
+      const stored = JSON.stringify(records[0].clientData);
+      assert.equal(stored.includes('@'), false, 'the deletion record still holds a credential: ' + stored);
+      assert.ok(records[0].clientData?.cmc?.counterparty?.apiEndpoint?.startsWith('http'), 'the host and path stay: ' + stored);
     });
   });
 

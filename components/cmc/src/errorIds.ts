@@ -350,6 +350,12 @@ const CmcErrorIds = {
   // A chat or user alert between a member and the group through the
   // membership access: not supported in this release.
   MEMBER_CHANNEL_NOT_SUPPORTED: 'cmc-member-channel-not-supported',
+  // `consent/invalidate-link-cmc` written on a stream that does not hold the
+  // invite it names (or the invite cannot be found to tell).
+  INVALIDATE_LINK_SCOPE_MISMATCH: 'cmc-invalidate-link-scope-mismatch',
+  // An offer asks a stream the plugin manages on the accepter's account
+  // (the inbox, the internal subtree, a chats / collectors leaf).
+  OFFER_PERMISSIONS_INVALID: 'cmc-offer-permissions-invalid',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];
