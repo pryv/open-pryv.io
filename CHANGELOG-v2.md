@@ -19,8 +19,10 @@
   through `PUT` / `DELETE /system/admin/mail/templates/:type/:lang/:part` is now used by every
   worker of the core from the next mail on. Until this release no worker used it before a restart:
   the worker that served the request never reloaded its templates, and in production mode the
-  others kept rendering the version they had compiled. Workers of the other cores still load it at
-  their next start, and `bin/mail.js` writes still need a restart.
+  others kept rendering a version they had already compiled. When the serving worker cannot reload
+  its templates, the request now answers 503 `api-unavailable` (the template is stored; repeat the
+  request). Workers of the other cores still load it at their next start, and `bin/mail.js` writes
+  still need a restart.
 
 ### Consent (CMC) and accesses
 - **Security fix: withdrawing a consent now also ends the sub-accesses created from it, whichever

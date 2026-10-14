@@ -252,9 +252,11 @@ export type LocalAccessHolder = 'owned' | 'other-account' | 'missing';
  *  - `orphan`: not an account of this core, and no core holds the name (an
  *    account deleted before deletion removed its rows): prunable;
  *  - `missing`: the name's account has no such access and no other account
- *    of this core holds it (a removed access: the history this index keeps).
- *    Reported only, never pruned: nothing tells it apart from the access of
- *    an account deleted before its name was taken again.
+ *    of this core holds it: an access removed from storage without a deletion
+ *    record (the consent adapter deletes rows outright), storage restored
+ *    from an older backup, or the access of an account deleted before
+ *    deletion removed its rows, whose name was taken again. Reported only,
+ *    never pruned: the row alone does not tell these cases apart.
  * Rows already stripped of their user (tombstones) are never listed.
  * `userCoreOf(stored)` is the core holding a stored name (null when none);
  * `accessHolder(stored, accessId)` answers for names hosted on `coreId`, null

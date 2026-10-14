@@ -17,7 +17,7 @@ const SyslogWatch = require('storages/engines/sqlite/test/support/SyslogWatch').
 // current macOS, so nothing can observe them. Linux CI runs it.
 const describeSyslog = os.type() === 'Darwin' ? describe.skip : describe;
 
-describeSyslog('[SYSL] Syslog (pending on macOS: syslog not observable)', function () {
+describeSyslog('[SYSL] Syslog', function () {
   const userId = cuid();
   const createdBy = cuid();
   let syslogWatch;

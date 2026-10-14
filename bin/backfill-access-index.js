@@ -28,9 +28,13 @@
 //     renamed account's former name). Nothing is changed unless --apply is
 //     given: then they are deleted (tombstoned under audit.onUserDelete:
 //     keep). Rows whose access no account of this core holds any more
-//     (missing: removed accesses, the history the index keeps) are counted,
-//     never changed. Run on every core (rows are judged by the name's home
-//     core).
+//     (missing: an access removed without a deletion record, an older backup
+//     restored, or a former name taken again) are counted, never changed;
+//     --list-missing prints them (access id, type, created, deleted) for
+//     review. Run on every core (rows are judged by the name's home core).
+//     Running --resync first gives every access held here its correct row,
+//     which leaves no stale rows. The access map takes memory in proportion
+//     to the core's accesses (about 60 MB per million).
 //
 // Usage:
 //   node bin/backfill-access-index.js            # write-if-absent
@@ -118,7 +122,12 @@ require('@pryv/boiler').init({
       console.log('  orphan rows (no account holds the name)              ' + rows.filter((r) => r.reason === 'orphan').length);
       console.log('  stale rows (access held by another account here)     ' + rows.filter((r) => r.reason === 'stale').length);
       console.log('  missing rows (no account here holds the access;      ' + rows.filter((r) => r.reason === 'missing').length);
-      console.log('    removed accesses kept as history, never pruned)');
+      console.log('    never pruned; --list-missing prints them)');
+      if (args.listMissing) {
+        for (const { entry } of rows.filter((r) => r.reason === 'missing')) {
+          console.log(`    ${entry.accessId} type=${entry.type} created=${entry.created} deleted=${entry.deleted ?? '-'}`);
+        }
+      }
       process.exit(0);
     }
 
@@ -161,20 +170,21 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { resync: false, dryRun: false, prune: false, apply: false };
+  const args = { resync: false, dryRun: false, prune: false, apply: false, listMissing: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--resync') args.resync = true;
     else if (a === '--dry-run') args.dryRun = true;
     else if (a === '--prune') args.prune = true;
     else if (a === '--apply') args.apply = true;
+    else if (a === '--list-missing') args.listMissing = true;
     else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
     }
   }
-  if (args.apply && !args.prune) {
-    console.error('--apply is only valid with --prune');
+  if ((args.apply || args.listMissing) && !args.prune) {
+    console.error('--apply and --list-missing are only valid with --prune');
     process.exit(1);
   }
   return args;
@@ -188,6 +198,7 @@ function printUsage (stream) {
     '  node bin/backfill-access-index.js --dry-run  # report counts; do not write',
     '  node bin/backfill-access-index.js --prune    # count index rows naming the wrong account',
     '  node bin/backfill-access-index.js --prune --apply  # delete them (tombstone under audit keep)',
+    '  node bin/backfill-access-index.js --prune --list-missing  # also print the rows never pruned',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the backfill reads the same storage:',

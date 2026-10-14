@@ -189,4 +189,27 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
       await mail.close();
     }
   });
+
+  it('[MA13] a PUT whose reload fails answers 503, with the template stored', async () => {
+    const mail = require('mail');
+    await mail.close();
+    let reads = 0;
+    await mail.init({
+      getAllMailTemplates: async () => {
+        if (reads++ > 0) throw new Error('MA13 reload failure');
+        return [];
+      },
+      smtp: { jsonTransport: true },
+      from: { name: 'Pryv Test', address: 'test@example.com' }
+    });
+    const type = 'reloadfail-' + cuid();
+    try {
+      const res = await coreRequest.put(`/system/admin/mail/templates/${type}/en/subject`).set(authHeaders()).send({ pug: '| Stored' });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'api-unavailable');
+      assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'subject'), '| Stored');
+    } finally {
+      await mail.close();
+    }
+  });
 });

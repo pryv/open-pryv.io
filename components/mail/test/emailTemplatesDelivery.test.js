@@ -164,7 +164,9 @@ describe('[MAILADAPT] emailTemplatesDelivery', () => {
   it('[MADP8] with NODE_ENV=production, a send after refresh() renders the new template', function () {
     this.timeout(30000);
     // Compiled templates are cached by file name only outside development
-    // and test, so this runs in a fresh process started in production mode.
+    // and test, so this runs in a fresh process started in production mode
+    // (importing the .ts sources relies on Node's type stripping, like the
+    // rest of the suite).
     // The test config initialises the logger and sets NODE_ENV=test;
     // `email-templates` reads NODE_ENV when it loads, after that.
     const testConfig = path.resolve(__dirname, '../../test-helpers/src/api-server-tests-config.ts');
@@ -194,6 +196,24 @@ describe('[MAILADAPT] emailTemplatesDelivery', () => {
     const line = res.stdout.split('\n').find((l) => l.startsWith('MADP8 '));
     assert.ok(line, res.stdout + res.stderr);
     assert.deepStrictEqual(JSON.parse(line.slice(6)), { first: 'Version one', second: 'Version two' });
+  });
+
+  it('[MADP9] overlapping refreshes end with the templates read last, whatever finishes first', async () => {
+    // reads: 0 = init, 1 = first refresh (slow), 2 = second refresh (fast)
+    let reads = 0;
+    const rows = (subject) => [{ type: 't', lang: 'en', part: 'subject', pug: '| ' + subject }, { type: 't', lang: 'en', part: 'html', pug: 'p x' }];
+    delivery = await createEmailTemplatesDelivery({
+      getAllMailTemplates: async () => {
+        const n = reads++;
+        if (n === 1) await new Promise((resolve) => setTimeout(resolve, 300));
+        return rows('Version ' + n);
+      },
+      smtp: SMTP,
+      from: FROM
+    });
+    await Promise.all([delivery.refresh(), delivery.refresh()]);
+    const info = await delivery.send({ message: { to: 'madp9@example.com' }, template: 't/en', locals: {} });
+    assert.strictEqual(JSON.parse(info.message).subject, 'Version 2');
   });
 
   it('[MADP5] rejects missing getAllMailTemplates / smtp arguments', async () => {

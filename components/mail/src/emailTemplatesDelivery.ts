@@ -72,46 +72,58 @@ async function createEmailTemplatesDelivery (opts: DeliveryOpts): Promise<Delive
     logger.info(`materialising templates under ${dir}`);
     try {
       await materialiseTemplates(dir, getAllMailTemplates);
+      const renderer = new EmailTemplates({
+        message: { from: formatFrom(from) },
+        // No compiled-template cache: every refresh brings new file names, so
+        // a cache would only grow. Compiling per send is cheap at mail volume.
+        views: { root: dir, locals: { cache: false } },
+        transport: smtp,
+        preview: false,
+        send: true,
+        // CSS inlining only: never fetch or read a stylesheet, script or image a
+        // rendered template points at. `inlineAttribute` is the per-element
+        // override (`data-inline` by default) that would force a fetch anyway;
+        // it is used as a regular expression, and this one never matches.
+        juiceResources: {
+          applyStyleTags: false,
+          removeStyleTags: false,
+          webResources: { relativeTo: dir, images: false, svgs: false, scripts: false, links: false, inlineAttribute: '(?!)' }
+        }
+      });
+      return { dir, renderer };
     } catch (err) {
       await fs.rm(dir, { recursive: true, force: true });
       throw err;
     }
-    const renderer = new EmailTemplates({
-      message: { from: formatFrom(from) },
-      // No compiled-template cache: every refresh brings new file names, so
-      // a cache would only grow. Compiling per send is cheap at mail volume.
-      views: { root: dir, locals: { cache: false } },
-      transport: smtp,
-      preview: false,
-      send: true,
-      // CSS inlining only: never fetch or read a stylesheet, script or image a
-      // rendered template points at. `inlineAttribute` is the per-element
-      // override (`data-inline` by default) that would force a fetch anyway;
-      // it is used as a regular expression, and this one never matches.
-      juiceResources: {
-        applyStyleTags: false,
-        removeStyleTags: false,
-        webResources: { relativeTo: dir, images: false, svgs: false, scripts: false, links: false, inlineAttribute: '(?!)' }
-      }
-    });
-    return { dir, renderer };
   }
 
   let current = await build();
   let previousDir: string | null = null;
+  // Refreshes run one after the other: overlapping ones could finish out of
+  // order and leave the older templates in place.
+  let queue: Promise<void> = Promise.resolve();
+  function enqueue (step: () => Promise<void>): Promise<void> {
+    const run = queue.then(step);
+    queue = run.catch(() => {});
+    return run;
+  }
 
   return {
     send: (...args: unknown[]) => current.renderer.send(...args),
     templateExists: (...args: unknown[]) => current.renderer.templateExists(...args),
-    async refresh () {
-      const next = await build();
-      if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
-      previousDir = current.dir;
-      current = next;
+    refresh () {
+      return enqueue(async () => {
+        const next = await build();
+        if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
+        previousDir = current.dir;
+        current = next;
+      });
     },
-    async close () {
-      if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
-      await fs.rm(current.dir, { recursive: true, force: true });
+    close () {
+      return enqueue(async () => {
+        if (previousDir != null) await fs.rm(previousDir, { recursive: true, force: true });
+        await fs.rm(current.dir, { recursive: true, force: true });
+      });
     },
     get tmpDir () { return current.dir; }
   };
