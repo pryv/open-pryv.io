@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## Tests: audit parents test waits for late audit rows
+
+- Audit `[WLP1]` reads the whole log until two reads agree before comparing the parent reads with
+  it: the audit row of an earlier streamed request can land after its response, which made the test
+  fail once in CI on the PostgreSQL audit engine.
+
 ## Backup incremental chain
 
 - `storages/interfaces/backup/chain.ts` (new): `chain.json` read and check (run ids are one safe

@@ -204,11 +204,20 @@ describe('[ASTE] Audit Streams and Events', function () {
     it('[WLP1] the accesses / actions parents read the whole log, as an account export pages it', async () => {
       // Each read below is audited too: bound the time so they all see the same log.
       const query = { modifiedSince: 1, fromTime: -1000000000000, toTime: timestamp.now() - 0.001, limit: 1000 };
-      const all = await coreRequest.get(eventsPath).set('Authorization', personalToken)
-        .query(Object.assign({ streams: [':_audit:'] }, query));
-      assert.strictEqual(all.status, 200);
-      assert.ok(all.body.events.length >= 5);
       const ids = (events) => events.map((e) => e.id).sort();
+      // The audit row of an earlier request can land after its response
+      // (a streamed result): read the whole log until two reads agree.
+      let all = null;
+      for (let tries = 0; tries < 20; tries++) {
+        const read = await coreRequest.get(eventsPath).set('Authorization', personalToken)
+          .query(Object.assign({ streams: [':_audit:'] }, query));
+        assert.strictEqual(read.status, 200);
+        const settled = all != null && JSON.stringify(ids(read.body.events)) === JSON.stringify(ids(all.body.events));
+        all = read;
+        if (settled) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.ok(all.body.events.length >= 5);
       for (const streams of [[':_audit:accesses', ':_audit:actions'], [':_audit:accesses'], [':_audit:actions']]) {
         const res = await coreRequest.get(eventsPath).set('Authorization', personalToken)
           .query(Object.assign({ streams }, query));
