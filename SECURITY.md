@@ -72,6 +72,13 @@ CVE are issued after the fix ships, or 90 days from triage, whichever
 comes first. Confirmed vulnerabilities are published as GitHub Security
 Advisories with a CVE where applicable.
 
+## Security review
+
+The maintainers' code-level security review of open-pryv.io, its findings by severity, the
+release that fixed each one and the residual risks are published in
+[SECURITY-AUDIT.md](SECURITY-AUDIT.md). It is revised with every release that carries a
+security fix.
+
 ## Recognition
 
 We do not run a paid bounty program, but we gratefully credit researchers
