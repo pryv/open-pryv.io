@@ -162,9 +162,9 @@ describe('[AC01] accesses', () => {
               .post(`/${userId}/accesses`)
               .set('Authorization', accessToken)
               .send(deletedAccess);
+            error = res.body.error;
           });
           it('[1DJ6] should return an error', () => {
-            error = res.body.error;
             assert.ok(error);
           });
           it('[7ZPK] error should say that the deleted field is forbidden upon creation', () => {

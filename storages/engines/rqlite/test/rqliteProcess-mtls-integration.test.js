@@ -69,7 +69,15 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
     }
   });
 
-  it('forms a cluster and replicates writes across the mTLS Raft channel', async () => {
+  // The two-node cluster forms once, in whichever test needs it first, so
+  // every test also passes when selected on its own.
+  let formed = null;
+  function cluster () {
+    if (formed == null) formed = formCluster();
+    return formed;
+  }
+
+  async function formCluster () {
     const tls = {
       caFile: path.join(tmpDir, 'ca.crt'),
       certFile: path.join(tmpDir, 'node.crt'),
@@ -119,14 +127,19 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
 
     // --- wait for cluster to agree on a leader ---
     await waitForClusterSize(`http://127.0.0.1:${portsA.http}`, 2, CLUSTER_FORM_TIMEOUT_MS);
+    return { urlA: `http://127.0.0.1:${portsA.http}`, urlB: `http://127.0.0.1:${portsB.http}` };
+  }
+
+  it('[RQML1] forms a cluster and replicates writes across the mTLS Raft channel', async () => {
+    const { urlA, urlB } = await cluster();
 
     // --- write on node-a ---
-    const writeRes = await fetch(`http://127.0.0.1:${portsA.http}/db/execute?level=strong`, {
+    const writeRes = await fetch(`${urlA}/db/execute?level=strong`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify([
         ['CREATE TABLE IF NOT EXISTS t (k TEXT PRIMARY KEY, v TEXT)'],
-        ['INSERT INTO t (k, v) VALUES (?, ?)', 'plan-34', 'phase-1-ok']
+        ['INSERT INTO t (k, v) VALUES (?, ?)', 'leader', 'replicated']
       ])
     });
     assert.equal(writeRes.status, 200, 'write to node-a returns 200');
@@ -134,27 +147,30 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
     assert(!writeBody.results.some(r => r.error), `write errors: ${JSON.stringify(writeBody)}`);
 
     // --- read on node-b (with level=strong to ensure it went through Raft) ---
-    const readRes = await fetch(`http://127.0.0.1:${portsB.http}/db/query?level=strong`, {
+    const readRes = await fetch(`${urlB}/db/query?level=strong`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([['SELECT v FROM t WHERE k = ?', 'plan-34']])
+      body: JSON.stringify([['SELECT v FROM t WHERE k = ?', 'leader']])
     });
     assert.equal(readRes.status, 200, 'read from node-b returns 200');
     const readBody = await readRes.json();
     const rows = readBody.results[0].values || [];
-    assert.deepEqual(rows, [['phase-1-ok']], `row not replicated; body=${JSON.stringify(readBody)}`);
+    assert.deepEqual(rows, [['replicated']], `row not replicated; body=${JSON.stringify(readBody)}`);
   });
 
   it('[RQML2] with every HTTP API on loopback, a follower forwards writes and strong reads and /nodes reports each node reachable', async () => {
-    assert(nodeA != null && nodeB != null, 'cluster from the previous case');
-    const followerUrl = await findFollower(['http://127.0.0.1:14001', 'http://127.0.0.1:14003']);
+    const { urlA, urlB } = await cluster();
+    const followerUrl = await findFollower([urlA, urlB]);
     // Each node advertises an HTTP address nobody can reach (spawnRqlited):
     // forwarding and reachability must go over the Raft port only.
     assert.equal(nodeA._args[nodeA._args.indexOf('-http-addr') + 1], '127.0.0.1:14001');
     const write = await fetch(followerUrl + '/db/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([['INSERT INTO t (k, v) VALUES (?, ?)', 'follower', 'forwarded']])
+      body: JSON.stringify([
+        ['CREATE TABLE IF NOT EXISTS t (k TEXT PRIMARY KEY, v TEXT)'],
+        ['INSERT INTO t (k, v) VALUES (?, ?)', 'follower', 'forwarded']
+      ])
     });
     assert.equal(write.status, 200);
     const writeBody = await write.json();

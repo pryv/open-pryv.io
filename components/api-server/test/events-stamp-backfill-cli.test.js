@@ -32,7 +32,7 @@ describe('[SBFT] bin/events-stamp-backfill.js', function () {
   const ids = { raw: cuid(), partial: cuid(), full: cuid(), deleted: cuid(), trashed: cuid(), version: cuid() };
   const T0 = 1700000000;
   const FULL = { created: 1500, createdBy: 'a-full', modified: 1600, modifiedBy: 'a-full' };
-  let fullBefore, runStart;
+  let fullBefore;
 
   function runCli (args) {
     const res = spawnSync('node', [CLI, '--user', username, ...args], {
@@ -87,6 +87,18 @@ describe('[SBFT] bin/events-stamp-backfill.js', function () {
     await fixtures.clean();
   });
 
+  // The repair run happens once, in whichever test needs it first, so every
+  // test also passes when selected on its own.
+  let repair = null;
+  function repairOnce () {
+    if (repair == null) {
+      const runStart = Date.now() / 1000;
+      const out = runCli([]);
+      repair = { runStart, out, runEnd: Date.now() / 1000 };
+    }
+    return repair;
+  }
+
   it('[SBF1] a dry run counts the head rows to repair and the version rows, and writes nothing', async function () {
     const out = runCli(['--dry-run']);
     assert.match(out, /DRY-RUN/);
@@ -100,9 +112,7 @@ describe('[SBFT] bin/events-stamp-backfill.js', function () {
   });
 
   it('[SBF2] a run fills the missing stamps, sets modified to the run time, recomputes integrity, leaves the rest', async function () {
-    runStart = Date.now() / 1000;
-    const out = runCli([]);
-    const runEnd = Date.now() / 1000;
+    const { runStart, out, runEnd } = repairOnce();
     assert.match(out, /events rewritten\s+3(?! \(would be\))/);
 
     const raw = await storedRow(ids.raw);
@@ -139,6 +149,7 @@ describe('[SBFT] bin/events-stamp-backfill.js', function () {
   });
 
   it('[SBF3] modifiedSince returns exactly the repaired events; a re-run finds nothing left', async function () {
+    const { runStart } = repairOnce();
     const res = await coreRequest.get('/' + username + '/events').set('Authorization', token)
       .query({ streams: JSON.stringify([streamId]), state: 'all', modifiedSince: runStart });
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));

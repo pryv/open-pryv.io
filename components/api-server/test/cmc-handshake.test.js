@@ -283,23 +283,13 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     let aliceChatStreamId, bobChatStreamId;
 
     before(async function () {
-      // CN12 already ran handshake; the per-peer chats streams should
-      // exist (auto-provisioned by handleAccept / handleIncomingAccept's
-      // anchorStreams). Both sides anchor under the REQUESTER'S per-request
-      // scope (`:_cmc:apps:my-app:study-1`) — see pickScopeFromOfferOrTrigger
-      // in handleAccept.ts: bob's anchor reads `offer.content.originStreamId`
-      // (stamped by capability mint to alice's trigger stream) rather than
-      // falling back to bob's bare app-scope.
-      // With override-config skipped, test/service-info.json wins:
-      //   service.api: 'https://{username}.pryv.me/'
-      // cmcSelfIdentityFor substitutes 'x' for {username} → host 'x.pryv.me'
-      // for ALL users (same canonical host on both sides, as it should be).
-      const TEST_HOST = 'x.pryv.me';
-      const aliceSlug = C.slug.counterpartySlug({ username: alice.username, host: TEST_HOST });
-      const bobSlug = C.slug.counterpartySlug({ username: bob.username, host: TEST_HOST });
-      const sharedScope = ':_cmc:apps:my-app:study-1';
-      aliceChatStreamId = sharedScope + ':chats:' + bobSlug;
-      bobChatStreamId = sharedScope + ':chats:' + aliceSlug;
+      // Its own handshake rather than CN12's, so CN13 also passes when
+      // selected on its own. Both sides anchor the per-peer chats streams
+      // under the REQUESTER'S per-request scope (see
+      // pickScopeFromOfferOrTrigger in handleAccept.ts).
+      const h = await runFreshHandshake('study-chat');
+      aliceChatStreamId = h.aliceChatStreamId;
+      bobChatStreamId = h.bobChatStreamId;
     });
 
     it('[CN13] alice posts chat → bob receives it on his chats stream', async function () {
@@ -887,6 +877,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
           'fixture user/session "' + actor.username + '" is missing or stale entering [CMCHS-IDEMP]: ' +
           res.status + ' ' + JSON.stringify(res.body));
       }
+      // The first accept from bob, under the same app, so CN14's accept is a
+      // second one even when it is selected on its own.
+      await runFreshHandshake('study-idemp-first');
     });
     it('[CN14] second accept from the same peer for a different scope does not collide on back-channel access name', async function () {
       const triggerStreamId = ':_cmc:apps:my-app:study-2';

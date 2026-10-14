@@ -36,7 +36,6 @@ describe('[HFDR] hfs-duration-repair tool', function () {
   let pryv, mall, userId, streamId;
   const ids = {};
   let planted = {};
-  let afterRepair = {};
 
   async function appendPoints (eventId, deltaTimesNs) {
     const repo = new business.series.Repository(await produceSeriesConnection());
@@ -109,6 +108,19 @@ describe('[HFDR] hfs-duration-repair tool', function () {
     return integrity.events.compute(event).integrity === event.integrity;
   }
 
+  // The repair runs once, in whichever test needs it first, so every test
+  // also passes when selected on its own.
+  let repair = null;
+  function repairOnce () {
+    if (repair == null) {
+      repair = (async () => {
+        const out = runTool();
+        return { out, afterRepair: await readAll() };
+      })();
+    }
+    return repair;
+  }
+
   it('[HFDR1] a dry run reports the candidates and writes nothing', async function () {
     if (integrity.events.isActive) assert.ok(!verifies(planted.A), 'precondition: A carries an old hash that does not verify');
     const out = runTool('--dry-run');
@@ -122,9 +134,8 @@ describe('[HFDR] hfs-duration-repair tool', function () {
   });
 
   it('[HFDR2] repairs the three inflated events from the series data, keeps the others', async function () {
-    const out = runTool();
+    const { out, afterRepair } = await repairOnce();
     assert.match(out, /repaired\s+3\s+\[confirmed exact 2, series grew since 1\]/);
-    afterRepair = await readAll();
     assert.strictEqual(afterRepair.A.duration, 1);
     assert.strictEqual(afterRepair.G.duration, 3);
     assert.ok(Math.abs(afterRepair.B.duration - 0.1) < 1e-6, 'B: ' + afterRepair.B.duration);
@@ -138,6 +149,7 @@ describe('[HFDR] hfs-duration-repair tool', function () {
   });
 
   it('[HFDR3] a re-run repairs nothing and changes nothing', async function () {
+    const { afterRepair } = await repairOnce();
     const out = runTool();
     assert.match(out, /candidates\s+3\b/);
     assert.match(out, /repaired\s+0\b/);

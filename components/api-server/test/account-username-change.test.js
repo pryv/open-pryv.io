@@ -59,16 +59,31 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
       .send({ newUsername });
   }
 
-  it('[UC01] changes the username and reports remaining changes', async function () {
+  // The first change runs once, in whichever test needs it first, so every
+  // test also passes when selected on its own.
+  let firstChangeDone = null;
+  function firstChange () {
+    if (firstChangeDone == null) firstChangeDone = runFirstChange();
+    return firstChangeDone;
+  }
+
+  async function runFirstChange () {
+    const formerUsername = username;
     const newUsername = ('a' + cuid()).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
-    const res = await changeUsername(username, newUsername);
+    const res = await changeUsername(formerUsername, newUsername);
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    username = newUsername; // subsequent tests address the current name
+    return { res, formerUsername, newUsername };
+  }
+
+  it('[UC01] changes the username and reports remaining changes', async function () {
+    const { res, formerUsername, newUsername } = await firstChange();
     assert.equal(res.body.account.username, newUsername);
     assert.equal(res.body.usernameChangesRemaining, 1); // default limit 2, used 1
 
     // Witness access (issued under the OLD username) still routes, and
     // access-info now reports the NEW canonical username.
-    const old = await coreRequest.get('/' + username + '/access-info').set('Authorization', witnessToken);
+    const old = await coreRequest.get('/' + formerUsername + '/access-info').set('Authorization', witnessToken);
     assert.equal(old.status, 200, 'old username must still route: ' + JSON.stringify(old.body));
     assert.equal(old.body.user.username, newUsername, 'reports the latest active username');
 
@@ -76,8 +91,6 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
     const fresh = await coreRequest.get('/' + newUsername + '/access-info').set('Authorization', witnessToken);
     assert.equal(fresh.status, 200);
     assert.equal(fresh.body.user.username, newUsername);
-
-    username = newUsername; // subsequent tests address the current name
   });
 
   it('[UC02] rejects a username already taken (by a primary or an alias)', async function () {
@@ -90,6 +103,7 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
   });
 
   it('[UC03] reports change usage via account/username-changes', async function () {
+    await firstChange();
     const res = await coreRequest.get('/' + username + '/account/username-changes').set('Authorization', personalToken);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.usernameChangesLimit, 2);
@@ -98,6 +112,7 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
   });
 
   it('[UC04] enforces the change limit (default 2)', async function () {
+    await firstChange();
     // Second change (used 1 -> allowed), reaching the limit.
     const second = ('b' + cuid()).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
     const r2 = await changeUsername(username, second);

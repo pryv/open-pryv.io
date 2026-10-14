@@ -71,6 +71,14 @@ describe('[HAST] hfs-author-scrub tool', function () {
     return live.map((a) => a.id);
   }
 
+  // The scrub without --revoke runs once, in whichever test needs it first,
+  // so every test also passes when selected on its own.
+  let scrub = null;
+  function scrubOnce () {
+    if (scrub == null) scrub = runTool();
+    return scrub;
+  }
+
   it('[HAST1] a dry run reports the event and the access, and writes nothing', async function () {
     const out = runTool('--dry-run');
     assert.match(out, /events rewritten\s+1 \(would be\)/);
@@ -80,7 +88,7 @@ describe('[HAST] hfs-author-scrub tool', function () {
   });
 
   it('[HAST2] rewrites the token to the access id and keeps the caller id; other events untouched', async function () {
-    const out = runTool();
+    const out = scrubOnce();
     assert.match(out, /events rewritten\s+1/);
     assert.strictEqual((await mall.events.getOne(userId, eventId)).modifiedBy, accessId + ' caller-x');
     assert.strictEqual((await mall.events.getOne(userId, cleanEventId)).modifiedBy, accessId);
@@ -88,6 +96,7 @@ describe('[HAST] hfs-author-scrub tool', function () {
   });
 
   it('[HAST3] a re-run finds nothing left to rewrite, so even --revoke revokes nothing', async function () {
+    scrubOnce();
     const out = runTool('--revoke');
     assert.match(out, /events rewritten\s+0/);
     assert.ok((await liveAccessIds()).includes(accessId), 'nothing left to match, nothing revoked');
@@ -189,6 +198,14 @@ describe('[HASP] hfs-author-scrub tool: trashed, deleted and paged rows', functi
     assert.strictEqual(tombstone.modifiedBy, accessToken + ' caller-d', 'fixture: the deleted row keeps the token');
   });
 
+  // The paged scrub runs once, in whichever test needs it first, so every
+  // test also passes when selected on its own.
+  let scrub = null;
+  function scrubOnce () {
+    if (scrub == null) scrub = runTool('--page-size', '2');
+    return scrub;
+  }
+
   it('[HASP2] a dry run over pages of 2 counts every live, trashed and deleted row, and writes nothing', async function () {
     const out = runTool('--dry-run', '--page-size', '2');
     assert.match(out, /events rewritten\s+7 \(would be\)/);
@@ -199,7 +216,7 @@ describe('[HASP] hfs-author-scrub tool: trashed, deleted and paged rows', functi
   });
 
   it('[HASP3] a run over pages of 2 rewrites them all and keeps their state', async function () {
-    const out = runTool('--page-size', '2');
+    const out = scrubOnce();
     assert.match(out, /events rewritten\s+7\n/);
     const trashed = await mall.events.getOne(userId, trashedId);
     assert.strictEqual(trashed.modifiedBy, accessId + ' caller-t');
@@ -219,6 +236,7 @@ describe('[HASP] hfs-author-scrub tool: trashed, deleted and paged rows', functi
   });
 
   it('[HASP4] a re-run with the default page size finds nothing left', async function () {
+    scrubOnce();
     const out = runTool();
     assert.match(out, /events rewritten\s+0\n/);
   });

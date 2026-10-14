@@ -65,6 +65,14 @@ describe('[BKLC] bin/platform-backloop-cleanup.js', function () {
     else delete process.env.DISABLE_INTEGRITY_CHECK;
   });
 
+  // The --apply run happens once, in whichever test needs it first, so every
+  // test also passes when selected on its own.
+  let applied = null;
+  function applyOnce () {
+    if (applied == null) applied = runCli(['--apply']);
+    return applied;
+  }
+
   it('[BKLC1] --help prints usage and exits 0', () => {
     const res = runCli(['--help']);
     assert.strictEqual(res.status, 0);
@@ -87,7 +95,7 @@ describe('[BKLC] bin/platform-backloop-cleanup.js', function () {
   });
 
   it('[BKLC3] --apply releases the rows of "backloop" only', async () => {
-    const res = runCli(['--apply']);
+    const res = applyOnce();
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /rows removed\s+3/);
     for (const email of emails) {
@@ -98,6 +106,7 @@ describe('[BKLC] bin/platform-backloop-cleanup.js', function () {
   });
 
   it('[BKLC4] a re-run finds nothing left', () => {
+    applyOnce();
     const res = runCli(['--apply']);
     assert.strictEqual(res.status, 0, res.stderr);
     assert.match(res.stdout, /unique values reserved 0/);

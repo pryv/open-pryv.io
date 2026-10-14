@@ -58,56 +58,63 @@ describe('[PGFA] events attachments on PostgreSQL file storage', function () {
     await testData.cleanup();
   });
 
-  let createdEvent;
-
-  it('[PGFA1] must store uploaded attachments as rows and serve them back unchanged', function (finalDone) {
-    request.post(basePath)
-      .field('event', JSON.stringify({ type: 'test/test', streamIds: [testData.streams[0].id] }))
-      .attach('document', testData.attachments.document.path,
-        testData.attachments.document.filename)
-      .end(function (res) {
-        (async () => {
-          assert.strictEqual(res.statusCode, 201);
-          createdEvent = res.body.event;
-          assert.strictEqual(createdEvent.attachments.length, 1);
-          const fileId = createdEvent.attachments[0].id;
-
-          const rows = await db.query(
-            'SELECT seq, OCTET_LENGTH(data) AS len FROM attachment_files WHERE user_id = $1 AND event_id = $2 AND file_id = $3 ORDER BY seq',
-            [user.id, createdEvent.id, fileId]);
-          assert.ok(rows.rows.length > 0, 'expected attachment rows in attachment_files');
-          const storedSize = rows.rows.reduce((sum, r) => sum + Number(r.len), 0);
-          assert.strictEqual(storedSize, testData.attachments.document.size);
-
-          const readToken = createdEvent.attachments[0].readToken;
-          request.get(basePath + '/' + createdEvent.id + '/' + fileId + '?readToken=' + readToken)
-            .buffer(true)
-            .parse(binaryParser)
-            .end(function (getRes) {
-              try {
-                assert.strictEqual(getRes.statusCode, 200);
-                const original = fs.readFileSync(testData.attachments.document.path);
-                assert.ok(original.equals(getRes.body), 'served bytes must equal the uploaded file');
-                finalDone();
-              } catch (e) { finalDone(e); }
-            });
-        })().catch(finalDone);
+  // The upload runs once, in whichever test needs it first, so every test
+  // also passes when selected on its own.
+  let uploaded = null;
+  function upload () {
+    if (uploaded == null) {
+      uploaded = new Promise((resolve) => {
+        request.post(basePath)
+          .field('event', JSON.stringify({ type: 'test/test', streamIds: [testData.streams[0].id] }))
+          .attach('document', testData.attachments.document.path,
+            testData.attachments.document.filename)
+          .end(resolve);
       });
+    }
+    return uploaded;
+  }
+
+  async function uploadedEvent () {
+    const res = await upload();
+    assert.strictEqual(res.statusCode, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+
+  it('[PGFA1] must store uploaded attachments as rows and serve them back unchanged', async function () {
+    const createdEvent = await uploadedEvent();
+    assert.strictEqual(createdEvent.attachments.length, 1);
+    const fileId = createdEvent.attachments[0].id;
+
+    const rows = await db.query(
+      'SELECT seq, OCTET_LENGTH(data) AS len FROM attachment_files WHERE user_id = $1 AND event_id = $2 AND file_id = $3 ORDER BY seq',
+      [user.id, createdEvent.id, fileId]);
+    assert.ok(rows.rows.length > 0, 'expected attachment rows in attachment_files');
+    const storedSize = rows.rows.reduce((sum, r) => sum + Number(r.len), 0);
+    assert.strictEqual(storedSize, testData.attachments.document.size);
+
+    const readToken = createdEvent.attachments[0].readToken;
+    const getRes = await new Promise((resolve) => {
+      request.get(basePath + '/' + createdEvent.id + '/' + fileId + '?readToken=' + readToken)
+        .buffer(true)
+        .parse(binaryParser)
+        .end(resolve);
+    });
+    assert.strictEqual(getRes.statusCode, 200);
+    const original = fs.readFileSync(testData.attachments.document.path);
+    assert.ok(original.equals(getRes.body), 'served bytes must equal the uploaded file');
   });
 
-  it('[PGFA2] must delete the rows when the attachment is deleted', function (finalDone) {
+  it('[PGFA2] must delete the rows when the attachment is deleted', async function () {
+    const createdEvent = await uploadedEvent();
     const fileId = createdEvent.attachments[0].id;
-    request.del(basePath + '/' + createdEvent.id + '/' + fileId)
-      .end(function (res) {
-        (async () => {
-          assert.strictEqual(res.statusCode, 200);
-          const rows = await db.query(
-            'SELECT 1 FROM attachment_files WHERE user_id = $1 AND event_id = $2 AND file_id = $3',
-            [user.id, createdEvent.id, fileId]);
-          assert.strictEqual(rows.rows.length, 0, 'rows must be gone after attachment deletion');
-          finalDone();
-        })().catch(finalDone);
-      });
+    const res = await new Promise((resolve) => {
+      request.del(basePath + '/' + createdEvent.id + '/' + fileId).end(resolve);
+    });
+    assert.strictEqual(res.statusCode, 200);
+    const rows = await db.query(
+      'SELECT 1 FROM attachment_files WHERE user_id = $1 AND event_id = $2 AND file_id = $3',
+      [user.id, createdEvent.id, fileId]);
+    assert.strictEqual(rows.rows.length, 0, 'rows must be gone after attachment deletion');
   });
 
   function binaryParser (res, callback) {

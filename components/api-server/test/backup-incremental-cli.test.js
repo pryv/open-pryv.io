@@ -101,7 +101,16 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     await fixtures.clean();
   });
 
-  it('[BKIC1] full encrypted backup, changes, incremental run, restore: the account comes back whole, changes and deletions included', async function () {
+  // The encrypted chain (full run, changes, incremental run) is built once,
+  // in whichever test needs it first, so every test also passes when
+  // selected on its own.
+  let chain = null;
+  function encryptedChain () {
+    if (chain == null) chain = buildEncryptedChain();
+    return chain;
+  }
+
+  async function buildEncryptedChain () {
     const dir = path.join(tmpDir, 'chain');
     const passphraseFile = path.join(tmpDir, 'passphrase');
     fs.writeFileSync(passphraseFile, 'bkic-passphrase\n', { mode: 0o600 });
@@ -124,6 +133,11 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
 
     const inc = runCli(['--output', dir, '--user', username, '--incremental', '--passphrase-file', passphraseFile]);
     assertOk(inc, 'incremental backup');
+    return { dir, passphraseFile, inc };
+  }
+
+  it('[BKIC1] full encrypted backup, changes, incremental run, restore: the account comes back whole, changes and deletions included', async function () {
+    const { dir, passphraseFile, inc } = await encryptedChain();
 
     // A wrong passphrase is refused before the run writes anything.
     const wrongFile = path.join(tmpDir, 'wrong-passphrase');
@@ -156,9 +170,8 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     assert.match(inc.stdout, /Incremental backup: run \S+ of the chain/);
   });
 
-  it('[BKIC2] --inspect lists the chain; a directory the old in-place incremental run left is reported DAMAGED and its restore is refused', function () {
-    const dir = path.join(tmpDir, 'chain');
-    const passphraseFile = path.join(tmpDir, 'passphrase');
+  it('[BKIC2] --inspect lists the chain; a directory the old in-place incremental run left is reported DAMAGED and its restore is refused', async function () {
+    const { dir, passphraseFile } = await encryptedChain();
     const ok = runCli(['--inspect', dir]);
     assertOk(ok, 'inspect');
     assert.match(ok.stdout, /Runs: 2/);
@@ -189,6 +202,7 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
   });
 
   it('[BKIC3] a hybrid chain continues with the recipient public key only; restore with the private key gives the merged account', async function () {
+    await encryptedChain(); // its changes (S2, the newer e2) are part of the account backed up here
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'spki', format: 'pem' },
