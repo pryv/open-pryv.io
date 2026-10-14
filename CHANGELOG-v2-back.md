@@ -15,6 +15,15 @@
   account's storage was labelled stale and `--apply` deleted its row.
   `findPrunableAccessIndexRows` takes `accessHolder` (`owned` / `other-account` / `missing`)
   instead of `ownsAccess`. Test: `[ACC14]`.
+- Tests: settings changed for a case or a suite go through the test config scope
+  (`injectTestConfigSnapshot` / `withInjectedConfig`) and are restored, instead of `config.set()`
+  then a "restoring" `config.set()`, which left an explicit value in the memory scope that outranked
+  every later injection for the rest of the mocha process (webhooks allow-list, OAuth consent URL,
+  email-challenge budgets, `dns:domain` in the multi-core suites, `cluster.allowInsecurePeerUrl`).
+  `config.set()` stays only for the keys config plugins claim with it at boot (`core:*`, `service`)
+  and inside multi-core child processes.
+- Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
+  written to `/var/run/syslog` are not observable there.
 
 ## Log file size cap, admin username reservation shape
 
