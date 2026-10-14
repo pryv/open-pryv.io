@@ -12,6 +12,7 @@ import { getMall } from 'mall';
 import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { getLogger } from '@pryv/boiler';
+import { deleteAccessChain } from './accessDeletion.ts';
 
 import type { MallLike } from 'cmc/src/_types.ts';
 
@@ -71,6 +72,15 @@ async function buildMallForCmc (): Promise<MallLike> {
     },
     invalidateAccessCache: invalidateCmcAccessCache,
     logger: getLogger('cmc:mall-accesses-adapter'),
+    // Every plugin delete is the route's deletion (soft delete with its
+    // record, webhook cascade, alias release, breach-scope tombstone,
+    // cache bust on every worker, final pass), never a bare row removal.
+    deleteAccess: async (userId: string, accessId: string) => {
+      const u = await usersRepository.getUserById(userId);
+      if (u?.username == null) throw new Error('cmc-mall-accesses-adapter: cannot resolve username for userId=' + userId);
+      const outcome = await deleteAccessChain({ id: userId, username: u.username }, { id: accessId });
+      return { id: accessId, relatedDeletions: outcome.relatedDeletions };
+    },
   });
 
   // Mall uses class-instance getters for streams/events, so a plain

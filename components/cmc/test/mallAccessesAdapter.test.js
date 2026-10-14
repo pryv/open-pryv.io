@@ -160,6 +160,22 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     ]);
   });
 
+  it('[MA17] with the route deletion wired, delete goes through it and removes no row itself', async () => {
+    const calls = [];
+    const storage = fakeStorageAccesses(rows);
+    storage.removeOne = (userOrId, query, cb) => { removed.push(query.id); cb(null); };
+    const wired = createMallAccessesAdapter({
+      storageAccesses: storage,
+      apiEndpointBuild: (username, token) => `https://${token}@${username}.test/`,
+      resolveUsername: async () => 'u1',
+      deleteAccess: async (userId, accessId) => { calls.push({ userId, accessId }); return { id: accessId, relatedDeletions: [{ id: 'child-a' }] }; },
+    });
+    const res = await wired.delete('user-1', { id: 'grant' });
+    assert.deepEqual(calls, [{ userId: 'user-1', accessId: 'grant' }]);
+    assert.deepEqual(res, { id: 'grant', relatedDeletions: [{ id: 'child-a' }] });
+    assert.deepEqual(removed, [], 'the storage row is the route deletion\'s business');
+  });
+
   it('[MA13] deleting a personal access cascades to nothing', async () => {
     const res = await adapter.delete('user-1', { id: 'pat' });
     assert.deepEqual(removed, ['pat']);

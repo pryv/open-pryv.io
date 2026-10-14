@@ -379,8 +379,11 @@ class AccessLogic {
 
     if (this.isShared()) return false;
 
-    // App token can delete the ones it created, under a caller id included
-    // (`createdBy` is then `<id> <callerId>`): the same match as canUpdateAccess.
+    // App token can delete the shared accesses it created, under a caller id
+    // included (`createdBy` is then `<id> <callerId>`): the same rule as
+    // canUpdateAccess (an app only ever creates shared accesses, so a row of
+    // another type naming it as creator is not one it manages).
+    if (access.type !== 'shared') return false;
     return isManagedBy(access, this.id);
   }
 

@@ -37,21 +37,10 @@ const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBas
 const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
-// Scoped notifications: structured access-change signal carrying the changed
-// access id + type + the streamIds it grants permissions on, so a notification
-// engine can match standing accesses-kind scopes. Additive — the coarse
-// USERNAME_BASED_ACCESSES_CHANGED signal is untouched. (A deletion carries only
-// the id; type/permissions are no longer available.)
-function notifyScopedAccessChange (username: string, access: { id?: string; type?: string; permissions?: Array<{ streamId?: string }> } | null | undefined, changeType: string): void {
-  if (access?.id == null) return;
-  const permissions = Array.isArray(access.permissions) ? access.permissions : [];
-  const streamIds = permissions.map((p) => p?.streamId).filter((s): s is string => s != null);
-  pubsub.scopedNotifications.emit(username, {
-    kind: 'accesses',
-    changeType,
-    access: { id: access.id, type: access.type, streamIds }
-  });
-}
+// Scoped notifications (the structured access-change signal) and the
+// deletion of an access with its side effects: helpers/accessDeletion.ts,
+// shared with the plugins' teardowns.
+const { deleteAccessChain, notifyScopedAccessChange } = require('./helpers/accessDeletion.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
@@ -1124,109 +1113,26 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
+  /**
+   * The deletion itself: helpers/accessDeletion.ts, shared with the plugins'
+   * teardowns (every CMC and delegation delete goes through it, so a consent
+   * withdrawn through any path leaves the same deletion record, webhook
+   * cascade, alias release and breach-scope tombstone as this route).
+   */
   async function deleteAccesses (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
-    const accessesRepository = storageLayer.accesses;
-    let idsToDelete = [{ id: params.id }];
-    if (result.relatedDeletions != null) {
-      idsToDelete = idsToDelete.concat(result.relatedDeletions);
-    }
-    // Cache invalidation is deferred until AFTER the delete commits (below):
-    // busting before the write let a concurrent auth re-cache the row mid-delete
-    // and keep resolving a deleted token. Collect the {id, token} to unset from
-    // the authoritative rows fetched in the loop below.
-    const logicsToUnset: Array<{ id: string; token: string }> = [];
-    // Collect any aliases carried by the accesses being deleted, so their
-    // platform reservation + routing entries can be released afterwards. The
-    // same pass captures the authoritative access rows (still live here) so
-    // the breach-scope reverse-index can be tombstoned after deletion.
-    const aliasesToRelease: string[] = [];
-    const rowsToTombstone: IndexAccessInput[] = [];
-    for (const idToDelete of idsToDelete) {
-      const access = await fromCallback((cb: NodeCallback) => accessesRepository.findOne(context.user, { id: idToDelete.id }, dbFindOptions, cb)) as AccessLike | null;
-      if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
-      if (access != null) { rowsToTombstone.push(access as IndexAccessInput); }
-      else if (idToDelete.id != null) { rowsToTombstone.push({ id: idToDelete.id }); }
-      // Authoritative source for the post-delete cache unset (id + token); fall
-      // back to a locally-cached logic when the row is already gone.
-      if (access != null && typeof access.id === 'string' && typeof access.token === 'string') {
-        logicsToUnset.push({ id: access.id, token: access.token });
-      } else {
-        const cached = cache.getAccessLogicForId(context.user.id, idToDelete.id);
-        if (cached != null) { logicsToUnset.push({ id: cached.id, token: cached.token }); }
-      }
-    }
-    // Cascade webhook deletion BEFORE access deletion. On partial failure,
-    // the access still exists so a retry re-runs the cascade.
+    let outcome;
     try {
-      for (const idToDelete of idsToDelete) {
-        const hooks = await webhooksRepository.get(context.user, { id: idToDelete.id, isPersonal: () => false });
-        await webhooksRepository.deleteByAccess(context.user, idToDelete.id);
-        // Stop the running copies (they would otherwise stay registered until a restart).
-        for (const hook of hooks) {
-          pubsub.webhooks.emit(pubsub.WEBHOOKS_DELETE, { username: context.user.username, webhook: { id: hook.id } });
-        }
-      }
+      outcome = await deleteAccessChain(context.user, {
+        id: params.id,
+        accessToDelete: params.accessToDelete ?? null,
+        relatedAccessesToDelete: params.relatedAccessesToDelete ?? [],
+      });
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
-    let deleteErr: unknown = null;
-    try {
-      await fromCallback((cb: NodeCallback) => {
-        accessesRepository.delete(context.user, { $or: idsToDelete }, cb);
-      });
-    } catch (err) {
-      deleteErr = err;
-    }
-    // Bust the cache AFTER the delete attempt (unconditionally, including an
-    // ambiguous failure where the row may have been removed): a concurrent auth
-    // that re-cached the row during the delete window must not keep resolving a
-    // deleted token. unsetAccessLogic bumps the epoch and broadcasts to sibling
-    // workers even when nothing is cached locally (closes the cross-worker hole).
-    for (const logic of logicsToUnset) {
-      cache.unsetAccessLogic(context.user.id, logic);
-    }
-    if (deleteErr != null) { return next(errors.unexpectedError(deleteErr)); }
-    // An access created through the deleted one between findRelatedAccesses
-    // and the delete above (or by a request that authenticated before the
-    // cache bust) would survive it unmanaged. The deleted access can create
-    // nothing any more, so one more pass is final. Reported like the others.
-    if (params.accessToDelete?.type !== 'personal') {
-      let late: AccessLike[] = [];
-      try {
-        const all: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, {}, dbFindOptions, cb));
-        late = managedAccessesOf(all, params.id, timestamp.now());
-      } catch (err) {
-        return next(errors.unexpectedError(err));
-      }
-      if (late.length > 0) {
-        try {
-          await fromCallback((cb: NodeCallback) => {
-            accessesRepository.delete(context.user, { $or: late.map((a) => ({ id: a.id })) }, cb);
-          });
-        } catch (err) {
-          return next(errors.unexpectedError(err));
-        }
-        for (const a of late) {
-          if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(context.user.id, { id: a.id, token: a.token });
-          rowsToTombstone.push(a as IndexAccessInput);
-        }
-        result.relatedDeletions = (result.relatedDeletions ?? []).concat(late.map((a) => ({ id: a.id! })));
-        params.relatedAccessesToDelete = (params.relatedAccessesToDelete ?? []).concat(late);
-      }
-    }
-    if (aliasesToRelease.length > 0) {
-      const usersRepository = await getUsersRepository();
-      for (const alias of aliasesToRelease) {
-        await usersRepository.releaseAlias(alias, context.user.id);
-      }
-    }
+    if (outcome.relatedDeletions.length > 0) result.relatedDeletions = outcome.relatedDeletions;
+    params.relatedAccessesToDelete = outcome.relatedAccessesToDelete as AccessLike[];
     result.accessDeletion = { id: params.id };
-    // Tombstone every deleted (base + cascaded) access in the breach-scope
-    // reverse-index — the row is retained with a `deleted` timestamp so a
-    // breach scoped after revocation still resolves the accessId. Non-fatal.
-    await tombstoneAccessesNonFatal(context.user.username, rowsToTombstone, timestamp.now());
-    pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
-    notifyScopedAccessChange(context.user.username, result.accessDeletion, 'delete');
     next();
   }
 

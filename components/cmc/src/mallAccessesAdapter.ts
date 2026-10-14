@@ -76,6 +76,15 @@ type AdapterDeps = {
    */
   invalidateAccessCache?: (userId: string, accessId: string, accessToken?: string) => void | Promise<void>;
   logger?: CmcLogger;
+  /**
+   * The route's own deletion (api-server helpers/accessDeletion.ts): a soft
+   * delete with its deletion record, the webhook cascade, the alias release,
+   * the breach-scope tombstone, the cache bust on every worker and the
+   * cascade to the accesses the deleted one manages. When wired, `delete`
+   * goes through it and the fallback below (a bare row removal with its own
+   * cascade, for unit fakes) is not used.
+   */
+  deleteAccess?: (userId: string, accessId: string) => Promise<{ id: string; relatedDeletions: Array<{ id: string }> }>;
 };
 
 const { fromCallback } = require('utils');
@@ -232,14 +241,17 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * cascade cannot be decided, and a grant removed alone is exactly what
      * this cascade exists to prevent. The caller's retry path applies.
      *
-     * Parity gap with the route, for the access and its managed ones alike:
-     * the row is removed outright (no deletion record, so neither appears
-     * under `includeDeletions`), and the route's webhook cascade, alias
-     * release, breach-scope index tombstone and accesses-changed
-     * notification are not done here. Known; to be closed by deleting
-     * through the route's own teardown.
+     * In production `deps.deleteAccess` is the route's own deletion (see
+     * AdapterDeps): the access and its managed ones are soft-deleted with
+     * their deletion records (they appear under `includeDeletions`), their
+     * webhooks deleted, aliases released, the breach-scope index tombstoned.
+     * The code below is the fallback for a wiring without it (unit fakes): a
+     * bare row removal with the same cascade.
      */
     async delete (userId: string, params: { id: string }): Promise<{ id: string; relatedDeletions: Array<{ id: string }> }> {
+      if (deps.deleteAccess != null) {
+        return await deps.deleteAccess(userId, params.id);
+      }
       if (storageAccesses.removeOne == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.removeOne not available');
       }
