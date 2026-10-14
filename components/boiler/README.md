@@ -165,7 +165,12 @@ logs: {
     },
     file: {
       active: true,
-      path: 'application.log'
+      path: 'application.log',
+      // daily files `<path>.YYYY-MM-DD` kept `days` days; `maxSize` ('10m',
+      // unit k / m / g) also starts a new file past that size. With
+      // `isActive: false`: one growing file at `path`, rotate it outside.
+      // `maxSize` is unset by default (no size cap); '10m' here is an example.
+      rotation: { isActive: true, days: 14, maxSize: '10m' }
     },
     custom: { 
       active: true,

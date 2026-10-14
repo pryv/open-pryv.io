@@ -20,5 +20,3 @@ logs:
     active: true
     level: error
     path: var-pryv/logs/api-server.errors.log
-    maxFileBytes: 4096
-    maxNbFiles: 20

@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Log file size cap, admin username reservation shape
+
+- `boiler/src/logging.ts`: the rotating transport takes `rotation.maxSize` (validated: a number
+  with k / m / g, anything else is reported and ignored, since winston-daily-rotate-file turns it
+  into "no limit" silently), passed only when set: winston-daily-rotate-file names its audit file
+  after a hash of the options, so an extra key would orphan existing audits and stop pruning; the
+  non-rotating `File` transport gets no size options any more
+  (winston reads `maxsize`, not `maxSize`, and its `File` size rollover lost every entry of a
+  200-entry burst in an experiment). Tests: boiler `[BLFS1]` (1k cap, 300-entry burst, several
+  files, no entry lost), `[BLFS2]`.
+- `routes/system.ts` `/system/users/validate`: `USERNAME_REGEXP_STR` checked before the invitation
+  claim and the reservations. Test: api-server `[LGV6]` (no username / email row written, token kept).
+
 ## Tests: audit parents test waits for late audit rows
 
 - Audit `[WLP1]` reads the whole log until two reads agree before comparing the parent reads with

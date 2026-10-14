@@ -192,6 +192,19 @@ function ensureLogDir (filePath: string): void {
 }
 
 /**
+ * `logs.file.rotation.maxSize` for winston-daily-rotate-file: a number with a
+ * `k` / `m` / `g` unit (`'10m'`). That library turns any other string into "no
+ * limit" without a word, so an unreadable value is reported here instead.
+ */
+function rotationMaxSize (value: unknown): string | null {
+  if (value == null || value === '') return null;
+  // The library reads `0k` as "no limit": a cap must be at least 1.
+  if (typeof value === 'string' && /^[1-9]\d*[kmg]$/i.test(value)) return value.toLowerCase();
+  rootLogger?.warn('logs.file.rotation.maxSize ignored: expected a size such as "10m", got ' + JSON.stringify(value));
+  return null;
+}
+
+/**
  * The file transports set by `logs:file` and `logs:fileSync` (none when both
  * are inactive).
  */
@@ -207,8 +220,8 @@ function createFileTransports (config: BoilerConfig): unknown[] {
     rootLogger?.debug('File active: ' + logFile.path);
     ensureLogDir(logFile.path);
     const fileOptions = { flags: 'a', mode: LOG_FILE_MODE };
-    if (logFile.rotation.isActive) {
-      transports.push(new winston.transports.DailyRotateFile({
+    if (logFile.rotation?.isActive) {
+      const rotateOptions: Record<string, unknown> = {
         filename: logFile.path + '.%DATE%',
         datePattern: 'YYYY-MM-DD',
         zippedArchive: true,
@@ -216,13 +229,20 @@ function createFileTransports (config: BoilerConfig): unknown[] {
         maxFiles: logFile.rotation.days ? logFile.rotation.days + 'd' : null,
         format: fileFormat,
         options: fileOptions
-      }));
+      };
+      // Only when set: the library names its audit file (the list of files it
+      // prunes) after a hash of these options, so an extra key, even null,
+      // would orphan the existing audit and stop pruning the files it lists.
+      const maxSize = rotationMaxSize(logFile.rotation.maxSize);
+      if (maxSize != null) rotateOptions.maxSize = maxSize;
+      transports.push(new winston.transports.DailyRotateFile(rotateOptions));
     } else {
+      // No rotation means one growing file (rotate it outside, e.g. logrotate).
+      // No size options here: winston's `File` size rollover loses entries
+      // logged in a burst, and the size cap belongs to `rotation.maxSize`.
       transports.push(new winston.transports.File({
         filename: logFile.path,
         level: logFile.level,
-        maxSize: logFile.maxFileBytes || '10m',
-        maxFiles: logFile.maxNbFiles || '14d',
         format: fileFormat,
         options: fileOptions
       }));

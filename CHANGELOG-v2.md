@@ -1,5 +1,21 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- `POST /system/users/validate` (admin) refuses a username account creation would refuse (5 to 60
+  lowercase letters, digits or dashes, starting and ending with a letter or digit) with 400
+  `invalid-parameters-format`, before reserving anything. It used to reserve such a name (and its
+  unique fields) and consume the invitation token, then account creation refused the name, leaving
+  the reservation held.
+- Logs (operators): `logs.file.rotation.maxSize` (e.g. `"10m"`, unit k / m / g) caps the size of each
+  daily log file; a new file starts the same day when one grows past it. Unset by default (no
+  change). With `logs.file.rotation.isActive: false` the log is one growing file at `logs.file.path`,
+  to rotate outside (e.g. logrotate): the size keys that branch used to receive never applied.
+  `production-config.yml`'s `logs.file.maxFileBytes` / `maxNbFiles` are removed; remove them from
+  your own config too (they were passed under names winston ignores, so they never applied). Note:
+  setting `maxSize` (like changing `days` or `level`) starts a new list of files to prune, so the
+  daily files written before are no longer deleted after `days`: delete them once by hand.
+
 ## 2.0.0-rc.51 - 2026-10-13
 
 Backup and restore: an incremental backup no longer overwrites the full backup it continues.

@@ -324,6 +324,25 @@ describe('[RGLG] Legacy register routes + invitations', () => {
       assert.strictEqual(await isValid(token), true, 'a refused pre-registration does not consume the token');
     });
 
+    it('[LGV6] an admin pre-registration refuses a name account creation would refuse, before reserving anything', async () => {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      const suffix = Math.random().toString(36).slice(2, 8);
+      // One token for every name: a refusal must leave it unused. Read on the
+      // platform directly, not through the per-address budgeted check route.
+      const token = await newToken();
+      for (const username of ['Abcde' + suffix, 'ab.cd' + suffix, 'ab', '-abcd' + suffix, 'a'.repeat(61)]) {
+        const email = 'lgv6-' + suffix + '-' + username.length + '@example.com';
+        const res = await validate({ username, invitationToken: token, uniqueFields: { email } });
+        assert.strictEqual(res.status, 400, username + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.reservation, false);
+        assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+        assert.strictEqual(await platform.isInvitationTokenValid(token), true, username + ': the token is kept');
+        assert.ok((await platform.getUsersUniqueField('username', username)) == null, username + ': no username row');
+        assert.ok((await platform.getUsersUniqueField('email', email)) == null, username + ': no email row');
+      }
+    });
+
     it('[LGV3] an admin pre-registration refused on a taken email keeps the token', async () => {
       const token = await newToken();
       const res = await validate({ username: registration(token).username, invitationToken: token, uniqueFields: { email: testEmail } });

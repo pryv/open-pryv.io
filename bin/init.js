@@ -861,6 +861,13 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #     format:
 # #       json: true
 
+# # logs.file.rotation.maxSize — size cap of one daily log file (e.g. "10m",
+# # unit k / m / g): past it a new file starts the same day. Unset = no cap.
+# # logs:
+# #   file:
+# #     rotation:
+# #       maxSize: 10m
+
 # # storages.contentIndexes — acceleration indexes for events.get content/
 # # clientData query conditions (PLATFORM-WIDE: declare identically on every
 # # core). Queries are correct without indexes; declaring paths only speeds

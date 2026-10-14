@@ -18,6 +18,8 @@ const { setMinimalMethodContext, setMethodId, isAdminKey } = require('middleware
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
 const { validateMailTemplate } = require('mail/src/templateValidator.ts');
+const { USERNAME_REGEXP_STR, USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('../schema/helpers.ts');
+const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
 
 function errMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -265,6 +267,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       // The username keys the reservation and the invitation claim below.
       if (typeof username !== 'string' || username === '') {
         return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: 'username is required' } });
+      }
+      // Same shape as account creation, checked before anything is reserved:
+      // a name creation refuses would otherwise keep its platform rows held.
+      if (!USERNAME_RE.test(username)) {
+        return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: `username: ${USERNAME_MIN_LENGTH} to ${USERNAME_MAX_LENGTH} lowercase letters, digits or dashes, starting and ending with a letter or digit` } });
       }
       const { getPlatform } = require('platform');
       const platform = await getPlatform();

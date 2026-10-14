@@ -557,9 +557,14 @@ logs:
     active: false
     path: "var-pryv/logs/core.log"
     level: info
+    # Daily files `<path>.YYYY-MM-DD`, kept `days` days. `maxSize` (e.g. "10m",
+    # unit k / m / g) also starts a new file when one grows past it; unset =
+    # no size cap. With `isActive: false` the log is one growing file at
+    # `path`: rotate it outside (e.g. logrotate).
     rotation:
       isActive: true
       days: 14
+      maxSize: null
   # Loss-proof trail. `file` above buffers through an async stream, so
   # entries pending at process.exit() are lost — this one appends
   # synchronously and always lands. Costs an fs call per entry: keep it

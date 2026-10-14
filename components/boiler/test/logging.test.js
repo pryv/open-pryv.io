@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { inspectAndHide, getLogger, setGlobalName } from '../src/logging.ts';
 
@@ -107,8 +108,8 @@ describe('[BLFM] boiler log file modes', function () {
   function mode (p) { return (fs.statSync(p).mode & 0o777).toString(8); }
 
   // Boots the logger (initLoggerWithConfig) in a fresh process with these
-  // logs settings, writes one error entry and exits.
-  function bootLoggerAndLog (logs) {
+  // logs settings, writes `count` error entries in a tight loop and exits.
+  function bootLoggerAndLog (logs, count = 1) {
     const values = {
       'logs:console': { active: false, level: 'info', format: {} },
       'logs:console:active': false,
@@ -123,8 +124,8 @@ describe('[BLFM] boiler log file modes', function () {
       "logging.setGlobalName('blfm');",
       'const values = JSON.parse(process.env.BLFM_VALUES);',
       'await logging.initLoggerWithConfig({ get: (key) => values[key] });',
-      "logging.getLogger('blfm').error('blfm entry');",
-      'setTimeout(() => process.exit(0), 700);'
+      `for (let i = 0; i < ${count}; i++) logging.getLogger('blfm').error('blfm entry ' + i);`,
+      'setTimeout(() => process.exit(0), 1500);'
     ].join('\n');
     const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
       env: Object.assign({}, process.env, { BLFM_VALUES: JSON.stringify(values) }),
@@ -155,5 +156,40 @@ describe('[BLFM] boiler log file modes', function () {
     assert.strictEqual(mode(path.join(syncDir, 'core-sync.log')), fileMode, 'sync log file');
     for (const f of rotatedFiles) assert.strictEqual(mode(path.join(rotatedDir, f)), fileMode, f);
     for (const d of [plainDir, rotatedDir, syncDir]) assert.strictEqual(mode(d), dirMode, d);
+  });
+
+  // Every `blfm entry <i>` line found in the files of `logDir` (rotated files
+  // may already be gzipped).
+  function entriesIn (logDir) {
+    const seen = new Set();
+    for (const f of fs.readdirSync(logDir).filter((n) => n.startsWith('core.log'))) {
+      const raw = fs.readFileSync(path.join(logDir, f));
+      const text = (f.endsWith('.gz') ? zlib.gunzipSync(raw) : raw).toString('utf8');
+      for (const line of text.split('\n')) {
+        const m = /blfm entry (\d+)/.exec(line);
+        if (m) seen.add(Number(m[1]));
+      }
+    }
+    return seen;
+  }
+
+  it('[BLFS1] rotation.maxSize caps each file and loses no entry of a burst', function () {
+    const logDir = path.join(dir, 'capped', 'logs');
+    bootLoggerAndLog({
+      file: { path: path.join(logDir, 'core.log'), level: 'info', rotation: { isActive: true, days: 2, maxSize: '1k' } }
+    }, 300);
+    // Split files, gzipped or not (a file closed in the tick it opened is not gzipped).
+    const files = fs.readdirSync(logDir).filter((n) => n.startsWith('core.log.')).map((n) => n.replace(/\.gz$/, ''));
+    assert.ok(new Set(files).size > 1, 'the size cap started new files: ' + files);
+    assert.strictEqual(entriesIn(logDir).size, 300, 'every entry of the burst is in a file');
+  });
+
+  it('[BLFS2] without rotation, one file at the configured path holds every entry of a burst', function () {
+    const logDir = path.join(dir, 'unrotated', 'logs');
+    bootLoggerAndLog({
+      file: { path: path.join(logDir, 'core.log'), level: 'info', rotation: { isActive: false } }
+    }, 300);
+    assert.deepStrictEqual(fs.readdirSync(logDir).filter((n) => n.startsWith('core.log')), ['core.log']);
+    assert.strictEqual(entriesIn(logDir).size, 300);
   });
 });
