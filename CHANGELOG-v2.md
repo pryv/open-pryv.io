@@ -15,6 +15,12 @@
   your own config too (they were passed under names winston ignores, so they never applied). Note:
   setting `maxSize` (like changing `days` or `level`) starts a new list of files to prune, so the
   daily files written before are no longer deleted after `days`: delete them once by hand.
+- Mail templates (admin, `services.email.method: in-process`): a template written or deleted
+  through `PUT` / `DELETE /system/admin/mail/templates/:type/:lang/:part` is now used by every
+  worker of the core from the next mail on. Until this release no worker used it before a restart:
+  the worker that served the request never reloaded its templates, and in production mode the
+  others kept rendering the version they had compiled. Workers of the other cores still load it at
+  their next start, and `bin/mail.js` writes still need a restart.
 
 ### Consent (CMC) and accesses
 - **Security fix: withdrawing a consent now also ends the sub-accesses created from it, whichever

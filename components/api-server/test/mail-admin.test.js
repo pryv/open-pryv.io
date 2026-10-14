@@ -149,4 +149,44 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     }
     assert.deepStrictEqual((await platformDB.getAllMailTemplates()).length, 0);
   });
+
+  it('[MA12] the process that served a PUT or DELETE sends the new template right away', async () => {
+    // The test core is the serving worker: no master relays anything here.
+    const mail = require('mail');
+    await mail.close();
+    await mail.init({
+      getAllMailTemplates: () => platformDB.getAllMailTemplates(),
+      smtp: { jsonTransport: true },
+      from: { name: 'Pryv Test', address: 'test@example.com' },
+      defaultLang: 'en'
+    });
+    const type = 'reload-' + cuid();
+    async function put (lang, part, pug) {
+      const res = await coreRequest.put(`/system/admin/mail/templates/${type}/${lang}/${part}`).set(authHeaders()).send({ pug });
+      assert.strictEqual(res.status, 204, JSON.stringify(res.body));
+    }
+    async function subject (lang) {
+      const { sent, result } = await mail.send({ type, lang, recipient: { email: 'ma12@example.com', name: 'ma12' } });
+      assert.strictEqual(sent, true);
+      return JSON.parse(result.message).subject;
+    }
+    try {
+      await put('en', 'subject', '| Version one');
+      await put('en', 'html', 'p Hello');
+      assert.strictEqual(await subject('en'), 'Version one');
+      await put('en', 'subject', '| Version two');
+      assert.strictEqual(await subject('en'), 'Version two', 'a PUT is used by the process that served it');
+
+      await put('fr', 'subject', '| Version française');
+      await put('fr', 'html', 'p Bonjour');
+      assert.strictEqual(await subject('fr'), 'Version française');
+      for (const part of ['subject', 'html']) {
+        const res = await coreRequest.delete(`/system/admin/mail/templates/${type}/fr/${part}`).set(authHeaders());
+        assert.strictEqual(res.status, 204);
+      }
+      assert.strictEqual(await subject('fr'), 'Version two', 'after a DELETE the default language is used');
+    } finally {
+      await mail.close();
+    }
+  });
 });

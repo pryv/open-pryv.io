@@ -133,11 +133,23 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // --------------------- admin mail templates ----------------- //
   // Edit path for in-process mail templates stored in PlatformDB.
   // Reads use application/json; PUT accepts text/plain (raw Pug) OR
-  // JSON `{ pug }`. Writes push `mail:template-invalidate` over IPC so
-  // every worker on this core refreshes its materialised Pug tmp-dir on
-  // the next request; the workers of other cores read the replicated row at
-  // their next start (there is no periodic refresh). A template outside the
-  // allowed Pug subset (see mail/src/templateValidator.ts) is refused.
+  // JSON `{ pug }`. After a write the serving worker refreshes its own
+  // materialised Pug tmp-dir before answering, then pushes
+  // `mail:template-invalidate` over IPC, which the master relays to the
+  // other workers of this core; the workers of other cores read the
+  // replicated row at their next start (there is no periodic refresh). A
+  // template outside the allowed Pug subset (see
+  // mail/src/templateValidator.ts) is refused.
+  async function refreshMailTemplates (): Promise<void> {
+    try {
+      await require('mail').refresh();
+    } catch (err) {
+      logger.warn('mail template refresh failed: ' + errMessage(err));
+    }
+    if (typeof process.send === 'function') {
+      try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
+    }
+  }
   expressApp.get(Paths.System + '/admin/mail/templates', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
@@ -177,9 +189,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       if (!ok) return next(errors.invalidParametersFormat('mail template is not allowed', { problems }));
       const platformDB = require('storages').platformDB;
       await platformDB.setMailTemplate(type, lang, part, pug);
-      if (typeof process.send === 'function') {
-        try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
-      }
+      await refreshMailTemplates();
       res.status(204).end();
     } catch (err) {
       logger.error('admin/mail/templates put failed: ' + errMessage(err));
@@ -191,9 +201,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
       await platformDB.deleteMailTemplate(type, lang, part);
-      if (typeof process.send === 'function') {
-        try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
-      }
+      await refreshMailTemplates();
       res.status(204).end();
     } catch (err) {
       logger.error('admin/mail/templates delete failed: ' + errMessage(err));

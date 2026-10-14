@@ -11,6 +11,9 @@ const assert = require('node:assert');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { spawnSync } = require('node:child_process');
+const { fileURLToPath } = require('node:url');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 require('test-helpers/src/api-server-tests-config.ts');
 
@@ -156,6 +159,41 @@ describe('[MAILADAPT] emailTemplatesDelivery', () => {
       if (delivery) { await delivery.close(); delivery = null; }
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('[MADP8] with NODE_ENV=production, a send after refresh() renders the new template', function () {
+    this.timeout(30000);
+    // Compiled templates are cached by file name only outside development
+    // and test, so this runs in a fresh process started in production mode.
+    // The test config initialises the logger and sets NODE_ENV=test;
+    // `email-templates` reads NODE_ENV when it loads, after that.
+    const testConfig = path.resolve(__dirname, '../../test-helpers/src/api-server-tests-config.ts');
+    const src = path.resolve(__dirname, '../src/emailTemplatesDelivery.ts');
+    const script = [
+      `await import(${JSON.stringify(testConfig)});`,
+      "process.env.NODE_ENV = 'production';",
+      `const { createEmailTemplatesDelivery } = await import(${JSON.stringify(src)});`,
+      "let subject = 'Version one';",
+      'const delivery = await createEmailTemplatesDelivery({',
+      "  getAllMailTemplates: async () => [{ type: 't', lang: 'en', part: 'subject', pug: '| ' + subject }, { type: 't', lang: 'en', part: 'html', pug: 'p x' }],",
+      "  smtp: { jsonTransport: true }, from: 'test@example.com'",
+      '});',
+      "const send = async () => JSON.parse((await delivery.send({ message: { to: 'madp8@example.com' }, template: 't/en', locals: {} })).message).subject;",
+      'const first = await send();',
+      "subject = 'Version two';",
+      'await delivery.refresh();',
+      'const second = await send();',
+      'await delivery.close();',
+      "process.stdout.write('MADP8 ' + JSON.stringify({ first, second }) + '\\n');"
+    ].join('\n');
+    const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      timeout: 25000
+    });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    const line = res.stdout.split('\n').find((l) => l.startsWith('MADP8 '));
+    assert.ok(line, res.stdout + res.stderr);
+    assert.deepStrictEqual(JSON.parse(line.slice(6)), { first: 'Version one', second: 'Version two' });
   });
 
   it('[MADP5] rejects missing getAllMailTemplates / smtp arguments', async () => {

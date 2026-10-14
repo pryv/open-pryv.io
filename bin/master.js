@@ -803,7 +803,7 @@ if (cluster.isPrimary) {
     cluster.on('message', (worker, msg) => {
       if (msg && msg.type === 'mail:template-invalidate') {
         for (const id in cluster.workers) {
-          if (cluster.workers[id] === worker) continue; // already wrote; no self-nudge
+          if (cluster.workers[id] === worker) continue; // the sender refreshed itself before sending
           try { cluster.workers[id].send(msg); } catch (err) {
             log(`[mail] IPC to worker ${id} failed: ${err.message}`);
           }
