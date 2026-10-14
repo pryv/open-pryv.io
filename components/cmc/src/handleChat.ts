@@ -33,6 +33,7 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const chatOrch = require('./chatOrchestration.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type Counterparty = { username: string; host: string };
 
@@ -110,6 +111,18 @@ async function handleChat (params: {
     logger: deps.logger,
   });
   if (chosen == null) {
+    // A chat addressed to a member of the group: no chat channel exists
+    // toward a membership access in this release.
+    const member = relationshipKey.selectRelationshipAccess({
+      accesses: accessesList,
+      role: C.ROLE_MEMBER,
+      counterparty: parsed.counterparty,
+      scopeStreamId: parsed.scopeStreamId,
+      appCode: parsed.appCode,
+    });
+    if (member != null) {
+      return { ok: false, reason: CmcErrorIds.MEMBER_CHANNEL_NOT_SUPPORTED, detail: { accessId: member.id } };
+    }
     return { ok: false, reason: 'cmc-chat-counterparty-access-not-found', detail: {
       appCode: parsed.appCode,
       counterpartySlug: parsed.counterpartySlug,

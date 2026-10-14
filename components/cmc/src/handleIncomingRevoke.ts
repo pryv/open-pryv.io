@@ -117,7 +117,9 @@ async function handleIncomingRevoke (params: {
     return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'created-by-access-gone' };
   }
   const cmcCd = createdByAccess.clientData?.cmc;
-  if (cmcCd?.role !== 'counterparty') {
+  // A member leaving the group delivers its revoke through its membership
+  // access: that access is what the teardown destroys here.
+  if (cmcCd == null || !C.RELATIONSHIP_ROLES.includes(cmcCd.role as string)) {
     return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'not-counterparty-access' };
   }
 
@@ -359,7 +361,7 @@ async function tearDownRelationship (params: {
     for (const acc of accessList) {
       if (acc == null || acc.id === createdByAccess.id) continue;
       const cmc = acc.clientData?.cmc;
-      if (cmc?.role !== 'counterparty') continue;
+      if (cmc == null || !C.RELATIONSHIP_ROLES.includes(cmc.role as string)) continue;
       const cp = cmc.counterparty;
       if (cp == null || cp.username !== counterparty.username) continue;
       if (typeof cp.host !== 'string' || slugMod.slugifyHost(cp.host) !== hostSlug) continue;

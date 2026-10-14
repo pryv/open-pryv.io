@@ -126,6 +126,10 @@ function validateRequest (content: unknown): ValidationResult {
     if (r.allowUserChoice != null && typeof r.allowUserChoice !== 'boolean') {
       errors.push('content.request.allowUserChoice: must be a boolean if present');
     }
+
+    if (r.membership != null && typeof r.membership !== 'boolean') {
+      errors.push('content.request.membership: must be a boolean if present');
+    }
   }
 
   // requesterMeta: optional, object
@@ -343,6 +347,126 @@ function validateSystemScopeUpdate (content: unknown): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
+// --- Group accounts ---
+
+/** A stream-permission level a membership may hold on the group account. */
+const MEMBERSHIP_LEVELS = new Set(['read', 'contribute']);
+
+/**
+ * The rule for what a membership offer (`request.membership: true`) may ask:
+ * stream permissions only, on user-creatable `:_cmc:apps:<app>[:<path>]`
+ * ids, at level `read` or `contribute`, no feature permission, `accessType`
+ * absent or `shared`. Enforced on the requester's write and again by the
+ * group's accept: a membership asking for the inbox (every grant token), `*`,
+ * a chats / collectors leaf, `manage`, or a delegable (`app`) access would
+ * be one consent click away.
+ *
+ * Takes the offer's `request` object; returns the violations (empty when the
+ * offer is admissible). Shape errors (a non-array, an unknown level) are
+ * reported by `validateRequest`; this only judges an array of permissions.
+ */
+function membershipOfferViolations (request: unknown): string[] {
+  const errors: string[] = [];
+  if (!isPlainObject(request)) return ['request: must be an object'];
+  const perms = request.permissions;
+  if (!Array.isArray(perms)) return ['request.permissions: must be an array'];
+  for (const p of perms) {
+    if (!isPlainObject(p)) { errors.push('request.permissions: entries must be objects'); continue; }
+    if (typeof p.feature === 'string') {
+      errors.push('request.permissions: a membership carries no feature permission (' + p.feature + ')');
+      continue;
+    }
+    if (typeof p.streamId !== 'string' || !C.isUserCreatableStreamId(p.streamId)) {
+      errors.push('request.permissions: a membership is scoped to user-creatable ' +
+        C.NS_APPS + ':<app>[:<path>] streams only (got ' + JSON.stringify(p.streamId) + ')');
+      continue;
+    }
+    if (typeof p.level !== 'string' || !MEMBERSHIP_LEVELS.has(p.level)) {
+      errors.push('request.permissions: a membership holds read or contribute at most (got ' +
+        JSON.stringify(p.level) + ' on ' + p.streamId + ')');
+    }
+  }
+  if (request.accessType != null && request.accessType !== 'shared') {
+    errors.push('request.accessType: a membership access is never delegable (got ' + JSON.stringify(request.accessType) + ')');
+  }
+  return errors;
+}
+
+/** True when `candidate` is a stream permission (no feature permission). */
+function isStreamPermissionArray (v: unknown): { ok: boolean; reason?: string } {
+  const check = isPermissionArray(v);
+  if (!check.ok) return check;
+  for (const p of v as unknown[]) {
+    if (!isPlainObject(p) || typeof p.streamId !== 'string') {
+      return { ok: false, reason: 'stream permissions only' };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * `consent/member-access-cmc`, as a member writes it: the patient, optionally
+ * the relationship scope (default: the trigger's stream), the permissions
+ * asked (stream permissions only; default: the offer's data streams at read)
+ * and the child's lifetime in seconds. The server-owned outcome fields are
+ * not judged here: a client value is dropped before the write
+ * (memberAccessServerOwnedFieldsHook.ts).
+ */
+function validateMemberAccess (content: unknown): ValidationResult {
+  if (!isPlainObject(content)) return fail('content must be an object');
+  const errors: string[] = [];
+  const cp = content.counterparty;
+  if (!isPlainObject(cp) || typeof cp.username !== 'string' || cp.username.length === 0 ||
+      typeof cp.host !== 'string' || cp.host.length === 0) {
+    errors.push('content.counterparty.{username,host}: required non-empty strings');
+  }
+  if (content.scopeStreamId != null &&
+      (typeof content.scopeStreamId !== 'string' || !C.isUserCreatableStreamId(content.scopeStreamId))) {
+    errors.push('content.scopeStreamId: must be a user-creatable ' + C.NS_APPS + ':* stream id if present');
+  }
+  if (content.permissions != null) {
+    const check = isStreamPermissionArray(content.permissions);
+    if (!check.ok) errors.push('content.permissions: ' + check.reason);
+  }
+  if (content.expireAfter != null &&
+      (typeof content.expireAfter !== 'number' || !Number.isFinite(content.expireAfter) || content.expireAfter <= 0)) {
+    errors.push('content.expireAfter: must be a positive number of seconds if present');
+  }
+  return errors.length === 0 ? ok() : fail(...errors);
+}
+
+/**
+ * `consent/member-revoke-cmc`, as the server writes it (a client write is
+ * refused before validation). Judged on the dispatch path for completeness.
+ */
+function validateMemberRevoke (content: unknown): ValidationResult {
+  if (!isPlainObject(content)) return fail('content must be an object');
+  const errors: string[] = [];
+  const m = content.member;
+  if (!isPlainObject(m) || typeof m.username !== 'string' || typeof m.host !== 'string') {
+    errors.push('content.member.{username,host}: required strings');
+  }
+  if (typeof content.membershipAccessId !== 'string' || content.membershipAccessId.length === 0) {
+    errors.push('content.membershipAccessId: required non-empty string');
+  }
+  if (typeof content.reason !== 'string' || !C.MEMBER_REVOKE_REASONS.includes(content.reason)) {
+    errors.push('content.reason: must be one of ' + C.MEMBER_REVOKE_REASONS.join(', '));
+  }
+  if (!Array.isArray(content.records)) {
+    errors.push('content.records: must be an array');
+  } else {
+    for (const r of content.records) {
+      if (!isPlainObject(r) || typeof r.relationshipAccessId !== 'string' ||
+          typeof r.childAccessId !== 'string' || typeof r.expires !== 'number' ||
+          !isPlainObject(r.counterparty)) {
+        errors.push('content.records: each record carries relationshipAccessId, counterparty, childAccessId, expires');
+        break;
+      }
+    }
+  }
+  return errors.length === 0 ? ok() : fail(...errors);
+}
+
 // --- Dispatcher ---
 
 function validateBackChannel (raw: unknown): ValidationResult {
@@ -376,6 +500,8 @@ const VALIDATORS: { [k: string]: (content: unknown) => ValidationResult } = {
   [C.ET_SYSTEM_SCOPE_REQUEST]: validateSystemScopeRequest,
   [C.ET_SYSTEM_SCOPE_UPDATE]: validateSystemScopeUpdate,
   [C.ET_BACK_CHANNEL]: validateBackChannel,
+  [C.ET_MEMBER_ACCESS]: validateMemberAccess,
+  [C.ET_MEMBER_REVOKE]: validateMemberRevoke,
 };
 
 function isKnownEventType (eventType: string): boolean {
@@ -402,4 +528,7 @@ export {
   validateSystemScopeRequest,
   validateSystemScopeUpdate,
   validateBackChannel,
+  validateMemberAccess,
+  validateMemberRevoke,
+  membershipOfferViolations,
 };

@@ -146,6 +146,9 @@ async function handleIncomingBackChannel (params: {
 
   const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
     accesses,
+    // A member's plugin delivers its back-channel to the group the same way:
+    // the grant to stamp is then the membership access.
+    role: C.RELATIONSHIP_ROLES,
     counterparty: { username: fromUsername, hostSlug: slugMod.slugifyHost(fromHost) },
     scopeStreamId: deliveryScope,
     appCode: c.appCode,

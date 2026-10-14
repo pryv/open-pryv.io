@@ -79,7 +79,7 @@ CMC and the future OAuth2 / app-accounts work sit at different layers:
 
 CMC's protocol works without that future federation layer because every interaction is a direct Pryv API call through a per-pair shared access, the access token IS the auth. But one feature is gated on it:
 
-**Directed cross-platform invites** (`to: 'alice@example.com'` where Alice is on a different platform) cannot be auto-routed without a federation channel. CMC v1 supports directed invites only **same-platform**; cross-platform directed invites degrade to capability-URL-only (the requester publishes the request, hands the URL to Alice via email/QR/etc.). When signed inter-platform requests + a well-known invite-webhook endpoint ship, CMC can fold directed cross-platform routing in as a follow-on.
+**Directed invites** (`to: 'alice@example.com'`) are not auto-routed, on the same platform or across platforms: the requester publishes the request and hands the capability URL to Alice (email, QR code, link). A same-platform in-process delivery into the recipient's inbox is not implemented either. When signed inter-platform requests + a well-known invite-webhook endpoint ship, CMC can fold directed routing in as a follow-on.
 
 The capability access mechanism here is also the natural store for future OAuth2 authorization codes, both are opaque-token constructs with a bounded lifetime (open-link capabilities may opt out of the bound).
 
@@ -159,13 +159,13 @@ All event types live under the `cmc/*` namespace and are validated by the plugin
 
 | Event type | App writes to | Plugin orchestration |
 |---|---|---|
-| `consent/request-cmc` | requester's own user-managed `:_cmc:apps:*` scope stream | Mints capability access on requester's account. If `to:` set and recipient local same-platform, also writes a notification copy into recipient's `:_cmc:inbox` (in-process). For cross-platform directed: no auto-routing (capability URL hand-off only). |
+| `consent/request-cmc` | requester's own user-managed `:_cmc:apps:*` scope stream | Mints capability access on requester's account. `content.to` is recorded, never routed: the invite reaches its recipient by the capability URL hand-off only (link, QR, email), on the same platform as across platforms. |
 | `consent/accept-cmc` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries the capability URL | Plugin: reads offer via capability connection; creates local data-grant access on recipient's account with permissions from the offer; uses capability connection to deliver accept event (with grantedAccess apiEndpoint) to requester's platform; receives back-channel apiEndpoint in response; stores it in `clientData.cmc.counterparty` of the data-grant. Plugin also auto-creates `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` + `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` on the recipient's account, nested under whichever app-scope stream the recipient wrote the accept trigger to. |
 | `consent/refuse-cmc` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries capability URL | Plugin: delivers refuse via capability connection; capability is consumed. |
 | `consent/revoke-cmc` | either party's own user-managed `:_cmc:apps:*` scope stream, content carries `accessId` | Plugin: `accesses.delete` locally on the access; uses stored counterparty apiEndpoint to deliver `consent/revoke-cmc` to the other party's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half of the pair. |
 | `consent/invalidate-link-cmc` | requester's own user-managed `:_cmc:apps:*` scope stream, content carries `capabilityId` | Plugin: flips the capability access's `clientData.cmc.capability.state` from `'open'` to `'invalidated'` so further accepts via the capability URL fail with `cmc-capability-invalidated`. Open-link mode only (single-use capabilities auto-consume on first accept; calling this on one is a no-op success). Already-established data-grant + back-channel relationships are NOT touched, use `consent/revoke-cmc` for per-relationship teardown. No outbound delivery; the rejection happens server-side on the next attempted accept. |
 
-Delivered counterparties of `consent/request-cmc` (when same-platform directed) / `consent/revoke-cmc` land in the recipient's `:_cmc:inbox`, the one-shot lifecycle channel. A `consent/accept-cmc` / `consent/refuse-cmc` is delivered on the capability's responses stream; the server writes a copy of each accept to the requester's inbox. An accept or a refuse posted on the inbox itself is refused.
+A delivered `consent/revoke-cmc` (and the `consent/back-channel-cmc` of the handshake) lands in the recipient's `:_cmc:inbox`, the one-shot lifecycle channel; a `consent/request-cmc` is never delivered there. A `consent/accept-cmc` / `consent/refuse-cmc` is delivered on the capability's responses stream; the server writes a copy of each accept to the requester's inbox. An accept or a refuse posted on the inbox itself is refused.
 
 **Family 2, Chat (anchored per user-pair under the app/path scope at `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`):**
 
@@ -270,9 +270,7 @@ After this exchange, both plugins hold each other's apiEndpoints in their access
 
 **Open invite (`to: null`):** Capability-URL-based. The request stays on the requester's platform; recipient's plugin pulls it via the capability access when the recipient's app writes `consent/accept-cmc` (or `consent/refuse-cmc`).
 
-**Same-platform directed invite (`to: <local-username>`):** Plugin's in-process write deposits a notification into the recipient's `:_cmc:inbox` automatically when the requester writes `consent/request-cmc`. Recipient sees it via socket.io. Capability URL also minted as fallback.
-
-**Cross-platform directed invite:** Capability-URL-only in v1. The plugin has no authenticated way to write into a foreign user's `:_cmc:inbox` without an existing access pair. Auto-routing requires federation auth → out of scope for v1 (federation work later).
+**Directed invite (`to: <username>`):** Capability-URL-only, same platform or not. `content.to` is validated and stored for the requester's own bookkeeping; the plugin does not write into another account's `:_cmc:inbox` (it has no authenticated way to do so without an existing access pair, and an in-process shortcut for a same-platform recipient is not implemented). The requester hands the capability URL over (link, QR code, email). Auto-routing would need federation auth and is out of scope for v1.
 
 ### App scoping for the requester
 
@@ -289,7 +287,7 @@ Apps query via plain `events.get({streamIds:[':_cmc:state']})`.
 
 ### Socket.io push
 
-Every successful `:_cmc:inbox` write (whether by in-process plugin routing for same-platform same-core directed invites, or by counterparty access writes for everything else) fires a standard socket.io `eventsCreated`. The recipient's app uses the standard `@pryv/monitor` add-on, `new pryv.Monitor(connection, { streams: [':_cmc:inbox'] })` + `monitor.on('event', cb)` + `monitor.start()`, no new socket primitive.
+Every successful `:_cmc:inbox` write (a counterparty access delivering a revoke or a back-channel, the server mirroring an accept) fires a standard socket.io `eventsCreated`. The recipient's app uses the standard `@pryv/monitor` add-on, `new pryv.Monitor(connection, { streams: [':_cmc:inbox'] })` + `monitor.on('event', cb)` + `monitor.start()`, no new socket primitive.
 
 ## Risks
 
@@ -302,9 +300,9 @@ Every successful `:_cmc:inbox` write (whether by in-process plugin routing for s
 - **Single-use enforcement under concurrency.** Two accepters can hit the same
   open invite at once, so first-write-wins has to be decided by the database
   rather than by a read-then-write in the plugin.
-- **Cross-platform directed invites.** Not supported. A directed invite to a
-  user on another platform degrades to capability-URL hand-off; auto-routing
-  needs a federation channel that does not exist yet.
+- **Directed invites.** Not auto-routed, same platform included: a directed
+  invite is a capability-URL hand-off; auto-routing needs a federation channel
+  that does not exist yet.
 - **State projection cost.** If `:_cmc:state` is ever materialized off
   outbox/inbox it is O(events) on write, so it wants a benchmark before any
   high-volume operator enables it. It is not implemented today.
@@ -313,7 +311,7 @@ Every successful `:_cmc:inbox` write (whether by in-process plugin routing for s
 
 ## Out of scope
 
-- **Cross-platform directed invite auto-routing**: capability-URL hand-off works; auto-routing is out of scope for v1 (federation work later).
+- **Directed invite auto-routing** (same platform or not): capability-URL hand-off works; auto-routing is out of scope for v1 (federation work later).
 - **Dedicated cross-core auth lane.** Same-platform cross-core deliveries take the same standard HTTPS path as cross-platform, the apiEndpoint's access token is the auth. We deliberately do NOT short-circuit via cluster-CA mTLS on `/events` (see "Future development scoping" below).
 - New API methods. New public HTTP routes on the core. (Capability access `apiEndpoint` URLs go through the existing access-auth path.)
 - OAuth2 / signatures / operator-side global revoke, future OAuth2 / app-accounts work.

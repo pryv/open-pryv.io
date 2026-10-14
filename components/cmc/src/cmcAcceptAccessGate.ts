@@ -38,9 +38,13 @@ const require = createRequire(import.meta.url);
  * Out of this gate (un-gated at events.create — orchestrator may
  * apply per-handler permission checks):
  *   - consent/revoke-cmc — see handleRevoke's canDeleteAccess check.
- *   - consent/request-cmc — publishing an offer is chain-checked on
- *     the requester side at access-mint time (capability access perms
- *     ⊆ requester's own held perms).
+ *   - consent/request-cmc — publishing an offer mints nothing on the
+ *     writer's account beyond the capability access (read on the offer
+ *     stream, create-only on its responses stream); the offer's
+ *     permissions describe what the ACCEPTER will grant, so no chain
+ *     check against the writer's own permissions applies. Any access with
+ *     contribute on a `:_cmc:apps:*` scope stream publishes offers in the
+ *     account's name.
  *   - consent/refuse-cmc — no access mutation; sender-attributable
  *     but no escalation surface.
  *   - consent/invalidate-link-cmc — closes an open-link capability
@@ -114,6 +118,8 @@ function createCmcAcceptAccessGateHook (deps: Deps): Middleware {
     // gate exists to close) come from a user's own personal/app/shared
     // access on their own account — NEVER from an access carrying
     // either of these plugin-stamped markers in clientData.cmc.
+    // A membership access (`role === 'member'`) is deliberately NOT
+    // exempt: a member may not accept consents on the group's behalf.
     const access = context?.access;
     const cmcMeta = access?.clientData?.cmc;
     if (cmcMeta?.kind === 'capability' || cmcMeta?.role === 'counterparty') {

@@ -257,11 +257,17 @@ function buildDataGrantPayload (params: {
   // app. Omitted by callers that have no scope to hand; the selector then
   // derives it from the grant's own channel permissions.
   scopeStreamId?: string | null;
+  // A membership offer (`request.membership: true`): the access minted is the
+  // membership access (`role: 'member'`), the administrator may narrow the
+  // teams whatever the offer's `allowUserChoice` says, and the record of the
+  // approval rides on the access. `approvedBy` is the delegation marker when
+  // a delegate accepted, null for the owner.
+  membership?: { approvedBy: Record<string, unknown> | null };
 }): Record<string, unknown> {
-  const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId, scopeStreamId } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId, scopeStreamId, membership } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
-    ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
+    ((membership != null ? 'cmc-member:' : 'cmc:') + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
   const offeredPerms = permissionsFromOffer(offerEvent); // consent form (mandatory preserved)
   let basePerms: PermissionLike[];
   if (grantedPermissions != null) {
@@ -281,7 +287,7 @@ function buildDataGrantPayload (params: {
     // THE consent-grant rule (single point): granted ⊆ offered; without
     // request.allowUserChoice the grant is ALL OR NOTHING; with it,
     // mandatory entries must still be granted.
-    const check = permissionSet.checkConsentGrant(normalized, offeredPerms, allowsUserChoice(offerEvent));
+    const check = permissionSet.checkConsentGrant(normalized, offeredPerms, membership != null || allowsUserChoice(offerEvent));
     if (!check.ok) {
       const err: ApiError = new Error(
         'cmc/accept: grantedPermissions rejected (' + check.reason + '); offending: ' +
@@ -302,13 +308,26 @@ function buildDataGrantPayload (params: {
   const allPerms = Array.isArray(extraPermissions) && extraPermissions.length > 0
     ? basePerms.concat(extraPermissions)
     : basePerms;
+  const membershipStamp = membership == null
+    ? {}
+    : {
+        membership: {
+          approvedBy: membership.approvedBy,
+          // What the member asked for, team by team; the granted set is the
+          // access's own permissions.
+          requestedScopes: offeredPerms
+            .map((p) => (p as { streamId?: unknown }).streamId)
+            .filter((s): s is string => typeof s === 'string'),
+        },
+      };
   return {
-    type: accessTypeFromOffer(offerEvent),
+    type: membership != null ? 'shared' : accessTypeFromOffer(offerEvent),
     name: computedName,
     permissions: allPerms,
     clientData: {
       cmc: {
-        role: 'counterparty',
+        role: membership != null ? C.ROLE_MEMBER : C.ROLE_COUNTERPARTY,
+        ...membershipStamp,
         // The requester's app-code — disambiguates between several
         // relationships with the same counterparty (matching, revoke
         // correlation). The back-channel access on the requester side
@@ -352,6 +371,10 @@ async function deliverAcceptViaCapability (params: {
   requesterAppCode?: string;
   requesterOriginStreamId?: string;
   offerEventId?: string;
+  // True when the offer was a membership request: the requester's plugin
+  // marks the inbox mirror so a member app can tell the accept apart. The
+  // requester's own copy of the offer stays the authority when it has one.
+  membership?: boolean;
   deps: CapabilityDeps;
 }): Promise<{ ok: boolean; response: unknown }> {
   // The capability access has create-only on the per-capability
@@ -381,6 +404,7 @@ async function deliverAcceptViaCapability (params: {
         requesterAppCode: params.requesterAppCode ?? null,
         requesterOriginStreamId: params.requesterOriginStreamId ?? null,
         originalEventId: params.offerEventId ?? null,
+        ...(params.membership === true ? { membership: true } : {}),
       },
     },
     deps: params.deps,

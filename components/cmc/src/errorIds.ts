@@ -295,6 +295,61 @@ const CmcErrorIds = {
   SCOPE_UPDATE_NOTHING_TO_APPLY: 'cmc-scope-update-nothing-to-apply',
   // The grant update itself failed.
   SCOPE_UPDATE_LOCAL_APPLY_FAILED: 'cmc-scope-update-local-apply-failed',
+
+  // --- Group accounts: membership offers (refused at write and at accept) ---
+  // A `consent/request-cmc` with `request.membership: true` asked for more
+  // than a membership may hold on the group account: a permission outside the
+  // user-creatable `:_cmc:apps:<app>[:<path>]` streams (the inbox, `*`, a
+  // chats / collectors leaf), a level above `contribute`, a feature
+  // permission, or `accessType: 'app'`. 4xx at write; `failed` at accept.
+  MEMBERSHIP_PERMISSIONS_INVALID: 'cmc-membership-permissions-invalid',
+
+  // --- Group accounts: member access mint, refused at write (4xx) ---
+  // The writer of a `consent/member-access-cmc` is not a membership access
+  // (`clientData.cmc.role === 'member'`); personal and delegate tokens are
+  // refused too, since a member identity comes from the membership access.
+  MEMBER_ACCESS_NOT_MEMBER: 'cmc-member-access-not-member',
+  // No relationship with `content.counterparty` is held under the scope asked.
+  MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND: 'cmc-member-access-relationship-not-found',
+  // The scope asked is not the trigger's stream or a descendant of it.
+  MEMBER_ACCESS_SCOPE_OUTSIDE_MEMBERSHIP: 'cmc-member-access-scope-outside-membership',
+  // The permissions asked are not stream permissions, or exceed what the
+  // group offered the patient; also the patient core's `forbidden` answer to
+  // the create (the grant is the real bound).
+  MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET: 'cmc-member-access-permissions-not-subset',
+  // `expireAfter` outside [`cmc:memberAccess:minTtl`, `cmc:memberAccess:maxTtl`].
+  MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE: 'cmc-member-access-expiry-out-of-range',
+  // More than `cmc:memberAccess:ratePerMinute` mint triggers by this
+  // membership on this worker in the last minute. Ask again after the window.
+  MEMBER_ACCESS_RATE_LIMITED: 'cmc-member-access-rate-limited',
+  // A mint for the same (membership, relationship) is in flight on this
+  // worker. Ask again shortly.
+  MEMBER_ACCESS_IN_FLIGHT: 'cmc-member-access-in-flight',
+  // Patient side: an `accesses.create` through a delegable (`app`) consent
+  // grant carried a `clientData.cmc` that is not exactly the member stamp
+  // `{ role: 'member-child', member: { username, host } }`. Distinct from
+  // CLIENTDATA_CMC_FORBIDDEN (which an older core answers for any
+  // `clientData.cmc`) so the group's core can tell an older core from a bug.
+  MEMBER_STAMP_INVALID: 'cmc-member-stamp-invalid',
+
+  // --- Group accounts: member access mint, reported on the trigger ---
+  // The relationship grant is a plain `shared` access: it cannot create
+  // accesses on the patient's account (the offer needs `accessType: 'app'`).
+  MEMBER_ACCESS_GRANT_NOT_DELEGABLE: 'cmc-member-access-grant-not-delegable',
+  // The patient core refused the mint (4xx); detail `{ peerErrorId, httpStatus }`.
+  MEMBER_ACCESS_PEER_REJECTED: 'cmc-member-access-peer-rejected',
+  // The patient core could not be reached (5xx, network, timeout). Ask again shortly.
+  MEMBER_ACCESS_PEER_UNREACHABLE: 'cmc-member-access-peer-unreachable',
+  // The membership ended while the mint was in progress; the child was deleted.
+  MEMBER_ACCESS_MEMBERSHIP_GONE: 'cmc-member-access-membership-gone',
+  // A mint re-dispatched from the retry queue: the token would reach nobody.
+  MEMBER_ACCESS_NOT_RETRYABLE: 'cmc-member-access-not-retryable',
+  // A sweep left at least one child it could not delete (patient core down);
+  // the child's own expiry bounds its life.
+  MEMBER_REVOKE_RESIDUAL: 'cmc-member-revoke-residual',
+  // A chat or user alert between a member and the group through the
+  // membership access: not supported in this release.
+  MEMBER_CHANNEL_NOT_SUPPORTED: 'cmc-member-channel-not-supported',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

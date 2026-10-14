@@ -407,8 +407,8 @@ describe('[CMCHOOK] cmc/hooks', () => {
       };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
-      // 5 reserved parents auto-created
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      // 6 reserved parents auto-created
+      assert.equal(mall.calls.streamsCreated.length, 6);
       const ids = mall.calls.streamsCreated.map((s) => s.id);
       assert.deepEqual(ids, [
         ':_cmc:',
@@ -416,6 +416,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
         ':_cmc:apps',
         ':_cmc:_internal',
         ':_cmc:_internal:retries',
+        ':_cmc:_internal:members',
       ]);
     });
 
@@ -425,7 +426,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const ctx = { user: { id: 'u1' }, newEvent: { streamIds: [], type: 'message/chat-cmc' } };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR05] provisions on streams.create with :_cmc:* params.id', async () => {
@@ -434,7 +435,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const ctx = { user: { id: 'u1' } };
       const err = await runMiddleware(mw, ctx, { id: ':_cmc:apps:my-app' }, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR06] idempotent: item-already-exists is swallowed; middleware continues', async () => {
@@ -447,7 +448,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
       // 5 attempts; all "already exist" — middleware treats as success
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR07] non-fatal: unexpected provisioning failure logs + continues', async () => {
@@ -480,7 +481,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const ctx = { user: { id: 'u1' } };
       const err = await runMiddleware(mw, ctx, { streams: [':_cmc:inbox'] }, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR09] provisions on the {streamId} object form', async () => {
@@ -489,7 +490,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, { user: { id: 'u1' } },
         { streams: [{ streamId: ':_cmc:apps:my-app' }] }, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR10] provisions on the logical-query form ({any: [...]})', async () => {
@@ -498,7 +499,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, { user: { id: 'u1' } },
         { streams: [{ any: ['fertility', ':_cmc:inbox'] }] }, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR11] does NOT provision on a read that names no :_cmc: stream', async () => {
@@ -518,7 +519,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       for (let i = 0; i < 5; i++) {
         await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
       }
-      assert.equal(mall.calls.streamsCreated.length, 5, 'exactly ONE provisioning run (5 streams), not one per poll');
+      assert.equal(mall.calls.streamsCreated.length, 6, 'exactly ONE provisioning run (6 streams), not one per poll');
     });
 
     it('[CH-PR13] memo is per-user — a second user still gets provisioned', async () => {
@@ -526,7 +527,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createEnsureReservedParentsHook({ mall });
       await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
       await runMiddleware(mw, { user: { id: 'u2' } }, { streams: [':_cmc:inbox'] }, {});
-      assert.equal(mall.calls.streamsCreated.length, 10);
+      assert.equal(mall.calls.streamsCreated.length, 12);
     });
 
     it('[CH-PR14] existence probe short-circuits creates when the tree is already there', async () => {
@@ -543,7 +544,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createEnsureReservedParentsHook({ mall });
       await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
       assert.equal(mall.calls.probes.length, 1);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
 
     it('[CH-PR16] a throwing probe falls back to provisioning (never skips silently)', async () => {
@@ -551,7 +552,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createEnsureReservedParentsHook({ mall });
       const err = await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
       assert.equal(err, undefined);
-      assert.equal(mall.calls.streamsCreated.length, 5);
+      assert.equal(mall.calls.streamsCreated.length, 6);
     });
   });
 

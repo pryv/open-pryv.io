@@ -971,3 +971,23 @@ sharedSecrets:
 # guard wiring entirely.
 delegation:
   active: true
+
+# Cross-account messaging and consent (the `:_cmc:` namespace plugin).
+cmc:
+  # Durable retry of failed deliveries (one worker re-dispatches from the
+  # per-user `:_cmc:_internal:retries` queue). Off by default; a group
+  # account's offboarding sweeps need it to retry a patient core that is down.
+  retryLoop:
+    enabled: false
+    intervalMs: 60000
+    perUserLimit: 100
+  # Group accounts: the accesses a group's core mints on patients' accounts
+  # for its members (`consent/member-access-cmc`).
+  memberAccess:
+    defaultTtl: 86400              # seconds a member access lives when the trigger sets none (24 h)
+    minTtl: 60                     # smallest `expireAfter` accepted (seconds)
+    maxTtl: 604800                 # largest `expireAfter` accepted (7 days); also bounds a residual after a failed sweep
+    ratePerMinute: 30              # mint triggers per membership access per minute, per worker process
+    maxInFlightPerMembership: 1    # concurrent mints per (membership, patient relationship), per worker
+    allowNameOnly: true            # mint on a patient core that refuses the member stamp (older release); the access then names the member only
+    sweepIntervalMs: 60000         # ledger pass: expired memberships and children, pruning (on the retry scheduler tick)

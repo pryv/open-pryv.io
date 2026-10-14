@@ -176,8 +176,13 @@ async function handleSystemEvent (params: {
   // `<scope>:collectors:<peer>`, so the scope identifies which of this
   // peer's relationships this alert belongs to. Shared with the inbound
   // matcher so stamping and delivery cannot disagree.
+  // A user alert or ack may address a member of the group (through its
+  // membership access); a scope request or update always addresses a
+  // counterparty grant.
+  const isUserMessagingType = triggerEvent.type === C.ET_SYSTEM_ALERT || triggerEvent.type === C.ET_SYSTEM_ACK;
   const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
     accesses: accessesList,
+    role: isUserMessagingType ? C.RELATIONSHIP_ROLES : C.ROLE_COUNTERPARTY,
     counterparty: parsed.counterparty,
     scopeStreamId: parsed.scopeStreamId,
     appCode: parsed.appCode,

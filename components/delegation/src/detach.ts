@@ -369,7 +369,9 @@ async function markAcceptEvent (deps: DetachDeps, bUserId: string, grant: Access
  */
 function isConsentGrant (access: AccessRow): boolean {
   const cmc = (access?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc;
-  return cmc != null && typeof cmc === 'object' && cmc.role === 'counterparty';
+  // A membership of a group account (`role: 'member'`) a delegate approved is
+  // a consent grant too: it ends with the delegation and its member is told.
+  return cmc != null && typeof cmc === 'object' && (cmc.role === 'counterparty' || cmc.role === 'member');
 }
 
 // =================================================== A-side: detach notify

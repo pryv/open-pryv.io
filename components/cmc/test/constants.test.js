@@ -158,9 +158,12 @@ describe('[CMCCONST] cmc/constants', () => {
     it('[CE04] ALL_EVENT_TYPES is the union (incl. internal retry-v1 + back-channel + invalidate-link) with no duplicates', () => {
       const set = new Set(C.ALL_EVENT_TYPES);
       assert.equal(set.size, C.ALL_EVENT_TYPES.length);
-      // 5 lifecycle + 1 chat + 4 system + 1 capability + 1 retry
-      assert.equal(set.size, 5 + 1 + 4 + 1 + 1);
+      // 5 lifecycle + 1 chat + 4 system + 1 capability + 2 member + 1 retry + 1 member ledger
+      assert.equal(set.size, 5 + 1 + 4 + 1 + 2 + 1 + 1);
       assert.ok(set.has('cmc-internal/retry-cmc'));
+      assert.ok(set.has('cmc-internal/member-cmc'));
+      assert.ok(set.has('consent/member-access-cmc'));
+      assert.ok(set.has('consent/member-revoke-cmc'));
       assert.ok(set.has('consent/back-channel-cmc'));
       assert.ok(set.has('consent/invalidate-link-cmc'));
     });
@@ -171,13 +174,14 @@ describe('[CMCCONST] cmc/constants', () => {
   });
 
   describe('[CMCCONST-RESERVED] RESERVED_PARENT_STREAM_IDS', () => {
-    it('[CC13] has exactly the five reserved parents', () => {
+    it('[CC13] has exactly the six reserved parents', () => {
       assert.deepEqual(C.RESERVED_PARENT_STREAM_IDS, [
         ':_cmc:',
         ':_cmc:inbox',
         ':_cmc:apps',
         ':_cmc:_internal',
         ':_cmc:_internal:retries',
+        ':_cmc:_internal:members',
       ]);
     });
 

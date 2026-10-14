@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — auto-provisioning of reserved parent streams on user creation.
  *
- * The five reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
- * `:_cmc:_internal`, `:_cmc:_internal:retries`) must auto-exist on every
+ * The six reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
+ * `:_cmc:_internal`, `:_cmc:_internal:retries`, `:_cmc:_internal:members`) must auto-exist on every
  * user account so that:
  *   - User code can `streams.create({parentId: ':_cmc:apps'})` for
  *     organizational app roots.
@@ -63,6 +63,7 @@ const RESERVED_TREE: Array<{ id: string; parentId: string | null; name: string }
   { id: C.NS_APPS, parentId: C.NS, name: 'CMC apps' },
   { id: C.NS_INTERNAL, parentId: C.NS, name: 'CMC plugin-internal' },
   { id: C.NS_INTERNAL_RETRIES, parentId: C.NS_INTERNAL, name: 'CMC retry queue' },
+  { id: C.NS_INTERNAL_MEMBERS, parentId: C.NS_INTERNAL, name: 'CMC group members ledger' },
 ];
 
 function isAlreadyExistsError (err: unknown): boolean {

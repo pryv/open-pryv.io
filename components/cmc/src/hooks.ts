@@ -40,10 +40,14 @@ type MethodContext = {
   oldEvent?: { type?: string; streamIds?: string[] };
   user?: { id?: string };
   access?: {
+    id?: string;
+    type?: string;
     isPersonal?: () => boolean;
     clientData?: {
       cmc?: {
         role?: string;
+        appCode?: string | null;
+        scopeStreamId?: string | null;
         capabilityId?: string | null;
         counterparty?: { username?: string; host?: string };
         features?: { chat?: unknown; systemMessaging?: unknown } | null;
@@ -64,6 +68,9 @@ type HookParams = {
   streams?: Array<string | { streamId?: string; [k: string]: unknown } | null>;
   clientData?: { cmc?: unknown; [k: string]: unknown } | null;
   update?: { id?: unknown; clientData?: { cmc?: unknown; [k: string]: unknown } | null; [k: string]: unknown } | null;
+  // accesses.update: the stored access, loaded by the route before the
+  // update is applied.
+  targetAccess?: { clientData?: { cmc?: unknown } | null } | null;
   [k: string]: unknown;
 } | null | undefined;
 type StreamNode = { id?: string; children?: StreamNode[]; [k: string]: unknown };
@@ -138,6 +145,64 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
     }
 
     next();
+  };
+}
+
+/**
+ * events.create hook: a membership offer (`consent/request-cmc` with
+ * `request.membership: true`) may only ask what a membership may hold on the
+ * group account (validators.membershipOfferViolations); a violation is
+ * refused with `cmc-membership-permissions-invalid`. On an admissible offer
+ * two fields are rewritten whatever the client sent: `allowUserChoice` is
+ * `true` (the administrator picks the teams) and `features.chat` is `false`
+ * (no member-to-group chat in this release). The group's accept re-applies
+ * the same rule on the offer it reads, so an older or foreign requester core
+ * cannot bypass it. Runs after the content validation.
+ */
+function createMembershipOfferHook (deps: Deps): Middleware {
+  return function cmcMembershipOfferHook (context, _params, _result, next) {
+    const event = context?.newEvent;
+    if (event == null || event.type !== C.ET_REQUEST) return next();
+    const content = event.content;
+    const request = content?.request as Record<string, unknown> | undefined;
+    if (request == null || typeof request !== 'object' || request.membership !== true) return next();
+    const violations = validators.membershipOfferViolations(request);
+    if (violations.length > 0) {
+      return next(deps.errors.invalidOperation(
+        'A membership offer may hold stream permissions on the group\'s ' + C.NS_APPS +
+          ':* streams only, at read or contribute, as a plain shared access',
+        { id: CmcErrorIds.MEMBERSHIP_PERMISSIONS_INVALID, errors: violations }
+      ));
+    }
+    const features = (request.features != null && typeof request.features === 'object')
+      ? request.features as Record<string, unknown>
+      : {};
+    event.content = {
+      ...content,
+      request: {
+        ...request,
+        allowUserChoice: true,
+        features: { ...features, chat: false },
+      },
+    };
+    context.newEvent = event;
+    next();
+  };
+}
+
+/**
+ * events.create hook: `consent/member-revoke-cmc` is the server's record of
+ * an offboarding sweep. The plugin writes it through the mall; a client write
+ * of that type, with any token, is refused (403, `cmc-protected-event-write`).
+ */
+function createMemberRevokeWriteGuardHook (deps: Deps): Middleware {
+  return function cmcMemberRevokeWriteGuard (context, _params, _result, next) {
+    const event = context?.newEvent;
+    if (event == null || event.type !== C.ET_MEMBER_REVOKE) return next();
+    return next(deps.errors.forbidden(
+      'Events of type ' + C.ET_MEMBER_REVOKE + ' are written by the server only',
+      { id: CmcErrorIds.PROTECTED_EVENT_WRITE, eventType: event.type }
+    ));
   };
 }
 
@@ -237,8 +302,11 @@ function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
  *
  * Accounts that pre-date the CMC deploy — and every account on a
  * platform where creation-time provisioning is off — don't have the
- * five reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
- * `:_cmc:_internal`, `:_cmc:_internal:retries`). Creation-time
+ * six reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
+ * `:_cmc:_internal`, `:_cmc:_internal:retries`, `:_cmc:_internal:members`;
+ * the last one is also created lazily by the member ledger on accounts
+ * provisioned before it existed, since the probe below reads `:_cmc:` only).
+ * Creation-time
  * provisioning stays disabled (account-suite constraint), so they are
  * provisioned lazily, on the account's first `:_cmc:*` operation.
  *
@@ -537,8 +605,10 @@ function createCounterpartyFromStampingHook (deps: Deps): Middleware {
     if (event == null) return next();
     if (!TYPES_WITH_FROM.has(event.type)) return next();
 
+    // A membership access delivers like a peer: its member identity is the
+    // stamped counterparty too.
     const accessCmc = context?.access?.clientData?.cmc;
-    if (accessCmc?.role !== 'counterparty') return next();
+    if (accessCmc == null || !C.RELATIONSHIP_ROLES.includes(accessCmc.role as string)) return next();
 
     const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
     if (streamIds.includes(C.NS_INBOX)) return next();
@@ -593,6 +663,17 @@ function createCounterpartyFeatureGateHook (deps: Deps): Middleware {
     const event = context?.newEvent;
     if (event == null) return next();
     const accessCmc = context?.access?.clientData?.cmc;
+    // A membership access has no chat or user-alert channel toward the group
+    // in this release: refused with its own id, before the feature contract.
+    if (accessCmc?.role === C.ROLE_MEMBER) {
+      if (event.type === C.ET_CHAT || event.type === C.ET_SYSTEM_ALERT || event.type === C.ET_SYSTEM_ACK) {
+        return next(deps.errors.forbidden('A member has no chat or alert channel to the group', {
+          id: CmcErrorIds.MEMBER_CHANNEL_NOT_SUPPORTED,
+          eventType: event.type,
+        }));
+      }
+      return next();
+    }
     if (accessCmc?.role !== 'counterparty') return next();
     const features = accessCmc.features;
     if (event.type === C.ET_CHAT && features?.chat === false) {
@@ -720,13 +801,77 @@ function createInternalWriteGuardHook (deps: Deps): Middleware {
 function createAccessCreateForgePreventionHook (deps: Deps): Middleware {
   return function cmcAccessCreateForgePreventionHook (context, params, result, next) {
     const clientData = params?.clientData;
-    if (clientData != null && typeof clientData === 'object' && clientData.cmc != null) {
+    if (clientData == null || typeof clientData !== 'object' || clientData.cmc == null) return next();
+    // The one admitted write: a group's core minting a member's access on
+    // this account through the delegable (`app`) consent grant it holds.
+    // The stamp is rebuilt field by field from the authenticated grant, never
+    // copied from the payload or spread from the grant's own `counterparty`
+    // (which carries the group's back-channel endpoint, token included, and
+    // `/access-info` returns clientData to the token holder).
+    const stamp = memberChildStamp(context.access, clientData.cmc);
+    if (stamp === 'not-admitted') {
       return next(deps.errors.invalidOperation(
         'clientData.cmc is reserved for the CMC plugin and may not be supplied by user code',
-        { id: 'cmc-clientdata-cmc-forbidden' }
+        { id: CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN }
       ));
     }
+    if (stamp === 'invalid') {
+      return next(deps.errors.invalidOperation(
+        'clientData.cmc on an access created through a consent grant must be exactly ' +
+          '{ role: "member-child", member: { username, host } }',
+        { id: CmcErrorIds.MEMBER_STAMP_INVALID }
+      ));
+    }
+    params!.clientData = { ...clientData, cmc: stamp };
     next();
+  };
+}
+
+type MemberChildStamp = {
+  role: string;
+  member: { username: string; host: string };
+  group: { username: string; host: string };
+  viaAccessId: string;
+  scopeStreamId: string | null;
+  appCode: string | null;
+};
+
+const STAMP_FIELD_MAX = 200;
+
+function isStampString (v: unknown): v is string {
+  return typeof v === 'string' && v.length >= 1 && v.length <= STAMP_FIELD_MAX;
+}
+
+/**
+ * The stored `clientData.cmc` of a member's child access, built from the
+ * authenticated grant, or why none is built: `'not-admitted'` when the caller
+ * is not a delegable consent grant (the existing refusal stands), `'invalid'`
+ * when the payload is not exactly the member stamp (a distinct id, so a
+ * group's core can tell an older core's refusal from a bug of its own).
+ */
+function memberChildStamp (access: MethodContext['access'], payload: unknown): MemberChildStamp | 'not-admitted' | 'invalid' {
+  const grant = access?.clientData?.cmc;
+  if (access == null || grant == null || access.type !== 'app' || grant.role !== C.ROLE_COUNTERPARTY ||
+      typeof access.id !== 'string' || access.id.length === 0) {
+    return 'not-admitted';
+  }
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return 'invalid';
+  const p = payload as Record<string, unknown>;
+  const keys = Object.keys(p);
+  if (keys.length !== 2 || p.role !== C.ROLE_MEMBER_CHILD) return 'invalid';
+  const member = p.member;
+  if (member == null || typeof member !== 'object' || Array.isArray(member)) return 'invalid';
+  const m = member as Record<string, unknown>;
+  if (Object.keys(m).length !== 2 || !isStampString(m.username) || !isStampString(m.host)) return 'invalid';
+  const group = grant.counterparty;
+  if (!isStampString(group?.username) || !isStampString(group?.host)) return 'not-admitted';
+  return {
+    role: C.ROLE_MEMBER_CHILD,
+    member: { username: m.username, host: m.host },
+    group: { username: group!.username as string, host: group!.host as string },
+    viaAccessId: access.id,
+    scopeStreamId: typeof grant.scopeStreamId === 'string' ? grant.scopeStreamId : null,
+    appCode: typeof grant.appCode === 'string' ? grant.appCode : null,
   };
 }
 
@@ -737,7 +882,7 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
     if (clientData != null && typeof clientData === 'object' && clientData.cmc != null) {
       return next(deps.errors.invalidOperation(
         'clientData.cmc is reserved for the CMC plugin and may not be supplied by user code',
-        { id: 'cmc-clientdata-cmc-forbidden' }
+        { id: CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN }
       ));
     }
     next();
@@ -745,9 +890,34 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
 }
 
 /**
+ * accesses.update hook, after the route loaded the target
+ * (`params.targetAccess`): an access that carries `clientData.cmc` keeps it.
+ * The update merges `clientData` one level deep and `null` removes a key, so
+ * `{ clientData: { cmc: null } }` or `{ clientData: null }` would strip the
+ * namespace from any access the caller may update: a consent grant could
+ * remove the member stamp from a child it minted. Any update that touches
+ * `clientData` on such an access is refused (the paired create / update
+ * hooks already refuse writing the key, so there is no way to send it back
+ * unchanged); the plugin's own writes go through the mall and never reach
+ * this hook. Mirrors the DPoP binding guard.
+ */
+function createAccessUpdateStampGuardHook (deps: Deps): Middleware {
+  return function cmcAccessUpdateStampGuard (_context, params, _result, next) {
+    const update = params?.update;
+    if (update == null || update.clientData === undefined) return next();
+    const stored = params?.targetAccess?.clientData;
+    if (stored == null || typeof stored !== 'object' || stored.cmc == null) return next();
+    return next(deps.errors.invalidOperation(
+      'clientData cannot be updated on an access managed by the CMC plugin: its clientData.cmc would be removed',
+      { id: CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN }
+    ));
+  };
+}
+
+/**
  * accesses.create / accesses.update post-hook — per-app appScope lazy provisioning.
  *
- * The 5 reserved parents under `:_cmc:` are pre-provisioned at user
+ * The reserved parents under `:_cmc:` are pre-provisioned at user
  * creation by `provisioning.ts`. Per-app sub-trees under
  * `:_cmc:apps:<app-code>` were historically created on demand at
  * CMC-acceptance time (see `provisioning.ts:21-26`). The OAuth-grant
@@ -973,6 +1143,10 @@ const SCOPE_SEGMENT_RE = /^[a-z0-9-]{1,100}$/;
 export {
   createEnsureAcceptScopeHook,
   createCmcContentValidationHook,
+  createMembershipOfferHook,
+  createMemberRevokeWriteGuardHook,
+  createAccessUpdateStampGuardHook,
+  memberChildStamp,
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,

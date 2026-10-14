@@ -207,7 +207,9 @@ async function handleRevoke (params: {
   let counterpartyAccess: AccessLike | null = null;
   if (explicitAccessId != null) {
     const byId = accesses.find((a) => a.id === explicitAccessId) ?? null;
-    if (byId != null && byId.clientData?.cmc?.role === 'counterparty') {
+    // A membership access is revoked the same way (the group offboards a
+    // member); its sweep is the dispatch loop's job once it is gone.
+    if (byId != null && C.RELATIONSHIP_ROLES.includes(byId.clientData?.cmc?.role)) {
       counterpartyAccess = byId;
     }
     if (counterpartyAccess == null) {
@@ -581,6 +583,7 @@ function findCounterpartyAccess (
   // the same peer under the same app.
   return relationshipKey.selectRelationshipAccess({
     accesses,
+    role: C.RELATIONSHIP_ROLES,
     counterparty: {
       username: counterparty.username,
       hostSlug: slugMod.slugifyHost(counterparty.host),

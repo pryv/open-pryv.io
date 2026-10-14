@@ -26,6 +26,8 @@ const C = require('./constants.ts');
 const ao = require('./acceptOrchestration.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
+const validators = require('./validators.ts');
+const provisioning = require('./provisioning.ts');
 const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // Tree-aware consent guard (hierarchical-masking class) — see
 // business/src/accesses/consentEffectiveGuard.ts.
@@ -149,14 +151,29 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-offer-read-failed' };
   }
 
+  // A membership offer (the requester asks to join this group account): the
+  // rule on what a membership may hold is re-applied here on the offer as
+  // read, whatever the requester's core enforced at write, and the access
+  // minted below is the membership access.
+  const offerRequest = (offer.content as { request?: unknown } | undefined)?.request;
+  const isMembership = (offerRequest as { membership?: unknown } | null | undefined)?.membership === true;
+  if (isMembership) {
+    const violations = validators.membershipOfferViolations(offerRequest);
+    if (violations.length > 0) {
+      return { ok: false, reason: CmcErrorIds.MEMBERSHIP_PERMISSIONS_INVALID, detail: { errors: violations } };
+    }
+  }
+
   // The relationship's features: the offer's, narrowed by what the accept
   // asks (a `true` there never turns on a feature the offer turned off).
   // This resolved pair is what the grant, the delivered accept and the
   // trigger record, and what decides whether a chat channel is provisioned.
+  // A membership has no chat channel in this release, whatever was sent.
   const features: Features = resolveFeatures(
     featuresFromOffer(offer.content),
     (triggerEvent.content as { features?: { chat?: unknown; systemMessaging?: unknown } | null })?.features
   );
+  if (isMembership) features.chat = false;
 
   // The counterparty (requester) identity needs to be derivable. We use
   // the offer's `requesterMeta` if present, falling back to the capability
@@ -233,6 +250,8 @@ async function handleAccept (params: {
       // Same scope the anchor streams were provisioned under, so the grant
       // and its channels name one relationship consistently.
       scopeStreamId: anchorScope,
+      // `approvedBy` is completed once the delegation lineage is known (3c).
+      membership: isMembership ? { approvedBy: null } : undefined,
     });
   } catch (err: unknown) {
     const e = err as { id?: string; message?: string };
@@ -322,6 +341,37 @@ async function handleAccept (params: {
       ...((dataGrantPayload!.clientData as Record<string, unknown> | undefined) ?? {}),
       delegation: lineage,
     };
+  }
+  if (isMembership) {
+    // Who approved the member: the delegate administrator, or the owner
+    // (null). The same identity fields the accept event's `approvedBy` holds.
+    const cmcData = (dataGrantPayload!.clientData as { cmc: { membership: { approvedBy: unknown } } }).cmc;
+    cmcData.membership.approvedBy = approvedByFromLineage(lineage);
+    // The teams the member was granted must exist on this account: the member
+    // writes its invites and mint triggers there. The administrator consented
+    // to each one, so creating a missing one is part of the approval.
+    if (mall.streams?.create != null) {
+      const perms = (dataGrantPayload!.permissions as Array<{ streamId?: unknown }>) ?? [];
+      for (const p of perms) {
+        if (typeof p.streamId !== 'string' || !C.isUserCreatableStreamId(p.streamId)) continue;
+        for (const streamId of anchors.scopeAncestors(p.streamId)) {
+          try {
+            await mall.streams.create(userId, {
+              id: streamId,
+              parentId: streamId.substring(0, streamId.lastIndexOf(':')),
+              name: streamId.split(':').pop() ?? streamId,
+              clientData: { cmc: { kind: 'app-scope', autoProvisioned: true } },
+            });
+          } catch (err: unknown) {
+            if (provisioning.isAlreadyExistsError(err)) continue;
+            deps.logger?.warn?.('cmc/handleAccept: could not provision a membership scope stream (non-fatal)', {
+              streamId, error: String((err as Error)?.message || err),
+            });
+            break;
+          }
+        }
+      }
+    }
   }
 
   // 4. Create the local data-grant access. Accesses are unique on
@@ -450,6 +500,7 @@ async function handleAccept (params: {
       requesterAppCode,
       requesterOriginStreamId: originStreamId,
       offerEventId: offer?.id,
+      membership: isMembership,
       deps,
     });
   } catch (err: unknown) {
@@ -521,6 +572,25 @@ async function handleAccept (params: {
 }
 
 type AcceptFailure = { ok: false; reason: string; detail?: unknown };
+
+/**
+ * The `approvedBy` record of a membership: `{ delegate: { username,
+ * hostSlug? }, relId }` for a delegate administrator, null for the owner.
+ * Identity fields only, nothing else from the marker.
+ */
+function approvedByFromLineage (lineage: DelegationLineage | null): Record<string, unknown> | null {
+  if (lineage == null) return null;
+  const delegate = (lineage.delegate != null && typeof lineage.delegate === 'object')
+    ? lineage.delegate as { username?: unknown; hostSlug?: unknown }
+    : {};
+  if (typeof delegate.username !== 'string' || delegate.username === '') return null;
+  const record: { delegate: { username: string; hostSlug?: string }; relId: string } = {
+    delegate: { username: delegate.username },
+    relId: lineage.relId,
+  };
+  if (typeof delegate.hostSlug === 'string' && delegate.hostSlug.length > 0) record.delegate.hostSlug = delegate.hostSlug;
+  return record;
+}
 
 function delegationEnded (why: string): AcceptFailure {
   return {
@@ -695,7 +765,7 @@ async function findDataGrantByAcceptEventId (params: {
   const list = await mall.accesses.get(userId, {});
   for (const a of (Array.isArray(list) ? list : [])) {
     const cmcMeta = a?.clientData?.cmc;
-    if (cmcMeta?.role === 'counterparty' && cmcMeta?.acceptEventId === acceptEventId) {
+    if (C.RELATIONSHIP_ROLES.includes(cmcMeta?.role) && cmcMeta?.acceptEventId === acceptEventId) {
       return a;
     }
   }

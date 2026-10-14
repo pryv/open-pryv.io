@@ -389,6 +389,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
+  // Group accounts: a membership offer may only ask what a membership may
+  // hold; the server's offboarding record is never written by a client.
+  const cmcMembershipOfferHook = cmc.createMembershipOfferHook({ errors });
+  const cmcMemberRevokeWriteGuard = cmc.createMemberRevokeWriteGuardHook({ errors });
   // Account-delegation namespace + lifecycle guards. Gated on the same
   // `delegationActive` flag resolved in the RETRIEVAL section above; when
   // inactive each slot is a passthrough so the register chains stay
@@ -559,7 +563,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcEnsureReservedParentsHook,
     verifyCanCreateEventsOnStream,
     cmcInternalWriteGuard,
+    cmcMemberRevokeWriteGuard,
     cmcContentValidationHook,
+    cmcMembershipOfferHook,
     cmcAcceptAccessGateHook,
     // After the gate, so a refused write is never stamped; before the store.
     cmcAcceptStampingHook,

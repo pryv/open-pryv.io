@@ -41,7 +41,7 @@ function fakeMall (opts = {}) {
 }
 
 describe('[CMCPROV] cmc/provisioning', () => {
-  it('[CP01] RESERVED_TREE has the five expected parents in dependency order', () => {
+  it('[CP01] RESERVED_TREE has the six expected parents in dependency order', () => {
     const ids = RESERVED_TREE.map((s) => s.id);
     assert.deepEqual(ids, [
       ':_cmc:',
@@ -49,6 +49,7 @@ describe('[CMCPROV] cmc/provisioning', () => {
       ':_cmc:apps',
       ':_cmc:_internal',
       ':_cmc:_internal:retries',
+      ':_cmc:_internal:members',
     ]);
     // Every non-root entry has a parentId that appears earlier.
     const seen = new Set();
@@ -62,7 +63,7 @@ describe('[CMCPROV] cmc/provisioning', () => {
     }
   });
 
-  it('[CP02] provisions all five streams on a fresh user', async () => {
+  it('[CP02] provisions all six streams on a fresh user', async () => {
     const mall = fakeMall();
     const created = await provisionUserStreams({ mall, userId: 'u1' });
     assert.deepEqual(created, [
@@ -71,8 +72,9 @@ describe('[CMCPROV] cmc/provisioning', () => {
       ':_cmc:apps',
       ':_cmc:_internal',
       ':_cmc:_internal:retries',
+      ':_cmc:_internal:members',
     ]);
-    assert.equal(mall.created.length, 5);
+    assert.equal(mall.created.length, 6);
     assert.equal(mall.created[0].parentId, null);
     assert.equal(mall.created[1].parentId, ':_cmc:');
   });
@@ -113,6 +115,7 @@ describe('[CMCPROV] cmc/provisioning', () => {
       ':_cmc:apps',
       ':_cmc:_internal',
       ':_cmc:_internal:retries',
+      ':_cmc:_internal:members',
     ]);
   });
 

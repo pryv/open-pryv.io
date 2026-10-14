@@ -83,7 +83,9 @@ function scopeOfAccess (acc: AccessLike | null | undefined): string | null {
 
 type SelectParams = {
   accesses: AccessLike[];
-  role?: string;
+  // The role(s) a candidate may carry. The group side resolves a relationship
+  // that may be a membership with `['counterparty', 'member']`.
+  role?: string | string[];
   counterparty: { username: string; hostSlug: string };
   scopeStreamId?: string | null;
   appCode?: string | null;
@@ -123,11 +125,12 @@ function selectRelationshipAccess (params: SelectParams): AccessLike | null {
     appCodeAuthoritative = true, logger,
   } = params;
   if (!Array.isArray(accesses)) return null;
+  const roles = Array.isArray(role) ? role : [role];
 
   const candidates: AccessLike[] = [];
   for (const acc of accesses) {
     const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== role) continue;
+    if (typeof cmc?.role !== 'string' || !roles.includes(cmc.role)) continue;
     const cp = cmc?.counterparty;
     if (cp == null) continue;
     if (cp.username !== counterparty.username) continue;

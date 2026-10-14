@@ -497,6 +497,15 @@ async function handleIncomingAccept (params: {
         backChannelAccessId: access.id,
       };
       if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
+      // A membership accept (this account asked to join a group): marked so a
+      // member app matches it; from our own copy of the offer when there is
+      // one, else from the delivered accept.
+      const ownOfferRequest = (offerCopy.event?.content as { request?: { membership?: unknown } } | undefined)?.request;
+      const isMembership = offerCopy.event != null
+        ? ownOfferRequest?.membership === true
+        : acceptEvent.content?.membership === true;
+      if (isMembership) mirrorContent.membership = true;
+      else delete mirrorContent.membership;
       await deps.mall.events.create(userId, {
         streamIds: [C.NS_INBOX],
         type: C.ET_ACCEPT,

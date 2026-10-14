@@ -63,9 +63,11 @@ function createInboxWriteHook (deps: Deps): Middleware {
     const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
     if (!streamIds.includes(C.NS_INBOX)) return next();
 
-    // The access must be a counterparty-marked shared access.
+    // The access must be a relationship access: a counterparty-marked shared
+    // access, or a membership access (a member's plugin delivers its
+    // back-channel and its revoke to the group's inbox through it).
     const accessCmc = context?.access?.clientData?.cmc;
-    if (accessCmc?.role !== 'counterparty') {
+    if (accessCmc == null || !C.RELATIONSHIP_ROLES.includes(accessCmc.role)) {
       return next(deps.errors.invalidOperation(
         'Writes to ' + C.NS_INBOX + ' require a counterparty-marked shared access',
         { id: 'cmc-not-counterparty', streamId: C.NS_INBOX }

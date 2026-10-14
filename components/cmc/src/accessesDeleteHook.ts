@@ -101,7 +101,9 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
     for (const access of deletedAccesses) {
       if (access?.id == null) continue;
       const cmc = access.clientData?.cmc;
-      if (cmc?.role !== 'counterparty') {
+      // A membership access deleted outright: the member is told like any
+      // peer (the sweep of what was minted for them is the caller's job).
+      if (cmc == null || !C.RELATIONSHIP_ROLES.includes(cmc.role as string)) {
         // Not a CMC relationship access (plain app/shared token, or a
         // CMC capability access — deleting an unconsumed invite has no
         // counterparty to notify).

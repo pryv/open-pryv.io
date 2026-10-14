@@ -125,7 +125,7 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
     const cmc = after?.clientData?.cmc;
     // Only counterparty / data-grant accesses matter to CMC. Other roles
     // (e.g. capability) don't get scope-update notifications.
-    if (cmc?.role !== 'counterparty' && cmc?.role !== 'data-grant') {
+    if (cmc?.role !== 'counterparty' && cmc?.role !== 'data-grant' && cmc?.role !== C.ROLE_MEMBER) {
       return { ran: false, reason: 'not-a-cmc-managed-access' };
     }
 

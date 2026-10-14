@@ -650,7 +650,9 @@ async function isPeerDeliveredEvent (
     const acc = Array.isArray(list)
       ? list.find((a) => a?.id === createdByAccessId)
       : null;
-    return acc?.clientData?.cmc?.role === 'counterparty';
+    // A membership access is a peer for protocol deliveries: what it writes
+    // on the group account came from the member's plugin.
+    return C.RELATIONSHIP_ROLES.includes(acc?.clientData?.cmc?.role);
   } catch (_e) {
     return false;
   }

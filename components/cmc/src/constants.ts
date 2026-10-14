@@ -21,6 +21,7 @@
  *             :collectors:<counterparty>   plugin-auto-created per collector-relationship
  *     :_cmc:_internal                       plugin-internal hidden region
  *       :_cmc:_internal:retries             retry queue (per-user, plugin-managed)
+ *       :_cmc:_internal:members             group-member ledger (plugin-managed)
  *       :_cmc:_internal:offer:<capId>       per-capability single-event stream
  *       :_cmc:_internal:responses:<capId>   per-capability single-write stream
  *
@@ -32,9 +33,9 @@
  * stream the trigger event was written to, so permission scoping is a
  * natural prefix-match.
  *
- * Auto-provisioned at user-creation time: the five reserved parents
+ * Auto-provisioned at user-creation time: the six reserved parents
  * (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`,
- * `:_cmc:_internal:retries`). Everything under `:_cmc:apps:<app-code>`
+ * `:_cmc:_internal:retries`, `:_cmc:_internal:members`). Everything under `:_cmc:apps:<app-code>`
  * and `:_cmc:_internal:offer:*` / `:_cmc:_internal:responses:*` is
  * created on demand by the user or by the plugin.
  *
@@ -56,14 +57,19 @@ const NS_INBOX = NS + 'inbox';
 const NS_APPS = NS + 'apps';
 const NS_INTERNAL = NS + '_internal';
 const NS_INTERNAL_RETRIES = NS_INTERNAL + ':retries';
+// The group-member ledger: one record per child access the group's core
+// minted on a patient's core for a member (memberLedger.ts). Hidden like the
+// retry queue; created lazily on accounts provisioned before it existed.
+const NS_INTERNAL_MEMBERS = NS_INTERNAL + ':members';
 
-// The five parents auto-provisioned on every user account.
+// The six parents auto-provisioned on every user account.
 const RESERVED_PARENT_STREAM_IDS = [
   NS,
   NS_INBOX,
   NS_APPS,
   NS_INTERNAL,
   NS_INTERNAL_RETRIES,
+  NS_INTERNAL_MEMBERS,
 ];
 
 // User-creatable region root. Children are owned by the user's apps.
@@ -205,6 +211,52 @@ const ACCEPT_UPDATE_PRESERVED_FIELDS: readonly string[] = ['features'];
 // status stamps (`delivered` / `completed` / `failed` + its `failure`), the
 // mint's `pending`, a scope request's outcome. Kept from storage on update.
 const CMC_SERVER_OWNED_FIELDS: readonly string[] = ['status', 'failure'];
+
+// --- Group accounts: members, member accesses, offboarding ---
+//
+// A group account (a practice, a research team) accepts membership requests
+// from ordinary accounts; the access it mints for a member carries
+// `clientData.cmc.role === 'member'`. A member then asks the group's core for a
+// short-lived access on a patient's account (`consent/member-access-cmc`); the
+// group's core mints it on the patient's core through the relationship grant
+// it holds and hands the token back once, in the synchronous response. When a
+// membership ends the server writes a `consent/member-revoke-cmc` on the
+// group's scope stream and deletes what was minted for that member.
+const ET_MEMBER_ACCESS = 'consent/member-access-cmc';
+const ET_MEMBER_REVOKE = 'consent/member-revoke-cmc';
+// Ledger record, one per minted child (plugin-internal, never published).
+const ET_MEMBER_LEDGER = 'cmc-internal/member-cmc';
+// The roles a relationship access can carry in `clientData.cmc.role`.
+// `counterparty`: one side's access toward its peer in a consent relationship.
+// `member`: a membership access on a group account, "a peer for protocol
+// deliveries, a local actor for triggers" (it writes the inbox like a peer and
+// writes mint triggers like the account's own apps).
+// `member-child`: the access minted on a patient's account for one member,
+// stamped by the patient's core from the grant that created it.
+const ROLE_COUNTERPARTY = 'counterparty';
+const ROLE_MEMBER = 'member';
+const ROLE_MEMBER_CHILD = 'member-child';
+// The two roles that serve a relationship on the group side.
+const RELATIONSHIP_ROLES: readonly string[] = [ROLE_COUNTERPARTY, ROLE_MEMBER];
+// Content fields of a `consent/member-access-cmc` only the server writes
+// (beside `status` / `failure`): dropped from a client create and kept from
+// storage on update (memberAccessServerOwnedFieldsHook).
+const MEMBER_ACCESS_SERVER_OWNED_FIELDS: readonly string[] = ['memberAccess', 'member', 'relationshipAccessId'];
+// What ended a membership, as recorded on the sweep trigger.
+const MEMBER_REVOKE_REASONS: readonly string[] = ['revoke', 'accesses.delete', 'expired', 'narrowed', 'detach', 'account-deleted'];
+// How a minted child names its member on the patient's core.
+const MEMBER_ATTRIBUTION_STAMPED = 'stamped';
+const MEMBER_ATTRIBUTION_NAME_ONLY = 'name-only';
+// Config keys (`cmc:memberAccess:*`) with the values used when unset.
+const MEMBER_ACCESS_CONFIG_DEFAULTS = {
+  defaultTtl: 86400,
+  minTtl: 60,
+  maxTtl: 604800,
+  ratePerMinute: 30,
+  maxInFlightPerMembership: 1,
+  allowNameOnly: true,
+  sweepIntervalMs: 60000,
+} as const;
 // Back-channel info delivery (requester → accepter, post-acceptance).
 // After the requester mints the back-channel access (handleIncomingAccept),
 // they POST one of these to the accepter's :_cmc:inbox via the data-grant
@@ -222,6 +274,9 @@ const ET_BACK_CHANNEL = 'consent/back-channel-cmc';
 const ET_INVALIDATE_LINK = 'consent/invalidate-link-cmc';
 
 const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE, ET_BACK_CHANNEL];
+// Group-account triggers: the mint (client-written on the group's scope
+// stream) and the sweep (server-written there; a client write is refused).
+const EVENT_TYPES_MEMBER = [ET_MEMBER_ACCESS, ET_MEMBER_REVOKE];
 // The types a counterparty token may deliver on `:_cmc:inbox`. An accept and a
 // refuse are not among them: they reach the requester only through the
 // capability's responses stream (the inbox holds the server's copy of an accept).
@@ -246,7 +301,9 @@ const ALL_EVENT_TYPES = [
   ...EVENT_TYPES_CHAT,
   ...EVENT_TYPES_SYSTEM,
   ...EVENT_TYPES_CAPABILITY,
+  ...EVENT_TYPES_MEMBER,
   ET_RETRY,
+  ET_MEMBER_LEDGER,
 ];
 
 const ALL_EVENT_TYPES_SET = new Set(ALL_EVENT_TYPES);
@@ -276,9 +333,25 @@ export {
   NS_APPS,
   NS_INTERNAL,
   NS_INTERNAL_RETRIES,
+  NS_INTERNAL_MEMBERS,
   RESERVED_PARENT_STREAM_IDS,
   USER_CREATABLE_PARENT_STREAM_ID,
   APP_RESERVED_SEGMENTS,
+
+  // group accounts
+  ET_MEMBER_ACCESS,
+  ET_MEMBER_REVOKE,
+  ET_MEMBER_LEDGER,
+  ROLE_COUNTERPARTY,
+  ROLE_MEMBER,
+  ROLE_MEMBER_CHILD,
+  RELATIONSHIP_ROLES,
+  MEMBER_ACCESS_SERVER_OWNED_FIELDS,
+  MEMBER_REVOKE_REASONS,
+  MEMBER_ATTRIBUTION_STAMPED,
+  MEMBER_ATTRIBUTION_NAME_ONLY,
+  MEMBER_ACCESS_CONFIG_DEFAULTS,
+  EVENT_TYPES_MEMBER,
 
   // stream-id builders
   chatsParentUnder,

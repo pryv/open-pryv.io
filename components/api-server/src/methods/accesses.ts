@@ -272,6 +272,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   const cmcAccessCreateForgePreventionHook = cmc.createAccessCreateForgePreventionHook({ errors });
   const cmcAccessUpdateForgePreventionHook = cmc.createAccessUpdateForgePreventionHook({ errors });
+  // After the target is loaded: an access carrying `clientData.cmc` keeps it.
+  const cmcAccessUpdateStampGuardHook = cmc.createAccessUpdateStampGuardHook({ errors });
   const cmcAccessProvisionAppScopeHook = cmc.createAccessProvisionAppScopeHook({
     mall,
     logger: getLogger('cmc:access-provision-app-scope'),
@@ -610,6 +612,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     cmcAccessUpdateForgePreventionHook,
     delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
+    cmcAccessUpdateStampGuardHook,
     delegationAccessesUpdateGuardHook,
     delegationAccessesUpdateMarkerPreserveHook,
     dpopBindingUpdateGuard,
@@ -992,8 +995,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   });
   setDeletionTeardownStep('cmc', async function revokeCmcRelationshipsOfDeletedAccount (account: { id: string }) {
     const all = (await mallForCmc.accesses.get(account.id, {})) as AccessLike[];
+    // Counterparty grants and the memberships of a group account alike.
     const relationships = (all || []).filter((a) => a?.deleted == null &&
-      (a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role === 'counterparty');
+      cmc.RELATIONSHIP_ROLES.includes((a?.clientData as { cmc?: { role?: unknown } } | null | undefined)?.cmc?.role));
     if (relationships.length === 0) return;
     trackTeardownDelivery(Promise.resolve()
       .then(() => cmcAccountDeletionNotice(account.id, relationships))
