@@ -421,7 +421,7 @@ describe('[BSTG] consumer.consume writes nothing before an accepted ack', functi
     assertNothingWritten();
   });
 
-  it('[BSTG5] a config directory that did not exist is not left behind', async () => {
+  it('[BSTG7] a config directory that did not exist is not left behind', async () => {
     fs.rmSync(configDir, { recursive: true });
     const nested = path.join(tmp, 'new', 'config');
     const { bundlePath } = writeBundle(tmp);
