@@ -383,6 +383,43 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       assert.strictEqual(res.body.event.content.failure?.reason, C.CmcErrorIds.MEMBER_ACCESS_GRANT_NOT_DELEGABLE);
     });
 
+    it('[GA14] a member access never outlives the membership: a membership with an end date caps the child, a shortened one re-mints within the new bound', async function () {
+      const m4 = await joinGroup('team-exp');
+      await invitePatient(m4.teamStream, m4.membershipToken);
+      const end = Math.floor(Date.now() / 1000) + 3600;
+      const upd = await coreRequest.put(group.accessesPath + '/' + m4.membershipAccess.id).set('Authorization', group.token).send({ expireAfter: 3600 });
+      assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+      const first = (await mint(m4.teamStream, m4.membershipToken)).res;
+      assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+      assert.ok(first.body.memberAccess.expires <= end + 5, 'capped at the membership: ' + first.body.memberAccess.expires + ' <= ' + end);
+      const shorter = Math.floor(Date.now() / 1000) + 1800;
+      // An updated access is addressed by the id the last answer returned (its serial).
+      const upd2 = await coreRequest.put(group.accessesPath + '/' + upd.body.access.id).set('Authorization', group.token).send({ expireAfter: 1800 });
+      assert.strictEqual(upd2.status, 200, JSON.stringify(upd2.body));
+      const second = (await mint(m4.teamStream, m4.membershipToken)).res;
+      assert.strictEqual(second.status, 201, JSON.stringify(second.body));
+      assert.notStrictEqual(second.body.memberAccess.accessId, first.body.memberAccess.accessId, 're-minted within the new bound');
+      assert.ok(second.body.memberAccess.expires <= shorter + 5);
+      assert.strictEqual(await tokenLivesOn(patient, new URL(first.body.memberAccess.apiEndpoint).username), null, 'the longer child is gone');
+      // A membership with less than minTtl left refuses.
+      const upd3 = await coreRequest.put(group.accessesPath + '/' + upd2.body.access.id).set('Authorization', group.token).send({ expireAfter: 30 });
+      assert.strictEqual(upd3.status, 200, JSON.stringify(upd3.body));
+      const third = (await mint(m4.teamStream, m4.membershipToken)).res;
+      assert.strictEqual(third.status, 400);
+      assert.strictEqual(third.body.error?.data?.id, C.CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE);
+    });
+
+    it('[GA15] a member asks for named data streams only: a star offer yields no default and a star ask is refused', async function () {
+      const m5 = await joinGroup('team-star');
+      await invitePatient(m5.teamStream, m5.membershipToken, { permissions: [{ streamId: '*', level: 'read' }] });
+      let r = (await mint(m5.teamStream, m5.membershipToken, { permissions: [{ streamId: '*', level: 'read' }] })).res;
+      assert.strictEqual(r.status, 400);
+      assert.strictEqual(r.body.error?.data?.id, C.CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
+      r = (await mint(m5.teamStream, m5.membershipToken)).res;
+      assert.strictEqual(r.status, 400, 'no named data stream was offered');
+      assert.strictEqual(r.body.error?.data?.id, C.CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
+    });
+
     it('[GA13] a patient core of an older release refuses the stamp: the access is minted name-only', async function () {
       const m3 = await joinGroup('team-old');
       await invitePatient(m3.teamStream, m3.membershipToken);

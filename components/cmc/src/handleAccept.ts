@@ -345,8 +345,15 @@ async function handleAccept (params: {
   if (isMembership) {
     // Who approved the member: the delegate administrator, or the owner
     // (null). The same identity fields the accept event's `approvedBy` holds.
+    const approvedBy = approvedByFromLineage(lineage);
+    // A delegate administrator may not approve their own membership: the
+    // membership would be a delegate token in all but name, publishing
+    // invites the owner never consented to and free of the delegation guard.
+    if (approvedBy != null && isSameIdentity(approvedBy.delegate as { username: string; hostSlug?: string }, counterparty)) {
+      return { ok: false, reason: CmcErrorIds.MEMBERSHIP_PERMISSIONS_INVALID, detail: { errors: ['a delegate administrator cannot approve their own membership'] } };
+    }
     const cmcData = (dataGrantPayload!.clientData as { cmc: { membership: { approvedBy: unknown } } }).cmc;
-    cmcData.membership.approvedBy = approvedByFromLineage(lineage);
+    cmcData.membership.approvedBy = approvedBy;
     // The teams the member was granted must exist on this account: the member
     // writes its invites and mint triggers there. The administrator consented
     // to each one, so creating a missing one is part of the approval.
@@ -590,6 +597,17 @@ function approvedByFromLineage (lineage: DelegationLineage | null): Record<strin
   };
   if (typeof delegate.hostSlug === 'string' && delegate.hostSlug.length > 0) record.delegate.hostSlug = delegate.hostSlug;
   return record;
+}
+
+/** The delegate of an `approvedBy` marker and a counterparty identity name one account. */
+function isSameIdentity (delegate: { username: string; hostSlug?: string }, identity: { username: string; host: string }): boolean {
+  if (delegate.username !== identity.username) return false;
+  if (typeof delegate.hostSlug !== 'string' || delegate.hostSlug.length === 0) return true;
+  try {
+    return slugMod.slugifyHost(identity.host) === delegate.hostSlug;
+  } catch (_e) {
+    return true;
+  }
 }
 
 function delegationEnded (why: string): AcceptFailure {

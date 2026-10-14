@@ -292,10 +292,12 @@ describe('[DELHOOK] delegation/hooks', () => {
 
     it('[DDG04] an access the host declares exempt passes (a group membership a delegate approved), the rest is still refused', async () => {
       const { factory } = fakeErrors();
-      const exempt = (access) => access?.clientData?.cmc?.role === 'member';
-      const mw = createDelegatedGrantGuardHook({ errors: factory }, GATED, { exempt });
+      const exempt = (access, type) => type === 'consent/accept-cmc' && access?.clientData?.cmc?.role === 'member';
+      const mw = createDelegatedGrantGuardHook({ errors: factory }, new Set(['consent/accept-cmc', 'consent/scope-update-cmc']), { exempt });
       const membership = { id: 'm1', clientData: { delegation: childMarker, cmc: { role: 'member' } } };
       assert.equal(await runMiddleware(mw, { access: membership, newEvent: { type: 'consent/accept-cmc' } }, {}, {}), undefined);
+      const scopeUpdate = await runMiddleware(mw, { access: membership, newEvent: { type: 'consent/scope-update-cmc' } }, {}, {});
+      assert.equal(scopeUpdate?.details?.id, 'delegation-grant-requires-owner', 'the exemption is per type');
       const other = { id: 'c1', clientData: { delegation: childMarker, cmc: { role: 'counterparty' } } };
       const err = await runMiddleware(mw, { access: other, newEvent: { type: 'consent/accept-cmc' } }, {}, {});
       assert.equal(err?.details?.id, 'delegation-grant-requires-owner');

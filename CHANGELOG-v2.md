@@ -137,17 +137,20 @@ token may delete only the `shared` accesses it created. Operators hosting a grou
   `accesses.delete` with an app token now refuses (403 `forbidden`) an access of another type
   whose `createdBy` names it, the rule `accesses.update` already applied. An app can only create
   `shared` accesses, so no regular caller is affected.
-- **Behaviour change: `accesses.update` refuses `clientData` on an access managed by the CMC
-  plugin.** An update that sends `clientData` (any value, `null` included) for an access carrying
-  `clientData.cmc` (consent grants, back-channels, capabilities, memberships, member accesses) is
-  refused with 400 `invalid-operation`, `cmc-clientdata-cmc-forbidden`. Before, `{ clientData:
-  null }` or `{ clientData: { cmc: null } }` removed the plugin's record (through a delegable grant,
-  the member stamp of an access it created). Updates that leave `clientData` out are unaffected.
+- **Behaviour change: `accesses.update` cannot remove the CMC plugin's record from an access.** An
+  update that sends `clientData: null`, or a `clientData` carrying a `cmc` key (`null` included),
+  for an access carrying `clientData.cmc` (consent grants, back-channels, capabilities, memberships,
+  member accesses) is refused with 400 `invalid-operation`, `cmc-clientdata-cmc-forbidden`. Before,
+  `{ clientData: null }` or `{ clientData: { cmc: null } }` removed the plugin's record (through a
+  delegable grant, the member stamp of an access it created). Updating other `clientData` keys
+  merges them beside the record, as before.
 - **Behaviour change (delegation): a membership approved by a delegate administrator ends with the
   delegation.** It carries the delegation lineage, so detaching that delegate deletes it (unless the
   owner keeps it in `keepAccessIds`), tells the member and sweeps the member's accesses (reason
-  `detach`). It is not a delegate token for what the member publishes: the delegation grant guard
-  (`delegation-grant-requires-owner`) does not apply to the patient invites written through it.
+  `detach`). It is not a delegate token for the patient invites the member publishes: the delegation
+  grant guard (`delegation-grant-requires-owner`) does not apply to `consent/request-cmc` written
+  through it (it still applies to everything else). A delegate administrator cannot approve a
+  membership requested from their own account (`cmc-membership-permissions-invalid`).
 - **Directed invites were never routed.** `consent/request-cmc` `content.to` is recorded, not
   delivered, on the same platform as across platforms; the component's README and implementer's
   guide described a same-platform inbox delivery that does not exist. Hand the capability URL over.

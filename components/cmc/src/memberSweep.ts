@@ -169,7 +169,7 @@ function createMemberSweep (deps: SweepDeps) {
     const records = (await ledger.recordsOfRelationship(ledgerDeps, userId, relationshipAccessId))
       .filter((r) => r.state === 'live' || r.state === 'residual');
     for (const r of records) {
-      try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent'); } catch (_e) { /* best-effort */ }
+      try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId); } catch (_e) { /* best-effort */ }
     }
     return records.length;
   }
@@ -182,7 +182,7 @@ function createMemberSweep (deps: SweepDeps) {
     for (const r of records) {
       if (r.state !== 'live') continue;
       if (typeof r.expires === 'number' && r.expires < t) {
-        try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent'); expired += 1; } catch (_e) { /* best-effort */ }
+        try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId); expired += 1; } catch (_e) { /* best-effort */ }
         continue;
       }
       const list = byMembership.get(r.membershipAccessId) ?? [];

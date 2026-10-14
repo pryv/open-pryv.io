@@ -383,10 +383,15 @@ async function tearDownRelationship (params: {
   if (scopeStreamId != null && counterparty != null &&
       typeof counterparty.username === 'string' && typeof counterparty.host === 'string') {
     const hostSlug = slugMod.slugifyHost(counterparty.host);
+    // Siblings of the SAME role only: one account can be both a member of
+    // the group and one of its patients under the same scope, and a member
+    // leaving must not take the patient relationship with it (nor the
+    // reverse).
+    const role = createdByAccess.clientData?.cmc?.role;
     for (const acc of accessList) {
       if (acc == null || acc.id === createdByAccess.id) continue;
       const cmc = acc.clientData?.cmc;
-      if (cmc == null || !C.RELATIONSHIP_ROLES.includes(cmc.role as string)) continue;
+      if (cmc == null || cmc.role !== role) continue;
       const cp = cmc.counterparty;
       if (cp == null || cp.username !== counterparty.username) continue;
       if (typeof cp.host !== 'string' || slugMod.slugifyHost(cp.host) !== hostSlug) continue;

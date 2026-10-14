@@ -61,7 +61,9 @@ type LedgerMall = { events: MallEventsLike; streams?: MallStreamsLike };
 
 type LedgerDeps = { mall: LedgerMall; logger?: CmcLogger; now?: () => number };
 
-const LIST_LIMIT = 10_000;
+// Read in pages: a group of 50 members and 250 patients holds 12,500 records.
+const PAGE_SIZE = 1_000;
+const MAX_PAGES = 100;
 
 function nowSeconds (deps: LedgerDeps): number {
   return (deps.now ?? (() => Date.now() / 1000))();
@@ -99,26 +101,37 @@ function recordOf (event: Record<string, unknown>): StoredLedgerRecord | null {
   return { ...(c as LedgerRecord), eventId: event.id };
 }
 
-/** Every record of the account (filtered by the caller). */
+/** Every record of the account (filtered by the caller), read page by page. */
 async function listRecords (deps: LedgerDeps, userId: string): Promise<StoredLedgerRecord[]> {
-  let events: Array<Record<string, unknown>>;
-  try {
-    events = await deps.mall.events.get(userId, {
-      streams: [{ any: [C.NS_INTERNAL_MEMBERS] }],
-      limit: LIST_LIMIT,
-    });
-  } catch (err: unknown) {
-    // A stream that does not exist yet (an older account before its first
-    // mint) reads as no record.
-    deps.logger?.debug?.('cmc/memberLedger: ledger read failed, treated as empty', {
-      userId, error: String((err as Error)?.message || err),
-    });
-    return [];
-  }
   const out: StoredLedgerRecord[] = [];
-  for (const ev of Array.isArray(events) ? events : []) {
-    const r = recordOf(ev);
-    if (r != null) out.push(r);
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    let events: Array<Record<string, unknown>>;
+    try {
+      events = await deps.mall.events.get(userId, {
+        streams: [{ any: [C.NS_INTERNAL_MEMBERS] }],
+        limit: PAGE_SIZE,
+        skip: page * PAGE_SIZE,
+      });
+    } catch (err: unknown) {
+      // A stream that does not exist yet (an older account before its first
+      // mint) reads as no record.
+      if (page === 0) {
+        deps.logger?.debug?.('cmc/memberLedger: ledger read failed, treated as empty', {
+          userId, error: String((err as Error)?.message || err),
+        });
+      }
+      return out;
+    }
+    const list = Array.isArray(events) ? events : [];
+    for (const ev of list) {
+      const r = recordOf(ev);
+      if (r != null && !seen.has(r.eventId)) { seen.add(r.eventId); out.push(r); }
+    }
+    if (list.length < PAGE_SIZE) break;
+    if (page === MAX_PAGES - 1) {
+      deps.logger?.warn?.('cmc/memberLedger: the ledger exceeds the read ceiling; records beyond it are not seen', { userId, ceiling: PAGE_SIZE * MAX_PAGES });
+    }
   }
   return out;
 }
@@ -151,18 +164,22 @@ async function findRecord (deps: LedgerDeps, userId: string, membershipAccessId:
 
 /**
  * Write a record: in place when `existing` is given (the pair's record is
- * reused for the new child), as a new event otherwise. Returns the event id.
+ * reused for the new child), as a new event otherwise. Returns the event id,
+ * or null when the in-place write did not apply: the stored record no longer
+ * names `existing.childAccessId` (another worker replaced the child
+ * meanwhile), so the caller's child is not the pair's and must not be kept.
  */
-async function writeRecord (deps: LedgerDeps, userId: string, record: LedgerRecord, existing?: StoredLedgerRecord | null): Promise<string> {
+async function writeRecord (deps: LedgerDeps, userId: string, record: LedgerRecord, existing?: StoredLedgerRecord | null): Promise<string | null> {
   const content: LedgerRecord = { ...record, stateChangedAt: record.stateChangedAt ?? nowSeconds(deps) };
   if (existing != null) {
-    await deps.mall.events.updateWithMerge(userId, existing.eventId, (stored) => ({
-      ...stored,
-      content,
-      modified: nowSeconds(deps),
-      modifiedBy: C.SYSTEM_ACCESS_ID,
-    }), null, { skipVersioning: true });
-    return existing.eventId;
+    let applied = false;
+    await deps.mall.events.updateWithMerge(userId, existing.eventId, (stored) => {
+      const current = (stored.content as Partial<LedgerRecord> | null | undefined)?.childAccessId;
+      if (current !== existing.childAccessId) return stored;
+      applied = true;
+      return { ...stored, content, modified: nowSeconds(deps), modifiedBy: C.SYSTEM_ACCESS_ID };
+    }, null, { skipVersioning: true });
+    return applied ? existing.eventId : null;
   }
   await ensureLedgerStream(deps, userId);
   const created = await deps.mall.events.create(userId, {
@@ -175,19 +192,26 @@ async function writeRecord (deps: LedgerDeps, userId: string, record: LedgerReco
   return created.id;
 }
 
-/** Change a record's state (and optionally other fields). */
-async function setState (deps: LedgerDeps, userId: string, eventId: string, state: LedgerState, patch: Partial<LedgerRecord> = {}): Promise<void> {
-  await deps.mall.events.updateWithMerge(userId, eventId, (stored) => ({
-    ...stored,
-    content: {
-      ...((stored.content as Record<string, unknown> | null | undefined) ?? {}),
-      ...patch,
-      state,
-      stateChangedAt: nowSeconds(deps),
-    },
-    modified: nowSeconds(deps),
-    modifiedBy: C.SYSTEM_ACCESS_ID,
-  }), null, { skipVersioning: true });
+/**
+ * Change a record's state (and optionally other fields), only while the
+ * stored record still names `expectedChildId` (compare-and-set: a verdict on
+ * a child must not land on the child that replaced it meanwhile). Returns
+ * whether the change applied.
+ */
+async function setState (deps: LedgerDeps, userId: string, eventId: string, state: LedgerState, expectedChildId: string, patch: Partial<LedgerRecord> = {}): Promise<boolean> {
+  let applied = false;
+  await deps.mall.events.updateWithMerge(userId, eventId, (stored) => {
+    const content = (stored.content as Record<string, unknown> | null | undefined) ?? {};
+    if (content.childAccessId !== expectedChildId) return stored;
+    applied = true;
+    return {
+      ...stored,
+      content: { ...content, ...patch, state, stateChangedAt: nowSeconds(deps) },
+      modified: nowSeconds(deps),
+      modifiedBy: C.SYSTEM_ACCESS_ID,
+    };
+  }, null, { skipVersioning: true });
+  return applied;
 }
 
 /**

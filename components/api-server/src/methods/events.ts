@@ -443,10 +443,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // accept a consent for the account it manages and detach revokes it.
   // A group membership approved by a delegate administrator carries the
   // delegation lineage (it ends at detach) but is not a delegate token: the
-  // patient invites a member publishes through it are the group's.
+  // patient invites a member publishes through it are the group's. The
+  // exemption covers the invite only (a membership cannot write a scope
+  // update anyway: it is peer-delivered and skipped).
   const delegationDelegatedGrantGuardHook = delegationActive
     ? delegation.createDelegatedGrantGuardHook({ errors }, new Set([cmc.ET_SYSTEM_SCOPE_UPDATE, cmc.ET_REQUEST]), {
-      exempt: (access: unknown) => (access as { clientData?: { cmc?: { role?: unknown } } } | null | undefined)?.clientData?.cmc?.role === cmc.ROLE_MEMBER,
+      exempt: (access: unknown, type: string) => type === cmc.ET_REQUEST &&
+        (access as { clientData?: { cmc?: { role?: unknown } } } | null | undefined)?.clientData?.cmc?.role === cmc.ROLE_MEMBER,
     })
     : delegationPassthrough;
   // Delegation lineage reader for the CMC accept (approvedBy stamp + data

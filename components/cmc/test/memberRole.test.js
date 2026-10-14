@@ -225,16 +225,22 @@ describe('[CMCMB] cmc group accounts: the member role and the membership offer',
         const err = await run(mw, { access: GRANT }, { clientData: { cmc } }, {});
         assert.equal(err?.details?.id, CmcErrorIds.MEMBER_STAMP_INVALID, JSON.stringify(cmc));
       }
+      // A stamped child holds named data streams only.
+      for (const permissions of [[{ streamId: '*', level: 'read' }], [{ streamId: ':_cmc:inbox', level: 'read' }]]) {
+        const err = await run(mw, { access: GRANT }, { permissions, clientData: { cmc: PAYLOAD } }, {});
+        assert.equal(err?.details?.id, CmcErrorIds.MEMBER_STAMP_INVALID, JSON.stringify(permissions));
+      }
     });
 
-    it('[MB13] an update that would remove the stamp ({ cmc: null }, { clientData: null }) is refused; an untouched clientData passes', async () => {
+    it('[MB13] an update that would remove the stamp ({ cmc: null }, { clientData: null }) is refused; other clientData keys and an untouched clientData pass', async () => {
       const { factory } = fakeErrors();
       const guard = hooks.createAccessUpdateStampGuardHook({ errors: factory });
       const target = { id: 'child', clientData: { cmc: { role: 'member-child' } } };
-      for (const clientData of [{ cmc: null }, null, { other: 1 }]) {
+      for (const clientData of [{ cmc: null }, null, { cmc: undefined }]) {
         const err = await run(guard, {}, { id: 'child', update: { clientData }, targetAccess: target }, {});
         assert.equal(err?.details?.id, CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN, JSON.stringify(clientData));
       }
+      assert.equal(await run(guard, {}, { id: 'child', update: { clientData: { other: 1 } }, targetAccess: target }, {}), undefined, 'another key merges beside the stamp');
       assert.equal(await run(guard, {}, { id: 'child', update: { name: 'n' }, targetAccess: target }, {}), undefined);
       assert.equal(await run(guard, {}, { id: 'plain', update: { clientData: null }, targetAccess: { id: 'plain', clientData: { x: 1 } } }, {}), undefined);
     });
@@ -309,6 +315,24 @@ describe('[CMCMB] cmc group accounts: the member role and the membership offer',
       assert.equal(updates[0].id, 'acc-membership');
       assert.equal(updates[0].update.clientData.cmc.role, 'member', 'the role is kept');
       assert.equal(updates[0].update.clientData.cmc.counterparty.apiEndpoint, 'https://bc-tok@member.example.com/');
+    });
+
+    it('[MB25] one account holding both roles under one scope: a back-channel stamps the access it was written with, and a revoke tears down same-role siblings only', async () => {
+      const both = { username: 'staff', host: 'member.example.com' };
+      const membership = { id: 'acc-m', created: 2, clientData: { cmc: { role: 'member', scopeStreamId: TEAM_A, counterparty: both } } };
+      const patientRel = { id: 'acc-p', created: 1, clientData: { cmc: { role: 'counterparty', scopeStreamId: TEAM_A, counterparty: both } } };
+      const updates = [];
+      const mall = { accesses: { async get () { return [membership, patientRel]; }, async update (u, p) { updates.push(p); return null; } } };
+      const content = { from: both, apiEndpoint: 'https://g@patient.example.com/', scopeStreamId: TEAM_A, remoteCollectorStreamId: TEAM_A + ':collectors:x' };
+      let r = await handleIncomingBackChannel({ userId: 'group', event: { type: C.ET_BACK_CHANNEL, streamIds: [':_cmc:inbox'], createdBy: 'acc-p caller', content }, deps: { mall } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(updates[0].id, 'acc-p', 'bound to the writer, not the newest same-identity access');
+      r = await handleIncomingBackChannel({ userId: 'group', event: { type: C.ET_BACK_CHANNEL, streamIds: [':_cmc:inbox'], createdBy: 'acc-m', content }, deps: { mall } });
+      assert.equal(updates[1].id, 'acc-m');
+      const deleted = [];
+      const mall2 = { accesses: { async get () { return [membership, patientRel]; }, async delete (u, p) { deleted.push(p.id); } }, events: { async updateWithMerge () { return null; }, async getOne () { return null; }, async update () {} } };
+      const rr = await handleIncomingRevoke({ userId: 'group', event: { type: C.ET_REVOKE, streamIds: [':_cmc:inbox'], createdBy: 'acc-m', content: {} }, deps: { mall: mall2 } });
+      assert.deepEqual(rr.deletedAccessIds, ['acc-m'], 'the patient relationship of the same person stays');
     });
   });
 
@@ -403,6 +427,28 @@ describe('[CMCMB] cmc group accounts: the member role and the membership offer',
       const created = mall.calls.accessesCreated[0];
       assert.deepEqual(created.clientData.cmc.membership.approvedBy, { delegate: { username: 'carer', hostSlug: 'x' }, relId: 'rel-1' });
       assert.equal(created.clientData.delegation.relId, 'rel-1');
+    });
+
+    it('[MB34] a delegate administrator cannot approve their own membership', async () => {
+      const mall = fakeMall();
+      mall.accesses.getOne = async (u, { id }) => (id === 'pat-1' ? { id: 'pat-1', clientData: { delegation: { kind: 'delegate-pat', relId: 'rel-1', delegate: { username: 'carer', hostSlug: 'member-example-com' } } } } : null);
+      const { fetch } = fakeFetch([{ status: 200, body: { events: [{ ...MEMBERSHIP_OFFER, content: { ...MEMBERSHIP_OFFER.content, requesterUsername: 'carer', requesterHost: 'member.example.com' } }] } }]);
+      const lineage = { kind: 'delegated-child', relId: 'rel-1', delegate: { username: 'carer', hostSlug: 'member-example-com' }, viaAccessId: 'pat-1' };
+      const r = await handleAccept({
+        userId: 'group',
+        triggerEvent: { id: 'evt-acc-m', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:practice'], content: { capabilityUrl: 'https://Tok@member.example.com/', approvedBy: { relId: 'rel-1' } } },
+        selfIdentity: GROUP_ID,
+        deps: {
+          mall,
+          fetch,
+          relationshipExists: async () => true,
+          triggerAccess: { canCreateAccess: async () => true },
+          lineageOf: (access) => (access?.id === 'pat-1' ? { kind: 'delegate-pat', relId: 'rel-1', delegate: lineage.delegate, viaAccessId: 'pat-1' } : lineage),
+        },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, CmcErrorIds.MEMBERSHIP_PERMISSIONS_INVALID);
+      assert.equal(mall.calls.accessesCreated.length, 0);
     });
 
     it('[MB33] the member side marks its inbox mirror from its own copy of the offer, never from the delivered accept alone when a copy exists', async () => {

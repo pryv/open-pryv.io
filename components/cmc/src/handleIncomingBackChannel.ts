@@ -79,7 +79,7 @@ type IncomingBackChannelResult =
 
 async function handleIncomingBackChannel (params: {
   userId: string;
-  event: { type: string; content: BackChannelEventContent; streamIds?: string[] };
+  event: { type: string; content: BackChannelEventContent; streamIds?: string[]; createdBy?: string };
   deps: {
     mall: MallLike;
     logger?: CmcLogger;
@@ -144,19 +144,28 @@ async function handleIncomingBackChannel (params: {
     relationshipKey.scopeOfChannelStream(remoteChatStreamId) ??
     relationshipKey.scopeOfChannelStream(remoteCollectorStreamId);
 
-  const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
-    accesses,
-    // A member's plugin delivers its back-channel to the group the same way:
-    // the grant to stamp is then the membership access.
-    role: C.RELATIONSHIP_ROLES,
-    counterparty: { username: fromUsername, hostSlug: slugMod.slugifyHost(fromHost) },
-    scopeStreamId: deliveryScope,
-    appCode: c.appCode,
-    // The peer derived this independently and may have fallen back to
-    // 'unknown'; it must not be able to drop the handshake.
-    appCodeAuthoritative: false,
-    logger: deps.logger,
-  });
+  // The requester delivers its back-channel THROUGH the grant it received,
+  // so the access the delivery was written with is the one to stamp. Bound to
+  // it whenever that access is a relationship access (the live path); the
+  // identity-and-scope selector stays for a delivery without a resolvable
+  // writer (unit invocations, retries of older snapshots). A member's plugin
+  // delivers to the group the same way: the membership access is the writer.
+  const writerId = typeof event.createdBy === 'string' ? event.createdBy.split(' ')[0] : null;
+  const writer = writerId == null ? null : accesses.find((a) => a?.id === writerId) ?? null;
+  const writerRole = writer?.clientData?.cmc?.role;
+  const chosen: AccessLike | null = (writer != null && typeof writerRole === 'string' && C.RELATIONSHIP_ROLES.includes(writerRole))
+    ? writer
+    : relationshipKey.selectRelationshipAccess({
+      accesses,
+      role: C.RELATIONSHIP_ROLES,
+      counterparty: { username: fromUsername, hostSlug: slugMod.slugifyHost(fromHost) },
+      scopeStreamId: deliveryScope,
+      appCode: c.appCode,
+      // The peer derived this independently and may have fallen back to
+      // 'unknown'; it must not be able to drop the handshake.
+      appCodeAuthoritative: false,
+      logger: deps.logger,
+    });
   if (chosen == null) {
     return {
       ok: false,

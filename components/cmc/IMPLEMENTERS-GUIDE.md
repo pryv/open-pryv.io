@@ -1462,7 +1462,9 @@ There is no `name`: the server names the access `cmc-member--<member slug>--<has
 }
 ```
 
-**Asking again** for the same patient with the same permissions returns the same access while it has more than 5 minutes left (its token re-read through the grant); other permissions, or an access about to expire, are replaced; one the patient deleted is minted again while the grant lasts. Idempotency is keyed by (membership, patient relationship), never by name.
+**Asking again** for the same patient with exactly the same permissions returns the same access while it has more than 5 minutes left (its token re-read through the grant); other permissions (more or fewer), or an access about to expire, are replaced; one the patient deleted is minted again while the grant lasts. Idempotency is keyed by (membership, patient relationship), never by name. An access is never minted over one the patient's core did not confirm gone: if that core cannot be reached while the previous access is replaced, the ask fails (`cmc-member-access-peer-unreachable`) and the previous access stays recorded.
+
+**Bounds.** A member asks for named data streams only (the stream ids the group's invite offered, at a level not above the offered one): never `*`, never a `:_cmc:` stream. The access never outlives the membership: when the membership access has an expiry, `expireAfter` is capped at what is left of it, and an ask is refused with `cmc-member-access-expiry-out-of-range` when less than `minTtl` remains.
 
 **The access on the patient's account** is `shared`, created by the grant (`createdBy` = the grant), cannot call `accesses.*`, and carries:
 

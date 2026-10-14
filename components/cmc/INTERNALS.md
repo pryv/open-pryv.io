@@ -654,7 +654,7 @@ Wire shapes: [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md#reference-group-accou
 | `cmcAcceptAccessGate` | **not** exempt |
 | `createMemberAccessGateHook` | the only role admitted to write `consent/member-access-cmc` |
 
-**Delegation.** A membership accepted with a delegate token carries `clientData.delegation` (it ends at detach). `delegation.createDelegatedGrantGuardHook(deps, types, { exempt })` takes a host-declared exemption; `events.ts` exempts `role === 'member'` accesses, so a delegate-approved membership is delegation-derived for its own lifetime but not for the patient invites the member publishes through it (those belong to the group, as under an owner-approved membership).
+**Delegation.** A membership accepted with a delegate token carries `clientData.delegation` (it ends at detach). `delegation.createDelegatedGrantGuardHook(deps, types, { exempt })` takes a host-declared exemption `(access, type)`; `events.ts` exempts `role === 'member'` accesses for `consent/request-cmc` only, so a delegate-approved membership is delegation-derived for its own lifetime but not for the patient invites the member publishes through it (those belong to the group, as under an owner-approved membership); a scope update stays refused. `handleAccept` refuses a membership whose requester is the approving delegate's own identity (`cmc-membership-permissions-invalid`): a delegate cannot make themselves a member and publish invites free of the guard.
 
 ## Hook order on `events.create`
 

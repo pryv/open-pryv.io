@@ -207,7 +207,9 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
     it('[MA07] the config reader falls back to the defaults for anything unset or invalid', () => {
       const values = { 'cmc:memberAccess:defaultTtl': 10, 'cmc:memberAccess:maxTtl': -1, 'cmc:memberAccess:allowNameOnly': false };
       const o = memberAccessOptionsFromConfig({ get: (k) => values[k] });
-      assert.deepEqual(o, { defaultTtl: 10, minTtl: 60, maxTtl: 604800, allowNameOnly: false });
+      assert.deepEqual(o, { defaultTtl: 60, minTtl: 60, maxTtl: 604800, allowNameOnly: false }, 'the default is clamped into the bounds');
+      const o2 = memberAccessOptionsFromConfig({ get: (k) => ({ 'cmc:memberAccess:defaultTtl': 999_999, 'cmc:memberAccess:maxTtl': 3600 })[k] });
+      assert.deepEqual([o2.defaultTtl, o2.maxTtl], [3600, 3600]);
     });
   });
 
@@ -343,6 +345,91 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       noTokenIn(r, 'the failure');
     });
 
+    it('[MA1B] a stale child whose deletion the patient core does not confirm is never minted over: the record stays live, the ask fails, a later sweep deletes it', async () => {
+      for (const [answer, reason] of [[{ status: 503, body: null }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE], [{ status: 400, body: { error: { id: 'x' } } }, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED], [new Error('down'), CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE]]) {
+        const mall = fakeMall();
+        await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+        const core = fakePatientCore([{ status: 200, body: { access: { ...CHILD, expires: 1_000_000 + 100 } } }, answer]);
+        const r = await mint(mall, core, {});
+        assert.equal(r.reason, reason, JSON.stringify(r));
+        assert.deepEqual(core.calls.map((c) => c.method), ['GET', 'DELETE'], 'no POST over a child not known gone');
+        const rec = await ledger.findRecord({ mall }, 'group', 'acc-membership', 'acc-rel');
+        assert.deepEqual([rec.state, rec.childAccessId], ['live', 'child-1'], 'the sweep will still find it');
+        noTokenIn(r, 'the failure');
+      }
+    });
+
+    it('[MA1C] a child that cannot be recorded, or whose pair was taken by a concurrent mint, is deleted and the ask fails', async () => {
+      const mall = fakeMall();
+      const origCreate = mall.events.create;
+      mall.events.create = async () => { throw new Error('ledger down'); };
+      let core = fakePatientCore([created201(), { status: 200, body: { accessDeletion: { id: 'child-1' } } }]);
+      let r = await mint(mall, core, {});
+      assert.equal(r.reason, CmcErrorIds.HANDLER_THREW);
+      assert.deepEqual(core.calls.map((c) => c.method + ' ' + c.path), ['POST /accesses', 'DELETE /accesses/child-1']);
+      mall.events.create = origCreate;
+      // The pair's record read before the mint, replaced by another worker meanwhile.
+      const mall2 = fakeMall();
+      const rec = await ledger.writeRecord({ mall: mall2 }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-0', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+      core = fakePatientCore(({ method, n }) => {
+        if (n === 0) return { status: 404, body: {} };
+        if (n === 1) { mall2.eventsMap.get(rec).content.childAccessId = 'child-by-b'; return created201(); }
+        return method === 'DELETE' ? { status: 200, body: {} } : null;
+      });
+      r = await mint(mall2, core, {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_IN_FLIGHT);
+      assert.deepEqual(core.calls.map((c) => c.method), ['GET', 'POST', 'DELETE']);
+      assert.equal((await ledger.findRecord({ mall: mall2 }, 'group', 'acc-membership', 'acc-rel')).childAccessId, 'child-by-b', 'the other worker\'s child keeps the record');
+    });
+
+    it('[MA1D] a child never outlives the membership: the lifetime is capped at its expiry, a shorter membership refuses, a reused child past it is replaced, an expired membership after the mint is gone', async () => {
+      const expiring = { ...MEMBERSHIP, expires: 1_000_000 + 7200 };
+      let core = fakePatientCore([created201({ expires: 1_000_000 + 7200 })]);
+      let r = await mint(fakeMall({ accesses: [expiring, RELATIONSHIP] }), core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(core.calls[0].body.expireAfter, 7200, 'capped at the membership');
+      r = await mint(fakeMall({ accesses: [{ ...MEMBERSHIP, expires: 1_000_000 + 30 }, RELATIONSHIP] }), fakePatientCore([]), {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE);
+      // Reuse: the recorded child outlives the (shortened) membership: replaced.
+      const mall = fakeMall({ accesses: [expiring, RELATIONSHIP] });
+      await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+      core = fakePatientCore([{ status: 200, body: { access: CHILD } }, { status: 200, body: {} }, created201({ id: 'child-2', expires: 1_000_000 + 7200 })]);
+      r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(core.calls.map((c) => c.method), ['GET', 'DELETE', 'POST']);
+      // Expired between the gate and the record: gone.
+      const mall3 = fakeMall({ accesses: [{ ...MEMBERSHIP, expires: 1_000_000 + 7200 }, RELATIONSHIP] });
+      core = fakePatientCore(({ n }) => {
+        if (n === 0) { mall3.accessesMap.get('acc-membership').expires = 1_000_000 - 1; return created201(); }
+        return { status: 200, body: {} };
+      });
+      r = await mint(mall3, core, {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_MEMBERSHIP_GONE);
+      assert.deepEqual(core.calls.map((c) => c.method), ['POST', 'DELETE']);
+    });
+
+    it('[MA1E] a star ask is refused, the default set never carries it, and a reused child must carry exactly the permissions asked', async () => {
+      const starInvite = { ...INVITE, content: { ...INVITE.content, request: { ...INVITE.content.request, permissions: [{ streamId: '*', level: 'read' }, { streamId: 'notes', level: 'read' }] } } };
+      const mall = fakeMall({ events: [starInvite] });
+      let r = await mint(mall, fakePatientCore([]), { permissions: [{ streamId: '*', level: 'read' }] });
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
+      let core = fakePatientCore([created201()]);
+      r = await mint(mall, core, {});
+      assert.deepEqual(core.calls[0].body.permissions, [{ streamId: 'notes', level: 'read' }], 'star dropped from the default');
+      // A child with MORE than asked is not reused.
+      const mall2 = fakeMall();
+      await ledger.writeRecord({ mall: mall2 }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+      core = fakePatientCore([{ status: 200, body: { access: { ...CHILD, permissions: [{ streamId: 'vitals', level: 'contribute' }, { streamId: 'notes', level: 'read' }, { streamId: 'x', level: 'none' }] } } }, { status: 200, body: {} }, created201({ id: 'child-2' })]);
+      r = await mint(mall2, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(core.calls.map((c) => c.method), ['GET', 'DELETE', 'POST']);
+      // Equal (carve-outs of level none ignored): reused.
+      core = fakePatientCore([{ status: 200, body: { access: { ...CHILD, id: 'child-2', permissions: [...CHILD.permissions, { streamId: 'x', level: 'none' }] } } }]);
+      r = await mint(mall2, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(core.calls.map((c) => c.method), ['GET']);
+    });
+
     it('[MA19] the handler refuses to run from the retry queue', async () => {
       const core = fakePatientCore([]);
       const r = await mint(fakeMall(), core, {}, { retryContext: { attempts: 1, lastFailureReason: 'x', lastFailureDetail: null } });
@@ -392,7 +479,9 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       const id1 = await ledger.writeRecord(deps, 'group', { ...base, state: 'absent' });
       const id2 = await ledger.writeRecord(deps, 'group', { ...base, childAccessId: 'c2' });
       assert.equal((await ledger.findRecord(deps, 'group', 'm', 'r')).childAccessId, 'c2');
-      await ledger.setState(deps, 'group', id2, 'deleted');
+      assert.equal(await ledger.setState(deps, 'group', id2, 'deleted', 'not-the-child'), false, 'compare-and-set: another child, no change');
+      assert.equal((await ledger.findRecord(deps, 'group', 'm', 'r')).state, 'live');
+      assert.equal(await ledger.setState(deps, 'group', id2, 'deleted', 'c2'), true);
       const all = await ledger.listRecords(deps, 'group');
       assert.deepEqual(all.map((r) => r.state).sort(), ['absent', 'deleted']);
       assert.equal((await ledger.recordsOfMembership(deps, 'group', 'm')).length, 2);
@@ -400,6 +489,24 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(await ledger.pruneExpired(deps, 'group'), 2);
       assert.deepEqual(mall.calls.eventsDeleted.sort(), [id1, id2].sort());
       assert.equal((await ledger.listRecords(deps, 'group')).length, 0);
+    });
+
+    it('[MA32] an in-place write applies only while the record still names the child it was read with; the ledger is read page by page', async () => {
+      const mall = fakeMall({ events: [] });
+      const deps = { mall, now: () => 100 };
+      await ledger.writeRecord(deps, 'group', base);
+      const read = await ledger.findRecord(deps, 'group', 'm', 'r');
+      // Another worker replaced the child meanwhile.
+      await ledger.writeRecord(deps, 'group', { ...base, childAccessId: 'c-other' }, read);
+      assert.equal(await ledger.writeRecord(deps, 'group', { ...base, childAccessId: 'c-mine' }, read), null, 'not applied');
+      assert.equal((await ledger.findRecord(deps, 'group', 'm', 'r')).childAccessId, 'c-other');
+      // Paging: a fake that honours limit and skip, 2,350 records.
+      const many = fakeMall({ events: [] });
+      const all = [];
+      for (let i = 0; i < 2350; i++) all.push({ id: 'led-' + i, type: C.ET_MEMBER_LEDGER, streamIds: [':_cmc:_internal:members'], content: { ...base, relationshipAccessId: 'r' + i, childAccessId: 'c' + i } });
+      many.events.get = async (u, p) => all.slice(p.skip ?? 0, (p.skip ?? 0) + (p.limit ?? all.length));
+      assert.equal((await ledger.listRecords({ mall: many }, 'group')).length, 2350);
+      assert.equal((await ledger.recordsOfMembership({ mall: many }, 'group', 'm')).length, 2350);
     });
 
     it('[MA31] a live record past its expiry is kept (the sweep decides), a missing ledger stream reads as empty', async () => {

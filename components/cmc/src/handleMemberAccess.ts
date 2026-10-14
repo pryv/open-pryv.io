@@ -72,6 +72,7 @@ import * as outbound from './outbound.ts';
 import * as slugMod from './slug.ts';
 import * as relationshipKey from './relationshipKey.ts';
 import * as ledger from './memberLedger.ts';
+import { coveredScopesOf } from './accessesUpdateHook.ts';
 import { CmcErrorIds } from './errorIds.ts';
 import { createHash } from 'node:crypto';
 import { levelCapabilityExcess } from 'business/src/accesses/permissionSet.ts';
@@ -97,10 +98,14 @@ function memberAccessOptionsFromConfig (config: { get: (key: string) => unknown 
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : (d[key] as number);
   };
   const allow = config.get('cmc:memberAccess:allowNameOnly');
+  const minTtl = num('minTtl');
+  const maxTtl = Math.max(num('maxTtl'), minTtl);
+  // A default outside the bounds would refuse every ask that sets no lifetime.
+  const defaultTtl = Math.min(Math.max(num('defaultTtl'), minTtl), maxTtl);
   return {
-    defaultTtl: num('defaultTtl'),
-    minTtl: num('minTtl'),
-    maxTtl: num('maxTtl'),
+    defaultTtl,
+    minTtl,
+    maxTtl,
     allowNameOnly: typeof allow === 'boolean' ? allow : d.allowNameOnly,
   };
 }
@@ -131,7 +136,15 @@ type GateDeps = {
   mall: MallLike;
   options: MemberAccessOptions;
   logger?: CmcLogger;
+  now?: () => number;
 };
+
+/** Seconds the membership still lives, or null when it carries no expiry. */
+function membershipRemaining (membershipAccess: CmcAccessLike, now: number): number | null {
+  const expires = membershipAccess.expires;
+  if (typeof expires !== 'number') return null;
+  return Math.floor(expires - now);
+}
 
 function isUnder (scope: string, root: string): boolean {
   return scope === root || scope.startsWith(root + ':');
@@ -228,7 +241,10 @@ async function resolveMintTarget (params: {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET, detail: { reason: 'offer-has-no-data-stream' } };
   }
   for (const p of permissions) {
-    if (typeof p?.streamId !== 'string' || typeof p?.level !== 'string' || C.isCmcStreamId(p.streamId)) {
+    // Named data streams only: `*` would reach the patient's `:_cmc:` tree
+    // (the inbox holds the patient's other grant tokens) and the channel
+    // streams are never delegated.
+    if (typeof p?.streamId !== 'string' || typeof p?.level !== 'string' || p.streamId === '*' || C.isCmcStreamId(p.streamId)) {
       return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET, detail: { streamId: (p as { streamId?: unknown })?.streamId } };
     }
     const offered = bound.find((o) => o.streamId === p.streamId);
@@ -237,10 +253,18 @@ async function resolveMintTarget (params: {
     }
   }
 
-  // 4. Lifetime.
-  const expireAfter = typeof content.expireAfter === 'number' ? content.expireAfter : deps.options.defaultTtl;
+  // 4. Lifetime: within the per-core bounds, and never beyond the
+  // membership's own expiry (a child must not outlive the membership).
+  let expireAfter = typeof content.expireAfter === 'number' ? content.expireAfter : deps.options.defaultTtl;
   if (!(expireAfter >= deps.options.minTtl && expireAfter <= deps.options.maxTtl)) {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE, detail: { expireAfter, minTtl: deps.options.minTtl, maxTtl: deps.options.maxTtl } };
+  }
+  const remaining = membershipRemaining(membershipAccess, (deps.now ?? (() => Date.now() / 1000))());
+  if (remaining != null) {
+    if (remaining < deps.options.minTtl) {
+      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE, detail: { expireAfter, membershipRemaining: Math.max(0, remaining), minTtl: deps.options.minTtl } };
+    }
+    expireAfter = Math.min(expireAfter, remaining);
   }
 
   return {
@@ -283,7 +307,7 @@ function offeredDataPermissions (offer: OfferContent): StreamPermissionLike[] {
   for (const p of perms) {
     if (p == null || typeof p !== 'object') continue;
     const { streamId, level } = p as { streamId?: unknown; level?: unknown };
-    if (typeof streamId !== 'string' || typeof level !== 'string' || C.isCmcStreamId(streamId)) continue;
+    if (typeof streamId !== 'string' || typeof level !== 'string' || streamId === '*' || C.isCmcStreamId(streamId)) continue;
     out.push({ streamId, level });
   }
   return out;
@@ -354,10 +378,26 @@ async function findAccessById (mall: MallLike, userId: string, accessId: string)
   return (Array.isArray(list) ? list : []).find((a) => a?.id === accessId) ?? null;
 }
 
-/** True when every permission asked is on the child as stored. */
+/**
+ * True when the child as stored carries exactly the permissions asked: same
+ * stream ids, same levels. The patient core may have appended `none`
+ * carve-outs of the grant (entries that grant nothing); those are ignored.
+ * A child with more than asked is not reused: a member asking `read` must
+ * not get back the `contribute` child of an earlier session.
+ */
 function childCarries (child: PeerAccess, permissions: StreamPermissionLike[]): boolean {
-  const have = new Set((child.permissions ?? []).map((p) => p?.streamId + '|' + p?.level));
-  return permissions.every((p) => have.has(p.streamId + '|' + p.level));
+  const have = new Set((child.permissions ?? [])
+    .filter((p) => p?.level !== 'none' && typeof p?.streamId === 'string')
+    .map((p) => p.streamId + '|' + p.level));
+  const want = new Set(permissions.map((p) => p.streamId + '|' + p.level));
+  if (have.size !== want.size) return false;
+  for (const k of want) if (!have.has(k)) return false;
+  return true;
+}
+
+/** Whether a peer's answer to a DELETE means the child is gone (2xx or 404). */
+function deletedOrGone (r: outbound.DeliverResult): boolean {
+  return r.ok || (r.reason === 'http-4xx' && r.status === 404);
 }
 
 const REUSE_MIN_REMAINING_S = 300;
@@ -390,7 +430,7 @@ async function handleMemberAccess (params: {
     membershipAccess,
     triggerStreamIds: triggerEvent.streamIds,
     content: triggerEvent.content as MintContent,
-    deps: { mall, options: deps.memberAccess, logger: deps.logger },
+    deps: { mall, options: deps.memberAccess, logger: deps.logger, now },
   });
   if (!gate.ok) return gate;
   const t = gate.target;
@@ -418,9 +458,19 @@ async function handleMemberAccess (params: {
       }
       return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { peerErrorId, httpStatus: r.status } };
     }
-    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { httpStatus: r.status || undefined, reason: r.reason } };
+    // Unreachable: the status when there was one, nothing else (no body, no
+    // message: the detail lands on a stream every member can read).
+    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: r.status > 0 ? { httpStatus: r.status } : {} };
   };
+  const unreachable = (): MemberAccessResult => ({ ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: {} });
   const ledgerDeps = { mall, logger: deps.logger, now };
+  const deleteChild = async (childAccessId: string): Promise<outbound.DeliverResult> => {
+    try {
+      return await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'DELETE', path: 'accesses/' + encodeURIComponent(childAccessId), deps: peerDeps() });
+    } catch (_e) {
+      return { ok: false, reason: 'network', status: 0, error: 'request failed' };
+    }
+  };
 
   // (1) Idempotency: the pair's record, verified by id on the patient core.
   const record: StoredLedgerRecord | null = await ledger.findRecord(ledgerDeps, userId, t.membershipAccess.id, relationshipAccessId);
@@ -428,27 +478,29 @@ async function handleMemberAccess (params: {
     let read: outbound.DeliverResult;
     try {
       read = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'GET', path: 'accesses/' + encodeURIComponent(record.childAccessId), deps: peerDeps() });
-    } catch (err: unknown) {
-      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { reason: String((err as Error)?.message || err) } };
+    } catch (_e) {
+      return unreachable();
     }
     if (read.ok) {
       const child = ((read.body as { access?: PeerAccess } | null)?.access) ?? null;
       const remaining = typeof child?.expires === 'number' ? child.expires - now() : Infinity;
-      if (child?.id != null && typeof child.token === 'string' && remaining > REUSE_MIN_REMAINING_S && childCarries(child, t.permissions)) {
+      const membershipExpires = t.membershipAccess.expires;
+      const withinMembership = typeof membershipExpires !== 'number' || (typeof child?.expires === 'number' && child.expires <= membershipExpires);
+      if (child?.id != null && typeof child.token === 'string' && remaining > REUSE_MIN_REMAINING_S && withinMembership && childCarries(child, t.permissions)) {
         return await finish({ id: child.id, token: child.token, name: child.name ?? record.childName, expires: typeof child.expires === 'number' ? child.expires : record.expires, attribution: record.attribution });
       }
-      // Stale: about to expire, or not the permissions asked. Deleted, then re-minted.
+      // Stale: about to expire, past the membership, or not the permissions
+      // asked. Deleted, then re-minted; a child not known gone is never
+      // minted over (the member may still hold its token, and the next name
+      // would collide): the record stays live and the ask fails.
       if (child?.id != null) {
-        try {
-          await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'DELETE', path: 'accesses/' + encodeURIComponent(child.id), deps: peerDeps() });
-        } catch (err: unknown) {
-          deps.logger?.debug?.('cmc/handleMemberAccess: stale child delete threw (re-minting anyway)', { error: String((err as Error)?.message || err) });
-        }
-        await ledger.setState(ledgerDeps, userId, record.eventId, 'deleted');
+        const del = await deleteChild(child.id);
+        if (!deletedOrGone(del)) return peerFailure(del);
+        await ledger.setState(ledgerDeps, userId, record.eventId, 'deleted', record.childAccessId);
       }
     } else if (read.reason === 'http-4xx' && read.status === 404) {
       // Deleted by the patient, or expired: a new one is minted while the grant lasts.
-      await ledger.setState(ledgerDeps, userId, record.eventId, 'absent');
+      await ledger.setState(ledgerDeps, userId, record.eventId, 'absent', record.childAccessId);
     } else {
       return peerFailure(read);
     }
@@ -467,8 +519,8 @@ async function handleMemberAccess (params: {
   let created: outbound.DeliverResult;
   try {
     created = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'POST', path: 'accesses', body, deps: peerDeps() });
-  } catch (err: unknown) {
-    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { reason: String((err as Error)?.message || err) } };
+  } catch (_e) {
+    return unreachable();
   }
   if (!created.ok && created.reason === 'http-4xx' && peerErrorIdOf(created.body) === CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN) {
     // An older patient core: it refuses every `clientData.cmc`. Exact
@@ -481,14 +533,14 @@ async function handleMemberAccess (params: {
     attribution = C.MEMBER_ATTRIBUTION_NAME_ONLY;
     try {
       created = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'POST', path: 'accesses', body, deps: peerDeps() });
-    } catch (err: unknown) {
-      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { reason: String((err as Error)?.message || err) } };
+    } catch (_e) {
+      return unreachable();
     }
   }
   if (!created.ok) return peerFailure(created);
   const child = ((created.body as { access?: PeerAccess } | null)?.access) ?? null;
   if (child?.id == null || typeof child.token !== 'string') {
-    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { reason: 'no-access-in-answer', httpStatus: created.status } };
+    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { httpStatus: created.status } };
   }
   const expires = typeof child.expires === 'number' ? child.expires : now() + t.expireAfter;
   return await finish({ id: child.id, token: child.token, name: child.name ?? name, expires, attribution });
@@ -497,32 +549,56 @@ async function handleMemberAccess (params: {
    * The ledger record first, then the membership re-read, then the token.
    */
   async function finish (child: { id: string; token: string; name: string; expires: number; attribution: string }): Promise<MemberAccessResult> {
-    await ledger.writeRecord(ledgerDeps, userId, {
-      membershipAccessId: t.membershipAccess.id,
-      member,
-      relationshipAccessId,
-      counterparty: { username: t.relationshipAccess.clientData!.cmc!.counterparty!.username as string, host: t.relationshipAccess.clientData!.cmc!.counterparty!.host as string },
-      scopeStreamId: t.scopeStreamId,
-      childAccessId: child.id,
-      childName: child.name,
-      expires: child.expires,
-      attribution: child.attribution,
-      state: 'live',
-      stateChangedAt: now(),
-    }, record);
-    // A sweep that ran meanwhile deleted the membership: the child goes too.
-    const still = await findAccessById(mall, userId, t.membershipAccess.id);
-    if (still == null) {
-      try {
-        await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'DELETE', path: 'accesses/' + encodeURIComponent(child.id), deps: peerDeps() });
-        const rec = await ledger.findRecord(ledgerDeps, userId, t.membershipAccess.id, relationshipAccessId);
-        if (rec != null) await ledger.setState(ledgerDeps, userId, rec.eventId, 'deleted');
-      } catch (err: unknown) {
-        deps.logger?.warn?.('cmc/handleMemberAccess: the membership ended during the mint and the child could not be deleted; the sweep will', {
-          childAccessId: child.id, error: String((err as Error)?.message || err),
+    // The record, before the token leaves. A record that cannot be written,
+    // or whose pair was taken by another worker meanwhile (compare-and-set
+    // on the child it names), means this child is untracked: deleted, and
+    // the ask fails; the member asks again.
+    let eventId: string | null = null;
+    let writeError: unknown = null;
+    try {
+      eventId = await ledger.writeRecord(ledgerDeps, userId, {
+        membershipAccessId: t.membershipAccess.id,
+        member,
+        relationshipAccessId,
+        counterparty: { username: t.relationshipAccess.clientData!.cmc!.counterparty!.username as string, host: t.relationshipAccess.clientData!.cmc!.counterparty!.host as string },
+        scopeStreamId: t.scopeStreamId,
+        childAccessId: child.id,
+        childName: child.name,
+        expires: child.expires,
+        attribution: child.attribution,
+        state: 'live',
+        stateChangedAt: now(),
+      }, record);
+    } catch (err: unknown) {
+      writeError = err;
+    }
+    if (eventId == null) {
+      const del = await deleteChild(child.id);
+      if (!deletedOrGone(del)) {
+        deps.logger?.error?.('cmc/handleMemberAccess: a minted child could not be recorded nor deleted; it lives until its expiry', {
+          childAccessId: child.id, relationshipAccessId, error: writeError == null ? 'record taken by a concurrent mint' : String((writeError as Error)?.message || writeError),
         });
       }
-      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_MEMBERSHIP_GONE, detail: { membershipAccessId: t.membershipAccess.id } };
+      return writeError != null
+        ? { ok: false, reason: CmcErrorIds.HANDLER_THREW, detail: {} }
+        : { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_IN_FLIGHT, detail: {} };
+    }
+    // A sweep that ran meanwhile deleted the membership, or it expired, or an
+    // update took the scope away: the child goes too.
+    const still = await findAccessById(mall, userId, t.membershipAccess.id);
+    const gone = still == null ||
+      (typeof still.expires === 'number' && still.expires < now()) ||
+      (Array.isArray(still.permissions) && !coveredScopesOf(still).some((s) => t.scopeStreamId === s || t.scopeStreamId.startsWith(s + ':')));
+    if (gone) {
+      const del = await deleteChild(child.id);
+      if (deletedOrGone(del)) {
+        await ledger.setState(ledgerDeps, userId, eventId, 'deleted', child.id);
+      } else {
+        deps.logger?.warn?.('cmc/handleMemberAccess: the membership ended during the mint and the child could not be deleted; the periodic pass will', {
+          childAccessId: child.id,
+        });
+      }
+      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_MEMBERSHIP_GONE, detail: {} };
     }
     return {
       ok: true,

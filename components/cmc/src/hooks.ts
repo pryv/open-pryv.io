@@ -822,6 +822,18 @@ function createAccessCreateForgePreventionHook (deps: Deps): Middleware {
         { id: CmcErrorIds.MEMBER_STAMP_INVALID }
       ));
     }
+    // A member's child reads named data streams only: never `*` (which
+    // reaches the patient's `:_cmc:` tree) nor a `:_cmc:` stream.
+    const perms = params?.permissions;
+    if (Array.isArray(perms) && perms.some((p) => {
+      const sid = (p as { streamId?: unknown })?.streamId;
+      return sid === '*' || (typeof sid === 'string' && C.isCmcStreamId(sid));
+    })) {
+      return next(deps.errors.invalidOperation(
+        'An access created with the member stamp holds named data streams only',
+        { id: CmcErrorIds.MEMBER_STAMP_INVALID }
+      ));
+    }
     params!.clientData = { ...clientData, cmc: stamp };
     next();
   };
@@ -895,11 +907,11 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
  * The update merges `clientData` one level deep and `null` removes a key, so
  * `{ clientData: { cmc: null } }` or `{ clientData: null }` would strip the
  * namespace from any access the caller may update: a consent grant could
- * remove the member stamp from a child it minted. Any update that touches
- * `clientData` on such an access is refused (the paired create / update
- * hooks already refuse writing the key, so there is no way to send it back
- * unchanged); the plugin's own writes go through the mall and never reach
- * this hook. Mirrors the DPoP binding guard.
+ * remove the member stamp from a child it minted. Those two shapes are
+ * refused; an update of OTHER `clientData` keys leaves the namespace as
+ * stored and passes (a non-null `cmc` is refused by the forge hook before
+ * this). The plugin's own writes go through the mall and never reach this
+ * hook. Mirrors the DPoP binding guard.
  */
 function createAccessUpdateStampGuardHook (deps: Deps): Middleware {
   return function cmcAccessUpdateStampGuard (_context, params, _result, next) {
@@ -907,8 +919,11 @@ function createAccessUpdateStampGuardHook (deps: Deps): Middleware {
     if (update == null || update.clientData === undefined) return next();
     const stored = params?.targetAccess?.clientData;
     if (stored == null || typeof stored !== 'object' || stored.cmc == null) return next();
+    const sent = update.clientData;
+    const removes = sent === null || (typeof sent === 'object' && Object.prototype.hasOwnProperty.call(sent, 'cmc'));
+    if (!removes) return next();
     return next(deps.errors.invalidOperation(
-      'clientData cannot be updated on an access managed by the CMC plugin: its clientData.cmc would be removed',
+      'clientData.cmc cannot be removed from an access managed by the CMC plugin',
       { id: CmcErrorIds.CLIENTDATA_CMC_FORBIDDEN }
     ));
   };

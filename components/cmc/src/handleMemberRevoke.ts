@@ -65,8 +65,10 @@ async function deleteChildThroughGrant (grantApiEndpoint: string, childAccessId:
   let r: outbound.DeliverResult;
   try {
     r = await outbound.requestPeer({ apiEndpoint: grantApiEndpoint, method: 'DELETE', path: 'accesses/' + encodeURIComponent(childAccessId), deps });
-  } catch (err: unknown) {
-    return { result: 'residual', reason: 'network', peerErrorId: String((err as Error)?.message || err).slice(0, 80) };
+  } catch (_e) {
+    // Only the endpoint parser can throw here (requestPeer catches its own
+    // errors); no message is recorded: `peerErrorId` names a peer's answer.
+    return { result: 'residual', reason: 'network' };
   }
   if (r.ok) return { result: 'deleted' };
   if (r.reason === 'http-4xx') {
@@ -176,7 +178,12 @@ async function revokeRecords (params: {
       if (firstResidual == null) firstResidual = { ...verdict, childAccessId: record.childAccessId };
     }
     try {
-      await ledger.setState(ledgerDeps, userId, record.eventId, verdict.result);
+      const applied = await ledger.setState(ledgerDeps, userId, record.eventId, verdict.result, record.childAccessId);
+      if (!applied) {
+        deps.logger?.info?.('cmc/handleMemberRevoke: the record was taken by a newer child meanwhile; verdict not applied', {
+          eventId: record.eventId, childAccessId: record.childAccessId,
+        });
+      }
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleMemberRevoke: ledger state write failed', {
         eventId: record.eventId, error: String((err as Error)?.message || err),
