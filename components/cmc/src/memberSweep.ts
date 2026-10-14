@@ -82,6 +82,12 @@ type SweepOptions = {
   recordFilter?: (record: StoredLedgerRecord) => boolean;
   // Write no trigger (the account is being erased); the sweep still runs.
   persist?: boolean;
+  // Scopes gone whatever the membership still names (a team stream deleted):
+  // recorded on the trigger, honoured by the narrowed re-check.
+  uncovered?: string[];
+  // Where the record is written (default: the membership's scope stream);
+  // the nearest surviving stream when the scope itself is being deleted.
+  streamId?: string;
 };
 
 function identityOf (access: CmcAccessLike | null | undefined): Identity {
@@ -125,8 +131,9 @@ function createMemberSweep (deps: SweepDeps) {
         expires: r.expires,
       })),
       status: 'pending',
+      ...(Array.isArray(options.uncovered) && options.uncovered.length > 0 ? { uncovered: options.uncovered } : {}),
     };
-    let event: Record<string, unknown> = { type: C.ET_MEMBER_REVOKE, streamIds: [sweepStreamOf(membershipAccess)], content };
+    let event: Record<string, unknown> = { type: C.ET_MEMBER_REVOKE, streamIds: [options.streamId ?? sweepStreamOf(membershipAccess)], content };
     const persist = options.persist !== false;
     if (persist) {
       try {
@@ -203,6 +210,11 @@ function createMemberSweep (deps: SweepDeps) {
       byMembership.set(r.membershipAccessId, list);
     }
     let swept = 0;
+    // Keys of memberships no longer seen gone by this pass (their records
+    // settled, or the account's) leave the grace map.
+    for (const key of goneSince.keys()) {
+      if (key.startsWith(userId + ':') && !byMembership.has(key.slice(userId.length + 1))) goneSince.delete(key);
+    }
     for (const [membershipAccessId, list] of byMembership) {
       let membership: CmcAccessLike | null = null;
       try {
@@ -264,12 +276,21 @@ function createMemberSweep (deps: SweepDeps) {
       if (typeof a?.id === 'string' && typeof ep === 'string' && ep.length > 0) grants.set(a.id, ep);
     }
     const peerDeps: OutboundDeps = { fetch: deps.fetch, timeoutMs: Math.min(deps.timeoutMs ?? ERASURE_TIMEOUT_MS, ERASURE_TIMEOUT_MS), logger: deps.logger };
-    const outcomes = await Promise.all(records.map(async (r) => {
-      const grant = grants.get(r.relationshipAccessId);
-      if (grant == null) return 'absent';
-      const v = await deleteChildThroughGrant(grant, r.childAccessId, peerDeps);
-      return v.result;
-    }));
+    // A bounded number of calls in flight: a large group must not open one
+    // socket per record at once.
+    const outcomes: string[] = new Array(records.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < records.length) {
+        const i = next++;
+        const r = records[i];
+        const grant = grants.get(r.relationshipAccessId);
+        if (grant == null) { outcomes[i] = 'absent'; continue; }
+        const v = await deleteChildThroughGrant(grant, r.childAccessId, peerDeps);
+        outcomes[i] = v.result;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(ERASURE_CONCURRENCY, records.length) }, () => worker()));
     const residuals = outcomes.filter((o) => o === 'residual').length;
     if (residuals > 0) {
       deps.logger?.warn?.('cmc/memberSweep: an erased group account leaves residual member accesses on patient cores (they expire on their own)', {
@@ -284,6 +305,7 @@ function createMemberSweep (deps: SweepDeps) {
 
 const RESIDUALS_PER_PASS = 50;
 const ERASURE_TIMEOUT_MS = 5_000;
+const ERASURE_CONCURRENCY = 16;
 const VANISHED_GRACE_S = 30;
 // Memberships seen gone by the periodic pass, `userId:membershipId` to the
 // time first seen (this worker; the pass runs on one).

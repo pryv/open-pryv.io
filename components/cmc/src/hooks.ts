@@ -715,6 +715,40 @@ function isPersonalAccess (access: MethodContext['access']): boolean {
  * counterparty's `content.from` is stamped from its access.
  * Personal accesses pass through unchanged.
  */
+// The group account's member records: the ask (`consent/member-access-cmc`)
+// and the offboarding sweep (`consent/member-revoke-cmc`). Members hold
+// `contribute` on the team streams these live on; only the owner's personal
+// token updates or deletes them (the group-side audit trail).
+const MEMBER_RECORD_TYPES = new Set<string>([C.ET_MEMBER_ACCESS, C.ET_MEMBER_REVOKE]);
+
+/**
+ * events.delete hook: an app or shared access may not delete a member record
+ * (above), nor an event on `:_cmc:inbox` or under `:_cmc:_internal` (403,
+ * `cmc-protected-event-write`). Runs after the stored event is loaded
+ * (`context.oldEvent`). Personal accesses pass through unchanged.
+ */
+function createEventDeleteGuardHook (deps: Deps): Middleware {
+  return function cmcEventDeleteGuard (context, _params, _result, next) {
+    if (isPersonalAccess(context?.access)) return next();
+    const oldEvent = context?.oldEvent;
+    if (oldEvent == null) return next();
+    const streamIds: string[] = Array.isArray(oldEvent.streamIds) ? oldEvent.streamIds : [];
+    if (streamIds.some(isProtectedStreamId)) {
+      return next(deps.errors.forbidden(
+        'Events on ' + C.NS_INBOX + ' or ' + C.NS_INTERNAL + ' cannot be deleted with this access',
+        { id: CmcErrorIds.PROTECTED_EVENT_WRITE }
+      ));
+    }
+    if (typeof oldEvent.type === 'string' && MEMBER_RECORD_TYPES.has(oldEvent.type)) {
+      return next(deps.errors.forbidden(
+        'A group account\'s member records (' + oldEvent.type + ') are deleted by the owner only',
+        { id: CmcErrorIds.PROTECTED_EVENT_WRITE, eventType: oldEvent.type }
+      ));
+    }
+    next();
+  };
+}
+
 function createEventUpdateGuardHook (deps: Deps): Middleware {
   const validateContent = createCmcContentValidationHook(deps);
   const stampFrom = createCounterpartyFromStampingHook(deps);
@@ -736,6 +770,12 @@ function createEventUpdateGuardHook (deps: Deps): Middleware {
       return next(deps.errors.forbidden(
         'The type of an event cannot be changed to or from a CMC type with this access',
         { id: CmcErrorIds.PROTECTED_EVENT_WRITE, eventType: newEvent.type }
+      ));
+    }
+    if (typeof oldEvent.type === 'string' && MEMBER_RECORD_TYPES.has(oldEvent.type)) {
+      return next(deps.errors.forbidden(
+        'A group account\'s member records (' + oldEvent.type + ') are updated by the owner only',
+        { id: CmcErrorIds.PROTECTED_EVENT_WRITE, eventType: oldEvent.type }
       ));
     }
     validateContent(context, params, result, (err?: unknown) => {
@@ -850,9 +890,11 @@ type MemberChildStamp = {
 
 const STAMP_FIELD_MAX = 200;
 
-// No whitespace and no control character: the stamp is rendered by the
-// patient's audit page and exported as is.
-const STAMP_STRING = /^[^\s\x00-\x1f\x7f]+$/;
+// No whitespace, no control character (C0, DEL, C1), no bidirectional
+// override or isolate, no zero-width or joiner character: the stamp is
+// rendered by the patient's audit page and exported as is, and one member
+// name must not be able to read as another.
+const STAMP_STRING = /^[^\s\x00-\x1f\x7f-\x9f​-‏‪-‮⁠-⁩﻿]+$/;
 
 function isStampString (v: unknown): v is string {
   return typeof v === 'string' && v.length >= 1 && v.length <= STAMP_FIELD_MAX && STAMP_STRING.test(v);
@@ -1174,6 +1216,7 @@ export {
   createCounterpartyFromStampingHook,
   createCounterpartyFeatureGateHook,
   createEventUpdateGuardHook,
+  createEventDeleteGuardHook,
   createInternalWriteGuardHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,

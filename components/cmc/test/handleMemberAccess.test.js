@@ -194,7 +194,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       const ok = await gate({ content: { permissions: [{ streamId: 'vitals', level: 'contribute' }, { streamId: 'notes', level: 'read' }] } });
       assert.equal(ok.ok, true, JSON.stringify(ok));
       const noOffer = await gate({ mall: fakeMall({ events: [] }) });
-      assert.equal(noOffer.reason, CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
+      assert.equal(noOffer.reason, CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND, 'the invite is gone: invite the patient again');
       assert.equal(noOffer.detail.reason, 'offer-not-found');
     });
 

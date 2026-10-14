@@ -93,7 +93,7 @@ export const { createAcceptStampingHook, createAcceptPreserveHook, preserveServe
 export const { stampWithdrawalOnAccept } = acceptWithdrawal;
 export const { mintCapability, gcCapability } = capability;
 
-export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
+export const { createAccessesUpdatePostHook, createStreamDeleteNarrowingHook, runWithSuppression } = accessesUpdateHook;
 export const { createAccessesDeletePostHook } = accessesDeleteHook;
 export const { RetryScheduler } = retryScheduler;
 export const { startRetryLoopIfEnabled } = bootRetryLoop;
@@ -118,6 +118,7 @@ export const {
   createCounterpartyFromStampingHook,
   createCounterpartyFeatureGateHook,
   createEventUpdateGuardHook,
+  createEventDeleteGuardHook,
   createInternalWriteGuardHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,

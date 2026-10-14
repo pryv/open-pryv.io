@@ -370,6 +370,8 @@ async function deliverAcceptViaCapability (params: {
   // that target per-request streams can't resolve it.
   requesterAppCode?: string;
   requesterOriginStreamId?: string;
+  // The accepter's accept trigger id (delivered as `acceptEventId`).
+  acceptEventId?: string;
   offerEventId?: string;
   // True when the offer was a membership request: the requester's plugin
   // marks the inbox mirror so a member app can tell the accept apart. The
@@ -404,6 +406,11 @@ async function deliverAcceptViaCapability (params: {
         requesterAppCode: params.requesterAppCode ?? null,
         requesterOriginStreamId: params.requesterOriginStreamId ?? null,
         originalEventId: params.offerEventId ?? null,
+        // The accepter's own accept trigger: the requester records it on its
+        // back-channel, and a revoke names it, so a notice that arrives after
+        // the relationship was re-established is told apart from a current
+        // one (handleIncomingRevoke).
+        acceptEventId: params.acceptEventId ?? null,
         ...(params.membership === true ? { membership: true } : {}),
       },
     },

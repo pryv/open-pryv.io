@@ -28,6 +28,7 @@ const {
   createCounterpartyFromStampingHook,
   createCounterpartyFeatureGateHook,
   createEventUpdateGuardHook,
+  createEventDeleteGuardHook,
   createInternalWriteGuardHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
@@ -1154,6 +1155,29 @@ describe('[CMCHOOK] cmc/hooks', () => {
     });
   });
 
+  describe('[CMCH-DEL] createEventDeleteGuardHook', () => {
+    const app = { isPersonal: () => false, clientData: {} };
+    const personal = { isPersonal: () => true };
+
+    it('[CHD1] an app or shared access may not delete a member record nor an inbox or internal event; the owner may; other events pass', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventDeleteGuardHook({ errors: factory });
+      for (const oldEvent of [
+        { streamIds: [':_cmc:apps:practice:team-a'], type: 'consent/member-revoke-cmc' },
+        { streamIds: [':_cmc:apps:practice:team-a'], type: 'consent/member-access-cmc' },
+        { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc' },
+        { streamIds: [':_cmc:_internal:retries'], type: 'cmc-internal/retry-cmc' },
+      ]) {
+        const err = await runMiddleware(mw, { access: app, oldEvent }, {}, {});
+        assert.equal(err?.details?.id, 'cmc-protected-event-write', JSON.stringify(oldEvent));
+        assert.equal(await runMiddleware(mw, { access: personal, oldEvent }, {}, {}), undefined);
+      }
+      assert.equal(await runMiddleware(mw, { access: app, oldEvent: { streamIds: [':_cmc:apps:practice:team-a'], type: 'consent/request-cmc' } }, {}, {}), undefined);
+      assert.equal(await runMiddleware(mw, { access: app, oldEvent: { streamIds: ['data'], type: 'note/txt' } }, {}, {}), undefined);
+      assert.equal(await runMiddleware(mw, { access: app }, {}, {}), undefined, 'no stored event: nothing to judge');
+    });
+  });
+
   describe('[CMCH-UPD] createEventUpdateGuardHook', () => {
     const app = { isPersonal: () => false, clientData: {} };
     const personal = { isPersonal: () => true };
@@ -1183,6 +1207,18 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(back?.details?.id, 'cmc-protected-event-write');
       const own = await runMiddleware(mw, ctx(personal, { streamIds: ['data'], type: 'note/txt' }, { streamIds: [':_cmc:inbox'], type: 'consent/request-cmc' }), {}, {});
       assert.equal(own, undefined);
+    });
+
+    it('[CHU4] a group account\'s member records are updated by the owner only', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventUpdateGuardHook({ errors: factory });
+      for (const type of ['consent/member-revoke-cmc', 'consent/member-access-cmc']) {
+        const err = await runMiddleware(mw, ctx(app, { streamIds: [':_cmc:apps:practice:team-a'], type }, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 } }), {}, {});
+        assert.equal(err?.details?.id, 'cmc-protected-event-write', type);
+        assert.equal(err?.details?.eventType, type);
+        const own = await runMiddleware(mw, ctx(personal, { streamIds: [':_cmc:apps:practice:team-a'], type }, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 } }), {}, {});
+        assert.equal(own, undefined, 'the owner may');
+      }
     });
 
     it('[CHU3] re-stamps content.from for a counterparty and validates CMC content', async () => {

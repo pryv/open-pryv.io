@@ -71,8 +71,8 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   the membership's team stream when a membership ends, however it ends:
   `{ member, membershipAccessId, reason, records, status, outcome, residuals, failure }`, `reason`
   one of `revoke` (an administrator revoked it, or the member left), `accesses.delete`, `expired`,
-  `narrowed` (an `accesses.update` removed teams: only the patients outside the remaining teams
-  that the membership no longer covers when the sweep runs), `detach`, `vanished` (the membership
+  `narrowed` (an `accesses.update` removed teams, or a team stream was deleted: only the patients
+  outside the teams the membership still covers when the sweep runs), `detach`, `vanished` (the membership
   access is gone but its records were still live: found by the periodic pass), `account-deleted`
   (no record is kept: the account is erased; its accesses on patient cores are deleted through the
   grants before the erasure). Each access minted for that member is deleted on its patient's core
@@ -85,8 +85,8 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   deleted through the grant before the revoke is delivered (no record is written for that pass).
 - **The member stamp on the patient's account.** An `accesses.create` made with a delegable (`app`)
   consent grant may send exactly `clientData: { cmc: { role: 'member-child', member: { username,
-  host } } }` (two strings of 1 to 200 characters without whitespace or control characters, no
-  other key). The server stores
+  host } } }` (two strings of 1 to 200 characters without whitespace, control, bidirectional or
+  zero-width characters, no other key). The server stores
   `{ role: 'member-child', member, group: { username, host }, viaAccessId, scopeStreamId, appCode }`,
   the group identity and the rest copied field by field from the authenticated grant (never an
   endpoint). Any other `clientData.cmc` sent by such a grant is refused with 400
@@ -97,7 +97,8 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
 - **Error ids.** Refused at write, 400 `invalid-operation` with the id in `error.data.id`:
   `cmc-member-access-not-member` (not written through a membership access; personal and delegate
   tokens included), `cmc-member-access-relationship-not-found` (no relationship with that patient
-  under the scope, or its handshake is not complete), `cmc-member-access-scope-outside-membership`,
+  under the scope, its handshake is not complete, or the invite it descends from was deleted:
+  invite the patient again), `cmc-member-access-scope-outside-membership`,
   `cmc-member-access-permissions-not-subset`, `cmc-member-access-expiry-out-of-range`,
   `cmc-member-access-rate-limited` (ask again after the minute), `cmc-member-access-in-flight` (ask
   again shortly), `cmc-membership-permissions-invalid`, `cmc-member-stamp-invalid`. On the trigger,
@@ -125,12 +126,46 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
 - **Revoke notices are re-sent until they land (issue 157).** A `consent/revoke-cmc` whose
   counterparty could not be reached (socket error, timeout, 5xx) after the in-request attempts is
   now queued, endpoint and body, in the account's hidden retry stream and re-sent by the retry
-  loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 attempts in all (about 20
-  hours), then marked `failed-permanent` for the operator with the host but no token. The trigger
+  loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours: 8 re-sends in all over about
+  27 hours, then marked `failed-permanent` for the operator with the host but no token. The trigger
   reports `content.deliveryQueued: true` beside `peerNotified: false` and `deliveryFailure`. A raw
-  `accesses.delete` of a relationship access queues its notice the same way. A 4xx is the peer's
-  answer and is not retried. Not queued: the notices of an account being deleted (no account is
-  left to hold them; logged), and anything when `cmc.retryLoop.enabled` is `false`.
+  `accesses.delete` of a relationship access and a delegation detach queue their notices the same
+  way. A 4xx is the peer's answer and is not retried. Not queued: the notices of an account being
+  deleted (no account is left to hold them; logged), and anything when `cmc.retryLoop.enabled` is
+  `false`.
+- **The retry loop retires its backlog instead of replaying it, and prunes what is settled.** A
+  core that ran with `cmc.retryLoop.enabled: false` (the previous default) still holds, in each
+  account's hidden retry stream, the retryable failures of that time (accepts, chats, scope
+  updates the users saw fail), since they were queued even then. When the loop starts, a pending
+  record older than its whole schedule (2 hours for a trigger, 30 hours for a revoke notice) is
+  marked `failed-permanent` with `lastFailureReason: 'cmc-retry-stale'` and never dispatched;
+  nothing months old reaches a counterparty. Settled records are pruned by the loop (a succeeded
+  one on the next pass, a `failed-permanent` one after 30 days), the stream is read in pages so a
+  pending record is never hidden behind newer ones, every write of the loop on a record skips
+  event versioning (a record holds a peer token: no history row keeps a copy), and the two passes
+  (retries, member ledger) visit only the accounts that have CMC state (the hidden retries
+  stream; an account without it is re-checked every 10 minutes), not every account on the core
+  each minute. New `cmc.retryLoop.startScheduler` (default `true`): `false` queues records but
+  starts no scheduler in this process. Operators: size the backlog before upgrading a core that
+  ran with the loop off; the retired records stay readable for 30 days.
+- **A late revoke notice never takes a relationship re-established meanwhile.** The accept
+  delivered to the requester now carries the accepter's `acceptEventId`, recorded on the
+  requester's relationship access (`clientData.cmc.peerAcceptEventId`), and a revoke notice names
+  the accept it ends and when it was issued (`content.acceptEventId`, `content.revokedAt`). A
+  notice that lands hours later (the retry loop) after the parties accepted the same link again is
+  recorded in the inbox but tears nothing down when it names an earlier accept than the one the
+  access pairs with, and a sibling access created after `revokedAt` is kept. Peers of earlier
+  releases stamp neither and are handled as before.
+- **A group account's member records are the owner's.** An app or shared access, a membership
+  access included, can no longer update or delete a `consent/member-access-cmc` or
+  `consent/member-revoke-cmc` event (403 `forbidden`, `cmc-protected-event-write`), nor delete an
+  event on `:_cmc:inbox` or under `:_cmc:_internal`; the owner's personal token can.
+- **Deleting a team stream narrows the memberships covering it.** When a group deletes a stream
+  under its `:_cmc:apps:*` for good (the second `streams.delete`, once trashed), every membership
+  whose teams include it, lie under it or above it is swept as `narrowed` for the patients under
+  that stream: the member accesses minted there are deleted on the patient cores, the record is
+  written on the deleted stream's parent (or `:_cmc:apps`) and names the stream in
+  `content.uncovered`. Trashing a stream is not a narrowing.
 - **Versions.** The group's core and the member's core need this release (the member's core
   checks the membership request at write and marks the accept in the member's inbox; an earlier
   member core ignores `request.membership`, and the group's accept still applies the rule). A
@@ -156,7 +191,7 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   `:_cmc:apps` root is refused at write with 400 `invalid-operation`,
   `error.data.id: 'cmc-invalid-event-content'` (the stream named in `error.data.errors`), and the
   accepter's core refuses such an offer again at accept (`content.failure.reason:
-  'cmc-offer-permissions-invalid'`, not retried), whatever the requester's core checked. `*` and
+  'cmc-offer-stream-not-offerable'`, not retried), whatever the requester's core checked. `*` and
   the accepter's own `:_cmc:apps:<app>[:<path>]` streams stay offerable. Before this release such an
   offer was accepted; the grant then carried both the offered `read` and the plugin's own
   `create-only` on the inbox, and only the order of the two entries kept the inbox unreadable.
@@ -165,7 +200,10 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   root included). Written elsewhere, it fails with `content.failure.reason:
   'cmc-invalidate-link-scope-mismatch'` (not retried) and the link stays open, so a token with
   write access to one app scope cannot close the invites of another by naming their capability
-  ids. An invite whose request event cannot be found is refused the same way.
+  ids. The invite's stream is read from the server-written copy of the offer that the capability
+  holds (which no client can edit or delete), so an invite event deleted by a member does not
+  keep the link from being closed; a capability minted before that copy carried the stream falls
+  back to the invite event, and is refused when neither can be read.
 - **Behaviour change: an app token may delete only the `shared` accesses it created.**
   `accesses.delete` with an app token now refuses (403 `forbidden`) an access of another type
   whose `createdBy` names it, the rule `accesses.update` already applied. An app can only create
@@ -260,8 +298,9 @@ admin pre-registration refuses badly shaped usernames. No migration.
   what is stored for a live access. A deletion record (`accesses.get` with `includeDeletions`),
   which never carried the access's own token, is redacted the same way for every caller in the
   response, and since this release the credentials also leave the stored row itself: every URL
-  user part in `clientData` is removed just before the access is marked deleted (host and path
-  kept), so a backup or an export of deletion records holds no peer token.
+  user part in `clientData` is removed once the access is marked deleted (host and path kept),
+  from the deletion row and from the history rows its earlier updates snapshotted, and the
+  deletion row's own token is unset, so a backup or an export of deletion records holds no token.
 
 ## 2.0.0-rc.51 - 2026-10-13
 

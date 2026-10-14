@@ -983,6 +983,9 @@ cmc:
   # logged at boot.
   retryLoop:
     enabled: true
+    # false: records are queued but no scheduler runs in this process (the
+    # loop runs elsewhere, or by hand); the in-process test core sets it.
+    startScheduler: true
     intervalMs: 60000
     perUserLimit: 100
   # Group accounts: the accesses a group's core mints on patients' accounts

@@ -629,6 +629,43 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       group = await makeActor('practice-erase-' + cuid().slice(-8));
     });
 
+    it('[GA41] a team stream deleted for good narrows the memberships covering it: the children minted under it die on the patient core, the record says narrowed on the parent and names the stream', async function () {
+      const m = await joinGroup('team-gone');
+      await invitePatient(m.teamStream, m.membershipToken);
+      const { res } = await mint(m.teamStream, m.membershipToken);
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const childToken = new URL(res.body.memberAccess.apiEndpoint).username;
+      assert.ok((await tokenLivesOn(patient, childToken)) != null, 'premise: the child works');
+      const path = group.streamsPath + '/' + encodeURIComponent(m.teamStream);
+      const trash = await coreRequest.delete(path).set('Authorization', group.token);
+      assert.strictEqual(trash.status, 200, JSON.stringify(trash.body));
+      assert.ok((await tokenLivesOn(patient, childToken)) != null, 'trashing is not a narrowing');
+      const gone = await coreRequest.delete(path).query({ mergeEventsWithParent: false }).set('Authorization', group.token);
+      assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
+      await pollTokenDead(patient, childToken, 'GA41 child');
+      const sweep = await sweepRecordFor(m.membershipAccess.id, 'narrowed');
+      assert.strictEqual(sweep.content.status, 'completed', JSON.stringify(sweep.content));
+      assert.deepStrictEqual(sweep.content.uncovered, [m.teamStream]);
+      assert.deepStrictEqual(sweep.streamIds, [APP_ROOT], 'recorded on the surviving parent');
+      assert.deepStrictEqual(sweep.content.outcome, [{ childAccessId: res.body.memberAccess.accessId, result: 'deleted' }]);
+    });
+
+    it('[GA42] a member cannot delete or update the group\'s member records; the owner can', async function () {
+      const m = await joinGroup('team-guard');
+      await invitePatient(m.teamStream, m.membershipToken);
+      const { res } = await mint(m.teamStream, m.membershipToken);
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const askId = res.body.event.id;
+      const del = await coreRequest.delete(group.eventsPath + '/' + askId).set('Authorization', m.membershipToken);
+      assert.strictEqual(del.status, 403, JSON.stringify(del.body));
+      assert.strictEqual(del.body.error?.data?.id, 'cmc-protected-event-write');
+      const upd = await coreRequest.put(group.eventsPath + '/' + askId).set('Authorization', m.membershipToken).send({ content: { expireAfter: 1 } });
+      assert.strictEqual(upd.status, 403, JSON.stringify(upd.body));
+      assert.strictEqual(upd.body.error?.data?.id, 'cmc-protected-event-write');
+      const own = await coreRequest.delete(group.eventsPath + '/' + askId).set('Authorization', group.token);
+      assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+    });
+
     it('[GA40] the child is deleted on the patient core through the grant before the erasure; the grant itself dies with the account-deletion notice', async function () {
       const m = await joinGroup('team-erase');
       const p = await invitePatient(m.teamStream, m.membershipToken);

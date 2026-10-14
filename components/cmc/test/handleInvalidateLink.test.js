@@ -39,6 +39,12 @@ function fakeMall () {
         calls.eventsCreated.push({ userId, ...params });
         return { event: { id: 'evt-' + calls.eventsCreated.length, ...params } };
       },
+      // The server-written offer copies, by stream (the scope check reads
+      // the copy in the capability's own internal stream first).
+      async get (userId, params) {
+        const any = params?.streams?.[0]?.any ?? [];
+        return calls.eventsCreated.filter((e) => (e.streamIds ?? []).some((s) => any.includes(s)));
+      },
       // The invite triggers, by id, on their app streams (the scope check
       // reads the invite the capability names).
       async getOne (userId, id) {
@@ -80,6 +86,7 @@ const APP_STREAM = ':_cmc:apps:my-app';
 const OPEN_LINK_TRIGGER = {
   id: 'evt-trigger-il-ol',
   type: 'consent/request-cmc',
+  streamIds: [APP_STREAM + ':study-1'],
   content: {
     to: null,
     capabilityRequested: true,
@@ -261,11 +268,34 @@ describe('[CMCIL] cmc/handleInvalidateLink', () => {
     assert.equal(result.reason, 'cmc-invalidate-link-scope-mismatch', 'no app scope at all');
     assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'open');
     mall.events.getOne = async () => null;
-    result = await at([':_cmc:apps:my-app']);
-    assert.equal(result.reason, 'cmc-invalidate-link-scope-mismatch', 'an invite that cannot be read cannot be judged');
-    mall.events.getOne = async () => ({ ...OPEN_LINK_TRIGGER, streamIds: [APP_STREAM + ':study-1'] });
     result = await at([':_cmc:apps:my-app:study-1']);
-    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.ok, true, 'the invite is gone (a member deleted it): the server-written offer copy still names the scope');
     assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'invalidated');
+  });
+
+  it('[CMCIL-H] a capability minted before the offer copy carried its origin falls back to the invite; neither readable is refused', async () => {
+    const mall = fakeMall();
+    const r = await mintCapability({
+      userId: 'u1', triggerEvent: { ...OPEN_LINK_TRIGGER, streamIds: undefined }, deps: { mall, idGen: () => 'cap-il-h', now: () => 1000 },
+    });
+    const at = (streamIds) => handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: { id: 'evt-il-h', type: 'consent/invalidate-link-cmc', streamIds, content: { capabilityId: 'cap-il-h' } },
+      deps: { mall },
+    });
+    let result = await at([':_cmc:apps:my-app']);
+    assert.equal(result.ok, true, 'judged from the invite, which the fake serves on its stream');
+    assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'invalidated');
+    const r2 = await mintCapability({
+      userId: 'u1', triggerEvent: { ...OPEN_LINK_TRIGGER, id: 'evt-trigger-il-h2', streamIds: undefined }, deps: { mall, idGen: () => 'cap-il-h2', now: () => 1000 },
+    });
+    mall.events.getOne = async () => null;
+    result = await handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: { id: 'evt-il-h2', type: 'consent/invalidate-link-cmc', streamIds: [':_cmc:apps:my-app'], content: { capabilityId: 'cap-il-h2' } },
+      deps: { mall },
+    });
+    assert.equal(result.reason, 'cmc-invalidate-link-scope-mismatch', 'neither the copy nor the invite says where the invite lives');
+    assert.equal(mall.accessesById.get(r2.accessId).clientData.cmc.capability.state, 'open');
   });
 });

@@ -39,9 +39,22 @@ const require = createRequire(import.meta.url);
  * that held the peer endpoint is gone, so the record carries the endpoint
  * and the body itself; it is re-sent as is, on its own, longer schedule
  * (DELIVERY_BACKOFF_BASE_MS × 5^n capped at DELIVERY_MAX_DELAY_MS: 1 min,
- * 5 min, 25 min, about 2 h, then 6 h; DELIVERY_MAX_ATTEMPTS = 8, about
- * 20 h in all) and marked 'failed-permanent' past it, the endpoint's
- * credential removed on either terminal state.
+ * 5 min, 25 min, about 2 h, then 6 h; DELIVERY_MAX_ATTEMPTS = 8 re-sends
+ * from the loop after the in-request round, about 27 h in all) and marked
+ * 'failed-permanent' past it, the endpoint's credential removed on either
+ * terminal state.
+ *
+ * A record older than its whole schedule plus a margin (STALE_AFTER_MS,
+ * DELIVERY_STALE_AFTER_MS, from the record's `time`) is retired as
+ * 'failed-permanent' with reason 'cmc-retry-stale' and never dispatched:
+ * a loop that starts on a core which ran with it off must not replay the
+ * backlog that built up meanwhile (accepts, chats, scope updates the
+ * users saw fail months ago).
+ *
+ * Terminal records are pruned by the loop: a succeeded one on the next
+ * pass, a failed-permanent one after FAILED_RETENTION_MS. The loop reads
+ * the stream in pages, so a pending record is never hidden behind newer
+ * ones.
  *
  * The loop is run by master workers on an interval; the actual
  * scheduling is wired separately. This module is pure: it depends only
@@ -59,6 +72,17 @@ const BACKOFF_MULTIPLIER = 5;
 const DELIVERY_MAX_ATTEMPTS = 8;
 const DELIVERY_MAX_DELAY_MS = 6 * 60 * 60 * 1000; // 6 h
 const DELIVERY_BACKOFF_BASE_MS = 60_000;
+// The trigger schedule spans about 23 min, the delivery one about 27 h.
+const STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 h
+const DELIVERY_STALE_AFTER_MS = 30 * 60 * 60 * 1000; // 30 h
+const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 d
+const STALE_REASON = 'cmc-retry-stale';
+const PAGE_SIZE = 200;
+const MAX_PAGES = 50;
+// Every write of the plugin on a retry record skips event versioning: the
+// record holds a peer token (a delivery's endpoint, an accept's capability
+// URL) that must not be copied into history rows.
+const WRITE_OPTS = { skipVersioning: true };
 
 
 type EventLike = {
@@ -96,8 +120,11 @@ type MallParams = Record<string, unknown>;
 type MallLike = {
   events: {
     create: (userId: string, params: MallParams) => Promise<EventLike>;
-    update: (userId: string, params: MallParams) => Promise<unknown>;
+    update: (userId: string, params: MallParams, transaction?: null, opts?: { skipVersioning?: boolean }) => Promise<unknown>;
     get: (userId: string, params?: MallParams) => Promise<RetryEvent[]>;
+    // The real mall's delete takes the stored event; optional so unit fakes
+    // may omit it (terminal records are then kept).
+    delete?: (userId: string, event: EventLike) => Promise<unknown>;
   };
 };
 type DeliveryDeps = {
@@ -283,7 +310,7 @@ async function processDeliveryEvent (params: {
       ...retryEvent,
       ...serverModification(deps),
       content: { ...c, status: 'succeeded', delivery: terminalDelivery(c) },
-    });
+    }, null, WRITE_OPTS);
     deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: c.attempts ?? 1 });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
@@ -301,7 +328,7 @@ async function processDeliveryEvent (params: {
         lastFailureDetail: detail,
         delivery: terminalDelivery(c),
       },
-    });
+    }, null, WRITE_OPTS);
     deps.logger?.warn?.('cmc/retry: delivery failed-permanent (the counterparty was never told)', {
       retryEventId: retryEvent.id, originalType: c.originalType, attempts: nextAttempts - 1, reason: result.reason, status: result.status,
     });
@@ -311,7 +338,7 @@ async function processDeliveryEvent (params: {
     ...retryEvent,
     ...serverModification(deps),
     content: { ...c, attempts: nextAttempts, lastFailureDetail: detail, nextAttemptAfter: nextDeliveryAttemptAt({ attempts: nextAttempts, now }) },
-  });
+  }, null, WRITE_OPTS);
   deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: nextAttempts });
   return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
 }
@@ -345,6 +372,25 @@ async function processRetryEvent (params: {
   const now = (deps.now ?? Date.now)();
   if (typeof c.nextAttemptAfter === 'number' && c.nextAttemptAfter > now) {
     return { outcome: 'skipped-not-due', retryEventId: retryEvent?.id };
+  }
+  // A record past its whole schedule is retired, never replayed.
+  const staleAfter = c.delivery != null ? DELIVERY_STALE_AFTER_MS : STALE_AFTER_MS;
+  if (typeof retryEvent.time === 'number' && now - retryEvent.time * 1000 > staleAfter) {
+    await deps.mall.events.update(userId, {
+      ...retryEvent,
+      ...serverModification(deps),
+      content: {
+        ...c,
+        status: 'failed-permanent',
+        lastFailureReason: STALE_REASON,
+        lastFailureDetail: { enqueuedAt: retryEvent.time, retiredAt: now / 1000 },
+        delivery: terminalDelivery(c),
+      },
+    }, null, WRITE_OPTS);
+    deps.logger?.warn?.('cmc/retry: a pending record older than its schedule was retired, not replayed', {
+      retryEventId: retryEvent.id, originalType: c.originalType, enqueuedAt: retryEvent.time, kind: c.delivery != null ? 'delivery' : 'trigger',
+    });
+    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: c.attempts ?? 1 };
   }
   if (c.delivery != null) {
     return await processDeliveryEvent({ userId, retryEvent, deps, now });
@@ -381,7 +427,7 @@ async function processRetryEvent (params: {
       ...retryEvent,
       ...serverModification(deps),
       content: { ...c, status: 'succeeded' },
-    });
+    }, null, WRITE_OPTS);
     deps.logger?.debug?.('cmc/retry: succeeded', { retryEventId: retryEvent.id });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
@@ -399,7 +445,7 @@ async function processRetryEvent (params: {
         lastFailureReason: dispatched.reason ?? 'unknown',
         lastFailureDetail: dispatched.detail ?? null,
       },
-    });
+    }, null, WRITE_OPTS);
     deps.logger?.warn?.('cmc/retry: failed-permanent', {
       retryEventId: retryEvent.id,
       reason: dispatched.reason,
@@ -418,7 +464,7 @@ async function processRetryEvent (params: {
       lastFailureDetail: dispatched.detail ?? null,
       nextAttemptAfter: nextAttemptAt({ attempts: nextAttempts, now }),
     },
-  });
+  }, null, WRITE_OPTS);
   deps.logger?.debug?.('cmc/retry: rescheduled', {
     retryEventId: retryEvent.id,
     attempts: nextAttempts,
@@ -443,23 +489,50 @@ async function runRetryLoop (params: {
 }> {
   const { userId, deps } = params;
   const limit = params.limit ?? 100;
+  const now = (deps.now ?? Date.now)();
 
-  // Pull pending retry events. Implementations may filter on content.status
-  // server-side; here we pull broadly + filter client-side because mall.events.get
-  // doesn't accept content filters uniformly.
-  const events = await deps.mall.events.get(userId, {
-    // The mall takes stream queries (`{ any: [...] }`), never bare ids: a bare
-    // id resolves no store and the read throws.
-    streams: [{ any: [C.NS_INTERNAL_RETRIES] }],
-    limit,
-  });
-
+  // The stream read in pages (newest first), every record seen: pending ones
+  // collected up to `limit`, terminal ones pruned on the way (a succeeded
+  // record at once, a failed-permanent one past its retention). A read that
+  // fails (an account without the stream yet) is an empty queue.
   const summary = { processed: 0, succeeded: 0, rescheduled: 0, failedPermanent: 0, skipped: 0 };
-  for (const ev of events) {
-    if (ev?.content?.status !== 'pending') {
-      summary.skipped += 1;
-      continue;
+  const pending: RetryEvent[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES && pending.length < limit; page++) {
+    let events: RetryEvent[];
+    try {
+      events = await deps.mall.events.get(userId, {
+        // The mall takes stream queries (`{ any: [...] }`), never bare ids: a
+        // bare id resolves no store and the read throws.
+        streams: [{ any: [C.NS_INTERNAL_RETRIES] }],
+        limit: PAGE_SIZE,
+        skip: page * PAGE_SIZE,
+      });
+    } catch (err: unknown) {
+      if (page === 0) deps.logger?.debug?.('cmc/retry: queue read failed, treated as empty', { userId, error: String((err as Error)?.message || err) });
+      break;
     }
+    const list = Array.isArray(events) ? events : [];
+    for (const ev of list) {
+      if (ev?.id != null) {
+        if (seen.has(ev.id)) continue;
+        seen.add(ev.id);
+      }
+      const status = ev?.content?.status;
+      if (status === 'pending') {
+        if (pending.length < limit) pending.push(ev);
+        continue;
+      }
+      summary.skipped += 1;
+      const retired = status === 'succeeded' ||
+        (status === 'failed-permanent' && typeof ev?.time === 'number' && now - ev.time * 1000 > FAILED_RETENTION_MS);
+      if (retired && deps.mall.events.delete != null && ev?.id != null) {
+        try { await deps.mall.events.delete(userId, ev); } catch (_e) { /* pruned on a later pass */ }
+      }
+    }
+    if (list.length < PAGE_SIZE) break;
+  }
+  for (const ev of pending) {
     summary.processed += 1;
     try {
       const r = await processRetryEvent({ userId, retryEvent: ev, deps });
@@ -523,7 +596,7 @@ const NON_RETRYABLE_REASONS = new Set([
   // The capability's own refusals, reported instead of delivery-rejected.
   ...CAPABILITY_REFUSAL_IDS,
   'cmc-offer-empty-permissions',
-  'cmc-offer-permissions-invalid',
+  'cmc-offer-stream-not-offerable',
   'cmc-system-counterparty-access-not-found',
   'cmc-system-no-remote-apiendpoint',
   'cmc-system-no-remote-collector-stream',
@@ -589,6 +662,10 @@ export {
   DELIVERY_MAX_ATTEMPTS,
   DELIVERY_MAX_DELAY_MS,
   DELIVERY_BACKOFF_BASE_MS,
+  STALE_AFTER_MS,
+  DELIVERY_STALE_AFTER_MS,
+  FAILED_RETENTION_MS,
+  STALE_REASON,
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,

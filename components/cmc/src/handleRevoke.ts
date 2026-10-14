@@ -135,10 +135,11 @@ async function handleRevoke (params: {
     mall: MallLike;
     // Set on a re-dispatch by the retry loop (see peerAlreadyNotified).
     retryContext?: RetryContext;
-    // False when the retry loop is off (nothing would ever re-send a queued
-    // notice). The loop's own re-dispatch passes false too, to keep a
-    // failing trigger from re-queueing itself; it still queues a notice,
-    // since the loop that re-dispatched it is the one that will send it.
+    // True when the retry loop runs (from `cmc.retryLoop.enabled`): a notice
+    // the peer could not take is then queued. The loop's own re-dispatch
+    // passes false, to keep a failing trigger from re-queueing itself; it
+    // still queues a notice, since the loop that re-dispatched it is the one
+    // that will send it.
     enqueueRetries?: boolean;
     notifyEventChanged?: (userId: string, event: { id?: string }) => void;
     // Group accounts (memberSweep.ts): the member children minted through a
@@ -386,6 +387,9 @@ async function handleRevoke (params: {
     if (typeof revokedScope === 'string') revokeContent.scopeStreamId = revokedScope;
     if (typeof cpCmc?.offerEventId === 'string') revokeContent.offerEventId = cpCmc.offerEventId;
     if (typeof cpCmc?.acceptEventId === 'string') revokeContent.acceptEventId = cpCmc.acceptEventId;
+    // When this revoke was issued: a notice that lands hours later (the
+    // retry loop) must not take a relationship re-established meanwhile.
+    revokeContent.revokedAt = Date.now() / 1000;
     // The invite the relationship descends from. Carried so the peer can match
     // the arrival against the request it already holds even when it is running
     // a build older than the receiver-side enrichment.
@@ -403,7 +407,12 @@ async function handleRevoke (params: {
       // The peer is down (not a 4xx, which is its considered answer): the
       // notice is queued with its endpoint, since the access that held it
       // is deleted below, and re-sent by the retry loop over the next hours.
-      const loopWillSend = deps.enqueueRetries !== false || deps.retryContext != null;
+      // Queued only when the wiring says the loop runs (`enqueueRetries`
+      // true from config), or when this is the loop's own re-dispatch
+      // (`retryContext`, which passes `enqueueRetries: false` to keep a
+      // failing trigger from re-queueing itself). Absent = not queued: the
+      // record would carry the peer token for a loop that may never run.
+      const loopWillSend = deps.enqueueRetries === true || deps.retryContext != null;
       if (loopWillSend && delivery.reason !== 'http-4xx' && mall.events?.create != null) {
         try {
           await retryQueue.enqueueDelivery({

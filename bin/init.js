@@ -866,6 +866,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # cmc:
 # #   retryLoop:
 # #     enabled: true
+# #     startScheduler: true
 # #     intervalMs: 60000
 # #     perUserLimit: 100
 # #   memberAccess:

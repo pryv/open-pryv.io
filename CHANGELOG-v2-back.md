@@ -27,6 +27,56 @@
 - Tests: `[SYSL]` is skipped on macOS (shown as pending) instead of returning early: datagrams
   written to `/var/run/syslog` are not observable there.
 
+## CMC: the retry loop's backlog, pairing of a late revoke, member record guards
+
+- `cmc/src/retryQueue.ts`: `processRetryEvent` retires a record whose `time` is older than
+  `STALE_AFTER_MS` (2 h, triggers) / `DELIVERY_STALE_AFTER_MS` (30 h, deliveries) as
+  `failed-permanent`, `STALE_REASON` (`cmc-retry-stale`), without dispatch; every write passes
+  `WRITE_OPTS` (`skipVersioning: true`); `runRetryLoop` pages (`PAGE_SIZE` 200, `MAX_PAGES` 50),
+  prunes succeeded records and `failed-permanent` ones past `FAILED_RETENTION_MS` (30 d) through
+  the optional `mall.events.delete`, and treats a failing read as an empty queue.
+  `DELIVERY_MAX_ATTEMPTS` stays 8 (docs now say "8 re-sends, about 27 h").
+- `cmc/src/bootRetryLoop.ts`: `cmc:retryLoop:startScheduler === false` returns null after the
+  enabled check (queueing stays on); `withCmcState(provider, mall)` filters the user list by the
+  presence of `:_cmc:_internal:retries` (`streams.getOneWithNoChildren`), negative verdicts
+  re-checked after `CMC_STATE_RECHECK_MS` (10 min); the returned scheduler carries `stopAll()`.
+  `api-server/src/methods/events.ts` keeps the handle (`stopCmcRetryLoop`) and, when a scheduler
+  runs in the process, drains it on SIGTERM / SIGINT then re-raises the signal (bounded 2 s).
+  `test-helpers` `initCore` injects `cmc.retryLoop.startScheduler: false` into the test core.
+- `handleRevoke.ts` / `accessesDeleteHook.ts`: a delivery record is queued only with
+  `enqueueRetries === true` (or a `retryContext`); `delegations.ts` passes the flag.
+- `acceptOrchestration.ts` delivers `acceptEventId` (the accepter's trigger id);
+  `handleIncomingAccept.ts` records it as `clientData.cmc.peerAcceptEventId` on the requester's
+  back-channel; `handleRevoke.ts` / `accessesDeleteHook.ts` stamp `revokedAt` on the notice;
+  `handleIncomingRevoke.ts` returns `relationship-re-established` (nothing deleted) when the
+  notice names another accept than the paired one, and `tearDownRelationship` keeps siblings
+  created after `revokedAt`.
+- `handleInvalidateLink.ts`: the scope comes from `originStreamId` of the offer copy in
+  `:_cmc:_internal:offer:<capabilityId>` (`mall.events.get`), then from the invite event.
+- `hooks.ts`: `MEMBER_RECORD_TYPES` refused on update by non-personal tokens
+  (`createEventUpdateGuardHook`) and on delete (`createEventDeleteGuardHook`, wired after
+  `checkEventForDelete`), with inbox / internal events; `STAMP_STRING` also refuses C1, bidi
+  and zero-width characters.
+- `accessesUpdateHook.ts` `createStreamDeleteNarrowingHook({ mall, memberSweep })`, wired in
+  `streams.ts` after `verifyStreamExistenceAndPermissions`: on the final delete of a user-creatable
+  `:_cmc:apps:*` stream, every live `member` access whose covered scopes touch it is swept
+  `narrowed` with `recordFilter` (records under the stream), `uncovered: [streamId]`, `streamId`
+  (the parent when user-creatable, else `:_cmc:apps`); `memberSweep.ts` `SweepOptions` gains
+  `uncovered` / `streamId`; `handleMemberRevoke.ts` `coveredNow` excludes scopes under
+  `content.uncovered`. `sweepErasedAccount` runs `ERASURE_CONCURRENCY` (16) workers; `goneSince`
+  drops keys not seen by the pass. `handleMemberAccess.ts`: a child the post-mint re-read could
+  not delete is set `residual`; an unreadable invite answers `MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND`
+  (`detail.reason: 'offer-not-found'`).
+- `api-server/src/methods/helpers/accessDeletion.ts`: `scrubCredentialUrls` runs after the soft
+  delete, on the deletion row (`clientData` scrubbed, `token: null`) and on its `findHistory` rows.
+- `CmcErrorIds.OFFER_STREAM_NOT_OFFERABLE` (`cmc-offer-stream-not-offerable`) replaces the
+  unshipped `cmc-offer-permissions-invalid`.
+- Tests: cmc `[RQ25]`..`[RQ27]`, `[BRL07]`, `[BRL08]`, `[HR26]` / `[DH26]` (no flag: nothing
+  queued), `[CIR26]`, `[CIR27]`, `[CMCIL-G]` (deleted invite), `[CMCIL-H]`, `[CHU4]`, `[CHD1]`,
+  `[MR34]`, `[MB12]` (bidi / zero-width); api-server `[CN62]` (late notice after a re-accept),
+  `[CN73]` (history rows, token), `[CN74]` (invalidate after the invite was deleted), `[GA41]`
+  (team stream deleted), `[GA42]` (member records guarded).
+
 ## CMC: delivery records in the retry queue, the sweep after review
 
 - `cmc/src/retryQueue.ts`: a second record kind, `content.delivery = { apiEndpoint, path, body }`,

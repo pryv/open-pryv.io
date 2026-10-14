@@ -437,7 +437,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     it('[HR25] a peer still down after the in-request attempts gets the notice queued for the retry loop, endpoint and body included; the trigger says so', async () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       const { fetch, calls } = fakeFetch(new Error('ECONNREFUSED'));
-      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch } });
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch, enqueueRetries: true } });
       assert.equal(r.ok, true);
       assert.equal(calls.length, 3, 'the in-request attempts first');
       assert.equal(r.peerNotified, false);
@@ -455,17 +455,19 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.ok(mall.calls.deleted.some((d) => d.id === COUNTERPARTY_ACCESS.id), 'the local teardown is done regardless');
     });
 
-    it('[HR26] nothing is queued for a 4xx (the peer answered), nor when the retry loop is off; a loop re-dispatch still queues', async () => {
+    it('[HR26] nothing is queued for a 4xx (the peer answered), nor when the retry loop is off or the wiring says nothing; a loop re-dispatch still queues', async () => {
       let mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
-      let r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 400, body: {} }).fetch } });
+      let r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 400, body: {} }).fetch, enqueueRetries: true } });
       assert.equal(r.deliveryQueued, undefined);
       assert.equal(mall.calls.eventsCreated.length, 0);
 
-      mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
-      r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: false } });
-      assert.equal(r.deliveryQueued, undefined);
-      assert.equal(r.deliveryFailure?.status, 503, 'still reported');
-      assert.equal(mall.calls.eventsCreated.length, 0);
+      for (const enqueueRetries of [false, undefined]) {
+        mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+        r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries } });
+        assert.equal(r.deliveryQueued, undefined);
+        assert.equal(r.deliveryFailure?.status, 503, 'still reported');
+        assert.equal(mall.calls.eventsCreated.length, 0, 'enqueueRetries ' + enqueueRetries);
+      }
 
       mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       r = await handleRevoke({
@@ -482,7 +484,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       mall.events.create = async () => { throw new Error('disk full'); };
       const errors = [];
-      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } } });
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: true, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } } });
       assert.equal(r.ok, true);
       assert.equal(r.deliveryQueued, undefined);
       assert.ok(errors.some((m) => m.includes('could not be queued')));

@@ -230,7 +230,9 @@ async function resolveMintTarget (params: {
   // 3. The bound: what the group offered the patient.
   const offer = await readOffer(deps.mall, userId, [relCmc.inviteEventId, relCmc.offerEventId]);
   if (offer == null) {
-    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET, detail: { reason: 'offer-not-found', relationshipAccessId: relationshipAccess.id } };
+    // The invite the relationship descends from is gone (deleted on the
+    // team stream): no bound can be read, the group invites the patient again.
+    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND, detail: { reason: 'offer-not-found', relationshipAccessId: relationshipAccess.id } };
   }
   const bound = offeredDataPermissions(offer);
   const grantDelegable = (offer.request as { accessType?: unknown } | undefined)?.accessType === 'app';
@@ -594,7 +596,10 @@ async function handleMemberAccess (params: {
       if (deletedOrGone(del)) {
         await ledger.setState(ledgerDeps, userId, eventId, 'deleted', child.id);
       } else {
-        deps.logger?.warn?.('cmc/handleMemberAccess: the membership ended during the mint and the child could not be deleted; the periodic pass will', {
+        // Left residual so the periodic pass re-sweeps it: a live record
+        // outside its membership's coverage is revisited by nothing else.
+        await ledger.setState(ledgerDeps, userId, eventId, 'residual', child.id);
+        deps.logger?.warn?.('cmc/handleMemberAccess: the membership ended during the mint and the child could not be deleted; left residual for the periodic pass', {
           childAccessId: child.id,
         });
       }

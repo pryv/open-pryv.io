@@ -362,6 +362,12 @@ async function handleIncomingAccept (params: {
         // path rewrites clientData, so they self-refresh on the next accept.
         offerEventId,
         inviteEventId,
+        // The peer's accept trigger this relationship descends from: a revoke
+        // naming another one is for an earlier relationship, re-established
+        // since (handleIncomingRevoke). Null from a peer of an earlier release.
+        peerAcceptEventId: typeof acceptEvent.content?.acceptEventId === 'string' && acceptEvent.content.acceptEventId.length > 0
+          ? acceptEvent.content.acceptEventId
+          : null,
         // The resolved features: handleChat / handleSystem on this side, and
         // the inbound features gate, enforce them.
         features: negotiatedFeatures,

@@ -501,7 +501,7 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       const mall = mallWithQueue();
       const { fetch, calls } = fakeFetch({ status: 503, body: {} });
       const errors = [];
-      const hook = createAccessesDeletePostHook({ fetch, mall, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } });
+      const hook = createAccessesDeletePostHook({ fetch, mall, enqueueRetries: true, logger: { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} } });
       const results = await hook('u1', [REQUESTER_SIDE_ACCESS]);
       assert.equal(calls.length, 3);
       assert.equal(results[0].peerNotified, false);
@@ -516,10 +516,15 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       assert.equal(errors.some((m) => m.includes('NOT notified')), false, 'queued is not lost');
     });
 
-    it('[DH26] not queued for a 4xx, without a mall, or with the loop off; then the loss is logged', async () => {
+    it('[DH26] not queued for a 4xx, without a mall, with the loop off or with a wiring that says nothing; then the loss is logged', async () => {
       let mall = mallWithQueue();
-      let results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 404, body: {} }).fetch, mall })('u1', [REQUESTER_SIDE_ACCESS]);
+      let results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 404, body: {} }).fetch, mall, enqueueRetries: true })('u1', [REQUESTER_SIDE_ACCESS]);
       assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(mall.created.length, 0);
+
+      mall = mallWithQueue();
+      results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, mall })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined, 'no flag: nothing queued');
       assert.equal(mall.created.length, 0);
 
       const errors = [];

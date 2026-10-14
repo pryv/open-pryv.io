@@ -268,8 +268,58 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
   };
 }
 
+/**
+ * streams.delete hook (group accounts), placed after the stream and the
+ * caller's right to delete it are verified and before the deletion runs:
+ * deleting a team stream under `:_cmc:apps:*` for good (the second delete,
+ * once trashed) narrows every membership that covers it, exactly as an
+ * `accesses.update` dropping that team would (reason `narrowed`): the
+ * accesses minted for the members under that stream are deleted on the
+ * patient cores. The record is written on the nearest surviving ancestor
+ * (the deleted stream's parent when it is a team stream, else the apps
+ * root), with `uncovered: [streamId]` so the sweep's re-check does not read
+ * the membership's permission on the dead stream as coverage. Fire and
+ * forget, like the update hook; the trashing step is not a narrowing.
+ */
+function createStreamDeleteNarrowingHook (deps: {
+  mall: { accesses: { get: (userId: string, params: Record<string, unknown>) => Promise<unknown> } };
+  memberSweep: Pick<MemberSweep, 'sweepMembership'>;
+  logger?: CmcLogger;
+}) {
+  return function cmcStreamDeleteNarrowingHook (context: { user?: { id?: string }; stream?: { id?: string; parentId?: string | null; trashed?: boolean | null } | null }, params: { id?: unknown }, _result: unknown, next: (err?: unknown) => void) {
+    const streamId = typeof params?.id === 'string' ? params.id : (typeof context?.stream?.id === 'string' ? context.stream.id : null);
+    const userId = context?.user?.id;
+    if (streamId == null || userId == null || context?.stream?.trashed == null || !C.isUserCreatableStreamId(streamId)) return next();
+    const parentId = context.stream?.parentId;
+    const recordStream = typeof parentId === 'string' && C.isUserCreatableStreamId(parentId) ? parentId : C.NS_APPS;
+    const under = (scope: unknown): boolean => typeof scope === 'string' && (scope === streamId || scope.startsWith(streamId + ':'));
+    Promise.resolve()
+      .then(async () => {
+        const all = await deps.mall.accesses.get(userId, {}) as AccessLike[];
+        for (const access of Array.isArray(all) ? all : []) {
+          if ((access as { deleted?: unknown })?.deleted != null || access?.clientData?.cmc?.role !== C.ROLE_MEMBER) continue;
+          const covered = coveredScopesOf(access);
+          const touches = covered.some((c) => under(c) || streamId.startsWith(c + ':'));
+          if (!touches) continue;
+          await deps.memberSweep.sweepMembership(userId, access, 'narrowed', {
+            recordFilter: (record) => under(record.scopeStreamId),
+            uncovered: [streamId],
+            streamId: recordStream,
+          });
+        }
+      })
+      .catch((err: unknown) => {
+        deps.logger?.warn?.('cmc/streamDeleteNarrowingHook: the member sweep failed (the children expire on their own)', {
+          streamId, error: String((err as Error)?.message ?? err),
+        });
+      });
+    next();
+  };
+}
+
 export {
   createAccessesUpdatePostHook,
+  createStreamDeleteNarrowingHook,
   isSuppressed,
   runWithSuppression,
   coveredScopesOf,

@@ -202,7 +202,7 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       await processRetryEvent({
         userId: 'u1',
         retryEvent: ev,
-        deps: { mall, dispatch: async ({ event }) => { seen.push(event); return { handled: true, status: 'completed' }; }, dispatchDeps: {}, now: () => 10_000_000 },
+        deps: { mall, dispatch: async ({ event }) => { seen.push(event); return { handled: true, status: 'completed' }; }, dispatchDeps: {}, now: () => 1_000_000 },
       });
       assert.equal(seen[0].createdBy, 'pat1 caller');
       // a snapshot taken before the field existed re-dispatches without it
@@ -495,6 +495,79 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.deepEqual(dispatched, ['message/chat-cmc'], 'the delivery record never goes through the dispatch');
       assert.equal(mall._events.get(ev.id).content.status, 'failed-permanent');
       assert.equal(mall._events.get(ev.id).content.attempts, 1);
+    });
+
+    it('[RQ25] a record older than its whole schedule is retired as cmc-retry-stale without a dispatch; a fresh one runs', async () => {
+      const mall = fakeMall();
+      const day = 24 * 60 * 60 * 1000;
+      const now = 10 * day;
+      mall._events.set('r-old', { id: 'r-old', time: (now - day) / 1000, content: { originalEventId: 'a', originalType: 'consent/accept-cmc', originalContent: { capabilityUrl: 'https://t@peer/' }, attempts: 2, nextAttemptAfter: 0, status: 'pending' } });
+      mall._events.set('r-new', { id: 'r-new', time: (now - 60_000) / 1000, content: { originalEventId: 'b', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      const dv = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => now - 2 * day } });
+      const dispatched = [];
+      const p = peer({ status: 201 });
+      const summary = await runRetryLoop({
+        userId: 'u1',
+        deps: { mall, dispatch: async ({ event }) => { dispatched.push(event.type); return { handled: true, status: 'completed' }; }, dispatchDeps: { fetch: p.fetch }, now: () => now },
+      });
+      assert.deepEqual(dispatched, ['message/chat-cmc'], 'the stale accept is never replayed');
+      assert.equal(p.calls.length, 0, 'the stale delivery is never sent');
+      assert.equal(summary.failedPermanent, 2);
+      for (const id of ['r-old', dv.id]) {
+        const c = mall._events.get(id).content;
+        assert.equal(c.status, 'failed-permanent', id);
+        assert.equal(c.lastFailureReason, 'cmc-retry-stale', id);
+        assert.equal(c.lastFailureDetail.enqueuedAt, mall._events.get(id).time);
+      }
+      assert.equal(JSON.stringify(mall._events.get(dv.id).content).includes('peer-tok'), false, 'the token leaves a retired delivery');
+      assert.equal(mall._events.get('r-new').content.status, 'succeeded');
+    });
+
+    it('[RQ26] every write on a retry record skips event versioning (the record holds a peer token)', async () => {
+      const mall = fakeMall();
+      const opts = [];
+      const update = mall.events.update.bind(mall.events);
+      mall.events.update = async (userId, params, transaction, o) => { opts.push(o); return update(userId, params); };
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => 0 } });
+      const outcomes = {
+        again: { handled: true, status: 'failed', reason: 'cmc-delivery-failed', detail: { peerReason: 'network' } },
+        done: { handled: true, status: 'completed' },
+        never: { handled: true, status: 'failed', reason: 'cmc-handler-wrong-type' },
+      };
+      for (const id of Object.keys(outcomes)) {
+        mall._events.set('r-' + id, { id: 'r-' + id, time: 0, content: { originalEventId: id, originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      }
+      const p = peer(new Error('down'));
+      const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async ({ event }) => outcomes[event.id], dispatchDeps: { fetch: p.fetch }, now: () => 120_000 } });
+      assert.deepEqual([summary.succeeded, summary.rescheduled, summary.failedPermanent], [1, 2, 1], JSON.stringify(summary));
+      assert.equal(opts.length, 4, 'a reschedule, a success, a failed-permanent and the delivery reschedule');
+      for (const o of opts) assert.deepEqual(o, { skipVersioning: true });
+      assert.equal(mall._events.get(ev.id).content.attempts, 2);
+    });
+
+    it('[RQ27] the loop reads the whole stream in pages: a pending delivery behind 150 newer terminal records is processed, succeeded records are pruned, failed-permanent ones past their retention too', async () => {
+      const mall = fakeMall();
+      const deleted = [];
+      mall.events.delete = async (userId, ev) => { deleted.push(ev.id); mall._events.delete(ev.id); };
+      const get = mall.events.get.bind(mall.events);
+      mall.events.get = async (userId, params) => {
+        const all = (await get(userId, params)).slice().reverse();
+        return all.slice(params.skip ?? 0, (params.skip ?? 0) + (params.limit ?? all.length));
+      };
+      const now = 100 * 24 * 60 * 60 * 1000;
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => now - 120_000 } });
+      for (let i = 0; i < 150; i++) {
+        const old = i % 3 === 0;
+        mall._events.set('t-' + i, { id: 't-' + i, time: (now - (old ? 40 : 1) * 24 * 60 * 60 * 1000) / 1000, content: { originalType: 'message/chat-cmc', attempts: 1, status: i % 2 === 0 ? 'succeeded' : 'failed-permanent' } });
+      }
+      const p = peer({ status: 201 });
+      const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async () => { throw new Error('no trigger here'); }, dispatchDeps: { fetch: p.fetch }, now: () => now }, limit: 100 });
+      assert.equal(summary.succeeded, 1, JSON.stringify(summary));
+      assert.equal(mall._events.get(ev.id).content.status, 'succeeded');
+      const succeededCount = 75;
+      const oldFailed = [...Array(150).keys()].filter((i) => i % 2 === 1 && i % 3 === 0).length;
+      assert.equal(deleted.length, succeededCount + oldFailed, 'succeeded pruned at once, failed-permanent past 30 days pruned');
+      assert.equal(mall._events.has('t-1'), true, 'a recent failed-permanent record stays for the operator');
     });
   });
 });

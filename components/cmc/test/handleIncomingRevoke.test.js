@@ -257,6 +257,42 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.equal(mall.accessesById.has('grant-other'), true);
   });
 
+  it('[CIR26] a revoke naming another accept than the one the access pairs with is for an earlier relationship: nothing is torn down', async () => {
+    const mall = fakeMall();
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    seedBackChannel(mall, 'bc', { counterparty: SUBJECT, scopeStreamId: SCOPE, peerAcceptEventId: 'acc-new' });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'bc', content: { accessId: 'grant-old', acceptEventId: 'acc-old' } },
+      deps: { mall },
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.reason, 'relationship-re-established');
+    assert.deepEqual(res.deletedAccessIds, []);
+    assert.equal(mall.accessesById.has('bc'), true);
+    // The same accept, or no stamp on either side: torn down as before.
+    const current = await handleIncomingRevoke({ userId: 'u1', event: { type: 'consent/revoke-cmc', createdBy: 'bc', content: { acceptEventId: 'acc-new' } }, deps: { mall } });
+    assert.deepEqual(current.deletedAccessIds, ['bc']);
+    seedBackChannel(mall, 'bc-legacy', { counterparty: SUBJECT, scopeStreamId: SCOPE });
+    const legacy = await handleIncomingRevoke({ userId: 'u1', event: { type: 'consent/revoke-cmc', createdBy: 'bc-legacy', content: { acceptEventId: 'acc-x' } }, deps: { mall } });
+    assert.deepEqual(legacy.deletedAccessIds, ['bc-legacy']);
+  });
+
+  it('[CIR27] a sibling created after the revoke was issued belongs to a later relationship and is kept', async () => {
+    const mall = fakeMall();
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    mall.accessesById.set('bc-old', { id: 'bc-old', created: 1000, clientData: { cmc: { role: 'counterparty', counterparty: SUBJECT, scopeStreamId: SCOPE } } });
+    mall.accessesById.set('bc-older', { id: 'bc-older', created: 900, clientData: { cmc: { role: 'counterparty', counterparty: SUBJECT, scopeStreamId: SCOPE } } });
+    mall.accessesById.set('bc-new', { id: 'bc-new', created: 5000, clientData: { cmc: { role: 'counterparty', counterparty: SUBJECT, scopeStreamId: SCOPE } } });
+    const res = await handleIncomingRevoke({
+      userId: 'u1',
+      event: { type: 'consent/revoke-cmc', createdBy: 'bc-old', content: { accessId: 'grant-old', revokedAt: 2000 } },
+      deps: { mall },
+    });
+    assert.deepEqual(res.deletedAccessIds.sort(), ['bc-old', 'bc-older']);
+    assert.equal(mall.accessesById.has('bc-new'), true, 'created after the revoke: kept');
+  });
+
   it('[CIR11] peer-supplied scope never selects the target; a mismatch only warns', async () => {
     const mall = fakeMall();
     const warns = [];

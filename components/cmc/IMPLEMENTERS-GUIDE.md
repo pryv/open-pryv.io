@@ -415,7 +415,7 @@ One write; the local access is destroyed server-side, which is what actually cut
 
 A field that could not be resolved is absent rather than null. Against an older peer you may see only `accessId`, `appCode` and `offerEventId`.
 
-> Delivery requires the back-channel handshake to have completed (that is what stores the peer's endpoint; without it the trigger completes with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing is retried). A peer that cannot be reached after the in-request attempts gets the notice queued (the trigger says `deliveryQueued: true` beside `peerNotified: false`) and re-sent by the sender's retry loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 attempts in all, then given up as `failed-permanent` for the operator; a 4xx is your answer and is not retried, and the notices of an account being deleted are not queued. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible after a day-long outage, and reconcile on your own schedule if the relationship matters.
+> Delivery requires the back-channel handshake to have completed (that is what stores the peer's endpoint; without it the trigger completes with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing is retried). A peer that cannot be reached after the in-request attempts gets the notice queued (the trigger says `deliveryQueued: true` beside `peerNotified: false`) and re-sent by the sender's retry loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 re-sends in all over about 27 hours, then given up as `failed-permanent` for the operator; a 4xx is your answer and is not retried, and the notices of an account being deleted are not queued. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible after a day-long outage, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 
@@ -817,7 +817,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 - Plugin updates `content.status` as it orchestrates (`'pending'` → `'delivered'` → `'completed'`, or `'failed'`).
 
 **Incoming** (events delivered to the corresponding anchored stream by counterparty plugins):
-- `content.from = { username, host }` is server-stamped, trustworthy, unforgeable.
+- `content.from = { username, host }` is written by the sending core (never by its app) and the arrival is bound to the access it was written with, so it identifies the account that holds that access on yours: an app of the sender cannot forge it. What a group's core asserts about one of its members (`member: { username, host }` on a member access, a sweep record) is that core's claim, checked by the member's own core when the membership was requested, not by yours.
 
 ## Family 1: Requests (anchored at `:_cmc:inbox` on the delivery side)
 
@@ -1492,7 +1492,8 @@ Written by the server on the membership's team stream when a membership ends (cl
 {
   member: { username, host },
   membershipAccessId: string,
-  reason: 'revoke' | 'accesses.delete' | 'expired' | 'narrowed' | 'detach' | 'account-deleted',
+  reason: 'revoke' | 'accesses.delete' | 'expired' | 'vanished' | 'narrowed' | 'detach' | 'account-deleted',
+  uncovered?: string[],              // 'narrowed' by a team stream deletion: the stream(s) gone
   records: Array<{ relationshipAccessId, counterparty: { username, host }, childAccessId, expires }>,
   status: 'pending' | 'delivered' | 'completed' | 'failed',
   outcome?: Array<{ childAccessId, result: 'deleted' | 'absent' | 'residual', reason? }>,
@@ -1508,7 +1509,7 @@ Written by the server on the membership's team stream when a membership ends (cl
 | `accesses.delete` | the membership access was deleted through the API |
 | `expired` | the membership access expired (found by the periodic pass) |
 | `vanished` | the membership access is gone but its records were still live (found by the periodic pass: a deletion whose own sweep did not complete) |
-| `narrowed` | an `accesses.update` removed teams: only the patients outside the teams the membership still covers when the sweep runs |
+| `narrowed` | an `accesses.update` removed teams, or a team stream was deleted (`uncovered` names it): only the patients outside the teams the membership still covers when the sweep runs |
 | `detach` | the delegate administrator who approved it was detached and the owner did not keep it |
 | `account-deleted` | the group account is deleted (its accesses on patient cores are deleted through the grants before the erasure; no record is kept) |
 
@@ -1523,7 +1524,7 @@ Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.
 | Id | Meaning |
 |---|---|
 | `cmc-member-access-not-member` | Not written through a membership access (personal and delegate tokens are refused too). |
-| `cmc-member-access-relationship-not-found` | No relationship with this patient under the scope, or its handshake is not complete. |
+| `cmc-member-access-relationship-not-found` | No relationship with this patient under the scope, its handshake is not complete, or the invite it descends from was deleted (`detail.reason: 'offer-not-found'`): invite the patient again. |
 | `cmc-member-access-scope-outside-membership` | `scopeStreamId` is not the trigger's stream or under it, or the trigger is not on a team stream. |
 | `cmc-member-access-permissions-not-subset` | Not stream permissions, or beyond what the group's invite offered the patient. |
 | `cmc-member-access-expiry-out-of-range` | `expireAfter` outside [`minTtl`, `maxTtl`]. |
@@ -1566,7 +1567,7 @@ After acceptance, two standard Pryv shared accesses exist (one on each side). Th
 
 The plugin maintains the necessary internal markers (role tagging, counterparty identity, peer apiEndpoint references) on these accesses. The receiving plugin validates incoming deliveries on `:_cmc:inbox` against those markers, stamps `content.from`, and fires socket.io push.
 
-Apps reading `:_cmc:inbox` see `content.from = { username, host }` as the trustworthy sender identity (server-stamped, unforgeable).
+Apps reading `:_cmc:inbox` see `content.from = { username, host }` as the sender identity written by the sending core and bound to the access the arrival was written with (an app of the sender cannot forge it; a member identity inside a group's record is the group core's claim, verified by the member's core at join, not by yours).
 
 *(For engineering-internal details, the `clientData.cmc.role`/`counterparty.*` markers and per-event-type write authorization rules, see the CMC engineering specs.)*
 
@@ -1614,8 +1615,8 @@ npm package.
 | `HANDLER_MISSING_CAPABILITY_URL` | `cmc-handler-missing-capability-url` | The `consent/accept-cmc` (or `consent/refuse-cmc`) trigger event omitted `capabilityUrl`. |
 | `HANDLER_OFFER_MISSING_CAPABILITY_ID` | `cmc-handler-offer-missing-capability-id` | The offer event lacked the server-stamped `capabilityId`. |
 | `OFFER_EMPTY_PERMISSIONS` | `cmc-offer-empty-permissions` | The offer carried no `request.permissions` array. |
-| `OFFER_PERMISSIONS_INVALID` | `cmc-offer-permissions-invalid` | The offer asks a stream the plugin manages on the accepter's account (`:_cmc:inbox`, the `:_cmc:_internal` subtree, a chats / collectors leaf, the `:_cmc:apps` root). Refused at write too (`cmc-invalid-event-content`); the accepter's core applies the rule again on the offer it reads. `*` and the accepter's own `:_cmc:apps:<app>[:<path>]` streams are fine. |
-| `INVALIDATE_LINK_SCOPE_MISMATCH` | `cmc-invalidate-link-scope-mismatch` | The `consent/invalidate-link-cmc` trigger was written on a stream that does not hold the invite it names (write it on the invite's stream or an ancestor), or the invite cannot be read. The link stays open. |
+| `OFFER_STREAM_NOT_OFFERABLE` | `cmc-offer-stream-not-offerable` | The offer asks a stream the plugin manages on the accepter's account (`:_cmc:inbox`, the `:_cmc:_internal` subtree, a chats / collectors leaf, the `:_cmc:apps` root). Refused at write too (`cmc-invalid-event-content`); the accepter's core applies the rule again on the offer it reads. `*` and the accepter's own `:_cmc:apps:<app>[:<path>]` streams are fine. |
+| `INVALIDATE_LINK_SCOPE_MISMATCH` | `cmc-invalidate-link-scope-mismatch` | The `consent/invalidate-link-cmc` trigger was written on a stream that does not hold the invite it names (write it on the invite's stream or an ancestor; the stream is read from the server-written offer copy the capability holds, then from the invite event), or neither can be read. The link stays open. |
 | `HANDLER_WRONG_TYPE` | `cmc-handler-wrong-type` | Dispatch invoked a handler with a trigger whose `.type` doesn't match (defensive, should be unreachable). |
 | `HANDLER_THREW` | `cmc-handler-threw` | The handler threw an unexpected exception not classified above. |
 | `HANDLER_OFFER_READ_FAILED` | `cmc-handler-offer-read-failed` | `readOfferViaCapability` threw without a more specific id. |

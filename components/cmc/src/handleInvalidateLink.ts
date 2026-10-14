@@ -96,13 +96,24 @@ async function handleInvalidateLink (params: {
   // The scope check: the trigger's stream must hold the invite this
   // capability was minted for (the invite's stream, or an ancestor of it),
   // so a token with contribute on one app scope cannot close the invites of
-  // another by guessing their capability ids. An invite that cannot be read
-  // cannot be judged, and is refused.
+  // another by guessing their capability ids. The invite's stream is read
+  // from the server-written copy of the offer in the capability's own
+  // internal stream (`originStreamId`, which no client can edit or delete),
+  // and from the invite event itself only for a capability minted before
+  // that stamp existed. Neither readable: refused.
   const triggerScopes = (Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [])
     .filter((s): s is string => typeof s === 'string' && s.startsWith(C.NS_APPS + ':'));
-  const requestEventId = acc.clientData?.cmc?.requestEventId;
   let inviteStreams: string[] | null = null;
-  if (typeof requestEventId === 'string' && requestEventId.length > 0 && mall.events?.getOne != null) {
+  if (mall.events?.get != null) {
+    try {
+      const copies = await mall.events.get(userId, { streams: [{ any: [C.offerStreamIdFor(capabilityId)] }], limit: 5 });
+      const copy = (Array.isArray(copies) ? copies : []).find((e) => e?.type === C.ET_REQUEST);
+      const origin = (copy?.content as { originStreamId?: unknown } | null | undefined)?.originStreamId;
+      if (typeof origin === 'string' && origin.length > 0) inviteStreams = [origin];
+    } catch (_e) { inviteStreams = null; }
+  }
+  const requestEventId = acc.clientData?.cmc?.requestEventId;
+  if (inviteStreams == null && typeof requestEventId === 'string' && requestEventId.length > 0 && mall.events?.getOne != null) {
     try {
       const invite = await mall.events.getOne(userId, requestEventId);
       if (invite != null && Array.isArray(invite.streamIds)) inviteStreams = invite.streamIds.filter((s): s is string => typeof s === 'string');

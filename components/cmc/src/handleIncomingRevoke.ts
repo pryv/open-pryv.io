@@ -130,6 +130,25 @@ async function handleIncomingRevoke (params: {
   // Withdrawing subject — SERVER-stamped identity only, never content.from.
   const accepter = cmcCd.counterparty;
 
+  // A notice that names another accept than the one this access pairs with
+  // belongs to an earlier relationship, re-established since (a revoke that
+  // reached us hours late, after a re-accept healed this access in place):
+  // the current relationship is not torn down by it. Judged only when both
+  // sides stamped the pairing (cores of this release).
+  const noticeAccept = (event.content as { acceptEventId?: unknown } | null | undefined)?.acceptEventId;
+  const pairedAccept = (cmcCd as { peerAcceptEventId?: unknown }).peerAcceptEventId;
+  if (typeof noticeAccept === 'string' && noticeAccept.length > 0 &&
+      typeof pairedAccept === 'string' && pairedAccept.length > 0 && noticeAccept !== pairedAccept) {
+    logger?.info?.('cmc/handleIncomingRevoke: the revoke names an earlier accept than the one this access pairs with; the relationship was re-established since, nothing is torn down', {
+      accessId: createdByAccess.id, noticeAcceptEventId: noticeAccept, pairedAcceptEventId: pairedAccept,
+    });
+    return { ok: true, inviteRevoked: false, deletedAccessIds: [], reason: 'relationship-re-established' };
+  }
+  // When the notice says when it was issued, a sibling created after that is
+  // a later relationship and survives.
+  const revokedAtRaw = (event.content as { revokedAt?: unknown } | null | undefined)?.revokedAt;
+  const revokedAt = typeof revokedAtRaw === 'number' && Number.isFinite(revokedAtRaw) ? revokedAtRaw : null;
+
   // Step 1 — ENFORCE. Everything the later steps need has been read off the
   // access above, so the teardown can run before them.
   const scopeStreamId: string | null = relationshipKey.scopeOfAccess(createdByAccess);
@@ -152,6 +171,7 @@ async function handleIncomingRevoke (params: {
     accessList,
     scopeStreamId,
     counterparty: accepter,
+    revokedAt,
     mall,
     logger,
   });
@@ -367,10 +387,13 @@ async function tearDownRelationship (params: {
   accessList: CmcAccessLike[];
   scopeStreamId: string | null;
   counterparty?: { username?: string; host?: string } | null;
+  // When the notice was issued (unix seconds): a sibling created after it
+  // belongs to a later relationship and is kept. Null: every sibling goes.
+  revokedAt?: number | null;
   mall: MallLike;
   logger?: LoggerLike;
 }): Promise<{ deleted: string[]; failed: string[] }> {
-  const { userId, createdByAccess, accessList, scopeStreamId, counterparty, mall, logger } = params;
+  const { userId, createdByAccess, accessList, scopeStreamId, counterparty, revokedAt, mall, logger } = params;
   const deleted: string[] = [];
   const failed: string[] = [];
   if (mall.accesses?.delete == null) {
@@ -399,6 +422,10 @@ async function tearDownRelationship (params: {
       if (cp == null || cp.username !== counterparty.username) continue;
       if (typeof cp.host !== 'string' || slugMod.slugifyHost(cp.host) !== hostSlug) continue;
       if (relationshipKey.scopeOfAccess(acc) !== scopeStreamId) continue;
+      if (revokedAt != null && typeof acc.created === 'number' && acc.created > revokedAt) {
+        logger?.info?.('cmc/handleIncomingRevoke: a sibling created after the revoke was issued is kept', { accessId: acc.id, revokedAt });
+        continue;
+      }
       targets.push(acc);
     }
   }

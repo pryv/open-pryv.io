@@ -3081,6 +3081,60 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.equal(revokes[0].content.appCode, 'rq-app-a');
     });
 
+    it('[CN62] a notice that lands after the parties re-established the relationship under the same scope leaves the new one standing on both sides', async function () {
+      // The requester never learnt of the revoke (outage), so it still holds
+      // its relationship access for the accepter; a new invite under the same
+      // scope, accepted, heals that access in place (same token). The late
+      // notice then arrives through the very access of the new relationship.
+      const { getMall } = require('mall');
+      const mall = await getMall();
+      const h = await runFreshHandshake('study-rq-c', 'rq-app-c');
+      const firstGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const outage = outageOf(alice.username);
+      try {
+        const revRes = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token)
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: firstGrant.id, reason: { en: 'CN62 revoke during an outage' } } });
+        assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+        const trigger = await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
+        assert.equal(trigger.content.deliveryQueued, true, JSON.stringify(trigger.content));
+      } finally {
+        outage.up();
+      }
+      // The requester is back and invites again under the same scope; bob accepts.
+      await runFreshHandshake('study-rq-c', 'rq-app-c');
+      let secondGrant;
+      await (async () => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < POLL_TIMEOUT_MS * 2) {
+          const r = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
+          secondGrant = (r.body?.accesses || []).find((a) => a.id !== firstGrant.id && a?.clientData?.cmc?.role === 'counterparty' &&
+            a.clientData.cmc.counterparty?.username === alice.username && a.clientData.cmc.scopeStreamId === h.triggerStreamId &&
+            typeof a.clientData.cmc.counterparty?.apiEndpoint === 'string');
+          if (secondGrant != null) break;
+          await sleep(POLL_INTERVAL_MS);
+        }
+      })();
+      assert.ok(secondGrant != null, 'the re-accept minted a fresh grant with the back-channel stamped');
+      const bobToken = decodeURIComponent(new URL(secondGrant.clientData.cmc.counterparty.apiEndpoint).username);
+      assert.strictEqual((await coreRequest.get('/' + alice.username + '/access-info').set('Authorization', bobToken)).status, 200, 'premise: bob can reach alice through the new relationship');
+
+      // The late notice is re-sent now.
+      const mine = (await queuedNotices(mall, bob.username)).find((e) => e.content.delivery.body?.content?.accessId === firstGrant.id);
+      assert.ok(mine != null);
+      try {
+        const summary = await runLoop(mall, bob.username, Date.now() + 2 * 60_000);
+        assert.ok(summary.succeeded >= 1, JSON.stringify(summary));
+      } finally {
+        outage.restore();
+      }
+      const arrival = await pollInboxFor(alice.eventsPath, alice.token, 'consent/revoke-cmc', (e) => e.content?.accessId === firstGrant.id);
+      assert.ok(arrival != null, 'the notice landed in the requester inbox');
+      assert.strictEqual((await coreRequest.get('/' + alice.username + '/access-info').set('Authorization', bobToken)).status, 200, 'the re-established relationship stands on the requester side');
+      const bobSide = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
+      assert.ok((bobSide.body.accesses || []).some((a) => a.id === secondGrant.id), 'and on the accepter side');
+      assert.ok(!(bobSide.body.accesses || []).some((a) => a.id === firstGrant.id), 'the revoked grant is gone');
+    });
+
     it('[CN61] the requester never back: the notice is failed-permanent after the last attempt, the record keeps the host without the token', async function () {
       const { getMall } = require('mall');
       const mall = await getMall();
@@ -3190,20 +3244,54 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.equal(done.content.status, 'completed');
     });
 
-    it('[CN73] a deleted relationship access keeps no credential in its deletion record, at rest', async function () {
+    it('[CN73] a deleted relationship access keeps no credential in its deletion record nor in its history rows, at rest, and no token', async function () {
       const { getStorageLayer } = require('storage');
       const storageLayer = await getStorageLayer();
       const h = await runFreshHandshake('study-guard-d', 'guard-app-d');
       const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
       const live = await new Promise((resolve, reject) => storageLayer.accesses.findOne(bob.username, { id: dataGrant.id }, {}, (err, row) => err ? reject(err) : resolve(row)));
       assert.ok(live?.clientData?.cmc?.counterparty?.apiEndpoint?.includes('@'), 'the live row holds the peer endpoint with its token: ' + JSON.stringify(live?.clientData));
-      const del = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id).set('Authorization', bob.token);
+      // An update through the route snapshots the head, endpoint included, into a history row
+      // (addressed by the id the API returns now: the back-channel stamp bumped its serial).
+      const base = dataGrant.id.split(':')[0];
+      const headRow = await new Promise((resolve, reject) => storageLayer.accesses.findOne(bob.username, { id: base }, {}, (err, row) => err ? reject(err) : resolve(row)));
+      const ref = headRow.serial == null ? base : base + ':' + headRow.serial;
+      const upd = await coreRequest.put(bob.accessesPath + '/' + ref).set('Authorization', bob.token).send({ expireAfter: 3600 });
+      assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+      const historyBefore = await storageLayer.accesses.findHistory(bob.username, base);
+      assert.ok(historyBefore.length >= 1, 'premise: a history row exists');
+      assert.ok(JSON.stringify(historyBefore.map((r) => r.clientData)).includes('@'), 'premise: the history row holds the token');
+      // The delete is addressed by the id the update answered (its new serial).
+      const del = await coreRequest.delete(bob.accessesPath + '/' + upd.body.access.id).set('Authorization', bob.token);
       assert.strictEqual(del.status, 200, JSON.stringify(del.body));
       const records = await new Promise((resolve, reject) => storageLayer.accesses.findDeletionRecords(bob.username, { id: dataGrant.id }, {}, (err, rows) => err ? reject(err) : resolve(rows)));
       assert.equal(records.length, 1);
       const stored = JSON.stringify(records[0].clientData);
       assert.equal(stored.includes('@'), false, 'the deletion record still holds a credential: ' + stored);
       assert.ok(records[0].clientData?.cmc?.counterparty?.apiEndpoint?.startsWith('http'), 'the host and path stay: ' + stored);
+      assert.equal(records[0].token == null, true, 'the deletion row keeps no token');
+      const historyAfter = await storageLayer.accesses.findHistory(bob.username, dataGrant.id);
+      assert.equal(historyAfter.length, historyBefore.length);
+      assert.equal(JSON.stringify(historyAfter.map((r) => r.clientData)).includes('@'), false, 'the history rows are scrubbed too');
+      const wire = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token).query({ includeDeletions: true });
+      assert.ok((wire.body.accessDeletions || []).some((d) => d.id.split(':')[0] === base), 'still listed with includeDeletions');
+    });
+
+    it('[CN74] an open link is closed from its scope even after a member deleted the invite event: the server-written offer copy names the scope', async function () {
+      const h = await runFreshHandshake('study-guard-e', 'guard-app-e', { mode: 'open-link' });
+      for (let i = 0; i < 2; i++) {
+        const d = await coreRequest.delete(alice.eventsPath + '/' + h.requestEventId).set('Authorization', alice.token);
+        assert.strictEqual(d.status, 200, JSON.stringify(d.body));
+      }
+      const inv = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [h.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
+      assert.strictEqual(inv.status, 201, JSON.stringify(inv.body));
+      const done = await pollStreamFor(alice.eventsPath, alice.token, h.triggerStreamId, 'consent/invalidate-link-cmc',
+        (e) => e.id === inv.body.event.id && (e.content?.status === 'completed' || e.content?.status === 'failed'));
+      assert.equal(done.content.status, 'completed', JSON.stringify(done.content));
+      const cap = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses
+        .find((a) => a?.clientData?.cmc?.kind === 'capability' && a?.clientData?.cmc?.capabilityId === h.capabilityId);
+      assert.equal(cap?.clientData?.cmc?.capability?.state, 'invalidated');
     });
   });
 

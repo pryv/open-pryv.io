@@ -420,6 +420,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
     // offboarded with the delegation.
     memberSweep: await buildMemberSweep(),
     sweepReason: 'detach',
+    // A requester that cannot be reached gets the notice queued for the
+    // retry loop, when it runs.
+    enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
   });
   function notifyConsentGrantsRevoked (bUserId: string, grants: unknown[]): void {
     Promise.resolve()

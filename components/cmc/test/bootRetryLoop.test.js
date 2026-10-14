@@ -39,6 +39,55 @@ const STUB_DEPS = {
 };
 
 describe('[CMCBRL] cmc/bootRetryLoop', () => {
+  it('[BRL07] startScheduler false: nothing is started (records are still queued by the dispatch wiring)', () => {
+    const logged = [];
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true, startScheduler: false } } }),
+      userIdsProvider: () => ['u1'],
+      isLoopWorker: () => true,
+      logger: { info: (m) => logged.push(m), warn: (m) => logged.push(m), debug () {} },
+    });
+    assert.equal(sched, null);
+    assert.ok(logged.some((m) => m.includes('startScheduler')));
+  });
+
+  it('[BRL08] both passes visit the accounts that hold CMC state only: the retries stream probed once, a negative verdict re-checked after a while, a positive one kept; stopAll stops both schedulers', async () => {
+    const { withCmcState, CMC_STATE_RECHECK_MS } = require('../src/bootRetryLoop.ts');
+    const probes = [];
+    const has = new Set(['u2']);
+    const mall = { streams: { async getOneWithNoChildren (userId, streamId) { probes.push(userId + ' ' + streamId); return has.has(userId) ? { id: streamId } : null; } } };
+    const provider = withCmcState(() => ['u1', 'u2', 'u3'], mall);
+    assert.deepEqual(await provider(), ['u2']);
+    assert.deepEqual(probes, ['u1 :_cmc:_internal:retries', 'u2 :_cmc:_internal:retries', 'u3 :_cmc:_internal:retries']);
+    has.add('u1');
+    assert.deepEqual(await provider(), ['u2'], 'the negative verdict is cached');
+    assert.equal(probes.length, 3);
+    const realNow = Date.now;
+    Date.now = () => realNow() + CMC_STATE_RECHECK_MS + 1;
+    try {
+      assert.deepEqual(await provider(), ['u1', 'u2'], 'the negative verdicts are re-checked, the positive one is kept');
+      assert.equal(probes.length, 5);
+    } finally {
+      Date.now = realNow;
+    }
+    const passes = [];
+    const memberSweep = { async runLedgerPass (userId) { passes.push(userId); return { swept: 0, expired: 0, residuals: 0, pruned: 0 }; } };
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      mall,
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true, intervalMs: 60_000 }, memberAccess: { sweepIntervalMs: 60_000 } } }),
+      userIdsProvider: () => ['u1', 'u2', 'u3'],
+      isLoopWorker: () => true,
+      memberSweep,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(passes, ['u1', 'u2'], 'the eager ledger pass skipped the account without CMC state');
+    await sched.stopAll();
+    assert.equal(sched.stats().running, false);
+    assert.equal(sched.ledgerScheduler.stats().running, false);
+  });
+
   it('[BRL01] returns null when config gate is off (default)', () => {
     const sched = startRetryLoopIfEnabled({
       ...STUB_DEPS,

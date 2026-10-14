@@ -129,6 +129,17 @@ type EventsAnyResult = { event?: WireEvent; eventDeletion?: ItemDeletion; [k: st
 // for events.
 const typeRepo = new TypeRepository();
 
+// The CMC retry loop's schedulers (null when not started in this process),
+// kept so they can be stopped at shutdown.
+type CmcRetryLoopHandle = { stopAll?: () => Promise<void> } | null;
+let cmcRetryLoop: CmcRetryLoopHandle = null;
+let cmcShutdownHooked = false;
+async function stopCmcRetryLoop (): Promise<void> {
+  const handle = cmcRetryLoop;
+  cmcRetryLoop = null;
+  if (handle?.stopAll != null) await handle.stopAll();
+}
+
 // Background-retry backoff for a failed event-types dictionary fetch: start at
 // 5s, double up to 5min, then hold. Retries continue for the process lifetime
 // while degraded, so a core that booted without the dictionary self-heals once
@@ -479,6 +490,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // content validated, counterparty `content.from` stamped).
   const cmcInternalWriteGuard = cmc.createInternalWriteGuardHook({ errors });
   const cmcEventUpdateGuard = cmc.createEventUpdateGuardHook({ errors });
+  const cmcEventDeleteGuard = cmc.createEventDeleteGuardHook({ errors });
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({
     errors,
     mall: mallForCmc,
@@ -613,7 +625,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // Operator-supplied userIdsProvider — defaults here to the platform's
   // full user list which is correct for single-shard deployments. Per-
   // shard / per-recent-activity scoping can be wired later.
-  cmc.startRetryLoopIfEnabled({
+  cmcRetryLoop = cmc.startRetryLoopIfEnabled({
     config,
     mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
@@ -626,7 +638,22 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const users = await usersRepository.getAllUsersIdAndName();
       return users.map((u: { id: string }) => u.id);
     },
-  });
+  }) as CmcRetryLoopHandle;
+  // The schedulers drain at shutdown (an in-flight tick finishes, no new one
+  // starts); the worker has no other shutdown path. A signal listener
+  // replaces Node's default exit, so the signal is raised again once the
+  // drain is done (or after a short bound), and the process ends as before.
+  if (cmcRetryLoop != null && !cmcShutdownHooked) {
+    cmcShutdownHooked = true;
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.once(signal, () => {
+        let done = false;
+        const leave = () => { if (done) return; done = true; process.kill(process.pid, signal); };
+        const bound = setTimeout(leave, 2_000);
+        stopCmcRetryLoop().catch(() => {}).finally(() => { clearTimeout(bound); leave(); });
+      });
+    }
+  }
 
   function applyPrerequisitesForCreation (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
     // Invariant: the params-validation step landed params on context.newEvent.
@@ -1228,6 +1255,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     'events.delete',
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkEventForDelete,
+    cmcEventDeleteGuard,
     sharedSecretsDeleteGuard,
     emailsDeleteGuard,
     blockAccountEventDeletion,
@@ -1531,4 +1559,4 @@ function mergeOntoStored (stored: WireEvent, read: WireEvent, updated: WireEvent
   return merged;
 }
 
-export { sanitizeRequestFiles, mergeOntoStored };
+export { sanitizeRequestFiles, mergeOntoStored, stopCmcRetryLoop };

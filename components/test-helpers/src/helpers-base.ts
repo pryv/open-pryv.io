@@ -129,6 +129,10 @@ async function initCore () {
   const isParallelMode = process.env.MOCHA_PARALLEL === '1';
   const testConfig = {
     dnsLess: { isActive: true },
+    // The CMC retry loop queues records (the suites assert them) but its
+    // background schedulers never run in the test core: a tick landing
+    // during a test would process the records the test drives by hand.
+    cmc: { retryLoop: { startScheduler: false } },
     ...(isParallelMode ? { caching: { isActive: false } } : {}),
     ...options.testConfig
   };

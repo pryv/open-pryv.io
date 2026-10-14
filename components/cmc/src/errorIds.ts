@@ -355,7 +355,7 @@ const CmcErrorIds = {
   INVALIDATE_LINK_SCOPE_MISMATCH: 'cmc-invalidate-link-scope-mismatch',
   // An offer asks a stream the plugin manages on the accepter's account
   // (the inbox, the internal subtree, a chats / collectors leaf).
-  OFFER_PERMISSIONS_INVALID: 'cmc-offer-permissions-invalid',
+  OFFER_STREAM_NOT_OFFERABLE: 'cmc-offer-stream-not-offerable',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

@@ -92,6 +92,12 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     deps.logger?.warn?.('cmc/bootRetryLoop: enabled but no userIdsProvider supplied — loop not started');
     return null;
   }
+  // Queueing on, scheduler off: the in-process test core (its suites drive
+  // the loop by hand) and an operator who runs the loop elsewhere.
+  if (deps.config.get('cmc:retryLoop:startScheduler') === false) {
+    deps.logger?.info?.('cmc/bootRetryLoop: cmc.retryLoop.startScheduler is false: records are queued, the loop is not started here');
+    return null;
+  }
   const isLoopWorker = (deps.isLoopWorker ?? defaultIsLoopWorker)();
   if (!isLoopWorker) {
     deps.logger?.debug?.('cmc/bootRetryLoop: not the designated worker — skipping');
@@ -100,6 +106,13 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
 
   const intervalMs = deps.config.get('cmc:retryLoop:intervalMs') || 60_000;
   const perUserLimit = deps.config.get('cmc:retryLoop:perUserLimit') || 100;
+  // Both passes visit the accounts that hold CMC state only: the hidden
+  // retries stream exists once the account made its first CMC write (the
+  // reserved parents are provisioned together), so its absence is "nothing
+  // to do", cached for CMC_STATE_RECHECK_MS; its presence is kept for the
+  // life of the process. Without a stream probe on the mall, every account
+  // is visited.
+  const userIdsProvider = withCmcState(deps.userIdsProvider, deps.mall, deps.logger);
 
   const retryDeps = {
     mall: deps.mall,
@@ -125,7 +138,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
 
   const scheduler = new RetryScheduler({
     retryDeps,
-    userIdsProvider: deps.userIdsProvider,
+    userIdsProvider,
     perUserLimit,
     logger: deps.logger,
   });
@@ -139,7 +152,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     const sweepIntervalMs = (deps.config.get('cmc:memberAccess:sweepIntervalMs') as number) || C.MEMBER_ACCESS_CONFIG_DEFAULTS.sweepIntervalMs;
     const ledgerScheduler = new RetryScheduler({
       retryDeps,
-      userIdsProvider: deps.userIdsProvider,
+      userIdsProvider,
       logger: deps.logger,
       runRetryLoop: async ({ userId }: { userId: string }) => {
         const r = await sweep.runLedgerPass(userId);
@@ -153,10 +166,59 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     (scheduler as { ledgerScheduler?: unknown }).ledgerScheduler = ledgerScheduler;
     deps.logger?.info?.('cmc/bootRetryLoop: member ledger pass started', { sweepIntervalMs });
   }
+  // One handle to stop both at shutdown (the in-flight tick is awaited).
+  (scheduler as { stopAll?: () => Promise<void> }).stopAll = async () => {
+    await scheduler.stop();
+    const ledger = (scheduler as { ledgerScheduler?: { stop: () => Promise<void> } }).ledgerScheduler;
+    if (ledger != null) await ledger.stop();
+  };
   return scheduler;
+}
+
+const CMC_STATE_RECHECK_MS = 10 * 60 * 1000;
+
+/**
+ * The provider filtered to the accounts whose hidden retries stream exists
+ * (the probe is `streams.getOneWithNoChildren`; absent on the mall, no
+ * filtering). A negative verdict is re-checked after CMC_STATE_RECHECK_MS,
+ * a positive one kept; a probe that throws counts as "has state" (the loop
+ * then reads the queue, which reports the real error).
+ */
+function withCmcState (provider: () => Promise<string[]> | string[], mall: MallLike, logger?: CmcLogger): () => Promise<string[]> {
+  const probe = (mall as { streams?: { getOneWithNoChildren?: (userId: string, streamId: string) => Promise<unknown> } }).streams?.getOneWithNoChildren;
+  if (typeof probe !== 'function') return async () => await Promise.resolve(provider());
+  const verdicts = new Map<string, { has: boolean; at: number }>();
+  return async () => {
+    const ids = await Promise.resolve(provider());
+    const now = Date.now();
+    const out: string[] = [];
+    for (const userId of ids) {
+      const v = verdicts.get(userId);
+      if (v != null && (v.has || now - v.at < CMC_STATE_RECHECK_MS)) {
+        if (v.has) out.push(userId);
+        continue;
+      }
+      let has = true;
+      try {
+        has = (await probe(userId, C.NS_INTERNAL_RETRIES)) != null;
+      } catch (err: unknown) {
+        logger?.debug?.('cmc/bootRetryLoop: the CMC state probe failed, the account is visited', { userId, error: String((err as Error)?.message || err) });
+      }
+      verdicts.set(userId, { has, at: now });
+      if (has) out.push(userId);
+    }
+    // Accounts gone from the provider leave the cache.
+    if (verdicts.size > ids.length * 2 + 100) {
+      const keep = new Set(ids);
+      for (const k of verdicts.keys()) if (!keep.has(k)) verdicts.delete(k);
+    }
+    return out;
+  };
 }
 
 export {
   startRetryLoopIfEnabled,
   defaultIsLoopWorker,
+  withCmcState,
+  CMC_STATE_RECHECK_MS,
 };

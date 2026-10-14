@@ -168,7 +168,7 @@ async function handleAccept (params: {
   // checked at write.
   const offerViolations = validators.offerPermissionViolations((offerRequest as { permissions?: unknown } | null | undefined)?.permissions);
   if (offerViolations.length > 0) {
-    return { ok: false, reason: CmcErrorIds.OFFER_PERMISSIONS_INVALID, detail: { errors: offerViolations } };
+    return { ok: false, reason: CmcErrorIds.OFFER_STREAM_NOT_OFFERABLE, detail: { errors: offerViolations } };
   }
 
   // The relationship's features: the offer's, narrowed by what the accept
@@ -514,6 +514,7 @@ async function handleAccept (params: {
       requesterAppCode,
       requesterOriginStreamId: originStreamId,
       offerEventId: offer?.id,
+      acceptEventId: triggerEvent?.id,
       membership: isMembership,
       deps,
     });

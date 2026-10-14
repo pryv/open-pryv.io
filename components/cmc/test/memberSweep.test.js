@@ -28,7 +28,7 @@ const { createMemberSweep, sweepStreamOf } = require('../src/memberSweep.ts');
 const { handleRevoke } = require('../src/handleRevoke.ts');
 const { handleIncomingRevoke } = require('../src/handleIncomingRevoke.ts');
 const { createAccessesDeletePostHook } = require('../src/accessesDeleteHook.ts');
-const { createAccessesUpdatePostHook } = require('../src/accessesUpdateHook.ts');
+const { createAccessesUpdatePostHook, createStreamDeleteNarrowingHook } = require('../src/accessesUpdateHook.ts');
 const dispatchMod = require('../src/dispatch.ts');
 const { startRetryLoopIfEnabled } = require('../src/bootRetryLoop.ts');
 const { assertOutboundUrl, fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
@@ -428,6 +428,33 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual(cores.calls.map((c) => c.method + ' ' + c.path).sort(), ['DELETE /accesses/c-b', 'DELETE /accesses/child-1']);
       assert.equal(mall.calls.eventsCreated.length, created, 'nothing written');
       assert.equal(mall.calls.eventsUpdated.length, 0);
+    });
+
+    it('[MR34] a team stream deleted for good narrows every membership covering it: swept as narrowed on the parent stream, the dead scope named as uncovered, nothing kept under it', async () => {
+      const mall = fakeMall();
+      await seed(mall);
+      await seed(mall, { childAccessId: 'c-b', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
+      const cores = fakeCores();
+      const { sweep, dispatched } = sweepOf(mall, cores);
+      const hook = createStreamDeleteNarrowingHook({ mall, memberSweep: sweep });
+      let called = false;
+      // Trashing is not a narrowing.
+      hook({ user: { id: 'group' }, stream: { id: TEAM, parentId: ':_cmc:apps:practice', trashed: null } }, { id: TEAM }, {}, () => { called = true; });
+      assert.equal(called, true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(dispatched.length, 0);
+      // The real deletion sweeps.
+      hook({ user: { id: 'group' }, stream: { id: TEAM, parentId: ':_cmc:apps:practice', trashed: true } }, { id: TEAM }, {}, () => {});
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(dispatched.length, 1);
+      const trigger = dispatched[0].event;
+      assert.equal(trigger.content.reason, 'narrowed');
+      assert.deepEqual(trigger.content.uncovered, [TEAM]);
+      assert.deepEqual(trigger.streamIds, [':_cmc:apps:practice'], 'written on the surviving parent');
+      assert.deepEqual(trigger.content.records.map((r) => r.childAccessId), ['child-1'], 'team B is untouched');
+      const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
+      assert.deepEqual(left, { 'child-1': 'deleted', 'c-b': 'live' });
+      assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/accesses/child-1'], 'the membership still names the dead stream, and that is not coverage');
     });
   });
 

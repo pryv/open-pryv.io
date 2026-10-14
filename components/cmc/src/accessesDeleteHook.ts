@@ -74,8 +74,9 @@ type DeleteHookDeps = OutboundDeps & {
   sweepReason?: string;
   sweepPersist?: boolean;
   // A notice the peer could not take is queued for the retry loop (needs
-  // `mall`); false when the loop is off, so the queue does not grow for
-  // nothing.
+  // `mall`) when this is true: the wiring says so from `cmc.retryLoop.enabled`.
+  // Absent or false, nothing is queued (a record carries the peer token, so a
+  // wiring that forgets the flag fails safe).
   enqueueRetries?: boolean;
 };
 
@@ -223,6 +224,9 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
       if (typeof cmc.appCode === 'string') content.appCode = cmc.appCode;
       if (typeof cmc.offerEventId === 'string') content.offerEventId = cmc.offerEventId;
       if (typeof cmc.acceptEventId === 'string') content.acceptEventId = cmc.acceptEventId;
+      // When the revocation was issued (a notice re-sent hours later must not
+      // take a relationship re-established meanwhile).
+      content.revokedAt = Date.now() / 1000;
       // Parity with handleRevoke: the invite the relationship descends from,
       // for a peer running a build older than the receiver-side enrichment.
       if (typeof cmc.inviteEventId === 'string') content.inviteEventId = cmc.inviteEventId;
@@ -262,7 +266,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         }
       }
       let deliveryQueued: boolean | undefined;
-      if (!delivered && retryable && deps.enqueueRetries !== false && deps.mall?.events?.create != null) {
+      if (!delivered && retryable && deps.enqueueRetries === true && deps.mall?.events?.create != null) {
         try {
           await retryQueue.enqueueDelivery({
             userId,

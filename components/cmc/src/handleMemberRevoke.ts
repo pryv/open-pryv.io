@@ -243,8 +243,13 @@ async function handleMemberRevoke (params: {
       if (membership != null && Array.isArray(membership.permissions)) stillCovered = coveredScopesOf(membership);
     } catch (_e) { /* judged from the snapshot */ }
   }
+  // Scopes the trigger says are gone whatever the membership still names
+  // (a team stream deleted: the membership's permission still names it).
+  const uncovered = Array.isArray(content.uncovered) ? content.uncovered.filter((s): s is string => typeof s === 'string') : [];
   const coveredNow = (scope: unknown): boolean =>
-    stillCovered != null && typeof scope === 'string' && stillCovered.some((s) => scope === s || scope.startsWith(s + ':'));
+    stillCovered != null && typeof scope === 'string' &&
+    !uncovered.some((u) => scope === u || scope.startsWith(u + ':')) &&
+    stillCovered.some((s) => scope === s || scope.startsWith(s + ':'));
   const settled = new Set<string>();
   // Children a narrowed sweep keeps: the live membership covers their scope.
   const kept = new Set<string>();
