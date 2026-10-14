@@ -106,7 +106,8 @@ async function scrubCredentialUrls (accessesRepository: ScrubRepository, user: D
  * The scrub runs after the delete: a failure leaves the credential at rest
  * (the exposure that existed before the scrub) and must not abort the rest
  * of the chain (the late pass, the alias release, the tombstones, the
- * notifications), so it is logged per row and swallowed.
+ * notifications), so it is logged per access and swallowed (a failing
+ * head-row update skips that access's history rows).
  */
 async function scrubOrWarn (accessesRepository: ScrubRepository, user: DeletionUser, access: AccessRow): Promise<void> {
   try {

@@ -591,5 +591,19 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(mall._events.get(ev.id).content.status, 'succeeded');
       assert.deepEqual([summary.processed, summary.succeeded, summary.skipped, summary.pendingTotal], [1, 1, 150, 151], JSON.stringify(summary));
     });
+
+    it('[RQ29] due records are processed oldest first (the oldest are the closest to the stale threshold), whatever the read order', async () => {
+      const mall = fakeMall();
+      paged(mall);
+      const now = 100 * 24 * 60 * 60 * 1000;
+      // Inserted oldest first; the paged read returns them newest first.
+      for (const [i, ageMin] of [[0, 300], [1, 120], [2, 10]]) {
+        mall._events.set('o-' + i, { id: 'o-' + i, time: (now - ageMin * 60_000) / 1000, content: { originalType: 'consent/revoke-cmc', delivery: { apiEndpoint: 'https://tok@peer' + i + '.example.com/', path: 'events', body: BODY }, attempts: 2, nextAttemptAfter: now - 1_000, status: 'pending' } });
+      }
+      const p = peer({ status: 201 });
+      const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async () => { throw new Error('no trigger here'); }, dispatchDeps: { fetch: p.fetch }, now: () => now } });
+      assert.equal(summary.succeeded, 3, JSON.stringify(summary));
+      assert.deepEqual(p.calls.map((c) => new URL(c.url).hostname), ['peer0.example.com', 'peer1.example.com', 'peer2.example.com']);
+    });
   });
 });

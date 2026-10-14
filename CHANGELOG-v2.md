@@ -147,7 +147,8 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   each pass backs off from the accounts it found idle (no pending retry record, no open ledger
   record): such an account is read again after 10 minutes, an active one every minute, so a core
   with many dormant accounts reads each of them six times an hour instead of sixty; a record
-  queued on an idle account waits at most those 10 minutes for its first loop attempt. In a
+  queued on an idle account waits about 10 minutes (plus at most one loop tick) for its first
+  loop attempt; the records due in a pass are processed oldest first. In a
   cluster the master names the API worker that runs the loop (`PRYV_CMC_LOOP_WORKER`) and the
   replacement of a crashed one takes over, as for the webhooks service; until now the loop ran on
   cluster worker 1 only and stopped for good when that worker was restarted. New

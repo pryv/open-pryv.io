@@ -139,6 +139,54 @@ describe('[ACBU] access writes bust the cache when a later step fails', function
     assert.strictEqual(res.status, 200, 'the access is still there: ' + JSON.stringify(res.body));
   });
 
+  it('[ACBU5] a credential scrub that fails after the delete is logged and the rest of the deletion still runs (the final pass deletes an access created meanwhile)', async function () {
+    const { deleteAccessChain } = require('api-server/src/methods/helpers/accessDeletion.ts');
+    const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
+    const peerToken = 'peertok' + cuid();
+    const app = await fixtureUser.access({
+      id: 'app_' + cuid(),
+      type: 'app',
+      name: 'app ' + cuid(),
+      token: cuid(),
+      permissions: [{ streamId: '*', level: 'manage' }],
+      clientData: { cmc: { peerApiEndpoint: 'https://' + peerToken + '@peer.example.com/peer/' } }
+    });
+    const appId = app.attrs.id;
+    const lateId = 'late_' + cuid();
+    const lateToken = cuid();
+    // An access created through the app between the first read and the delete.
+    let injected = false;
+    replace(accessStorage, 'delete', (original) => function (...args) {
+      if (injected) return original.apply(this, args);
+      injected = true;
+      const self = this;
+      fixtureUser.access({ id: lateId, type: 'shared', name: 'late ' + cuid(), token: lateToken, createdBy: appId, permissions: [{ streamId: '*', level: 'read' }] })
+        .then(() => original.apply(self, args), args[args.length - 1]);
+    });
+    // The scrub's write (the one carrying `clientData`) fails.
+    const scrubWrites = [];
+    replace(accessStorage, 'updateOne', (original) => function (u, query, update, cb) {
+      if (update?.clientData != null) { scrubWrites.push(query?.id); return cb(new Error('scrub write failed')); }
+      return original.call(this, u, query, update, cb);
+    });
+    const capture = captureWarnings();
+    let outcome;
+    try {
+      outcome = await deleteAccessChain({ id: userId, username }, { id: appId });
+    } finally {
+      capture.restore();
+    }
+    assert.strictEqual(outcome.deleted, true);
+    assert.deepStrictEqual(scrubWrites, [appId], 'the scrub was attempted and failed');
+    assert.ok(outcome.relatedDeletions.some((d) => d.id === lateId), 'the final pass ran: ' + JSON.stringify(outcome.relatedDeletions));
+    const lateRes = await coreRequest.get('/' + username + '/access-info').set('Authorization', lateToken);
+    assert.notStrictEqual(lateRes.status, 200, 'the late access is deleted: ' + JSON.stringify(lateRes.body));
+    const warning = capture.warnings.find((w) => /credential scrub/.test(String(w.args[0])));
+    assert.ok(warning != null, 'a warning is logged: ' + JSON.stringify(capture.warnings.map((w) => w.args[0])));
+    assert.strictEqual(warning.args[1].accessId, appId);
+    assert.ok(!JSON.stringify(warning.args).includes(peerToken), 'never the peer token');
+  });
+
   it('[ACBU4] with the token known, the CMC bust stays on the one access', async function () {
     const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
     const mall = await buildMallForCmc();

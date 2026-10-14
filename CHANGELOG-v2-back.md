@@ -45,8 +45,8 @@
   `bin/master.js` on the designated API worker and on its replacement, like
   `PRYV_WEBHOOKS_WORKER`) before the cluster-id-1 rule; the returned scheduler carries
   `stopAll()`. `runRetryLoop` collects due pending records only (`nextAttemptAfter <= now`),
-  keeps paging until `limit` of them, and prunes after the paging loop (no delete while paging
-  by `skip`).
+  keeps paging until `limit` of them, processes them oldest first (by `time`), and prunes after
+  the paging loop (no delete while paging by `skip`).
   `api-server/src/methods/events.ts` keeps the handle (`stopCmcRetryLoop`) and, when a scheduler
   runs in the process, drains it on SIGTERM / SIGINT then re-raises the signal (bounded 2 s).
   `test-helpers` `initCore` injects `cmc.retryLoop.startScheduler: false` into the test core.
@@ -66,8 +66,9 @@
   and zero-width characters.
 - `handleIncomingRevoke.ts`: a dropped stale notice is marked on the inbox arrival
   (`content.superseded: 'relationship-re-established'`, best effort, `updateWithMerge`).
-  `accessDeletion.ts` `scrubOrWarn`: a scrub that throws after the soft delete is logged per row
-  and never aborts the late pass, the alias release, the tombstones or the notifications.
+  `accessDeletion.ts` `scrubOrWarn`: a scrub that throws after the soft delete is logged per access
+  (a failing head-row update skips that access's history rows) and never aborts the late pass,
+  the alias release, the tombstones or the notifications.
   `hooks.ts` `STAMP_STRING` is built from `\u` escapes (no raw bidi or zero-width code point in
   source).
 - `accessesUpdateHook.ts` `createStreamDeleteNarrowing({ mall, memberSweep })` returns

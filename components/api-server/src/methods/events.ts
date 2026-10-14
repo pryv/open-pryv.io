@@ -620,8 +620,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcDispatchMiddleware
   );
 
-  // CMC retry-loop bootstrap. No-op unless `cmc.retryLoop.enabled: true`
-  // is set in config AND we're worker id 1 (or running standalone).
+  // CMC retry-loop bootstrap. Enabled by default (`cmc.retryLoop.enabled`);
+  // runs only in the loop worker: the API worker the master designates with
+  // `PRYV_CMC_LOOP_WORKER` (the replacement of a crashed one takes over), else
+  // cluster worker 1 or a standalone process.
   // Operator-supplied userIdsProvider — defaults here to the platform's
   // full user list which is correct for single-shard deployments. Per-
   // shard / per-recent-activity scoping can be wired later.
