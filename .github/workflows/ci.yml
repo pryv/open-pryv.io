@@ -54,7 +54,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: actions/setup-node@v6
         # Node is pinned in every job to the version of the Docker base image
-        # (node:24-slim digest in the Dockerfile). Node 24.19.0 and later abort
+        # (node:24-trixie-slim digest in the Dockerfile). Node 24.19.0 and later abort
         # the process when better-sqlite3 statements are garbage-collected
         # (`RemoveEnvironmentCleanupHook ... Assertion (env) != nullptr`,
         # nodejs/node#65446), which kills the SQLite engine suite. Unpin once a
@@ -359,6 +359,27 @@ jobs:
         run: |
           docker run --rm --entrypoint node open-pryv-verify:candidate -e \
             "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
+      # Scan the image before anything is pushed: every critical / high finding
+      # in the log, then the build stops on a critical one that has a fix
+      # (accepted exceptions, each with its reason, in .grype-image.yaml).
+      - name: Image scan report (critical and high)
+        uses: anchore/scan-action@v7
+        with:
+          image: open-pryv-verify:candidate
+          fail-build: false
+          severity-cutoff: high
+          output-format: table
+          output-file: grype-image.txt
+      - name: Show the image scan report
+        run: cat grype-image.txt
+      - name: Image scan gate (fail on a fixable critical)
+        uses: anchore/scan-action@v7
+        with:
+          image: open-pryv-verify:candidate
+          config: .grype-image.yaml
+          only-fixed: true
+          fail-build: true
+          severity-cutoff: critical
       - name: Build + push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -418,6 +439,26 @@ jobs:
         run: |
           docker run --rm --entrypoint node open-pryv-check:candidate -e \
             "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
+      # Same image scan as the release build, so a base or rqlite bump can be
+      # checked before a tag.
+      - name: Image scan report (critical and high)
+        uses: anchore/scan-action@v7
+        with:
+          image: open-pryv-check:candidate
+          fail-build: false
+          severity-cutoff: high
+          output-format: table
+          output-file: grype-image.txt
+      - name: Show the image scan report
+        run: cat grype-image.txt
+      - name: Image scan gate (fail on a fixable critical)
+        uses: anchore/scan-action@v7
+        with:
+          image: open-pryv-check:candidate
+          config: .grype-image.yaml
+          only-fixed: true
+          fail-build: true
+          severity-cutoff: critical
       - name: Export a marker for the next job
         env:
           ARCH: ${{ matrix.arch }}

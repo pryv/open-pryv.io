@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- Docker image (operators): based on Debian 13 (trixie) instead of Debian 12 (bookworm), same
+  Node 24.18.1; Debian 12 left its remaining critical and high OS-package advisories unfixed. The
+  bundled rqlite is 10.6.0 (was 10.5.1; built with the patched Go toolchain): within 10.x no
+  data-directory step is needed. Native installs: `storages/engines/rqlite/scripts/setup` now pins
+  10.6.0 and checks the tarball's sha256; it never replaces an existing binary, so replace
+  `bin-ext/rqlited` yourself while the core is stopped (INSTALL.md, "Upgrading the bundled rqlite").
+  Images derived from ours (`FROM pryvio/open-pryv.io`) that `apt-get install` packages now resolve
+  them against trixie.
+
 ## 2.0.0-rc.53 - 2026-10-15
 
 Group accounts in consent (CMC); revoke notices the counterparty could not take are re-sent until

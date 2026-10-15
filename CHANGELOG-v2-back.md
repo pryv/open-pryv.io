@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## Image base and image scan in CI
+
+- `Dockerfile`: base `node:24-trixie-slim` (24.18.1, digest-pinned) instead of `node:24-slim`
+  (bookworm); rqlite 10.6.0 with its per-arch sha256. Grype on the rc.53 image: 4 critical, 83 high
+  (Debian 12: 2 critical / 72 high with no fix; rqlited 10.5.1: Go stdlib 1.27.1 + `x/net` 0.59.0).
+- CI: the release build (`docker-build`, before anything is pushed) and the manual `docker-build-check`
+  scan the built image with Grype: a report of every critical / high finding in the log, then a gate
+  that fails on a critical finding with a fix. Accepted exceptions live in `.grype-image.yaml`, each
+  with its reason (today: `x/net` 0.59.0 HTTP/2 server bugs in rqlited, whose HTTP API listens on
+  loopback only; remove once an rqlite release carries `x/net` >= 0.60.0). The source SBOM scan
+  does not read that file.
+- `storages/engines/rqlite/scripts/setup`: rqlite 10.6.0, and the downloaded tarball is checked
+  against its sha256 (same values as the Dockerfile) before extraction.
+
 ## Mail template reload, access-index prune classes
 
 - `mail/src/emailTemplatesDelivery.ts`: `refresh()` materialises into a new directory with a new

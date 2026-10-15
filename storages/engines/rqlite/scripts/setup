@@ -9,7 +9,11 @@ set -e
 #                                   so operators can bind-mount /app/var-pryv/... without shadowing)
 #   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
 
-RQLITE_VERSION=10.5.1
+RQLITE_VERSION=10.6.0
+# Per-arch sha256 of the release tarballs, same values as the Dockerfile's:
+# update both when bumping RQLITE_VERSION (curl -fsSL <url> | sha256sum).
+RQLITE_SHA256_amd64=cd64c28d672a702a6aeceab17a977ef11f3250634bd8931fb162bce4f6a84a41
+RQLITE_SHA256_arm64=f03cdb26e60f394796363817820f78804d2aa88a85930f7a0836c4a0d19d35c6
 
 # Detect OS / arch
 case "$(uname)" in
@@ -81,7 +85,7 @@ else
 
   mkdir -p "$RQLITE_BIN_DIR"
 
-  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v10.5.1
+  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v10.6.0
   # only linux-* assets ship). Fall back to Homebrew's native arm64 bottle,
   # which tracks the same upstream version, then symlink binaries in.
   if [[ "$RQLITE_OS" == "darwin" ]]; then
@@ -113,6 +117,13 @@ else
 
     echo "Downloading $URL ..."
     curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"
+    # Integrity check before extraction: a tampered download fails here.
+    EXPECTED_SHA256_VAR="RQLITE_SHA256_${RQLITE_ARCH}"
+    if command -v sha256sum >/dev/null 2>&1; then
+      echo "${!EXPECTED_SHA256_VAR}  $TMP_DIR/$TARBALL" | sha256sum -c -
+    else
+      echo "${!EXPECTED_SHA256_VAR}  $TMP_DIR/$TARBALL" | shasum -a 256 -c -
+    fi
 
     echo "Extracting..."
     tar xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR" --strip-components 1

@@ -1,0 +1,26 @@
+# Grype configuration for the container-image gate in CI (the `config` input
+# of the image scan steps; the source SBOM scan does not read it).
+#
+# The gate fails on a critical finding that has a fix. Each entry below is an
+# accepted exception: what it is, why it is not reachable in this image, and
+# when to remove it. Review the list at every rqlite or base-image bump.
+ignore:
+  # golang.org/x/net v0.59.0 in the bundled rqlited: HTTP/2 server
+  # denial-of-service bugs (flow-control refund, Trailer map growth, SETTINGS
+  # flood), fixed in x/net v0.60.0. rqlited's HTTP API listens on loopback only
+  # (storages.engines.rqlite.httpBindAddr, INSTALL.md) and the Raft port is
+  # not an HTTP server; only local processes can reach it. rqlite 10.6.0 still
+  # ships v0.59.0: remove these entries once an rqlite release carries
+  # x/net >= v0.60.0 and RQLITE_VERSION is bumped to it.
+  - vulnerability: GO-2026-6612
+    package:
+      name: golang.org/x/net
+      location: /app/bin-ext/rqlited
+  - vulnerability: GO-2026-6603
+    package:
+      name: golang.org/x/net
+      location: /app/bin-ext/rqlited
+  - vulnerability: GO-2026-6611
+    package:
+      name: golang.org/x/net
+      location: /app/bin-ext/rqlited

@@ -1,17 +1,19 @@
 # Base image digest-pinned for reproducibility + supply-chain integrity.
-# `node:24-slim` is a moving tag (Docker Hub republishes it on every Node
-# patch); the digest freezes the exact image. Re-pin deliberately (quarterly
-# or on a security bump): docker buildx imagetools inspect node:24.18-slim
+# The tag is a moving one (Docker Hub republishes it on every Node patch); the
+# digest freezes the exact image. Re-pin deliberately (quarterly or on a
+# security bump): docker buildx imagetools inspect node:24.18-trixie-slim
 # (the 24.18 line, see below; or the registry manifest API) → update the sha256
 # below + re-baseline (build with --no-cache locally: the apt upgrade layer is
 # otherwise reused from an earlier build).
-# Slim (Debian bookworm-slim) carries far fewer OS-package CVEs than the full
-# bookworm variant (Grype 2026-07 base scan: Critical 60 -> 8, High 248 -> 21)
-# while still apt-installing the build deps the native modules need below.
+# Debian 13 (trixie) slim: Debian 12 (bookworm) left its remaining critical /
+# high OS-package advisories unfixed (Grype on the 2.0.0-rc.53 image: 2
+# critical, 72 high, none fixable), while trixie receives the fixes, which the
+# `apt-get upgrade` below applies. Slim still apt-installs the build deps the
+# native modules need below.
 # Do NOT re-pin past Node 24.18.x until nodejs/node#65446 is fixed: better-sqlite3
 # rebuilt against 24.19+ headers aborts the process on statement garbage collection.
-# Pinned: node:24.18.1-slim (security release of the 24.18 line).
-FROM node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+# Pinned: node:24.18.1-trixie-slim (security release of the 24.18 line).
+FROM node:24-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
 
 WORKDIR /app
 
@@ -32,9 +34,9 @@ RUN apt-get update && \
 # tampered or MITM-able download fails the build instead of landing silently.
 # Update both checksums when bumping RQLITE_VERSION (they are per-arch):
 #   curl -fsSL <url> | sha256sum
-ARG RQLITE_VERSION=10.5.1
-ARG RQLITE_SHA256_amd64=f0ebf593b573595022947add67cd22e6cbb02c1d2a1ed8c7da45c94093a49b0d
-ARG RQLITE_SHA256_arm64=e0a05fa26564cd56b1d741f8d2b5c656e4c207d00895436ee4937a9ac2049a76
+ARG RQLITE_VERSION=10.6.0
+ARG RQLITE_SHA256_amd64=cd64c28d672a702a6aeceab17a977ef11f3250634bd8931fb162bce4f6a84a41
+ARG RQLITE_SHA256_arm64=f03cdb26e60f394796363817820f78804d2aa88a85930f7a0836c4a0d19d35c6
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) RQLITE_SHA256="$RQLITE_SHA256_amd64" ;; \
