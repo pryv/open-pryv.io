@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- Operators: a process start no longer prints `[winston] Attempt to write logs with no transports,
+  which can increase memory usage: ...` (once per process: master, API workers, HFS, previews) when
+  no `logs.custom` is configured. The line was noise from the logger's own setup; nothing was lost.
+- Operators (`logs.file`): an error logged with its Error object now carries the error's name,
+  message (masked) and stack in the file's `context` field (it was `{}`), as the JSON console format
+  does since 2.0.0-rc.54. The text console format already printed them.
+
 ## 2.0.0-rc.54 - 2026-10-15
 
 Logging: a core with no log target configured (such as one installed with an earlier install

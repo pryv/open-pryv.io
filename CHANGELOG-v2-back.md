@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## Unreleased
+
+- `boiler/src/logging.ts`: `initLoggerWithConfig` reads the console settings (and `hasLogTarget`)
+  before creating the winston logger, which is now created with its console transport. A config read
+  that logs (`get: [key] is undefined` at debug) no longer reaches a logger without transports.
+  Tests: `[BLFB12]` (boiler boot on the default config with no target: no `[winston]` line),
+  `[BLFB13]` (same with `LOGS=debug`).
+- `boiler/src/logging.ts`: the `logs.file` JSON format serialises with `errorsAsPlainObjects` (plus
+  the stock BigInt handling), so an Error context keeps name, message, stack and cause. Tests:
+  `[BLFB11]` (file), `[BLFB10]` (text console format: name, masked message and stack).
+
 ## Log fallback to stderr, wizard log targets
 
 - `boiler/src/logging.ts`: `initLoggerWithConfig` turns the console on at `warn`, every level on

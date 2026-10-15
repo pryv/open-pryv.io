@@ -346,4 +346,57 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     assert.match(entry.context.stack, /^Error: boom auth=\(hidden\)/);
     assert.ok(!line.includes(TOKEN), line);
   });
+
+  it('[BLFB10] text format: an Error given as context prints its name, masked message and stack', function () {
+    const res = bootAndLogEachLevel(silentConsole(), {
+      extra: `l.error('blfb-err-ctx', new TypeError('boom auth=${TOKEN}'));`
+    });
+    const at = res.stderr.indexOf('blfb-err-ctx');
+    assert.ok(at >= 0, res.stderr);
+    const shown = res.stderr.slice(at);
+    // The masked copy is an Error carrying the original name: `Error [TypeError]: …`.
+    assert.match(shown, /^blfb-err-ctx Error \[TypeError\]: boom auth=\(hidden\)\n\s+at /);
+    assert.ok(!res.stderr.includes(TOKEN), res.stderr);
+    assert.ok(!/blfb-err-ctx \{\}/.test(res.stderr), res.stderr);
+  });
+
+  it('[BLFB11] log file: an Error given as context keeps its name, masked message and stack', function () {
+    const logPath = path.join(dir, 'err-ctx', 'logs', 'core.log');
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra: `l.error('blfb-err-ctx', new TypeError('boom auth=${TOKEN}'));` });
+    const line = fs.readFileSync(logPath, 'utf8').split('\n').find((s) => s.includes('blfb-err-ctx'));
+    assert.ok(line);
+    const entry = JSON.parse(line);
+    assert.strictEqual(entry.context.name, 'TypeError');
+    assert.strictEqual(entry.context.message, 'boom auth=(hidden)');
+    assert.match(entry.context.stack, /^TypeError: boom auth=\(hidden\)\n\s+at /);
+    assert.ok(!line.includes(TOKEN), line);
+  });
+
+  // The boiler config logs `get: [key] is undefined` at debug: read while the
+  // logger is being set up, such a line used to reach winston before any
+  // transport, which printed a "[winston] Attempt to write logs with no
+  // transports" line at every process start.
+  for (const [code, logsEnv] of [['BLFB12', null], ['BLFB13', 'debug']]) {
+    it(`[${code}] a boiler boot ${logsEnv ? 'with LOGS=' + logsEnv : 'with no log target'} prints no winston warning`, function () {
+      const runDir = fs.mkdtempSync(path.join(dir, 'boot-'));
+      const script = path.join(runDir, 'boot.mjs');
+      fs.writeFileSync(script, [
+        `const { init, getLogger } = await import(${JSON.stringify(BOILER_SRC)});`,
+        `init({ appName: 'blfb', baseConfigDir: ${JSON.stringify(CONFIG_DIR)}, skipOverrideConfig: true });`,
+        "getLogger('boot').error('blfb-error');",
+        'setTimeout(() => process.exit(0), 1500);'
+      ].join('\n'));
+      const env = Object.assign({}, process.env);
+      for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
+      if (logsEnv) env.LOGS = logsEnv;
+      const res = spawnSync(process.execPath, [script], { cwd: runDir, env, encoding: 'utf8', timeout: 20000 });
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      const out = res.stdout + res.stderr;
+      assert.match(out, /blfb-error/);
+      assert.ok(!out.includes('[winston]'), out);
+    });
+  }
 });

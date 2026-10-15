@@ -214,9 +214,11 @@ function createFileTransports (config: BoilerConfig): unknown[] {
   const transports: unknown[] = [];
   const logFile = config.get('logs:file');
   if (config.get('logs:file:active')) {
+    // An Error context (already masked) keeps its name, message, stack and
+    // cause; the stock replacer would write it as `{}`.
     const fileFormat = winston.format.combine(
       winston.format.timestamp(),
-      winston.format.json()
+      winston.format.json({ replacer: fileJsonReplacer })
     );
 
     rootLogger?.debug('File active: ' + logFile.path);
@@ -282,8 +284,11 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   if (winstonInstance) {
     throw new Error('Logger was already initialized');
   }
-  // console
-  winstonInstance = winston.createLogger({ });
+  // console: its settings are read BEFORE the winston logger exists. A config
+  // read can log (the boiler config logs `get: [key] is undefined` at debug),
+  // and a winston logger with no transport yet answers each entry with a
+  // "[winston] Attempt to write logs with no transports" line on the console.
+  // Until the logger exists, those entries are skipped (see Logger.debug).
   const logConsole = config.get('logs:console');
   let isSilent = !config.get('logs:console:active');
 
@@ -311,7 +316,7 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   const jsonMode = process.env.LOG_FORMAT === 'json' || formatOptions.json === true;
   const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(formatOptions);
   const myconsole = new winston.transports.Console({ format: consoleFormat, level: consoleLevel, silent: isSilent, stderrLevels });
-  winstonInstance!.add(myconsole);
+  winstonInstance = winston.createLogger({ transports: [myconsole] });
 
   rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', consoleLevel);
 
@@ -504,6 +509,13 @@ function errorsAsPlainObjects (_key: string, value: unknown): unknown {
   const cause = (value as { cause?: unknown }).cause;
   if (cause !== undefined) plain.cause = cause;
   return plain;
+}
+
+// The file format's replacer: Errors as above, plus the stock one's BigInt
+// handling (written as a string; plain JSON cannot hold it).
+function fileJsonReplacer (key: string, value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  return errorsAsPlainObjects(key, value);
 }
 
 function hiddenValue (key: string): string {
