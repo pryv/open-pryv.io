@@ -3,9 +3,11 @@
 ## Unreleased
 
 - Operators: a core with in-process mail (`services.email.method: in-process`, the default) and no
-  SMTP host (`services.email.smtp.host` unset, as on a fresh install) now treats mail as not
-  configured: it logs one warning at boot naming the mail classes that are switched on but not
-  sent (welcome, password-reset, email-verification, MFA-change), and skips those mails quietly.
+  SMTP host (`services.email.smtp.host` unset or a placeholder such as `REPLACE ME`, as on a fresh
+  install) now treats mail as not configured: it logs one warning at boot (per process, like the
+  other configuration warnings; a placeholder host is quoted in it) naming the mail classes that
+  are switched on but not sent (welcome, password-reset, email-verification, MFA-change), and
+  skips those mails quietly.
   Until now every registration and password reset logged an `unexpected-error (500)` and a
   "Sending email failed (in-process): ... services.email.smtp.host is required" line, although the
   registration itself succeeded. A configured SMTP host keeps the previous behaviour: a delivery
@@ -13,8 +15,8 @@
 - `POST /:username/account/request-password-reset`: on such a core the request now answers 200
   (no mail is sent, as when `services.email.enabled.resetPassword` is false) instead of failing
   with `unexpected-error` (500).
-- `POST /system/admin/mail/send-test`: with no SMTP host the answer is now 503 `api-unavailable`
-  ("Mail is not configured: ...") instead of 500 `unexpected-error`.
+- `POST /system/admin/mail/send-test`: with no SMTP host, or a placeholder one, the answer is now
+  503 `api-unavailable` ("Mail is not configured: ...") instead of 500 `unexpected-error`.
 
 ## 2.0.0-rc.54 - 2026-10-15
 

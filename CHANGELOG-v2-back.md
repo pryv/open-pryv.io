@@ -12,10 +12,14 @@
   configuration.
 - `config/plugins/config-validation.js` `collectWarnings`: one "mail is not configured" warning
   naming the enabled classes; the verification warning is not repeated when its only cause is the
-  missing SMTP host. `routes/system.ts` send-test: `apiUnavailable` instead of `unexpectedError`.
+  missing SMTP host; a non-empty placeholder host is quoted. `routes/system.ts` send-test: the same
+  `isInProcessSmtpMissing` check (it was a truthiness test), `apiUnavailable` instead of
+  `unexpectedError`.
   Tests: `[MLNC1]` (registration and password reset with no SMTP host: 201 / 200, no error log),
   `[MLNC2]` (SMTP host with a refused connection: the error is still logged), `[ML07]`,
-  `[CV-GA5]`, `[CV-GA6]`, `[MA09]` (503 `api-unavailable`).
+  `[CV-GA5]`-`[CV-GA8]` (`[CV-GA8]`: the shipped default mail settings give two warnings, the
+  mail one and the verification page one), `[MA09]` and `[MA60]` (no or placeholder host: 503
+  `api-unavailable`).
 
 ## Log fallback to stderr, wizard log targets
 

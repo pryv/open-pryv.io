@@ -362,6 +362,31 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
       assert.ok(!/email-verification|cannot be proved/.test(warnings[0]), warnings[0]);
     });
 
+    it('[CV-GA7] a placeholder SMTP host is shown in the warning', () => {
+      const config = scopedConfig({
+        services: { email: { enabled: { verifyEmail: false }, method: 'in-process', smtp: { host: 'REPLACE ME' } } },
+        auth: {}
+      }, 'default-file');
+      const warnings = collectWarnings(config);
+      assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
+      assert.match(warnings[0], /smtp\.host missing or unset: it is 'REPLACE ME'\)/);
+    });
+
+    // The shipped defaults (verifyEmail on, no verification page URL, an empty
+    // SMTP host) give two warnings with two different remedies: the mail one
+    // (SMTP) and the verification page one (auth.emailVerificationPageURL).
+    it('[CV-GA8] the shipped default mail settings give the mail warning and the verification page warning', () => {
+      const yaml = require('js-yaml');
+      const fs = require('node:fs');
+      const defaults = yaml.load(fs.readFileSync(new URL('../../../config/default-config.yml', import.meta.url), 'utf8'));
+      const config = scopedConfig({ services: { email: defaults.services.email }, auth: defaults.auth }, 'default-file');
+      const warnings = collectWarnings(config);
+      assert.strictEqual(warnings.length, 2, JSON.stringify(warnings));
+      assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, email-verification and MFA-change mails are not sent/);
+      assert.ok(!/: it is '/.test(warnings[0]), 'an empty host is not shown');
+      assert.match(warnings[1], /email verification is on by default but 'auth\.emailVerificationPageURL' is not set/);
+    });
+
     it('[CV-GA6] no mail warning when mail is off or the SMTP host is set', () => {
       for (const email of [
         { enabled: false, method: 'in-process' },

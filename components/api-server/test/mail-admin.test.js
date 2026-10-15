@@ -129,6 +129,21 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     assert.match(res.body.error.message, /Mail is not configured/);
   });
 
+  it('[MA60] POST send-test with a placeholder SMTP host is refused as not configured', async () => {
+    const mail = require('mail');
+    await mail.close();
+    const { withInjectedConfig } = require('test-helpers');
+    await withInjectedConfig({ services: { email: { smtp: { host: 'REPLACE ME' } } } }, async () => {
+      const res = await coreRequest
+        .post('/system/admin/mail/send-test')
+        .set(authHeaders())
+        .send({ type: 'sendtest-' + cuid(), lang: 'en', recipient: 'nobody@example.com' });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'api-unavailable');
+    });
+    assert.strictEqual(mail.isActive(), false, 'no transport was set up');
+  });
+
   it('[MA51] PUT refuses a template carrying code and stores nothing', async () => {
     const type = 'code-' + cuid();
     for (const pug of ['- global.x = 1\np x', 'p !{username}', 'p #{process.env.HOME}', 'include /etc/hosts']) {

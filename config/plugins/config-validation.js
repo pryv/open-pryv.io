@@ -657,7 +657,11 @@ function collectWarnings (config) {
   if (kinds.length > 0) {
     const names = kinds.map((k) => MAIL_KINDS[k]);
     const list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
-    warnings.push("'services.email' is incomplete (" + describeMailCapability(config).problems.join('; ') + '): ' +
+    // A non-empty host read as a placeholder is shown (a host is no secret),
+    // so a real host taken for one can be spotted from the log alone.
+    const host = config.get('services:email:smtp:host');
+    const shown = typeof host === 'string' && host.trim() !== '' ? ": it is '" + host + "'" : '';
+    warnings.push("'services.email' is incomplete (" + describeMailCapability(config).problems.join('; ') + shown + '): ' +
       'mail is not configured, so the ' + list + ' mails are not sent (the requests that send them still succeed' +
       (kinds.includes('verifyEmail') ? '; account email addresses cannot be proved' : '') + '). ' +
       "Set 'services.email.smtp' (host, port, auth) to send them, or set 'services.email.enabled: false' to turn mail off explicitly.");
