@@ -1,7 +1,17 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.53 - 2026-10-15
 
+Group accounts in consent (CMC); revoke notices the counterparty could not take are re-sent until
+they land, and the CMC retry loop now runs by default (`cmc.retryLoop.enabled: true`); every
+consent and delegation teardown is now the `accesses.delete` deletion (deletion records); an offer
+can no longer ask the streams the consent plugin manages on the accepter's account. Also: admin mail
+template changes apply without a restart; operator tools log to stderr; the bundled event-types
+catalogue is 1.3.0. Read the behaviour changes below before upgrading a CMC deployment, and size the
+retry backlog of a core that ran with the loop off. No migration.
+
+- Event types: the catalogue bundled with the server is now 1.3.0, with the consent (CMC) event
+  types and fields of group accounts and of the revoke-notice pairing described below.
 - Mail templates (admin, `services.email.method: in-process`): a template written or deleted
   through `PUT` / `DELETE /system/admin/mail/templates/:type/:lang/:part` is now used by every
   worker of the core from the next mail on. Until this release no worker used it before a restart:
