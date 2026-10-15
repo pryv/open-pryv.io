@@ -29,3 +29,6 @@ README.md
 # checkout and are unaffected; this guard protects local docker builds
 # (rc-build-and-push.sh, ad-hoc `docker build .` iterations).
 **/override-config.yml
+
+# CI image-scan exceptions: documentation for the gate, not for /app.
+.grype-image.yaml

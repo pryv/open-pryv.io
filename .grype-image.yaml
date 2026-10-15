@@ -3,15 +3,21 @@
 #
 # The gate fails on a critical finding that has a fix. Each entry below is an
 # accepted exception: what it is, why it is not reachable in this image, and
-# when to remove it. Review the list at every rqlite or base-image bump.
+# when to remove it. Add one only when the finding is unreachable; the other
+# ways to unblock a gated tag are in AGENTS.md ("Release image scan").
+# Review the list at every rqlite or base-image bump.
 ignore:
-  # golang.org/x/net v0.59.0 in the bundled rqlited: HTTP/2 server
-  # denial-of-service bugs (flow-control refund, Trailer map growth, SETTINGS
-  # flood), fixed in x/net v0.60.0. rqlited's HTTP API listens on loopback only
-  # (storages.engines.rqlite.httpBindAddr, INSTALL.md) and the Raft port is
-  # not an HTTP server; only local processes can reach it. rqlite 10.6.0 still
-  # ships v0.59.0: remove these entries once an rqlite release carries
-  # x/net >= v0.60.0 and RQLITE_VERSION is bumped to it.
+  # golang.org/x/net v0.59.0 in the bundled rqlited, fixed in x/net v0.60.0.
+  # Server side, HTTP/2 only: flow-control refund (6612), Trailer map growth
+  # (6603), SETTINGS flood (6611), HPACK encoder race crash (6617). The core
+  # starts rqlited without -http-cert / -http-key, so its HTTP API is plain
+  # HTTP/1.1 and HTTP/2 is never negotiated on it (no h2c handler either); it
+  # also listens on loopback unless storages.engines.rqlite.httpBindAddr says
+  # otherwise. The Raft port is rqlite's own TCP protocol, not HTTP.
+  # Client side (6610, HTTP/2 Transport): rqlited as the core runs it makes no
+  # outbound HTTP/2 request.
+  # rqlite 10.6.0 still ships v0.59.0: remove these entries once an rqlite
+  # release carries x/net >= v0.60.0 and RQLITE_VERSION is bumped to it.
   - vulnerability: GO-2026-6612
     package:
       name: golang.org/x/net
@@ -21,6 +27,14 @@ ignore:
       name: golang.org/x/net
       location: /app/bin-ext/rqlited
   - vulnerability: GO-2026-6611
+    package:
+      name: golang.org/x/net
+      location: /app/bin-ext/rqlited
+  - vulnerability: GO-2026-6617
+    package:
+      name: golang.org/x/net
+      location: /app/bin-ext/rqlited
+  - vulnerability: GO-2026-6610
     package:
       name: golang.org/x/net
       location: /app/bin-ext/rqlited

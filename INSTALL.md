@@ -926,7 +926,11 @@ Set `migrations.autoRunOnStart: false` in config to disable auto-run at startup 
 
 ### Upgrading the bundled rqlite (9.x to 10.x)
 
-The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.6.0** (10.5.1 up to 2.0.0-rc.53, 9.4.5 before rc.34). Moving within 10.x (10.5.1 to 10.6.0) needs no data-directory step: replace the binary while the core is stopped. rqlite 10 makes its snapshot store crash-safe at the point where a node killed during a snapshot could later restore stale pages into its copy of the platform DB under 9.x, checksums its snapshot files, and stops a node on a node-local SQLite error instead of letting it diverge silently. The flags and HTTP endpoints the core uses are unchanged.
+The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.6.0** (10.5.1 up to 2.0.0-rc.53, 9.4.5 before rc.34).
+
+**Within 10.x** (10.5.1 to 10.6.0): no data-directory step. Back up as below, then replace the binary while the core is stopped; in a cluster, upgrade the followers first and the leader last. 10.5.1 and 10.6.0 nodes replicate and send each other snapshots in both directions (checked on a three-node cluster, either version leading), so the cluster keeps working while the cores are upgraded one by one.
+
+**From 9.x to 10.x:** rqlite 10 makes its snapshot store crash-safe at the point where a node killed during a snapshot could later restore stale pages into its copy of the platform DB under 9.x, checksums its snapshot files, and stops a node on a node-local SQLite error instead of letting it diverge silently. The flags and HTTP endpoints the core uses are unchanged.
 
 - **The data directory is upgraded in place, one way.** At its first start, rqlite 10 converts the directory (log line `upgraded v8 snapshot directory …/rsnapshots to …/wsnapshots`) and rebuilds the node's database from its snapshot store (`clean snapshot predates recording of snapshot index and term, full restore needed`, then `node restored`). rqlite 9 cannot open the directory afterwards: it stops with `panic: log not found`. Going back to an older release therefore needs the data directory restored from a backup (below).
 - **Back up every node first:** `curl -s 'http://localhost:4001/db/backup' -o platform-backup.sqlite` on the leader (`?noleader` on a follower for its own copy), and an archive of the rqlite data directory taken while the core is stopped.

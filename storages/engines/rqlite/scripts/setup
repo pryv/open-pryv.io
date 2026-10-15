@@ -121,8 +121,11 @@ else
     EXPECTED_SHA256_VAR="RQLITE_SHA256_${RQLITE_ARCH}"
     if command -v sha256sum >/dev/null 2>&1; then
       echo "${!EXPECTED_SHA256_VAR}  $TMP_DIR/$TARBALL" | sha256sum -c -
-    else
+    elif command -v shasum >/dev/null 2>&1; then
       echo "${!EXPECTED_SHA256_VAR}  $TMP_DIR/$TARBALL" | shasum -a 256 -c -
+    else
+      echo "Error: sha256sum or shasum is required to verify the rqlite download."
+      exit 1
     fi
 
     echo "Extracting..."

@@ -359,10 +359,13 @@ jobs:
         run: |
           docker run --rm --entrypoint node open-pryv-verify:candidate -e \
             "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
-      # Scan the image before anything is pushed: every critical / high finding
-      # in the log, then the build stops on a critical one that has a fix
-      # (accepted exceptions, each with its reason, in .grype-image.yaml).
-      - name: Image scan report (critical and high)
+      # Scan the image before anything is pushed: the full Grype table (all
+      # severities) in the step log, then the build stops on a critical finding
+      # that has a fix (accepted exceptions, each with its reason, in
+      # .grype-image.yaml; how to unblock a tag: AGENTS.md "Release image scan").
+      # The report step's warning annotation ("level 'high' or higher") is
+      # expected: the base carries unfixed highs, and only the gate decides.
+      - name: Image scan report (full table)
         uses: anchore/scan-action@v7
         with:
           image: open-pryv-verify:candidate
@@ -370,8 +373,6 @@ jobs:
           severity-cutoff: high
           output-format: table
           output-file: grype-image.txt
-      - name: Show the image scan report
-        run: cat grype-image.txt
       - name: Image scan gate (fail on a fixable critical)
         uses: anchore/scan-action@v7
         with:
@@ -440,8 +441,8 @@ jobs:
           docker run --rm --entrypoint node open-pryv-check:candidate -e \
             "require('better-sqlite3')(':memory:').prepare('select 1').get(); require('sharp'); console.log('native modules ok on ' + process.arch)"
       # Same image scan as the release build, so a base or rqlite bump can be
-      # checked before a tag.
-      - name: Image scan report (critical and high)
+      # checked before a tag (the report's warning annotation is expected).
+      - name: Image scan report (full table)
         uses: anchore/scan-action@v7
         with:
           image: open-pryv-check:candidate
@@ -449,8 +450,6 @@ jobs:
           severity-cutoff: high
           output-format: table
           output-file: grype-image.txt
-      - name: Show the image scan report
-        run: cat grype-image.txt
       - name: Image scan gate (fail on a fixable critical)
         uses: anchore/scan-action@v7
         with:
@@ -459,6 +458,16 @@ jobs:
           only-fixed: true
           fail-build: true
           severity-cutoff: critical
+      # The encryption-at-rest variant is built FROM the published image at tag
+      # time, after the stock image is pushed: build it here on this candidate
+      # (the docker driver's `default` builder sees the locally loaded image) so
+      # a base change that breaks its packages shows before a tag.
+      - name: Build the encryption-at-rest variant on this candidate (not pushed)
+        run: |
+          docker tag open-pryv-check:candidate pryvio/open-pryv.io:0.0.0-check
+          docker buildx build --builder default --load -f Dockerfile.encrypted \
+            --build-arg IMAGE_TAG=0.0.0-check -t open-pryv-enc-check:candidate .
+          docker run --rm --entrypoint cryptsetup open-pryv-enc-check:candidate --version
       - name: Export a marker for the next job
         env:
           ARCH: ${{ matrix.arch }}

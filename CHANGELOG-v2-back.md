@@ -6,11 +6,12 @@
   (bookworm); rqlite 10.6.0 with its per-arch sha256. Grype on the rc.53 image: 4 critical, 83 high
   (Debian 12: 2 critical / 72 high with no fix; rqlited 10.5.1: Go stdlib 1.27.1 + `x/net` 0.59.0).
 - CI: the release build (`docker-build`, before anything is pushed) and the manual `docker-build-check`
-  scan the built image with Grype: a report of every critical / high finding in the log, then a gate
-  that fails on a critical finding with a fix. Accepted exceptions live in `.grype-image.yaml`, each
-  with its reason (today: `x/net` 0.59.0 HTTP/2 server bugs in rqlited, whose HTTP API listens on
-  loopback only; remove once an rqlite release carries `x/net` >= 0.60.0). The source SBOM scan
-  does not read that file.
+  scan the built image with Grype: the full table in the log, then a gate that fails on a critical
+  finding with a fix. Accepted exceptions live in `.grype-image.yaml`, each with its reason (today:
+  five `x/net` 0.59.0 HTTP/2 advisories in rqlited, whose HTTP API the core serves without TLS, so
+  HTTP/2 is never negotiated; remove once an rqlite release carries `x/net` >= 0.60.0); the source
+  SBOM scan does not read that file, and the build context excludes it. How to unblock a gated tag:
+  AGENTS.md. The manual check also builds the encryption-at-rest variant on the candidate image.
 - `storages/engines/rqlite/scripts/setup`: rqlite 10.6.0, and the downloaded tarball is checked
   against its sha256 (same values as the Dockerfile) before extraction.
 
