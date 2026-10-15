@@ -90,6 +90,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
 
     try {
       const platform = await getPlatform();
+      // A new name an account holds would take that account's host (DNS
+      // records answer before usernames); an existing record may change.
+      if (await platform.getDnsRecord(subdomain) == null && await platform.isNameHeldByAccount(subdomain)) {
+        return res.status(409).json({
+          error: { id: 'item-already-exists', message: `An account holds the name '${subdomain}': a record under it would take that account's host` }
+        });
+      }
       await platform.setDnsRecord(subdomain, records);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

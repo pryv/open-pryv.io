@@ -217,6 +217,20 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
       assert.equal(fs.existsSync(path.join(tmp, 'bundle.age')), false);
     });
 
+    it('[BNCX4] refuses a new core id an account holds, before writing anything', async () => {
+      const db = makeFakeDB();
+      const asked = [];
+      const isNameHeldByAccount = async (name) => { asked.push(name); return name === 'core-b'; };
+      await assert.rejects(cliOps.newCore(optsIn(tmp, db, { isNameHeldByAccount })), /an account holds the name "core-b"/);
+      assert.equal(db._coreInfos.size, 0);
+      assert.equal(db._dns.size, 0);
+      assert.equal(fs.existsSync(path.join(tmp, 'ca')), false);
+      // another id goes through
+      await cliOps.newCore(optsIn(tmp, db, { isNameHeldByAccount, coreId: 'core-c' }));
+      assert.ok(db._coreInfos.get('core-c'));
+      assert.deepEqual(asked, ['core-b', 'core-c']);
+    });
+
     it('[BNCX2] --replace re-issues for a registered id and revokes its earlier token', async () => {
       const db = makeFakeDB();
       const tokensPath = path.join(tmp, 'tokens.json');

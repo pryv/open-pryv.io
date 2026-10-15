@@ -223,7 +223,7 @@ class RestoreOrchestrator {
     if (this.isReservedUsername != null) return this.isReservedUsername;
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
-    await platform.refreshHostedSiteNames();
+    await platform.refreshPlatformNames();
     return (name: string) => platform.isUsernameRoutingReserved(name);
   }
 

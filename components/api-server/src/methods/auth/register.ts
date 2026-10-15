@@ -117,6 +117,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
    * Check if username is taken, or reserved (registration would refuse it).
    */
   async function checkUsername (_context: MethodContext, params: CheckUsernameParams, result: ResultBag, next: MethodNext) {
+    // the same names registration re-reads, so both answer alike
+    await platform.refreshPlatformNames();
     result.reserved = platform.isUsernameReserved(params.username) ||
       await usersRepository.usernameExistsOnPlatform(params.username);
     if (result.reserved == null) {

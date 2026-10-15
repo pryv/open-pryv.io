@@ -75,6 +75,8 @@ interface NewCoreOpts {
   allowInsecurePeerUrl?: boolean;
   /** Re-issue for a core id that already has a core-info row. */
   replace?: boolean;
+  /** Whether an account holds a name: a new core id under it is refused. */
+  isNameHeldByAccount?: (name: string) => Promise<boolean>;
 }
 
 interface InitCaHolderOpts {
@@ -135,7 +137,7 @@ async function newCore (opts: NewCoreOpts) {
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
     secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs,
-    allowInsecurePeerUrl = false, replace = false
+    allowInsecurePeerUrl = false, replace = false, isNameHeldByAccount
   } = opts;
   const rows = platformDB as PlatformRows;
 
@@ -154,6 +156,11 @@ async function newCore (opts: NewCoreOpts) {
   if (previousInfo != null && !replace) {
     throw new Error(`new-core: core "${coreId}" is already registered. If its earlier bundle was never used, ` +
       `run \`revoke-token ${coreId} --ip <ip>\` first; to re-issue for this id anyway, pass --replace.`);
+  }
+  // The id becomes `<id>.<domain>`, answered before usernames: a new core
+  // under an account's name would take that account's host.
+  if (previousInfo == null && isNameHeldByAccount != null && await isNameHeldByAccount(coreId)) {
+    throw new Error(`new-core: an account holds the name "${coreId}"; choose another core id`);
   }
   const snapshot = previousInfo == null
     ? null

@@ -10,6 +10,15 @@
   `bin-ext/rqlited` yourself while the core is stopped (INSTALL.md, "Upgrading the bundled rqlite").
   Images derived from ours (`FROM pryvio/open-pryv.io`) that `apt-get install` packages now resolve
   them against trixie.
+- Usernames and the platform's DNS names no longer collide. Registration, the username check
+  (`/reg/<username>/check_username`), the username change, admin pre-registration and delegated
+  account creation refuse a name equal to a core id, a `dns.staticEntries` key or a runtime DNS
+  record (`/reg/records`, `bin/dns-records.js`), as they already refused hosted-site names: these
+  names are answered before usernames, so such an account was unreachable at
+  `<username>.<domain>`. Conversely, a NEW runtime DNS record (`POST /reg/records` answers
+  `409 item-already-exists`, `bin/dns-records.js load` stops) or a NEW core id
+  (`bin/bootstrap.js new-core`) under an existing account's name is refused; existing records can
+  still be updated. Existing accounts are unaffected.
 
 ## 2.0.0-rc.54 - 2026-10-15
 

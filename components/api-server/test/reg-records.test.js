@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, coreRequest, assert, config */
+/* global initTests, initCore, coreRequest, assert, config, getNewFixture */
 
 const cuid = require('cuid');
 const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
@@ -149,6 +149,45 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.deepStrictEqual(await platform.getDnsRecord(sub), { txt: ['second-value'] });
 
       await platform.deleteDnsRecord(sub);
+    });
+  });
+
+  describe('names shared with accounts', () => {
+    it('[RR13] a new record under an account\'s name is refused; an existing one may change', async () => {
+      const username = 'rrname' + cuid().slice(-8).toLowerCase();
+      const fixtures = getNewFixture();
+      await fixtures.user(username);
+      try {
+        let res = await coreRequest.post('/reg/records')
+          .set('Authorization', adminAccessKey)
+          .send({ subdomain: username, records: { a: ['10.0.0.9'] } });
+        assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'item-already-exists');
+        assert.strictEqual(await platform.getDnsRecord(username), null);
+        // a record written before the account existed may still be updated
+        await platform.setDnsRecord(username, { a: ['10.0.0.8'] });
+        res = await coreRequest.post('/reg/records')
+          .set('Authorization', adminAccessKey)
+          .send({ subdomain: username, records: { a: ['10.0.0.9'] } });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      } finally {
+        await platform.deleteDnsRecord(username);
+        await fixtures.clean();
+      }
+    });
+
+    it('[RR14] a runtime record name is reported reserved by check_username', async () => {
+      const sub = 'rrrec' + cuid().slice(-8).toLowerCase();
+      assert.strictEqual((await coreRequest.get('/reg/' + sub + '/check_username')).body.reserved, false);
+      const res = await coreRequest.post('/reg/records')
+        .set('Authorization', adminAccessKey)
+        .send({ subdomain: sub, records: { a: ['10.0.0.9'] } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      try {
+        assert.strictEqual((await coreRequest.get('/reg/' + sub + '/check_username')).body.reserved, true);
+      } finally {
+        await platform.deleteDnsRecord(sub);
+      }
     });
   });
 
