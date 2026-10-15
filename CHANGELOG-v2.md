@@ -8,8 +8,14 @@
   master's own lines: a configuration file without a `logs:` section, as written by the install
   wizard, turned every worker error into silence. Any configured target keeps the previous
   behaviour.
+- Operators: console logs carry no more ANSI colour codes in the journal or `docker logs`, with the
+  production defaults (`NODE_ENV=production`, the Docker image default), with a wizard-generated
+  config and with the stderr fallback above. The production defaults asked for this with
+  `logs.console.colorize: false`, a key the server never read; the setting is
+  `logs.console.format.color: false` (default `true`, kept for interactive development). A config
+  that still sets `colorize` can switch to `format.color`.
 - Install wizard (`init`): the generated `pryv-config.yml` now has a `logs:` section, as in the
-  production defaults: the console at `info`, and errors in a daily file
+  production defaults: the console at `info` without colours, and errors in a daily file
   `<data folder>/logs/api-server.errors.log` (14 days kept) on the data volume. Configurations
   written by earlier versions can add the same section.
 

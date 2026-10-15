@@ -119,7 +119,7 @@ function generateFormat (options: { color?: boolean; time?: boolean; align?: boo
           }
         }
       }
-      if (!skip) { itemStr = util.inspect(items, { depth: 10, colors: true }); }
+      if (!skip) { itemStr = util.inspect(items, { depth: 10, colors: !!options.color }); }
     }
 
     const line = `[${level}]: ${message} ${itemStr}`;
@@ -291,21 +291,23 @@ async function initLoggerWithConfig (config: BoilerConfig) {
     isSilent = false;
   }
 
-  // LOG_FORMAT env var can force the structured console output
-  const jsonMode = process.env.LOG_FORMAT === 'json' || logConsole.format?.json === true;
-  const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(logConsole.format);
   // `logs.console.stderr`: every level on stderr, for a CLI whose stdout is
   // its output (e.g. `bin/mail.js templates get > file`).
   let stderrLevels = config.get('logs:console:stderr') === true ? Object.keys(winston.config.npm.levels) : undefined;
   let consoleLevel = logConsole.level;
+  let formatOptions = logConsole.format || {};
   // No log target at all (console silent, no file, no custom logger): the
   // warnings and errors would be lost. Send them to stderr instead, where
-  // the service manager (journal, `docker logs`) keeps them.
+  // the service manager (journal, `docker logs`) keeps them, without colours.
   if (isSilent && !hasLogTarget(config)) {
     isSilent = false;
     consoleLevel = 'warn';
     stderrLevels = Object.keys(winston.config.npm.levels);
+    formatOptions = Object.assign({}, formatOptions, { color: false });
   }
+  // LOG_FORMAT env var can force the structured console output
+  const jsonMode = process.env.LOG_FORMAT === 'json' || formatOptions.json === true;
+  const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(formatOptions);
   const myconsole = new winston.transports.Console({ format: consoleFormat, level: consoleLevel, silent: isSilent, stderrLevels });
   winstonInstance!.add(myconsole);
 

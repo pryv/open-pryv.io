@@ -1598,7 +1598,7 @@ async function main () {
     // journal / `docker logs`) at info, and errors in a daily file on the
     // data volume so they survive container restarts.
     logs: {
-      console: { active: true, level: 'info' },
+      console: { active: true, level: 'info', format: { color: false } },
       file: { active: true, level: 'error', path: `${dataFolder}/logs/api-server.errors.log` }
     }
   };
@@ -1753,6 +1753,7 @@ async function main () {
     ['console: every process (master + workers), kept by the journal or',
       '`docker logs`. file: errors only, rotated daily (14 days kept),',
       'on the data volume. Raise or lower `level` (debug, info, warn, error).',
+      'format.color: false keeps ANSI colour codes out of the journal.',
       'With every target off, warnings and errors still go to stderr.'],
     { logs: config.logs });
 

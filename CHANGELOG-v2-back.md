@@ -6,7 +6,13 @@
   stderr, when the console is inactive and none of `logs:file`, `logs:fileSync`, `logs:custom` is
   active (`LOGS=<level>` still wins, as before). Tests: `[BLFB1]`-`[BLFB4]` (child processes: the
   fallback, and no change with a file, a sync file or an active console).
-- `bin/init.js`: the generated config carries `logs.console` (`info`) and `logs.file` (`error`,
+- `boiler/src/logging.ts`: the text console format colours the logged context (`util.inspect`) only
+  when `format.color` is true (it was always coloured); the stderr fallback forces
+  `format.color: false`. `config/production-config.yml`: the unread `logs.console.colorize` is
+  replaced by `logs.console.format.color: false`. Tests: `[BLFB5]` (fallback with a colour format),
+  `[BLFB6]` (boiler booted on `production-config.yml`), `[INWZ9]` (boiler booted on a generated
+  config; the error also lands in the error file): no ANSI escape in the console output.
+- `bin/init.js`: the generated config carries `logs.console` (`info`, `format.color: false`) and `logs.file` (`error`,
   under the data folder) in a "Logs" section; the two commented `logs` entries of the appendix say
   to merge into it. Test: `[INWZ8]` (also passes `check-config`).
 

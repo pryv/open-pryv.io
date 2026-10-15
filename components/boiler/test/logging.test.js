@@ -16,6 +16,8 @@ import { inspectAndHide, getLogger, setGlobalName } from '../src/logging.ts';
 
 const TOKEN = 'ckzq8x4k2b7c9d0e1f2g3h4i5j';
 const LOGGING_SRC = fileURLToPath(new URL('../src/logging.ts', import.meta.url));
+const BOILER_SRC = fileURLToPath(new URL('../src/index.ts', import.meta.url));
+const CONFIG_DIR = fileURLToPath(new URL('../../../config', import.meta.url));
 
 describe('[BLGM] boiler logging masks credentials', function () {
   it('[BLGM1] an Error is masked: message, stack, fields and cause, and stays an Error', function () {
@@ -257,6 +259,36 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     }));
     assert.doesNotMatch(res.stderr + res.stdout, /blfb-/);
     assert.match(fs.readFileSync(syncPath, 'utf8'), /blfb-error/);
+  });
+
+  it('[BLFB5] the fallback output carries no ANSI colour codes, even with a colour format', function () {
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:console': { active: false, level: 'info', format: { color: true, time: true } }
+    }));
+    assert.match(res.stderr, /blfb-error/);
+    assert.ok(!res.stderr.includes('\u001b['), JSON.stringify(res.stderr));
+  });
+
+  it('[BLFB6] config/production-config.yml: the console output carries no ANSI colour codes', function () {
+    const runDir = fs.mkdtempSync(path.join(dir, 'prod-'));
+    const script = path.join(runDir, 'boot.mjs');
+    fs.writeFileSync(script, [
+      `const { init, getLogger } = await import(${JSON.stringify(BOILER_SRC)});`,
+      `init({ appName: 'blfb', baseConfigDir: ${JSON.stringify(CONFIG_DIR)}, skipOverrideConfig: true });`,
+      "const l = getLogger('prod');",
+      "l.info('blfb-info', { nested: { list: [1, 'two'] } }); l.error('blfb-error', { code: 'E1' });",
+      'setTimeout(() => process.exit(0), 1500);'
+    ].join('\n'));
+    const env = Object.assign({}, process.env);
+    for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
+    const res = spawnSync(process.execPath, [script, '--config', path.join(CONFIG_DIR, 'production-config.yml')], {
+      cwd: runDir, env, encoding: 'utf8', timeout: 20000
+    });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    const out = res.stdout + res.stderr;
+    assert.match(out, /blfb-info/);
+    assert.match(out, /blfb-error/);
+    assert.ok(!out.includes('\u001b['), JSON.stringify(out));
   });
 
   it('[BLFB4] an active console keeps its configured level and stream', function () {

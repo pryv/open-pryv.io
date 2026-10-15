@@ -19,6 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(__dirname, '../../../bin/init.js');
 const CHECK_CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
+const BOILER_SRC = path.resolve(REPO_ROOT, 'components/boiler/src/index.ts');
 
 const ANSWERS = `
 dnsless: true
@@ -119,7 +120,7 @@ describe('[INWZ] bin/init.js generated files', function () {
     const res = runWizard(configDir);
     assert.strictEqual(res.status, 0, res.output);
     const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
-    assert.deepStrictEqual(config.logs.console, { active: true, level: 'info' });
+    assert.deepStrictEqual(config.logs.console, { active: true, level: 'info', format: { color: false } });
     assert.strictEqual(config.logs.file.active, true);
     assert.strictEqual(config.logs.file.level, 'error');
     assert.strictEqual(config.logs.file.path, path.join(configDir, 'data', 'logs', 'api-server.errors.log'));
@@ -127,6 +128,34 @@ describe('[INWZ] bin/init.js generated files', function () {
       cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
     });
     assert.strictEqual(check.status, 0, check.stdout + check.stderr);
+  });
+
+  it('[INWZ9] a core booted on the generated config writes console logs without ANSI colour codes', () => {
+    const res = runWizard(configDir);
+    assert.strictEqual(res.status, 0, res.output);
+    const script = path.join(configDir, 'boot.mjs');
+    fs.writeFileSync(script, [
+      `const { init, getLogger } = await import(${JSON.stringify(BOILER_SRC)});`,
+      `init({ appName: 'inwz', baseConfigDir: ${JSON.stringify(path.join(REPO_ROOT, 'config'))}, skipOverrideConfig: true });`,
+      "const l = getLogger('wizard');",
+      "l.info('inwz-info', { nested: { list: [1, 'two'] } }); l.error('inwz-error', { code: 'E1' });",
+      'setTimeout(() => process.exit(0), 1500);'
+    ].join('\n'));
+    const env = { ...process.env };
+    for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
+    const boot = spawnSync(process.execPath, [script, '--config', path.join(configDir, 'pryv-config.yml')], {
+      cwd: configDir, env, encoding: 'utf8', timeout: 30000
+    });
+    assert.strictEqual(boot.status, 0, boot.stdout + boot.stderr);
+    const out = boot.stdout + boot.stderr;
+    assert.match(out, /inwz-info/);
+    assert.match(out, /inwz-error/);
+    assert.ok(!out.includes('\u001b['), JSON.stringify(out));
+    // and the error reached the (daily) error file on the data volume
+    const logDir = path.join(configDir, 'data', 'logs');
+    const errorFile = fs.readdirSync(logDir).find((n) => n.startsWith('api-server.errors.log.'));
+    assert.ok(errorFile, 'error log file in ' + logDir);
+    assert.match(fs.readFileSync(path.join(logDir, errorFile), 'utf8'), /inwz-error/);
   });
 
   it('[INWZ5] a Let\'s Encrypt contact that is not an email address is refused', () => {
