@@ -1,5 +1,28 @@
 # Changelog - Internal (no API impact)
 
+## Cross-account messaging: reserved parents, single-use withdrawal, retry of server-authored accepts
+
+- `components/cmc/src/hooks.ts`: `createStreamCreateReservedRootHook` also checks `parentId`
+  (`isReservedParentId`: a `:_cmc:*` id other than `:_cmc:apps` and the user-creatable region);
+  new `createStreamUpdateReservedRootHook` (an `update.parentId` in a reserved region, or any
+  `parentId` on a plugin-managed stream, refused with `cmc-reserved-stream`). Same pair in
+  `components/delegation/src/hooks.ts` on the whole `:_delegation:*` namespace. Both update hooks
+  are wired first in the `streams.update` chain (`api-server/src/methods/streams.ts`), before the
+  permission walk, the delegation one gated on `delegation:active`. Tests: `[CS09]`, `[CS10]`,
+  `[CSU01]` to `[CSU03]`, `[DSC05]`, `[DSU01]`, `[DSU02]`, `[CNRP1]` to `[CNRP6]`.
+- `components/cmc/src/inviteState.ts`: single-use transition `pending | delivered | refused ->
+  invalidated`. `handleInvalidateLink.ts`: the single-use no-op is now for a consumed capability
+  only; an open one flips through `markCapabilityInvalidated` and stamps the invite, like an
+  open-link; the access and its permissions are kept so the later accept gets the typed refusal.
+  Tests: `[IS13]`, `[CMCIL-C]`, `[CMCIL-C2]`, `[CN56]` (the issue's repro with an app token),
+  `[CN57]`.
+- `components/cmc/src/retryQueue.ts` `processRetryEvent`: a trigger record of a
+  `consent/accept-cmc` whose `originalCreatedBy` access id is `system`, or whose
+  `originalStreamIds` holds `:_cmc:inbox`, is marked `failed-permanent` with
+  `cmc-retry-system-authored` (listed non-retryable, with `cmc-retry-stale`) and never
+  dispatched; defence in depth, no path writes such a record today. Tests: `[RQ30]`, `[RQ31]`;
+  the retry fixtures now put a received accept on the capability's responses stream.
+
 ## Stream permission walk
 
 - `AccessLogic._getStreamPermissions` keeps the ids it walked and stops on one seen before, so a

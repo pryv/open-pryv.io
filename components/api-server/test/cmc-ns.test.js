@@ -309,6 +309,120 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     });
   });
 
+  describe('[CMCNS-RP] reserved parents: nothing is created or moved under a plugin-managed region, for any token', function () {
+    // The plugins read their regions by stream query (`:_cmc:_internal:retries`
+    // and its descendants are the retry queue, `:_cmc:inbox` the deliveries),
+    // so a user stream parented there, with a plain id the id checks never
+    // see, would have its events read as the plugin's records. The owner's
+    // personal token, which manages everything, is refused like any other.
+    const CMC_RESERVED_PARENTS = [':_cmc:', ':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries', ':_cmc:_internal:members'];
+    const DELEGATION_RESERVED_PARENTS = [':_delegation:', ':_delegation:_internal'];
+    let plainStreamId;
+
+    before(async function () {
+      // Lazy provisioning, so the reserved parents exist (the refusal must not
+      // be a mere unknown-referenced-resource on a missing parent).
+      await coreRequest.post(eventsPath).set('Authorization', token)
+        .send({ streamIds: [':_cmc:apps:my-app'], type: 'note/txt', content: 'trigger provisioning' });
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: 'rp-plain-' + cuid().slice(-6), name: 'RP plain' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      plainStreamId = res.body.stream.id;
+    });
+
+    it('[CNRP1] streams.create with a plain id under each reserved CMC parent is refused with cmc-reserved-stream', async function () {
+      for (const parentId of CMC_RESERVED_PARENTS) {
+        const res = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(res.status, 400, parentId + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', parentId);
+        assert.strictEqual(res.body?.error?.data?.parentId, parentId);
+      }
+    });
+
+    it('[CNRP2] streams.update moving a plain stream under each reserved CMC parent is refused, and the stream stays where it was', async function () {
+      for (const parentId of CMC_RESERVED_PARENTS) {
+        const res = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(res.status, 400, parentId + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', parentId);
+        assert.strictEqual(res.body?.error?.data?.parentId, parentId);
+      }
+      const after = await coreRequest.get(basePath).set('Authorization', token).query({ parentId: plainStreamId });
+      assert.strictEqual(after.status, 200, JSON.stringify(after.body));
+      const roots = await coreRequest.get(basePath).set('Authorization', token);
+      const still = (roots.body?.streams || []).find((s) => s.id === plainStreamId);
+      assert.ok(still != null, 'the stream is still at the root: ' + JSON.stringify(roots.body?.streams?.map((s) => s.id)));
+      assert.strictEqual(still.parentId ?? null, null);
+    });
+
+    it('[CNRP3] a plugin-managed CMC stream cannot be moved, even by the owner', async function () {
+      for (const id of [':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries']) {
+        for (const parentId of [null, plainStreamId]) {
+          const res = await coreRequest.put(basePath + '/' + encodeURIComponent(id)).set('Authorization', token)
+            .send({ parentId });
+          assert.strictEqual(res.status, 400, id + ' -> ' + parentId + ': ' + JSON.stringify(res.body));
+          assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', id);
+          assert.strictEqual(res.body?.error?.data?.streamId, id);
+        }
+      }
+    });
+
+    it('[CNRP4] the user-creatable region still takes children: a plain stream created under, and moved into, an app scope', async function () {
+      await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: ':_cmc:apps:rp-app', parentId: ':_cmc:apps', name: 'RP app' });
+      const created = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ name: 'RP notes', parentId: ':_cmc:apps:rp-app' });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      assert.strictEqual(created.body.stream.parentId, ':_cmc:apps:rp-app');
+      const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+        .send({ parentId: ':_cmc:apps:rp-app' });
+      assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+      assert.strictEqual(moved.body.stream.parentId, ':_cmc:apps:rp-app');
+      const back = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+        .send({ parentId: null });
+      assert.strictEqual(back.status, 200, JSON.stringify(back.body));
+      // Under an app scope, the plugin-owned segments are still refused as parents.
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ name: 'attempt', parentId: ':_cmc:apps:rp-app:chats' });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNRP5] an app token with manage on everything gets the same refusal, not a permission error', async function () {
+      const appToken = cuid();
+      const acc = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ type: 'app', name: 'rp-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: '*', level: 'manage' }] });
+      assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+      const created = await coreRequest.post(basePath).set('Authorization', appToken)
+        .send({ name: 'attempt', parentId: ':_cmc:_internal:retries' });
+      assert.strictEqual(created.status, 400, JSON.stringify(created.body));
+      assert.strictEqual(created.body?.error?.data?.id, 'cmc-reserved-stream');
+      const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', appToken)
+        .send({ parentId: ':_cmc:inbox' });
+      assert.strictEqual(moved.status, 400, JSON.stringify(moved.body));
+      assert.strictEqual(moved.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNRP6] the account-delegation namespace is a reserved parent too, on create and on move', async function () {
+      for (const parentId of DELEGATION_RESERVED_PARENTS) {
+        const created = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(created.status, 400, parentId + ': ' + JSON.stringify(created.body));
+        assert.strictEqual(created.body?.error?.data?.id, 'delegation-reserved-stream', parentId);
+        assert.strictEqual(created.body?.error?.data?.parentId, parentId);
+        const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(moved.status, 400, parentId + ': ' + JSON.stringify(moved.body));
+        assert.strictEqual(moved.body?.error?.data?.id, 'delegation-reserved-stream', parentId);
+      }
+      const res = await coreRequest.put(basePath + '/' + encodeURIComponent(':_delegation:_internal')).set('Authorization', token)
+        .send({ parentId: null });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'delegation-reserved-stream');
+    });
+  });
+
   describe('[CMCNS-H7] accesses.create / accesses.update forge-prevention', function () {
     // The `clientData.cmc` namespace is plugin-owned. User
     // code attempting to forge fields under it (e.g. `role: counterparty`

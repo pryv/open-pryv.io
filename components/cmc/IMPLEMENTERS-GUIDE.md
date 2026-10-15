@@ -438,7 +438,8 @@ const requests = await doctorConnection.api([
 //                                           content.acceptedAt, content.backChannelAccessId
 //   'refused'                               single-use: content.refusedBy, content.refusedAt, content.reason
 //   'revoked'                               single-use relationship withdrawn: content.revokedAt
-//   'invalidated'                           open-link closed: content.invalidatedAt
+//   'invalidated'                           open-link closed, or single-use withdrawn before any
+//                                           accept (consent/invalidate-link-cmc): content.invalidatedAt
 // An open-link request stays 'pending' / 'delivered' while it accepts joiners;
 // who joined is listed by the relationship accesses (see "Inspecting accepters").
 ```
@@ -1101,7 +1102,7 @@ A `consent/request-cmc` trigger is not dispatched like the others: its `status` 
 {
   status: 'pending' | 'delivered'                   // still open
         | 'accepted' | 'refused' | 'revoked'        // single-use
-        | 'invalidated',                            // open-link
+        | 'invalidated',                            // open-link closed; single-use withdrawn before any accept
   acceptedBy?:          { username, host },  acceptedAt?: number,  backChannelAccessId?: string,
   refusedBy?:           { username, host },  refusedAt?:  number,  reason?: object,
   revokedAt?:           number,
@@ -1109,7 +1110,7 @@ A `consent/request-cmc` trigger is not dispatched like the others: its `status` 
 }
 ```
 
-A refusal does not consume a single-use link: the same party may still accept it, and the request then moves from `refused` to `accepted`. An open-link request never records one party's answer; it stays open until `invalidated`, and who joined is read from the relationship accesses (see [Inspecting accepters](#inspecting-accepters)).
+A refusal does not consume a single-use link: the same party may still accept it, and the request then moves from `refused` to `accepted`. The requester withdraws a single-use link nobody accepted yet (`pending`, `delivered` or `refused`) with `consent/invalidate-link-cmc`: the request moves to `invalidated` and a later accept fails with `cmc-capability-invalidated`; an accepted one is a relationship, ended with `consent/revoke-cmc` (`revoked`). An open-link request never records one party's answer; it stays open until `invalidated`, and who joined is read from the relationship accesses (see [Inspecting accepters](#inspecting-accepters)).
 
 Cross-scope projection (`:_cmc:state` summary) is **deferred to v2**, apps that need it can aggregate by reading from their own scope streams in v1.
 
@@ -1196,7 +1197,7 @@ A capability access is a regular Pryv `shared` access on the requester's account
   - `create-only` on `:_cmc:_internal:responses:<capId>`
 - **`clientData.cmc`:** `{ kind: 'capability', requestEventId, capabilityId: '<capId>', capability: { mode, state, stateChangedAt }, singleUse: <bool> }` (a `capability.acceptedBy` array left by older releases is ignored)
 - **Expiry:** 7 days default (code constant, not operator-configurable); requester sets `content.request.expiresAt` per invite: [60 s, 30 d] for single-use, at least 60 s with no upper bound for open-link, or `null` (open-link only) for no expiry.
-- **Lifecycle:** single-use flips `clientData.cmc.capability.state` to `consumed` on the first accept; open-link stays `open` until `invalidated`. The access and its two streams are kept (not garbage-collected) so re-clicks get typed errors; `gcCapability` is available for operator-driven cleanup only.
+- **Lifecycle:** single-use flips `clientData.cmc.capability.state` to `consumed` on the first accept, or to `invalidated` when the requester withdraws it first (`consent/invalidate-link-cmc`); open-link stays `open` until `invalidated`. The access and its two streams are kept (not garbage-collected) so re-clicks get typed errors; `gcCapability` is available for operator-driven cleanup only.
 - **Listing:** returned by `accesses.get` like any access; select with `clientData.cmc.kind === 'capability'`. The per-capability streams are plugin-managed and not enumerated by regular `streams.get`.
 
 The access's `apiEndpoint` is the capability URL. The recipient's plugin opens it as a standard `pryv.Connection(url)` during accept orchestration.
@@ -1309,7 +1310,7 @@ await connection.api([{
 
 The plugin flips `clientData.cmc.capability.state` from `'open'` to `'invalidated'`. The next attempted accept via the same capability URL fails at the write-hook with `cmc-capability-invalidated`.
 
-Invalidate is **idempotent** (calling it on an already-invalidated capability is a no-op success) and **a no-op on single-use capabilities** (single-use auto-consumes on first accept; nothing to invalidate).
+Invalidate is **idempotent** (calling it on an already-invalidated capability is a no-op success). It also **withdraws a single-use invite nobody accepted yet** (a link sent to the wrong person): the capability flips to `invalidated`, the request trigger to `invalidated`, and the patient's later accept fails with `cmc-capability-invalidated`. The app that created the invite can do this with its own token (the capability access is created by the server, so the app can neither list nor delete it); the invalidate must be written on the invite's stream or an ancestor of it. On a consumed single-use capability (already accepted) it is a no-op success: that relationship is ended with `consent/revoke-cmc`. The capability access is kept, with its permissions, so the typed error can be answered; the offer stays readable through the link.
 
 ## What invalidate does NOT do
 
@@ -1319,7 +1320,7 @@ For per-relationship teardown, "I want to terminate my relationship with alice s
 
 | To... | Write |
 |---|---|
-| Stop accepting NEW patients via this link | `consent/invalidate-link-cmc` (capabilityId), written on the invite's stream or an ancestor of it (elsewhere: `cmc-invalidate-link-scope-mismatch`, the link stays open) |
+| Stop accepting NEW patients via this link, or withdraw a single-use invite nobody accepted yet | `consent/invalidate-link-cmc` (capabilityId), written on the invite's stream or an ancestor of it (elsewhere: `cmc-invalidate-link-scope-mismatch`, the link stays open) |
 | Terminate ONE existing relationship | `consent/revoke-cmc` (anchored on the per-counterparty stream) |
 | Terminate ALL relationships from this link | Loop `consent/revoke-cmc` per counterparty (no batch primitive in v1) |
 
@@ -1609,7 +1610,7 @@ npm package.
 |---|---|---|
 | `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 403 on current cores, `invalid-access-token` for an unknown token and `forbidden` for an expired one; 401 is mapped the same way). Covers "token never existed" + "token expired past TTL", auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
 | `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
-| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester via `consent/invalidate-link-cmc`. **Open-link mode** use case, the requester closed the link to new accepters. Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected; use `consent/revoke-cmc` for per-relationship teardown. See [Open-link capability](#reference--open-link-capability). |
+| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester via `consent/invalidate-link-cmc`: an open-link closed to new accepters, or a single-use invite withdrawn before anyone accepted it. Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected; use `consent/revoke-cmc` for per-relationship teardown. Patient-side UX: "this invite was withdrawn." See [Open-link capability](#reference--open-link-capability). |
 | `CAPABILITY_ALREADY_ACCEPTED_BY_YOU` | `cmc-capability-already-accepted-by-you` | Open-link mode same-patient re-click. The `{username, host}` from the incoming accept still holds a relationship through this capability on the requester's account. Patient-side UX: "you already accepted this invite." `error.data.acceptedAt` carries the creation time (unix seconds) of that relationship. |
 | `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
 | `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation, investigate. |
