@@ -30,25 +30,38 @@
   unchanged. Same rule as the deletion of a trashed stream.
 - `streams.update`: a `parentId` naming one of the stream's descendants is refused with
   `400 invalid-operation` (it was accepted and left the streams unreachable from the root).
-- **Security (cross-account messaging, account delegation).** A stream cannot be created under, or
-  moved into, a plugin-managed region: `streams.create` with a `parentId` inside `:_cmc:` other
-  than `:_cmc:apps` and the user-created streams under it (so `:_cmc:`, `:_cmc:inbox`, the
-  `:_cmc:_internal` subtree, the plugin-owned `chats` / `collectors` segments), or inside
-  `:_delegation:*`, is refused with `400 invalid-operation` (`cmc-reserved-stream` /
-  `delegation-reserved-stream`), and so is `streams.update` with such a `parentId`; a
-  plugin-managed stream (`:_cmc:inbox`, `:_cmc:_internal:*`, `:_delegation:*`, ...) cannot be
-  moved. For every token, the owner's personal token included (until now the owner could place a
-  plain stream under `:_cmc:_internal:retries`, whose events the retry loop reads as its records).
-  `:_cmc:apps:*` creation and moves within it are unchanged.
+- **Security (cross-account messaging, account delegation).** The plugin-managed regions of the
+  `:_cmc:` and `:_delegation:` namespaces are now closed to user writes by every supported form of
+  a stream id, including the store-prefixed form (`:local:<id>`, which addresses the same stream as
+  `<id>`). A `streams.create` whose `parentId`, or a `streams.update` whose new `parentId`, is
+  inside `:_cmc:` other than `:_cmc:apps` and the user-created streams under it (so `:_cmc:`,
+  `:_cmc:inbox`, the `:_cmc:_internal` subtree, the plugin-owned `chats` / `collectors` segments),
+  or inside `:_delegation:*`, is refused with `400 invalid-operation` (`cmc-reserved-stream` /
+  `delegation-reserved-stream`); a plugin-managed stream cannot be moved out of its place, and
+  cannot be trashed; and an `events.create` into the plugin-internal subtree is refused as before.
+  This holds for every token, the owner's personal token included. Until now a store-prefixed id
+  was judged as a different string and slipped past these checks, so a stream could be placed
+  inside the plugin's internal area (whose events the plugin consumes) or a plugin stream moved
+  under a parent an app grant reaches. A rename that keeps the current `parentId`, and all
+  `:_cmc:apps:*` creation and moves within it, are unchanged.
+- **Security (cross-account messaging).** The outbound retry worker now processes only records the
+  server itself wrote (author, stream and type all checked); any other event present in the
+  internal retry stream is retired without being processed. Until now a record crafted there could
+  have the worker act on attacker-chosen content. Combined with the write refusal above, which
+  stops such a record being created, and with the existing refusal of a retried accept the server
+  authored.
 - Cross-account messaging: `consent/invalidate-link-cmc` now withdraws a **single-use** invite
   nobody accepted yet (issue 160): the capability flips to `invalidated`, the `consent/request-cmc`
   trigger's `content.status` becomes `invalidated` (`invalidatedAt`, `reason`; from `pending`,
   `delivered` or `refused`), and the patient's later accept fails with `cmc-capability-invalidated`
   as for an open-link. The app that created the invite does this with its own token, on the
   invite's stream or an ancestor of it. On a consumed (accepted) single-use capability it stays a
-  no-op success. Until now every single-use invite was a no-op, so a link sent to the wrong person
-  stayed usable until it expired. Clients that enumerate invite statuses: `invalidated` is no
-  longer open-link only.
+  no-op success. The invite's offer text stays readable through the capability link until it
+  expires (the link is kept so the later accept gets the typed error), so set a short `expiresAt`
+  on sensitive invites. A withdrawal that races an accept wins: the accept is refused with
+  `cmc-capability-invalidated` and no relationship is left. Until now every single-use invite was a
+  no-op, so a link sent to the wrong person stayed usable until it expired. Clients that enumerate
+  invite statuses: `invalidated` is no longer open-link only.
 
 ## 2.0.0-rc.55 - 2026-10-15
 

@@ -3,19 +3,47 @@
 ## Cross-account messaging: reserved parents, single-use withdrawal, retry of server-authored accepts
 
 - `components/cmc/src/hooks.ts`: `createStreamCreateReservedRootHook` also checks `parentId`
-  (`isReservedParentId`: a `:_cmc:*` id other than `:_cmc:apps` and the user-creatable region);
-  new `createStreamUpdateReservedRootHook` (an `update.parentId` in a reserved region, or any
-  `parentId` on a plugin-managed stream, refused with `cmc-reserved-stream`). Same pair in
-  `components/delegation/src/hooks.ts` on the whole `:_delegation:*` namespace. Both update hooks
-  are wired first in the `streams.update` chain (`api-server/src/methods/streams.ts`), before the
-  permission walk, the delegation one gated on `delegation:active`. Tests: `[CS09]`, `[CS10]`,
-  `[CSU01]` to `[CSU03]`, `[DSC05]`, `[DSU01]`, `[DSU02]`, `[CNRP1]` to `[CNRP6]`.
+  (`isReservedParentId`: a `:_cmc:*` id other than `:_cmc:apps` and the user-creatable region).
+  Same `parentId` check in `components/delegation/src/hooks.ts` on the whole `:_delegation:*`
+  namespace. The create guards are wired first in the `streams.create` chain. Tests: `[CS09]`,
+  `[CS10]`, `[DSC05]`, `[CNRP1]`, `[CNRP4]` to `[CNRP6]`.
+- Store-prefix canonicalisation. `components/cmc/src/constants.ts` and
+  `components/delegation/src/constants.ts` gained `canonicalLocalStreamId` (strips a leading
+  `:local:` store prefix, which the mall resolves to the same local stream). Every classification
+  predicate (`isCmcStreamId` / `isCmcInternalStreamId` / `isUserCreatableStreamId` / `getAppCode`
+  and the delegation twins) canonicalises first, so the reserved and internal write/read guards,
+  `isReservedParentId`, the member-access permission check (`handleMemberAccess.ts`
+  `resolvesToStoreRoot` also rejects the `:local:` root alias) and the scope-update partition
+  (`handleSystem.ts` `isCmcMachinery`) judge the stream the id resolves to.
+  `api-server/src/methods/streams.ts` normalises `id` / `parentId` / `update.parentId`, and
+  `events.ts` `normalizeStreamIdAndStreamIds` normalises event `streamIds`, once before the guard
+  chains (the mall canonicalises the stored value the same way, so no stored value changes).
+  Tests: `[CNRP7]`, `[CNM2A]` to `[CNM2C]`, `[CS09]`.
+- Stream moves. The move checks (a move into a plugin region, and a move of a plugin-managed /
+  `:_delegation:*` stream) run in `api-server/src/methods/streams.ts` `applyPrerequisitesForUpdate`,
+  guarded by the existing `parentChanges`, so a rename that repeats the current `parentId` is not
+  treated as a move; the delegation half is gated on `delegation:active`. The
+  `createStreamUpdateReservedRootHook` of both plugins now refuses only trashing a plugin-managed
+  stream (`update.trashed === true`). Tests: `[CSU01]`, `[CSU02]`, `[DSU01]`, `[DSU02]`, `[CNRP2]`,
+  `[CNRP3]`, `[CNRP6]`.
+- Retry loop authorship. `components/cmc/src/retryQueue.ts` `runRetryLoop` dispatches only a record
+  the plugin wrote (`isForeignRetryRecord`: positive evidence of a non-plugin write is a
+  `createdBy` whose access id is not `system`, a `type` other than `cmc-internal/retry-cmc`, or a
+  `streamIds` not including the retries stream); a foreign record is retired `failed-permanent`
+  with `cmc-retry-foreign-record` (listed non-retryable) and never dispatched. A production record
+  always carries these fields; an absent field (unit fakes only) is not evidence. Tests: `[RQ32]`,
+  `[CNM2B]`.
+- Accept vs. withdrawal race (`capability.ts`, `handleInvalidateLink.ts`, `handleIncomingAccept.ts`):
+  `markCapabilityInvalidated` returns `priorState`; `handleInvalidateLink` answers
+  `alreadyConsumed` when the state was already `consumed`; `markCapabilityConsumed` does not
+  overwrite an `invalidated` link; `handleIncomingAccept` re-reads the capability state before
+  minting and refuses with `cmc-capability-invalidated` if it flipped. Tests: `[CN102]`.
 - `components/cmc/src/inviteState.ts`: single-use transition `pending | delivered | refused ->
   invalidated`. `handleInvalidateLink.ts`: the single-use no-op is now for a consumed capability
   only; an open one flips through `markCapabilityInvalidated` and stamps the invite, like an
   open-link; the access and its permissions are kept so the later accept gets the typed refusal.
-  Tests: `[IS13]`, `[CMCIL-C]`, `[CMCIL-C2]`, `[CN56]` (the issue's repro with an app token),
-  `[CN57]`.
+  Tests: `[IS13]`, `[CMCIL-C]`, `[CMCIL-C2]`, `[CN100]` (the issue's repro with an app token),
+  `[CN101]`, `[CN103]` (the offer stays readable through a withdrawn link).
 - `components/cmc/src/retryQueue.ts` `processRetryEvent`: a trigger record of a
   `consent/accept-cmc` whose `originalCreatedBy` access id is `system`, or whose
   `originalStreamIds` holds `:_cmc:inbox`, is marked `failed-permanent` with
