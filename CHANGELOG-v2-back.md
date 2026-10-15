@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## Stream permission walk
+
+- `AccessLogic._getStreamPermissions` keeps the ids it walked and stops on one seen before, so a
+  parent chain stored with a cycle (written below the API, which now refuses it) cannot hang the
+  walk; such a stream then resolves through the `*` permission.
+
 ## Log masking of contexts that do not convert to JSON
 
 - `boiler/src/logging.ts` `inspectAndHide`: when the JSON round trip throws, the context is masked

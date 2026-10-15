@@ -21,6 +21,15 @@
   still be updated. Existing accounts keep working; restoring one from a backup under such a name
   is refused, as it already was for hosted-site names (the account would be unreachable at
   `<username>.<domain>`). The username check reads these names at most every 10 seconds.
+- **Security.** `streams.update` with a new `parentId` (moving a stream) by a non-personal access
+  needs manage rights on every stream of the moved subtree (the stream and all its descendants,
+  trashed ones included), in addition to the existing manage right on the target parent (or on
+  `*` for the root); otherwise `403 forbidden` and nothing moves. Until now a child granted at a
+  lower level (`read`, `create-only`, `none`) travelled along with its parent into the target
+  parent's inherited permissions. Renames and updates that keep the current `parentId` are
+  unchanged. Same rule as the deletion of a trashed stream.
+- `streams.update`: a `parentId` naming one of the stream's descendants is refused with
+  `400 invalid-operation` (it was accepted and left the streams unreachable from the root).
 
 ## 2.0.0-rc.55 - 2026-10-15
 

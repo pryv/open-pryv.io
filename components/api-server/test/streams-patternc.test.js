@@ -655,7 +655,8 @@ describe('[STRP] streams (Pattern C)', function () {
   });
 
   // An access managing a subtree (no `*` grant) renames streams inside it;
-  // moving a stream still needs `manage` on the target parent.
+  // moving a stream still needs `manage` on the target parent (and on the
+  // whole moved subtree, see [STMV]).
   describe('[STRN] PUT /<id> by an access managing a subtree', function () {
     let fixtureUser, rnUsername;
 
@@ -711,6 +712,171 @@ describe('[STRP] streams (Pattern C)', function () {
       res = await update(ids.S, appToken, { parentId: ids.Q });
       assert.strictEqual(res.status, 403, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+    });
+  });
+
+  // Moving a stream (a new parentId) carries its whole subtree into the new
+  // parent's inherited permissions: a non-personal access must manage every
+  // stream of the subtree, and the new parent cannot be inside it.
+  describe('[STMV] PUT /<id> moving a stream with its subtree', function () {
+    let fixtureUser, mvUsername, mvPersonalToken;
+
+    before(async function () {
+      const fixtures = getNewFixture();
+      mvUsername = cuid();
+      mvPersonalToken = cuid();
+      fixtureUser = await fixtures.user(mvUsername);
+      await fixtureUser.access({ token: mvPersonalToken, type: 'personal' });
+      await fixtureUser.session(mvPersonalToken);
+    });
+
+    // P (root) > S > X, Q (root); an event in X; an app token with permissionsFor(ids).
+    async function setupTree (permissionsFor) {
+      const suffix = cuid().slice(-8);
+      const ids = { P: 'mv-p-' + suffix, S: 'mv-s-' + suffix, X: 'mv-x-' + suffix, Q: 'mv-q-' + suffix, evX: cuid() };
+      await fixtureUser.stream({ id: ids.P, name: 'P ' + suffix });
+      await fixtureUser.stream({ id: ids.S, name: 'S ' + suffix, parentId: ids.P });
+      await fixtureUser.stream({ id: ids.X, name: 'X ' + suffix, parentId: ids.S });
+      await fixtureUser.stream({ id: ids.Q, name: 'Q ' + suffix });
+      await fixtureUser.event({ id: ids.evX, type: 'note/txt', content: 'in X', streamIds: [ids.X] });
+      const appToken = await appWith(permissionsFor(ids), suffix);
+      return { ids, appToken };
+    }
+
+    async function appWith (permissions, suffix = cuid().slice(-8)) {
+      const appToken = cuid();
+      await fixtureUser.access({ token: appToken, type: 'app', name: 'mv app ' + suffix + cuid().slice(-4), permissions });
+      return appToken;
+    }
+
+    function update (id, token, body) {
+      return coreRequest.put('/' + mvUsername + '/streams/' + id).set('Authorization', token).send(body);
+    }
+
+    async function parentOf (id) {
+      const mall = await getMall();
+      const stream = await mall.streams.getOneWithNoChildren(mvUsername, id, 'local');
+      return stream.parentId ?? null;
+    }
+
+    function readEvent (token, id) {
+      return coreRequest.get('/' + mvUsername + '/events/' + id).set('Authorization', token);
+    }
+
+    async function assertRefused (ids, res, status = 403, errorId = ErrorIds.Forbidden) {
+      assert.strictEqual(res.status, status, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, errorId);
+      assert.strictEqual(await parentOf(ids.S), ids.P, 'S did not move');
+    }
+
+    it('[SMV1] must forbid moving a stream when the access cannot read a descendant, so another access does not gain it', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'none' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      const readerOfQ = await appWith([{ streamId: ids.Q, level: 'read' }]);
+      assert.notStrictEqual((await readEvent(readerOfQ, ids.evX)).status, 200);
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: ids.Q }));
+      assert.notStrictEqual((await readEvent(readerOfQ, ids.evX)).status, 200);
+    });
+
+    it('[SMV2] must forbid moving a stream when a descendant is granted read', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'read' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: ids.Q }));
+    });
+
+    it('[SMV3] must forbid moving a stream when a descendant is create-only', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'create-only' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: ids.Q }));
+    });
+
+    it('[SMV4] must forbid moving a stream to the root when a descendant is granted below manage, even with `*` manage', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: '*', level: 'manage' }, { streamId: i.X, level: 'read' }
+      ]);
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: null }));
+    });
+
+    it('[SMV5] must move a stream with its descendants when the access manages all of them', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      const res = await update(ids.S, appToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.stream.parentId, ids.Q);
+      assert.strictEqual(await parentOf(ids.X), ids.S);
+      assert.strictEqual((await readEvent(appToken, ids.evX)).status, 200);
+    });
+
+    it('[SMV6] must move a stream whose descendant restates manage explicitly', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'manage' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      const res = await update(ids.S, appToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    });
+
+    it('[SMV7] must move a stream when manage is inherited from the old parent', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.P, level: 'manage' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      const res = await update(ids.S, appToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(await parentOf(ids.S), ids.Q);
+    });
+
+    it('[SMV8] must count trashed descendants', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'read' }, { streamId: i.Q, level: 'manage' }
+      ]);
+      const trashed = await coreRequest.del('/' + mvUsername + '/streams/' + ids.X).set('Authorization', mvPersonalToken);
+      assert.strictEqual(trashed.status, 200, JSON.stringify(trashed.body));
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: ids.Q }));
+    });
+
+    it('[SMV9] must still let a personal access move a stream', async function () {
+      const { ids } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'none' }
+      ]);
+      const res = await update(ids.S, mvPersonalToken, { parentId: ids.Q });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(await parentOf(ids.S), ids.Q);
+    });
+
+    it('[SMV10] must refuse moving a stream under one of its own descendants, for any access', async function () {
+      const { ids } = await setupTree((i) => [{ streamId: i.Q, level: 'read' }]);
+      await assertRefused(ids, await update(ids.S, mvPersonalToken, { parentId: ids.X }), 400, ErrorIds.InvalidOperation);
+      // the tree is intact: an access with no entry on S or X still lists streams
+      const readerOfQ = await appWith([{ streamId: ids.Q, level: 'read' }]);
+      const res = await coreRequest.get('/' + mvUsername + '/streams').set('Authorization', readerOfQ).timeout(10000);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    });
+
+    it('[SMV12] a parent cycle already in storage does not hang the permission walk', async function () {
+      const { ids } = await setupTree((i) => [{ streamId: i.Q, level: 'read' }]);
+      const mall = await getMall();
+      // written below the API, which refuses it
+      await mall.streams.update(mvUsername, { id: ids.S, parentId: ids.X });
+      try {
+        // answered (refused) within the timeout, through the read and the update paths
+        const managerOfQ = await appWith([{ streamId: ids.Q, level: 'manage' }]);
+        const read = await readEvent(managerOfQ, ids.evX).timeout(10000);
+        assert.notStrictEqual(read.status, 200, JSON.stringify(read.body));
+        const res = await update(ids.S, managerOfQ, { name: 'renamed ' + ids.S }).timeout(10000);
+        assert.ok([403, 404].includes(res.status), JSON.stringify(res.body));
+      } finally {
+        await mall.streams.update(mvUsername, { id: ids.S, parentId: ids.P });
+      }
+    });
+
+    it('[SMV11] must check the target parent before the subtree', async function () {
+      const { ids, appToken } = await setupTree((i) => [
+        { streamId: i.S, level: 'manage' }, { streamId: i.X, level: 'read' }
+      ]);
+      await assertRefused(ids, await update(ids.S, appToken, { parentId: ids.Q }));
     });
   });
 

@@ -317,6 +317,28 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (parentChanges && !(await context.access.canCreateChildOnStream(params.update!.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
+    if (parentChanges) {
+      // A move relocates the whole subtree in every access's permission walk,
+      // so a non-personal access must manage every stream in it (a descendant
+      // granted at a lower level would otherwise travel along, as for a
+      // deletion); and the new parent cannot be inside the subtree (a cycle).
+      const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
+      const subtree = await mall.streams.get(context.user.id, { id: storeStreamId, includeTrashed: true, childrenDepth: -1, storeId });
+      if (subtree.length === 0) {
+        return next(errors.unknownResource('stream', params.id));
+      }
+      const streamAndDescendantIds: string[] = treeUtils.collectPluckFromRootItem(subtree[0], 'id');
+      if (params.update!.parentId != null && streamAndDescendantIds.includes(params.update!.parentId)) {
+        return next(errors.invalidOperation('The provided "parentId" is the stream itself or one of its descendants.', { id: params.id, parentId: params.update!.parentId }));
+      }
+      if (!context.access.isPersonal()) {
+        for (const descendantId of streamAndDescendantIds) {
+          if (!(await context.access.canUpdateStream(descendantId))) {
+            return next(errors.forbidden());
+          }
+        }
+      }
+    }
     // check target parent if needed
     if (params.update!.parentId && params.update!.parentId !== stream.parentId) {
       const targetParentArray = await mall.streams.get(context.user.id, {

@@ -689,7 +689,10 @@ class AccessLogic {
 
     const mall = await getMall();
 
-    while (currentStream != null) { // should never execute
+    // a parent chain stored with a cycle must not hang the walk
+    const visited = new Set<string>();
+    while (currentStream != null && !visited.has(currentStream)) {
+      visited.add(currentStream);
       const permissions = this.getStreamPermission(storeId, currentStream);
       if (permissions != null) return permissions; // found
 
