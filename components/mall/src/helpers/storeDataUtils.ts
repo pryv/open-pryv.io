@@ -19,7 +19,50 @@ const STORE_ID_MARKER = ':';
 
 const LocalStoreId = LOCAL_STORE_ID;
 const AccountStoreId = ACCOUNT_STORE_ID;
-export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId, isPassthroughStore, throwAPIError };
+export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId, isPassthroughStore, canonicalStreamId, throwAPIError };
+
+/**
+ * The canonical form of a stream id: the one string a guard can compare,
+ * whatever store-prefixed spelling the client used. The parser above accepts
+ * several spellings of the same stream (`:local:<id>` for `<id>`,
+ * `:account::system:email` for `:system:email`, repeated prefixes); a guard
+ * that tests the raw string would see a non-matching alias and pass, while the
+ * store routes the write to the guarded stream. Every guard judges this form.
+ *
+ *   - local store: the in-store id (`:local:foo` -> `foo`, `:local::_cmc:x` ->
+ *     `:_cmc:x`); the store root (`:local:`) becomes `*`. A nested prefix is
+ *     resolved again (`:local::_system:x` -> `:_system:x`, the account store),
+ *     which is stricter than the single-pass store routing: the guards then
+ *     judge the account field the id names.
+ *   - account store: the canonical `:system:<f>` / `:_system:<f>` id
+ *     (`:account::system:email` -> `:system:email`). A bare field through
+ *     `:account:<f>` is left as is: it has no canonical spelling, and the
+ *     account guards refuse an id that routes to the account store without
+ *     being a known field id.
+ *   - any other store: `:storeId:itemId`, normalised.
+ */
+function canonicalStreamId (id: string): string {
+  let current = id;
+  for (let i = 0; i < 8; i++) {
+    const [storeId, itemId] = parseStoreIdAndStoreItemId(current);
+    if (storeId === LOCAL_STORE_ID) {
+      if (itemId === current) return current;
+      current = itemId === '*' ? '*' : itemId;
+      if (current === '*') return current;
+      continue;
+    }
+    if (storeId === ACCOUNT_STORE_ID) {
+      if (itemId.startsWith(':system:') || itemId.startsWith(':_system:')) return itemId;
+      // A further store prefix inside (`:account::local::system:email`): the
+      // store would take the field after the last colon; resolve it the same
+      // way so the guards judge that field.
+      if (itemId.startsWith(STORE_ID_MARKER) && itemId !== current) { current = itemId; continue; }
+      return current;
+    }
+    return getFullItemId(storeId, itemId);
+  }
+  return current;
+}
 
 /**
  * Whether the given store uses "passthrough" IDs — i.e. store-internal IDs

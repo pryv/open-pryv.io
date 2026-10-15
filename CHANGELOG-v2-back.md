@@ -26,6 +26,21 @@
   `createStreamUpdateReservedRootHook` of both plugins now refuses only trashing a plugin-managed
   stream (`update.trashed === true`). Tests: `[CSU01]`, `[CSU02]`, `[DSU01]`, `[DSU02]`, `[CNRP2]`,
   `[CNRP3]`, `[CNRP6]`.
+- Account-store aliases. `mall/src/helpers/storeDataUtils.ts` gained `canonicalStreamId` (the one
+  spelling a guard compares: `:local:<id>` -> `<id>`, `:local:` -> `*`, nested prefixes resolved
+  again, `:account::system:<f>` -> `:system:<f>`, a bare `:account:<f>` left as is, other stores
+  normalised to `:store:item`). `api-server/src/methods/events.ts`: new `canonicalizeEventStreamIds`
+  first in the `events.create` and `events.update` chains (before the shared-secrets, emails,
+  plugin and account guards); `normalizeStreamIdAndStreamIds` canonicalises again (belt) and refuses
+  an id routing to the account store that is not a known account stream id
+  (`unknown-referenced-resource`); `blockAccountEventDeletion` judges the store the id routes to.
+  `streams.ts` `canonicalizeLocalStreamIds` uses the same canonicaliser (a `:local:` parent is the
+  root, `null`). `accesses.ts` `validateAccountStreamPermissions` rewrites each `permission.streamId`
+  to its canonical form before the checks, and `isUnknownSystemStream` also catches any id routing
+  to the account store. The plugin-side `canonicalLocalStreamId` helpers stay as the plugins' belt.
+  Tests: `[ASA1]` to `[ASA5]` (`account-streams-alias.test.js`).
+- `handleIncomingAccept.ts`: the capability access is read again from storage immediately before
+  the mint (not the copy loaded earlier), so a withdrawal completed meanwhile refuses the mint.
 - Retry loop authorship. `components/cmc/src/retryQueue.ts` `runRetryLoop` dispatches only a record
   the plugin wrote (`isForeignRetryRecord`: positive evidence of a non-plugin write is a
   `createdBy` whose access id is not `system`, a `type` other than `cmc-internal/retry-cmc`, or a

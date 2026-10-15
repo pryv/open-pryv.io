@@ -620,12 +620,12 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.deepEqual(mall.capability, mall.minted);
     });
 
-    it('[IA16] the capability access is read by id from createdBy', async () => {
+    it('[IA16] the capability access is read by id from createdBy, never by a scan: once for the enrichment, once again from storage right before the mint', async () => {
       const mall = inviteMall('open-link');
       await handleIncomingAccept({
         userId: 'u1', acceptEvent: acceptThroughCapability, selfIdentity: SELF, deps: { mall },
       });
-      assert.deepEqual(mall.calls.getOne, ['cap-acc-1']);
+      assert.deepEqual(mall.calls.getOne, ['cap-acc-1', 'cap-acc-1']);
     });
 
     it('[IA17] a failing invite write is logged and the accept still succeeds', async () => {

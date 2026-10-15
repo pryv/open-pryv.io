@@ -392,6 +392,24 @@ async function handleIncomingAccept (params: {
       },
     },
   };
+  // Immediately before the mint, read the capability again from storage (the
+  // copy above may be seconds old): a withdrawal that completed meanwhile
+  // must stop the relationship here, not after it exists.
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    try {
+      const fresh = await capabilityMod.findCapabilityAccess({
+        userId, capabilityId: capabilityIdToConsume, accessId: capabilityAccess?.id ?? capabilityAccessIdHint, deps: { mall },
+      });
+      const freshState = (fresh?.clientData as { cmc?: { capability?: { state?: string } } } | undefined)?.cmc?.capability?.state;
+      if (freshState === 'invalidated') {
+        return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
+      }
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability re-read before the mint failed (continuing)', {
+        capabilityId: capabilityIdToConsume, error: String((err as Error)?.message || err),
+      });
+    }
+  }
   // A relationship we already hold for this scope is healed in place.
   let access: AccessLike | null = null;
   if (existingForScope != null) {

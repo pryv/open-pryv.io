@@ -237,11 +237,16 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // prefixed alias cannot slip a reserved id past a raw-string guard.
   function canonicalizeLocalStreamIds (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params != null && typeof params === 'object') {
-      if (typeof params.id === 'string') params.id = cmc.canonicalLocalStreamId(params.id) as string;
-      if (typeof params.parentId === 'string') params.parentId = cmc.canonicalLocalStreamId(params.parentId) as string;
+      if (typeof params.id === 'string') params.id = storeDataUtils.canonicalStreamId(params.id);
+      // A parent spelled as the local store root (`:local:`) is the root.
+      if (typeof params.parentId === 'string') {
+        const parent = storeDataUtils.canonicalStreamId(params.parentId);
+        params.parentId = parent === '*' ? null : parent;
+      }
       const update = params.update as { parentId?: unknown } | undefined;
       if (update != null && typeof update === 'object' && typeof update.parentId === 'string') {
-        update.parentId = cmc.canonicalLocalStreamId(update.parentId) as string;
+        const parent = storeDataUtils.canonicalStreamId(update.parentId);
+        update.parentId = parent === '*' ? null : parent;
       }
     }
     next();

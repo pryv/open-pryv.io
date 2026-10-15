@@ -44,6 +44,16 @@
   inside the plugin's internal area (whose events the plugin consumes) or a plugin stream moved
   under a parent an app grant reaches. A rename that keeps the current `parentId`, and all
   `:_cmc:apps:*` creation and moves within it, are unchanged.
+- **Security (account fields).** The account-field guards (the primary email, which only
+  `account.update` writes; the non-editable and hidden fields; the level caps on account-stream
+  permissions) now judge the canonical spelling of a stream id, whatever store-prefixed spelling a
+  request uses, on `events.create`, `events.update`, `events.delete`, `accesses.create` and
+  `accesses.update`; an id that routes to the account store without naming a known account field
+  is refused as an unknown stream, and a permission granted through an alias is stored under the
+  canonical id. Until now an alias was judged as a different string, so a request could reach an
+  account field around those guards; in particular an access holding `contribute` on the email
+  field could change the account's primary email (the password-reset address) through the events
+  API. Requests that use the canonical ids are unchanged.
 - **Security (cross-account messaging).** The outbound retry worker now processes only records the
   server itself wrote (author, stream and type all checked); any other event present in the
   internal retry stream is retired without being processed. Until now a record crafted there could

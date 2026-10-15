@@ -409,6 +409,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   function validateAccountStreamPermissions (access: MethodContext['access'], permissions: StreamPermission[]) {
     for (const permission of permissions) {
       if (isStreamBasedPermission(permission)) {
+        // Judge, and store, the canonical spelling: `:account::system:email`
+        // or `:local::system:email` name the same account field as
+        // `:system:email`, and the checks below compare exact ids.
+        permission.streamId = storeDataUtils.canonicalStreamId(permission.streamId);
         if (isUnknownSystemStream(permission.streamId)) {
           return errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId });
         }
@@ -436,9 +440,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return permission.streamId != null;
     }
 
+    // An id that routes to the account store (any spelling) must be a known
+    // account stream id; a system-looking id is judged the same way.
     function isUnknownSystemStream (streamId: string) {
-      return ((streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
-                accountStreams.toFieldName(streamId) === streamId);
+      const routesToAccount = storeDataUtils.parseStoreIdAndStoreItemId(streamId)[0] === storeDataUtils.AccountStoreId;
+      return (routesToAccount || streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
+                accountStreams.toFieldName(streamId) === streamId;
     }
   }
 
