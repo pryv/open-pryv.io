@@ -620,6 +620,17 @@ access:
   # hour. 0 = the full hour from creation.
   unopenedRequestTtl: 600
 
+# === PER-CORE: access deletion records ===
+# A deleted access stays as a deletion record (accesses.get includeDeletions),
+# with the rows of its earlier versions and its access-index row. With
+# retentionDays above 0 the master removes all three that many days after the
+# deletion (once a day). Past it, an audit page or an event's author shows a
+# removed access by id only, and a breach can no longer be scoped from that
+# access id. 0 = kept until the account is deleted.
+accesses:
+  deletionRecords:
+    retentionDays: 0
+
 # === PER-CORE: local tracing toggle ===
 trace:
   enable: false
