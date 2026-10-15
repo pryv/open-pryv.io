@@ -421,6 +421,24 @@ if (cluster.isPrimary) {
     }, sweepIntervalMs);
     accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
 
+    // Opt-in purge of access deletion records (with their version rows and
+    // index rows) past `accesses.deletionRecords.retentionDays`; off at 0.
+    // Master only, once a day. A bad value refuses the boot here: a retention
+    // the operator set must not be silently dropped.
+    const { startAccessDeletionRecordsPurge } = require('../components/business/src/accesses/deletionRecordsPurge.ts');
+    startAccessDeletionRecordsPurge({
+      config,
+      accesses: require('../storages/index.ts').storageLayer.accesses,
+      listUsers: async () => {
+        const byName = await require('../storages/index.ts').usersLocalIndex.getAllByUsername();
+        return Object.entries(byName).map(([username, id]) => ({ id, username }));
+      },
+      deleteIndexRow: (accessId) => require('../components/platform/src/accessIndex.ts')
+        .deleteAccessIndexRow(require('../storages/index.ts').platformDB, accessId),
+      logger: { warn },
+      log
+    });
+
     // Periodic platform DB integrity check, this core's copy: the same
     // read-only check as at boot. The copy can be damaged while the core runs
     // (e.g. a snapshot restore inside rqlite) and nothing else would say so.

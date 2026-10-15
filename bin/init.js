@@ -846,6 +846,15 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   maxLiveRequestsPerIp: 50
 # #   unopenedRequestTtl: 600
 
+# # accesses.deletionRecords.retentionDays — days a deleted access is kept as a
+# # deletion record (with its earlier versions and its access-index row) before
+# # the master removes it, once a day. Past it, audit pages and event authors
+# # show that access by id only, and a breach cannot be scoped from its id.
+# # 0 (default) = kept until the account is deleted.
+# # accesses:
+# #   deletionRecords:
+# #     retentionDays: 0
+
 # # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
 # # username lookups (default 60). Bounds how long a worker that missed an
 # # invalidation keeps using a deleted or changed access; a lower value costs

@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- Access deletion records (operators): new per-core setting
+  `accesses.deletionRecords.retentionDays` (default 0 = kept until the account is deleted). Above 0,
+  the master removes, once a day, the deletion records of accesses deleted more than that many days
+  ago (`accesses.get` with `includeDeletions` no longer lists them), with the rows of their earlier
+  versions and their access-index rows (whatever `audit.onUserDelete` says). Past it, an audit page
+  or an event's author shows such an access by id only, and `/system/accesses/:accessId` no longer
+  resolves it for breach scoping; choose the retention with that in mind (data minimisation against
+  attribution). A value that is not a number of days stops the boot.
+
 ## 2.0.0-rc.55 - 2026-10-15
 
 Docker image on Debian 13 (trixie) instead of Debian 12, bundled rqlite 10.6.0 (was 10.5.1; no

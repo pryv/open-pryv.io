@@ -162,6 +162,11 @@ export async function getAccessIndex (platform: PlatformIndexHandle, baseAccessI
   return raw == null ? null : JSON.parse(raw) as AccessIndexEntry;
 }
 
+/** Remove the row of one base access id: its deletion record was purged past the retention. */
+export async function deleteAccessIndexRow (platform: Pick<PlatformIndexHandle, 'deletePlatformKv'>, baseAccessId: string): Promise<void> {
+  await platform.deletePlatformKv(keyFor(baseAccessId));
+}
+
 /** Enumerate every indexed base access id (retention primitive + test/backfill helper). */
 export async function listAccessIndexKeys (platform: PlatformIndexHandle): Promise<string[]> {
   const keys = await platform.listPlatformKvKeys(PREFIX);
