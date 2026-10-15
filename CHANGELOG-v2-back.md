@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## Log fallback to stderr, wizard log targets
+
+- `boiler/src/logging.ts`: `initLoggerWithConfig` turns the console on at `warn`, every level on
+  stderr, when the console is inactive and none of `logs:file`, `logs:fileSync`, `logs:custom` is
+  active (`LOGS=<level>` still wins, as before). Tests: `[BLFB1]`-`[BLFB4]` (child processes: the
+  fallback, and no change with a file, a sync file or an active console).
+- `bin/init.js`: the generated config carries `logs.console` (`info`) and `logs.file` (`error`,
+  under the data folder) in a "Logs" section; the two commented `logs` entries of the appendix say
+  to merge into it. Test: `[INWZ8]` (also passes `check-config`).
+
 ## Mail template reload, access-index prune classes
 
 - `mail/src/emailTemplatesDelivery.ts`: `refresh()` materialises into a new directory with a new

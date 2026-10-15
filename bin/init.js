@@ -881,6 +881,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # logs.console.format.json — one JSON object per line ({timestamp, level,
 # # name, pid, message, context}) for log collectors / log-based alerting.
 # # Also switchable per-run with the LOG_FORMAT=json environment variable.
+# # (Merge into the logs: section above.)
 # # logs:
 # #   console:
 # #     format:
@@ -888,6 +889,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 
 # # logs.file.rotation.maxSize — size cap of one daily log file (e.g. "10m",
 # # unit k / m / g): past it a new file starts the same day. Unset = no cap.
+# # (Merge into the logs: section above.)
 # # logs:
 # #   file:
 # #     rotation:
@@ -1591,6 +1593,13 @@ async function main () {
             }
           : {})
       }
+    },
+    // Same targets as config/production-config.yml: the console (kept by the
+    // journal / `docker logs`) at info, and errors in a daily file on the
+    // data volume so they survive container restarts.
+    logs: {
+      console: { active: true, level: 'info' },
+      file: { active: true, level: 'error', path: `${dataFolder}/logs/api-server.errors.log` }
     }
   };
 
@@ -1739,6 +1748,13 @@ async function main () {
       '; audit = ' + config.storages.audit.engine +
       '; file = ' + config.storages.file.engine + '.'],
     { storages: config.storages });
+
+  yamlBody += section(yaml, 'Logs',
+    ['console: every process (master + workers), kept by the journal or',
+      '`docker logs`. file: errors only, rotated daily (14 days kept),',
+      'on the data volume. Raise or lower `level` (debug, info, warn, error).',
+      'With every target off, warnings and errors still go to stderr.'],
+    { logs: config.logs });
 
   if (config.services) {
     yamlBody += section(yaml, 'External services',

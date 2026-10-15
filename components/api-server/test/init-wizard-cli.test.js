@@ -115,6 +115,20 @@ describe('[INWZ] bin/init.js generated files', function () {
     }
   });
 
+  it('[INWZ8] the generated config sets log targets: console at info, errors in a file on the data volume', () => {
+    const res = runWizard(configDir);
+    assert.strictEqual(res.status, 0, res.output);
+    const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
+    assert.deepStrictEqual(config.logs.console, { active: true, level: 'info' });
+    assert.strictEqual(config.logs.file.active, true);
+    assert.strictEqual(config.logs.file.level, 'error');
+    assert.strictEqual(config.logs.file.path, path.join(configDir, 'data', 'logs', 'api-server.errors.log'));
+    const check = spawnSync('node', [CHECK_CLI, path.join(configDir, 'pryv-config.yml')], {
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
+    });
+    assert.strictEqual(check.status, 0, check.stdout + check.stderr);
+  });
+
   it('[INWZ5] a Let\'s Encrypt contact that is not an email address is refused', () => {
     const res = runWizard(configDir, [], ANSWERS.replace(/^le\.email:.*$/m, 'le.email: ops'));
     assert.notStrictEqual(res.status, 0);

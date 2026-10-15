@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- Operators: when no log target is configured (`logs.console`, `logs.file`, `logs.fileSync` and
+  `logs.custom` all inactive), the master and the workers now write their warnings and errors to
+  stderr, so the journal or `docker logs` keeps them. Until now such a core logged nothing but the
+  master's own lines: a configuration file without a `logs:` section, as written by the install
+  wizard, turned every worker error into silence. Any configured target keeps the previous
+  behaviour.
+- Install wizard (`init`): the generated `pryv-config.yml` now has a `logs:` section, as in the
+  production defaults: the console at `info`, and errors in a daily file
+  `<data folder>/logs/api-server.errors.log` (14 days kept) on the data volume. Configurations
+  written by earlier versions can add the same section.
+
 ## 2.0.0-rc.53 - 2026-10-15
 
 Group accounts in consent (CMC); revoke notices the counterparty could not take are re-sent until

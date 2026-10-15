@@ -265,6 +265,14 @@ function createFileTransports (config: BoilerConfig): unknown[] {
 }
 
 /**
+ * Whether a log target other than the console is configured: `logs:file`,
+ * `logs:fileSync` or `logs:custom`.
+ */
+function hasLogTarget (config: BoilerConfig): boolean {
+  return !!(config.get('logs:file:active') || config.get('logs:fileSync:active') || config.get('logs:custom:active'));
+}
+
+/**
  * Config initialize Logger right after beeing loaded
  * This is done by config Only
  */
@@ -288,11 +296,20 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(logConsole.format);
   // `logs.console.stderr`: every level on stderr, for a CLI whose stdout is
   // its output (e.g. `bin/mail.js templates get > file`).
-  const stderrLevels = config.get('logs:console:stderr') === true ? Object.keys(winston.config.npm.levels) : undefined;
-  const myconsole = new winston.transports.Console({ format: consoleFormat, level: logConsole.level, silent: isSilent, stderrLevels });
+  let stderrLevels = config.get('logs:console:stderr') === true ? Object.keys(winston.config.npm.levels) : undefined;
+  let consoleLevel = logConsole.level;
+  // No log target at all (console silent, no file, no custom logger): the
+  // warnings and errors would be lost. Send them to stderr instead, where
+  // the service manager (journal, `docker logs`) keeps them.
+  if (isSilent && !hasLogTarget(config)) {
+    isSilent = false;
+    consoleLevel = 'warn';
+    stderrLevels = Object.keys(winston.config.npm.levels);
+  }
+  const myconsole = new winston.transports.Console({ format: consoleFormat, level: consoleLevel, silent: isSilent, stderrLevels });
   winstonInstance!.add(myconsole);
 
-  rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', logConsole.level);
+  rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', consoleLevel);
 
   // files
   for (const transport of createFileTransports(config)) {
