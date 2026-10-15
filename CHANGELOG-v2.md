@@ -1,6 +1,14 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.55 - 2026-10-15
+
+Docker image on Debian 13 (trixie) instead of Debian 12, bundled rqlite 10.6.0 (was 10.5.1; no
+data-directory step within 10.x; native installs replace `bin-ext/rqlited` themselves). Log
+masking hardened: contexts holding a BigInt, contexts that do not convert to JSON and non-string
+messages are now masked; Error contexts reach the log file; no more `[winston] ... no transports`
+line at start. A core without an SMTP host treats mail as not configured: one boot warning instead
+of an error per registration, password-reset requests answer 200, `send-test` answers 503.
+No migration.
 
 - Docker image (operators): based on Debian 13 (trixie) instead of Debian 12 (bookworm), same
   Node 24.18.1; Debian 12 left its remaining critical and high OS-package advisories unfixed. The
