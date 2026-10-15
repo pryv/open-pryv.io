@@ -375,6 +375,32 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     assert.ok(!line.includes(TOKEN), line);
   });
 
+  // JSON.stringify throws on a BigInt: such a context used to skip the key
+  // masking (the token printed in clear) and to throw out of a JSON console call.
+  it('[BLFB14] a context holding a BigInt and a token is masked on the text console, the JSON console and the file', function () {
+    const extra = `l.error('blfb-big-ctx', { n: 12345678901234567890n, token: '${TOKEN}' });`;
+    const logPath = path.join(dir, 'big-ctx', 'logs', 'core.log');
+    const runs = {
+      text: bootAndLogEachLevel(silentConsole(), { extra }).stderr,
+      json: bootAndLogEachLevel(silentConsole(), { extra, env: { LOG_FORMAT: 'json' } }).stderr
+    };
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra });
+    runs.file = fs.readFileSync(logPath, 'utf8');
+    for (const [format, out] of Object.entries(runs)) {
+      // The entry from its marker on (the file line puts the context first).
+      const at = out.lastIndexOf('\n', out.indexOf('blfb-big-ctx')) + 1;
+      assert.ok(out.includes('blfb-big-ctx'), format + ': ' + out);
+      const line = out.slice(at);
+      assert.ok(!out.includes(TOKEN), format + ': ' + out);
+      assert.match(line, /\(hidden\)/, format);
+      assert.match(line, /12345678901234567890/, format);
+    }
+    assert.strictEqual(JSON.parse(runs.json.split('\n').find((s) => s.includes('blfb-big-ctx'))).context.token, '(hidden)');
+  });
+
   // The boiler config logs `get: [key] is undefined` at debug: read while the
   // logger is being set up, such a line used to reach winston before any
   // transport, which printed a "[winston] Attempt to write logs with no

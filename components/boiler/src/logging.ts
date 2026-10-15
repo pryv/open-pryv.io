@@ -163,7 +163,7 @@ function generateJsonFormat () {
     }
     // An Error (already masked by inspectAndHide) keeps its name, message,
     // stack and cause; plain JSON would reduce it to `{}`.
-    return JSON.stringify(entry, errorsAsPlainObjects);
+    return JSON.stringify(entry, jsonReplacer);
   }
   return winston.format.combine(winston.format.timestamp(), winston.format.printf(printf));
 }
@@ -218,7 +218,7 @@ function createFileTransports (config: BoilerConfig): unknown[] {
     // cause; the stock replacer would write it as `{}`.
     const fileFormat = winston.format.combine(
       winston.format.timestamp(),
-      winston.format.json({ replacer: fileJsonReplacer })
+      winston.format.json({ replacer: jsonReplacer })
     );
 
     rootLogger?.debug('File active: ' + logFile.path);
@@ -288,7 +288,7 @@ async function initLoggerWithConfig (config: BoilerConfig) {
   // read can log (the boiler config logs `get: [key] is undefined` at debug),
   // and a winston logger with no transport yet answers each entry with a
   // "[winston] Attempt to write logs with no transports" line on the console.
-  // Until the logger exists, those entries are skipped (see Logger.debug).
+  // Until the logger exists, those debug entries are skipped (see Logger.debug).
   const logConsole = config.get('logs:console');
   let isSilent = !config.get('logs:console:active');
 
@@ -457,7 +457,7 @@ function inspectAndHide (o: unknown): unknown {
   if (o instanceof Error) return maskError(o, 0);
   let cloned;
   try {
-    cloned = JSON.parse(JSON.stringify(o, errorsAsPlainObjects));
+    cloned = JSON.parse(JSON.stringify(o, jsonReplacer));
   } catch {
     // Non-round-trippable value (e.g. toJSON returns undefined or a non-JSON
     // primitive). Fall back to the raw value rather than crash.
@@ -495,7 +495,7 @@ function maskError (e: Error, depth: number): Error {
 function maskNested (value: unknown, depth: number): unknown {
   if (value instanceof Error) return depth < MAX_NESTED_ERRORS ? maskError(value, depth + 1) : '(not logged)';
   if (value !== null && typeof value === 'object') {
-    try { JSON.stringify(value, errorsAsPlainObjects); } catch { return '(not logged)'; }
+    try { JSON.stringify(value, jsonReplacer); } catch { return '(not logged)'; }
   }
   return inspectAndHide(value);
 }
@@ -511,9 +511,11 @@ function errorsAsPlainObjects (_key: string, value: unknown): unknown {
   return plain;
 }
 
-// The file format's replacer: Errors as above, plus the stock one's BigInt
-// handling (written as a string; plain JSON cannot hold it).
-function fileJsonReplacer (key: string, value: unknown): unknown {
+// The replacer of every JSON step (masking copy, JSON console, file): Errors
+// as above, and a BigInt written as a string. JSON.stringify throws on a
+// BigInt, which used to skip the masking of the whole context and, in the
+// JSON console format, throw out of the log call.
+function jsonReplacer (key: string, value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString();
   return errorsAsPlainObjects(key, value);
 }

@@ -7,9 +7,13 @@
   that logs (`get: [key] is undefined` at debug) no longer reaches a logger without transports.
   Tests: `[BLFB12]` (boiler boot on the default config with no target: no `[winston]` line),
   `[BLFB13]` (same with `LOGS=debug`).
-- `boiler/src/logging.ts`: the `logs.file` JSON format serialises with `errorsAsPlainObjects` (plus
-  the stock BigInt handling), so an Error context keeps name, message, stack and cause. Tests:
-  `[BLFB11]` (file), `[BLFB10]` (text console format: name, masked message and stack).
+- `boiler/src/logging.ts`: one replacer, `jsonReplacer` (`errorsAsPlainObjects` plus a BigInt as
+  a string), serves every JSON step: the masking copy in `inspectAndHide` / `maskNested`, the JSON
+  console format and the `logs.file` format. The file format keeps an Error context's name,
+  message, stack and cause; a BigInt no longer makes `inspectAndHide` fall back to the unmasked
+  object, nor the JSON console throw. Tests: `[BLFB11]` (file), `[BLFB10]` (text console format:
+  name, masked message and stack), `[BLFB14]` (BigInt + `token` context masked on the text console,
+  the JSON console and the file).
 
 ## Log fallback to stderr, wizard log targets
 

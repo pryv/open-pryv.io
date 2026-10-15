@@ -8,6 +8,9 @@
 - Operators (`logs.file`): an error logged with its Error object now carries the error's name,
   message (masked) and stack in the file's `context` field (it was `{}`), as the JSON console format
   does since 2.0.0-rc.54. The text console format already printed them.
+- Operators (logs, security): a logged context holding a BigInt value had none of its credential
+  keys (`token`, `password`, ...) masked, on every log target; with the JSON console format the log
+  call threw instead. Such a context is now masked like any other, the BigInt written as a string.
 
 ## 2.0.0-rc.54 - 2026-10-15
 
