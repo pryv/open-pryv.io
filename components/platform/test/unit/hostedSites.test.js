@@ -104,6 +104,18 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
     assert.equal(platform.isUsernameReserved('someuser'), false);
   });
 
+  it('[PLH8] a refresh with a maximum age reuses a read that recent; a plain refresh always reads', async () => {
+    const { platform, db } = makePlatform();
+    let reads = 0;
+    const read = db.getAllDnsRecords;
+    db.getAllDnsRecords = async () => { reads++; return read(); };
+    await platform.refreshPlatformNames();
+    await platform.refreshPlatformNames(10_000);
+    assert.equal(reads, 1);
+    await platform.refreshPlatformNames();
+    assert.equal(reads, 2);
+  });
+
   it('[PLH4] registerSelf advertises the sorted site names and the snapshot carries them', async () => {
     const { platform, db } = makePlatform({ config: { hostedSites: { zsite: { static: '/srv/z' }, account: { proxy: 'https://e.org/' } } } });
     await platform.registerSelf();

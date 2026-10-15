@@ -82,6 +82,7 @@ class Platform {
   // username: core ids, `dns.staticEntries` keys, runtime DNS record names.
   // Refreshed by refreshPlatformNames().
   #platformDnsNames: Set<string> = new Set();
+  #platformNamesReadAt: number = 0;
 
   // Null in `cleartext` mode (default); a PiiHasher instance when
   // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
@@ -573,9 +574,12 @@ class Platform {
    * advertised by every core (plus this core's own), the core ids, the
    * `dns.staticEntries` keys and the runtime DNS record names. Registration
    * and the change-username flow call it so a name added on another core
-   * after this one booted is still refused as a username.
+   * after this one booted is still refused as a username. `maxAgeMs` > 0
+   * skips the read when the last one is that recent (the public, advisory
+   * username check); the paths that take a name re-read every time.
    */
-  async refreshPlatformNames (): Promise<void> {
+  async refreshPlatformNames (maxAgeMs: number = 0): Promise<void> {
+    if (maxAgeMs > 0 && Date.now() - this.#platformNamesReadAt < maxAgeMs) return;
     const cores = await this.#db.getAllCoreInfos();
     this.#setHostedSiteNames(cores);
     const names = new Set<string>([this.coreId.toLowerCase()]);
@@ -590,6 +594,7 @@ class Platform {
       if (typeof row?.subdomain === 'string') names.add(row.subdomain.toLowerCase());
     }
     this.#platformDnsNames = names;
+    this.#platformNamesReadAt = Date.now();
   }
 
   /**

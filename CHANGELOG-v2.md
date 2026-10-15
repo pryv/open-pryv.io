@@ -18,7 +18,9 @@
   `<username>.<domain>`. Conversely, a NEW runtime DNS record (`POST /reg/records` answers
   `409 item-already-exists`, `bin/dns-records.js load` stops) or a NEW core id
   (`bin/bootstrap.js new-core`) under an existing account's name is refused; existing records can
-  still be updated. Existing accounts are unaffected.
+  still be updated. Existing accounts keep working; restoring one from a backup under such a name
+  is refused, as it already was for hosted-site names (the account would be unreachable at
+  `<username>.<domain>`). The username check reads these names at most every 10 seconds.
 
 ## 2.0.0-rc.54 - 2026-10-15
 

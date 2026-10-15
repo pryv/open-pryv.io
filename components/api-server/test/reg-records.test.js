@@ -184,6 +184,8 @@ describe('[RGRC] Register records admin endpoint', () => {
         .send({ subdomain: sub, records: { a: ['10.0.0.9'] } });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       try {
+        // the check reads the names at most every 10 s: start a new window
+        await platform.refreshPlatformNames();
         assert.strictEqual((await coreRequest.get('/reg/' + sub + '/check_username')).body.reserved, true);
       } finally {
         await platform.deleteDnsRecord(sub);
