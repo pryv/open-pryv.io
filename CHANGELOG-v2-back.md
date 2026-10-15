@@ -30,6 +30,27 @@
   name, masked message and stack), `[BLFB14]` (BigInt + `token` context masked on the text console,
   the JSON console and the file).
 
+## Mail without an SMTP host: not configured
+
+- `business/src/emails/mailCapability.ts`: `isInProcessSmtpMissing(servicesEmail)` (in-process
+  method, SMTP host missing or a placeholder) and `enabledMailKinds(config)` (the classes switched
+  on in `services.email.enabled`).
+- `api-server/src/methods/helpers/mailing.ts`: the in-process path, before initialising the mail
+  component, skips the send (debug log, callback with no error and no result) when
+  `isInProcessSmtpMissing`; it used to throw an `unexpected-error`. The email challenge of the
+  registration gate is unaffected: the boot already refuses that gate without a complete mail
+  configuration.
+- `config/plugins/config-validation.js` `collectWarnings`: one "mail is not configured" warning
+  naming the enabled classes; the verification warning is not repeated when its only cause is the
+  missing SMTP host; a non-empty placeholder host is quoted. `routes/system.ts` send-test: the same
+  `isInProcessSmtpMissing` check (it was a truthiness test), `apiUnavailable` instead of
+  `unexpectedError`.
+  Tests: `[MLNC1]` (registration and password reset with no SMTP host: 201 / 200, no error log),
+  `[MLNC2]` (SMTP host with a refused connection: the error is still logged), `[ML07]`,
+  `[CV-GA5]`-`[CV-GA8]` (`[CV-GA8]`: the shipped default mail settings give two warnings, the
+  mail one and the verification page one), `[MA09]` and `[MA60]` (no or placeholder host: 503
+  `api-unavailable`).
+
 ## Log fallback to stderr, wizard log targets
 
 - `boiler/src/logging.ts`: `initLoggerWithConfig` turns the console on at `warn`, every level on

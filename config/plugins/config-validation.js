@@ -645,11 +645,31 @@ function collectWarnings (config) {
   const warnings = [];
   const {
     describeVerificationMail,
-    describeMailCapability
+    describeMailCapability,
+    isInProcessSmtpMissing,
+    enabledMailKinds,
+    MAIL_KINDS
   } = require('../../components/business/src/emails/mailCapability.ts');
   const status = describeVerificationMail(config);
+  // In-process delivery with no SMTP host: mail is not configured. Sends are
+  // skipped quietly at runtime; this is the one place that says so.
+  const kinds = isInProcessSmtpMissing(config.get('services:email')) ? enabledMailKinds(config) : [];
+  if (kinds.length > 0) {
+    const names = kinds.map((k) => MAIL_KINDS[k]);
+    const list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+    // A non-empty host read as a placeholder is shown (a host is no secret),
+    // so a real host taken for one can be spotted from the log alone.
+    const host = config.get('services:email:smtp:host');
+    const shown = typeof host === 'string' && host.trim() !== '' ? ": it is '" + host + "'" : '';
+    warnings.push("'services.email' is incomplete (" + describeMailCapability(config).problems.join('; ') + shown + '): ' +
+      'mail is not configured, so the ' + list + ' mails are not sent (the requests that send them still succeed' +
+      (kinds.includes('verifyEmail') ? '; account email addresses cannot be proved' : '') + '). ' +
+      "Set 'services.email.smtp' (host, port, auth) to send them, or set 'services.email.enabled: false' to turn mail off explicitly.");
+  }
+  // (A verification mail stopped by the missing SMTP host is in the warning above.)
   if (!status.enabled && status.reason !== 'disabled' &&
-      !(status.explicit && status.reason === 'missing-page-url')) {
+      !(status.explicit && status.reason === 'missing-page-url') &&
+      !(kinds.length > 0 && status.reason === 'mail-not-configured')) {
     const why = status.reason === 'missing-page-url'
       ? "'auth.emailVerificationPageURL' is not set"
       : "'services.email' is incomplete (" + describeMailCapability(config).problems.join('; ') + ')';

@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
 import type { Application, Request, Response, NextFunction } from 'express';
+import { isInProcessSmtpMissing } from 'business/src/emails/mailCapability.ts';
 // `context` is attached by setMinimalMethodContext earlier in the chain.
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
@@ -229,8 +230,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const mail = require('mail');
       if (!mail.isActive()) {
         const emailCfg = (config.get('services:email') || {}) as { smtp?: { host?: string }; from?: unknown; defaultLang?: string };
-        if (!emailCfg.smtp || !emailCfg.smtp.host) {
-          return next(errors.unexpectedError('services.email.smtp.host is required for send-test'));
+        // Mail not configured is a state of the core, not an unexpected error.
+        // send-test always delivers in-process, whatever `method` says; the
+        // host check is the shared one (missing or a placeholder).
+        if (isInProcessSmtpMissing({ ...emailCfg, method: 'in-process' })) {
+          return next(errors.apiUnavailable('Mail is not configured: services.email.smtp.host is required for send-test'));
         }
         const platformDB = require('storages').platformDB;
         await mail.init({

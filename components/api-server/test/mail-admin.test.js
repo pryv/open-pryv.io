@@ -122,8 +122,26 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
       .post('/system/admin/mail/send-test')
       .set(authHeaders())
       .send({ type, lang: 'en', recipient: 'nobody@example.com' });
-    // Without services.email.smtp.host the route must refuse fast.
-    assert.ok(res.status >= 400 && res.status < 600, 'expected 4xx/5xx, got ' + res.status);
+    // Without services.email.smtp.host the route must refuse fast: mail is
+    // not configured (503), not an unexpected error.
+    assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error.id, 'api-unavailable');
+    assert.match(res.body.error.message, /Mail is not configured/);
+  });
+
+  it('[MA60] POST send-test with a placeholder SMTP host is refused as not configured', async () => {
+    const mail = require('mail');
+    await mail.close();
+    const { withInjectedConfig } = require('test-helpers');
+    await withInjectedConfig({ services: { email: { smtp: { host: 'REPLACE ME' } } } }, async () => {
+      const res = await coreRequest
+        .post('/system/admin/mail/send-test')
+        .set(authHeaders())
+        .send({ type: 'sendtest-' + cuid(), lang: 'en', recipient: 'nobody@example.com' });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'api-unavailable');
+    });
+    assert.strictEqual(mail.isActive(), false, 'no transport was set up');
   });
 
   it('[MA51] PUT refuses a template carrying code and stores nothing', async () => {
