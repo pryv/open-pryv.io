@@ -20,7 +20,7 @@ the release's `CHANGELOG-v2.md` entry carries the operator instructions in neutr
 report describes the fix at a later revision. Methodology, scope, the surface inventory and the
 areas where no defect was found are published without delay. At this revision every finding counted
 in section 1 is fixed, released and deployed, so none is withheld under this rule; the
-lower-severity defects still open are summarised in section 5.
+lower-severity defects still open are noted in section 5.
 
 ---
 
@@ -45,7 +45,9 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-up recorded 50 findings rated Low or above:
+The review and its follow-up recorded 50 findings, each rated and described individually in
+section 4 and counted below; the further lower-severity fixes listed under each release are
+described but not counted:
 
 | Severity | Fixed | Open | Accepted |
 |---|---|---|---|
@@ -967,7 +969,11 @@ maintainers' platforms every count was zero).
 
 #### Delegates could read consent counterparties' tokens and webhook URL credentials
 
-- **Severity:** Medium (where account delegation and consent or webhooks are both used).
+- **Severity:** Medium (where account delegation and consent or webhooks are both used). What a
+  delegate could obtain is bounded: the counterparty's grant to the owner (data the owner was
+  already given, within the consented scope) and a receiver secret, both outliving the
+  delegation; the 2.0.0-rc.41 item handed a delegate the owner's own tokens, login sessions
+  included.
 - **What could happen:** a delegated personal access is handed no credential of the owner's
   accesses (see 2.0.0-rc.41), but a consent relationship access also keeps the counterparty's
   endpoints in `clientData.cmc`, with their tokens, and these were returned as stored by
@@ -979,8 +985,10 @@ maintainers' platforms every count was zero).
   webhook returned to a caller that neither owns the webhook's access nor created it carries its
   `url` reduced to scheme, host and path. Deletion records are redacted the same way for every
   caller. Limits: only URL user parts are redacted in `clientData` (a bare token an app stores
-  there is returned as stored), and a secret placed in a webhook URL's path is not recognised. The
-  owner's own reads are unchanged.
+  there is returned as stored), and a secret placed in a webhook URL's path is not recognised.
+  Until 2.0.0-rc.53 a delegate writing back a `clientData` it had read stored the redacted URLs
+  over the owner's; such an update is now refused (see 2.0.0-rc.53 below). The owner's own reads
+  are unchanged.
 - **Operator action:** none.
 - **Completed in 2.0.0-rc.53:** the credentials also leave the stored rows. Once a relationship
   access is deleted, every URL user part in its `clientData` is removed from the deletion row and
@@ -1022,7 +1030,8 @@ The completion steps of two 2.0.0-rc.52 findings are described with them above. 
   withdrawal (`consent/revoke-cmc`, a deletion of the relationship access, a delegation detach),
   the counterparty was never told, and its side of the relationship stayed in place. The notice is
   now queued and re-sent by the retry loop (8 re-sends over about 27 hours, then marked failed for
-  the operator), and a notice that lands late never ends a relationship re-established meanwhile.
+  the operator), and, between cores running this release, a notice that lands late never ends a
+  relationship re-established meanwhile.
   The notices of an account being deleted are not queued (no account is left to hold them).
 - **A consent offer could name streams the consent plugin manages** (Low; no read was possible): an
   offer asking access to the accepter's `:_cmc:inbox` (which holds the grant endpoints the accepter
