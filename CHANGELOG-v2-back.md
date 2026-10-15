@@ -12,6 +12,15 @@
   replaced by `logs.console.format.color: false`. Tests: `[BLFB5]` (fallback with a colour format),
   `[BLFB6]` (boiler booted on `production-config.yml`), `[INWZ9]` (boiler booted on a generated
   config; the error also lands in the error file): no ANSI escape in the console output.
+- Tests: `[BLFB7]` (a `logs:custom` module is a target: no fallback, the module gets the entry),
+  `[BLFB8]` (`LOGS=warn` with no target: stdout at that level, nothing on stderr).
+- `boiler/src/logging.ts`: the JSON console format serialises with `errorsAsPlainObjects`, so an
+  Error context (already masked) keeps name, message, stack and cause. Test: `[BLFB9]`.
+- `bin/master.js`: `log` / `warn` and a new `error` helper go through the `master` logger only; the
+  `console.*` mirrors (log, warn, platform integrity at boot and from the monitor, hosted sites,
+  rqlite stop) are gone. The FATAL path logs through the logger and falls back to the raw console
+  only when the logger is not initialised. The `[bootstrap]` lines, which run before boiler init,
+  stay on the console.
 - `bin/init.js`: the generated config carries `logs.console` (`info`, `format.color: false`) and `logs.file` (`error`,
   under the data folder) in a "Logs" section; the two commented `logs` entries of the appendix say
   to merge into it. Test: `[INWZ8]` (also passes `check-config`).

@@ -202,9 +202,10 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
   before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blfb-')); });
   after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  // Boots the logger with these logs settings (no LOGS override) and writes
-  // one entry per level; returns what reached stdout and stderr.
-  function bootAndLogEachLevel (values) {
+  // Boots the logger with these logs settings (LOGS, LOG_FORMAT and DEBUG
+  // unset unless given in `env`), writes one entry per level, then runs
+  // `extra` (statements using `l`); returns what reached stdout and stderr.
+  function bootAndLogEachLevel (values, { env: extraEnv = {}, extra = '' } = {}) {
     const script = [
       `const logging = await import(${JSON.stringify(LOGGING_SRC)});`,
       "logging.setGlobalName('blfb');",
@@ -212,12 +213,14 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
       'await logging.initLoggerWithConfig({ get: (key) => values[key] });',
       "const l = logging.getLogger('blfb');",
       "l.debug('blfb-debug'); l.info('blfb-info'); l.warn('blfb-warn'); l.error('blfb-error');",
+      extra,
       'setTimeout(() => process.exit(0), 1500);'
     ].join('\n');
     const env = Object.assign({}, process.env, { BLFB_VALUES: JSON.stringify(values) });
     delete env.LOGS;
     delete env.LOG_FORMAT;
     delete env.DEBUG;
+    Object.assign(env, extraEnv);
     const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8', timeout: 20000 });
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     return res;
@@ -261,6 +264,16 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     assert.match(fs.readFileSync(syncPath, 'utf8'), /blfb-error/);
   });
 
+  it('[BLFB4] an active console keeps its configured level and stream', function () {
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:console': { active: true, level: 'info', format: {} },
+      'logs:console:active': true
+    }));
+    assert.match(res.stdout, /blfb-info/);
+    assert.match(res.stdout, /blfb-error/);
+    assert.doesNotMatch(res.stderr, /blfb-/);
+  });
+
   it('[BLFB5] the fallback output carries no ANSI colour codes, even with a colour format', function () {
     const res = bootAndLogEachLevel(silentConsole({
       'logs:console': { active: false, level: 'info', format: { color: true, time: true } }
@@ -291,13 +304,46 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     assert.ok(!out.includes('\u001b['), JSON.stringify(out));
   });
 
-  it('[BLFB4] an active console keeps its configured level and stream', function () {
+  it('[BLFB7] with a custom logger configured, a silent console stays silent', function () {
+    const customDir = fs.mkdtempSync(path.join(dir, 'custom-'));
+    const customOut = path.join(customDir, 'custom.log');
+    const customModule = path.join(customDir, 'custom-logger.cjs');
+    fs.writeFileSync(customModule, [
+      "const fs = require('node:fs');",
+      'module.exports = {',
+      '  init: async () => {},',
+      `  log: (level, key, message) => fs.appendFileSync(${JSON.stringify(customOut)}, level + ' ' + message + '\\n')`,
+      '};'
+    ].join('\n'));
     const res = bootAndLogEachLevel(silentConsole({
-      'logs:console': { active: true, level: 'info', format: {} },
-      'logs:console:active': true
+      'logs:custom:active': true,
+      'logs:custom:path': customModule,
+      'logs:custom:settings': {}
     }));
-    assert.match(res.stdout, /blfb-info/);
-    assert.match(res.stdout, /blfb-error/);
+    assert.doesNotMatch(res.stderr + res.stdout, /blfb-/);
+    assert.match(fs.readFileSync(customOut, 'utf8'), /error blfb-error/);
+  });
+
+  it('[BLFB8] LOGS=<level> with no target keeps its console: stdout at that level, nothing on stderr', function () {
+    const res = bootAndLogEachLevel(silentConsole(), { env: { LOGS: 'warn' } });
+    assert.match(res.stdout, /\[warn\]: \[blfb:blfb\] blfb-warn/);
+    assert.match(res.stdout, /\[error\]: \[blfb:blfb\] blfb-error/);
+    assert.doesNotMatch(res.stdout, /blfb-info|blfb-debug/);
     assert.doesNotMatch(res.stderr, /blfb-/);
+  });
+
+  it('[BLFB9] LOG_FORMAT=json: an Error given as context keeps its masked message and stack', function () {
+    const res = bootAndLogEachLevel(silentConsole(), {
+      env: { LOG_FORMAT: 'json' },
+      extra: `l.error('blfb-err-ctx', new Error('boom auth=${TOKEN}'));`
+    });
+    const line = res.stderr.split('\n').find((s) => s.includes('blfb-err-ctx'));
+    assert.ok(line, res.stderr);
+    const entry = JSON.parse(line);
+    assert.strictEqual(entry.level, 'error');
+    assert.strictEqual(entry.context.name, 'Error');
+    assert.strictEqual(entry.context.message, 'boom auth=(hidden)');
+    assert.match(entry.context.stack, /^Error: boom auth=\(hidden\)/);
+    assert.ok(!line.includes(TOKEN), line);
   });
 });

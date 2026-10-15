@@ -14,6 +14,16 @@
   `logs.console.colorize: false`, a key the server never read; the setting is
   `logs.console.format.color: false` (default `true`, kept for interactive development). A config
   that still sets `colorize` can switch to `format.color`.
+- Operators: the master process's messages now appear once, through the logger, instead of twice
+  (a logger line plus a raw `[master] ...` console copy). Their text is unchanged, the prefix
+  changes: `[master] WARNING: <msg>` is now `[warn]: [master:master] <msg>`, `[master] ERROR:
+  <msg>` is `[error]: [master:master] <msg>`, `[master] <msg>` is `[info]: [master:master] <msg>`
+  (with the console's timestamp). A grep on the message text (e.g. `Master process ready`) still
+  matches; one on the `[master] WARNING:` / `[master] ERROR:` prefixes must change. The master's
+  info lines follow `logs.console` like every other line (they are not printed when the console is
+  off); a boot failure before the logger is ready still prints `[master] FATAL: ...` on stderr.
+- Operators (`LOG_FORMAT=json` / `logs.console.format.json`): an error logged with its Error object
+  now carries the error's name, message and stack in `context` (it was `{}`).
 - Install wizard (`init`): the generated `pryv-config.yml` now has a `logs:` section, as in the
   production defaults: the console at `info` without colours, and errors in a daily file
   `<data folder>/logs/api-server.errors.log` (14 days kept) on the data volume. Configurations

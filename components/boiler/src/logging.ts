@@ -161,7 +161,9 @@ function generateJsonFormat () {
     } else if (items.length > 0 && items[0] !== undefined) {
       entry.context = items.length === 1 ? items[0] : items;
     }
-    return JSON.stringify(entry);
+    // An Error (already masked by inspectAndHide) keeps its name, message,
+    // stack and cause; plain JSON would reduce it to `{}`.
+    return JSON.stringify(entry, errorsAsPlainObjects);
   }
   return winston.format.combine(winston.format.timestamp(), winston.format.printf(printf));
 }

@@ -116,8 +116,11 @@ if (cluster.isPrimary) {
 
     const config = await getConfig();
     const logger = getLogger('master');
-    const log = (msg) => { logger.info(msg); console.log(`[master] ${msg}`); };
-    const warn = (msg) => { logger.warn(msg); console.warn(`[master] WARNING: ${msg}`); };
+    // Through the logger only: its console (or, with no log target at all,
+    // its stderr fallback for warnings and errors) reaches the journal.
+    const log = (msg) => logger.info(msg);
+    const warn = (msg) => logger.warn(msg);
+    const error = (msg) => logger.error(msg);
 
     // Start rqlited when rqlite is the platform engine — master.js owns the lifecycle.
     // When `storages.engines.rqlite.external` is true, skip spawning and connect to an
@@ -187,9 +190,7 @@ if (cluster.isPrimary) {
       const report = await require('../storages/index.ts').platformDB.checkStoreIntegrity();
       bootIntegrityOk = report.ok;
       if (!report.ok) {
-        const msg = `[platform-integrity] ${describePlatformIntegrity(report).join('\n  ')}`;
-        logger.error(msg);
-        console.error(`[master] ERROR: ${msg}`);
+        error(`[platform-integrity] ${describePlatformIntegrity(report).join('\n  ')}`);
       }
     } catch (e) {
       warn(`[platform-integrity] check failed: ${e.message}`);
@@ -273,10 +274,7 @@ if (cluster.isPrimary) {
           problems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
         }
         if (problems.length > 0) {
-          for (const p of problems) {
-            logger.error('[hosted-sites] ' + p);
-            console.error('[master] [hosted-sites] ' + p);
-          }
+          for (const p of problems) error('[hosted-sites] ' + p);
           throw new Error('hosted sites configuration is invalid (see above)');
         }
         for (const site of sites.values()) {
@@ -435,7 +433,7 @@ if (cluster.isPrimary) {
       logger: {
         info: log,
         warn,
-        error: (msg) => { logger.error(msg); console.error(`[master] ERROR: ${msg}`); }
+        error
       }
     });
 
@@ -867,7 +865,7 @@ if (cluster.isPrimary) {
         require('../components/platform/src/index.ts').platform.stopCoreUrlRefresh();
       },
       stopRqlite: () => rqliteProcess.isRunning()
-        ? rqliteProcess.stop(log, (msg) => { logger.error(msg); console.error(`[master] ERROR: ${msg}`); })
+        ? rqliteProcess.stop(log, error)
         : Promise.resolve(),
       log,
       warn,
@@ -914,8 +912,12 @@ if (cluster.isPrimary) {
     log('Master process ready');
   })().catch(async err => {
     if (err && err.bootFatal) {
-      console.error('[master] FATAL: ' + err.message);
-      try { require('@pryv/boiler').getLogger('master').error('FATAL: ' + err.message); } catch { /* logger not ready */ }
+      // The logger once boiler is initialised; the raw console before that.
+      try {
+        require('@pryv/boiler').getLogger('master').error('FATAL: ' + err.message);
+      } catch {
+        console.error('[master] FATAL: ' + err.message);
+      }
     } else {
       console.error('Master startup failed:', err);
     }
