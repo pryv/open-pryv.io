@@ -16,13 +16,14 @@ describe('[BIH] boiler/logging inspectAndHide', function () {
     assert.strictEqual(inspectAndHide(undefined), undefined);
   });
 
-  it('[BIH2] passes through functions without throwing', function () {
+  it('[BIH2] renders functions as a marker without throwing', function () {
     const fn = () => 42;
     // Pre-fix: JSON.parse(JSON.stringify(fn)) → JSON.parse(undefined) →
     // SyntaxError. Worker bootstrap crashed the api-server process on
     // any logger.{debug,info,warn,error}(message, function) call.
     assert.doesNotThrow(() => inspectAndHide(fn));
-    assert.strictEqual(inspectAndHide(fn), fn);
+    // A marker, never the function itself: util.inspect would print its own properties.
+    assert.strictEqual(inspectAndHide(fn), '[Function: fn]');
   });
 
   it('[BIH3] passes through symbols without throwing', function () {
@@ -31,13 +32,13 @@ describe('[BIH] boiler/logging inspectAndHide', function () {
     assert.strictEqual(inspectAndHide(sym), sym);
   });
 
-  it('[BIH4] passes through objects whose toJSON returns undefined', function () {
+  it('[BIH4] handles objects whose toJSON returns undefined as JSON does', function () {
     // class { toJSON () { return undefined; } } — JSON.stringify yields
     // undefined, same crash shape as raw functions/symbols.
     const obj = { toJSON: () => undefined };
     assert.doesNotThrow(() => inspectAndHide(obj));
-    // Fallback returns the original value when JSON round-trip fails.
-    assert.strictEqual(inspectAndHide(obj), obj);
+    // Never the original (unmasked) object: the context serialises to nothing, as in JSON.
+    assert.strictEqual(inspectAndHide(obj), undefined);
   });
 
   it('[BIH5] returns an Error for an Error (a masked copy, the original untouched)', function () {
