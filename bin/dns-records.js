@@ -164,6 +164,10 @@ async function runLoad (platform, args) {
   for (const [subdomain, records] of incoming) {
     const prev = existingBySubdomain.get(subdomain);
     if (prev == null) {
+      // a new name an account holds would take that account's host
+      if (await platform.isNameHeldByAccount(subdomain)) {
+        throw new Error(`'${subdomain}': an account holds this name; a record under it would take that account's host`);
+      }
       plan.push(['put', subdomain, records]);
       added++;
     } else if (JSON.stringify(prev) === JSON.stringify(records)) {

@@ -22,11 +22,13 @@ function makeConfig (values) {
   return { get: (key) => values[key] };
 }
 
-function makeFakeDb ({ coreInfos = [], invitation = 'tok' } = {}) {
+function makeFakeDb ({ coreInfos = [], dnsRecords = [], invitation = 'tok' } = {}) {
   const rows = new Map(coreInfos.map((c) => [c.id, c]));
   return {
     rows,
+    dnsRecords,
     async getAllCoreInfos () { return [...rows.values()].map((r) => JSON.parse(JSON.stringify(r))); },
+    async getAllDnsRecords () { return dnsRecords.map((r) => JSON.parse(JSON.stringify(r))); },
     async setCoreInfo (id, info) { rows.set(id, JSON.parse(JSON.stringify(info))); },
     // a live token keeps #checkInvitationToken off the config fallback
     async getAllInvitationTokens () { return [{ id: 'h' }]; },
@@ -34,9 +36,9 @@ function makeFakeDb ({ coreInfos = [], invitation = 'tok' } = {}) {
   };
 }
 
-function makePlatform ({ config = {}, coreInfos } = {}) {
+function makePlatform ({ config = {}, coreInfos, dnsRecords } = {}) {
   const platform = new Platform();
-  const db = makeFakeDb({ coreInfos });
+  const db = makeFakeDb({ coreInfos, dnsRecords });
   platform._setDependenciesForTests(db, null, makeConfig(Object.assign({ 'core:id': 'core-a' }, config)));
   return { platform, db };
 }
@@ -65,12 +67,12 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
     assert.equal(platform.isUsernameReserved('sitedocs'), true);
   });
 
-  it('[PLH3] a site added on another core after boot is seen by refreshHostedSiteNames', async () => {
+  it('[PLH3] a site added on another core after boot is seen by refreshPlatformNames', async () => {
     const { platform, db } = makePlatform({ coreInfos: [{ id: 'core-b', ip: '10.0.0.2' }] });
-    await platform.refreshHostedSiteNames();
+    await platform.refreshPlatformNames();
     assert.equal(platform.isUsernameReserved('latesite'), false);
     db.rows.set('core-b', { id: 'core-b', ip: '10.0.0.2', sites: ['latesite'] });
-    await platform.refreshHostedSiteNames();
+    await platform.refreshPlatformNames();
     assert.equal(platform.isUsernameReserved('latesite'), true);
     // ordinary names stay free
     assert.equal(platform.isUsernameReserved('someuser'), false);
@@ -82,6 +84,36 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
       assert.equal(platform.isUsernameReserved(name), true, name);
     }
     assert.equal(platform.isUsernameReserved('preview1'), false);
+  });
+
+  it('[PLH7] core ids, static entries and runtime DNS record names are refused, case-insensitively', async () => {
+    const { platform, db } = makePlatform({
+      config: { 'dns:staticEntries': { Vanity: { cname: 'example.org' } } },
+      coreInfos: [{ id: 'core-b', ip: '10.0.0.2' }],
+      dnsRecords: [{ subdomain: 'status', records: { a: ['10.0.0.9'] } }, { subdomain: 'statuspage', records: { a: ['10.0.0.9'] } }]
+    });
+    for (const name of ['core-a', 'core-b', 'vanity', 'statuspage']) {
+      await assertRegistrationRefused(platform, name);
+      assert.equal(platform.isUsernameReserved(name.toUpperCase()), true, name);
+      assert.equal(platform.isUsernameRoutingReserved(name), true, name);
+    }
+    // a record added after the last read is refused once the names are re-read
+    db.dnsRecords.push({ subdomain: 'latedns', records: { a: ['10.0.0.9'] } });
+    assert.equal(platform.isUsernameReserved('latedns'), false);
+    await assertRegistrationRefused(platform, 'latedns');
+    assert.equal(platform.isUsernameReserved('someuser'), false);
+  });
+
+  it('[PLH8] a refresh with a maximum age reuses a read that recent; a plain refresh always reads', async () => {
+    const { platform, db } = makePlatform();
+    let reads = 0;
+    const read = db.getAllDnsRecords;
+    db.getAllDnsRecords = async () => { reads++; return read(); };
+    await platform.refreshPlatformNames();
+    await platform.refreshPlatformNames(10_000);
+    assert.equal(reads, 1);
+    await platform.refreshPlatformNames();
+    assert.equal(reads, 2);
   });
 
   it('[PLH4] registerSelf advertises the sorted site names and the snapshot carries them', async () => {

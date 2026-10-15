@@ -313,7 +313,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
 
       // Reserved names are refused as on the public registration path
       // (hosted-site names re-read first: another core may advertise a new one).
-      await platform.refreshHostedSiteNames();
+      await platform.refreshPlatformNames();
       if (platform.isUsernameReserved(username)) {
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
       }

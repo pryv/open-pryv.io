@@ -78,6 +78,11 @@ class Platform {
   // plus the `sites` advertised by every core-info row, so a core whose config
   // misses a name still refuses it. Refreshed with the core-info reads.
   #hostedSiteNames: Set<string> = new Set();
+  // DNS names the platform answers itself, which take precedence over a
+  // username: core ids, `dns.staticEntries` keys, runtime DNS record names.
+  // Refreshed by refreshPlatformNames().
+  #platformDnsNames: Set<string> = new Set();
+  #platformNamesReadAt: number = 0;
 
   // Null in `cleartext` mode (default); a PiiHasher instance when
   // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
@@ -154,6 +159,9 @@ class Platform {
     // A core that joins or moves later writes its row; refresh periodically so
     // the running cores learn its URL without a restart (multi-core only).
     if (!this.isSingleCore) this.startCoreUrlRefresh();
+    // The names an account may not take, for the checks that do not re-read
+    // them first (auth.usernameCheck); a failure leaves the next refresh to it.
+    await this.refreshPlatformNames().catch((err: Error) => logger.warn('could not read the platform names: ' + err.message));
 
     // Re-key any legacy raw-keyed invitation tokens to their hash (idempotent),
     // then seed from config (writes hashed keys).
@@ -562,12 +570,41 @@ class Platform {
   }
 
   /**
-   * Re-read the hosted-site names advertised by every core (plus this core's
-   * own). Registration and the change-username flow call it so a site added
-   * on another core after this one booted is still refused as a username.
+   * Re-read the names an account may not take: the hosted-site names
+   * advertised by every core (plus this core's own), the core ids, the
+   * `dns.staticEntries` keys and the runtime DNS record names. Registration
+   * and the change-username flow call it so a name added on another core
+   * after this one booted is still refused as a username. `maxAgeMs` > 0
+   * skips the read when the last one is that recent (the public, advisory
+   * username check); the paths that take a name re-read every time.
    */
-  async refreshHostedSiteNames (): Promise<void> {
-    this.#setHostedSiteNames(await this.#db.getAllCoreInfos());
+  async refreshPlatformNames (maxAgeMs: number = 0): Promise<void> {
+    if (maxAgeMs > 0 && Date.now() - this.#platformNamesReadAt < maxAgeMs) return;
+    const cores = await this.#db.getAllCoreInfos();
+    this.#setHostedSiteNames(cores);
+    const names = new Set<string>([this.coreId.toLowerCase()]);
+    for (const info of cores) {
+      if (typeof info?.id === 'string') names.add(info.id.toLowerCase());
+    }
+    const staticEntries = this.#config?.get('dns:staticEntries');
+    if (staticEntries != null && typeof staticEntries === 'object') {
+      for (const name of Object.keys(staticEntries)) names.add(name.toLowerCase());
+    }
+    for (const row of await this.#db.getAllDnsRecords()) {
+      if (typeof row?.subdomain === 'string') names.add(row.subdomain.toLowerCase());
+    }
+    this.#platformDnsNames = names;
+    this.#platformNamesReadAt = Date.now();
+  }
+
+  /**
+   * Whether an account holds `name`, on any core. A new DNS record or core
+   * id under that name would take the account's host (`<name>.<domain>`).
+   */
+  async isNameHeldByAccount (name: string): Promise<boolean> {
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    return await usersRepository.usernameExistsOnPlatform(name.toLowerCase());
   }
 
   #setHostedSiteNames (cores: CoreInfo[]) {
@@ -1065,9 +1102,9 @@ class Platform {
     //    registration is known to happen on this core)
     const invitationKey = await this.#checkInvitationToken(invitationToken);
 
-    // 2. Check reserved usernames (hosted-site names re-read first: another
+    // 2. Check reserved usernames (platform names re-read first: another
     //    core may have started advertising one since this core booted)
-    await this.refreshHostedSiteNames();
+    await this.refreshPlatformNames();
     if (this.#isUsernameReserved(username)) {
       throw errors.itemAlreadyExists('user', { username });
     }
@@ -1409,14 +1446,16 @@ class Platform {
    * Whether the name is one the platform routes itself, so an account under
    * it would collide with the platform: starts with "pryv", a service host
    * of the embedded DNS (`reg`, `access`, `mfa`, `lsc`), a path segment the
-   * core routes, or a hosted-site name of any core. The word list is a
-   * registration rule on top of these.
+   * core routes, a hosted-site name of any core, a core id, a static entry
+   * or a runtime DNS record name (as of the last refreshPlatformNames()).
+   * The word list is a registration rule on top of these.
    */
   isUsernameRoutingReserved (username: string): boolean {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
     if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
+    if (this.#platformDnsNames.has(lower)) return true;
     return this.#hostedSiteNames.has(lower);
   }
 

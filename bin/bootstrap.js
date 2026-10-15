@@ -120,7 +120,8 @@ async function runNewCore (args) {
     outPath,
     ttlMs,
     allowInsecurePeerUrl: config.get('cluster:allowInsecurePeerUrl') === true,
-    replace: args.replace === true
+    replace: args.replace === true,
+    isNameHeldByAccount: async (name) => (await require('platform').getPlatform()).isNameHeldByAccount(name)
   });
 
   console.log('');

@@ -74,7 +74,7 @@ export async function assertDelegatedUsernameAllowed (username: string): Promise
       'The requested username does not follow the registration rules', 400, { username });
   }
   const platform = await getPlatform();
-  await platform.refreshHostedSiteNames();
+  await platform.refreshPlatformNames();
   if (platform.isUsernameReserved(username)) {
     throw delegationError(DelegationErrorIds.USERNAME_TAKEN,
       'The requested username is already taken', 409, { username });

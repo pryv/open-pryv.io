@@ -10,6 +10,17 @@
   or an event's author shows such an access by id only, and `/system/accesses/:accessId` no longer
   resolves it for breach scoping; choose the retention with that in mind (data minimisation against
   attribution). A value that is not a number of days stops the boot.
+- Usernames and the platform's DNS names no longer collide. Registration, the username check
+  (`/reg/<username>/check_username`), the username change, admin pre-registration and delegated
+  account creation refuse a name equal to a core id, a `dns.staticEntries` key or a runtime DNS
+  record (`/reg/records`, `bin/dns-records.js`), as they already refused hosted-site names: these
+  names are answered before usernames, so such an account was unreachable at
+  `<username>.<domain>`. Conversely, a NEW runtime DNS record (`POST /reg/records` answers
+  `409 item-already-exists`, `bin/dns-records.js load` stops) or a NEW core id
+  (`bin/bootstrap.js new-core`) under an existing account's name is refused; existing records can
+  still be updated. Existing accounts keep working; restoring one from a backup under such a name
+  is refused, as it already was for hosted-site names (the account would be unreachable at
+  `<username>.<domain>`). The username check reads these names at most every 10 seconds.
 
 ## 2.0.0-rc.55 - 2026-10-15
 
