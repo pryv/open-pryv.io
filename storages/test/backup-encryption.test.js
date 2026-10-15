@@ -49,7 +49,7 @@ describe('[BENC] backup encryption', () => {
   // Cipher primitives
   // -------------------------------------------------------------------------
   describe('cipher', () => {
-    it('[BC01] symmetric buffer round-trips', () => {
+    it('[BKE01] symmetric buffer round-trips', () => {
       const enc = createBackupEncryptor({ passphrase: 'correct horse' });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'correct horse' });
       const plain = Buffer.from('the quick brown fox jumps over the lazy dog');
@@ -59,7 +59,7 @@ describe('[BENC] backup encryption', () => {
       assert.deepStrictEqual(dec.decryptBuffer(cipherBytes), plain);
     });
 
-    it('[BC02] hybrid (recipient pubkey) buffer round-trips and host holds no decrypt secret', () => {
+    it('[BKE02] hybrid (recipient pubkey) buffer round-trips and host holds no decrypt secret', () => {
       const { publicKey, privateKey } = rsaKeypair();
       const enc = createBackupEncryptor({ recipientPubKeyPem: publicKey });
       assert.strictEqual(enc.envelope.mode, 'hybrid');
@@ -71,7 +71,7 @@ describe('[BENC] backup encryption', () => {
       assert.deepStrictEqual(dec.decryptBuffer(enc.encryptBuffer(plain)), plain);
     });
 
-    it('[BC03] multi-chunk stream round-trips (input larger than chunk)', async () => {
+    it('[BKE03] multi-chunk stream round-trips (input larger than chunk)', async () => {
       const enc = createBackupEncryptor({ passphrase: 'pw', chunkSize: 1024 });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' });
       const plain = crypto.randomBytes(5000); // ~5 chunks + remainder
@@ -81,19 +81,19 @@ describe('[BENC] backup encryption', () => {
       assert.deepStrictEqual(back, plain);
     });
 
-    it('[BC04] empty input round-trips (header only, no frames)', () => {
+    it('[BKE04] empty input round-trips (header only, no frames)', () => {
       const enc = createBackupEncryptor({ passphrase: 'pw' });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' });
       assert.deepStrictEqual(dec.decryptBuffer(enc.encryptBuffer(Buffer.alloc(0))), Buffer.alloc(0));
     });
 
-    it('[BC05] wrong passphrase fails authentication', () => {
+    it('[BKE05] wrong passphrase fails authentication', () => {
       const enc = createBackupEncryptor({ passphrase: 'right' });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'wrong' });
       assert.throws(() => dec.decryptBuffer(enc.encryptBuffer(Buffer.from('secret'))));
     });
 
-    it('[BC06] tampered ciphertext fails the GCM auth tag', () => {
+    it('[BKE06] tampered ciphertext fails the GCM auth tag', () => {
       const enc = createBackupEncryptor({ passphrase: 'pw' });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' });
       const cipherBytes = enc.encryptBuffer(Buffer.from('secret payload'));
@@ -343,7 +343,7 @@ describe('[BENC] backup encryption', () => {
       return found;
     }
 
-    it('[BC15] a plaintext and an encrypted backup are written for their owner only', async function () {
+    it('[BKE15] a plaintext and an encrypted backup are written for their owner only', async function () {
       if (process.platform === 'win32') this.skip();
       await writeBackup(null);
       assert.deepStrictEqual(nonPrivateEntries(tmp), [], 'plaintext backup');

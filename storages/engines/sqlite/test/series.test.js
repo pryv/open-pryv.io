@@ -36,7 +36,7 @@ describe('[SQSR] SQLite series', function () {
     }
   });
 
-  it('[SQ01] should write a small batch of points', async function () {
+  it('[SLS01] should write a small batch of points', async function () {
     const points = [];
     for (let i = 0; i < 10; i++) {
       points.push({ fields: { value: i * 1.5 }, timestamp: 1000000 + i });
@@ -47,7 +47,7 @@ describe('[SQSR] SQLite series', function () {
     assert.strictEqual(rows.length, 10);
   });
 
-  it('[SQ02] should write a large batch (1200 points) in one call', async function () {
+  it('[SLS02] should write a large batch (1200 points) in one call', async function () {
     const eventId2 = 'series-evt-large-' + Date.now();
     const points = [];
     for (let i = 0; i < 1200; i++) {
@@ -59,7 +59,7 @@ describe('[SQSR] SQLite series', function () {
     assert.strictEqual(rows.length, 1200);
   });
 
-  it('[SQ03] should filter via WHERE time >= / <', async function () {
+  it('[SLS03] should filter via WHERE time >= / <', async function () {
     const eventId3 = 'series-evt-filter-' + Date.now();
     const points = [];
     for (let i = 0; i < 20; i++) {
@@ -77,14 +77,14 @@ describe('[SQSR] SQLite series', function () {
     assert.strictEqual(rows.length, 5); // i=5..9
   });
 
-  it('[SQ04] SHOW MEASUREMENTS lists all event_ids', async function () {
+  it('[SLS04] SHOW MEASUREMENTS lists all event_ids', async function () {
     const measurements = await conn.query('SHOW MEASUREMENTS', { database: userId });
     const names = measurements.map((m) => m.name).sort();
-    assert.ok(names.includes(eventId), 'event_id from SQ01 should be present');
+    assert.ok(names.includes(eventId), 'event_id from SLS01 should be present');
     assert.ok(names.length >= 1);
   });
 
-  it('[SQ05] dropMeasurement removes only the named event', async function () {
+  it('[SLS05] dropMeasurement removes only the named event', async function () {
     const before = await conn.query('SHOW MEASUREMENTS', { database: userId });
     const eventToDrop = before[0]?.name;
     if (!eventToDrop) return; // nothing to drop
@@ -96,7 +96,7 @@ describe('[SQSR] SQLite series', function () {
     assert.ok(!afterNames.includes(eventToDrop), 'dropped event should be gone');
   });
 
-  it('[SQ06] exportDatabase + importDatabase round-trip', async function () {
+  it('[SLS06] exportDatabase + importDatabase round-trip', async function () {
     const eventId4 = 'series-evt-export-' + Date.now();
     const points = [];
     for (let i = 0; i < 5; i++) {
@@ -118,7 +118,7 @@ describe('[SQSR] SQLite series', function () {
 
   // The series directory is named after the namespace (`user.<username>`): an
   // account deletion that left it behind would keep a trace of the username.
-  it('[SQ07] dropDatabase leaves nothing behind, and creates nothing for an unknown namespace', async function () {
+  it('[SLS07] dropDatabase leaves nothing behind, and creates nothing for an unknown namespace', async function () {
     const fs = require('node:fs');
     const path = require('node:path');
     const ns = 'user.sqsrdrop' + cuid.slug();

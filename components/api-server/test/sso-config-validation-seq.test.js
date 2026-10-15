@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, assert */
 
 /**
- * [SSOCFG] — boot-time validation of the third-party sign-in config.
+ * [SSOCB] — boot-time validation of the third-party sign-in config.
  *
  * Pins the coupling that makes the no-downgrade handoff safe: the sign-in
  * callback hands the minted (non-MFA) session token to the auth app ONLY
@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
  * Platform integrity check (these tests touch no storage).
  */
 
-describe('[SSOCFG] checkSsoConfig boot rules', () => {
+describe('[SSOCB] checkSsoConfig boot rules', () => {
   let checkSsoConfig;
 
   before(async function () {

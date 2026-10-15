@@ -468,7 +468,7 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
     }
   });
 
-  it('[CKE2] a skewed joiner is refused before the ack, and the same bundle joins once the clock is right', async () => {
+  it('[CKE3] a skewed joiner is refused before the ack, and the same bundle joins once the clock is right', async () => {
     const platformDB = makeFakeDB();
     const tokensPath = path.join(tmp, 'tokens.json');
     const tokenStore = new TokenStore({ path: tokensPath });

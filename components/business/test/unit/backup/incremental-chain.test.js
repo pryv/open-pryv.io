@@ -284,7 +284,7 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
         .map((rel) => path.join(runPath, rel));
     }
 
-    it('[BKC5] each run has its own envelope and key, the key model of the chain is kept, a wrong secret is refused before anything is written', async function () {
+    it('[BKC10] each run has its own envelope and key, the key model of the chain is kept, a wrong secret is refused before anything is written', async function () {
       // Symmetric: two runs under the same passphrase, two envelopes.
       const dir = path.join(tmp, 'sym');
       const enc1 = createBackupEncryptor({ passphrase: 'pw' });

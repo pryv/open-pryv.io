@@ -288,7 +288,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(capture.updates.length, 1);
   });
 
-  it('[BC10] stores the back-channel when the delivery carries no appCode at all', async () => {
+  it('[BC18] stores the back-channel when the delivery carries no appCode at all', async () => {
     const capture = {};
     const r = await handleIncomingBackChannel({
       userId: 'u1',
@@ -299,7 +299,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(r.dataGrantAccessId, 'only-grant');
   });
 
-  it('[BC11] with several grants and no appCode match, still stores on a pending one', async () => {
+  it('[BC19] with several grants and no appCode match, still stores on a pending one', async () => {
     const capture = {};
     const warnings = [];
     const accesses = [
@@ -325,7 +325,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.deepEqual(warnings[0].ctx.candidateIds, ['done-grant', 'pending-grant']);
   });
 
-  it('[BC12] prefers a grant with no appCode over one scoped to another app', async () => {
+  it('[BC20] prefers a grant with no appCode over one scoped to another app', async () => {
     const capture = {};
     const accesses = [
       grantFor('other-app-grant', { appCode: 'app-a' }),
@@ -344,7 +344,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
   // CMC-writable stream the sender controls it. Dispatch routes this event
   // type by type alone, so the handler is the place that has to care which
   // stream it arrived on.
-  it('[BC13] ignores a back-channel delivered outside :_cmc:inbox', async () => {
+  it('[BC21] ignores a back-channel delivered outside :_cmc:inbox', async () => {
     const capture = {};
     const r = await handleIncomingBackChannel({
       userId: 'u1',
@@ -359,7 +359,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(capture.updates.length, 0, 'nothing may be stamped from a non-inbox delivery');
   });
 
-  it('[BC14] accepts a back-channel delivered on :_cmc:inbox', async () => {
+  it('[BC22] accepts a back-channel delivered on :_cmc:inbox', async () => {
     const capture = {};
     const r = await handleIncomingBackChannel({
       userId: 'u1',

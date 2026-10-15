@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — two-user handshake integration tests.
  *
- * [CMCHS] covers the full cross-user CMC flow against the in-process
+ * [CMCHI] covers the full cross-user CMC flow against the in-process
  * api-server with a real PostgreSQL (or SQLite) backend:
  *   - request → accept → back-channel handshake (CN12).
  *   - chat round-trip after handshake (CN13).
@@ -76,7 +76,7 @@ async function pollStreamFor (path, token, streamId, type, predicate) {
   throw new Error('poll timeout: ' + type + ' on ' + streamId + ' via ' + path);
 }
 
-describe('[CMCHS] cmc two-user handshake (in-process integration)', function () {
+describe('[CMCHI] cmc two-user handshake (in-process integration)', function () {
   this.timeout(60_000);
 
   let alice, bob;          // { username, token, streamsPath, eventsPath, accessesPath }
@@ -126,7 +126,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     return actor;
   }
 
-  describe('[CMCHS-OK] full request → accept → back-channel handshake', function () {
+  describe('[CMCHI-OK] full request → accept → back-channel handshake', function () {
     it('[CN12] alice issues request, bob accepts, both inboxes see counterpart\'s message', async function () {
       const triggerStreamId = ':_cmc:apps:my-app:study-1';
 
@@ -573,7 +573,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
   describe('[CMCHS-SU] scope-update local-apply + peer notify', function () {
     // Unit-level coverage: handleSystemScopeUpdate has [HS22]-[HS28b]
-    // unit tests; accessesUpdateHook has [AU01]-[AU10]. The integration
+    // unit tests; accessesUpdateHook has [AU45]-[AU48] and [AU05]-[AU10]. The integration
     // test here fires the actual events.create → dispatch loop end-to-end
     // through the api-server + plugin to catch wiring regressions (e.g.
     // dispatch switch missing the type, or the local-apply suppression
@@ -659,7 +659,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     });
   });
 
-  describe('[CMCHS-SR] collector scope request answered by the user', function () {
+  describe('[CMCHI-SR] collector scope request answered by the user', function () {
     let h;
     let bobDataGrantId;
 
@@ -1044,7 +1044,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // blocking new-doctor onboarding via app-web-auth-3 and bridge flows.
     // The fix in createDataStructureFromPermissions skips the auto-create
     // step for `:_cmc:*` stream-ids (the CMC plugin owns provisioning).
-    it('[AP01] creates an app access whose permissions reference :_cmc:* stream-ids', async function () {
+    it('[CAP01] creates an app access whose permissions reference :_cmc:* stream-ids', async function () {
       const res = await coreRequest.post(alice.accessesPath)
         .set('Authorization', alice.token)
         .send({
@@ -1062,13 +1062,13 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(grantedStreamIds.includes(':_cmc:inbox'));
     });
 
-    it('[AP02] creates an access mixing local + :_cmc:* perms in one call', async function () {
+    it('[CAP02] creates an access mixing local + :_cmc:* perms in one call', async function () {
       // Mirrors the doctor-dashboard / app-web-auth-3 onboarding payload
       // that triggered the regression: a real app permission alongside two
       // CMC ones in a single accesses.create.
       const localStreamId = 'app-ap02-' + cuid().slice(-8);
       await ensureStream(alice.streamsPath, alice.token,
-        { id: localStreamId, parentId: null, name: 'App AP02' });
+        { id: localStreamId, parentId: null, name: 'App CAP02' });
       const res = await coreRequest.post(alice.accessesPath)
         .set('Authorization', alice.token)
         .send({
@@ -1083,7 +1083,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     });
 
-    it('[AP03] still rejects truly invalid local stream-ids (regex un-touched for non-CMC)', async function () {
+    it('[CAP03] still rejects truly invalid local stream-ids (regex un-touched for non-CMC)', async function () {
       // Pin that the fix narrowly skips only the `:_cmc:*` namespace.
       // A bare local stream-id that breaks `^[a-z0-9-]{1,100}` (uppercase)
       // must still be rejected with the same invalid-request-structure
@@ -1128,7 +1128,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // intended outcome); if it didn't, the create succeeds 201 (test
     // fails — hook regressed).
 
-    it('[PA01] accesses.create with :_cmc:apps:<new-app> perm auto-provisions the leaf', async function () {
+    it('[PA05] accesses.create with :_cmc:apps:<new-app> perm auto-provisions the leaf', async function () {
       const appCode = 'pa01-' + cuid().slice(-6);
       const leafStreamId = ':_cmc:apps:' + appCode;
 
@@ -1152,7 +1152,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'leaf should already exist after accesses.create; got ' + JSON.stringify(verify.body));
     });
 
-    it('[PA02] accesses.create with an already-existing leaf perm succeeds (idempotent)', async function () {
+    it('[PA06] accesses.create with an already-existing leaf perm succeeds (idempotent)', async function () {
       // :_cmc:apps:my-app was pre-provisioned by makeActor.
       const res = await coreRequest.post(alice.accessesPath)
         .set('Authorization', alice.token)
@@ -1166,7 +1166,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     });
 
-    it('[PA03] accesses.update that ADDS a per-app perm provisions the new leaf', async function () {
+    it('[PA07] accesses.update that ADDS a per-app perm provisions the new leaf', async function () {
       // Start with an access that has no per-app perm.
       const createRes = await coreRequest.post(alice.accessesPath)
         .set('Authorization', alice.token)
@@ -3031,7 +3031,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       });
     }
 
-    it('[CN60] the requester down: the revoke completes locally and queues the notice; once the requester is back, the loop delivers it to their inbox', async function () {
+    it('[CN85] the requester down: the revoke completes locally and queues the notice; once the requester is back, the loop delivers it to their inbox', async function () {
       const { getMall } = require('mall');
       const mall = await getMall();
       const h = await runFreshHandshake('study-rq-a', 'rq-app-a');
@@ -3041,7 +3041,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       try {
         const revRes = await coreRequest.post(bob.eventsPath)
           .set('Authorization', bob.token)
-          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN60 revoke during an outage' } } });
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN85 revoke during an outage' } } });
         assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
         trigger = await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
       } finally {
@@ -3081,7 +3081,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.equal(revokes[0].content.appCode, 'rq-app-a');
     });
 
-    it('[CN62] a notice that lands after the parties re-established the relationship under the same scope leaves the new one standing on both sides', async function () {
+    it('[CN86] a notice that lands after the parties re-established the relationship under the same scope leaves the new one standing on both sides', async function () {
       // The requester never learnt of the revoke (outage), so it still holds
       // its relationship access for the accepter; a new invite under the same
       // scope, accepted, heals that access in place (same token). The late
@@ -3093,7 +3093,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const outage = outageOf(alice.username);
       try {
         const revRes = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token)
-          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: firstGrant.id, reason: { en: 'CN62 revoke during an outage' } } });
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: firstGrant.id, reason: { en: 'CN86 revoke during an outage' } } });
         assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
         const trigger = await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
         assert.equal(trigger.content.deliveryQueued, true, JSON.stringify(trigger.content));
@@ -3135,7 +3135,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok(!(bobSide.body.accesses || []).some((a) => a.id === firstGrant.id), 'the revoked grant is gone');
     });
 
-    it('[CN61] the requester never back: the notice is failed-permanent after the last attempt, the record keeps the host without the token', async function () {
+    it('[CN87] the requester never back: the notice is failed-permanent after the last attempt, the record keeps the host without the token', async function () {
       const { getMall } = require('mall');
       const mall = await getMall();
       const h = await runFreshHandshake('study-rq-b', 'rq-app-b');
@@ -3144,7 +3144,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       try {
         const revRes = await coreRequest.post(bob.eventsPath)
           .set('Authorization', bob.token)
-          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN61 revoke, requester gone' } } });
+          .send({ streamIds: [h.bobCollectorStreamId], type: 'consent/revoke-cmc', content: { accessId: dataGrant.id, reason: { en: 'CN87 revoke, requester gone' } } });
         assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
         await pollTriggerCompleted(bob, h.bobCollectorStreamId, revRes.body.event.id);
         const mine = (await queuedNotices(mall, bob.username)).find((e) => e.content.delivery.body?.content?.accessId === dataGrant.id);
@@ -3190,7 +3190,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       return await coreRequest.get(bob.eventsPath).set('Authorization', token).query({ streams, limit: 100 });
     }
 
-    it('[CN70] an offer asking the accepter\'s :_cmc:inbox (every grant endpoint they received) is refused at write', async function () {
+    it('[CN88] an offer asking the accepter\'s :_cmc:inbox (every grant endpoint they received) is refused at write', async function () {
       await ensureStream(alice.streamsPath, alice.token, { id: ':_cmc:apps:guard-app-a', parentId: ':_cmc:apps', name: 'guard-app-a' });
       for (const streamId of [':_cmc:inbox', ':_cmc:_internal:retries', ':_cmc:apps:guard-app-a:s:chats:bob--x-pryv-me']) {
         const res = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
@@ -3244,7 +3244,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.equal(done.content.status, 'completed');
     });
 
-    it('[CN73] a deleted relationship access keeps no credential in its deletion record nor in its history rows, at rest, and no token', async function () {
+    it('[CN89] a deleted relationship access keeps no credential in its deletion record nor in its history rows, at rest, and no token', async function () {
       const { getStorageLayer } = require('storage');
       const storageLayer = await getStorageLayer();
       const h = await runFreshHandshake('study-guard-d', 'guard-app-d');
@@ -3277,7 +3277,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.ok((wire.body.accessDeletions || []).some((d) => d.id.split(':')[0] === base), 'still listed with includeDeletions');
     });
 
-    it('[CN74] an open link is closed from its scope even after a member deleted the invite event: the server-written offer copy names the scope', async function () {
+    it('[CN90] an open link is closed from its scope even after a member deleted the invite event: the server-written offer copy names the scope', async function () {
       const h = await runFreshHandshake('study-guard-e', 'guard-app-e', { mode: 'open-link' });
       for (let i = 0; i < 2; i++) {
         const d = await coreRequest.delete(alice.eventsPath + '/' + h.requestEventId).set('Authorization', alice.token);
@@ -3437,7 +3437,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       return { h, dataGrant, child };
     }
 
-    it('[CN60] the accepter withdraws (consent/revoke-cmc): the sub-access dies with the grant', async function () {
+    it('[CN91] the accepter withdraws (consent/revoke-cmc): the sub-access dies with the grant', async function () {
       const { h, dataGrant, child } = await grantWithSubAccess('study-ag-a', 'ag-app-a');
 
       const revRes = await coreRequest.post(bob.eventsPath)
@@ -3445,16 +3445,16 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         .send({
           streamIds: [h.bobCollectorStreamId],
           type: 'consent/revoke-cmc',
-          content: { accessId: dataGrant.id, reason: { en: 'CN60 accepter withdraw' } },
+          content: { accessId: dataGrant.id, reason: { en: 'CN91 accepter withdraw' } },
         });
       assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
 
-      await pollTokenDead(bob, child.token, 'CN60');
+      await pollTokenDead(bob, child.token, 'CN91');
       assert.strictEqual(await accessExists(bob, dataGrant.id), false, 'the grant is gone');
       assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
     });
 
-    it('[CN61] the requester withdraws: the revoke received by the accepter ends the sub-access too', async function () {
+    it('[CN92] the requester withdraws: the revoke received by the accepter ends the sub-access too', async function () {
       const { h, dataGrant, child } = await grantWithSubAccess('study-ag-b', 'ag-app-b');
       const backChannel = await backChannelFor(alice, h.triggerStreamId);
 
@@ -3463,16 +3463,16 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         .send({
           streamIds: [h.aliceCollectorStreamId],
           type: 'consent/revoke-cmc',
-          content: { accessId: backChannel.id, reason: { en: 'CN61 requester withdraw' } },
+          content: { accessId: backChannel.id, reason: { en: 'CN92 requester withdraw' } },
         });
       assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
 
-      await pollTokenDead(bob, child.token, 'CN61');
+      await pollTokenDead(bob, child.token, 'CN92');
       assert.strictEqual(await accessExists(bob, dataGrant.id), false, 'the grant is gone');
       assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
     });
 
-    it('[CN62] accesses.delete of the grant takes a sub-access created under a caller id with it', async function () {
+    it('[CN93] accesses.delete of the grant takes a sub-access created under a caller id with it', async function () {
       const { dataGrant, child } = await grantWithSubAccess('study-ag-c', 'ag-app-c', 'caller-cn62');
 
       // The grant lists what it created, caller id or not.
@@ -3486,11 +3486,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
       assert.deepStrictEqual(delRes.body.relatedDeletions, [{ id: child.id }]);
 
-      assert.strictEqual(await tokenLivesOn(bob, child.token), false, 'CN62: the sub-access token is dead');
+      assert.strictEqual(await tokenLivesOn(bob, child.token), false, 'CN93: the sub-access token is dead');
       assert.strictEqual(await accessExists(bob, child.id), false, 'the sub-access is gone');
     });
 
-    it('[CN63] a sub-access created under a caller id, deleted by the grant, is among the grant\'s deletions', async function () {
+    it('[CN94] a sub-access created under a caller id, deleted by the grant, is among the grant\'s deletions', async function () {
       const { dataGrant, child } = await grantWithSubAccess('study-ag-d', 'ag-app-d', 'caller-cn63');
 
       const delRes = await coreRequest.delete(bob.accessesPath + '/' + child.id)

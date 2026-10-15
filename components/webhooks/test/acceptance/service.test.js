@@ -28,7 +28,7 @@ const HttpServer = require('business/test/acceptance/webhooks/support/httpServer
 
 const BOOT_MESSAGE = require('../../src/messages.ts').BOOT_MESSAGE;
 
-describe('[WH01] webhooks', function () {
+describe('[WSV01] webhooks', function () {
   let user, username,
     streamId, appAccessId, appAccessToken,
     webhook, webhook2, webhookId,
@@ -68,8 +68,8 @@ describe('[WH01] webhooks', function () {
     webhooksApp.stop();
   });
 
-  describe('[WH02] when loading Webhooks on startup', function () {
-    describe('[WH03] when booting the webhooks application', function () {
+  describe('[WSV02] when loading Webhooks on startup', function () {
+    describe('[WSV03] when booting the webhooks application', function () {
       before(function () {
         username = cuid();
         streamId = cuid();
@@ -135,8 +135,8 @@ describe('[WH01] webhooks', function () {
       });
     });
 
-    describe('[WH04] when creating an event in a Webhook scope', function () {
-      describe('[WH05] when the notifications server is running', function () {
+    describe('[WSV04] when creating an event in a Webhook scope', function () {
+      describe('[WSV05] when the notifications server is running', function () {
         before(async function () {
           notificationsServer = new HttpServer(postPath, 200);
           await notificationsServer.listen(port);
@@ -212,7 +212,7 @@ describe('[WH01] webhooks', function () {
   });
 
   describe('[BBB] when creating a Webhook through api-server', function () {
-    describe('[WH06] when the notifications server is running returning 400', function () {
+    describe('[WSV06] when the notifications server is running returning 400', function () {
       before(async function () {
         webhooksApp = new WebhooksApp();
         await webhooksApp.setup();
@@ -336,7 +336,7 @@ describe('[WH01] webhooks', function () {
     });
   });
 
-  describe('[WH07] when there are running webhooks', function () {
+  describe('[WSV07] when there are running webhooks', function () {
     before(function () {
       username = cuid();
       appAccessId = cuid();
@@ -379,7 +379,7 @@ describe('[WH01] webhooks', function () {
       }));
     });
 
-    describe('[WH08] when deleting a webhook through API server', function () {
+    describe('[WSV08] when deleting a webhook through API server', function () {
       before(async function () {
         await apiServer.request()
           .delete(`/${username}/webhooks/${webhookId}`)

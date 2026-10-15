@@ -43,19 +43,19 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     });
   });
 
-  it('[MA01] update passes the access token to the invalidation callback', async () => {
+  it('[MAA01] update passes the access token to the invalidation callback', async () => {
     const after = await adapter.update('user-1', { id: 'acc-1', update: { permissions: [{ streamId: 'a', level: 'read' }] } });
     assert.equal(after.id, 'acc-1');
     assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'acc-1', accessToken: 'tok-1' }]);
   });
 
-  it('[MA02] delete captures the token BEFORE removal and passes it along', async () => {
+  it('[MAA02] delete captures the token BEFORE removal and passes it along', async () => {
     await adapter.delete('user-1', { id: 'acc-1' });
     assert.equal(rows['acc-1'], undefined, 'row removed');
     assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'acc-1', accessToken: 'tok-1' }]);
   });
 
-  it('[MA03] invalidation still fires (id-only) when the row cannot be re-read', async () => {
+  it('[MAA03] invalidation still fires (id-only) when the row cannot be re-read', async () => {
     // rebuild without findOne
     const storage = fakeStorageAccesses(rows);
     delete storage.findOne;
@@ -73,7 +73,7 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     assert.equal(invalidations[0].accessToken, undefined);
   });
 
-  it('[MA05] a failing re-read after a committed update still invalidates, then reports the error', async () => {
+  it('[MAA05] a failing re-read after a committed update still invalidates, then reports the error', async () => {
     const storage = fakeStorageAccesses(rows);
     storage.findOne = (userOrId, query, options, cb) => cb(new Error('re-read failed'));
     adapter = createMallAccessesAdapter({
@@ -89,7 +89,7 @@ describe('[MAAD] cmc mall-accesses adapter cache invalidation', () => {
     assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'acc-1', accessToken: undefined }]);
   });
 
-  it('[MA04] getOne reads one access by id with its apiEndpoint, null when absent', async () => {
+  it('[MAA04] getOne reads one access by id with its apiEndpoint, null when absent', async () => {
     const one = await adapter.getOne('user-1', { id: 'acc-1' });
     assert.equal(one.id, 'acc-1');
     assert.equal(one.apiEndpoint, 'https://tok-1@u1.test/');
@@ -135,7 +135,7 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     });
   });
 
-  it('[MA10] deleting an app access removes the live accesses it manages, with or without a caller id, before itself', async () => {
+  it('[MAA10] deleting an app access removes the live accesses it manages, with or without a caller id, before itself', async () => {
     const res = await adapter.delete('user-1', { id: 'grant' });
     assert.deepEqual(removed, ['child-a', 'child-b', 'grant']);
     assert.equal(rows['child-a'], undefined);
@@ -144,14 +144,14 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     assert.deepEqual(res, { id: 'grant', relatedDeletions: [{ id: 'child-a' }, { id: 'child-b' }] });
   });
 
-  it('[MA11] an expired managed access and the accesses of other creators are left alone', async () => {
+  it('[MAA11] an expired managed access and the accesses of other creators are left alone', async () => {
     await adapter.delete('user-1', { id: 'grant' });
     assert.ok(rows['child-x'] != null, 'the expired one stays (it opens nothing)');
     assert.ok(rows.other != null, 'another creator\'s access stays');
     assert.ok(rows['of-pat'] != null && rows.pat != null);
   });
 
-  it('[MA12] every removed access is invalidated with its own token', async () => {
+  it('[MAA12] every removed access is invalidated with its own token', async () => {
     await adapter.delete('user-1', { id: 'grant' });
     assert.deepEqual(invalidations, [
       { userId: 'user-1', accessId: 'child-a', accessToken: 'tok-a' },
@@ -160,7 +160,7 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     ]);
   });
 
-  it('[MA17] with the route deletion wired, delete goes through it and removes no row itself', async () => {
+  it('[MAA17] with the route deletion wired, delete goes through it and removes no row itself', async () => {
     const calls = [];
     const storage = fakeStorageAccesses(rows);
     storage.removeOne = (userOrId, query, cb) => { removed.push(query.id); cb(null); };
@@ -176,7 +176,7 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     assert.deepEqual(removed, [], 'the storage row is the route deletion\'s business');
   });
 
-  it('[MA13] deleting a personal access cascades to nothing', async () => {
+  it('[MAA13] deleting a personal access cascades to nothing', async () => {
     const res = await adapter.delete('user-1', { id: 'pat' });
     assert.deepEqual(removed, ['pat']);
     assert.ok(rows.grant != null && rows['of-pat'] != null, 'what the personal access created stays');
@@ -203,7 +203,7 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     assert.deepEqual(invalidations, [{ userId: 'user-1', accessId: 'child-a', accessToken: 'tok-a' }]);
   });
 
-  it('[MA15] a row that cannot be read is not deleted: the call rejects and nothing is removed', async () => {
+  it('[MAA15] a row that cannot be read is not deleted: the call rejects and nothing is removed', async () => {
     const storage = fakeStorageAccesses(rows);
     storage.findOne = (userOrId, query, options, cb) => cb(new Error('read failed'));
     storage.removeOne = (userOrId, query, cb) => { removed.push(query.id); cb(null); };
@@ -219,7 +219,7 @@ describe('[MAAC] cmc mall-accesses adapter delete cascade', () => {
     assert.ok(rows.grant != null && rows['child-a'] != null && rows['child-b'] != null);
   });
 
-  it('[MA16] an access created through the grant while it was being removed is removed by the final pass', async () => {
+  it('[MAA16] an access created through the grant while it was being removed is removed by the final pass', async () => {
     const storage = fakeStorageAccesses(rows);
     storage.removeOne = (userOrId, query, cb) => {
       removed.push(query.id);

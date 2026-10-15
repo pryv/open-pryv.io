@@ -19,26 +19,26 @@ const C = require('../src/constants.ts');
 
 describe('[CMCCONST] cmc/constants', () => {
   describe('[CMCCONST-NS] namespace classification', () => {
-    it('[CC01] isCmcStreamId true for every reserved parent', () => {
+    it('[CCT01] isCmcStreamId true for every reserved parent', () => {
       for (const id of C.RESERVED_PARENT_STREAM_IDS) {
         assert.ok(C.isCmcStreamId(id), 'expected isCmcStreamId(' + id + ') === true');
       }
     });
 
-    it('[CC02] isCmcStreamId true for arbitrary children under :_cmc:', () => {
+    it('[CCT02] isCmcStreamId true for arbitrary children under :_cmc:', () => {
       assert.ok(C.isCmcStreamId(':_cmc:apps:my-app:study'));
       assert.ok(C.isCmcStreamId(':_cmc:apps:my-app:chats:alice--example-com'));
       assert.ok(C.isCmcStreamId(':_cmc:_internal:offer:abc123'));
     });
 
-    it('[CC03] isCmcStreamId false for unrelated streams', () => {
+    it('[CCT03] isCmcStreamId false for unrelated streams', () => {
       assert.equal(C.isCmcStreamId(':_system:account'), false);
       assert.equal(C.isCmcStreamId('cmc:inbox'), false); // wrong prefix
       assert.equal(C.isCmcStreamId('user-created'), false);
       assert.equal(C.isCmcStreamId(':_cmc'), true); // bare root variant accepted
     });
 
-    it('[CC04] isAppNestedPluginStream matches chats / collectors anywhere under :_cmc:apps:', () => {
+    it('[CCT04] isAppNestedPluginStream matches chats / collectors anywhere under :_cmc:apps:', () => {
       // Flat under app
       assert.ok(C.isAppNestedPluginStream(':_cmc:apps:my-app:chats'));
       assert.ok(C.isAppNestedPluginStream(':_cmc:apps:my-app:chats:alice--example-com'));
@@ -50,7 +50,7 @@ describe('[CMCCONST] cmc/constants', () => {
       assert.ok(C.isAppNestedPluginStream(':_cmc:apps:my-app:study-A:collectors:alice--example-com'));
     });
 
-    it('[CC05] isAppNestedPluginStream false for non-matching paths', () => {
+    it('[CCT05] isAppNestedPluginStream false for non-matching paths', () => {
       assert.equal(C.isAppNestedPluginStream(':_cmc:apps:my-app'), false);
       assert.equal(C.isAppNestedPluginStream(':_cmc:apps:my-app:study-A'), false);
       // Different segment name that contains "chats" as a substring
@@ -58,7 +58,7 @@ describe('[CMCCONST] cmc/constants', () => {
       assert.equal(C.isAppNestedPluginStream(':_cmc:inbox'), false);
     });
 
-    it('[CC06] isUserCreatableStreamId allows arbitrary children under :_cmc:apps: except chats/collectors', () => {
+    it('[CCT06] isUserCreatableStreamId allows arbitrary children under :_cmc:apps: except chats/collectors', () => {
       assert.ok(C.isUserCreatableStreamId(':_cmc:apps:my-app'));
       assert.ok(C.isUserCreatableStreamId(':_cmc:apps:my-app:study-A'));
       assert.ok(C.isUserCreatableStreamId(':_cmc:apps:my-app:study-A:notes'));
@@ -71,7 +71,7 @@ describe('[CMCCONST] cmc/constants', () => {
       assert.equal(C.isUserCreatableStreamId(':_cmc:apps'), false); // the parent itself
     });
 
-    it('[CC07] isPluginManagedStreamId is the complement of isUserCreatableStreamId inside :_cmc:', () => {
+    it('[CCT07] isPluginManagedStreamId is the complement of isUserCreatableStreamId inside :_cmc:', () => {
       const pluginManaged = [
         ':_cmc:',
         ':_cmc:inbox',
@@ -98,13 +98,13 @@ describe('[CMCCONST] cmc/constants', () => {
   });
 
   describe('[CMCCONST-APP] getAppCode', () => {
-    it('[CC08] extracts the app-code segment for any :_cmc:apps:<app-code> id', () => {
+    it('[CCT08] extracts the app-code segment for any :_cmc:apps:<app-code> id', () => {
       assert.equal(C.getAppCode(':_cmc:apps:my-app'), 'my-app');
       assert.equal(C.getAppCode(':_cmc:apps:my-app:study-A'), 'my-app');
       assert.equal(C.getAppCode(':_cmc:apps:my-app:study-A:chats:alice--example-com'), 'my-app');
     });
 
-    it('[CC09] returns null for ids outside :_cmc:apps:', () => {
+    it('[CCT09] returns null for ids outside :_cmc:apps:', () => {
       assert.equal(C.getAppCode(':_cmc:inbox'), null);
       assert.equal(C.getAppCode('fertility'), null);
       assert.equal(C.getAppCode(':_cmc:apps'), null);
@@ -112,7 +112,7 @@ describe('[CMCCONST] cmc/constants', () => {
   });
 
   describe('[CMCCONST-BUILD] stream-id builders', () => {
-    it('[CC10] chatsParentUnder + chatStreamUnder append :chats / :chats:<slug>', () => {
+    it('[CCT10] chatsParentUnder + chatStreamUnder append :chats / :chats:<slug>', () => {
       const base = ':_cmc:apps:my-app:study-A';
       assert.equal(C.chatsParentUnder(base), ':_cmc:apps:my-app:study-A:chats');
       assert.equal(
@@ -121,7 +121,7 @@ describe('[CMCCONST] cmc/constants', () => {
       );
     });
 
-    it('[CC11] collectorsParentUnder + collectorStreamUnder append :collectors / :collectors:<slug>', () => {
+    it('[CCT11] collectorsParentUnder + collectorStreamUnder append :collectors / :collectors:<slug>', () => {
       const base = ':_cmc:apps:my-app';
       assert.equal(C.collectorsParentUnder(base), ':_cmc:apps:my-app:collectors');
       assert.equal(
@@ -130,7 +130,7 @@ describe('[CMCCONST] cmc/constants', () => {
       );
     });
 
-    it('[CC12] offerStreamIdFor / responsesStreamIdFor build per-capability stream-ids', () => {
+    it('[CCT12] offerStreamIdFor / responsesStreamIdFor build per-capability stream-ids', () => {
       assert.equal(C.offerStreamIdFor('abc123'), ':_cmc:_internal:offer:abc123');
       assert.equal(C.responsesStreamIdFor('abc123'), ':_cmc:_internal:responses:abc123');
     });
@@ -174,7 +174,7 @@ describe('[CMCCONST] cmc/constants', () => {
   });
 
   describe('[CMCCONST-RESERVED] RESERVED_PARENT_STREAM_IDS', () => {
-    it('[CC13] has exactly the six reserved parents', () => {
+    it('[CCT13] has exactly the six reserved parents', () => {
       assert.deepEqual(C.RESERVED_PARENT_STREAM_IDS, [
         ':_cmc:',
         ':_cmc:inbox',

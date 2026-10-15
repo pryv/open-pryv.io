@@ -661,7 +661,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       assert.ok(!JSON.stringify(rows[0][1].value).includes('"alice"'));
     });
 
-    it('[OPI4] a row written before the change (stored username) is ignored in favour of the resolved one', async () => {
+    it('[OPI11] a row written before the change (stored username) is ignored in favour of the resolved one', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-PI4', { username: 'alice-stale' });
       const calls = [];
@@ -677,7 +677,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       assert.ok(!('username' in refresh.value), 'the stale username is not carried into the refresh row');
     });
 
-    it('[OPI5] a user no longer on this core → invalid_grant, nothing read or revoked, code consumed', async () => {
+    it('[OPI12] a user no longer on this core → invalid_grant, nothing read or revoked, code consumed', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-PI5');
       const touched = [];

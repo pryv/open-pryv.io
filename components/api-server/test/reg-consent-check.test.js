@@ -61,7 +61,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
 
   const APP = { storageLayer: {}, getCustomAuthFunction: () => null };
 
-  it('[RC01] must read access-info on the core the PLATFORM names, never a caller-supplied host', async () => {
+  it('[RCC01] must read access-info on the core the PLATFORM names, never a caller-supplied host', async () => {
     const fetchFn = accessInfoFetch(200, {
       id: 'acc-1',
       type: 'app',
@@ -84,7 +84,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     // otherwise this grant would have read as wider than the offer.
   });
 
-  it('[RC02] must not call out at all when the core has no usable url', async () => {
+  it('[RCC02] must not call out at all when the core has no usable url', async () => {
     // `coreIdToUrl` answers "null/" when it has no cached row, no dns
     // domain and no configured core url. That string must never reach fetch.
     for (const unusable of ['null/', '', 'not a url', 'file:///etc/passwd']) {
@@ -100,7 +100,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     }
   });
 
-  it('[RC03] must tell a rejected token apart from a core it could not reach', async () => {
+  it('[RCC03] must tell a rejected token apart from a core it could not reach', async () => {
     // The page's fault: the token is no good. 400 territory.
     for (const status of [401, 403]) {
       const outcome = await checkAcceptedGrant(
@@ -143,7 +143,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     }
   });
 
-  it('[RC04] must treat a throwing or timing-out fetch as unavailable, never as a pass', async () => {
+  it('[RCC04] must treat a throwing or timing-out fetch as unavailable, never as a pass', async () => {
     const throwing = async () => { throw new Error('connect ETIMEDOUT'); };
     const outcome = await checkAcceptedGrant(
       { app: APP, username: 'alice', token: 'tok-1', consentForm: CONSENT_FORM },
@@ -153,7 +153,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     assert.strictEqual(outcome.reason, 'core-unreachable');
   });
 
-  it('[RC05] must apply the same grant rule to a remote access as to a local one', async () => {
+  it('[RCC05] must apply the same grant rule to a remote access as to a local one', async () => {
     const missingMandatory = accessInfoFetch(200, {
       id: 'acc-2',
       type: 'app',
@@ -196,7 +196,7 @@ describe('[RCCK] auth-request consent check (remote arm)', () => {
     assert.deepStrictEqual(outcome, { ok: false, kind: 'grant', reason: 'token-invalid' });
   });
 
-  it('[RC07] an app access granted through a delegation on another core is checked like any app access', async () => {
+  it('[RCC07] an app access granted through a delegation on another core is checked like any app access', async () => {
     // access-info on the controlled account's core also carries the
     // `delegation` block for such an access; the check reads type and
     // permissions only.

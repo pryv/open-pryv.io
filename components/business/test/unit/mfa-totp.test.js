@@ -49,10 +49,10 @@ describe('[TOTP] in-process TOTP/HOTP primitive', function () {
   describe('[TOTPB] Base32 RFC 4648 codec', function () {
     for (const v of vectors.base32.vectors) {
       const unpadded = v.padded.replace(/=+$/, '');
-      it(`[TOTPB] encode(${JSON.stringify(v.plain)}) -> ${JSON.stringify(unpadded)} (unpadded)`, function () {
+      it(`[TOTPBenc] encode(${JSON.stringify(v.plain)}) -> ${JSON.stringify(unpadded)} (unpadded)`, function () {
         assert.strictEqual(base32Encode(Buffer.from(v.plain, 'ascii')), unpadded);
       });
-      it(`[TOTPB] decode round-trips ${JSON.stringify(v.plain)} (padded and unpadded)`, function () {
+      it(`[TOTPBdec] decode round-trips ${JSON.stringify(v.plain)} (padded and unpadded)`, function () {
         assert.strictEqual(base32Decode(v.padded).toString('ascii'), v.plain);
         assert.strictEqual(base32Decode(unpadded).toString('ascii'), v.plain);
       });

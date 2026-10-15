@@ -109,7 +109,7 @@ describe('[ACSF] accesses (personal)', function () {
     await createTestAccesses();
   }
 
-  describe('[AS01] GET /', function () {
+  describe('[APE01] GET /', function () {
     before(resetAccesses);
 
     it('[K5BF] must return all accesses (including personal ones)', async function () {
@@ -126,7 +126,7 @@ describe('[ACSF] accesses (personal)', function () {
     });
   });
 
-  describe('[AS02] POST /', function () {
+  describe('[APE02] POST /', function () {
     beforeEach(resetAccesses);
 
     it('[BU9U] must create a new shared access with the sent data, returning it', async function () {
@@ -481,7 +481,7 @@ describe('[ACSF] accesses (personal)', function () {
     });
   });
 
-  describe('[AS03] PUT /<id>', function () {
+  describe('[APE03] PUT /<id>', function () {
     beforeEach(resetAccesses);
 
     it('[U04A] unknown id returns unknown-resource', async function () {
@@ -498,7 +498,7 @@ describe('[ACSF] accesses (personal)', function () {
     });
   });
 
-  describe('[AS04] DELETE /<id>', function () {
+  describe('[APE04] DELETE /<id>', function () {
     beforeEach(resetAccesses);
 
     it('[S8EK] must delete the shared access', async function () {
@@ -577,7 +577,7 @@ describe('[ACSF] accesses (personal)', function () {
     });
   });
 
-  describe('[AS05] POST /check-app', function () {
+  describe('[APE05] POST /check-app', function () {
     beforeEach(resetAccesses);
 
     function getCheckAppPath () {

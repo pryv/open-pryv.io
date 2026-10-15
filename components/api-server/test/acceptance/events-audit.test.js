@@ -112,7 +112,7 @@ describe('[AUDI] Audit logs events (Pattern C)', () => {
       until);
   }
 
-  describe('[AU01] GET /events', () => {
+  describe('[EA01] GET /events', () => {
     it('[0BK7] must not return null values or trashed=false', async () => {
       // the setup's `trashed: false` read
       const isSetupRead = (e) => e.content?.query?.trashed === 'false';
@@ -153,7 +153,7 @@ describe('[AUDI] Audit logs events (Pattern C)', () => {
     });
   });
 
-  describe('[AU02] audit events via events.get', () => {
+  describe('[EA02] audit events via events.get', () => {
     it('[RV4W] must return audit events with a valid :_audit:-prefixed id field', async () => {
       const res = await coreRequest
         .get(basePath + '/events')

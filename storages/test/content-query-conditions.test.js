@@ -119,7 +119,7 @@ describe('[CQRY] Content-query conditions', () => {
   ];
 
   describe('[CQMR] reference matcher semantics', () => {
-    it('[MR01] strict JSON types: true ≠ 1 ≠ "true", 2 ≠ "2"', () => {
+    it('[CQM01] strict JSON types: true ≠ 1 ≠ "true", 2 ≠ "2"', () => {
       assert.ok(matchesOne({ taken: true }, { path: 'taken', eq: true }));
       assert.ok(!matchesOne({ taken: 1 }, { path: 'taken', eq: true }));
       assert.ok(!matchesOne({ taken: 'true' }, { path: 'taken', eq: true }));
@@ -128,7 +128,7 @@ describe('[CQRY] Content-query conditions', () => {
       assert.ok(!matchesOne({ scope: '2' }, { path: 'scope', eq: 2 }));
     });
 
-    it('[MR02] missing path never matches; explicit null is "present"', () => {
+    it('[CQM02] missing path never matches; explicit null is "present"', () => {
       assert.ok(!matchesOne({}, { path: 'a', eq: 1 }));
       assert.ok(!matchesOne({}, { path: 'a', neq: 1 }));
       assert.ok(matchesOne({}, { path: 'a', exists: false }));
@@ -136,7 +136,7 @@ describe('[CQRY] Content-query conditions', () => {
       assert.ok(matchesOne({ a: null }, { path: 'a', neq: 1 }));
     });
 
-    it('[MR03] root $ addresses scalar content', () => {
+    it('[CQM03] root $ addresses scalar content', () => {
       assert.ok(matchesOne(14.2, { path: '$', gte: 12 }));
       assert.ok(!matchesOne('14.2', { path: '$', gte: 12 }));
       assert.ok(matchesOne('G03DA04', { path: '$', prefix: 'G03' }));
@@ -179,7 +179,7 @@ describe('[CQRY] Content-query conditions', () => {
   });
 
   describe('[CQPG] PostgreSQL SQL generation', () => {
-    it('[PG01] binds every user value as a parameter (no interpolation)', () => {
+    it('[CQP01] binds every user value as a parameter (no interpolation)', () => {
       for (const rawCondition of CONDITION_CATALOGUE) {
         const [condition] = validateAndNormalizeConditions([rawCondition], 'content');
         const params = [];
@@ -192,7 +192,7 @@ describe('[CQRY] Content-query conditions', () => {
       }
     });
 
-    it('[PG02] uses jsonb-domain comparison with type guards', () => {
+    it('[CQP02] uses jsonb-domain comparison with type guards', () => {
       const [condition] = validateAndNormalizeConditions([{ path: 'scope', gte: 2 }], 'content');
       const params = [];
       const { condition: sql } = convertJsonCondition(condition, 1, params);
@@ -201,7 +201,7 @@ describe('[CQRY] Content-query conditions', () => {
       assert.deepStrictEqual(params, [['scope'], 2]);
     });
 
-    it('[PG03] clientData maps to the client_data column and $ to the root', () => {
+    it('[CQP03] clientData maps to the client_data column and $ to the root', () => {
       const [condition] = validateAndNormalizeConditions([{ path: '$', eq: 'x' }], 'clientData');
       const params = [];
       const { condition: sql } = convertJsonCondition(condition, 1, params);

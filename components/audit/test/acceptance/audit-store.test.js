@@ -83,7 +83,7 @@ describe('[ASTE] Audit Streams and Events', function () {
       (events) => rowsOf(events, appAccess) >= 4 && rowsOf(events, anotherAppAccess) >= 1);
   });
 
-  describe('[AS01] streams.get', () => {
+  describe('[AST01] streams.get', () => {
     it('[U2PV] must retrieve access and actions substreams ', async () => {
       const res = await coreRequest
         .get(streamsPath)
@@ -146,7 +146,7 @@ describe('[ASTE] Audit Streams and Events', function () {
     });
   });
 
-  describe('[AS02] events.get', () => {
+  describe('[AST02] events.get', () => {
     it('[TJ8S] must retrieve logs by time range', async () => {
       const res = await coreRequest
         .get(eventsPath)

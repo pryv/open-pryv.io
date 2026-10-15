@@ -78,7 +78,7 @@ const CMC_COUNTERPARTY_ACCESS = {
 
 describe('[CMCAU] cmc/accessesUpdateHook', () => {
   describe('[CMCAU-RUN] post-hook fires for CMC accesses', () => {
-    it('[AU01] writes local audit + delivers to peer on counterparty access update', async () => {
+    it('[AU45] writes local audit + delivers to peer on counterparty access update', async () => {
       const mall = fakeMall();
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       const hook = createAccessesUpdatePostHook({ mall, fetch });
@@ -166,7 +166,7 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
       assert.equal(warned.length, 1);
     });
 
-    it('[AU02] also fires for data-grant access role', async () => {
+    it('[AU46] also fires for data-grant access role', async () => {
       const mall = fakeMall();
       const { fetch } = fakeFetch({ status: 201, body: {} });
       const hook = createAccessesUpdatePostHook({ mall, fetch });
@@ -224,7 +224,7 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
   });
 
   describe('[CMCAU-SKIP] post-hook skips non-CMC + missing-apiendpoint', () => {
-    it('[AU03] skips when access has no clientData.cmc', async () => {
+    it('[AU47] skips when access has no clientData.cmc', async () => {
       const mall = fakeMall();
       const hook = createAccessesUpdatePostHook({ mall, fetch: fakeFetch({}).fetch });
       const r = await hook('u1', undefined, { id: 'a', clientData: {} });
@@ -232,7 +232,7 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
       assert.equal(r.reason, 'not-a-cmc-managed-access');
     });
 
-    it('[AU04] skips when role is not counterparty or data-grant', async () => {
+    it('[AU48] skips when role is not counterparty or data-grant', async () => {
       const mall = fakeMall();
       const hook = createAccessesUpdatePostHook({ mall, fetch: fakeFetch({}).fetch });
       const r = await hook('u1', undefined, {

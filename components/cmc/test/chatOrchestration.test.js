@@ -49,7 +49,7 @@ function fakeMall (accesses) {
 
 describe('[CMCCO] cmc/chatOrchestration', () => {
   describe('[CMCCO-PS] parseChatStreamId', () => {
-    it('[CO01] parses flat-under-app: :_cmc:apps:my-app:chats:alice--example-com', () => {
+    it('[CHO01] parses flat-under-app: :_cmc:apps:my-app:chats:alice--example-com', () => {
       const r = parseChatStreamId(':_cmc:apps:my-app:chats:alice--example-com');
       assert.deepEqual(r, {
         appCode: 'my-app',
@@ -59,7 +59,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       });
     });
 
-    it('[CO02] parses nested-under-path: :_cmc:apps:my-app:study-A:chats:alice--example-com', () => {
+    it('[CHO02] parses nested-under-path: :_cmc:apps:my-app:study-A:chats:alice--example-com', () => {
       const r = parseChatStreamId(':_cmc:apps:my-app:study-A:chats:alice--example-com');
       assert.deepEqual(r, {
         appCode: 'my-app',
@@ -69,21 +69,21 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       });
     });
 
-    it('[CO03] returns null for non-chat ids', () => {
+    it('[CHO03] returns null for non-chat ids', () => {
       assert.equal(parseChatStreamId(':_cmc:apps:my-app:study-A'), null);
       assert.equal(parseChatStreamId(':_cmc:apps:my-app:collectors:alice--example-com'), null);
       assert.equal(parseChatStreamId(':_cmc:inbox'), null);
       assert.equal(parseChatStreamId('fertility'), null);
     });
 
-    it('[CO04] returns null for malformed slugs', () => {
+    it('[CHO04] returns null for malformed slugs', () => {
       assert.equal(parseChatStreamId(':_cmc:apps:my-app:chats:notaslug'), null);
       assert.equal(parseChatStreamId(':_cmc:apps:my-app:chats:Alice--EXAMPLE.com'), null);
     });
   });
 
   describe('[CMCCO-FA] findCounterpartyAccess', () => {
-    it('[CO05] returns the matching counterparty access', async () => {
+    it('[CHO05] returns the matching counterparty access', async () => {
       const accesses = [
         { id: 'a1', clientData: { cmc: { role: 'counterparty', counterparty: { username: 'bob', host: 'other.example' } } } },
         { id: 'a2', clientData: { cmc: { role: 'counterparty', counterparty: { username: 'alice', host: 'example.com' } } } },
@@ -97,7 +97,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       assert.equal(r?.id, 'a2');
     });
 
-    it('[CO06] returns null when no match', async () => {
+    it('[CHO06] returns null when no match', async () => {
       const accesses = [
         { id: 'a1', clientData: { cmc: { role: 'counterparty', counterparty: { username: 'bob', host: 'other.example' } } } },
       ];
@@ -109,7 +109,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       assert.equal(r, null);
     });
 
-    it('[CO07] ignores accesses without cmc.role=counterparty', async () => {
+    it('[CHO07] ignores accesses without cmc.role=counterparty', async () => {
       const accesses = [
         { id: 'a1', clientData: { cmc: { role: 'capability', counterparty: { username: 'alice', host: 'example.com' } } } },
         { id: 'a2', clientData: { cmc: { role: 'something-else' } } },
@@ -125,7 +125,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
   });
 
   describe('[CMCCO-FA-APP] findCounterpartyAccessForApp', () => {
-    it('[CO08] filters by appCode when set on the access', async () => {
+    it('[CHO08] filters by appCode when set on the access', async () => {
       const accesses = [
         { id: 'a1', clientData: { cmc: { role: 'counterparty', appCode: 'study', counterparty: { username: 'alice', host: 'example.com' } } } },
         { id: 'a2', clientData: { cmc: { role: 'counterparty', appCode: 'care', counterparty: { username: 'alice', host: 'example.com' } } } },
@@ -139,7 +139,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       assert.equal(r?.id, 'a2');
     });
 
-    it('[CO09] falls through (returns first match) for accesses without appCode set', async () => {
+    it('[CHO09] falls through (returns first match) for accesses without appCode set', async () => {
       const accesses = [
         { id: 'a1', clientData: { cmc: { role: 'counterparty', counterparty: { username: 'alice', host: 'example.com' } } } },
       ];
@@ -154,7 +154,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
   });
 
   describe('[CMCCO-DC] deliverChatToPeer', () => {
-    it('[CO10] POSTs message/chat-cmc to the remote chat stream with content + from', async () => {
+    it('[CHO10] POSTs message/chat-cmc to the remote chat stream with content + from', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await deliverChatToPeer({
         remoteApiEndpoint: 'https://Tok@peer.example/',
@@ -172,7 +172,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       assert.deepEqual(sent.content.from, { username: 'alice', host: 'my-host.example' });
     });
 
-    it('[CO11] surfaces 4xx as non-retryable', async () => {
+    it('[CHO11] surfaces 4xx as non-retryable', async () => {
       const { fetch } = fakeFetch({ status: 403, body: { error: 'forbidden' } });
       const r = await deliverChatToPeer({
         remoteApiEndpoint: 'https://Tok@peer.example/',

@@ -27,7 +27,7 @@ const server = helpers.dependencies.instanceManager;
 const validation = helpers.validation;
 const testData = helpers.dynData({ prefix: 'perm' });
 
-describe('[ACCP] Access permissions (sequential)', function () {
+describe('[PCAP] Access permissions (sequential)', function () {
   const user = structuredClone(testData.users[0]);
   let request = null;
 
@@ -49,7 +49,7 @@ describe('[ACCP] Access permissions (sequential)', function () {
     await testData.cleanup();
   });
 
-  describe('[AP03] Auth and change tracking', function () {
+  describe('[AP05] Auth and change tracking', function () {
     beforeEach(testData.resetEvents);
 
     const basePath = '/' + user.username + '/events';

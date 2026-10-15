@@ -74,7 +74,7 @@ const CHAT_TRIGGER = {
 
 describe('[CMCHC] cmc/handleChat', () => {
   describe('[CMCHC-OK] handleChat happy path', () => {
-    it('[HC01] resolves counterparty-access and POSTs message/chat-cmc to peer', async () => {
+    it('[HC12] resolves counterparty-access and POSTs message/chat-cmc to peer', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await handleChat({

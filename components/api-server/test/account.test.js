@@ -80,7 +80,7 @@ describe('[ACCO] account', function () {
   // - [PHSB] must return the user's account details
   // - [K5EI] must be forbidden to non-personal accesses
 
-  describe('[AC02] PUT /', function () {
+  describe('[ACT02] PUT /', function () {
     beforeEach(async () => { await resetUsers(); });
 
     it('[0PPV] must modify account details with the sent data',
@@ -140,7 +140,7 @@ describe('[ACCO] account', function () {
     });
   }
 
-  describe('[AC03] storage space monitoring', function () {
+  describe('[ACT03] storage space monitoring', function () {
     before(function (done) {
       async.series([
         testData.resetUsers,
@@ -299,7 +299,7 @@ describe('[ACCO] account', function () {
     }
   });
 
-  describe('[AC04] /change-password', function () {
+  describe('[ACT04] /change-password', function () {
     // `resetUsers()` wipes the access used by `request.login` in the
     // outer [ACCO] `before`. In sequential mode caching:isActive:true
     // (default) masks this — the auth cache keeps the stale token live.
@@ -350,7 +350,7 @@ describe('[ACCO] account', function () {
       before(async () => {
         await resetUsers();
         await server.ensureStartedAsync(settings);
-        // Same rationale as the [AC04] outer before — auth cache may
+        // Same rationale as the [ACT04] outer before — auth cache may
         // hold a stale token after resetUsers. The restart with new
         // settings also resets the in-process server state, so re-login
         // is required for the [APWD] tests below.
@@ -358,7 +358,7 @@ describe('[ACCO] account', function () {
           request.login(user, (err) => err ? reject(err) : resolve()));
       });
 
-      describe('[AC05] Complexity rules:', function () {
+      describe('[ACT05] Complexity rules:', function () {
         it('[1YPT] must return an error if the new password is too short', async () => {
           const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.badTooShort });
           const res = await request.post(path).send(data);
@@ -400,7 +400,7 @@ describe('[ACCO] account', function () {
         });
       });
 
-      describe('[AC06] Reuse rules:', function () {
+      describe('[ACT06] Reuse rules:', function () {
         it('[AFX4] must return an error if the new password is found in the N last passwords used', async () => {
           const passwordsHistory = await setupPasswordHistory(settings.auth.passwordPreventReuseHistoryLength);
           const data = Object.assign({}, baseData, { newPassword: passwordsHistory[0] });
@@ -435,7 +435,7 @@ describe('[ACCO] account', function () {
         }
       });
 
-      describe('[AC07] Age rules:', function () {
+      describe('[ACT07] Age rules:', function () {
         const passwordAgeSettings = _.merge(structuredClone(settings), { auth: { passwordAgeMinDays: 1 } });
 
         it('[J4O6] must return an error if the current password’s age is below the set minimum', async () => {
@@ -476,7 +476,7 @@ describe('[ACCO] account', function () {
     });
   });
 
-  describe('[AC08] /request-password-reset and /reset-password', function () {
+  describe('[ACT08] /request-password-reset and /reset-password', function () {
     beforeEach(async () => {
       await resetUsers();
       // Each test requests a reset for the same account from the same address.

@@ -305,7 +305,7 @@ describe('[SHS] shared secrets', function () {
         'a child of a secretSharing-forbidden access must not regain the capability');
     });
 
-    it('[SHS60] the inherited restriction cannot be stripped by accesses.update', async function () {
+    it('[SHS74] the inherited restriction cannot be stripped by accesses.update', async function () {
       const restricted = await createAppAccess({
         permissions: [
           { streamId: '*', level: 'manage' },
@@ -790,7 +790,7 @@ describe('[SHS] shared secrets', function () {
         'a foreign access must not read the item directly');
     });
 
-    it('[SHS57] naming the namespace ROOT does not hand over everyone\'s secrets', async function () {
+    it('[SHS75] naming the namespace ROOT does not hand over everyone\'s secrets', async function () {
       // The substream check ([SHS28]) is not enough: the root is not a substream,
       // so a `*` grant used to resolve to `read` on it and expansion then walked
       // every child. One request, no key, every secret in the clear.
@@ -814,7 +814,7 @@ describe('[SHS] shared secrets', function () {
       }
     });
 
-    it('[SHS58] a forged shared-secret event is neither creatable nor redeemable', async function () {
+    it('[SHS76] a forged shared-secret event is neither creatable nor redeemable', async function () {
       // Without this, the secretSharing opt-out is decorative: forge the item
       // type in an ordinary stream and the public endpoint serves it.
       const app = await createAppAccess({
@@ -915,7 +915,7 @@ describe('[SHS] shared secrets', function () {
       assert.strictEqual(listed.status, 200, JSON.stringify(listed.body));
     });
 
-    it('[SHS59] events.create into the namespace is refused', async function () {
+    it('[SHS77] events.create into the namespace is refused', async function () {
       const app = await createAppAccess({ permissions: [{ streamId: '*', level: 'manage' }] });
       const res = await coreRequest.post(eventsPath)
         .set('Authorization', app.token)

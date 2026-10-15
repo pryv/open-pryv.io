@@ -375,7 +375,7 @@ describe('[ACUP] accesses.update', function () {
   describe('[ACUP04] soft-deleted handling', function () {
     beforeEach(resetAccesses);
 
-    it('[SD01] update on a soft-deleted access returns unknown-resource', async function () {
+    it('[SD43] update on a soft-deleted access returns unknown-resource', async function () {
       await coreRequest
         .delete(path(sharedAccessId))
         .set('Authorization', personalToken);

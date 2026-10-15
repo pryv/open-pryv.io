@@ -480,7 +480,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(mall.calls.eventsCreated.length, 1);
     });
 
-    it('[HR27] a queue write that fails is reported as a lost notice, never thrown', async () => {
+    it('[HR40] a queue write that fails is reported as a lost notice, never thrown', async () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       mall.events.create = async () => { throw new Error('disk full'); };
       const errors = [];

@@ -282,7 +282,7 @@ describe('[CERTRENEWER] CertRenewer', function () {
   });
 });
 
-describe('[CERTRENEWER] PlatformDBDnsWriter', () => {
+describe('[CERTDNSW] PlatformDBDnsWriter', () => {
   it('setDnsRecord appends to existing TXT values; deleteDnsRecord when last removed', async () => {
     const db = makeFakePlatformDB();
     const writer = new PlatformDBDnsWriter({ platformDB: db, waitMs: 0 });
@@ -319,7 +319,7 @@ describe('[CERTRENEWER] PlatformDBDnsWriter', () => {
   });
 });
 
-describe('[CERTRENEWER] acmeChallengeName()', () => {
+describe('[CERTACN] acmeChallengeName()', () => {
   it('returns the short-form subdomain key (relative to dns.domain)', () => {
     // DnsServer matches on the zone-relative prefix, not the FQDN.
     // All LE DNS-01 challenges for a multi-SAN cert land at the same

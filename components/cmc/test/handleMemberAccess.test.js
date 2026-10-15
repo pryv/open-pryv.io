@@ -137,7 +137,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       });
     }
 
-    it('[MA01] only a membership access may ask: a personal token, a counterparty access or no access get not-member', async () => {
+    it('[HMA01] only a membership access may ask: a personal token, a counterparty access or no access get not-member', async () => {
       for (const membershipAccess of [null, { id: 'p', type: 'personal', isPersonal: () => true }, RELATIONSHIP]) {
         const r = await gate({ membershipAccess });
         assert.equal(r.ok, false);
@@ -145,7 +145,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       }
     });
 
-    it('[MA02] the scope asked must be the trigger stream or under it; the trigger must sit on a scope stream', async () => {
+    it('[HMA02] the scope asked must be the trigger stream or under it; the trigger must sit on a scope stream', async () => {
       let r = await gate({ content: { scopeStreamId: ':_cmc:apps:practice:team-b' } });
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_SCOPE_OUTSIDE_MEMBERSHIP);
       r = await gate({ streamIds: ['notes'] });
@@ -159,7 +159,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(r.target.relationshipAccess.id, 'acc-rel-sub');
     });
 
-    it('[MA03] no relationship with that patient under the scope, or one whose handshake never completed, is relationship-not-found', async () => {
+    it('[HMA03] no relationship with that patient under the scope, or one whose handshake never completed, is relationship-not-found', async () => {
       let r = await gate({ content: { counterparty: { username: 'nobody', host: 'x.example.com' } } });
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND);
       const noEndpoint = { ...RELATIONSHIP, clientData: { cmc: { ...RELATIONSHIP.clientData.cmc, counterparty: PATIENT } } };
@@ -171,7 +171,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND);
     });
 
-    it('[MA04] the permissions default to the offered data streams at read; the channel streams are never delegated', async () => {
+    it('[HMA04] the permissions default to the offered data streams at read; the channel streams are never delegated', async () => {
       const r = await gate();
       assert.equal(r.ok, true, JSON.stringify(r));
       assert.deepEqual(r.target.permissions, [{ streamId: 'vitals', level: 'read' }, { streamId: 'notes', level: 'read' }]);
@@ -180,7 +180,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(r.target.grantApiEndpoint, GRANT_ENDPOINT);
     });
 
-    it('[MA05] permissions above the offer, outside it, on a cmc stream, or with no readable offer are permissions-not-subset', async () => {
+    it('[HMA05] permissions above the offer, outside it, on a cmc stream, or with no readable offer are permissions-not-subset', async () => {
       for (const permissions of [
         [{ streamId: 'notes', level: 'contribute' }],
         [{ streamId: 'vitals', level: 'manage' }],
@@ -198,13 +198,13 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(noOffer.detail.reason, 'offer-not-found');
     });
 
-    it('[MA06] expireAfter must sit within the per-core bounds', async () => {
+    it('[HMA06] expireAfter must sit within the per-core bounds', async () => {
       assert.equal((await gate({ content: { expireAfter: 30 } })).reason, CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE);
       assert.equal((await gate({ content: { expireAfter: 604801 } })).reason, CmcErrorIds.MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE);
       assert.equal((await gate({ content: { expireAfter: 3600 } })).target.expireAfter, 3600);
     });
 
-    it('[MA07] the config reader falls back to the defaults for anything unset or invalid', () => {
+    it('[HMA07] the config reader falls back to the defaults for anything unset or invalid', () => {
       const values = { 'cmc:memberAccess:defaultTtl': 10, 'cmc:memberAccess:maxTtl': -1, 'cmc:memberAccess:allowNameOnly': false };
       const o = memberAccessOptionsFromConfig({ get: (k) => values[k] });
       assert.deepEqual(o, { defaultTtl: 60, minTtl: 60, maxTtl: 604800, allowNameOnly: false }, 'the default is clamped into the bounds');
@@ -214,7 +214,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
   });
 
   describe('[CMCMA-MINT] the mint through the grant', () => {
-    it('[MA10] a first ask mints a stamped child, records it, and answers the endpoint once; the trigger record carries no token', async () => {
+    it('[HMA10] a first ask mints a stamped child, records it, and answers the endpoint once; the trigger record carries no token', async () => {
       const mall = fakeMall();
       const core = fakePatientCore([created201()]);
       const r = await mint(mall, core, {});
@@ -242,7 +242,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.ok(mall.calls.streamsCreated.includes(':_cmc:_internal:members'), 'the ledger stream is ensured');
     });
 
-    it('[MA11] a live record is reused: the child is read by id through the grant and its token re-read, nothing is created', async () => {
+    it('[HMA11] a live record is reused: the child is read by id through the grant and its token re-read, nothing is created', async () => {
       const mall = fakeMall();
       await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
       const core = fakePatientCore([{ status: 200, body: { access: CHILD } }]);
@@ -253,7 +253,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(mall.calls.eventsCreated.length, 1, 'the record is updated in place, not duplicated');
     });
 
-    it('[MA12] a recorded child about to expire, or without the permissions asked, is deleted and a new one minted', async () => {
+    it('[HMA12] a recorded child about to expire, or without the permissions asked, is deleted and a new one minted', async () => {
       for (const stale of [{ ...CHILD, expires: 1_000_000 + 100 }, { ...CHILD, permissions: [{ streamId: 'notes', level: 'read' }] }]) {
         const mall = fakeMall();
         await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
@@ -266,7 +266,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       }
     });
 
-    it('[MA13] a recorded child the patient deleted (404) is marked absent and a new one minted while the grant lasts', async () => {
+    it('[HMA13] a recorded child the patient deleted (404) is marked absent and a new one minted while the grant lasts', async () => {
       const mall = fakeMall();
       await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
       const core = fakePatientCore([{ status: 404, body: { error: { id: 'unknown-resource' } } }, created201({ id: 'child-2' })]);
@@ -278,7 +278,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.deepEqual([all[0].state, all[0].childAccessId], ['live', 'child-2']);
     });
 
-    it('[MA14] an older patient core refusing the stamp gets a second, stampless mint reported name-only; with allowNameOnly off it is a failure', async () => {
+    it('[HMA14] an older patient core refusing the stamp gets a second, stampless mint reported name-only; with allowNameOnly off it is a failure', async () => {
       const refusal = { status: 400, body: { error: { id: 'invalid-operation', data: { id: 'cmc-clientdata-cmc-forbidden' } } } };
       let mall = fakeMall();
       let core = fakePatientCore([refusal, created201()]);
@@ -302,7 +302,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(r.detail.peerErrorId, 'cmc-member-stamp-invalid');
     });
 
-    it('[MA15] the grant is the real bound: a 403 forbidden from the create is permissions-not-subset; a duplicate name is peer-rejected and never answered with a delete', async () => {
+    it('[HMA15] the grant is the real bound: a 403 forbidden from the create is permissions-not-subset; a duplicate name is peer-rejected and never answered with a delete', async () => {
       let core = fakePatientCore([{ status: 403, body: { error: { id: 'forbidden', message: 'insufficient' } } }]);
       let r = await mint(fakeMall(), core, {});
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
@@ -314,7 +314,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(core.calls.length, 1, 'no delete');
     });
 
-    it('[MA16] a 5xx, a network error or a timeout is peer-unreachable; the ledger gets nothing', async () => {
+    it('[HMA16] a 5xx, a network error or a timeout is peer-unreachable; the ledger gets nothing', async () => {
       for (const answer of [{ status: 503, body: null }, new Error('ECONNREFUSED'), Object.assign(new Error('aborted'), { name: 'AbortError' })]) {
         const mall = fakeMall();
         const r = await mint(mall, fakePatientCore([answer]), {});
@@ -324,7 +324,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       }
     });
 
-    it('[MA17] a non-delegable grant (the invite did not ask accessType app) fails before any call', async () => {
+    it('[HMA17] a non-delegable grant (the invite did not ask accessType app) fails before any call', async () => {
       const invite = { ...INVITE, content: { ...INVITE.content, request: { ...INVITE.content.request, accessType: undefined } } };
       const core = fakePatientCore([]);
       const r = await mint(fakeMall({ events: [invite] }), core, {});
@@ -345,7 +345,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       noTokenIn(r, 'the failure');
     });
 
-    it('[MA1B] a stale child whose deletion the patient core does not confirm is never minted over: the record stays live, the ask fails, a later sweep deletes it', async () => {
+    it('[HMA1B] a stale child whose deletion the patient core does not confirm is never minted over: the record stays live, the ask fails, a later sweep deletes it', async () => {
       for (const [answer, reason] of [[{ status: 503, body: null }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE], [{ status: 400, body: { error: { id: 'x' } } }, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED], [new Error('down'), CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE]]) {
         const mall = fakeMall();
         await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
@@ -451,7 +451,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(core.calls.length, 0);
     });
 
-    it('[MA1A] the two calls share one timeout: the second gets what is left of it', async () => {
+    it('[HMA1A] the two calls share one timeout: the second gets what is left of it', async () => {
       const mall = fakeMall();
       await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
       const core = fakePatientCore([{ status: 404, body: {} }, created201()]);

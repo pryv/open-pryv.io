@@ -97,7 +97,7 @@ const ACK_TRIGGER = {
 
 describe('[CMCHS] cmc/handleSystem', () => {
   describe('[CMCHS-PS] parseCollectorStreamId', () => {
-    it('[HS01] parses flat :_cmc:apps:<app>:collectors:<slug>', () => {
+    it('[HS49] parses flat :_cmc:apps:<app>:collectors:<slug>', () => {
       const r = parseCollectorStreamId(':_cmc:apps:my-app:collectors:provider-a--provider-example-org');
       assert.equal(r.appCode, 'my-app');
       assert.equal(r.scopeStreamId, ':_cmc:apps:my-app');

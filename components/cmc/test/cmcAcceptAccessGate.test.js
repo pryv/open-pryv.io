@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — access-mint/widen trigger access-gate tests.
  *
- * [CMCAUTH] covers the events.create middleware that rejects
+ * [CMCAG] covers the events.create middleware that rejects
  * consent/accept-cmc and consent/scope-update-cmc writes when
  * context.access is not personal. (Revoke is access-permission-
  * gated inside handleRevoke via AccessLogic.canDeleteAccess —
@@ -47,7 +47,7 @@ const SHARED = { type: 'shared', isPersonal: () => false };
 const CAPABILITY = { type: 'shared', isPersonal: () => false, clientData: { cmc: { kind: 'capability' } } };
 const COUNTERPARTY = { type: 'shared', isPersonal: () => false, clientData: { cmc: { role: 'counterparty' } } };
 
-describe('[CMCAUTH] cmc/cmcAcceptAccessGate', () => {
+describe('[CMCAG] cmc/cmcAcceptAccessGate', () => {
   it('[CMCAUTH-PT] passes a personal token through for every gated trigger', async () => {
     const errors = fakeErrors();
     const mw = createCmcAcceptAccessGateHook({ errors: errors.factory });
@@ -87,7 +87,7 @@ describe('[CMCAUTH] cmc/cmcAcceptAccessGate', () => {
     assert.equal(err.details.id, 'cmc-accept-requires-personal-token');
   });
 
-  it('[CMCAUTH-SU] rejects scope-update from a non-personal access', async () => {
+  it('[CMCAG-SU] rejects scope-update from a non-personal access', async () => {
     const errors = fakeErrors();
     const mw = createCmcAcceptAccessGateHook({ errors: errors.factory });
     const ctx = {
@@ -100,7 +100,7 @@ describe('[CMCAUTH] cmc/cmcAcceptAccessGate', () => {
     assert.equal(err.details.eventType, 'consent/scope-update-cmc');
   });
 
-  it('[CMCAUTH-RV] passes revoke through this gate regardless of token class', async () => {
+  it('[CMCAG-RV] passes revoke through this gate regardless of token class', async () => {
     // Revoke is access-permission-gated inside handleRevoke (via
     // AccessLogic.canDeleteAccess — honours the `selfRevoke` feature
     // permission), NOT personal-token-gated at events.create. The gate
@@ -118,7 +118,7 @@ describe('[CMCAUTH] cmc/cmcAcceptAccessGate', () => {
     assert.equal(errors.captured.length, 0);
   });
 
-  it('[CMCAUTH-UN] passes through un-gated trigger types regardless of token class', async () => {
+  it('[CMCAG-UN] passes through un-gated trigger types regardless of token class', async () => {
     const errors = fakeErrors();
     const mw = createCmcAcceptAccessGateHook({ errors: errors.factory });
     const unGated = [

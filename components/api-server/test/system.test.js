@@ -395,7 +395,7 @@ describe('[SYER] system (ex-register)', function () {
         });
       });
 
-      it('[RD10] must return a correct 400 error if a user with the same user name already exists',
+      it('[RD13] must return a correct 400 error if a user with the same user name already exists',
         async function () {
           const data = {
             username: testData.users[0].username,

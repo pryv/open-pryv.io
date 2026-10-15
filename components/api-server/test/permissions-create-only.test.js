@@ -178,7 +178,7 @@ describe('[PCRO] permissions create-only level', () => {
     });
   });
 
-  describe('[PC01] Permissions - create-only level', function () {
+  describe('[PCO01] Permissions - create-only level', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/accesses`;
@@ -188,9 +188,9 @@ describe('[PCRO] permissions create-only level', () => {
       return `${basePath}/${id}`;
     }
 
-    describe('[PC02] Accesses', function () {
-      describe('[PC07] GET /', function () {
-        describe('[PC08] when using an access with a "create-only" permissions', function () {
+    describe('[PCO02] Accesses', function () {
+      describe('[PCO07] GET /', function () {
+        describe('[PCO08] when using an access with a "create-only" permissions', function () {
           let accesses;
           before(async function () {
             const res = await coreRequest
@@ -205,8 +205,8 @@ describe('[PCRO] permissions create-only level', () => {
         });
       });
 
-      describe('[PC09] POST /', function () {
-        describe('[PC10] when using an access with a "create-only" permission', function () {
+      describe('[PCO09] POST /', function () {
+        describe('[PCO10] when using an access with a "create-only" permission', function () {
           it('[X4Z1] a masterToken should allow to create an access with a "create-only" permissions', async function () {
             const res = await coreRequest
               .post(basePath)
@@ -352,7 +352,7 @@ describe('[PCRO] permissions create-only level', () => {
         });
       });
 
-      describe('[PC11] PUT /', function () {
+      describe('[PCO11] PUT /', function () {
         it('[1WXJ] should forbid updating accesses', async function () {
           // Shared accesses (incl. create-only) cannot update anything
           // — canUpdateAccess returns false → 403 forbidden.
@@ -368,7 +368,7 @@ describe('[PCRO] permissions create-only level', () => {
         });
       });
 
-      describe('[PC12] DELETE /', function () {
+      describe('[PCO12] DELETE /', function () {
         it('[G6IP] should forbid deleting accesses', async function () {
           const res = await coreRequest
             .del(reqPath(readAccessId))
@@ -379,7 +379,7 @@ describe('[PCRO] permissions create-only level', () => {
     });
   });
 
-  describe('[PC03] Events', function () {
+  describe('[PCO03] Events', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/events`;
@@ -488,7 +488,7 @@ describe('[PCRO] permissions create-only level', () => {
       // because they are covered by the GET above
     });
 
-    describe('[PC04] attachments', function () {
+    describe('[PCO04] attachments', function () {
       let eventId, fileId;
       before(async function () {
         const res = await coreRequest
@@ -534,7 +534,7 @@ describe('[PCRO] permissions create-only level', () => {
         });
       });
 
-      describe('[PC20] DELETE /events/{id}/{fileId}', function () {
+      describe('[PCO20] DELETE /events/{id}/{fileId}', function () {
         it('[GY6M] should be forbidden', async function () {
           const res = await coreRequest
             .delete(reqPath(eventId) + `/${fileId}`)
@@ -545,7 +545,7 @@ describe('[PCRO] permissions create-only level', () => {
     });
   });
 
-  describe('[PC05] Streams', function () {
+  describe('[PCO05] Streams', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/streams`;
@@ -555,7 +555,7 @@ describe('[PCRO] permissions create-only level', () => {
       return `${basePath}/${id}`;
     }
 
-    describe('[PC21] GET /', function () {
+    describe('[PCO21] GET /', function () {
       it('[J12F] should only return streams for which permissions are defined', async function () {
         const res = await coreRequest
           .get(basePath)
@@ -568,7 +568,7 @@ describe('[PCRO] permissions create-only level', () => {
       });
     });
 
-    describe('[PC22] POST /', function () {
+    describe('[PCO22] POST /', function () {
       it('[TFWF] should forbid creating child streams in "create-only" streams', async function () {
         const data = {
           name: charlatan.Lorem.word(),
@@ -582,7 +582,7 @@ describe('[PCRO] permissions create-only level', () => {
       });
     });
 
-    describe('[PC23] PUT /', function () {
+    describe('[PCO23] PUT /', function () {
       it('[PCO8] should forbid updating "create-only" streams', async function () {
         const res = await coreRequest
           .put(reqPath(streamCreateOnlyId))
@@ -592,7 +592,7 @@ describe('[PCRO] permissions create-only level', () => {
       });
     });
 
-    describe('[PC24] DELETE /', function () {
+    describe('[PCO24] DELETE /', function () {
       it('[PCO9] should forbid deleting "create-only" streams', async function () {
         const res = await coreRequest
           .del(reqPath(streamCreateOnlyId))
@@ -602,13 +602,13 @@ describe('[PCRO] permissions create-only level', () => {
     });
   });
 
-  describe('[PC06] Webhooks', function () {
+  describe('[PCO06] Webhooks', function () {
     let basePath;
     before(function () {
       basePath = `/${username}/webhooks`;
     });
 
-    describe('[PC25] CREATE /', function () {
+    describe('[PCO25] CREATE /', function () {
       it('[3AE9] should allow creating webhooks', async function () {
         const res = await coreRequest
           .post(basePath)

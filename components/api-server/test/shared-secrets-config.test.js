@@ -45,13 +45,13 @@ describe('[SHSCFG] shared secrets — configuration', function () {
     await user.session(personalToken);
   });
 
-  it('[SHS61] enabled by default — the feature is inert, not absent', async function () {
+  it('[SHS71] enabled by default — the feature is inert, not absent', async function () {
     const res = await coreRequest.post(secretsPath)
       .set('Authorization', personalToken).send(validBody());
     assert.strictEqual(res.status, 201, JSON.stringify(res.body));
   });
 
-  it('[SHS62] sharedSecrets.enabled:false refuses both creation and redemption', async function () {
+  it('[SHS72] sharedSecrets.enabled:false refuses both creation and redemption', async function () {
     // Mint a live secret first, so we can prove an ALREADY-ISSUED key stops
     // working too — disabling the feature must not leave redeemable keys behind.
     const created = await coreRequest.post(secretsPath)
@@ -77,7 +77,7 @@ describe('[SHSCFG] shared secrets — configuration', function () {
     assert.deepStrictEqual(after.body.secret, { token: 'abc' });
   });
 
-  it('[SHS63] limits are read per request, so an operator can tighten them live', async function () {
+  it('[SHS73] limits are read per request, so an operator can tighten them live', async function () {
     await withInjectedConfig({ sharedSecrets: { maxTtl: 60 } }, async () => {
       const tooLong = await coreRequest.post(secretsPath)
         .set('Authorization', personalToken).send(validBody({ ttl: 300 }));

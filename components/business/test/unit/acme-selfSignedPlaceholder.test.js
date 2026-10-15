@@ -40,7 +40,7 @@ describe('[SSPL] selfSignedPlaceholder', () => {
   });
 
   describe('generate()', () => {
-    it('[SS01] produces a valid PEM cert + key with the requested CN + SAN', () => {
+    it('[SSP01] produces a valid PEM cert + key with the requested CN + SAN', () => {
       const { keyPem, certPem } = generate({
         commonName: 'core-x.example.com',
         altNames: ['core-x.example.com', 'lsc.example.com']
@@ -56,7 +56,7 @@ describe('[SSPL] selfSignedPlaceholder', () => {
       assert.ok(sanValues.includes('lsc.example.com'));
     });
 
-    it('[SS02] cert validity is ~24 hours', () => {
+    it('[SSP02] cert validity is ~24 hours', () => {
       const before = new Date();
       const { certPem } = generate({ commonName: 'short.example.com' });
       const cert = forge.pki.certificateFromPem(certPem);
@@ -67,19 +67,19 @@ describe('[SSPL] selfSignedPlaceholder', () => {
       assert.ok(cert.validity.notBefore.getTime() >= before.getTime() - 1000);
     });
 
-    it('[SS03] throws without a commonName', () => {
+    it('[SSP03] throws without a commonName', () => {
       assert.throws(() => generate({ commonName: '' }), /commonName/);
     });
   });
 
   describe('ensure()', () => {
-    it('[SS10] no-ops when letsEncrypt is disabled', () => {
+    it('[SSP10] no-ops when letsEncrypt is disabled', () => {
       const result = ensure({ config: makeConfig({ 'letsEncrypt:enabled': false }) });
       assert.equal(result.written, false);
       assert.equal(result.reason, 'letsEncrypt-disabled');
     });
 
-    it('[SS11] no-ops when ssl paths are not configured', () => {
+    it('[SSP11] no-ops when ssl paths are not configured', () => {
       const result = ensure({ config: makeConfig({ 'letsEncrypt:enabled': true }) });
       assert.equal(result.written, false);
       assert.equal(result.reason, 'ssl-paths-not-configured');
