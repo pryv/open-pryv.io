@@ -108,6 +108,34 @@ export function describeMailCapability (config: ConfigReader): MailCapability {
 }
 
 /**
+ * True when `services.email` (the object) selects in-process delivery but
+ * names no SMTP host: mail is not configured, so a send is skipped rather than
+ * attempted and reported as a failure. Typical of a fresh install whose
+ * operator has not set up SMTP yet.
+ */
+export function isInProcessSmtpMissing (email: unknown): boolean {
+  if (email == null || typeof email !== 'object') return false;
+  const { method, smtp } = email as { method?: unknown; smtp?: { host?: unknown } | null };
+  if (method !== 'in-process') return false;
+  return isMissingOrSentinel(smtp?.host);
+}
+
+/** The mail classes switched on in `services.email.enabled`. */
+export const MAIL_KINDS = {
+  welcome: 'welcome',
+  resetPassword: 'password-reset',
+  verifyEmail: 'email-verification',
+  mfaChange: 'MFA-change'
+} as const;
+
+export function enabledMailKinds (config: ConfigReader): Array<keyof typeof MAIL_KINDS> {
+  const enabled = config.get('services:email:enabled');
+  if (enabled === false) return [];
+  const switches = (enabled != null && typeof enabled === 'object') ? enabled as Record<string, unknown> : {};
+  return (Object.keys(MAIL_KINDS) as Array<keyof typeof MAIL_KINDS>).filter((kind) => switches[kind] !== false);
+}
+
+/**
  * Whether the account email-verification flow (the mailed link) is live, and
  * why not when it is not. Rules are ordered: the operator switching the feature
  * off is reported as `disabled` even if the rest is also incomplete.

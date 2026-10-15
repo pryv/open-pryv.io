@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { isInProcessSmtpMissing } from 'business/src/emails/mailCapability.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getLogger } = require('@pryv/boiler');
@@ -90,12 +91,15 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
   (async () => {
     const mail = require('mail');
     if (!mail.isActive()) {
+      // No SMTP host: mail is not configured (the boot warns once). The send
+      // is skipped like a switched-off mail class, not reported as a failure.
+      if (isInProcessSmtpMissing(emailSettings)) {
+        logger.debug('Mail not configured (services.email.smtp.host is not set): ' + template + ' mail not sent');
+        return null;
+      }
       const platformDB = require('storages').platformDB;
       if (!platformDB || typeof platformDB.getAllMailTemplates !== 'function') {
         throw errors.unexpectedError('in-process mail: PlatformDB is not initialised — storages.init() must run before any sendmail call.');
-      }
-      if (!emailSettings.smtp || !emailSettings.smtp.host) {
-        throw errors.unexpectedError('in-process mail: services.email.smtp.host is required.');
       }
       await mail.init({
         getAllMailTemplates: platformDB.getAllMailTemplates.bind(platformDB),

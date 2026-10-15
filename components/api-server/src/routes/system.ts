@@ -229,8 +229,9 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const mail = require('mail');
       if (!mail.isActive()) {
         const emailCfg = (config.get('services:email') || {}) as { smtp?: { host?: string }; from?: unknown; defaultLang?: string };
+        // Mail not configured is a state of the core, not an unexpected error.
         if (!emailCfg.smtp || !emailCfg.smtp.host) {
-          return next(errors.unexpectedError('services.email.smtp.host is required for send-test'));
+          return next(errors.apiUnavailable('Mail is not configured: services.email.smtp.host is required for send-test'));
         }
         const platformDB = require('storages').platformDB;
         await mail.init({

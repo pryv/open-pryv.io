@@ -177,6 +177,20 @@ describe('[MAIL] Mailing helper methods', () => {
     });
   });
 
+  it('[ML07] in-process with no SMTP host: the send is skipped, without error', (done) => {
+    const mail = require('mail');
+    mail.close().then(() => {
+      mailing.sendmail({ method: 'in-process', smtp: { host: '' } }, template, recipient, substitutions, lang, (err, res) => {
+        try {
+          assert.strictEqual(err, null);
+          assert.strictEqual(res, null);
+          assert.strictEqual(mail.isActive(), false);
+          done();
+        } catch (e) { done(e); }
+      });
+    }, done);
+  });
+
   describe('[ML05] using in-process', () => {
     const inProcessTemplate = 'welcome-email';
     const mail = require('mail');
