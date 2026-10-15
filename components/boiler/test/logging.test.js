@@ -158,6 +158,43 @@ describe('[BLGM] boiler logging masks credentials', function () {
     }
   });
 
+  it('[BLGM12] a walk over a heavily shared graph is bounded in time and size', function () {
+    // 30 levels, each holding the same child twice, and a cycle at the bottom:
+    // expanding every path would be 2^30 values.
+    const root = { token: TOKEN };
+    let node = root;
+    for (let i = 0; i < 30; i++) { const child = { i }; node.a = child; node.b = child; node = child; }
+    node.loop = root;
+    const started = Date.now();
+    const masked = inspectAndHide(root);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 200, 'took ' + elapsed + ' ms');
+    const text = JSON.stringify(masked);
+    assert.ok(text.includes('[Truncated]'), 'cut past the budget');
+    assert.ok(!text.includes(TOKEN));
+    assert.strictEqual(masked.token, '(hidden)');
+    assert.ok(text.length < 2_000_000, text.length + ' characters');
+  });
+
+  it('[BLGM13] String, Number and Boolean objects are unboxed when the context is walked, as in JSON', function () {
+    const ctx = { s: new String('auth=' + TOKEN), n: new Number(4), b: new Boolean(false) }; // eslint-disable-line no-new-wrappers
+    ctx.loop = ctx;
+    assert.deepStrictEqual(inspectAndHide(ctx), { s: 'auth=(hidden)', n: 4, b: false, loop: '[Circular]' });
+  });
+
+  it('[BLGM14] a function logged as context is a marker, not the function with its properties', function () {
+    function withToken () {}
+    withToken.token = TOKEN;
+    assert.strictEqual(inspectAndHide(withToken), '[Function: withToken]');
+    assert.strictEqual(inspectAndHide(() => {}), '[Function]');
+  });
+
+  it('[BLGM15] credential keys inside a string are hidden whatever their case, for the same keys as object properties', function () {
+    const masked = inspectAndHide({ note: `body {"Token":"${TOKEN}","secret":"${TOKEN}","cookie":"${TOKEN}","set-cookie":"${TOKEN}","user":"alice"}` });
+    assert.ok(!masked.note.includes(TOKEN), masked.note);
+    assert.match(masked.note, /"user":"alice"/);
+  });
+
   it('[BLGM5] an Error inside a logged object keeps its masked message', function () {
     const masked = inspectAndHide({ step: 'sync', err: new Error('refused for https://' + TOKEN + '@h.example.com/') });
     assert.strictEqual(masked.step, 'sync');
@@ -490,6 +527,25 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     }
     for (const line of [runs.json, runs.file].map((o) => o.split('\n').find((s) => s.includes('blfb-circ-ctx')))) {
       assert.deepStrictEqual(JSON.parse(line).context, { user: 'alice', token: '(hidden)', self: '[Circular]' });
+    }
+  });
+
+  // A message that is not a string used to be interpolated after the masking.
+  it('[BLFB16] a URL given as the message is masked on the text console, the JSON console and the file', function () {
+    const extra = `l.error(new URL('https://${TOKEN}@core.example.com/events?auth=${TOKEN}'));`;
+    const logPath = path.join(dir, 'url-msg', 'logs', 'core.log');
+    const runs = {
+      text: bootAndLogEachLevel(silentConsole(), { extra }).stderr,
+      json: bootAndLogEachLevel(silentConsole(), { extra, env: { LOG_FORMAT: 'json' } }).stderr
+    };
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra });
+    runs.file = fs.readFileSync(logPath, 'utf8');
+    for (const [format, out] of Object.entries(runs)) {
+      assert.ok(!out.includes(TOKEN), format + ': ' + out);
+      assert.ok(out.includes('https://(hidden)@core.example.com/events?auth=(hidden)'), format + ': ' + out);
     }
   });
 

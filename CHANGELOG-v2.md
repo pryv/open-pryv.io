@@ -24,7 +24,14 @@
   as is, credential keys and `auth=` / URL credentials in clear, on the text console; the JSON
   console and the log file could fail on it. It is now masked like any other context: a cycle is
   shown as `[Circular]`, a branch that cannot be read as `[Unserialisable]`, nesting beyond 32
-  levels as `[Too deep]`. Contexts that convert to JSON print exactly as before.
+  levels as `[Too deep]`, and what lies beyond 20,000 values as `[Truncated]` (a log call stays
+  cheap whatever it is given). Contexts that convert to JSON print exactly as before.
+- Operators (logs, security): a log message that is not a string (such as a URL holding an access
+  token as user info or in `auth=`) was written as is, after the masking; it is now masked like a
+  text message. A function logged as context prints as `[Function: name]` instead of the function
+  with its properties. Credential keys inside a text (`"token":"..."` in a logged JSON body) are
+  now hidden whatever their case and for every key that is hidden as an object property (adding
+  `secret`, `key`, `authorization`, `cookie`, `set-cookie` and others).
 - Operators: a core with in-process mail (`services.email.method: in-process`, the default) and no
   SMTP host (`services.email.smtp.host` unset or a placeholder such as `REPLACE ME`, as on a fresh
   install) now treats mail as not configured: it logs one warning at boot (per process, like the

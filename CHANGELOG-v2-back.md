@@ -13,6 +13,17 @@
   token and `auth=` masked), `[BLGM8]` (toJSON throws), `[BLGM9]` (getter throws), `[BLGM10]` (depth
   cap), `[BLGM11]` (ordinary contexts: same output on the plain path and through the walk),
   `[BLFB15]` (circular context with a token on the text console, the JSON console and the file).
+- `maskWalk` carries a walk state (`ancestors`, `nodes`): past `MAX_MASK_NODES` (20,000) visited
+  values the rest is `[Truncated]` (one marker per array or object). Ancestor-only tracking expands a
+  shared subtree once per path, so without the budget a 22-level "diamond" with a cycle took 1.5 s
+  and 193 MB, 30 levels did not return. String / Number / Boolean objects are unboxed after the
+  replacer, as JSON does (a String object was walked as a map of its characters). Tests: `[BLGM12]`
+  (30-level diamond under 200 ms, truncated, token hidden), `[BLGM13]`.
+- `Logger.log`: the message goes through `messageText` (`String()`, `[Unprintable message]` when that
+  throws) before `hideSensitiveValues`; only Errors were converted before. `inspectAndHide`: a
+  function context returns `[Function: name]`. `hideSensitiveValues`: the in-string pair regexp is
+  built from `SENSITIVE_KEYS`, case-insensitive, `-` and `_` interchangeable. Tests: `[BLGM14]`,
+  `[BLGM15]`, `[BLFB16]` (URL message on the text console, the JSON console and the file).
 
 ## Image base and image scan in CI
 

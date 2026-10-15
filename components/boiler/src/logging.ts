@@ -390,8 +390,10 @@ class Logger {
 
   log (...args: unknown[]) {
     const level = args[0] as LogLevel;
-    // An Error as the message (`logger.error(err, err)`) prints as "Name: message".
-    const message = hideSensitiveValues(args[1] instanceof Error ? String(args[1]) : args[1]) as string;
+    // A message that is not a string (an Error: "Name: message", a URL, ...)
+    // is turned into one BEFORE masking: it used to be interpolated as is,
+    // after the masking, credentials included.
+    const message = hideSensitiveValues(messageText(args[1])) as string;
     const context: unknown[] = [];
 
     let meta;
@@ -447,11 +449,12 @@ export { getLogger, setGlobalName, initLoggerWithConfig, inspectAndHide };
 function inspectAndHide (o: unknown): unknown {
   // Bypass values that don't survive JSON.parse(JSON.stringify()) — passing
   // them through would crash the logger (and the caller) on every log call.
-  // - functions: JSON.stringify(fn) returns the string 'undefined' (actually undefined),
-  //   then JSON.parse('undefined') throws SyntaxError.
+  // - functions: JSON.stringify(fn) returns undefined, then JSON.parse
+  //   throws. A marker stands for one: the function itself would be printed
+  //   with its own properties (util.inspect), unmasked.
   // - symbols: JSON.stringify(symbol) returns undefined likewise.
-  // - any object whose toJSON returns undefined: same shape.
-  if (o === undefined || typeof o === 'function' || typeof o === 'symbol') return o;
+  if (o === undefined || typeof o === 'symbol') return o;
+  if (typeof o === 'function') return '[Function' + (o.name ? ': ' + o.name : '') + ']';
   // An Error stays an Error (printed with its stack), its message, stack,
   // fields and cause masked.
   if (o instanceof Error) return maskError(o, 0);
@@ -463,7 +466,7 @@ function inspectAndHide (o: unknown): unknown {
     // deep, toJSON returning undefined): mask it by walking it instead. Never
     // the raw value, whose credentials would be printed in clear. The walk
     // costs more, so it only runs when the plain round trip failed.
-    return maskWalk(o, '', new Set(), 0);
+    return maskWalk(o, '', { ancestors: new Set(), nodes: 0 }, 0);
   }
   return _inspectAndHide(cloned);
 }
@@ -472,20 +475,30 @@ function inspectAndHide (o: unknown): unknown {
 const CIRCULAR = '[Circular]';
 const UNSERIALISABLE = '[Unserialisable]';
 const TOO_DEEP = '[Too deep]';
+const TRUNCATED = '[Truncated]';
 const MAX_MASK_DEPTH = 32;
+// Values visited by one walk. A shared subtree is expanded once per path (as
+// in JSON), so a graph with heavy sharing grows exponentially with its depth:
+// past this budget the rest is cut. A real HTTP request/response pair is a
+// few hundred values.
+const MAX_MASK_NODES = 20000;
+
+type WalkState = { ancestors: Set<object>; nodes: number };
 
 /**
  * A masked, JSON-shaped copy of `value`, built like JSON.stringify would
- * (toJSON, then the log replacer; functions, symbols and undefined left out
- * of objects, null in arrays) but tolerant: a cycle becomes `[Circular]`, a
- * toJSON or getter that throws `[Unserialisable]` for that branch only, and
- * nesting beyond MAX_MASK_DEPTH `[Too deep]`. Credential keys and strings are
- * masked as by _inspectAndHide.
+ * (toJSON, then the log replacer, then String / Number / Boolean objects
+ * unboxed; functions, symbols and undefined left out of objects, null in
+ * arrays) but tolerant: a cycle becomes `[Circular]`, a toJSON or getter that
+ * throws `[Unserialisable]` for that branch only, nesting beyond
+ * MAX_MASK_DEPTH `[Too deep]`, and what lies past MAX_MASK_NODES visited values
+ * `[Truncated]`. Credential keys and strings are masked as by _inspectAndHide.
  */
-function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: number): unknown {
+function maskWalk (value: unknown, key: string, state: WalkState, depth: number): unknown {
+  if (++state.nodes > MAX_MASK_NODES) return TRUNCATED;
   const original = value;
   if (original !== null && typeof original === 'object') {
-    if (ancestors.has(original)) return CIRCULAR;
+    if (state.ancestors.has(original)) return CIRCULAR;
     if (depth >= MAX_MASK_DEPTH) return TOO_DEEP;
   }
   try {
@@ -494,6 +507,11 @@ function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: n
       value = toJSON.call(value, key);
     }
     value = jsonReplacer(key, value);
+    // JSON serialises wrapper objects as their primitive (a String object
+    // would otherwise be walked as a map of its characters).
+    if (value instanceof String) value = String(value);
+    else if (value instanceof Number) value = Number(value);
+    else if (value instanceof Boolean) value = value.valueOf();
   } catch {
     return UNSERIALISABLE;
   }
@@ -503,14 +521,16 @@ function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: n
   if (value === null || typeof value !== 'object') return value;
 
   const isTracked = original !== null && typeof original === 'object';
-  if (isTracked) ancestors.add(original as object);
+  if (isTracked) state.ancestors.add(original as object);
   try {
     if (Array.isArray(value)) {
       const res: unknown[] = [];
       for (let i = 0; i < value.length; i++) {
+        // Over budget: one marker, not one per remaining item.
+        if (state.nodes >= MAX_MASK_NODES) { res.push(TRUNCATED); break; }
         let item;
         try { item = value[i]; } catch { res.push(UNSERIALISABLE); continue; }
-        const masked = maskWalk(item, String(i), ancestors, depth + 1);
+        const masked = maskWalk(item, String(i), state, depth + 1);
         res.push(masked === undefined ? null : masked);
       }
       return res;
@@ -518,13 +538,14 @@ function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: n
     const res: Record<string, unknown> = {};
     const obj = value as Record<string, unknown>;
     for (const k of Object.keys(obj)) {
+      if (state.nodes >= MAX_MASK_NODES) { res[TRUNCATED] = TRUNCATED; break; }
       if (SENSITIVE_KEYS.has(k.toLowerCase())) {
         res[k] = hiddenValue(k);
         continue;
       }
       let item;
       try { item = obj[k]; } catch { res[k] = UNSERIALISABLE; continue; }
-      const masked = maskWalk(item, k, ancestors, depth + 1);
+      const masked = maskWalk(item, k, state, depth + 1);
       if (masked !== undefined) res[k] = masked;
     }
     return res;
@@ -532,7 +553,7 @@ function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: n
     // e.g. a Proxy whose ownKeys trap throws
     return UNSERIALISABLE;
   } finally {
-    if (isTracked) ancestors.delete(original as object);
+    if (isTracked) state.ancestors.delete(original as object);
   }
 }
 
@@ -629,18 +650,28 @@ const SENSITIVE_KEYS = new Set(['password', 'passwordhash', 'newpassword', 'oldp
   'filesreadtokensecret', 'atrestkey', 'piihmackey', 'access_token', 'refresh_token', 'id_token',
   'client_secret', 'clientsecret', 'code_verifier', 'cookie', 'set-cookie']);
 
+// `"<key>":"<value>"` (or `=`) inside a string, for the same keys as above in
+// any case: a JSON body or header dump logged as text.
+const SENSITIVE_PAIR_REGEXP = new RegExp('"(' + [...SENSITIVE_KEYS].map((k) => k.replace(/[-_]/g, '[-_]')).join('|') + ')"[:=]"([^"]*)"', 'gi');
+
+// The text of a log message, whatever was passed (String() as a template
+// literal would do; an object String() cannot convert gives a marker).
+function messageText (raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  try { return String(raw); } catch { return '[Unprintable message]'; }
+}
+
 // Hides sensitive values (auth tokens, passwords, credentials in URLs) in log messages
 function hideSensitiveValues (msg: unknown) {
   if (typeof msg !== 'string') return msg;
   const tokenRegexp = /auth=([^&\s"']+)/g;
-  const passwordRegexp = /"(password|passwordHash|newPassword|oldPassword|resetToken|recoveryCode|token|emailProof|invitationToken|mfaToken|refreshToken|accessToken|readToken|passphrase|adminAccessKey|access_token|refresh_token|id_token|client_secret|code_verifier)"[:=]"([^"]*)"/g;
   // URL user info: `https://<token>@host/` (an API endpoint) or `//user:pass@host`
   const userinfoRegexp = /\/\/[^/@\s"']+@/g;
   const mask = '(hidden)';
 
   const res = msg
     .replace(tokenRegexp, 'auth=' + mask)
-    .replace(passwordRegexp, '$1=' + mask)
+    .replace(SENSITIVE_PAIR_REGEXP, '$1=' + mask)
     .replace(userinfoRegexp, '//' + mask + '@');
 
   return res;
