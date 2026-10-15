@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## Stream permission walk
+
+- `AccessLogic._getStreamPermissions` keeps the ids it walked and stops on one seen before, so a
+  parent chain stored with a cycle (written below the API, which now refuses it) cannot hang the
+  walk; such a stream then resolves through the `*` permission.
+
 ## Image base and image scan in CI
 
 - `Dockerfile`: base `node:24-trixie-slim` (24.18.1, digest-pinned) instead of `node:24-slim`
