@@ -10,6 +10,15 @@
   `bin-ext/rqlited` yourself while the core is stopped (INSTALL.md, "Upgrading the bundled rqlite").
   Images derived from ours (`FROM pryvio/open-pryv.io`) that `apt-get install` packages now resolve
   them against trixie.
+- Operators: a process start no longer prints `[winston] Attempt to write logs with no transports,
+  which can increase memory usage: ...` (once per process: master, API workers, HFS, previews) when
+  no `logs.custom` is configured. The line was noise from the logger's own setup; nothing was lost.
+- Operators (`logs.file`): an error logged with its Error object now carries the error's name,
+  message (masked) and stack in the file's `context` field (it was `{}`), as the JSON console format
+  does since 2.0.0-rc.54. The text console format already printed them.
+- Operators (logs, security): a logged context holding a BigInt value had none of its credential
+  keys (`token`, `password`, ...) masked, on every log target; with the JSON console format the log
+  call threw instead. Such a context is now masked like any other, the BigInt written as a string.
 
 ## 2.0.0-rc.54 - 2026-10-15
 

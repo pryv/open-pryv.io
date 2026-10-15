@@ -346,4 +346,83 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
     assert.match(entry.context.stack, /^Error: boom auth=\(hidden\)/);
     assert.ok(!line.includes(TOKEN), line);
   });
+
+  it('[BLFB10] text format: an Error given as context prints its name, masked message and stack', function () {
+    const res = bootAndLogEachLevel(silentConsole(), {
+      extra: `l.error('blfb-err-ctx', new TypeError('boom auth=${TOKEN}'));`
+    });
+    const at = res.stderr.indexOf('blfb-err-ctx');
+    assert.ok(at >= 0, res.stderr);
+    const shown = res.stderr.slice(at);
+    // The masked copy is an Error carrying the original name: `Error [TypeError]: …`.
+    assert.match(shown, /^blfb-err-ctx Error \[TypeError\]: boom auth=\(hidden\)\n\s+at /);
+    assert.ok(!res.stderr.includes(TOKEN), res.stderr);
+    assert.ok(!/blfb-err-ctx \{\}/.test(res.stderr), res.stderr);
+  });
+
+  it('[BLFB11] log file: an Error given as context keeps its name, masked message and stack', function () {
+    const logPath = path.join(dir, 'err-ctx', 'logs', 'core.log');
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra: `l.error('blfb-err-ctx', new TypeError('boom auth=${TOKEN}'));` });
+    const line = fs.readFileSync(logPath, 'utf8').split('\n').find((s) => s.includes('blfb-err-ctx'));
+    assert.ok(line);
+    const entry = JSON.parse(line);
+    assert.strictEqual(entry.context.name, 'TypeError');
+    assert.strictEqual(entry.context.message, 'boom auth=(hidden)');
+    assert.match(entry.context.stack, /^TypeError: boom auth=\(hidden\)\n\s+at /);
+    assert.ok(!line.includes(TOKEN), line);
+  });
+
+  // JSON.stringify throws on a BigInt: such a context used to skip the key
+  // masking (the token printed in clear) and to throw out of a JSON console call.
+  it('[BLFB14] a context holding a BigInt and a token is masked on the text console, the JSON console and the file', function () {
+    const extra = `l.error('blfb-big-ctx', { n: 12345678901234567890n, token: '${TOKEN}' });`;
+    const logPath = path.join(dir, 'big-ctx', 'logs', 'core.log');
+    const runs = {
+      text: bootAndLogEachLevel(silentConsole(), { extra }).stderr,
+      json: bootAndLogEachLevel(silentConsole(), { extra, env: { LOG_FORMAT: 'json' } }).stderr
+    };
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra });
+    runs.file = fs.readFileSync(logPath, 'utf8');
+    for (const [format, out] of Object.entries(runs)) {
+      // The entry from its marker on (the file line puts the context first).
+      const at = out.lastIndexOf('\n', out.indexOf('blfb-big-ctx')) + 1;
+      assert.ok(out.includes('blfb-big-ctx'), format + ': ' + out);
+      const line = out.slice(at);
+      assert.ok(!out.includes(TOKEN), format + ': ' + out);
+      assert.match(line, /\(hidden\)/, format);
+      assert.match(line, /12345678901234567890/, format);
+    }
+    assert.strictEqual(JSON.parse(runs.json.split('\n').find((s) => s.includes('blfb-big-ctx'))).context.token, '(hidden)');
+  });
+
+  // The boiler config logs `get: [key] is undefined` at debug: read while the
+  // logger is being set up, such a line used to reach winston before any
+  // transport, which printed a "[winston] Attempt to write logs with no
+  // transports" line at every process start.
+  for (const [code, logsEnv] of [['BLFB12', null], ['BLFB13', 'debug']]) {
+    it(`[${code}] a boiler boot ${logsEnv ? 'with LOGS=' + logsEnv : 'with no log target'} prints no winston warning`, function () {
+      const runDir = fs.mkdtempSync(path.join(dir, 'boot-'));
+      const script = path.join(runDir, 'boot.mjs');
+      fs.writeFileSync(script, [
+        `const { init, getLogger } = await import(${JSON.stringify(BOILER_SRC)});`,
+        `init({ appName: 'blfb', baseConfigDir: ${JSON.stringify(CONFIG_DIR)}, skipOverrideConfig: true });`,
+        "getLogger('boot').error('blfb-error');",
+        'setTimeout(() => process.exit(0), 1500);'
+      ].join('\n'));
+      const env = Object.assign({}, process.env);
+      for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
+      if (logsEnv) env.LOGS = logsEnv;
+      const res = spawnSync(process.execPath, [script], { cwd: runDir, env, encoding: 'utf8', timeout: 20000 });
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      const out = res.stdout + res.stderr;
+      assert.match(out, /blfb-error/);
+      assert.ok(!out.includes('[winston]'), out);
+    });
+  }
 });

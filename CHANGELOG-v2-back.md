@@ -15,6 +15,21 @@
 - `storages/engines/rqlite/scripts/setup`: rqlite 10.6.0, and the downloaded tarball is checked
   against its sha256 (same values as the Dockerfile) before extraction.
 
+## Logger setup without transports, one JSON replacer
+
+- `boiler/src/logging.ts`: `initLoggerWithConfig` reads the console settings (and `hasLogTarget`)
+  before creating the winston logger, which is now created with its console transport. A config read
+  that logs (`get: [key] is undefined` at debug) no longer reaches a logger without transports.
+  Tests: `[BLFB12]` (boiler boot on the default config with no target: no `[winston]` line),
+  `[BLFB13]` (same with `LOGS=debug`).
+- `boiler/src/logging.ts`: one replacer, `jsonReplacer` (`errorsAsPlainObjects` plus a BigInt as
+  a string), serves every JSON step: the masking copy in `inspectAndHide` / `maskNested`, the JSON
+  console format and the `logs.file` format. The file format keeps an Error context's name,
+  message, stack and cause; a BigInt no longer makes `inspectAndHide` fall back to the unmasked
+  object, nor the JSON console throw. Tests: `[BLFB11]` (file), `[BLFB10]` (text console format:
+  name, masked message and stack), `[BLFB14]` (BigInt + `token` context masked on the text console,
+  the JSON console and the file).
+
 ## Log fallback to stderr, wizard log targets
 
 - `boiler/src/logging.ts`: `initLoggerWithConfig` turns the console on at `warn`, every level on
