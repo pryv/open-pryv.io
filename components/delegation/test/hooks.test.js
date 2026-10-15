@@ -26,6 +26,7 @@ const {
   isDelegationDerivedAccess,
   lineageOf,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,
@@ -423,6 +424,61 @@ describe('[DELHOOK] delegation/hooks', () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       assert.equal(await runMiddleware(mw, {}, {}, {}), undefined);
+    });
+
+    it('[DSC05] rejects a parentId inside :_delegation:*, whatever the new id; other parents pass', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const parentId of [':_delegation:', ':_delegation:_internal', ':_delegation:_internal:delegates']) {
+        for (const params of [{ id: 'plain', parentId }, { parentId }, { update: { id: 'plain', parentId } }]) {
+          const err = await runMiddleware(mw, {}, params, {});
+          assert.ok(err instanceof Error, 'expected reject under ' + parentId + ' for ' + JSON.stringify(params));
+          assert.equal(err.details.id, 'delegation-reserved-stream');
+          assert.equal(err.details.parentId, parentId);
+        }
+      }
+      for (const params of [{ id: 'plain', parentId: null }, { id: 'plain', parentId: 'diary' }, { id: 'plain', parentId: ':_cmc:apps' }]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+    });
+  });
+
+  describe('[DELHOOK-SU] createStreamUpdateReservedRootHook (streams.update moves)', () => {
+    it('[DSU01] passthrough without parentId, and for moves outside :_delegation:', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const params of [
+        { id: 'fertility', update: { name: 'renamed' } },
+        { id: ':_delegation:_internal', update: { name: 'renamed' } },
+        { id: 'fertility', update: { parentId: null } },
+        { id: 'fertility', update: { parentId: 'diary' } },
+        { id: 'fertility' },
+        {},
+        null,
+      ]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+      assert.equal(captured.length, 0);
+    });
+
+    it('[DSU02] rejects a move into :_delegation:*, and a move of any :_delegation:* stream', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const parentId of [':_delegation:', ':_delegation:_internal', ':_delegation:_internal:controlled']) {
+        const err = await runMiddleware(mw, {}, { id: 'fertility', update: { parentId } }, {});
+        assert.ok(err instanceof Error, 'expected reject under ' + parentId);
+        assert.equal(err.details.id, 'delegation-reserved-stream');
+        assert.equal(err.details.parentId, parentId);
+        assert.equal(err.details.streamId, 'fertility');
+      }
+      for (const id of [':_delegation:', ':_delegation:_internal', ':_delegation:_internal:delegates']) {
+        for (const parentId of [null, 'diary']) {
+          const err = await runMiddleware(mw, {}, { id, update: { parentId } }, {});
+          assert.ok(err instanceof Error, 'expected reject moving ' + id);
+          assert.equal(err.details.id, 'delegation-reserved-stream');
+          assert.equal(err.details.streamId, id);
+        }
+      }
     });
   });
 

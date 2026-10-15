@@ -207,10 +207,34 @@ function createMemberRevokeWriteGuardHook (deps: Deps): Middleware {
 }
 
 /**
- * streams.create hook — rejects creates of reserved CMC streams.
+ * True for a `parentId` under which user code may not place a stream: any
+ * `:_cmc:*` id except `:_cmc:apps` itself and the user-creatable region
+ * below it. The plugin reads its own regions by stream query
+ * (`:_cmc:_internal:retries` and its descendants are the retry queue,
+ * `:_cmc:inbox` the deliveries), so a user stream parented there would have
+ * its events read as the plugin's records, whatever the stream's own id.
+ */
+function isReservedParentId (parentId: unknown): parentId is string {
+  if (typeof parentId !== 'string' || !C.isCmcStreamId(parentId)) return false;
+  if (parentId === C.NS_APPS) return false;
+  return !C.isUserCreatableStreamId(parentId);
+}
+
+/** The refusal for a `parentId` inside a plugin-managed region. */
+function reservedParentError (deps: Deps, parentId: string, streamId: unknown): ApiError {
+  return deps.errors.invalidOperation(
+    'Stream parent "' + parentId + '" lives in a plugin-managed region of :_cmc:; only :_cmc:apps and its user-created streams take children',
+    { id: 'cmc-reserved-stream', parentId, ...(typeof streamId === 'string' ? { streamId } : {}) }
+  );
+}
+
+/**
+ * streams.create hook — rejects creates of reserved CMC streams, and creates
+ * under a reserved parent.
  *
- * Behaviour:
- * - If the target stream-id isn't under `:_cmc:`, passthrough.
+ * Behaviour, on the new stream's id:
+ * - If the target stream-id isn't under `:_cmc:`, passthrough (to the
+ *   parent check).
  * - If the target is exactly one of the plugin-managed reserved parents
  *   (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`,
  *   `:_cmc:_internal:retries`), reject — these are auto-provisioned by
@@ -222,6 +246,12 @@ function createMemberRevokeWriteGuardHook (deps: Deps): Middleware {
  *   passthrough.
  * - Otherwise (any other `:_cmc:*` location, e.g. `:_cmc:_internal:*`),
  *   reject — user code may not create plugin-managed streams.
+ *
+ * Then on `parentId`, whatever the id (a plain id, or none): a parent inside
+ * a plugin-managed region (`isReservedParentId`) is refused with the same
+ * `cmc-reserved-stream` id. `:_cmc:apps` and the user-created streams under
+ * it keep taking children. For every token type, the owner's included: the
+ * plugin's regions hold its records and the peers' deliveries.
  */
 function createStreamCreateReservedRootHook (deps: Deps): Middleware {
   return function streamCreateReservedRootHook (context, params, result, next) {
@@ -231,26 +261,69 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
       ? params.update
       : params;
     const id: unknown = target?.id;
+    const parentId: unknown = target?.parentId;
 
-    if (typeof id !== 'string') return next();
-    if (!C.isCmcStreamId(id)) return next();
+    if (typeof id === 'string' && C.isCmcStreamId(id)) {
+      // Reject creation of the reserved parents themselves.
+      if (C.RESERVED_PARENT_STREAM_IDS.includes(id)) {
+        return next(deps.errors.invalidOperation(
+          'Stream "' + id + '" is reserved and auto-provisioned by the CMC plugin',
+          { id: 'cmc-reserved-stream', streamId: id }
+        ));
+      }
+      // Reject everything else under :_cmc: but the children of :_cmc:apps
+      // (user-creatable).
+      if (!C.isUserCreatableStreamId(id)) {
+        return next(deps.errors.invalidOperation(
+          'Stream "' + id + '" lives in a plugin-managed region of :_cmc:; only :_cmc:apps:* is user-creatable',
+          { id: 'cmc-reserved-stream', streamId: id }
+        ));
+      }
+    }
 
-    // Reject creation of the reserved parents themselves.
-    if (C.RESERVED_PARENT_STREAM_IDS.includes(id)) {
+    if (isReservedParentId(parentId)) {
+      return next(reservedParentError(deps, parentId, id));
+    }
+    next();
+  };
+}
+
+/**
+ * streams.update hook — a move cannot enter a plugin-managed region, and a
+ * plugin-managed stream cannot be moved.
+ *
+ * `streams.update` takes `{ id, update: { parentId?, ... } }`. Refused with
+ * `cmc-reserved-stream` (400):
+ *   - an `update.parentId` inside a plugin-managed region
+ *     (`isReservedParentId`): the moved subtree would be read as the plugin's
+ *     records (a stream moved under `:_cmc:_internal:retries` feeds the retry
+ *     loop), for every token type including personal;
+ *   - an update carrying `parentId` (whatever its value) for a stream the
+ *     plugin manages (`isPluginManagedStreamId`): moving `:_cmc:inbox` or the
+ *     internal subtree under another parent would put the peers' deliveries
+ *     and the plugin's records (retry records hold peer tokens) under a
+ *     permission walk that an app grant reaches. Renames and other updates
+ *     of such a stream are not this hook's concern.
+ * A move within the user-creatable region, or to a parent outside `:_cmc:`,
+ * passes through to the permission checks.
+ */
+function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
+  return function cmcStreamUpdateReservedRootHook (_context, params, _result, next) {
+    const update = params?.update;
+    if (update == null || typeof update !== 'object') return next();
+    if (!Object.prototype.hasOwnProperty.call(update, 'parentId')) return next();
+    const id: unknown = params?.id;
+    if (typeof id === 'string' && C.isPluginManagedStreamId(id)) {
       return next(deps.errors.invalidOperation(
-        'Stream "' + id + '" is reserved and auto-provisioned by the CMC plugin',
+        'Stream "' + id + '" is managed by the CMC plugin and cannot be moved',
         { id: 'cmc-reserved-stream', streamId: id }
       ));
     }
-
-    // Allow children of :_cmc:apps (user-creatable).
-    if (C.isUserCreatableStreamId(id)) return next();
-
-    // Reject everything else under :_cmc:.
-    return next(deps.errors.invalidOperation(
-      'Stream "' + id + '" lives in a plugin-managed region of :_cmc:; only :_cmc:apps:* is user-creatable',
-      { id: 'cmc-reserved-stream', streamId: id }
-    ));
+    const parentId: unknown = update.parentId;
+    if (isReservedParentId(parentId)) {
+      return next(reservedParentError(deps, parentId, id));
+    }
+    next();
   };
 }
 
@@ -1209,7 +1282,9 @@ export {
   createAccessUpdateStampGuardHook,
   memberChildStamp,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
+  isReservedParentId,
   createEnsureReservedParentsHook,
   streamsParamReferencesCmc,
   _resetEnsuredUsersMemo,

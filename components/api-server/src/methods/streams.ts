@@ -213,6 +213,15 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const delegationStreamDeleteHook = delegationActive
     ? delegation.createStreamDeleteReservedRootHook({ errors })
     : delegationPassthrough;
+  // A move (`update.parentId`) cannot enter a plugin-managed region nor take
+  // a plugin-managed stream out of its place, for every token type: the
+  // plugins read their regions by stream query, so a user subtree moved there
+  // would be read as their records. Wired before the permission walk
+  // (applyPrerequisitesForUpdate), like the create guards.
+  const cmcStreamUpdateHook = cmc.createStreamUpdateReservedRootHook({ errors });
+  const delegationStreamUpdateHook = delegationActive
+    ? delegation.createStreamUpdateReservedRootHook({ errors })
+    : delegationPassthrough;
   const sharedSecretsStreamUpdateGuard = sharedSecrets.createStreamUpdateGuard({ errors });
   const sharedSecretsStreamCreateGuard = sharedSecrets.createStreamCreateGuard({ errors });
   const emailsStreamCreateGuard = emailsGuards.createStreamCreateGuard({ errors });
@@ -297,7 +306,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), sharedSecretsStreamUpdateGuard, emailsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), cmcStreamUpdateHook, delegationStreamUpdateHook, sharedSecretsStreamUpdateGuard, emailsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));

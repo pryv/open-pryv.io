@@ -66,11 +66,16 @@ function fakeMall () {
   };
 }
 
+// A received accept, as the requester's core records it: on the capability's
+// responses stream (an accept on `:_cmc:inbox` is the server's own mirror,
+// never retried, see [RQ30]).
+const RESPONSES_STREAM = ':_cmc:_internal:responses:cap-1';
+
 function makeTrigger () {
   return {
     id: 'orig-1',
     type: 'consent/accept-cmc',
-    streamIds: [':_cmc:inbox'],
+    streamIds: [RESPONSES_STREAM],
     content: { capabilityUrl: 'https://t@peer.example.com/' },
   };
 }
@@ -165,7 +170,7 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         content: {
           originalEventId: 'orig-1',
           originalType: 'consent/accept-cmc',
-          originalStreamIds: [':_cmc:inbox'],
+          originalStreamIds: [RESPONSES_STREAM],
           originalContent: { capabilityUrl: 'https://t@peer.example.com/' },
           attempts: 1,
           nextAttemptAfter: 0,
@@ -174,6 +179,62 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         },
       };
     }
+
+    it('[RQ30] a retried accept authored by the server is refused, never dispatched: the inbox mirror of a received accept', async () => {
+      const mall = fakeMall();
+      const dispatched = [];
+      const dispatch = async ({ event }) => { dispatched.push(event); return { handled: true, status: 'completed' }; };
+      // The mirror as the mall stores it: on `:_cmc:inbox`, createdBy `system`.
+      mall._events.set('r-1', makeRetryEvent({ originalStreamIds: [':_cmc:inbox'], originalCreatedBy: 'system' }));
+      let r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+      assert.equal(r.outcome, 'failed-permanent');
+      assert.equal(dispatched.length, 0, 'never dispatched');
+      let stored = mall._events.get('r-1');
+      assert.equal(stored.content.status, 'failed-permanent');
+      assert.equal(stored.content.lastFailureReason, 'cmc-retry-system-authored');
+      assert.equal(stored.modifiedBy, 'system');
+      // A snapshot taken before `originalCreatedBy` existed: the stream says it.
+      mall._events.set('r-2', { ...makeRetryEvent({ originalStreamIds: [':_cmc:inbox'] }), id: 'r-2' });
+      r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-2'), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+      assert.equal(r.outcome, 'failed-permanent');
+      assert.equal(dispatched.length, 0);
+      stored = mall._events.get('r-2');
+      assert.equal(stored.content.lastFailureReason, 'cmc-retry-system-authored');
+      assert.equal(isRetryableReason('cmc-retry-system-authored'), false);
+      assert.equal(isRetryableReason('cmc-retry-stale'), false);
+    });
+
+    it('[RQ31] a retried accept on an app scope authored by the server is refused too; one a client wrote is dispatched', async () => {
+      const mall = fakeMall();
+      const dispatched = [];
+      const dispatch = async ({ event }) => { dispatched.push(event); return { handled: true, status: 'completed' }; };
+      // Written by the server on the owner's app scope: would read as the
+      // owner's accept and mint a data grant.
+      for (const [id, createdBy] of [['r-1', 'system'], ['r-2', 'system some-caller']]) {
+        mall._events.set(id, { ...makeRetryEvent({ originalStreamIds: [':_cmc:apps:my-app:study-1'], originalCreatedBy: createdBy }), id });
+        const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(id), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+        assert.equal(r.outcome, 'failed-permanent', createdBy);
+        assert.equal(mall._events.get(id).content.lastFailureReason, 'cmc-retry-system-authored');
+        assert.deepEqual(mall._events.get(id).content.lastFailureDetail, { originalCreatedBy: createdBy, originalStreamIds: [':_cmc:apps:my-app:study-1'] });
+      }
+      assert.equal(dispatched.length, 0, 'never dispatched');
+      // The owner's own accept (createdBy its personal access), and a
+      // received accept on the responses stream: dispatched as before.
+      mall._events.set('r-3', { ...makeRetryEvent({ originalStreamIds: [':_cmc:apps:my-app:study-1'], originalCreatedBy: 'acc-personal caller' }), id: 'r-3' });
+      mall._events.set('r-4', { ...makeRetryEvent({ originalCreatedBy: 'cap-acc-1' }), id: 'r-4' });
+      for (const id of ['r-3', 'r-4']) {
+        const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(id), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+        assert.equal(r.outcome, 'succeeded', id);
+      }
+      assert.equal(dispatched.length, 2);
+      assert.equal(dispatched[0].createdBy, 'acc-personal caller');
+      assert.equal(dispatched[1].streamIds[0], RESPONSES_STREAM);
+      // Other types written by the server (a sweep record) are not accepts: dispatched.
+      mall._events.set('r-5', { ...makeRetryEvent({ originalType: 'consent/member-revoke-cmc', originalStreamIds: [':_cmc:apps:my-app'], originalCreatedBy: 'system' }), id: 'r-5' });
+      const r5 = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-5'), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+      assert.equal(r5.outcome, 'succeeded');
+      assert.equal(dispatched.length, 3);
+    });
 
     it('[RQ08] succeeds when dispatch returns status=completed → marks succeeded', async () => {
       const mall = fakeMall();

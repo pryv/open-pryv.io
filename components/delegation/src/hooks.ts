@@ -62,7 +62,10 @@ type HookParams = {
   // events.get stream queries: ids and/or {streamId} query objects
   streams?: Array<string | { streamId?: string } | null>;
   clientData?: ClientDataLike | null;
-  update?: { id?: unknown; clientData?: ClientDataLike | null } | null;
+  // streams.create payload (plain) carries parentId at the top level;
+  // streams.update carries it under `update`.
+  parentId?: unknown;
+  update?: { id?: unknown; parentId?: unknown; clientData?: ClientDataLike | null } | null;
   targetAccess?: AccessLike;
   accessToDelete?: AccessLike;
   relatedAccessesToDelete?: AccessLike[];
@@ -420,10 +423,13 @@ function createAccessesUpdateMarkerPreserveHook (): Middleware {
 // ----------------------------------------------------- NAMESPACE WRITE PROTECTION
 
 /**
- * streams.create hook — reject creation of any `:_delegation:*` stream. Unlike
- * the cross-account messaging namespace there is NO user-creatable region: the
- * whole namespace is plugin-managed and auto-provisioned. Tolerates the
- * `{ update: {...} }` wrapper some stream flows pass.
+ * streams.create hook — reject creation of any `:_delegation:*` stream, and
+ * of any stream under a `:_delegation:*` parent. Unlike the cross-account
+ * messaging namespace there is NO user-creatable region: the whole namespace
+ * is plugin-managed and auto-provisioned, and the plugin reads its records by
+ * stream query, so a user stream parented inside it would have its events
+ * read as the plugin's. For every token type, the owner's included.
+ * Tolerates the `{ update: {...} }` wrapper some stream flows pass.
  */
 function createStreamCreateReservedRootHook (deps: Deps): Middleware {
   return function delegationStreamCreateReservedRootHook (context, params, result, next) {
@@ -431,12 +437,50 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
       ? params.update
       : params;
     const id: unknown = target?.id;
-    if (typeof id !== 'string') return next();
-    if (!C.isDelegationStreamId(id)) return next();
-    return next(deps.errors.invalidOperation(
-      'Stream "' + id + '" is reserved and managed by the account-delegation plugin',
-      { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
-    ));
+    if (typeof id === 'string' && C.isDelegationStreamId(id)) {
+      return next(deps.errors.invalidOperation(
+        'Stream "' + id + '" is reserved and managed by the account-delegation plugin',
+        { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
+      ));
+    }
+    const parentId: unknown = target?.parentId;
+    if (typeof parentId === 'string' && C.isDelegationStreamId(parentId)) {
+      return next(reservedParentError(deps, parentId, id));
+    }
+    next();
+  };
+}
+
+function reservedParentError (deps: Deps, parentId: string, streamId: unknown): ApiError {
+  return deps.errors.invalidOperation(
+    'Stream parent "' + parentId + '" is reserved and managed by the account-delegation plugin; it takes no user stream',
+    { id: DelegationErrorIds.RESERVED_STREAM, parentId, ...(typeof streamId === 'string' ? { streamId } : {}) }
+  );
+}
+
+/**
+ * streams.update hook — a move cannot enter the `:_delegation:*` namespace,
+ * and a `:_delegation:*` stream cannot be moved. `streams.update` takes
+ * `{ id, update: { parentId?, ... } }`; an update without `parentId` (a
+ * rename) is not this hook's concern. Same reasons as the create hook.
+ */
+function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
+  return function delegationStreamUpdateReservedRootHook (_context, params, _result, next) {
+    const update = params?.update;
+    if (update == null || typeof update !== 'object') return next();
+    if (!Object.prototype.hasOwnProperty.call(update, 'parentId')) return next();
+    const id: unknown = params?.id;
+    if (typeof id === 'string' && C.isDelegationStreamId(id)) {
+      return next(deps.errors.invalidOperation(
+        'Stream "' + id + '" is reserved by the account-delegation plugin and cannot be moved',
+        { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
+      ));
+    }
+    const parentId: unknown = (update as { parentId?: unknown }).parentId;
+    if (typeof parentId === 'string' && C.isDelegationStreamId(parentId)) {
+      return next(reservedParentError(deps, parentId, id));
+    }
+    next();
   };
 }
 
@@ -527,6 +571,7 @@ export {
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,

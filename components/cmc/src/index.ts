@@ -112,6 +112,7 @@ export const {
   createMemberRevokeWriteGuardHook,
   createAccessUpdateStampGuardHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
   createEnsureAcceptScopeHook,

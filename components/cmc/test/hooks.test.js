@@ -22,6 +22,8 @@ const assert = require('node:assert/strict');
 const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
+  isReservedParentId,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
   createEnsureAcceptScopeHook,
@@ -268,6 +270,98 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const err = await runMiddleware(mw, {}, {}, {});
       assert.equal(err, undefined);
+    });
+
+    it('[CS09] rejects a parentId inside a plugin-managed region, whatever the new id', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const parentId of [
+        ':_cmc:',
+        ':_cmc:inbox',
+        ':_cmc:_internal',
+        ':_cmc:_internal:retries',
+        ':_cmc:_internal:members',
+        ':_cmc:_internal:offer:abc',
+        ':_cmc:apps:my-app:chats',
+        ':_cmc:apps:my-app:study-A:collectors:bob--other-org',
+      ]) {
+        for (const params of [{ id: 'plain', parentId }, { parentId }, { update: { id: 'plain', parentId } }]) {
+          const err = await runMiddleware(mw, {}, params, {});
+          assert.ok(err instanceof Error, 'expected reject under ' + parentId + ' for ' + JSON.stringify(params));
+          assert.equal(err.details.id, 'cmc-reserved-stream');
+          assert.equal(err.details.parentId, parentId);
+        }
+      }
+      assert.ok(isReservedParentId(':_cmc:inbox'));
+      assert.equal(isReservedParentId(':_cmc:apps'), false);
+      assert.equal(isReservedParentId(':_cmc:apps:my-app'), false);
+      assert.equal(isReservedParentId('fertility'), false);
+      assert.equal(isReservedParentId(null), false);
+    });
+
+    it('[CS10] allows a parentId of :_cmc:apps or a user-created stream under it, for a plain or a :_cmc:apps:* id', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const params of [
+        { id: ':_cmc:apps:my-app', parentId: ':_cmc:apps' },
+        { id: 'plain', parentId: ':_cmc:apps' },
+        { id: ':_cmc:apps:my-app:study-A', parentId: ':_cmc:apps:my-app' },
+        { id: 'notes', parentId: ':_cmc:apps:my-app:study-A' },
+        { id: 'plain', parentId: null },
+        { id: 'plain', parentId: 'fertility' },
+      ]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+      assert.equal(captured.length, 0);
+    });
+  });
+
+  describe('[CMCHOOK-SU] createStreamUpdateReservedRootHook (streams.update moves)', () => {
+    it('[CSU01] passes through updates without parentId, and moves outside the plugin regions', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const params of [
+        { id: 'fertility', update: { name: 'renamed' } },
+        { id: ':_cmc:inbox', update: { name: 'renamed inbox' } },
+        { id: 'fertility', update: { parentId: null } },
+        { id: 'fertility', update: { parentId: 'diary' } },
+        { id: 'fertility', update: { parentId: ':_cmc:apps' } },
+        { id: 'fertility', update: { parentId: ':_cmc:apps:my-app:study-A' } },
+        { id: ':_cmc:apps:my-app:study-A', update: { parentId: ':_cmc:apps:my-app:study-B' } },
+        { id: 'fertility' },
+        {},
+        null,
+      ]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CSU02] rejects a move into a plugin-managed region, whatever the moved stream', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const parentId of [':_cmc:', ':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries', ':_cmc:apps:my-app:chats']) {
+        for (const id of ['fertility', ':_cmc:apps:my-app:study-A']) {
+          const err = await runMiddleware(mw, {}, { id, update: { parentId, name: 'moved' } }, {});
+          assert.ok(err instanceof Error, 'expected reject for ' + id + ' under ' + parentId);
+          assert.equal(err.details.id, 'cmc-reserved-stream');
+          assert.equal(err.details.parentId, parentId);
+          assert.equal(err.details.streamId, id);
+        }
+      }
+    });
+
+    it('[CSU03] rejects moving a plugin-managed stream anywhere, even to the root', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const id of [':_cmc:', ':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries', ':_cmc:apps', ':_cmc:apps:my-app:chats:alice--example-com']) {
+        for (const parentId of [null, 'diary', ':_cmc:apps:my-app']) {
+          const err = await runMiddleware(mw, {}, { id, update: { parentId } }, {});
+          assert.ok(err instanceof Error, 'expected reject moving ' + id + ' under ' + parentId);
+          assert.equal(err.details.id, 'cmc-reserved-stream');
+          assert.equal(err.details.streamId, id);
+        }
+      }
     });
   });
 

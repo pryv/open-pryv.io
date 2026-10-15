@@ -53,8 +53,10 @@ import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
  *   'single-use' — the first accept closes the link. Re-clicks return
  *                  `cmc-capability-consumed` (state-flip detected by the
  *                  responses-stream write-hook). A refusal does not close
- *                  it: the subject may still accept later. This is the
- *                  default.
+ *                  it: the subject may still accept later. The requester
+ *                  withdraws it before any accept with
+ *                  `consent/invalidate-link-cmc` (state 'invalidated').
+ *                  This is the default.
  *
  *   'open-link'  — multiple accepts allowed until the requester
  *                  explicitly invalidates the link (open-link
@@ -519,10 +521,11 @@ function counterpartyKey (username: string, host: string): string {
 /**
  * Transition a capability access from `state: 'open'` to
  * `state: 'invalidated'`. Called by handleInvalidateLink when the
- * requester invalidates their own open-link capability. Idempotent —
+ * requester closes their own capability: an open-link to new joiners, or
+ * a single-use invite nobody accepted yet. Idempotent —
  * already-`'invalidated'` is a no-op success. Already-`'consumed'`
- * capabilities are also a no-op success (single-use links auto-consume
- * on first accept; nothing to invalidate).
+ * capabilities are also a no-op success (a single-use link was accepted;
+ * nothing to invalidate, the relationship is revoked instead).
  */
 async function markCapabilityInvalidated (params: {
   userId: string;

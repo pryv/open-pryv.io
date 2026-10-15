@@ -77,6 +77,16 @@ const STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 h
 const DELIVERY_STALE_AFTER_MS = 30 * 60 * 60 * 1000; // 30 h
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 d
 const STALE_REASON = 'cmc-retry-stale';
+// A retried `consent/accept-cmc` whose author is the server (`createdBy`
+// `system`, or a record on `:_cmc:inbox`, where the only accept is the
+// server's mirror of a received one): never re-dispatched. Every accept a
+// client writes carries its access id; the server's own copies are not
+// triggers, and re-running one would mint again (the mirror: the peer's
+// back-channel access; an apps-stream copy: the owner's data grant, since a
+// system author reads as the owner's accept). No path enqueues such a record
+// today; this is the defence should one appear (an operator tool, a crafted
+// record).
+const SYSTEM_AUTHORED_REASON = 'cmc-retry-system-authored';
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
 // Every write of the plugin on a retry record skips event versioning: the
@@ -395,6 +405,22 @@ async function processRetryEvent (params: {
   if (c.delivery != null) {
     return await processDeliveryEvent({ userId, retryEvent, deps, now });
   }
+  if (isSystemAuthoredAccept(c)) {
+    await deps.mall.events.update(userId, {
+      ...retryEvent,
+      ...serverModification(deps),
+      content: {
+        ...c,
+        status: 'failed-permanent',
+        lastFailureReason: SYSTEM_AUTHORED_REASON,
+        lastFailureDetail: { originalCreatedBy: c.originalCreatedBy ?? null, originalStreamIds: c.originalStreamIds ?? [] },
+      },
+    }, null, WRITE_OPTS);
+    deps.logger?.warn?.('cmc/retry: a retried accept authored by the server was refused, not replayed', {
+      retryEventId: retryEvent.id, originalEventId: c.originalEventId, originalCreatedBy: c.originalCreatedBy ?? null, originalStreamIds: c.originalStreamIds ?? [],
+    });
+    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: c.attempts ?? 1 };
+  }
 
   const syntheticTrigger: EventLike = {
     id: c.originalEventId ?? undefined,
@@ -470,6 +496,23 @@ async function processRetryEvent (params: {
     attempts: nextAttempts,
   });
   return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
+}
+
+/**
+ * True for a trigger record of a `consent/accept-cmc` the server authored:
+ * `originalCreatedBy` is the system access id (`<accessId>` or
+ * `<accessId> <callerId>`), or the record sits on `:_cmc:inbox` (an accept
+ * there can only be the server's mirror, `inboxWriteHook` refuses a client's).
+ */
+function isSystemAuthoredAccept (c: RetryContent): boolean {
+  if (c.originalType !== C.ET_ACCEPT) return false;
+  const createdBy = c.originalCreatedBy;
+  if (typeof createdBy === 'string') {
+    const separatorIndex = createdBy.indexOf(' ');
+    const accessId = separatorIndex === -1 ? createdBy : createdBy.slice(0, separatorIndex);
+    if (accessId === C.SYSTEM_ACCESS_ID) return true;
+  }
+  return Array.isArray(c.originalStreamIds) && c.originalStreamIds.includes(C.NS_INBOX);
 }
 
 /**
@@ -656,6 +699,9 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-member-access-peer-unreachable',
   'cmc-member-access-membership-gone',
   'cmc-member-access-not-retryable',
+  // The retry loop's own verdicts on a record.
+  STALE_REASON,
+  SYSTEM_AUTHORED_REASON,
 ]);
 
 function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {
@@ -683,6 +729,7 @@ export {
   DELIVERY_STALE_AFTER_MS,
   FAILED_RETENTION_MS,
   STALE_REASON,
+  SYSTEM_AUTHORED_REASON,
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,
