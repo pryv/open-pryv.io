@@ -132,7 +132,7 @@ describe('[DNSCLI] bin/dns-records.js CLI', () => {
     assert.match(res.stderr, /No record for subdomain/);
   });
 
-  it('[DC06] load validates every record before writing any', async () => {
+  it('[DC07] load validates every record before writing any', async () => {
     const subOk = '_dnscli-ok-' + cuid();
     const yamlPath = path.join(tmpDir, 'dc06.yaml');
     fs.writeFileSync(yamlPath, yaml.dump({

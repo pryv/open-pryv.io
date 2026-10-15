@@ -85,7 +85,7 @@ describe('[CQIX] Content-query index reconciler (PostgreSQL)', function () {
       return res.rows.map((r) => r.indexname);
     }
 
-    it('[IX10] creates declared indexes, keeps them on re-run, drops on undeclare', async () => {
+    it('[IX14] creates declared indexes, keeps them on re-run, drops on undeclare', async () => {
       const declarations = [
         { field: 'content', path: 'drug.codes.atc', types: ['medication/exposure-assertion-v1'] },
         { field: 'clientData', path: 'related' }

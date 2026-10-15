@@ -24,7 +24,7 @@ const PERMS = [
 
 describe('[CSID] auth-request consent sidecar', () => {
   describe('[CSID-OK] resolution', () => {
-    it('[CS01] annotates by id and keeps every other field of the entry', () => {
+    it('[CSC01] annotates by id and keeps every other field of the entry', () => {
       const form = resolveConsentSidecar(PERMS, {
         allowUserChoice: true,
         mandatory: ['diary'],
@@ -40,7 +40,7 @@ describe('[CSID] auth-request consent sidecar', () => {
       });
     });
 
-    it('[CS02] an empty sidecar is valid: no annotation, all-or-nothing', () => {
+    it('[CSC02] an empty sidecar is valid: no annotation, all-or-nothing', () => {
       const form = resolveConsentSidecar(PERMS, {});
       assert.equal(form.allowUserChoice, false);
       assert.deepEqual(form.permissions, [
@@ -50,7 +50,7 @@ describe('[CSID] auth-request consent sidecar', () => {
       ]);
     });
 
-    it('[CS03] the sidecar is the only source of annotations', () => {
+    it('[CSC03] the sidecar is the only source of annotations', () => {
       // An annotation written inside an entry is dropped, so the echoed
       // requestedPermissions stay exactly what the app sent and cannot
       // contradict the sidecar.
@@ -64,7 +64,7 @@ describe('[CSID] auth-request consent sidecar', () => {
       ]);
     });
 
-    it('[CS04] mandatory ids without allowUserChoice are accepted and inert', () => {
+    it('[CSC04] mandatory ids without allowUserChoice are accepted and inert', () => {
       // Same as a CMC offer: all-or-nothing already implies every entry is
       // required, so the annotation changes nothing. Refusing it would make
       // the two flows disagree for no gain.
@@ -79,25 +79,25 @@ describe('[CSID] auth-request consent sidecar', () => {
       assert.throws(() => resolveConsentSidecar(perms, sidecar),
         (err) => err instanceof ConsentSidecarError && re.test(err.message));
 
-    it('[CS05] the sidecar must be an object', () => {
+    it('[CSC05] the sidecar must be an object', () => {
       rejects(PERMS, [], /consent must be an object/);
       rejects(PERMS, 'yes', /consent must be an object/);
       rejects(PERMS, null, /consent must be an object/);
     });
 
-    it('[CS06] allowUserChoice must be a boolean, the id lists arrays of strings', () => {
+    it('[CSC06] allowUserChoice must be a boolean, the id lists arrays of strings', () => {
       rejects(PERMS, { allowUserChoice: 'true' }, /allowUserChoice must be a boolean/);
       rejects(PERMS, { mandatory: 'diary' }, /consent\.mandatory must be an array/);
       rejects(PERMS, { optIn: [1] }, /consent\.optIn must contain non-empty permission ids/);
       rejects(PERMS, { optIn: [''] }, /consent\.optIn must contain non-empty permission ids/);
     });
 
-    it('[CS07] an id naming no requested entry is a typo, not a no-op', () => {
+    it('[CSC07] an id naming no requested entry is a typo, not a no-op', () => {
       rejects(PERMS, { mandatory: ['diarry'] }, /'diarry', which is not among requestedPermissions/);
       rejects(PERMS, { optIn: ['selfDestruct'] }, /'selfDestruct', which is not among requestedPermissions/);
     });
 
-    it('[CS08] an id matching two requested entries is ambiguous', () => {
+    it('[CSC08] an id matching two requested entries is ambiguous', () => {
       rejects(
         [{ streamId: 'diary', level: 'read' }, { streamId: 'diary', level: 'contribute' }],
         { mandatory: ['diary'] },

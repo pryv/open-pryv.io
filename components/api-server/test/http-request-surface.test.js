@@ -27,7 +27,7 @@ describe('[HTRS] HTTP request surface', function () {
   });
 
   describe('[HTR1] a query id never replaces the path id', function () {
-    it('[HTP1] events: getOne and delete act on the path id', async function () {
+    it('[HRS1] events: getOne and delete act on the path id', async function () {
       await user.stream({ id: 'htrs-s', name: 'htrs' });
       const a = (await user.event({ streamIds: ['htrs-s'], type: 'note/txt', content: 'a' })).attrs;
       const b = (await user.event({ streamIds: ['htrs-s'], type: 'note/txt', content: 'b' })).attrs;
@@ -42,7 +42,7 @@ describe('[HTRS] HTTP request surface', function () {
       assert.ok(other.body.event.trashed !== true, 'the query id was left alone');
     });
 
-    it('[HTP2] streams: delete acts on the path id', async function () {
+    it('[HRS2] streams: delete acts on the path id', async function () {
       await user.stream({ id: 'htrs-a', name: 'htrs a' });
       await user.stream({ id: 'htrs-b', name: 'htrs b' });
       const del = await coreRequest.delete(basePath + '/streams/htrs-a').query({ id: 'htrs-b' }).set('Authorization', token);
@@ -54,7 +54,7 @@ describe('[HTRS] HTTP request surface', function () {
       assert.ok(b != null && b.trashed !== true, 'the query id was left alone');
     });
 
-    it('[HTP3] accesses: getOne and delete act on the path id', async function () {
+    it('[HRS3] accesses: getOne and delete act on the path id', async function () {
       const a = (await user.access({ type: 'app', token: cuid(), name: 'htrs-a', permissions: [{ streamId: '*', level: 'read' }] })).attrs;
       const b = (await user.access({ type: 'app', token: cuid(), name: 'htrs-b', permissions: [{ streamId: '*', level: 'read' }] })).attrs;
       const got = await coreRequest.get(basePath + '/accesses/' + a.id).query({ id: b.id }).set('Authorization', token);

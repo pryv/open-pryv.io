@@ -141,7 +141,7 @@ function revokeDeps (mall, cores, over = {}) {
 
 describe('[CMCMR] cmc group accounts: offboarding', () => {
   describe('[CMCMR-REC] sweeping records through the grants', () => {
-    it('[MR01] each child is deleted through its relationship grant; the ledger says deleted; the read-back confirms', async () => {
+    it('[MR43] each child is deleted through its relationship grant; the ledger says deleted; the read-back confirms', async () => {
       const mall = fakeMall();
       const r1 = await seed(mall);
       const r2 = await seed(mall, { relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B, childAccessId: 'child-2' });
@@ -156,7 +156,7 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual((await ledger.listRecords({ mall }, 'group')).map((x) => x.state), ['deleted', 'deleted']);
     });
 
-    it('[MR02] verdicts: a 404 or a dead grant is absent, a 5xx or a network error a residual; the read-back settles an expired residual as absent and a deletion still listed as residual', async () => {
+    it('[MR44] verdicts: a 404 or a dead grant is absent, a 5xx or a network error a residual; the read-back settles an expired residual as absent and a deletion still listed as residual', async () => {
       const mall = fakeMall();
       const rows = [];
       for (const id of ['c-404', 'c-401', 'c-503', 'c-net', 'c-listed']) rows.push(await seed(mall, { childAccessId: id }));
@@ -182,7 +182,7 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual(states, { 'c-404': 'absent', 'c-401': 'absent', 'c-503': 'absent', 'c-net': 'residual', 'c-listed': 'residual' });
     });
 
-    it('[MR03] a record whose relationship is gone, or whose child expired, is settled absent without a call; a settled record is skipped', async () => {
+    it('[MR45] a record whose relationship is gone, or whose child expired, is settled absent without a call; a settled record is skipped', async () => {
       const mall = fakeMall({ accesses: [MEMBERSHIP] });
       const gone = await seed(mall);
       const mall2 = fakeMall();

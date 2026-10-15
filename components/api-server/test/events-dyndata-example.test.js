@@ -56,7 +56,7 @@ describe('[EVDY] events with dynData', function () {
   }
 
   describe('[EVDY01] GET /', function () {
-    it('[ED01] must return events for the user', async function () {
+    it('[EDY01] must return events for the user', async function () {
       const res = await coreRequest
         .get(basePath)
         .set('Authorization', token)
@@ -69,7 +69,7 @@ describe('[EVDY] events with dynData', function () {
       assert.ok(res.body.events.length > 0, 'should have events');
     });
 
-    it('[ED02] must filter events by streamIds', async function () {
+    it('[EDY02] must filter events by streamIds', async function () {
       // Use stream ID from dynData
       const streamId = testData.streams[0].id;
 
@@ -91,7 +91,7 @@ describe('[EVDY] events with dynData', function () {
   });
 
   describe('[EVDY02] POST /', function () {
-    it('[ED10] must create a new event', async function () {
+    it('[EDY10] must create a new event', async function () {
       // accesses[1] has 'contribute' permission on streams[1]
       const streamId = testData.streams[1].id;
       const data = {
@@ -114,7 +114,7 @@ describe('[EVDY] events with dynData', function () {
   });
 
   describe('[EVDY03] GET /:id', function () {
-    it('[ED20] must return a specific event from dynData', async function () {
+    it('[EDY20] must return a specific event from dynData', async function () {
       // Use an event ID from dynData
       const eventId = testData.events[0].id;
 
@@ -129,7 +129,7 @@ describe('[EVDY] events with dynData', function () {
   });
 
   describe('[EVDY04] Access with different tokens', function () {
-    it('[ED30] must return events with read-all access', async function () {
+    it('[EDY30] must return events with read-all access', async function () {
       // accesses[2] has read-all permissions (streamId: '*')
       const readAllToken = testData.accesses[2].token;
 
@@ -142,7 +142,7 @@ describe('[EVDY] events with dynData', function () {
       assert.ok(res.body.events);
     });
 
-    it('[ED31] must restrict events with limited access', async function () {
+    it('[EDY31] must restrict events with limited access', async function () {
       // accesses[1] has specific stream permissions
       const limitedToken = testData.accesses[1].token;
 

@@ -648,7 +648,7 @@ export default function conformanceTests (getDB) {
       });
     });
 
-    describe('[MAILTMPL] setMailTemplate / getMailTemplate / getAllMailTemplates / deleteMailTemplate', () => {
+    describe('[PDBMT] setMailTemplate / getMailTemplate / getAllMailTemplates / deleteMailTemplate', () => {
       it('[MT01] must persist and retrieve a {type, lang, part} triple', async () => {
         const t = 'welcome-' + cuid();
         await db.setMailTemplate(t, 'en', 'subject', '| Welcome');

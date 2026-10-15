@@ -53,7 +53,7 @@ describe('[MIGSKIP] applyOrAnnounce', () => {
     };
   }
 
-  it('[MS01] autoRun=true with no pending: emits "No pending migrations."', async () => {
+  it('[MSW01] autoRun=true with no pending: emits "No pending migrations."', async () => {
     const logger = makeLogger();
     const runner = fakeRunner({ applied: [] });
     const res = await applyOrAnnounce({ runner, logger, autoRun: true });
@@ -70,7 +70,7 @@ describe('[MIGSKIP] applyOrAnnounce', () => {
     assert.deepStrictEqual(logger._warn, []);
   });
 
-  it('[MS02] autoRun=true with applied migrations: per-migration info + summary', async () => {
+  it('[MSW02] autoRun=true with applied migrations: per-migration info + summary', async () => {
     const logger = makeLogger();
     const applied = [
       { engineId: 'postgresql', filename: '20260601_120000_a.js', fromVersion: 0, toVersion: 1, durationMs: 12, dryRun: false },
@@ -91,7 +91,7 @@ describe('[MIGSKIP] applyOrAnnounce', () => {
     assert.deepStrictEqual(logger._warn, []);
   });
 
-  it('[MS03] autoRun=false with no pending: single info line, runAll NOT called', async () => {
+  it('[MSW03] autoRun=false with no pending: single info line, runAll NOT called', async () => {
     const logger = makeLogger();
     const statuses = [
       { engineId: 'postgresql', currentVersion: 5, discovered: [], pending: [] },
@@ -111,7 +111,7 @@ describe('[MIGSKIP] applyOrAnnounce', () => {
     assert.deepStrictEqual(logger._warn, []);
   });
 
-  it('[MS04] autoRun=false with one pending: WARNING summary + per-engine WARNING line', async () => {
+  it('[MSW04] autoRun=false with one pending: WARNING summary + per-engine WARNING line', async () => {
     const logger = makeLogger();
     const statuses = [
       {
@@ -141,7 +141,7 @@ describe('[MIGSKIP] applyOrAnnounce', () => {
     );
   });
 
-  it('[MS05] autoRun=false with multiple pending across multiple engines: count + per-engine math', async () => {
+  it('[MSW05] autoRun=false with multiple pending across multiple engines: count + per-engine math', async () => {
     const logger = makeLogger();
     const statuses = [
       {

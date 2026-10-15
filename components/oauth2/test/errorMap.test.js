@@ -104,7 +104,7 @@ describe('[OAUTH-ERR] error map', () => {
     };
 
     for (const [pryvId, oauthError] of Object.entries(EXPECTED_ROWS)) {
-      it(`[OAUTH-ERR-MATRIX] ${pryvId} → ${oauthError}`, () => {
+      it(`[OAUTH-ERR-ROW] ${pryvId} → ${oauthError}`, () => {
         assert.equal(mapError(pryvId), oauthError);
       });
     }

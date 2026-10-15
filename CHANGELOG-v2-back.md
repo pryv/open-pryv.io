@@ -15,6 +15,31 @@
 - `storages/engines/rqlite/scripts/setup`: rqlite 10.6.0, and the downloaded tarball is checked
   against its sha256 (same values as the Dockerfile) before extraction.
 
+## Log fallback to stderr, wizard log targets
+
+- `boiler/src/logging.ts`: `initLoggerWithConfig` turns the console on at `warn`, every level on
+  stderr, when the console is inactive and none of `logs:file`, `logs:fileSync`, `logs:custom` is
+  active (`LOGS=<level>` still wins, as before). Tests: `[BLFB1]`-`[BLFB4]` (child processes: the
+  fallback, and no change with a file, a sync file or an active console).
+- `boiler/src/logging.ts`: the text console format colours the logged context (`util.inspect`) only
+  when `format.color` is true (it was always coloured); the stderr fallback forces
+  `format.color: false`. `config/production-config.yml`: the unread `logs.console.colorize` is
+  replaced by `logs.console.format.color: false`. Tests: `[BLFB5]` (fallback with a colour format),
+  `[BLFB6]` (boiler booted on `production-config.yml`), `[INWZ9]` (boiler booted on a generated
+  config; the error also lands in the error file): no ANSI escape in the console output.
+- Tests: `[BLFB7]` (a `logs:custom` module is a target: no fallback, the module gets the entry),
+  `[BLFB8]` (`LOGS=warn` with no target: stdout at that level, nothing on stderr).
+- `boiler/src/logging.ts`: the JSON console format serialises with `errorsAsPlainObjects`, so an
+  Error context (already masked) keeps name, message, stack and cause. Test: `[BLFB9]`.
+- `bin/master.js`: `log` / `warn` and a new `error` helper go through the `master` logger only; the
+  `console.*` mirrors (log, warn, platform integrity at boot and from the monitor, hosted sites,
+  rqlite stop) are gone. The FATAL path logs through the logger and falls back to the raw console
+  only when the logger is not initialised. The `[bootstrap]` lines, which run before boiler init,
+  stay on the console.
+- `bin/init.js`: the generated config carries `logs.console` (`info`, `format.color: false`) and `logs.file` (`error`,
+  under the data folder) in a "Logs" section; the two commented `logs` entries of the appendix say
+  to merge into it. Test: `[INWZ8]` (also passes `check-config`).
+
 ## Mail template reload, access-index prune classes
 
 - `mail/src/emailTemplatesDelivery.ts`: `refresh()` materialises into a new directory with a new

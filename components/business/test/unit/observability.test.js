@@ -77,7 +77,7 @@ function initEmitter (sink) {
   });
 }
 
-describe('[OBS] observability choke point', function () {
+describe('[OBSU] observability choke point', function () {
   afterEach(function () {
     observability._reset();
   });

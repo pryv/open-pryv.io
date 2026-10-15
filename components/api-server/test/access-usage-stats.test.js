@@ -65,19 +65,19 @@ describe('[AUST] access-usage-stats tracking', function () {
     });
   }
 
-  it('[AU01] skips the update when the context has an access but NO resolved user', async function () {
+  it('[AUS01] skips the update when the context has an access but NO resolved user', async function () {
     // Shape produced by a public method: setAuditAccessId stamped a
     // synthetic access id, no user was ever resolved.
     await run({ access: { id: 'public' }, user: { username: 'someone' }, methodId: 'auth.cores' });
     assert.equal(calls.length, 0, 'must not touch storage without a user id');
   });
 
-  it('[AU02] skips the update when there is no user object at all', async function () {
+  it('[AUS02] skips the update when there is no user object at all', async function () {
     await run({ access: { id: 'valid-password' }, methodId: 'auth.login' });
     assert.equal(calls.length, 0, 'must not touch storage without a user');
   });
 
-  it('[AU03] still records usage for a real authenticated access', async function () {
+  it('[AUS03] still records usage for a real authenticated access', async function () {
     await run({
       access: { id: 'a-real-access' },
       user: { id: 'u-123', username: 'someone' },
@@ -90,7 +90,7 @@ describe('[AUST] access-usage-stats tracking', function () {
     assert.equal(calls[0].update.$inc['calls.events:get'], 1);
   });
 
-  it('[AU05] a batch counts registered methods only, never client-chosen names', async function () {
+  it('[AUS05] a batch counts registered methods only, never client-chosen names', async function () {
     const username = cuid();
     const token = cuid();
     const user = await getNewFixture().user(username, {});
@@ -112,7 +112,7 @@ describe('[AUST] access-usage-stats tracking', function () {
     }
   });
 
-  it('[AU04] calls next() before doing its work (callers never wait on stats)', async function () {
+  it('[AUS04] calls next() before doing its work (callers never wait on stats)', async function () {
     let nextCalled = false;
     middleware({ access: { id: 'x' }, user: { id: 'u-1' }, methodId: 'events.get' }, {}, {}, () => {
       nextCalled = true;

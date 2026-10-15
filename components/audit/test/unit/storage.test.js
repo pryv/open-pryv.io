@@ -15,7 +15,7 @@ describe('[ASTO] Audit Storage', () => {
     await initTests();
   });
 
-  describe('[AS01] receive message and write it into its own database', () => {
+  describe('[AUD01] receive message and write it into its own database', () => {
     let userStrorage;
 
     async function sendAndWait (event) {
@@ -56,7 +56,7 @@ describe('[ASTO] Audit Storage', () => {
     });
   });
 
-  describe('[AS02] type wildcard query', () => {
+  describe('[AUD02] type wildcard query', () => {
     it('[ASTW] a type wildcard matches its own class only, not a class sharing its prefix', async () => {
       const storage = await audit.storage.forUser(cuid());
       for (const type of ['log/test', 'logx/test']) {

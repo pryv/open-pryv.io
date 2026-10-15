@@ -238,7 +238,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.ok(!res.body.core, 'response must not contain legacy `core.url` redirect');
     });
 
-    it('[MC15] the forward is signed for its body and names the landing core', async function () {
+    it('[MC21] the forward is signed for its body and names the landing core', async function () {
       const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
       const username = 'fwd15' + cuid.slug().toLowerCase();
       forwardHandler = async () => ({ ok: true, status: 201, json: async () => ({ username, apiEndpoint: 'https://x/' }) });
@@ -260,7 +260,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.strictEqual(verifyRegistrationForward(options.headers[REGISTRATION_FORWARD_HEADER], key, options.body.replace(username, username + 'x')), null, 'bound to the body');
     });
 
-    it('[MC16] a signed forward is created here, never forwarded again', async function () {
+    it('[MC22] a signed forward is created here, never forwarded again', async function () {
       const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
       const key = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
       const username = 'fwd16' + cuid.slug().toLowerCase();
@@ -274,7 +274,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.ok(!res.body.core, 'no redirect');
     });
 
-    it('[MC17] a forged or replayed forward header is refused', async function () {
+    it('[MC23] a forged or replayed forward header is refused', async function () {
       const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
       const key = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
       const body = { appId: 'test-app', username: 'fwd17' + cuid.slug().toLowerCase(), email: charlatan.Internet.email(), password: 'testpassword', hosting: 'eu-central-1', insurancenumber: '123' };

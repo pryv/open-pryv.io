@@ -102,7 +102,7 @@ const SINGLE_USE_TRIGGER = {
 
 describe('[CMCOL] cmc/capability open-link', () => {
   describe('[CMCOL-MD] markCapabilityInvalidated flips state', () => {
-    it('[CMCOL-MD] open access becomes state=invalidated + bumps stateChangedAt', async () => {
+    it('[CMCOL-MD1] open access becomes state=invalidated + bumps stateChangedAt', async () => {
       const mall = fakeMall();
       const r = await mintCapability({
         userId: 'u1',
@@ -124,7 +124,7 @@ describe('[CMCOL] cmc/capability open-link', () => {
   });
 
   describe('[CMCOL-ME] markCapabilityInvalidated is idempotent', () => {
-    it('[CMCOL-ME] second call on an already-invalidated access is a no-op success', async () => {
+    it('[CMCOL-ME1] second call on an already-invalidated access is a no-op success', async () => {
       const mall = fakeMall();
       await mintCapability({
         userId: 'u1',
@@ -145,7 +145,7 @@ describe('[CMCOL] cmc/capability open-link', () => {
   });
 
   describe('[CMCOL-MF] markCapabilityInvalidated tolerates single-use consumed', () => {
-    it('[CMCOL-MF] consumed (single-use) access is a no-op success', async () => {
+    it('[CMCOL-MF1] consumed (single-use) access is a no-op success', async () => {
       const mall = fakeMall();
       const r = await mintCapability({
         userId: 'u1',

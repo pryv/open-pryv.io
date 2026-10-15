@@ -131,7 +131,7 @@ describe('[ACMECLIENT] AcmeClient', function () {
       assert.equal(events[1][1].directoryUrl, AcmeClient.DIRECTORY_PRODUCTION);
     });
 
-    it('[ACNE] registers without a contact when no email is given', async () => {
+    it('[ACMNC] registers without a contact when no email is given', async () => {
       const { lib, events } = makeFakeLib();
       const result = await AcmeClient.createAccount({ acmeLib: lib });
       assert.equal(result.email, null);

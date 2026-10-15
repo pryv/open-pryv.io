@@ -339,7 +339,7 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
 
     const get = (p, extra = {}) => request(port, Object.assign({ path: p, host: 'docs.' + DOMAIN }, extra));
 
-    it('[HSTI] joins the upstream base with the request path and query', async function () {
+    it('[HSTIU] joins the upstream base with the request path and query', async function () {
       const r = await get('/guide/intro.html?lang=fr&x=1');
       assert.equal(r.status, 200);
       assert.equal(r.body, 'upstream:/docs/guide/intro.html?lang=fr&x=1');

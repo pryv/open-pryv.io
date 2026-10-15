@@ -17,7 +17,7 @@ const ps = require('../../src/accesses/permissionSet.ts');
 
 describe('[PSET] accesses permissionSet', () => {
   describe('[PSET-L] lexicon values', () => {
-    it('[PS01] exposes the ordered level map and value lists', () => {
+    it('[PS14] exposes the ordered level map and value lists', () => {
       assert.deepEqual(ps.PermissionLevels, {
         none: -1, read: 0, 'create-only': 1, contribute: 1, manage: 2
       });

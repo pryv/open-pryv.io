@@ -654,7 +654,7 @@ describe('[RGMC] register: multi-core', function () {
   // 2b. email→username recovery (hashed): non-home core redirects to the
   //     user's home core (which reverse-resolves the HMAC token locally).
   // ----------------------------------------------------------------
-  describe('[MC17] email→username recovery (hashed)', function () {
+  describe('[MC24] email→username recovery (hashed)', function () {
     let request;
     let recEmail;
 

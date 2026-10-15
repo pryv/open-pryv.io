@@ -212,7 +212,7 @@ describe('[CKFM] FileMaterializer validity-window gate', () => {
     assert.equal(fs.readFileSync(fm.keyPath, 'utf8'), 'K1');
   });
 
-  it('[CKF3] the default validator refuses an unparseable cert', async () => {
+  it('[CKF4] the default validator refuses an unparseable cert', async () => {
     const renewer = makeFakeRenewer([{ 'h.test': mkCert('LEAF', 'KEY') }]);
     const fm = new FileMaterializer({ certRenewer: renewer, tlsDir: tmp, hostname: 'h.test', log: () => {} });
     const r = await fm.checkOnce();
@@ -221,7 +221,7 @@ describe('[CKFM] FileMaterializer validity-window gate', () => {
   });
 });
 
-describe('[FILEMAT] runRotateScript', function () {
+describe('[FILEROT] runRotateScript', function () {
   this.timeout(10_000);
   let tmp;
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-rs-')); });

@@ -100,7 +100,7 @@ describe('[CERTUTILS] certUtils', () => {
     });
     after(() => { if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); });
 
-    it('[CKV1] accepts a clock inside the window', () => {
+    it('[CKV8] accepts a clock inside the window', () => {
       const verdict = checkValidityWindow(pem, { nowMs: issuedAt + HOUR });
       assert.equal(verdict.ok, true);
       assert.equal(verdict.notBefore, issuedAt);
@@ -144,13 +144,13 @@ describe('[CERTUTILS] certUtils', () => {
     });
   });
 
-  describe('[CKCF] clockSkewSecondsFromConfig()', () => {
-    it('[CKC1] keeps numbers >= 0, including 0 (disabled)', () => {
+  describe('[CKUF] clockSkewSecondsFromConfig()', () => {
+    it('[CKU1] keeps numbers >= 0, including 0 (disabled)', () => {
       assert.equal(clockSkewSecondsFromConfig(45), 45);
       assert.equal(clockSkewSecondsFromConfig('10'), 10);
       assert.equal(clockSkewSecondsFromConfig(0), 0);
     });
-    it('[CKC2] falls back to 30 when unset or invalid', () => {
+    it('[CKU2] falls back to 30 when unset or invalid', () => {
       assert.equal(clockSkewSecondsFromConfig(undefined), 30);
       assert.equal(clockSkewSecondsFromConfig(null), 30);
       assert.equal(clockSkewSecondsFromConfig('thirty'), 30);

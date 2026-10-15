@@ -762,7 +762,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(typeof revoke.content.reason, 'object');
     });
 
-    it('[OE27] refresh-token reuse also revokes a sub-access the session created under a caller id', async function () {
+    it('[OE30] refresh-token reuse also revokes a sub-access the session created under a caller id', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
       const bearer = r.tokenRes.body.access_token;

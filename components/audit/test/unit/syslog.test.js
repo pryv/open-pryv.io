@@ -42,7 +42,7 @@ describeSyslog('[SYSL] Syslog', function () {
     return e;
   }
 
-  describe('[SY01] receive message and write them to syslog', () => {
+  describe('[SY07] receive message and write them to syslog', () => {
     it('[F8SH] default message', function (done) {
       this.timeout(5000);
       const randomString = cuid();

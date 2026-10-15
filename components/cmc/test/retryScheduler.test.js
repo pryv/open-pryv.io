@@ -37,7 +37,7 @@ function fakeRunRetryLoop (recorder, opts = {}) {
 }
 
 describe('[CMCRS] cmc/retryScheduler', () => {
-  it('[RS01] tick iterates over provider-supplied userIds and aggregates stats', async () => {
+  it('[RS08] tick iterates over provider-supplied userIds and aggregates stats', async () => {
     const seen = [];
     const sched = new RetryScheduler({
       retryDeps: {},
@@ -51,7 +51,7 @@ describe('[CMCRS] cmc/retryScheduler', () => {
     assert.equal(r.errors, 0);
   });
 
-  it('[RS02] per-user errors are isolated; tick continues + counts them', async () => {
+  it('[RS09] per-user errors are isolated; tick continues + counts them', async () => {
     const seen = [];
     const sched = new RetryScheduler({
       retryDeps: {},

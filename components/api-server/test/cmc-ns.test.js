@@ -275,7 +275,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     // parents. Without this guard, deleting `:_cmc:` would silently
     // break every active CMC relationship on the account.
 
-    it('[CN15] rejects delete of the bare :_cmc: root by a personal token', async function () {
+    it('[CN95] rejects delete of the bare :_cmc: root by a personal token', async function () {
       // Ensure the parent exists by triggering lazy provisioning first.
       await coreRequest
         .post(eventsPath)
@@ -292,7 +292,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable');
     });
 
-    it('[CN16] rejects delete of :_cmc:_internal by a personal token', async function () {
+    it('[CN96] rejects delete of :_cmc:_internal by a personal token', async function () {
       const res = await coreRequest
         .delete('/' + username + '/streams/' + encodeURIComponent(':_cmc:_internal'))
         .set('Authorization', token);
@@ -300,7 +300,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable');
     });
 
-    it('[CN17] rejects delete of :_cmc:apps by a personal token', async function () {
+    it('[CN97] rejects delete of :_cmc:apps by a personal token', async function () {
       const res = await coreRequest
         .delete('/' + username + '/streams/' + encodeURIComponent(':_cmc:apps'))
         .set('Authorization', token);
@@ -332,7 +332,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         res.status + ' ' + JSON.stringify(res.body));
     });
 
-    it('[CN12] accesses.create rejects clientData.cmc.role forge', async function () {
+    it('[CN98] accesses.create rejects clientData.cmc.role forge', async function () {
       const res = await coreRequest
         .post(accessesPath())
         .set('Authorization', token)
@@ -346,7 +346,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-clientdata-cmc-forbidden');
     });
 
-    it('[CN13] accesses.create allows non-cmc clientData keys', async function () {
+    it('[CN99] accesses.create allows non-cmc clientData keys', async function () {
       const res = await coreRequest
         .post(accessesPath())
         .set('Authorization', token)
@@ -525,21 +525,21 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         (e.streamIds || []).some((s) => String(s).startsWith(C.NS_INTERNAL)));
     }
 
-    it('[CI01] default `*` events.get never expands into :_cmc:_internal', async function () {
+    it('[CNI01] default `*` events.get never expands into :_cmc:_internal', async function () {
       const res = await coreRequest.get('/' + iv.username + '/events')
         .set('Authorization', iv.token).query({ limit: 1000 });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       assert.strictEqual(leaks(res.body.events).length, 0, 'default `*` leaked an internal event');
     });
 
-    it('[CI02] explicit `[*]` events.get never expands into :_cmc:_internal', async function () {
+    it('[CNI02] explicit `[*]` events.get never expands into :_cmc:_internal', async function () {
       const res = await coreRequest.get('/' + iv.username + '/events')
         .set('Authorization', iv.token).query({ streams: ['*'], limit: 1000 });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       assert.strictEqual(leaks(res.body.events).length, 0, 'explicit `*` leaked an internal event');
     });
 
-    it('[CI03] a single-value direct-target internal read returns nothing', async function () {
+    it('[CNI03] a single-value direct-target internal read returns nothing', async function () {
       const res = await coreRequest.get('/' + iv.username + '/events')
         .set('Authorization', iv.token)
         .query({ streams: C.NS_INTERNAL_RETRIES, limit: 1000 });
@@ -547,7 +547,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(leaks(res.body.events).length, 0, 'single-value internal target leaked');
     });
 
-    it('[CI04] a logical-query targeting an internal id has it scrubbed', async function () {
+    it('[CNI04] a logical-query targeting an internal id has it scrubbed', async function () {
       // Mix a legit stream so the query stays valid after the internal id is
       // scrubbed — this exercises the logical-query hardening (any/all/not).
       const res = await coreRequest.get('/' + iv.username + '/events')
@@ -557,7 +557,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(leaks(res.body.events).length, 0, 'logical-query internal target leaked');
     });
 
-    it('[CI05] streams.get does not expose the :_cmc:_internal subtree', async function () {
+    it('[CNI05] streams.get does not expose the :_cmc:_internal subtree', async function () {
       const sg = await coreRequest.get('/' + iv.username + '/streams').set('Authorization', iv.token);
       assert.strictEqual(sg.status, 200);
       const flat = [];

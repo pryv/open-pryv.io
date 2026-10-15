@@ -13,7 +13,7 @@ const { listeningAgent } = require('test-helpers/src/listeningAgent.ts');
 const subdomainToPath = require('middleware/src/subdomainToPath.ts').default([]);
 
 describe('[SDTP] subdomainToPath middleware', function () {
-  describe('[SD01] using a minimal application', function () {
+  describe('[SD46] using a minimal application', function () {
     const app = express();
     // Not a bare app: see listeningAgent.ts on why supertest(app) flakes on macOS.
     let request;

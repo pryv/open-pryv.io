@@ -135,7 +135,7 @@ describe('[PRCN] TcpPubsub reconnect after broker loss', function () {
     });
   }
 
-  it('[RC01] delivers while the broker is up (baseline)', async () => {
+  it('[RC18] delivers while the broker is up (baseline)', async () => {
     await publishVia(port, 'reconn-scope', 'evt-before');
     await waitFor(() => received.includes('evt-before'));
     assert.ok(received.includes('evt-before'));
@@ -165,7 +165,7 @@ describe('[PRCN] TcpPubsub reconnect after broker loss', function () {
     assert.ok(received.includes('evt-after'), 'invalidation delivered after reconnect');
   });
 
-  it('[RC03] tells listeners the connection dropped, then that it is back', async () => {
+  it('[RC19] tells listeners the connection dropped, then that it is back', async () => {
     const states = [];
     const remove = tcpPubsub.onConnectionStateChange((state) => states.push(state));
     try {

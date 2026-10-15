@@ -42,7 +42,7 @@ describe('[AUTN] Authentication', function () {
     },
     getCustomAuthFunction: () => { }
   };
-  describe('[AT01] hasProperties', function () {
+  describe('[AT76] hasProperties', function () {
     // FLOW Mock out the settings object for this unit test
     const { hasProperties } = authMod(express(), { settings });
     const obj = { a: 1, b: 2 };

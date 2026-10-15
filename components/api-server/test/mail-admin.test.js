@@ -126,7 +126,7 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     assert.ok(res.status >= 400 && res.status < 600, 'expected 4xx/5xx, got ' + res.status);
   });
 
-  it('[MA10] PUT refuses a template carrying code and stores nothing', async () => {
+  it('[MA51] PUT refuses a template carrying code and stores nothing', async () => {
     const type = 'code-' + cuid();
     for (const pug of ['- global.x = 1\np x', 'p !{username}', 'p #{process.env.HOME}', 'include /etc/hosts']) {
       const res = await coreRequest
@@ -139,7 +139,7 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     assert.strictEqual(await platformDB.getMailTemplate(type, 'en', 'html'), null);
   });
 
-  it('[MA11] PUT refuses a type, lang or part outside ^[a-z0-9-]+$', async () => {
+  it('[MA52] PUT refuses a type, lang or part outside ^[a-z0-9-]+$', async () => {
     for (const p of ['Bad_Type/en/html', 'welcome-email/EN/html', 'welcome-email/en/html.pug']) {
       const res = await coreRequest
         .put('/system/admin/mail/templates/' + p)
@@ -150,7 +150,7 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     assert.deepStrictEqual((await platformDB.getAllMailTemplates()).length, 0);
   });
 
-  it('[MA12] the process that served a PUT or DELETE sends the new template right away', async () => {
+  it('[MA53] the process that served a PUT or DELETE sends the new template right away', async () => {
     // The test core is the serving worker: no master relays anything here.
     const mail = require('mail');
     await mail.close();
@@ -190,13 +190,13 @@ describe('[MAILADM] /system/admin/mail/* admin-key-gated routes', () => {
     }
   });
 
-  it('[MA13] a PUT whose reload fails answers 503, with the template stored', async () => {
+  it('[MA54] a PUT whose reload fails answers 503, with the template stored', async () => {
     const mail = require('mail');
     await mail.close();
     let reads = 0;
     await mail.init({
       getAllMailTemplates: async () => {
-        if (reads++ > 0) throw new Error('MA13 reload failure');
+        if (reads++ > 0) throw new Error('MA54 reload failure');
         return [];
       },
       smtp: { jsonTransport: true },

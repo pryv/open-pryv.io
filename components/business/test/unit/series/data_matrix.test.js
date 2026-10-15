@@ -197,7 +197,7 @@ describe('[DMTX] DataMatrix', function () {
   });
 });
 describe('[SROW] business.series.Row', function () {
-  describe('[SR01] toStruct', function () {
+  describe('[SR06] toStruct', function () {
     it('[NJ4G] should return a js object for the row', function () {
       const row = new Row([1, 2], ['a', 'b']);
       const obj = row.toStruct();

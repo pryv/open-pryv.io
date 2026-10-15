@@ -346,7 +346,7 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.deepEqual(res.deletedAccessIds, ['grant-13a']);
   });
 
-  it('[CIR15] a delete that fails for a real reason is reported as a retryable failure, warned, and not claimed', async () => {
+  it('[CIR28] a delete that fails for a real reason is reported as a retryable failure, warned, and not claimed', async () => {
     const SCOPE = ':_cmc:apps:my-app:study-a';
     const mall = fakeMall();
     seedBackChannel(mall, 'grant-15a', { counterparty: SUBJECT, scopeStreamId: SCOPE });

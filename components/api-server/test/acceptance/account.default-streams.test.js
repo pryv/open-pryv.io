@@ -25,7 +25,7 @@ const { produceStorageConnection } = require('api-server/test/test-helpers');
 
 const { getMall } = require('mall');
 
-describe('[ACCO] Account with system streams', function () {
+describe('[ACCD] Account with system streams', function () {
   let app;
   let request;
   let res;
