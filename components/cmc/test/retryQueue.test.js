@@ -666,5 +666,28 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(summary.succeeded, 3, JSON.stringify(summary));
       assert.deepEqual(p.calls.map((c) => new URL(c.url).hostname), ['peer0.example.com', 'peer1.example.com', 'peer2.example.com']);
     });
+
+    it('[RQ32] the loop dispatches only records the plugin wrote; a foreign-authored, foreign-type or foreign-stream record is retired, never run (S4)', async () => {
+      const mall = fakeMall();
+      const base = { originalType: 'consent/accept-cmc', originalStreamIds: [':_cmc:apps:x'], originalContent: { marker: 'x' }, attempts: 1, nextAttemptAfter: 0, status: 'pending' };
+      // Plugin-written: createdBy system, exact stream, retry type.
+      mall._events.set('legit', { id: 'legit', createdBy: 'system', type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries'], time: 0, content: { ...base, originalContent: { marker: 'legit' } } });
+      // Foreign author (a crafted API write stamps the writing access's id).
+      mall._events.set('author', { id: 'author', createdBy: 'acc-attacker', type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries'], time: 0, content: { ...base, originalContent: { marker: 'author' } } });
+      // Foreign author with a callerId suffix.
+      mall._events.set('author2', { id: 'author2', createdBy: 'acc-attacker some-caller', type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries'], time: 0, content: { ...base, originalContent: { marker: 'author2' } } });
+      // Foreign type parked in the retries stream.
+      mall._events.set('type', { id: 'type', createdBy: 'system', type: 'note/txt', streamIds: [':_cmc:_internal:retries'], time: 0, content: { ...base, originalContent: { marker: 'type' } } });
+      // A descendant stream parented inside the queue (legacy).
+      mall._events.set('stream', { id: 'stream', createdBy: 'system', type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries:legacy'], time: 0, content: { ...base, originalContent: { marker: 'stream' } } });
+      const seen = [];
+      const summary = await runRetryLoop({ userId: 'u1', deps: { mall, dispatch: async ({ event }) => { seen.push(event?.content?.marker); return { handled: true, status: 'completed' }; }, dispatchDeps: {}, now: () => 10_000 } });
+      assert.deepEqual(seen, ['legit'], 'only the plugin-authored record is dispatched: ' + JSON.stringify(seen));
+      assert.equal(summary.succeeded, 1);
+      for (const id of ['author', 'author2', 'type', 'stream']) {
+        assert.equal(mall._events.get(id).content.status, 'failed-permanent', id + ' retired');
+        assert.equal(mall._events.get(id).content.lastFailureReason, 'cmc-retry-foreign-record', id);
+      }
+    });
   });
 });

@@ -436,14 +436,15 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
     const target = (params != null && typeof params === 'object' && params.update != null)
       ? params.update
       : params;
-    const id: unknown = target?.id;
+    // Judge the canonical ids: a `:local:` alias resolves to the same stream.
+    const id: unknown = C.canonicalLocalStreamId(target?.id);
     if (typeof id === 'string' && C.isDelegationStreamId(id)) {
       return next(deps.errors.invalidOperation(
         'Stream "' + id + '" is reserved and managed by the account-delegation plugin',
         { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
       ));
     }
-    const parentId: unknown = target?.parentId;
+    const parentId: unknown = C.canonicalLocalStreamId(target?.parentId);
     if (typeof parentId === 'string' && C.isDelegationStreamId(parentId)) {
       return next(reservedParentError(deps, parentId, id));
     }
@@ -459,26 +460,26 @@ function reservedParentError (deps: Deps, parentId: string, streamId: unknown): 
 }
 
 /**
- * streams.update hook — a move cannot enter the `:_delegation:*` namespace,
- * and a `:_delegation:*` stream cannot be moved. `streams.update` takes
- * `{ id, update: { parentId?, ... } }`; an update without `parentId` (a
- * rename) is not this hook's concern. Same reasons as the create hook.
+ * streams.update hook — a `:_delegation:*` stream cannot be trashed.
+ * `streams.update` takes `{ id, update: { trashed?, parentId?, ... } }`.
+ * Trashing a reserved stream would break the delegation records on it like a
+ * delete would, so `update.trashed === true` on a `:_delegation:*` stream is
+ * refused. The MOVE checks (a move into the namespace, and a move of a
+ * reserved stream) live in the `streams.update` prerequisites, where the
+ * stored parent is known, so a rename repeating the current parentId is not
+ * treated as a move.
  */
 function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
   return function delegationStreamUpdateReservedRootHook (_context, params, _result, next) {
     const update = params?.update;
     if (update == null || typeof update !== 'object') return next();
-    if (!Object.prototype.hasOwnProperty.call(update, 'parentId')) return next();
-    const id: unknown = params?.id;
+    if ((update as { trashed?: unknown }).trashed !== true) return next();
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id === 'string' && C.isDelegationStreamId(id)) {
       return next(deps.errors.invalidOperation(
-        'Stream "' + id + '" is reserved by the account-delegation plugin and cannot be moved',
+        'Stream "' + id + '" is reserved by the account-delegation plugin and cannot be trashed',
         { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
       ));
-    }
-    const parentId: unknown = (update as { parentId?: unknown }).parentId;
-    if (typeof parentId === 'string' && C.isDelegationStreamId(parentId)) {
-      return next(reservedParentError(deps, parentId, id));
     }
     next();
   };
@@ -491,7 +492,7 @@ function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
  */
 function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
   return function delegationStreamDeleteReservedRootHook (context, params, result, next) {
-    const id: unknown = params?.id;
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id !== 'string') return next();
     if (!C.isDelegationStreamId(id)) return next();
     return next(deps.errors.invalidOperation(

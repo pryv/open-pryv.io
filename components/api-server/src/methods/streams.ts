@@ -231,9 +231,25 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
+  // A stream id may be written store-prefixed (`:local:<id>`), which the mall
+  // resolves to the same local stream as `<id>`. Canonicalise `id` / `parentId`
+  // / `update.parentId` once, before the plugin and permission chains, so a
+  // prefixed alias cannot slip a reserved id past a raw-string guard.
+  function canonicalizeLocalStreamIds (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
+    if (params != null && typeof params === 'object') {
+      if (typeof params.id === 'string') params.id = cmc.canonicalLocalStreamId(params.id) as string;
+      if (typeof params.parentId === 'string') params.parentId = cmc.canonicalLocalStreamId(params.parentId) as string;
+      const update = params.update as { parentId?: unknown } | undefined;
+      if (update != null && typeof update === 'object' && typeof update.parentId === 'string') {
+        update.parentId = cmc.canonicalLocalStreamId(update.parentId) as string;
+      }
+    }
+    next();
+  }
   api.register(
     'streams.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
+    canonicalizeLocalStreamIds,
     cmcEnsureReservedParentsHook,
     cmcStreamCreateHook,
     delegationStreamCreateHook,
@@ -306,7 +322,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), cmcStreamUpdateHook, delegationStreamUpdateHook, sharedSecretsStreamUpdateGuard, emailsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), canonicalizeLocalStreamIds, cmcStreamUpdateHook, delegationStreamUpdateHook, sharedSecretsStreamUpdateGuard, emailsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
@@ -323,6 +339,27 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // rename, or an update repeating the current parentId, does not.
     const parentChanges = params.update!.parentId !== undefined &&
       (params.update!.parentId ?? null) !== (stream.parentId ?? null);
+    // Plugin-managed regions: a stream cannot be moved INTO a reserved region,
+    // and a plugin-managed stream cannot be moved out of its place, for every
+    // token (a personal token manages every stream, so the permission walk
+    // below would not stop it). Checked here, where `parentChanges` is known,
+    // so a rename that repeats the current parentId is not treated as a move.
+    if (parentChanges) {
+      const movedId = params.id!;
+      const newParentId = params.update!.parentId;
+      if (cmc.isReservedParentId(newParentId) || cmc.isPluginManagedStreamId(movedId)) {
+        return next(errors.invalidOperation(
+          'Stream "' + movedId + '" cannot be moved into or out of a plugin-managed region of :_cmc:.',
+          { id: 'cmc-reserved-stream', streamId: movedId, parentId: newParentId ?? null }));
+      }
+      if (delegationActive &&
+          ((typeof newParentId === 'string' && delegation.isDelegationStreamId(newParentId)) ||
+           delegation.isDelegationStreamId(movedId))) {
+        return next(errors.invalidOperation(
+          'Stream "' + movedId + '" cannot be moved into or out of the account-delegation namespace.',
+          { id: 'delegation-reserved-stream', streamId: movedId, parentId: newParentId ?? null }));
+      }
+    }
     if (parentChanges && !(await context.access.canCreateChildOnStream(params.update!.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
@@ -412,7 +449,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     logger: getLogger('cmc:stream-delete-narrowing'),
   });
   const sharedSecretsStreamDeleteGuard = sharedSecrets.createStreamDeleteGuard({ errors });
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, delegationStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), canonicalizeLocalStreamIds, cmcStreamDeleteHook, delegationStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id!, null);

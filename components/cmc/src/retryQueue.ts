@@ -87,6 +87,12 @@ const STALE_REASON = 'cmc-retry-stale';
 // today; this is the defence should one appear (an operator tool, a crafted
 // record).
 const SYSTEM_AUTHORED_REASON = 'cmc-retry-system-authored';
+// A record in the retries stream that the plugin did not write. The plugin
+// enqueues through the mall with no `createdBy` (stamped `system`), the exact
+// `:_cmc:_internal:retries` stream and the `cmc-internal/retry-cmc` type; a
+// record failing any of those was placed by something else (a crafted write, a
+// legacy stream parented inside the queue) and is never dispatched.
+const FOREIGN_RECORD_REASON = 'cmc-retry-foreign-record';
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
 // Every write of the plugin on a retry record skips event versioning: the
@@ -516,6 +522,34 @@ function isSystemAuthoredAccept (c: RetryContent): boolean {
 }
 
 /**
+ * True when a record in the retries stream carries positive evidence that
+ * something other than the plugin wrote it, so it must never be dispatched.
+ * The plugin enqueues through the mall (author stamped `system`), on the exact
+ * `:_cmc:_internal:retries` stream, with the `cmc-internal/retry-cmc` type; a
+ * production record always carries all three (the mall stamps `createdBy`).
+ * Evidence of a foreign write:
+ *   - a `createdBy` whose access id is not `system` (a crafted API write stamps
+ *     the writing access's id);
+ *   - a `type` other than the retry type;
+ *   - a `streamIds` that does not include the retries stream (a legacy stream
+ *     parented inside the queue; the loop's `{ any: [retries] }` read also
+ *     returns descendant-stream events).
+ * A field that is simply absent is not treated as evidence (it only happens in
+ * unit fakes; the mall always stamps `createdBy` in production).
+ */
+function isForeignRetryRecord (ev: RetryEvent): boolean {
+  if (ev == null) return false;
+  if (typeof ev.createdBy === 'string' && ev.createdBy.length > 0) {
+    const sep = ev.createdBy.indexOf(' ');
+    const accessId = sep === -1 ? ev.createdBy : ev.createdBy.slice(0, sep);
+    if (accessId !== C.SYSTEM_ACCESS_ID) return true;
+  }
+  if (typeof ev.type === 'string' && ev.type !== C.ET_RETRY) return true;
+  if (Array.isArray(ev.streamIds) && ev.streamIds.length > 0 && !ev.streamIds.includes(C.NS_INTERNAL_RETRIES)) return true;
+  return false;
+}
+
+/**
  * One pass of the retry loop: pull all due events from the retries
  * stream, process each.
  */
@@ -548,6 +582,7 @@ async function runRetryLoop (params: {
   const summary = { processed: 0, succeeded: 0, rescheduled: 0, failedPermanent: 0, skipped: 0, pendingTotal: 0 };
   const pending: RetryEvent[] = [];
   const toPrune: RetryEvent[] = [];
+  const toRetire: RetryEvent[] = [];
   const seen = new Set<string>();
   for (let page = 0; page < MAX_PAGES && pending.length < limit; page++) {
     let events: RetryEvent[];
@@ -572,6 +607,14 @@ async function runRetryLoop (params: {
       const status = ev?.content?.status;
       if (status === 'pending') {
         summary.pendingTotal += 1;
+        // Only records the plugin wrote are ever dispatched. A foreign record
+        // (crafted, or a legacy stream parented inside the queue) is retired,
+        // never run.
+        if (isForeignRetryRecord(ev)) {
+          summary.skipped += 1;
+          if (ev?.id != null) toRetire.push(ev);
+          continue;
+        }
         const after = ev?.content?.nextAttemptAfter;
         const due = typeof after !== 'number' || after <= now;
         if (due && pending.length < limit) pending.push(ev);
@@ -589,6 +632,25 @@ async function runRetryLoop (params: {
     for (const ev of toPrune) {
       try { await deps.mall.events.delete(userId, ev); } catch (_e) { /* pruned on a later pass */ }
     }
+  }
+  // Retire foreign pending records once (so they are not re-scanned every pass),
+  // without ever dispatching them.
+  for (const ev of toRetire) {
+    try {
+      await deps.mall.events.update(userId, {
+        ...ev,
+        ...serverModification(deps),
+        content: {
+          ...(ev.content ?? {}),
+          status: 'failed-permanent',
+          lastFailureReason: FOREIGN_RECORD_REASON,
+          lastFailureDetail: { createdBy: ev.createdBy ?? null, type: ev.type ?? null },
+        },
+      }, null, WRITE_OPTS);
+      deps.logger?.warn?.('cmc/retry: a record the plugin did not write was retired, never dispatched', {
+        retryEventId: ev.id, type: ev.type, createdBy: ev.createdBy ?? null,
+      });
+    } catch (_e) { /* retired on a later pass */ }
   }
   const timeOf = (ev: RetryEvent): number => (typeof ev?.time === 'number' ? ev.time : 0);
   pending.sort((a, b) => timeOf(a) - timeOf(b));
@@ -702,6 +764,7 @@ const NON_RETRYABLE_REASONS = new Set([
   // The retry loop's own verdicts on a record.
   STALE_REASON,
   SYSTEM_AUTHORED_REASON,
+  FOREIGN_RECORD_REASON,
 ]);
 
 function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {
@@ -730,6 +793,7 @@ export {
   FAILED_RETENTION_MS,
   STALE_REASON,
   SYSTEM_AUTHORED_REASON,
+  FOREIGN_RECORD_REASON,
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,

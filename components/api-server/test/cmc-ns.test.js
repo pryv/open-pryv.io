@@ -416,10 +416,119 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         assert.strictEqual(moved.status, 400, parentId + ': ' + JSON.stringify(moved.body));
         assert.strictEqual(moved.body?.error?.data?.id, 'delegation-reserved-stream', parentId);
       }
-      const res = await coreRequest.put(basePath + '/' + encodeURIComponent(':_delegation:_internal')).set('Authorization', token)
-        .send({ parentId: null });
-      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
-      assert.strictEqual(res.body?.error?.data?.id, 'delegation-reserved-stream');
+      // (A move OF a :_delegation:* stream is not set up here: delegation
+      // streams are provisioned only on a delegation-using account, which this
+      // namespace test is not. [CNRP3] covers the move-of case for CMC.)
+    });
+  });
+
+  describe('[CMCNS-M2] the store-prefix alias must not reach a plugin-managed region', function () {
+    // A stream id may be written in its store-prefixed form (`:local:<id>`),
+    // which the mall resolves to the same local stream as `<id>`. The reserved
+    // and internal guards must see the canonical id, or the alias is a bypass.
+    let plainStreamId;
+
+    before(async function () {
+      await coreRequest.post(eventsPath).set('Authorization', token)
+        .send({ streamIds: [':_cmc:apps:my-app'], type: 'note/txt', content: 'trigger provisioning' });
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: 'm2-plain-' + cuid().slice(-6), name: 'M2 plain' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      plainStreamId = res.body.stream.id;
+    });
+
+    it('[CNRP7] streams.create / streams.update via the :local: alias cannot reach a reserved parent (M1)', async function () {
+      for (const parentId of [':local::_cmc:_internal:retries', ':local::_cmc:inbox', ':local::_delegation:_internal']) {
+        const reservedId = parentId.startsWith(':local::_delegation') ? 'delegation-reserved-stream' : 'cmc-reserved-stream';
+        const created = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(created.status, 400, parentId + ': ' + JSON.stringify(created.body));
+        assert.strictEqual(created.body?.error?.data?.id, reservedId, parentId);
+        const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(moved.status, 400, parentId + ' move: ' + JSON.stringify(moved.body));
+        assert.strictEqual(moved.body?.error?.data?.id, reservedId, parentId + ' move');
+      }
+      // Creating a plugin-managed stream itself through the alias is refused too.
+      const createId = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: ':local::_cmc:_internal:evil', name: 'alias evil', parentId: ':local::_cmc:_internal' });
+      assert.strictEqual(createId.status, 400, JSON.stringify(createId.body));
+      assert.strictEqual(createId.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNM2A] an app token with * contribute cannot craft a retry-queue record via the :local: alias (M2)', async function () {
+      const appToken = cuid();
+      const acc = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ type: 'app', name: 'm2-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: '*', level: 'contribute' }] });
+      assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+      const crafted = {
+        status: 'pending',
+        nextAttemptAfter: 0,
+        originalType: 'consent/accept-cmc',
+        originalStreamIds: [':_cmc:apps:my-app'],
+        originalContent: { capabilityUrl: 'https://attacker@evil.example/' },
+        originalCreatedBy: token,
+      };
+      // The internal subtree is refused by the plugin's internal write guard,
+      // now that it judges the canonical id behind the :local: alias.
+      for (const streamId of [':local::_cmc:_internal:retries', ':local::_cmc:_internal']) {
+        const res = await coreRequest.post('/' + username + '/events').set('Authorization', appToken)
+          .send({ streamIds: [streamId], type: 'cmc-internal/retry-cmc', content: crafted });
+        assert.notStrictEqual(res.status, 201, streamId + ' must not be admitted: ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-protected-event-write', streamId + ': ' + JSON.stringify(res.body));
+      }
+      // The inbox, likewise, admits no such write from a plain app token.
+      const inboxRes = await coreRequest.post('/' + username + '/events').set('Authorization', appToken)
+        .send({ streamIds: [':local::_cmc:inbox'], type: 'cmc-internal/retry-cmc', content: crafted });
+      assert.notStrictEqual(inboxRes.status, 201, 'inbox must not be admitted: ' + JSON.stringify(inboxRes.body));
+      // No crafted record landed in the queue.
+      const mall = await getMall();
+      const inQueue = await mall.events.get(username, { streams: [{ any: [C.NS_INTERNAL_RETRIES] }], limit: 50 });
+      assert.ok((inQueue || []).every((e) => e.createdBy === 'system' || e.content?.originalContent?.capabilityUrl !== 'https://attacker@evil.example/'),
+        'no attacker record in the retry queue: ' + JSON.stringify((inQueue || []).map((e) => ({ id: e.id, createdBy: e.createdBy }))));
+    });
+
+    it('[CNM2B] the retry loop dispatches only records the plugin wrote (createdBy system, exact stream and type) (S4)', async function () {
+      const mall = await getMall();
+      const u = cuid();
+      await fixtures.user(u);
+      const legit = {
+        status: 'pending',
+        nextAttemptAfter: 0,
+        originalType: 'consent/revoke-cmc',
+        originalStreamIds: [':_cmc:inbox'],
+        originalContent: { marker: 'legit' },
+      };
+      const forgedAuthor = { ...legit, originalContent: { marker: 'forged-author' }, originalCreatedBy: token };
+      const forgedType = { ...legit, originalContent: { marker: 'forged-type' } };
+      // Written by the plugin (no createdBy supplied -> stamped 'system').
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, content: legit });
+      // Written with a forged author (what the alias write or a crafted record leaves).
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, createdBy: token, content: forgedAuthor });
+      // A non-retry type parked in the retries stream by the plugin's own system writes.
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: 'note/txt', content: forgedType });
+      const seen = [];
+      await C.retryQueue.runRetryLoop({
+        userId: u,
+        deps: {
+          mall,
+          dispatch: async ({ event }) => { seen.push(event?.content?.marker ?? event?.type); return { handled: true, status: 'completed' }; },
+          dispatchDeps: {},
+          now: () => Date.now() + 5000,
+        },
+      });
+      assert.deepStrictEqual(seen, ['legit'],
+        'only the plugin-authored retry record is dispatched: ' + JSON.stringify(seen));
+    });
+
+    it('[CNM2C] events.get through the :local: alias never returns an internal record', async function () {
+      const mall = await getMall();
+      await mall.events.create(username, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, content: { status: 'pending', marker: 'read-probe' } });
+      for (const q of [':local::_cmc:_internal:retries', ':local::_cmc:_internal', ':_cmc:_internal:retries']) {
+        const res = await coreRequest.get('/' + username + '/events').set('Authorization', token).query({ streams: [q], limit: 50 });
+        assert.strictEqual(res.status, 200, q + ': ' + JSON.stringify(res.body));
+        assert.deepStrictEqual((res.body.events || []).filter((e) => e.content?.marker === 'read-probe'), [], q + ' leaked an internal record');
+      }
     });
   });
 

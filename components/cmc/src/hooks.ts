@@ -215,9 +215,10 @@ function createMemberRevokeWriteGuardHook (deps: Deps): Middleware {
  * its events read as the plugin's records, whatever the stream's own id.
  */
 function isReservedParentId (parentId: unknown): parentId is string {
-  if (typeof parentId !== 'string' || !C.isCmcStreamId(parentId)) return false;
-  if (parentId === C.NS_APPS) return false;
-  return !C.isUserCreatableStreamId(parentId);
+  const id = C.canonicalLocalStreamId(parentId);
+  if (typeof id !== 'string' || !C.isCmcStreamId(id)) return false;
+  if (id === C.NS_APPS) return false;
+  return !C.isUserCreatableStreamId(id);
 }
 
 /** The refusal for a `parentId` inside a plugin-managed region. */
@@ -260,8 +261,10 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
     const target = (params != null && typeof params === 'object' && params.update != null)
       ? params.update
       : params;
-    const id: unknown = target?.id;
-    const parentId: unknown = target?.parentId;
+    // Judge the canonical ids: `:local:<id>` resolves to the same stream as
+    // `<id>`, so the raw alias must not slip a reserved id past these checks.
+    const id: unknown = C.canonicalLocalStreamId(target?.id);
+    const parentId: unknown = C.canonicalLocalStreamId(target?.parentId);
 
     if (typeof id === 'string' && C.isCmcStreamId(id)) {
       // Reject creation of the reserved parents themselves.
@@ -289,39 +292,30 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
 }
 
 /**
- * streams.update hook — a move cannot enter a plugin-managed region, and a
- * plugin-managed stream cannot be moved.
+ * streams.update hook — a plugin-managed stream cannot be trashed.
  *
- * `streams.update` takes `{ id, update: { parentId?, ... } }`. Refused with
- * `cmc-reserved-stream` (400):
- *   - an `update.parentId` inside a plugin-managed region
- *     (`isReservedParentId`): the moved subtree would be read as the plugin's
- *     records (a stream moved under `:_cmc:_internal:retries` feeds the retry
- *     loop), for every token type including personal;
- *   - an update carrying `parentId` (whatever its value) for a stream the
- *     plugin manages (`isPluginManagedStreamId`): moving `:_cmc:inbox` or the
- *     internal subtree under another parent would put the peers' deliveries
- *     and the plugin's records (retry records hold peer tokens) under a
- *     permission walk that an app grant reaches. Renames and other updates
- *     of such a stream are not this hook's concern.
- * A move within the user-creatable region, or to a parent outside `:_cmc:`,
- * passes through to the permission checks.
+ * `streams.update` takes `{ id, update: { trashed?, parentId?, ... } }`.
+ * Trashing a plugin-managed stream (`:_cmc:inbox`, the `:_cmc:_internal`
+ * subtree, a `chats` / `collectors` leaf) would break the deliveries and
+ * records that live on it exactly as a delete would (a trashed inbox refuses
+ * every peer delivery), so `update.trashed === true` on such a stream is
+ * refused with `cmc-reserved-stream` (400), for every token including
+ * personal. The MOVE checks (a move into a plugin region, and a move of a
+ * plugin-managed stream) live in the `streams.update` prerequisites, where the
+ * stored parent is known, so a rename that merely repeats the current parentId
+ * is not treated as a move.
  */
 function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
   return function cmcStreamUpdateReservedRootHook (_context, params, _result, next) {
     const update = params?.update;
     if (update == null || typeof update !== 'object') return next();
-    if (!Object.prototype.hasOwnProperty.call(update, 'parentId')) return next();
-    const id: unknown = params?.id;
+    if ((update as { trashed?: unknown }).trashed !== true) return next();
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id === 'string' && C.isPluginManagedStreamId(id)) {
       return next(deps.errors.invalidOperation(
-        'Stream "' + id + '" is managed by the CMC plugin and cannot be moved',
+        'Stream "' + id + '" is managed by the CMC plugin and cannot be trashed',
         { id: 'cmc-reserved-stream', streamId: id }
       ));
-    }
-    const parentId: unknown = update.parentId;
-    if (isReservedParentId(parentId)) {
-      return next(reservedParentError(deps, parentId, id));
     }
     next();
   };
@@ -350,7 +344,7 @@ function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
  */
 function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
   return function cmcStreamDeleteReservedRootHook (_context, params, _result, next) {
-    const id: unknown = params?.id;
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id !== 'string') return next();
     if (!C.isCmcStreamId(id)) return next();
 
@@ -766,9 +760,10 @@ function createCounterpartyFeatureGateHook (deps: Deps): Middleware {
   };
 }
 
-/** True for the inbox and the plugin-internal subtree. */
+/** True for the inbox and the plugin-internal subtree (store-prefix aware). */
 function isProtectedStreamId (id: unknown): boolean {
-  return typeof id === 'string' && (id === C.NS_INBOX || C.isCmcInternalStreamId(id));
+  const canonical = C.canonicalLocalStreamId(id);
+  return typeof canonical === 'string' && (canonical === C.NS_INBOX || C.isCmcInternalStreamId(canonical));
 }
 
 function isPersonalAccess (access: MethodContext['access']): boolean {
@@ -875,8 +870,11 @@ function createInternalWriteGuardHook (deps: Deps): Middleware {
     const ownResponses = typeof capabilityId === 'string' && capabilityId.length > 0
       ? C.responsesStreamIdFor(capabilityId)
       : null;
-    for (const id of streamIds) {
-      if (C.isCmcInternalStreamId(id) && id !== ownResponses) {
+    for (const rawId of streamIds) {
+      // Judge the canonical id: a `:local:` alias resolves to the same
+      // internal stream, so it must not slip past this guard.
+      const id = C.canonicalLocalStreamId(rawId);
+      if (typeof id === 'string' && C.isCmcInternalStreamId(id) && id !== ownResponses) {
         return next(deps.errors.forbidden(
           'Events cannot be created in ' + C.NS_INTERNAL + ' with this access',
           { id: CmcErrorIds.PROTECTED_EVENT_WRITE, streamId: id }

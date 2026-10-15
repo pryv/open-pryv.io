@@ -154,6 +154,12 @@ async function handleInvalidateLink (params: {
       detail: { capabilityId },
     };
   }
+  // A consume landed between the read above and the flip (an accept racing this
+  // withdrawal): the link was accepted, not withdrawn. Report it like the
+  // consumed case rather than stamping the invite invalidated.
+  if (flip.priorState === 'consumed') {
+    return { ok: true, eventType: triggerEvent.type, capabilityId, alreadyConsumed: true };
+  }
 
   // Record the outcome on the invite trigger the requester's app watches.
   // Best-effort: the link is closed either way.

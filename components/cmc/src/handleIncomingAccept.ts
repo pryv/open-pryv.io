@@ -57,6 +57,7 @@ const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
 import type { Features } from './features.ts';
 const crypto = require('node:crypto');
@@ -323,6 +324,16 @@ async function handleIncomingAccept (params: {
         error: String((err as Error)?.message || err),
       });
     }
+  }
+  // The responses-stream write-hook checked the capability state when the
+  // accept was written; the requester may have withdrawn the link
+  // (handleInvalidateLink) in the window since. Re-read it here, before minting
+  // the relationship, and refuse if it flipped, so an accept racing a
+  // withdrawal does not open a relationship the requester believes closed.
+  const capabilityStateNow =
+    (capabilityAccess?.clientData as { cmc?: { capability?: { state?: string } } } | undefined)?.cmc?.capability?.state;
+  if (capabilityStateNow === 'invalidated') {
+    return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
   }
   const inviteEventId: string | null =
     ((capabilityAccess?.clientData as { cmc?: { requestEventId?: string } } | undefined)?.cmc?.requestEventId ?? null) as string | null;
@@ -597,7 +608,7 @@ async function handleIncomingAccept (params: {
           userId,
           capabilityId: capabilityIdToConsume,
           accessId: capabilityAccess?.id ?? capabilityAccessIdHint,
-          deps: { mall },
+          deps: { mall, logger: deps.logger },
         });
       }
     } catch (err: unknown) {

@@ -1972,7 +1972,7 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(after.content.status, 'invalidated');
     });
 
-    it('[CN56] the app that created a single-use invite withdraws it while open: the invite is marked invalidated and the later accept fails (issue 160)', async function () {
+    it('[CN100] the app that created a single-use invite withdraws it while open: the invite is marked invalidated and the later accept fails (issue 160)', async function () {
       // The app holds manage on its scope and on the inbox, as an app that
       // creates invites does; no personal token. The capability access is
       // created by the server, so the app can neither list nor delete it.
@@ -2038,19 +2038,63 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       await pollTrigger(alice, inv2.requestEventId, (c) => c.status === 'invalidated', 'CN56 refused then invalidated');
     });
 
-    it('[CN57] withdrawing a consumed single-use invite is a no-op: the relationship stands, the invite stays accepted', async function () {
+    it('[CN101] withdrawing a consumed single-use invite is a no-op: the relationship stands, the invite stays accepted', async function () {
       const h = await runFreshHandshake('wd-consumed');
-      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'accepted', 'CN57 accepted');
+      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'accepted', 'CN101 accepted');
       const wd = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
         .send({ streamIds: [h.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
       assert.strictEqual(wd.status, 201, JSON.stringify(wd.body));
-      const settledWd = await pollTrigger(alice, wd.body.event.id, settled, 'CN57 withdrawal trigger');
+      const settledWd = await pollTrigger(alice, wd.body.event.id, settled, 'CN101 withdrawal trigger');
       assert.strictEqual(settledWd.content.status, 'completed', JSON.stringify(settledWd.content));
       const cap = await capabilityAccessOf(alice, h.capabilityId);
       assert.strictEqual(cap?.clientData?.cmc?.capability?.state, 'consumed');
-      const invite = await pollTrigger(alice, h.requestEventId, () => true, 'CN57 invite');
+      const invite = await pollTrigger(alice, h.requestEventId, () => true, 'CN101 invite');
       assert.strictEqual(invite.content.status, 'accepted', JSON.stringify(invite.content));
       assert.strictEqual((await liveAccepters(alice, h.capabilityId)).length, 1);
+    });
+
+    it('[CN102] a withdrawal that lands before the accept mints: the link flips invalidated, the accept is refused, no relationship is left (S1)', async function () {
+      // Drive the two sides directly so the withdrawal wins the race: read the
+      // offer, invalidate the (single-use) link, THEN deliver the accept. The
+      // responses-stream write-hook admits the accept (state was read open on
+      // the capability token path), and handleIncomingAccept must re-read the
+      // state and refuse rather than open a relationship the requester closed.
+      const h = await postInvite('s1-race');
+      const wd = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [h.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
+      assert.strictEqual(wd.status, 201, JSON.stringify(wd.body));
+      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'invalidated', 'CN102 invalidated');
+      const acceptId = await postAnswer(bob, 'consent/accept-cmc', h.capabilityUrl, { accessName: 'cmc-grant-s1-' + Date.now() });
+      const accept = await pollTrigger(bob, acceptId, settled, 'CN102 accept');
+      assert.strictEqual(accept.content.status, 'failed', JSON.stringify(accept.content));
+      assert.strictEqual(accept.content.failure?.reason, 'cmc-capability-invalidated', JSON.stringify(accept.content));
+      // The invite stays invalidated and nobody joined.
+      const after = await pollTrigger(alice, h.requestEventId, () => true, 'CN102 after');
+      assert.strictEqual(after.content.status, 'invalidated');
+      assert.strictEqual((await liveAccepters(alice, h.capabilityId)).length, 0);
+    });
+
+    it('[CN103] the offer stays readable through a withdrawn link until it expires (S2)', async function () {
+      // The capability access is kept with its permissions after withdrawal so
+      // the accept gets the typed cmc-capability-invalidated; a side effect is
+      // that the offer event is still readable through the capability URL. The
+      // guide tells implementers to set a short expiresAt for sensitive invites.
+      const h = await postInvite('s2-read');
+      const wd = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [h.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: h.capabilityId } });
+      assert.strictEqual(wd.status, 201, JSON.stringify(wd.body));
+      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'invalidated', 'CN103 invalidated');
+      // Read exactly as `readOffer` does: the capability token has read on its
+      // offer stream only, so a bare events.get returns the offer event (the
+      // internal read guard drops an explicitly-named internal id, but the
+      // token's own permission substitution for `*` keeps its offer readable).
+      const u = new URL(h.capabilityUrl);
+      const capToken = u.username;
+      const offerRead = await coreRequest.get('/' + alice.username + '/events')
+        .set('Authorization', capToken).query({ limit: 5 });
+      assert.strictEqual(offerRead.status, 200, JSON.stringify(offerRead.body));
+      assert.ok((offerRead.body.events || []).some((e) => e.type === 'consent/request-cmc'),
+        'the offer event is still readable through the link: ' + JSON.stringify(offerRead.body.events?.map((e) => e.type)));
     });
 
     it('[CN55] withdrawing a single-use relationship marks the invite revoked, from either side', async function () {

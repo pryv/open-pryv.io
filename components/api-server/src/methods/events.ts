@@ -1176,6 +1176,14 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (event.streamIds != null && event.streamIds.length > 1) {
       event.streamIds = [...new Set(event.streamIds)];
     }
+    // Canonicalise store-prefixed local ids (`:local:<id>` resolves to the same
+    // stream as `<id>`), so the CMC / delegation write guards downstream judge
+    // the stream the event actually lands on, not the alias. The mall applies
+    // the same canonicalisation when it stores the event, so this changes no
+    // stored value; it only lets the raw-string guards see the real id.
+    if (Array.isArray(event.streamIds)) {
+      event.streamIds = event.streamIds.map((s: string) => (typeof s === 'string' ? cmc.canonicalLocalStreamId(s) as string : s));
+    }
     // using context.newEvent now - not params
     context.newEvent = event;
     // used only in the events creation and update

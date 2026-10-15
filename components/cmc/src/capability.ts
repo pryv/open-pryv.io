@@ -448,14 +448,22 @@ async function markCapabilityConsumed (params: {
   userId: string;
   capabilityId: string;
   accessId?: string | null;
-  deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string }> {
+  deps: { mall: MallLike; now?: () => number; logger?: { warn?: (msg: string, ctx?: unknown) => void } };
+}): Promise<{ ok: boolean; reason?: string; skipped?: string }> {
   const { userId, capabilityId, accessId, deps } = params;
   const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   if (cmcCd?.capability?.state === 'consumed') {
     return { ok: true }; // idempotent
+  }
+  // A withdrawal won the race (handleInvalidateLink flipped the link to
+  // `invalidated` between the accept's write-hook check and this consume): do
+  // NOT overwrite it with `consumed`. The requester deliberately closed the
+  // link; leaving it `invalidated` keeps the two sides' records coherent.
+  if (cmcCd?.capability?.state === 'invalidated') {
+    deps.logger?.warn?.('cmc/capability: not consuming a capability already invalidated by the requester', { capabilityId });
+    return { ok: true, skipped: 'invalidated' };
   }
   if (deps.mall.accesses.update == null) {
     return { ok: false, reason: 'mall-accesses-update-unavailable' };
@@ -532,14 +540,17 @@ async function markCapabilityInvalidated (params: {
   capabilityId: string;
   accessId?: string | null;
   deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string }> {
+}): Promise<{ ok: boolean; reason?: string; priorState?: string }> {
   const { userId, capabilityId, accessId, deps } = params;
   const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   const state = cmcCd?.capability?.state;
   if (state === 'invalidated' || state === 'consumed') {
-    return { ok: true }; // idempotent / no-op
+    // No-op, but report the state read now: a consume that landed between the
+    // caller's own read and this one (handleInvalidateLink) must be surfaced as
+    // `alreadyConsumed`, not as a plain success.
+    return { ok: true, priorState: state };
   }
   if (deps.mall.accesses.update == null) {
     return { ok: false, reason: 'mall-accesses-update-unavailable' };
@@ -561,7 +572,7 @@ async function markCapabilityInvalidated (params: {
       },
     },
   });
-  return { ok: true };
+  return { ok: true, priorState: state as string | undefined };
 }
 
 async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<unknown> {

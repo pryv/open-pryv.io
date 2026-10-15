@@ -68,6 +68,17 @@
  */
 
 import * as C from './constants.ts';
+
+/**
+ * True when a permission streamId resolves to a store root (`*`, or the local
+ * store-prefix alias `:local:` which the permission walk treats as `*`): a
+ * member child must name concrete data streams only.
+ */
+function resolvesToStoreRoot (streamId: unknown): boolean {
+  if (streamId === '*') return true;
+  const canonical = C.canonicalLocalStreamId(streamId);
+  return canonical === '*' || canonical === '';
+}
 import * as outbound from './outbound.ts';
 import * as slugMod from './slug.ts';
 import * as relationshipKey from './relationshipKey.ts';
@@ -245,8 +256,11 @@ async function resolveMintTarget (params: {
   for (const p of permissions) {
     // Named data streams only: `*` would reach the patient's `:_cmc:` tree
     // (the inbox holds the patient's other grant tokens) and the channel
-    // streams are never delegated.
-    if (typeof p?.streamId !== 'string' || typeof p?.level !== 'string' || p.streamId === '*' || C.isCmcStreamId(p.streamId)) {
+    // streams are never delegated. `resolvesToStoreRoot` also rejects the
+    // store-prefix alias of the root (`:local:`), which the permission walk
+    // treats as `*`.
+    if (typeof p?.streamId !== 'string' || typeof p?.level !== 'string' ||
+        p.streamId === '*' || resolvesToStoreRoot(p.streamId) || C.isCmcStreamId(p.streamId)) {
       return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET, detail: { streamId: (p as { streamId?: unknown })?.streamId } };
     }
     const offered = bound.find((o) => o.streamId === p.streamId);
@@ -309,7 +323,8 @@ function offeredDataPermissions (offer: OfferContent): StreamPermissionLike[] {
   for (const p of perms) {
     if (p == null || typeof p !== 'object') continue;
     const { streamId, level } = p as { streamId?: unknown; level?: unknown };
-    if (typeof streamId !== 'string' || typeof level !== 'string' || streamId === '*' || C.isCmcStreamId(streamId)) continue;
+    if (typeof streamId !== 'string' || typeof level !== 'string' ||
+        streamId === '*' || resolvesToStoreRoot(streamId) || C.isCmcStreamId(streamId)) continue;
     out.push({ streamId, level });
   }
   return out;
