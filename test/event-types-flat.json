@@ -1,5 +1,5 @@
 {
-  "version": "1.2.1",
+  "version": "1.3.0",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -551,6 +551,10 @@
                 "app"
               ],
               "description": "Pryv access type the accepted data-grant is minted as. Default `shared` (a non-delegable grant that cannot call `accesses.*`). Set `app` to make the grant delegable: the approved requester can `accesses.create` scoped, individually-named sub-accesses (permissions ⊆ the grant) for least-privilege re-delegation with per-actor audit attribution."
+            },
+            "membership": {
+              "type": "boolean",
+              "description": "Default false. Set true when the requester asks to join the accepter's group: the access the accepter mints is a membership access (role `member`) through which the member writes `consent/member-access-cmc` on the group's scope streams. Enforced by the platform, on write and again at accept: stream permissions only, on user-creatable `:_cmc:apps:<app>[:<path>]` streams, level `read` or `contribute`; no feature permissions; `accessType` absent or `shared`; `allowUserChoice` is treated as true whatever is sent (the accepter picks the scopes). A violation is refused with `cmc-membership-permissions-invalid`."
             }
           },
           "required": [
@@ -710,6 +714,10 @@
             "username",
             "host"
           ]
+        },
+        "acceptEventId": {
+          "type": "string",
+          "description": "Peer-delivered shape, server-written: the id of the accepter's accept trigger, on the accepter's account. The requester's core records it on its relationship access, so a later `consent/revoke-cmc` naming an earlier accept does not tear down a relationship re-established since. Absent when the accepter's core predates it."
         }
       }
     },
@@ -730,7 +738,7 @@
       ]
     },
     "consent/revoke-cmc": {
-      "description": "Cross-account consent revoke (`cmc/revoke-v1` lineage). Either party tears down an established access pair by writing this with the local data-grant access id + an optional localised reason.",
+      "description": "Cross-account consent revoke (`cmc/revoke-v1` lineage). Either party tears down an established access pair by writing this with the local data-grant access id + an optional localised reason. The notice delivered to the counterparty also carries server-written correlation fields (`acceptEventId`, `revokedAt`); an inbox arrival the receiving core dropped as stale is marked `superseded`.",
       "type": "object",
       "properties": {
         "accessId": {
@@ -739,6 +747,21 @@
         "reason": {
           "type": "object",
           "description": "Localized reason text."
+        },
+        "acceptEventId": {
+          "type": "string",
+          "description": "Server-written: the accept the revoked relationship descends from. On a notice sent by the accepter, the accepter's accept trigger id; a receiving core whose relationship pairs with another accept (re-established since) records the notice and tears nothing down. On the accepter's own arrival, the id its accept trigger was stamped with."
+        },
+        "revokedAt": {
+          "type": "number",
+          "description": "Server-written on the delivered notice: when the revoke was issued (Unix timestamp, seconds). A notice delivered late (re-sent by the retry loop) keeps accesses the receiver created after this time. Absent when the sender's core predates it."
+        },
+        "superseded": {
+          "type": "string",
+          "enum": [
+            "relationship-re-established"
+          ],
+          "description": "Server-written on inbox arrivals only (never set by the sender): the receiving core dropped this late notice because the relationship was re-established since (it pairs with a later accept). Nothing was torn down; apps must ignore such an arrival and keep the endpoints they hold for that counterparty and scope. Absent on a notice that was acted upon, and when the receiver's core predates it."
         }
       },
       "required": [
@@ -990,6 +1013,349 @@
       },
       "required": [
         "capabilityId"
+      ]
+    },
+    "consent/member-access-cmc": {
+      "description": "A group member asks the group's core for a short-lived access on a patient's account. Written on the group account, on a scope stream the member's membership access holds `contribute` on (or by the group's personal token). The group's core mints a `shared` child access on the patient's core through the data-grant it holds, named and attributed by the server, and returns its apiEndpoint once, in the `memberAccess` field of the synchronous `events.create` response (never stored on the event). Server-owned fields (`status`, `failure`, `memberAccess`, `member`, `relationshipAccessId`) are written by the platform after dispatch and never by a client: a client-supplied value is discarded on create, and the stored value is kept on update.",
+      "type": "object",
+      "properties": {
+        "counterparty": {
+          "type": "object",
+          "description": "The patient: the counterparty of the group's relationship whose data-grant is used.",
+          "properties": {
+            "username": {
+              "type": "string",
+              "minLength": 1
+            },
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The counterparty's canonical host, as stored on the group's relationship access (`clientData.cmc.counterparty.host`), not the hostname of a per-user API URL."
+            }
+          },
+          "required": [
+            "username",
+            "host"
+          ]
+        },
+        "scopeStreamId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Scope stream of the patient relationship. Default: the trigger's stream; must equal it or be under it."
+        },
+        "permissions": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Stream permissions of the child access, a subset of the offer's stream permissions outside `:_cmc:` (level not above the offer's). Default: the offer's stream permissions outside `:_cmc:`, at level `read`. Feature permissions are refused; the patient's core enforces the data-grant as the final bound.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "streamId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "level": {
+                "type": "string",
+                "enum": [
+                  "manage",
+                  "contribute",
+                  "read",
+                  "create-only",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "streamId",
+              "level"
+            ]
+          }
+        },
+        "expireAfter": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMinimum": true,
+          "description": "Lifetime of the child access, in seconds. Default and bounds are per core (`cmc:memberAccess:defaultTtl`, `minTtl`, `maxTtl`; 24 hours, 60 seconds and 7 days by default), and never beyond the data-grant's own expiry."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "delivered",
+            "completed",
+            "failed"
+          ],
+          "description": "Server-owned: dispatch state of the trigger."
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-access-grant-not-delegable`, `cmc-member-access-peer-rejected`, `cmc-member-access-peer-unreachable`, `cmc-member-access-membership-gone`, `cmc-member-access-not-retryable`); `detail` carries at most `peerErrorId` and `httpStatus`, never a peer response body.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "peerErrorId": {
+                  "type": "string"
+                },
+                "httpStatus": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "memberAccess": {
+          "type": "object",
+          "description": "Server-owned, on success: the child access minted on the patient's core. Never carries its token or apiEndpoint.",
+          "properties": {
+            "accessId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string",
+              "description": "Server-derived: `cmc-member--<member-slug>--<hash>`."
+            },
+            "expires": {
+              "type": "number",
+              "description": "Unix timestamp (seconds)."
+            },
+            "attribution": {
+              "type": "string",
+              "enum": [
+                "stamped",
+                "name-only"
+              ],
+              "description": "`stamped`: the child access carries the member and group identity in its `clientData.cmc`, set by the patient's core. `name-only`: the patient's core runs an older release that refuses the stamp; only the access name identifies the member."
+            }
+          }
+        },
+        "member": {
+          "type": "object",
+          "description": "Server-owned: the member, taken from the membership access that wrote the trigger.",
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            }
+          }
+        },
+        "relationshipAccessId": {
+          "type": "string",
+          "description": "Server-owned: id of the group's access for the patient relationship used."
+        }
+      },
+      "required": [
+        "counterparty"
+      ]
+    },
+    "consent/member-revoke-cmc": {
+      "description": "Offboarding of a group member: removes the child accesses minted for that member on patients' cores. Written by the platform on the group's scope stream whenever a membership ends (revoked, deleted, expired, narrowed, delegation detached, account deleted, or found gone by the periodic check); a client write is refused with `cmc-protected-event-write`, and every field is server-owned (a client-supplied value is discarded on create, and the stored value is kept on update). Records who was offboarded and what was removed, with the outcome per child access.",
+      "type": "object",
+      "properties": {
+        "member": {
+          "type": "object",
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "host"
+          ]
+        },
+        "membershipAccessId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "revoke",
+            "accesses.delete",
+            "expired",
+            "narrowed",
+            "detach",
+            "account-deleted",
+            "vanished"
+          ],
+          "description": "What ended the membership. `vanished`: the membership access was found gone by the periodic check while its child accesses remained (deleted by a path that did not offboard, or interrupted before it did). `narrowed`: an `accesses.update` removed teams, or a team stream was deleted (see `uncovered`)."
+        },
+        "uncovered": {
+          "type": "array",
+          "description": "Server-owned, on a `narrowed` record caused by the deletion of a team stream: the stream(s) deleted. The record is then written on the deleted stream's parent (or `:_cmc:apps`).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "records": {
+          "type": "array",
+          "description": "The child accesses to remove.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "relationshipAccessId": {
+                "type": "string"
+              },
+              "counterparty": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "host"
+                ]
+              },
+              "childAccessId": {
+                "type": "string"
+              },
+              "expires": {
+                "type": "number",
+                "description": "Unix timestamp (seconds)."
+              }
+            },
+            "required": [
+              "relationshipAccessId",
+              "counterparty",
+              "childAccessId",
+              "expires"
+            ]
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "delivered",
+            "completed",
+            "failed"
+          ],
+          "description": "Server-owned: dispatch state of the trigger."
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-revoke-residual`); `detail` carries at most `childAccessId`, `peerErrorId` and `httpStatus`, never a peer response body.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "childAccessId": {
+                  "type": "string"
+                },
+                "peerErrorId": {
+                  "type": "string"
+                },
+                "httpStatus": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "outcome": {
+          "type": "array",
+          "description": "Server-owned: the result per child access, read back on the patient's core.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "childAccessId": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "deleted",
+                  "absent",
+                  "residual"
+                ],
+                "description": "`deleted`: removed now. `absent`: already gone or expired. `residual`: still present (patient's core unreachable or refusing); retried, and bounded by the child's own expiry."
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "childAccessId",
+              "result"
+            ]
+          }
+        },
+        "residuals": {
+          "type": "array",
+          "description": "Server-owned: the child accesses that could not be removed.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "counterparty": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "host"
+                ]
+              },
+              "childAccessId": {
+                "type": "string"
+              },
+              "expires": {
+                "type": "number",
+                "description": "Unix timestamp (seconds): the latest the residual can live."
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "counterparty",
+              "childAccessId",
+              "expires",
+              "reason"
+            ]
+          }
+        }
+      },
+      "required": [
+        "member",
+        "membershipAccessId",
+        "reason",
+        "records"
       ]
     },
     "contact/facebook": {

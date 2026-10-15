@@ -666,7 +666,9 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       const del = await coreRequest.delete(group.eventsPath + '/' + askId).set('Authorization', m.membershipToken);
       assert.strictEqual(del.status, 403, JSON.stringify(del.body));
       assert.strictEqual(del.body.error?.data?.id, 'cmc-protected-event-write');
-      const upd = await coreRequest.put(group.eventsPath + '/' + askId).set('Authorization', m.membershipToken).send({ content: { expireAfter: 1 } });
+      // a well-formed content (the update replaces it): the refusal is the guard's, not the schema's
+      const upd = await coreRequest.put(group.eventsPath + '/' + askId).set('Authorization', m.membershipToken)
+        .send({ content: { ...res.body.event.content, expireAfter: 60 } });
       assert.strictEqual(upd.status, 403, JSON.stringify(upd.body));
       assert.strictEqual(upd.body.error?.data?.id, 'cmc-protected-event-write');
       const own = await coreRequest.delete(group.eventsPath + '/' + askId).set('Authorization', group.token);
