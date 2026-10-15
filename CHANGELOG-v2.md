@@ -283,6 +283,12 @@ take is queued and re-sent over the next hours, and `cmc.retryLoop.enabled` now 
   patient's core.
 
 ### Consent (CMC), delegation and accesses: behaviour changes
+- **A deletion record keeps no credential at rest.** Once a consent relationship access is
+  marked deleted, every URL user part in its `clientData` is removed (host and path kept) from
+  the deletion row and from the history rows its earlier updates snapshotted, and that
+  deletion row loses its own token too, so a backup or an export of deletion records holds no
+  credential of a consent relationship (other deletion records keep their token as before).
+  Until this release the credentials were redacted in API answers only (2.0.0-rc.52).
 - **Behaviour change (every CMC user): every consent and delegation teardown is now the
   `accesses.delete` deletion.** Accesses removed by the server outside the route (a
   `consent/revoke-cmc` written by either side, a revocation received from the counterparty, a
@@ -406,12 +412,7 @@ admin pre-registration refuses badly shaped usernames. No migration.
   `clientData` it read persists the redacted URLs. The owner's own reads are unchanged, and so is
   what is stored for a live access. A deletion record (`accesses.get` with `includeDeletions`),
   which never carried the access's own token, is redacted the same way for every caller in the
-  response, and since this release the credentials also leave the stored row itself: every URL
-  user part in `clientData` is removed once the access is marked deleted (host and path kept),
-  from the deletion row and from the history rows its earlier updates snapshotted, and the
-  deletion row of such a relationship access loses its own token too, so a backup or an export
-  of deletion records holds no credential of a consent relationship (other deletion records keep
-  their token as before).
+  response. The stored row keeps the credentials until 2.0.0-rc.53, which removes them.
 
 ## 2.0.0-rc.51 - 2026-10-13
 

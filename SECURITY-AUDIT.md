@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 1 (2026-10-14), covering releases 2.0.0-rc.40 to 2.0.0-rc.51.
+**Report revision:** 2 (2026-10-15), covering releases 2.0.0-rc.40 to 2.0.0-rc.53.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -18,8 +18,9 @@ independent assessment.
 released **and** deployed on the platforms the maintainers operate (pryv.me included). Until then,
 the release's `CHANGELOG-v2.md` entry carries the operator instructions in neutral wording, and this
 report describes the fix at a later revision. Methodology, scope, the surface inventory and the
-areas where no defect was found are published without delay. At this revision every finding of the
-review is fixed, released and deployed, so nothing is withheld under this rule.
+areas where no defect was found are published without delay. At this revision every finding counted
+in section 1 is fixed, released and deployed, so none is withheld under this rule; the
+lower-severity defects still open are noted in section 5.
 
 ---
 
@@ -31,7 +32,10 @@ registration, administration and multi-core planes, the storage engines, and the
 shipped in the Docker image.
 
 **When.** June to October 2026. The work started in June 2026 with the attack-surface inventory and
-ran in full from 7 to 14 October 2026, release by release.
+ran in full from 7 to 14 October 2026, release by release. A follow-up review of the consent (CMC)
+plugin, of delegation and of access teardown, made in October 2026 alongside the work on group
+accounts in consent, added the findings fixed in 2.0.0-rc.52 and rc.53; they were fixed under the
+same rules (tests that fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -41,15 +45,17 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review recorded 47 findings rated Low or above:
+The review and its follow-up recorded 50 findings, each rated and described individually in
+section 4 and counted below; the further lower-severity fixes listed under each release are
+described but not counted:
 
 | Severity | Fixed | Open | Accepted |
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
-| High | 19 | 0 | 0 |
-| Medium | 21 | 0 | 0 |
+| High | 20 | 0 | 0 |
+| Medium | 23 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **47** | **0** | **0** |
+| **Total** | **50** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -78,6 +84,8 @@ its applicability is stated with it.
 | 2.0.0-rc.49 | 2026-10-12 | 1 Medium, lower-severity fixes | yes (2026-10-14) |
 | 2.0.0-rc.50 | 2026-10-13 | lower-severity fixes | yes (2026-10-14) |
 | 2.0.0-rc.51 | 2026-10-13 | 1 High, lower-severity fixes | yes (2026-10-14) |
+| 2.0.0-rc.52 | 2026-10-14 | 1 High, 2 Medium, lower-severity fixes | yes (2026-10-15) |
+| 2.0.0-rc.53 | 2026-10-15 | completion steps of earlier findings, lower-severity fixes | yes (2026-10-15) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -913,9 +921,9 @@ maintainers' platforms every count was zero).
   account's file kept reading the old one through its open connection: the account looked unknown
   or kept its former password and fields, and a change made in that window was written into the
   deleted file and lost. The store now follows the file on disk, like the other per-account files.
-  Residual, planned: on SQLite, a request still in flight when its account is deleted can re-create
-  that account's directory with an empty file (an opaque id, no account data); a sweep of such
-  directories is planned.
+  Residual at this release: on SQLite, a request still in flight when its account is deleted can
+  re-create that account's directory with an empty file (an opaque id, no account data). Closed in
+  2.0.0-rc.53 by preventing the re-creation (see 2.0.0-rc.53 below).
 - **A login refused after its MFA session was opened** (Low): a storage error while the session or
   the personal access was written left the MFA session pending until it expired, holding one of the
   account's pending-session places; the login now ends it.
@@ -926,6 +934,131 @@ maintainers' platforms every count was zero).
   be stored in them; such a configuration is now refused at boot and by `bin/check-config.js`.
 - **Operator action:** remove any `custom.systemStreams.other` section from your configuration
   (account fields belong under `custom.systemStreams.account`); otherwise none.
+
+### Fixed in 2.0.0-rc.52 (deployed)
+
+#### Withdrawing a consent left the grant's sub-accesses working
+
+- **Severity:** High (where a consent grant is delegable: an offer that asked
+  `request.accessType: 'app'`, which lets the requester create `shared` sub-accesses on the
+  accepter's account).
+- **What could happen:** only a plain `accesses.delete` of the grant removed the sub-accesses
+  created through it. A withdrawal written as `consent/revoke-cmc` (by either side), a revocation
+  received from the counterparty, the end of a delegation and the deletion of the counterparty's
+  account removed the grant alone: the sub-accesses kept opening the accepter's data after the
+  consent was withdrawn, until their own expiry, which they need not have.
+- **What changed:** every one of these paths removes the grant's live sub-accesses first, then the
+  grant, and drops each from the access cache of every worker; a sub-access created through the
+  grant while it was being removed is removed by a final pass (the same pass was added to
+  `accesses.delete`). A revocation received from the counterparty whose local deletion fails is
+  reported as a failure and retried, instead of being recorded as applied.
+- **Operator action:** sub-accesses left behind by earlier withdrawals are not removed
+  automatically. After the upgrade, run `node bin/access-scope-audit.js` (read only) on each core:
+  it lists every live access whose creator is gone and not known to be personal, under "no longer
+  managed", with its expiry; review them with the account owners and delete them with
+  `accesses.delete`. The maintainers ran it on the platforms they operate after the deploy and
+  found none.
+- **Completed in 2.0.0-rc.53:** every consent and delegation teardown (the paths above, a
+  capability collected by an operator, the teardown at account deletion) is now the
+  `accesses.delete` deletion. Until then these teardowns removed the access rows outright (Low: no
+  deletion record of the removed access, its aliases still held, the access index used by the
+  breach-scope tool not updated; its webhooks were stopped at their next call by an existing
+  check). The removed accesses now leave a deletion record (readable with `includeDeletions`, name
+  kept, token never), their webhooks are deleted, their aliases released and the access index
+  updated. Apps that list deletions will see these records.
+
+#### Delegates could read consent counterparties' tokens and webhook URL credentials
+
+- **Severity:** Medium (where account delegation and consent or webhooks are both used). What a
+  delegate could obtain is bounded: the counterparty's grant to the owner (data the owner was
+  already given, within the consented scope) and a receiver secret, both outliving the
+  delegation; the 2.0.0-rc.41 item handed a delegate the owner's own tokens, login sessions
+  included.
+- **What could happen:** a delegated personal access is handed no credential of the owner's
+  accesses (see 2.0.0-rc.41), but a consent relationship access also keeps the counterparty's
+  endpoints in `clientData.cmc`, with their tokens, and these were returned as stored by
+  `accesses.get`, `getOne`, `update` and `checkApp`. Likewise `webhooks.get`, `getOne`, `update`
+  and `test` returned every webhook's `url` as stored, a receiver secret included.
+- **What changed:** wherever an access is returned without its credentials, every URL inside its
+  `clientData` comes without its user part (as a whole string, inside a longer text,
+  percent-encoded, or in a lenient spelling the URL parser accepts); host and path are kept. A
+  webhook returned to a caller that neither owns the webhook's access nor created it carries its
+  `url` reduced to scheme, host and path. Deletion records are redacted the same way for every
+  caller. Limits: only URL user parts are redacted in `clientData` (a bare token an app stores
+  there is returned as stored), and a secret placed in a webhook URL's path is not recognised.
+  Until 2.0.0-rc.53 a delegate writing back a `clientData` it had read stored the redacted URLs
+  over the owner's; such an update is now refused (see 2.0.0-rc.53 below). The owner's own reads
+  are unchanged.
+- **Operator action:** none.
+- **Completed in 2.0.0-rc.53:** the credentials also leave the stored rows. Once a relationship
+  access is deleted, every URL user part in its `clientData` is removed from the deletion row and
+  from the history rows its earlier updates kept, and that deletion row loses its own token, so a
+  backup or an export of deletion records holds no credential of a consent relationship.
+
+#### Accesses created under a caller id escaped their creator's revocation
+
+- **Severity:** Medium (accesses created with a caller id, `Authorization: <token> <callerId>`).
+- **What could happen:** an access created under a caller id records the caller id next to its
+  creator, and was not recognised as created by that access: deleting the creating access did not
+  delete it, and the revocation that answers a reused OAuth2 refresh token did not reach it, so it
+  kept working after its creator was revoked. Its creator could also neither list nor delete it.
+- **What changed:** these paths match on the creating access's id, as `accesses.update` already
+  did. What a caller may see or delete is unchanged: its own creations only.
+- **Operator action:** none for the fix; `node bin/access-scope-audit.js` (above) also lists such
+  accesses whose creator is gone.
+
+#### Lower-severity fixes in 2.0.0-rc.52
+
+- **Admin pre-registration reserved badly shaped usernames** (Low; follows the 2.0.0-rc.45 item):
+  `POST /system/users/validate` reserved a username that account creation then refused, with its
+  unique fields, and consumed the invitation token; such a name is now refused before anything is
+  reserved.
+- **Log file size settings that never applied** (Low): the size keys of the production
+  configuration (`logs.file.maxFileBytes`, `maxNbFiles`) were passed under names the logging
+  library ignores, so daily rotation was the only bound. `logs.file.rotation.maxSize` now caps each
+  daily file (unset by default), and the dead keys are removed.
+- **Operator action:** run `node bin/access-scope-audit.js` as described above; remove
+  `logs.file.maxFileBytes` and `maxNbFiles` from your own configuration (setting `maxSize` starts a
+  new list of files to prune: see the rc.52 notes).
+
+### Lower-severity fixes in 2.0.0-rc.53 (deployed)
+
+The completion steps of two 2.0.0-rc.52 findings are described with them above. Also:
+
+- **Withdrawal notices that could not be delivered were never re-sent** (Low; reported publicly in
+  open-pryv.io#157): when the counterparty's core could not be reached at the moment of a
+  withdrawal (`consent/revoke-cmc`, a deletion of the relationship access, a delegation detach),
+  the counterparty was never told, and its side of the relationship stayed in place. The notice is
+  now queued and re-sent by the retry loop (8 re-sends over about 27 hours, then marked failed for
+  the operator), and, between cores running this release, a notice that lands late never ends a
+  relationship re-established meanwhile.
+  The notices of an account being deleted are not queued (no account is left to hold them).
+- **A consent offer could name streams the consent plugin manages** (Low; no read was possible): an
+  offer asking access to the accepter's `:_cmc:inbox` (which holds the grant endpoints the accepter
+  received) or to the plugin's internal streams was accepted; the grant then also carried the
+  plugin's own `create-only` rule on the inbox, and only the order of the two entries kept the inbox
+  unreadable (checked end to end: no event was readable). Such an offer is now refused at write,
+  and again by the accepter's core at accept.
+- **Invite links could be closed from another app scope** (Low; denial only):
+  `consent/invalidate-link-cmc` accepted any capability id, so a token able to write in one app
+  scope of an account could close the invites published in another. It must now be written on the
+  invite's stream or an ancestor of it.
+- **The consent record on an access could be removed by an update** (Low): `accesses.update` with
+  `clientData: null` or a `cmc` key removed the consent plugin's record from an access carrying
+  one; it is now refused (other `clientData` keys merge as before). With the same release, an app
+  token deletes only the `shared` accesses it created, as `accesses.update` already required.
+- **An erased account's directory could be re-created on SQLite** (Low; closes the residual noted
+  under 2.0.0-rc.51): the erasure now marks the account id and tells every worker, and no per-user
+  directory is created again for that id; a request racing its own account's erasure now fails
+  instead of answering from an empty file. Residual: a worker reached within the short propagation
+  window of the mark, and a backup run started before the erasure; HF series storage is not
+  covered by the mark and relies on the erasure's second removal pass. A per-account SQLite handle
+  whose close is refused now still leaves its cache instead of staying in use.
+- **Operator action:** `cmc.retryLoop.enabled` now defaults to `true` (the loop that re-sends the
+  notices above); set it to `false` to keep it off, in which case nothing is queued. On a core that
+  ran with the loop off, size its retry backlog before upgrading: records older than their whole
+  schedule are retired as `failed-permanent` (`cmc-retry-stale`) without being sent, and stay
+  readable for 30 days (see the rc.53 notes). No migration.
 
 ---
 
@@ -973,9 +1106,17 @@ fixed libraries. The rqlite ports listen on loopback (HTTP) and behind mutual TL
 - The SQLite event engine moving from escaped inline values to placeholders, as the PostgreSQL
   engine does.
 
+**Access deletion records.** A deleted access leaves a deletion record (its name, permissions and
+timestamps) that is kept until the account is erased; API answers never return its token, and
+since 2.0.0-rc.53 the stored record of a consent relationship holds none of its credentials. Since
+2.0.0-rc.53 every consent and delegation teardown leaves such a record too. An opt-in retention
+setting is planned.
+
 **Open lower-severity defects.** A small number of Low and Low-Medium defects found during the
-review remain open and tracked; they will be described here once fixed. Operators should keep daily
-log rotation on (the default): a capped log file without daily rotation is not capped.
+review and its follow-up remain open and tracked; they will be described here once fixed. Operators
+should keep daily log rotation on (the default); since 2.0.0-rc.52, `logs.file.rotation.maxSize`
+also caps the size of each daily file. A log file without daily rotation is one growing file, to be
+rotated outside the server.
 
 ---
 
@@ -1001,3 +1142,4 @@ This report is updated with every release that carries a security fix:
 | Revision | Date | Releases covered | Change |
 |---|---|---|---|
 | 1 | 2026-10-14 | 2.0.0-rc.40 to 2.0.0-rc.51 | First publication. Every finding fixed, released and deployed on the maintainers' platforms (2.0.0-rc.51 deployed 2026-10-14). |
+| 2 | 2026-10-15 | 2.0.0-rc.40 to 2.0.0-rc.53 | Adds 2.0.0-rc.52 and rc.53 (follow-up review of consent, delegation and access teardown): 1 High and 2 Medium findings, their completion steps and lower-severity fixes; the SQLite erasure residual noted under rc.51 is closed. Both releases deployed on the maintainers' platforms (2026-10-15). |
