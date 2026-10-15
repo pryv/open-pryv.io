@@ -1,6 +1,12 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.54 - 2026-10-15
+
+Logging: a core with no log target configured (such as one installed with an earlier install
+wizard) now writes its warnings and errors to stderr instead of dropping them; console logs carry
+no ANSI colour codes in production; the master's messages appear once, through the logger, with a
+new prefix (adjust any grep on `[master] WARNING:` / `[master] ERROR:`); the install wizard writes a
+`logs:` section. No migration.
 
 - Operators: when no log target is configured (`logs.console`, `logs.file`, `logs.fileSync` and
   `logs.custom` all inactive), the master and the workers now write their warnings and errors to
