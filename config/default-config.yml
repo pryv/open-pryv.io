@@ -549,6 +549,8 @@ caching:
   accessMaxAgeSeconds: 60
 
 # === PER-CORE: local logs ===
+# With no target at all (console, file, fileSync and custom all off), warnings
+# and errors still go to stderr, so the journal / `docker logs` keep them.
 logs:
   console:
     active: false

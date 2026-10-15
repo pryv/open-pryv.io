@@ -16,6 +16,8 @@ import { inspectAndHide, getLogger, setGlobalName } from '../src/logging.ts';
 
 const TOKEN = 'ckzq8x4k2b7c9d0e1f2g3h4i5j';
 const LOGGING_SRC = fileURLToPath(new URL('../src/logging.ts', import.meta.url));
+const BOILER_SRC = fileURLToPath(new URL('../src/index.ts', import.meta.url));
+const CONFIG_DIR = fileURLToPath(new URL('../../../config', import.meta.url));
 
 describe('[BLGM] boiler logging masks credentials', function () {
   it('[BLGM1] an Error is masked: message, stack, fields and cause, and stays an Error', function () {
@@ -191,5 +193,157 @@ describe('[BLFM] boiler log file modes', function () {
     }, 300);
     assert.deepStrictEqual(fs.readdirSync(logDir).filter((n) => n.startsWith('core.log')), ['core.log']);
     assert.strictEqual(entriesIn(logDir).size, 300);
+  });
+});
+
+describe('[BLFB] boiler log fallback when no target is configured', function () {
+  this.timeout(30000);
+  let dir;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blfb-')); });
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // Boots the logger with these logs settings (LOGS, LOG_FORMAT and DEBUG
+  // unset unless given in `env`), writes one entry per level, then runs
+  // `extra` (statements using `l`); returns what reached stdout and stderr.
+  function bootAndLogEachLevel (values, { env: extraEnv = {}, extra = '' } = {}) {
+    const script = [
+      `const logging = await import(${JSON.stringify(LOGGING_SRC)});`,
+      "logging.setGlobalName('blfb');",
+      'const values = JSON.parse(process.env.BLFB_VALUES);',
+      'await logging.initLoggerWithConfig({ get: (key) => values[key] });',
+      "const l = logging.getLogger('blfb');",
+      "l.debug('blfb-debug'); l.info('blfb-info'); l.warn('blfb-warn'); l.error('blfb-error');",
+      extra,
+      'setTimeout(() => process.exit(0), 1500);'
+    ].join('\n');
+    const env = Object.assign({}, process.env, { BLFB_VALUES: JSON.stringify(values) });
+    delete env.LOGS;
+    delete env.LOG_FORMAT;
+    delete env.DEBUG;
+    Object.assign(env, extraEnv);
+    const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8', timeout: 20000 });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    return res;
+  }
+
+  function silentConsole (extra) {
+    return Object.assign({
+      'logs:console': { active: false, level: 'info', format: {} },
+      'logs:console:active': false,
+      'logs:file:active': false,
+      'logs:custom:active': false,
+      'logs:skipUncaughtException': true
+    }, extra);
+  }
+
+  it('[BLFB1] with no log target configured, warnings and errors go to stderr (and nothing below warn)', function () {
+    const res = bootAndLogEachLevel(silentConsole());
+    assert.match(res.stderr, /\[warn\]: \[blfb:blfb\] blfb-warn/);
+    assert.match(res.stderr, /\[error\]: \[blfb:blfb\] blfb-error/);
+    assert.doesNotMatch(res.stderr + res.stdout, /blfb-info|blfb-debug/);
+    assert.doesNotMatch(res.stdout, /blfb-/);
+  });
+
+  it('[BLFB2] with a log file configured, a silent console stays silent', function () {
+    const logPath = path.join(dir, 'fallback', 'logs', 'core.log');
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'info', rotation: { isActive: false } },
+      'logs:file:active': true
+    }));
+    assert.doesNotMatch(res.stderr + res.stdout, /blfb-/);
+    assert.match(fs.readFileSync(logPath, 'utf8'), /blfb-error/);
+  });
+
+  it('[BLFB3] with only the sync file configured, a silent console stays silent', function () {
+    const syncPath = path.join(dir, 'fallback-sync', 'logs', 'core-sync.log');
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:fileSync': { active: true, path: syncPath, level: 'warn' },
+      'logs:fileSync:active': true
+    }));
+    assert.doesNotMatch(res.stderr + res.stdout, /blfb-/);
+    assert.match(fs.readFileSync(syncPath, 'utf8'), /blfb-error/);
+  });
+
+  it('[BLFB4] an active console keeps its configured level and stream', function () {
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:console': { active: true, level: 'info', format: {} },
+      'logs:console:active': true
+    }));
+    assert.match(res.stdout, /blfb-info/);
+    assert.match(res.stdout, /blfb-error/);
+    assert.doesNotMatch(res.stderr, /blfb-/);
+  });
+
+  it('[BLFB5] the fallback output carries no ANSI colour codes, even with a colour format', function () {
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:console': { active: false, level: 'info', format: { color: true, time: true } }
+    }));
+    assert.match(res.stderr, /blfb-error/);
+    assert.ok(!res.stderr.includes('\u001b['), JSON.stringify(res.stderr));
+  });
+
+  it('[BLFB6] config/production-config.yml: the console output carries no ANSI colour codes', function () {
+    const runDir = fs.mkdtempSync(path.join(dir, 'prod-'));
+    const script = path.join(runDir, 'boot.mjs');
+    fs.writeFileSync(script, [
+      `const { init, getLogger } = await import(${JSON.stringify(BOILER_SRC)});`,
+      `init({ appName: 'blfb', baseConfigDir: ${JSON.stringify(CONFIG_DIR)}, skipOverrideConfig: true });`,
+      "const l = getLogger('prod');",
+      "l.info('blfb-info', { nested: { list: [1, 'two'] } }); l.error('blfb-error', { code: 'E1' });",
+      'setTimeout(() => process.exit(0), 1500);'
+    ].join('\n'));
+    const env = Object.assign({}, process.env);
+    for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
+    const res = spawnSync(process.execPath, [script, '--config', path.join(CONFIG_DIR, 'production-config.yml')], {
+      cwd: runDir, env, encoding: 'utf8', timeout: 20000
+    });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    const out = res.stdout + res.stderr;
+    assert.match(out, /blfb-info/);
+    assert.match(out, /blfb-error/);
+    assert.ok(!out.includes('\u001b['), JSON.stringify(out));
+  });
+
+  it('[BLFB7] with a custom logger configured, a silent console stays silent', function () {
+    const customDir = fs.mkdtempSync(path.join(dir, 'custom-'));
+    const customOut = path.join(customDir, 'custom.log');
+    const customModule = path.join(customDir, 'custom-logger.cjs');
+    fs.writeFileSync(customModule, [
+      "const fs = require('node:fs');",
+      'module.exports = {',
+      '  init: async () => {},',
+      `  log: (level, key, message) => fs.appendFileSync(${JSON.stringify(customOut)}, level + ' ' + message + '\\n')`,
+      '};'
+    ].join('\n'));
+    const res = bootAndLogEachLevel(silentConsole({
+      'logs:custom:active': true,
+      'logs:custom:path': customModule,
+      'logs:custom:settings': {}
+    }));
+    assert.doesNotMatch(res.stderr + res.stdout, /blfb-/);
+    assert.match(fs.readFileSync(customOut, 'utf8'), /error blfb-error/);
+  });
+
+  it('[BLFB8] LOGS=<level> with no target keeps its console: stdout at that level, nothing on stderr', function () {
+    const res = bootAndLogEachLevel(silentConsole(), { env: { LOGS: 'warn' } });
+    assert.match(res.stdout, /\[warn\]: \[blfb:blfb\] blfb-warn/);
+    assert.match(res.stdout, /\[error\]: \[blfb:blfb\] blfb-error/);
+    assert.doesNotMatch(res.stdout, /blfb-info|blfb-debug/);
+    assert.doesNotMatch(res.stderr, /blfb-/);
+  });
+
+  it('[BLFB9] LOG_FORMAT=json: an Error given as context keeps its masked message and stack', function () {
+    const res = bootAndLogEachLevel(silentConsole(), {
+      env: { LOG_FORMAT: 'json' },
+      extra: `l.error('blfb-err-ctx', new Error('boom auth=${TOKEN}'));`
+    });
+    const line = res.stderr.split('\n').find((s) => s.includes('blfb-err-ctx'));
+    assert.ok(line, res.stderr);
+    const entry = JSON.parse(line);
+    assert.strictEqual(entry.level, 'error');
+    assert.strictEqual(entry.context.name, 'Error');
+    assert.strictEqual(entry.context.message, 'boom auth=(hidden)');
+    assert.match(entry.context.stack, /^Error: boom auth=\(hidden\)/);
+    assert.ok(!line.includes(TOKEN), line);
   });
 });

@@ -15,7 +15,8 @@ logs:
   console:
     active: true
     level: info
-    colorize: false
+    format:
+      color: false   # no ANSI codes in the journal / `docker logs`
   file:
     active: true
     level: error
