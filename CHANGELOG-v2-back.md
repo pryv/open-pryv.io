@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## Log masking of contexts that do not convert to JSON
+
+- `boiler/src/logging.ts` `inspectAndHide`: when the JSON round trip throws, the context is masked
+  by `maskWalk` (JSON semantics: toJSON then `jsonReplacer`; functions, symbols and undefined left
+  out of objects, null in arrays; non-finite numbers as null) instead of being returned raw. Cycles
+  (tracked on the ancestors only, so a shared non-circular reference prints twice as in JSON) give
+  `[Circular]`, a throwing toJSON / getter / ownKeys `[Unserialisable]` for that branch, depth
+  beyond 32 `[Too deep]`; credential keys and strings are masked as by `_inspectAndHide`. The plain
+  round trip stays the hot path; the walk runs only after it failed. `maskNested` is unchanged: a
+  circular field of a logged Error is still left out as `(not logged)`. Tests: `[BLGM7]` (circular,
+  token and `auth=` masked), `[BLGM8]` (toJSON throws), `[BLGM9]` (getter throws), `[BLGM10]` (depth
+  cap), `[BLGM11]` (ordinary contexts: same output on the plain path and through the walk),
+  `[BLFB15]` (circular context with a token on the text console, the JSON console and the file).
+
 ## Image base and image scan in CI
 
 - `Dockerfile`: base `node:24-trixie-slim` (24.18.1, digest-pinned) instead of `node:24-slim`

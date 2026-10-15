@@ -94,6 +94,70 @@ describe('[BLGM] boiler logging masks credentials', function () {
     assert.strictEqual(masked.status, 502);
   });
 
+  it('[BLGM7] a circular context is masked, its cycle marked, never printed raw', function () {
+    const ctx = { user: 'alice', token: TOKEN, headers: { authorization: TOKEN }, url: 'https://x.example.com/?auth=' + TOKEN };
+    ctx.self = ctx;
+    ctx.headers.owner = ctx;
+    const masked = inspectAndHide(ctx);
+    assert.ok(!JSON.stringify(masked).includes(TOKEN), JSON.stringify(masked));
+    assert.deepStrictEqual(masked, {
+      user: 'alice',
+      token: '(hidden)',
+      headers: { authorization: '(hidden)', owner: '[Circular]' },
+      url: 'https://x.example.com/?auth=(hidden)',
+      self: '[Circular]'
+    });
+  });
+
+  it('[BLGM8] a toJSON that throws marks that branch only', function () {
+    const masked = inspectAndHide({ a: 1, bad: { toJSON () { throw new Error('no'); } }, token: TOKEN, list: [{ toJSON () { throw new Error('no'); } }, 'ok'] });
+    assert.deepStrictEqual(masked, { a: 1, bad: '[Unserialisable]', token: '(hidden)', list: ['[Unserialisable]', 'ok'] });
+  });
+
+  it('[BLGM9] a getter that throws marks that branch only', function () {
+    const ctx = { a: 1, token: TOKEN };
+    Object.defineProperty(ctx, 'boom', { enumerable: true, get () { throw new Error('no'); } });
+    const masked = inspectAndHide(ctx);
+    assert.deepStrictEqual(masked, { a: 1, token: '(hidden)', boom: '[Unserialisable]' });
+  });
+
+  it('[BLGM10] nesting is capped when the context has to be walked', function () {
+    const root = { token: TOKEN };
+    let node = root;
+    for (let i = 0; i < 100; i++) { node.next = { level: i }; node = node.next; }
+    node.loop = root;
+    const masked = inspectAndHide(root);
+    assert.strictEqual(masked.token, '(hidden)');
+    let depth = 0;
+    let cur = masked;
+    while (cur.next != null && typeof cur.next === 'object') { cur = cur.next; depth++; }
+    assert.strictEqual(cur.next, '[Too deep]');
+    assert.ok(depth > 10 && depth < 40, 'capped at ' + depth);
+  });
+
+  it('[BLGM11] ordinary contexts render as before, and the same when they have to be walked', function () {
+    const date = new Date('2026-10-15T10:00:00.000Z');
+    const samples = [
+      { userId: 'u1', count: 3, ok: true, none: null, skip: undefined, fn () {}, at: date, list: [1, 'two', undefined, { password: 'p' }] },
+      { url: 'https://' + TOKEN + '@core.example.com/events?auth=' + TOKEN, nested: { deep: { readToken: TOKEN, keep: 'k' } } },
+      { big: 12n, nan: NaN, buf: Buffer.from('hi') },
+      ['a', { Authorization: TOKEN }, [null]]
+    ];
+    const expected = [
+      { userId: 'u1', count: 3, ok: true, none: null, at: '2026-10-15T10:00:00.000Z', list: [1, 'two', null, { password: '(hidden password)' }] },
+      { url: 'https://(hidden)@core.example.com/events?auth=(hidden)', nested: { deep: { readToken: '(hidden)', keep: 'k' } } },
+      { big: '12', nan: null, buf: { type: 'Buffer', data: [104, 105] } },
+      ['a', { Authorization: '(hidden)' }, [null]]
+    ];
+    for (let i = 0; i < samples.length; i++) {
+      assert.deepStrictEqual(inspectAndHide(samples[i]), expected[i], 'plain path, sample ' + i);
+      // The same sample next to a cycle goes through the walk.
+      const withCycle = { sample: samples[i] };
+      withCycle.loop = withCycle;
+      assert.deepStrictEqual(inspectAndHide(withCycle), { sample: expected[i], loop: '[Circular]' }, 'walked, sample ' + i);
+    }
+  });
+
   it('[BLGM5] an Error inside a logged object keeps its masked message', function () {
     const masked = inspectAndHide({ step: 'sync', err: new Error('refused for https://' + TOKEN + '@h.example.com/') });
     assert.strictEqual(masked.step, 'sync');
@@ -399,6 +463,34 @@ describe('[BLFB] boiler log fallback when no target is configured', function () 
       assert.match(line, /12345678901234567890/, format);
     }
     assert.strictEqual(JSON.parse(runs.json.split('\n').find((s) => s.includes('blfb-big-ctx'))).context.token, '(hidden)');
+  });
+
+  // A circular context used to be passed on unmasked (its token in clear on the
+  // text console) and made the JSON console and the file throw or drop it.
+  it('[BLFB15] a circular context holding a token is masked on the text console, the JSON console and the file', function () {
+    const extra = `const c = { user: 'alice', token: '${TOKEN}' }; c.self = c; l.error('blfb-circ-ctx', c);`;
+    const logPath = path.join(dir, 'circ-ctx', 'logs', 'core.log');
+    const runs = {
+      text: bootAndLogEachLevel(silentConsole(), { extra }).stderr,
+      json: bootAndLogEachLevel(silentConsole(), { extra, env: { LOG_FORMAT: 'json' } }).stderr
+    };
+    bootAndLogEachLevel(silentConsole({
+      'logs:file': { path: logPath, level: 'error', rotation: { isActive: false } },
+      'logs:file:active': true
+    }), { extra });
+    runs.file = fs.readFileSync(logPath, 'utf8');
+    for (const [format, out] of Object.entries(runs)) {
+      assert.ok(out.includes('blfb-circ-ctx'), format + ': ' + out);
+      assert.ok(!out.includes(TOKEN), format + ': ' + out);
+      const at = out.lastIndexOf('\n', out.indexOf('blfb-circ-ctx')) + 1;
+      const line = out.slice(at);
+      assert.match(line, /\(hidden\)/, format);
+      assert.match(line, /\[Circular\]/, format);
+      assert.match(line, /alice/, format);
+    }
+    for (const line of [runs.json, runs.file].map((o) => o.split('\n').find((s) => s.includes('blfb-circ-ctx')))) {
+      assert.deepStrictEqual(JSON.parse(line).context, { user: 'alice', token: '(hidden)', self: '[Circular]' });
+    }
   });
 
   // The boiler config logs `get: [key] is undefined` at debug: read while the

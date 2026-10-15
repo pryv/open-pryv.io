@@ -19,6 +19,12 @@
 - Operators (logs, security): a logged context holding a BigInt value had none of its credential
   keys (`token`, `password`, ...) masked, on every log target; with the JSON console format the log
   call threw instead. Such a context is now masked like any other, the BigInt written as a string.
+- Operators (logs, security): a logged context that cannot be turned into JSON (a circular object,
+  such as an HTTP request holding its client, or one whose `toJSON` or a getter throws) was printed
+  as is, credential keys and `auth=` / URL credentials in clear, on the text console; the JSON
+  console and the log file could fail on it. It is now masked like any other context: a cycle is
+  shown as `[Circular]`, a branch that cannot be read as `[Unserialisable]`, nesting beyond 32
+  levels as `[Too deep]`. Contexts that convert to JSON print exactly as before.
 - Operators: a core with in-process mail (`services.email.method: in-process`, the default) and no
   SMTP host (`services.email.smtp.host` unset or a placeholder such as `REPLACE ME`, as on a fresh
   install) now treats mail as not configured: it logs one warning at boot (per process, like the

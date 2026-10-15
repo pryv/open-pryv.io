@@ -459,11 +459,81 @@ function inspectAndHide (o: unknown): unknown {
   try {
     cloned = JSON.parse(JSON.stringify(o, jsonReplacer));
   } catch {
-    // Non-round-trippable value (e.g. toJSON returns undefined or a non-JSON
-    // primitive). Fall back to the raw value rather than crash.
-    return o;
+    // Not round-trippable (circular, a toJSON or getter that throws, too
+    // deep, toJSON returning undefined): mask it by walking it instead. Never
+    // the raw value, whose credentials would be printed in clear. The walk
+    // costs more, so it only runs when the plain round trip failed.
+    return maskWalk(o, '', new Set(), 0);
   }
   return _inspectAndHide(cloned);
+}
+
+// Markers left by maskWalk in place of a branch it cannot print.
+const CIRCULAR = '[Circular]';
+const UNSERIALISABLE = '[Unserialisable]';
+const TOO_DEEP = '[Too deep]';
+const MAX_MASK_DEPTH = 32;
+
+/**
+ * A masked, JSON-shaped copy of `value`, built like JSON.stringify would
+ * (toJSON, then the log replacer; functions, symbols and undefined left out
+ * of objects, null in arrays) but tolerant: a cycle becomes `[Circular]`, a
+ * toJSON or getter that throws `[Unserialisable]` for that branch only, and
+ * nesting beyond MAX_MASK_DEPTH `[Too deep]`. Credential keys and strings are
+ * masked as by _inspectAndHide.
+ */
+function maskWalk (value: unknown, key: string, ancestors: Set<object>, depth: number): unknown {
+  const original = value;
+  if (original !== null && typeof original === 'object') {
+    if (ancestors.has(original)) return CIRCULAR;
+    if (depth >= MAX_MASK_DEPTH) return TOO_DEEP;
+  }
+  try {
+    const toJSON = (value as { toJSON?: unknown } | null)?.toJSON;
+    if (value !== null && typeof value === 'object' && typeof toJSON === 'function') {
+      value = toJSON.call(value, key);
+    }
+    value = jsonReplacer(key, value);
+  } catch {
+    return UNSERIALISABLE;
+  }
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+  if (typeof value === 'string') return hideSensitiveValues(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value === null || typeof value !== 'object') return value;
+
+  const isTracked = original !== null && typeof original === 'object';
+  if (isTracked) ancestors.add(original as object);
+  try {
+    if (Array.isArray(value)) {
+      const res: unknown[] = [];
+      for (let i = 0; i < value.length; i++) {
+        let item;
+        try { item = value[i]; } catch { res.push(UNSERIALISABLE); continue; }
+        const masked = maskWalk(item, String(i), ancestors, depth + 1);
+        res.push(masked === undefined ? null : masked);
+      }
+      return res;
+    }
+    const res: Record<string, unknown> = {};
+    const obj = value as Record<string, unknown>;
+    for (const k of Object.keys(obj)) {
+      if (SENSITIVE_KEYS.has(k.toLowerCase())) {
+        res[k] = hiddenValue(k);
+        continue;
+      }
+      let item;
+      try { item = obj[k]; } catch { res[k] = UNSERIALISABLE; continue; }
+      const masked = maskWalk(item, k, ancestors, depth + 1);
+      if (masked !== undefined) res[k] = masked;
+    }
+    return res;
+  } catch {
+    // e.g. a Proxy whose ownKeys trap throws
+    return UNSERIALISABLE;
+  } finally {
+    if (isTracked) ancestors.delete(original as object);
+  }
 }
 
 const MAX_NESTED_ERRORS = 5;
