@@ -160,6 +160,26 @@ export interface PlatformDB {
   deleteUserCore (username: string): Promise<void>;
   getAllUserCores (): Promise<UserCoreMapping[]>;
 
+  // --- Rows whose value is a core id (generic) --------------------
+  // The `user-core/` claim-or-confirm semantics for any row family that maps
+  // a token to the core holding it (e.g. `ext-id/`). The stored key is
+  // `prefix + key`; `prefix` follows the platform KV prefix rules (no SQL
+  // LIKE wildcards).
+  /**
+   * ATOMIC claim-or-confirm: install `coreId` under `prefix + key` ONLY when
+   * no row holds the key. Returns true when the surviving row points at THIS
+   * `coreId` (claimed now, or already ours), false when another core holds
+   * it. Concurrent claimants on different cores: exactly ONE gets true. Two
+   * claimants on the SAME core both get true: the caller must settle which
+   * one owns the row with its own (local) uniqueness check.
+   */
+  claimCoreRow (prefix: string, key: string, coreId: string): Promise<boolean>;
+  getCoreRow (prefix: string, key: string): Promise<string | null>;
+  /** Delete the row only when it points at `coreId`; true when a row was deleted. */
+  deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean>;
+  /** Every row under `prefix`, `key` without the prefix (full scan: tools only). */
+  getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>>;
+
   // --- Core registration (multi-core) -----------------------------
   setCoreInfo (coreId: string, info: CoreInfo): Promise<void>;
   getCoreInfo (coreId: string): Promise<CoreInfo | null>;
@@ -316,6 +336,16 @@ const PlatformDB: PlatformDB = {
   async deleteUserCore (username: string): Promise<void> { throw new Error('Not implemented'); },
 
   async getAllUserCores (): Promise<UserCoreMapping[]> { throw new Error('Not implemented'); },
+
+  // --- Rows whose value is a core id --- //
+
+  async claimCoreRow (prefix: string, key: string, coreId: string): Promise<boolean> { throw new Error('Not implemented'); },
+
+  async getCoreRow (prefix: string, key: string): Promise<string | null> { throw new Error('Not implemented'); },
+
+  async deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean> { throw new Error('Not implemented'); },
+
+  async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> { throw new Error('Not implemented'); },
 
   // --- Core registration (multi-core) --- //
 

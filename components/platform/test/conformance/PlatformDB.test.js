@@ -361,6 +361,64 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('[XIDP] claimCoreRow() / getCoreRow() / deleteCoreRowIfValue() / getAllCoreRows()', () => {
+      const prefix = 'ext-id/';
+
+      it('[XIDP1] must claim an absent key, then confirm (true) for the same core', async () => {
+        const key = 'ns-' + cuid() + '/v-' + cuid();
+        assert.strictEqual(await db.claimCoreRow(prefix, key, 'core-a'), true);
+        assert.strictEqual(await db.claimCoreRow(prefix, key, 'core-a'), true);
+        assert.strictEqual(await db.getCoreRow(prefix, key), 'core-a');
+      });
+
+      it('[XIDP2] must reject (false) and NOT overwrite when a different core holds the key', async () => {
+        const key = 'ns-' + cuid() + '/v-' + cuid();
+        await db.claimCoreRow(prefix, key, 'core-a');
+        assert.strictEqual(await db.claimCoreRow(prefix, key, 'core-b'), false);
+        assert.strictEqual(await db.getCoreRow(prefix, key), 'core-a');
+      });
+
+      it('[XIDP3] concurrent claims from two cores: exactly one true', async () => {
+        const key = 'ns-' + cuid() + '/v-' + cuid();
+        const [a, b] = await Promise.all([
+          db.claimCoreRow(prefix, key, 'core-a'),
+          db.claimCoreRow(prefix, key, 'core-b')
+        ]);
+        assert.strictEqual((a === true ? 1 : 0) + (b === true ? 1 : 0), 1, 'exactly one claimant wins');
+        const holder = await db.getCoreRow(prefix, key);
+        assert.strictEqual(holder, a ? 'core-a' : 'core-b');
+      });
+
+      it('[XIDP4] delete only when the row points at the given core', async () => {
+        const key = 'ns-' + cuid() + '/v-' + cuid();
+        await db.claimCoreRow(prefix, key, 'core-a');
+        assert.strictEqual(await db.deleteCoreRowIfValue(prefix, key, 'core-b'), false);
+        assert.strictEqual(await db.getCoreRow(prefix, key), 'core-a');
+        assert.strictEqual(await db.deleteCoreRowIfValue(prefix, key, 'core-a'), true);
+        assert.strictEqual(await db.getCoreRow(prefix, key), null);
+        assert.strictEqual(await db.deleteCoreRowIfValue(prefix, key, 'core-a'), false);
+      });
+
+      it('[XIDP5] the scan returns only the prefix, keys without it', async () => {
+        const k1 = 'ns1/v-' + cuid();
+        const k2 = 'ns2/v-' + cuid();
+        await db.claimCoreRow(prefix, k1, 'core-a');
+        await db.claimCoreRow(prefix, k2, 'core-b');
+        await db.claimCoreRow('ext-id-other/', 'x-' + cuid(), 'core-a');
+        await db.setUserCore('user-' + cuid(), 'core-a');
+        const all = await db.getAllCoreRows(prefix);
+        assert.deepStrictEqual(
+          all.sort((x, y) => x.key.localeCompare(y.key)),
+          [{ key: k1, coreId: 'core-a' }, { key: k2, coreId: 'core-b' }]
+        );
+      });
+
+      it('[XIDP6] must refuse a prefix holding SQL LIKE wildcards', async () => {
+        await assert.rejects(() => db.claimCoreRow('ext_id/', 'k', 'core-a'));
+        await assert.rejects(() => db.getAllCoreRows('ext-id%'));
+      });
+    });
+
     describe('setCoreInfo() / getCoreInfo() / getAllCoreInfos()', () => {
       it('must set and retrieve core info', async () => {
         const info = { id: 'core-a', ip: '1.2.3.4', hosting: 'hosting-1', available: true };

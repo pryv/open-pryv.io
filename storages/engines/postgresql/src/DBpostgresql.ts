@@ -200,6 +200,35 @@ class DBpostgresql {
     }));
   }
 
+  // --- Rows whose value is a core id --- //
+
+  async claimCoreRow (prefix: string, key: string, coreId: string): Promise<boolean> {
+    checkKvPrefix('claimCoreRow', prefix);
+    // Same claim-or-confirm as setUserCoreIfNotExists.
+    await this.db.query(
+      'INSERT INTO platform_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
+      [prefix + key, coreId]
+    );
+    return (await this.#get(prefix + key)) === coreId;
+  }
+
+  async getCoreRow (prefix: string, key: string): Promise<string | null> {
+    checkKvPrefix('getCoreRow', prefix);
+    return await this.#get(prefix + key);
+  }
+
+  async deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean> {
+    checkKvPrefix('deleteCoreRowIfValue', prefix);
+    const res = await this.db.query('DELETE FROM platform_kv WHERE key = $1 AND value = $2', [prefix + key, coreId]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> {
+    checkKvPrefix('getAllCoreRows', prefix);
+    const rows = await this.#getWithPrefix(prefix);
+    return rows.map((row) => ({ key: row.key.slice(prefix.length), coreId: row.value }));
+  }
+
   // --- Core registration --- //
 
   async setCoreInfo (coreId: string, info: CoreInfo): Promise<void> {

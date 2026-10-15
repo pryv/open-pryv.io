@@ -265,6 +265,42 @@ class DBrqlite {
     }));
   }
 
+  // --- Rows whose value is a core id --- //
+
+  async claimCoreRow (prefix: string, key: string, coreId: string): Promise<boolean> {
+    checkKvPrefix('claimCoreRow', prefix);
+    // Same claim-or-confirm as setUserCoreIfNotExists: INSERT OR IGNORE commits
+    // one winner per key, the 'strong' read-back says which core it is.
+    await this.execute(
+      'INSERT OR IGNORE INTO keyValue (key, value) VALUES (?, ?)',
+      [prefix + key, coreId]
+    );
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [prefix + key], 'strong');
+    if (rows.length === 0) return false;
+    return rows[0].value === coreId;
+  }
+
+  async getCoreRow (prefix: string, key: string): Promise<string | null> {
+    checkKvPrefix('getCoreRow', prefix);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [prefix + key], 'strong');
+    return rows.length === 0 ? null : rows[0].value;
+  }
+
+  async deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean> {
+    checkKvPrefix('deleteCoreRowIfValue', prefix);
+    const result = await this.execute(
+      'DELETE FROM keyValue WHERE key = ? AND value = ?',
+      [prefix + key, coreId]
+    );
+    return (result?.rows_affected ?? 0) > 0;
+  }
+
+  async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> {
+    checkKvPrefix('getAllCoreRows', prefix);
+    const rows = await this.query('SELECT key, value FROM keyValue WHERE key LIKE ?', [prefix + '%'], 'strong');
+    return rows.map((row: Row) => ({ key: row.key.slice(prefix.length), coreId: row.value }));
+  }
+
   // --- Core registration --- //
 
   async setCoreInfo (coreId: string, info: CoreInfo) {
