@@ -88,7 +88,9 @@ describe('[PFRT] counterparty calls (peerFetch)', function () {
 
   it('[PFR3] lets an allow-listed private host through by name, IP or range, and the platform names', async function () {
     const r = await receiver((req, res) => { res.setHeader('content-type', 'application/json'); res.end('{"ok":1}'); });
-    for (const [allowed, host] of [[['localhost'], 'localhost'], [['127.0.0.1'], '127.0.0.1'], [['127.0.0.0/8'], 'localhost']]) {
+    // By range through a name: `localhost` may resolve to `::1` as well as
+    // 127.0.0.1 (macOS does), and every resolved address must be allowed.
+    for (const [allowed, host] of [[['localhost'], 'localhost'], [['127.0.0.1'], '127.0.0.1'], [['127.0.0.0/8', '::1/128'], 'localhost']]) {
       const res = await peerFetch(`http://${host}:${r.port}/events`, {}, settings(allowed));
       assert.equal(res.status, 200, String(allowed));
       assert.deepEqual(await res.json(), { ok: 1 });
