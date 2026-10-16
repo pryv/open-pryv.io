@@ -129,6 +129,66 @@ describe('[ASA] account streams through store-prefixed ids', function () {
     assert.strictEqual(upd.status, 400, JSON.stringify(upd.body));
   });
 
+  it('[ASA6] an app holding a star grant on the local store cannot hand out an account field through a store-prefixed id', async function () {
+    // The creation check judges the permission the child would hold: the
+    // account field the alias routes to, not a local stream a `*` grant on the
+    // local store reaches.
+    const starApps = {};
+    for (const level of ['contribute', 'manage']) {
+      starApps[level] = cuid();
+      const acc = await coreRequest.post(accessesPath()).set('Authorization', token)
+        .send({ type: 'app', name: 'asa-star-' + level + '-' + cuid().slice(-6), token: starApps[level], permissions: [{ streamId: '*', level }] });
+      assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+    }
+    const namePrefix = 'asa6-' + cuid().slice(-6) + '-';
+    let attempts = 0;
+    for (const creatorLevel of ['contribute', 'manage']) {
+      for (const streamId of [':local::system:email', ':account::system:email', ':local::_system:language']) {
+        for (const level of ['contribute', 'read']) {
+          attempts++;
+          const res = await coreRequest.post(accessesPath()).set('Authorization', starApps[creatorLevel])
+            .send({ type: 'shared', name: namePrefix + attempts, token: cuid(), permissions: [{ streamId, level }] });
+          const label = creatorLevel + ' creator, ' + streamId + ' at ' + level + ': ' + JSON.stringify(res.body);
+          assert.strictEqual(res.status, 403, label);
+          assert.strictEqual(res.body?.error?.id, 'forbidden', label);
+        }
+      }
+    }
+    const list = await coreRequest.get(accessesPath()).set('Authorization', token);
+    assert.strictEqual(list.status, 200, JSON.stringify(list.body));
+    const stored = (list.body.accesses || []).filter((a) => a.name.startsWith(namePrefix));
+    assert.deepStrictEqual(stored, [], 'none of the refused accesses is stored');
+    assert.strictEqual(await currentEmail(), email);
+  });
+
+  it('[ASA7] an app holding contribute on the email field creates a child through a store-prefixed id, stored under the canonical id', async function () {
+    const namePrefix = 'asa7-' + cuid().slice(-6) + '-';
+    let n = 0;
+    for (const streamId of [':account::system:email', ':local::system:email']) {
+      for (const level of ['contribute', 'read']) {
+        n++;
+        const res = await coreRequest.post(accessesPath()).set('Authorization', appToken)
+          .send({ type: 'shared', name: namePrefix + n, token: cuid(), permissions: [{ streamId, level }] });
+        const label = streamId + ' at ' + level + ': ' + JSON.stringify(res.body);
+        assert.strictEqual(res.status, 201, label);
+        assert.deepStrictEqual(res.body.access.permissions.filter((p) => p.streamId != null).map((p) => p.streamId), [':system:email'], label);
+        assert.strictEqual(res.body.access.permissions[0].level, level, label);
+      }
+    }
+    // Above its own level: refused, whatever the spelling.
+    const tooHigh = await coreRequest.post(accessesPath()).set('Authorization', appToken)
+      .send({ type: 'shared', name: namePrefix + 'high', token: cuid(), permissions: [{ streamId: ':local::system:email', level: 'manage' }] });
+    assert.notStrictEqual(tooHigh.status, 201, JSON.stringify(tooHigh.body));
+    const list = await coreRequest.get(accessesPath()).set('Authorization', token);
+    assert.strictEqual(list.status, 200, JSON.stringify(list.body));
+    const stored = (list.body.accesses || []).filter((a) => a.name.startsWith(namePrefix));
+    assert.strictEqual(stored.length, n, 'the four created children are stored, the refused one is not');
+    for (const a of stored) {
+      assert.deepStrictEqual(a.permissions.filter((p) => p.streamId != null).map((p) => p.streamId), [':system:email'], a.name + ': stored canonical');
+    }
+    assert.strictEqual(await currentEmail(), email);
+  });
+
   it('[ASA4] events.update cannot move an event onto an account stream through a store-prefixed id', async function () {
     const stream = await coreRequest.post('/' + username + '/streams').set('Authorization', token)
       .send({ id: 'asa-plain-' + cuid().slice(-6), name: 'ASA plain' });

@@ -396,18 +396,32 @@ async function handleIncomingAccept (params: {
   // copy above may be seconds old): a withdrawal that completed meanwhile
   // must stop the relationship here, not after it exists.
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    let fresh: Awaited<ReturnType<typeof capabilityMod.findCapabilityAccess>> | undefined;
     try {
-      const fresh = await capabilityMod.findCapabilityAccess({
+      fresh = await capabilityMod.findCapabilityAccess({
         userId, capabilityId: capabilityIdToConsume, accessId: capabilityAccess?.id ?? capabilityAccessIdHint, deps: { mall },
       });
+    } catch (err: unknown) {
+      // A storage error is not a verdict: the responses-stream write hook
+      // already checked this capability once when the accept was written, so
+      // the mint goes on with that check, and the failure is logged.
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability re-read before the mint failed (continuing)', {
+        capabilityId: capabilityIdToConsume, error: String((err as Error)?.message || err),
+      });
+    }
+    if (fresh !== undefined) {
       const freshState = (fresh?.clientData as { cmc?: { capability?: { state?: string } } } | undefined)?.cmc?.capability?.state;
       if (freshState === 'invalidated') {
         return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
       }
-    } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/handleIncomingAccept: capability re-read before the mint failed (continuing)', {
-        capabilityId: capabilityIdToConsume, error: String((err as Error)?.message || err),
-      });
+      // The access found a moment ago is gone (deleted since, which is how a
+      // link is torn down for good): the same withdrawal verdict as a state
+      // flip, since that is what the deletion means for this accept. Not
+      // raised when the first lookup found nothing either: that orphan case
+      // is handled above, with the write hook's check as the authority.
+      if (fresh == null && capabilityAccess != null) {
+        return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
+      }
     }
   }
   // A relationship we already hold for this scope is healed in place.

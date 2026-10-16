@@ -44,6 +44,9 @@ export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId
 function canonicalStreamId (id: string): string {
   let current = id;
   for (let i = 0; i < 8; i++) {
+    // No closing store marker (`:az&`): not a store-prefixed id, nothing to
+    // resolve; left as is for the callers' format checks to refuse.
+    if (current.startsWith(STORE_ID_MARKER) && current.indexOf(STORE_ID_MARKER, 1) < 0) return current;
     const [storeId, itemId] = parseStoreIdAndStoreItemId(current);
     if (storeId === LOCAL_STORE_ID) {
       if (itemId === current) return current;

@@ -39,6 +39,18 @@
   to its canonical form before the checks, and `isUnknownSystemStream` also catches any id routing
   to the account store. The plugin-side `canonicalLocalStreamId` helpers stay as the plugins' belt.
   Tests: `[ASA1]` to `[ASA5]` (`account-streams-alias.test.js`).
+  Permission ids are canonicalised first in the `accesses.create` and `accesses.update` chains
+  (`canonicalizePermissionStreamIds` / `...ForUpdate`, right after the params validation, before the
+  plugin forge-prevention hooks and `applyPrerequisitesForCreation`'s `canCreateAccess`); the
+  rewrite in `validateAccountStreamPermissions` stays as the belt. `AccessLogic._getStreamPermissionLevel`
+  (so every `can*` check, the plugin callers of `canCreateAccess` included) and
+  `isStreamForbiddenForReading` judge `storeDataUtils.canonicalStreamId(id)` and key the level cache
+  on it; the permission map is still built from the stored ids as written, so a stored alias stays
+  inert. `canonicalStreamId` leaves an id with no closing store marker (`:az&`) untouched for the
+  callers' format checks. `handleIncomingAccept.ts`: the pre-mint re-read refuses
+  (`cmc-capability-invalidated`) when the capability access found a moment earlier is gone; a
+  storage error on the re-read still continues on the write hook's check. Tests: `[ASA6]`, `[ASA7]`,
+  `[IA24]`, `[IA25]`.
 - `handleIncomingAccept.ts`: the capability access is read again from storage immediately before
   the mint (not the copy loaded earlier), so a withdrawal completed meanwhile refuses the mint.
 - Retry loop authorship. `components/cmc/src/retryQueue.ts` `runRetryLoop` dispatches only a record

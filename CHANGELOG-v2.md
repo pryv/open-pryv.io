@@ -53,7 +53,11 @@
   canonical id. Until now an alias was judged as a different string, so a request could reach an
   account field around those guards; in particular an access holding `contribute` on the email
   field could change the account's primary email (the password-reset address) through the events
-  API. Requests that use the canonical ids are unchanged.
+  API. On `accesses.create` and `accesses.update`, a permission naming an account field through a
+  store-prefixed id is judged as that field from the first check on, the creator's own permission
+  check included: an app holding only a `*` grant on the regular streams cannot hand out a
+  permission on an account field through such an id (`403 forbidden`), while an app holding the
+  field itself creates the child as before. Requests that use the canonical ids are unchanged.
 - **Security (cross-account messaging).** The outbound retry worker now processes only records the
   server itself wrote (author, stream and type all checked); any other event present in the
   internal retry stream is retired without being processed. Until now a record crafted there could

@@ -640,6 +640,7 @@ class AccessLogic {
    */
   async isStreamForbiddenForReading (fullStreamId: string) {
     if (this.isPersonal()) return false;
+    fullStreamId = storeDataUtils.canonicalStreamId(fullStreamId);
     await this._getStreamPermissionLevel(fullStreamId);
     const permission = this._streamPermissionLevelCache[fullStreamId];
     if (permission == null) return false;
@@ -671,13 +672,20 @@ class AccessLogic {
     if (fullStreamId == null) fullStreamId = '*'; // to be investgated why this happens
 
     if (this.isPersonal()) return 'manage';
-    const cachedLevel = this._streamPermissionLevelCache[fullStreamId];
+    // Judge the store the id routes to, whatever spelling the caller used:
+    // `:local::system:email` is the account field `:system:email`, not a
+    // local stream a `*` grant on the local store would reach. Every `can*`
+    // check and the level cache key the canonical id; a canonical id is
+    // unchanged. (The permission map itself is built from the stored ids as
+    // written: a stored alias stays the inert entry it always was.)
+    const canonicalId: string = storeDataUtils.canonicalStreamId(fullStreamId);
+    const cachedLevel = this._streamPermissionLevelCache[canonicalId];
     if (cachedLevel != null) {
       return cachedLevel.level;
     }
 
-    const permissions = await this._getStreamPermissions(fullStreamId);
-    this._streamPermissionLevelCache[fullStreamId] = permissions;
+    const permissions = await this._getStreamPermissions(canonicalId);
+    this._streamPermissionLevelCache[canonicalId] = permissions;
 
     return permissions?.level;
   }
