@@ -7,7 +7,7 @@
 import type { Response, NextFunction } from 'express';
 
 type SuccessCode = number | ((result: unknown) => number);
-type ResultLike = { writeToHttpResponse: (res: Response, successCode: SuccessCode) => void };
+type ResultLike = { writeToHttpResponse: (res: Response, successCode: number) => void };
 
 /**
  * Helper function for handling method responses.
@@ -21,6 +21,8 @@ export default function (res: Response, next: NextFunction, successCode: Success
       return next(err);
     }
     if (result == null) { throw new Error('AF: either err or result must be non-null.'); }
-    result.writeToHttpResponse(res, successCode);
+    // Resolved here: the result writes a number only (a function reaching it
+    // never sends the response).
+    result.writeToHttpResponse(res, typeof successCode === 'function' ? successCode(result) : successCode);
   };
 };

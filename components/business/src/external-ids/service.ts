@@ -35,6 +35,12 @@ export interface ExternalIdInfo {
   claimedAt: number;
 }
 
+/** `created` is false when the account already held that exact value. */
+export interface ClaimResult {
+  externalId: ExternalIdInfo;
+  created: boolean;
+}
+
 export interface ExtIdServicePlatform extends ExtIdPlatformHandle {
   coreIdToUrl (coreId: string): string;
 }
@@ -61,12 +67,12 @@ export class ExternalIdsService {
    * that value; 409 when another account holds it (on any core) or when the
    * account holds another id in the namespace.
    */
-  async claim (userId: string, namespace: string, rawValue: unknown): Promise<ExternalIdInfo> {
+  async claim (userId: string, namespace: string, rawValue: unknown): Promise<ClaimResult> {
     const blindedValue = parseBlindedValue(rawValue);
     const tokens = tokensFor(this.platform, await this.#namespaceRow(namespace), blindedValue);
     const held = await this.db.getByUserAndNamespace(userId, tokens.nsToken);
     if (held != null) {
-      if (held.valueToken === tokens.valueToken) return { namespace, claimedAt: held.claimedAt };
+      if (held.valueToken === tokens.valueToken) return { externalId: { namespace, claimedAt: held.claimedAt }, created: false };
       throw errors.externalIdAlreadyClaimed(namespace, 'namespace-taken');
     }
     if (!await claimRow(this.platform, tokens)) throw errors.externalIdAlreadyClaimed(namespace, 'value-taken');
@@ -78,7 +84,7 @@ export class ExternalIdsService {
       if (err instanceof ExternalIdConflict) throw errors.externalIdAlreadyClaimed(namespace, err.reason);
       throw err;
     }
-    return { namespace, claimedAt };
+    return { externalId: { namespace, claimedAt }, created: true };
   }
 
   /** Unlink the account's id in that namespace (idempotent). */
@@ -95,12 +101,12 @@ export class ExternalIdsService {
    * update the local row, release the old id. Behaves as `claim` when the
    * account holds nothing in the namespace.
    */
-  async replace (userId: string, namespace: string, rawValue: unknown): Promise<ExternalIdInfo> {
+  async replace (userId: string, namespace: string, rawValue: unknown): Promise<ClaimResult> {
     const blindedValue = parseBlindedValue(rawValue);
     const tokens = tokensFor(this.platform, await this.#namespaceRow(namespace), blindedValue);
     const held = await this.db.getByUserAndNamespace(userId, tokens.nsToken);
     if (held == null) return await this.claim(userId, namespace, blindedValue);
-    if (held.valueToken === tokens.valueToken) return { namespace, claimedAt: held.claimedAt };
+    if (held.valueToken === tokens.valueToken) return { externalId: { namespace, claimedAt: held.claimedAt }, created: false };
     const oldValueToken = held.valueToken;
     if (!await claimRow(this.platform, tokens)) throw errors.externalIdAlreadyClaimed(namespace, 'value-taken');
     const claimedAt = this.now();
@@ -112,7 +118,7 @@ export class ExternalIdsService {
       throw err;
     }
     await releaseRow(this.platform, { nsToken: tokens.nsToken, valueToken: oldValueToken });
-    return { namespace, claimedAt };
+    return { externalId: { namespace, claimedAt }, created: true };
   }
 
   /** The account's ids: namespaces and claim dates only, never a value. */

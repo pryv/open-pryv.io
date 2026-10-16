@@ -64,3 +64,26 @@ const __ex_getAccess = {
     })
   };
 export { __ex_getAccess as getAccess };
+
+// External-id namespaces (admin). The name rule is enforced again by the
+// platform layer, which owns the rows.
+const extIdNamespace = helpers.string({ pattern: '^[a-z0-9][a-z0-9-]{1,62}$' });
+const __ex_extIdNamespacesGet = {
+    params: helpers.object({ namespace: extIdNamespace }, { required: ['namespace'] })
+  };
+export { __ex_extIdNamespacesGet as extIdNamespacesGet };
+const __ex_extIdNamespacesSet = {
+    params: helpers.object({
+      namespace: extIdNamespace,
+      label: helpers.string({ minLength: 1, maxLength: 80 }),
+      defaultMode: helpers.string({ enum: ['hint', 'forced'] })
+    }, { required: ['namespace'] })
+  };
+export { __ex_extIdNamespacesSet as extIdNamespacesSet };
+const __ex_extIdNamespacesDelete = {
+    params: helpers.object({
+      namespace: extIdNamespace,
+      force: helpers.boolean()
+    }, { required: ['namespace'] })
+  };
+export { __ex_extIdNamespacesDelete as extIdNamespacesDelete };

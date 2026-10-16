@@ -92,6 +92,32 @@ const __ex_changePassword = {
     result: helpers.object({}, { additionalProperties: false })
   };
 export { __ex_changePassword as changePassword };
+
+// External ids. The value is validated (base64url, length) by the service,
+// which refuses without echoing it; the schema only bounds the types.
+const extIdNamespace = helpers.string({ pattern: '^[a-z0-9][a-z0-9-]{1,62}$' });
+const __ex_externalIdsClaim = {
+    params: helpers.object({
+      namespace: extIdNamespace,
+      blindedValue: helpers.string({ maxLength: 100 })
+    }, { required: ['namespace', 'blindedValue'] })
+  };
+export { __ex_externalIdsClaim as externalIdsClaim };
+const __ex_externalIdsList = {
+    params: helpers.object({})
+  };
+export { __ex_externalIdsList as externalIdsList };
+const __ex_externalIdsRelease = {
+    params: helpers.object({ namespace: extIdNamespace }, { required: ['namespace'] })
+  };
+export { __ex_externalIdsRelease as externalIdsRelease };
+const __ex_externalIdCores = {
+    params: helpers.object({
+      namespace: helpers.string({ maxLength: 100 }),
+      blindedValue: helpers.string({ maxLength: 100 })
+    }, { required: ['namespace', 'blindedValue'] })
+  };
+export { __ex_externalIdCores as externalIdCores };
 const __ex_requestPasswordReset = {
     params: helpers.object({
       appId: helpers.string(),

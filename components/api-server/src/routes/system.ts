@@ -68,6 +68,21 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- external-id namespaces ----------------- //
+  expressApp.get(Paths.System + '/admin/ext-id-ns', setMethodId('system.extIdNamespaces.list'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+  });
+  expressApp.get(Paths.System + '/admin/ext-id-ns/:namespace', setMethodId('system.extIdNamespaces.get'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, { namespace: req.params.namespace }, methodCallback(res, next, 200));
+  });
+  expressApp.put(Paths.System + '/admin/ext-id-ns/:namespace', contentType.json, setMethodId('system.extIdNamespaces.set'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params = Object.assign({}, req.body, { namespace: req.params.namespace });
+    const context = req.context as { extIdNamespaceCreated?: boolean };
+    systemAPI.call(req.context, params, methodCallback(res, next, () => context.extIdNamespaceCreated === true ? 201 : 200));
+  });
+  expressApp.delete(Paths.System + '/admin/ext-id-ns/:namespace', setMethodId('system.extIdNamespaces.delete'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, { namespace: req.params.namespace, force: req.query.force === 'true' }, methodCallback(res, next, 204));
+  });
   // --------------------- event-types dictionary status ----------------- //
   // Reports whether the published event-types dictionary loaded, so operators
   // can alert on a core that is running degraded on its embedded fallback.

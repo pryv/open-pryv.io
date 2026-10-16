@@ -245,6 +245,8 @@ class Application {
     require('./routes/reg/records.ts').default(this.expressApp, this);
     require('./routes/reg/apps.ts').default(this.expressApp, this);
     require('./routes/reg/legacy.ts').default(this.expressApp, this);
+    // External ids: the core lookup (the account routes come with account.ts).
+    require('./routes/externalIds.ts').lookupRoute(this.expressApp, this);
 
     // OAuth2 component — discovery doc + /oauth2/{authorize,authorize/accept,token}.
     // Mount path delegates to the dedicated wiring module which builds
@@ -269,6 +271,7 @@ class Application {
     require('./routes/accesses.ts').default(this.expressApp, this);
     require('./routes/delegations.ts').default(this.expressApp, this);
     require('./routes/account.ts').default(this.expressApp, this);
+    require('./routes/externalIds.ts').default(this.expressApp, this);
     require('./routes/auth/login.ts').default(this.expressApp, this);
     require('./routes/mfa.ts').default(this.expressApp, this);
     await require('./routes/events.ts').default(this.expressApp, this);

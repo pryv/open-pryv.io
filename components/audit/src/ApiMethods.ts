@@ -93,7 +93,17 @@ const ALL_METHODS = [
   'system.listUsers',
   'system.listCores',
   'system.getEventTypesStatus',
+  'system.extIdNamespaces.list',
+  'system.extIdNamespaces.get',
+  'system.extIdNamespaces.set',
+  'system.extIdNamespaces.delete',
   'auth.hostings',
+  // External ids of the account (personal token), and the core lookup by id.
+  'account.externalIds.claim',
+  'account.externalIds.list',
+  'account.externalIds.release',
+  'account.externalIds.replace',
+  'auth.extIdCores',
   // OAuth 2.0 authorization-server events. Emitted directly via
   // audit.eventForUser() from the oauth2 component's grant/consent paths
   // (they are NOT api.register API methods, so they never pass through
@@ -137,7 +147,12 @@ const NOT_AUDITED_METHODS = [
   'system.checkPlatformIntegrity',
   'system.listCores',
   // read-only dictionary status introspection, no per-user context
-  'system.getEventTypesStatus'
+  'system.getEventTypesStatus',
+  // read-only, no per-user context
+  'system.extIdNamespaces.list',
+  'system.extIdNamespaces.get',
+  // the unauthenticated lookup, like auth.cores
+  'auth.extIdCores'
 ];
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));
@@ -150,6 +165,8 @@ const WITHOUT_USER_METHODS = [
   'auth.delete',
   'system.createUser',
   'system.deactivateMfa',
+  'system.extIdNamespaces.set',
+  'system.extIdNamespaces.delete',
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is

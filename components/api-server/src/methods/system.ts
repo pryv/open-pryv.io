@@ -39,6 +39,8 @@ const { getEventTypesLoadState } = require('business').types;
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
 const { getAccessIndex } = require('platform/src/accessIndex.ts');
+const { getNamespace, listNamespaces, setNamespace, deleteNamespace, namespaceInfo } = require('platform/src/externalIdIndex.ts');
+const { APIError } = require('errors');
 
 const { platform } = require('platform') as { platform: Platform };
 
@@ -244,6 +246,70 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
+  // ------------------------------------------------- external-id namespaces
+  // Admin-managed rows; the salt is server-generated and never returned.
+  function extIdError (err: unknown) {
+    return err instanceof APIError ? err : errors.unexpectedError(err);
+  }
+
+  systemAPI.register('system.extIdNamespaces.list',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    async function listExtIdNamespaces (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      try {
+        result.namespaces = await listNamespaces(platform);
+        next();
+      } catch (err) {
+        return next(extIdError(err));
+      }
+    }
+  );
+
+  systemAPI.register('system.extIdNamespaces.get',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.extIdNamespacesGet.params),
+    async function getExtIdNamespace (_context: MethodContext, params: { namespace: string }, result: ResultBag, next: Next) {
+      try {
+        const row = await getNamespace(platform, params.namespace);
+        if (row == null) return next(errors.unknownResource('external-id namespace', params.namespace));
+        result.namespace = namespaceInfo(params.namespace, row);
+        next();
+      } catch (err) {
+        return next(extIdError(err));
+      }
+    }
+  );
+
+  systemAPI.register('system.extIdNamespaces.set',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.extIdNamespacesSet.params),
+    async function setExtIdNamespace (context: MethodContext & { extIdNamespaceCreated?: boolean }, params: { namespace: string, label?: string, defaultMode?: string }, result: ResultBag, next: Next) {
+      try {
+        const { created, info } = await setNamespace(platform, params.namespace,
+          { label: params.label, defaultMode: params.defaultMode }, Date.now() / 1000);
+        context.extIdNamespaceCreated = created;
+        result.namespace = info;
+        next();
+      } catch (err) {
+        return next(extIdError(err));
+      }
+    }
+  );
+
+  systemAPI.register('system.extIdNamespaces.delete',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.extIdNamespacesDelete.params),
+    async function deleteExtIdNamespace (_context: MethodContext, params: { namespace: string, force?: boolean }, _result: ResultBag, next: Next) {
+      try {
+        if (!await deleteNamespace(platform, params.namespace, { force: params.force === true })) {
+          return next(errors.unknownResource('external-id namespace', params.namespace));
+        }
+        next();
+      } catch (err) {
+        return next(extIdError(err));
       }
     }
   );

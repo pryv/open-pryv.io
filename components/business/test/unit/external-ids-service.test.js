@@ -114,11 +114,11 @@ describe('[XIDS] external ids service', () => {
 
   it('[XIDS1] claim, then list (namespace and date only), holds, and an idempotent second claim', async () => {
     const v = value();
-    assert.deepStrictEqual(await coreA.claim('u1', ns, v), { namespace: ns, claimedAt: 1000 });
+    assert.deepStrictEqual(await coreA.claim('u1', ns, v), { externalId: { namespace: ns, claimedAt: 1000 }, created: true });
     assert.deepStrictEqual(await coreA.list('u1'), [{ namespace: ns, claimedAt: 1000 }]);
     assert.strictEqual(await coreA.holds('u1', ns, v), true);
     assert.strictEqual(await coreA.holds('u2', ns, v), false);
-    assert.deepStrictEqual(await coreA.claim('u1', ns, v), { namespace: ns, claimedAt: 1000 });
+    assert.deepStrictEqual(await coreA.claim('u1', ns, v), { externalId: { namespace: ns, claimedAt: 1000 }, created: false });
     assert.strictEqual(coreA.db.rows.length, 1);
     assert.strictEqual(JSON.stringify(await coreA.list('u1')).includes(v), false, 'list never returns the value');
   });

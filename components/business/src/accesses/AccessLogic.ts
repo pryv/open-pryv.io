@@ -328,6 +328,10 @@ class AccessLogic {
       case 'account.changePassword':
       case 'account.changeUsername':
       case 'account.usernameChanges':
+      case 'account.externalIds.claim':
+      case 'account.externalIds.list':
+      case 'account.externalIds.release':
+      case 'account.externalIds.replace':
         return this.isPersonal();
 
       // -- Accesses
