@@ -165,6 +165,14 @@ jobs:
         run: npm install --ignore-scripts
       - name: Lint
         run: npx eslint .
+      - name: TypeScript any / canonical-type gate
+        # The TS-only rules of `just lint` (no-explicit-any, canonical type
+        # homes), which the default eslint config above does not apply to .ts.
+        run: npx eslint --config eslint.ts-any.config.js 'components/**/*.ts' 'storages/**/*.ts'
+      - name: Open-index-signature ratchet
+        run: ./scripts/open-type-ratchet
+      - name: createRequire ratchet
+        run: ./scripts/create-require-ratchet
       - name: Production-dependency integrity
         # No runtime TOP-LEVEL require of a dev-only package (pruned by
         # `--omit=dev`, which crash-loops the production image). CI installs
