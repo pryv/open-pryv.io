@@ -410,7 +410,11 @@ class BackupOrchestrator {
 
   async _backupPlatform (writer: BackupWriter) {
     if (!this.platformDB) return;
-    const platformData = await this.platformDB.exportAll();
+    const platformData: unknown[] = await this.platformDB.exportAll();
+    // External-id namespace rows (with their salts): `ext-id/` rows are not
+    // backed up, each core's reconcile rebuilds them from its local table.
+    const { exportNamespaceRows } = await import('platform/src/externalIdIndex.ts');
+    platformData.push(...await exportNamespaceRows(this.platformDB));
     await writer.writePlatformData(platformData);
   }
 

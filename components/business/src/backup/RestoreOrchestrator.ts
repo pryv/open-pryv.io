@@ -126,7 +126,8 @@ class RestoreOrchestrator {
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[] } = { restored: [], skipped: [], conflicts, deleted };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[] } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [] };
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -149,7 +150,7 @@ class RestoreOrchestrator {
     }
 
     if (platformRead != null) {
-      await this._writePlatform(platformRead);
+      report.extIdNamespaceSaltMismatch = (await this._writePlatform(platformRead)).extIdNamespaceSaltMismatch;
     }
 
     this.logger.info(`Restore complete: ${report.restored.length} restored, ${report.skipped.length} skipped`);
@@ -516,10 +517,15 @@ class RestoreOrchestrator {
    * reserved username, as for the manifest.
    */
   async _readPlatform (reader: BackupReaderLike, isReserved: (name: string) => boolean): Promise<PlatformRead> {
-    const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null };
+    const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null, extIdNamespaces: [] };
     if (!this.platformDB) return read;
     const data = read.data;
+    const { isNamespaceRowEntry } = await import('platform/src/externalIdIndex.ts');
     for await (const item of await reader.readPlatformData()) {
+      if (isNamespaceRowEntry(item)) {
+        read.extIdNamespaces.push(item);
+        continue;
+      }
       // v1 backups (and old v2 exports) write raw `{key, value}` entries straight from
       // the SQLite/MongoDB platform-wide store. v2 platformDB.importAll expects the
       // parsed shape `{username, field, value, isUnique}` (matching exportAll output).
@@ -574,12 +580,22 @@ class RestoreOrchestrator {
   }
 
   /** Write what `_readPlatform` read and checked. */
-  async _writePlatform (read: PlatformRead) {
-    if (!this.platformDB) return;
+  async _writePlatform (read: PlatformRead): Promise<{ extIdNamespaceSaltMismatch: string[] }> {
+    if (!this.platformDB) return { extIdNamespaceSaltMismatch: [] };
     if (read.data.length > 0) {
       await this.platformDB.importAll(read.data);
     }
     this.logger.info(`Platform data restored: ${read.data.length} records${read.skipped ? ` (${read.skipped} unsupported keys skipped)` : ''}`);
+    let extIdNamespaceSaltMismatch: string[] = [];
+    if (read.extIdNamespaces.length > 0) {
+      const { importNamespaceRows } = await import('platform/src/externalIdIndex.ts');
+      const ns = await importNamespaceRows(this.platformDB, read.extIdNamespaces);
+      extIdNamespaceSaltMismatch = ns.saltMismatch;
+      this.logger.info(`External-id namespaces restored: ${ns.imported} written, ${ns.kept} already present`);
+      if (ns.saltMismatch.length > 0) {
+        this.logger.warn(`External-id namespaces kept with a salt that differs from the backup (not overwritten): ${ns.saltMismatch.join(', ')}`);
+      }
+    }
     let serverMappingsCount = 0;
     if (read.defaultCoreId != null && read.mappingUsernames.length > 0) {
       try {
@@ -600,6 +616,7 @@ class RestoreOrchestrator {
     if (serverMappingsCount > 0) {
       this.logger.info(`Register server mappings restored: ${serverMappingsCount} user-core rows written`);
     }
+    return { extIdNamespaceSaltMismatch };
   }
 }
 
@@ -680,7 +697,7 @@ type DeletedUserRef = { userId: string; username: string | null; lastRunId: stri
 type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }>; deletedUsers?: DeletedUserRef[] };
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed'; reason: string };
 /** The platform part of a backup, read and checked before anything is written. */
-type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null };
+type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null; extIdNamespaces: Array<{ key: string, value: string }> };
 type UserReader = {
   readStreams (): AsyncIterable<unknown>;
   readAccesses (): AsyncIterable<unknown>;

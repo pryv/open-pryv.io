@@ -31,6 +31,13 @@
 //   node bin/reconcile-user-cores.js            # delete stale + heal missing
 //   node bin/reconcile-user-cores.js --dry-run  # report counts; do not write
 //   node bin/reconcile-user-cores.js --config config/host-config.yml
+//
+// With --ext-ids it reconciles this core's external ids instead (the `ext-id/`
+// rows that point here against the core's local table): stale rows deleted,
+// missing rows re-claimed, ids of deleted accounts released, ids another core
+// holds dropped locally, ids of a deleted namespace reported. Run it after a
+// restore, after a crash during a claim, and before moving a core. It also
+// applies on a single core.
 
 const path = require('path');
 
@@ -82,6 +89,30 @@ require('@pryv/boiler').init({
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
 
+    if (args.extIds) {
+      const { getExternalIdsService } = require('business/src/external-ids/service.ts');
+      const { getUsersLocalIndex } = require('storage');
+      const usersIndex = await getUsersLocalIndex();
+      const service = await getExternalIdsService();
+      const s = await service.reconcile({
+        dryRun: args.dryRun,
+        userExists: async (userId) => (await usersIndex.getNameForId(userId)) != null
+      });
+      console.log('reconcile-user-cores --ext-ids: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
+        ' on core "' + platform.coreId + '"');
+      console.log('  local ids                 ' + s.localRows);
+      console.log('  stale rows deleted        ' + s.staleDeleted);
+      console.log('  ids of deleted accounts   ' + s.orphanUsersReleased);
+      console.log('  missing rows re-claimed   ' + s.missingHealed);
+      console.log('  lost to another core      ' + s.lostToOtherCore);
+      console.log('  namespace missing (kept)  ' + s.namespaceMissing);
+      if (s.namespaceMissing > 0) {
+        console.log('    ! some local ids belong to a namespace that no longer exists: restore its row ' +
+          '(with its salt) from a backup, or release those ids');
+      }
+      process.exit(0);
+    }
+
     if (platform.isSingleCore) {
       console.log('reconcile-user-cores: single-core deployment — nothing to do ' +
         '(the platform-wide username check ignores the user-core map).');
@@ -110,10 +141,11 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false };
+  const args = { dryRun: false, extIds: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
+    else if (a === '--ext-ids') args.extIds = true;
     else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
@@ -127,6 +159,8 @@ function printUsage (stream) {
     'Usage:',
     '  node bin/reconcile-user-cores.js            # delete stale + heal missing self-rows',
     '  node bin/reconcile-user-cores.js --dry-run  # report counts; do not write',
+    '  node bin/reconcile-user-cores.js --ext-ids [--dry-run]',
+    '                                              # reconcile this core\'s external ids',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

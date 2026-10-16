@@ -174,6 +174,46 @@ export async function deleteNamespace (platform: ExtIdPlatformHandle, namespace:
   return true;
 }
 
+/**
+ * Namespace rows as backup entries: raw `{ key, value }`, salt included (a
+ * lost salt orphans every id of its namespace). A restore that does not know
+ * the prefix skips them.
+ */
+export async function exportNamespaceRows (db: Pick<ExtIdPlatformHandle, 'listPlatformKvEntries'>): Promise<Array<{ key: string, value: string }>> {
+  return await db.listPlatformKvEntries(NS_PREFIX);
+}
+
+export function isNamespaceRowEntry (entry: { key?: unknown }): entry is { key: string, value: string } {
+  return typeof entry.key === 'string' && entry.key.startsWith(NS_PREFIX);
+}
+
+/**
+ * Restore namespace rows, keeping what is live: an absent namespace is
+ * written; the same namespace with the same salt is left as is; the same
+ * namespace with ANOTHER salt is left as is too and reported (overwriting it
+ * would orphan the ids claimed under the live salt).
+ */
+export async function importNamespaceRows (db: Pick<ExtIdPlatformHandle, 'getPlatformKv' | 'claimCoreRow'>,
+  entries: Array<{ key: string, value: string }>): Promise<{ imported: number, kept: number, saltMismatch: string[] }> {
+  const result = { imported: 0, kept: 0, saltMismatch: [] as string[] };
+  for (const entry of entries) {
+    const namespace = entry.key.slice(NS_PREFIX.length);
+    if (!isValidNamespaceName(namespace)) continue;
+    const backedUp = JSON.parse(entry.value) as ExtIdNamespaceRow;
+    let live = parseRow(await db.getPlatformKv(NS_PREFIX + namespace));
+    if (live == null) {
+      if (await db.claimCoreRow(NS_PREFIX, namespace, entry.value)) {
+        result.imported++;
+        continue;
+      }
+      live = parseRow(await db.getPlatformKv(NS_PREFIX + namespace));
+    }
+    if (live != null && live.salt === backedUp.salt) result.kept++;
+    else result.saltMismatch.push(namespace);
+  }
+  return result;
+}
+
 export function namespaceToken (platform: ExtIdPlatformHandle, row: ExtIdNamespaceRow): string {
   return platform.hashFor(NS_FIELD, row.salt);
 }

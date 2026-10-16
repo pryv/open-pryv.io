@@ -191,6 +191,59 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(extIdRows(store).length, 1, 'only u9 on core-b remains');
   });
 
+  it('[XIDS9] reconcile heals each drift state and never touches another core\'s rows', async () => {
+    const { tokensFor, getNamespace } = require('platform/src/externalIdIndex.ts');
+    const nsRow = await getNamespace(coreA.platform, ns);
+    const keyOf = (v) => { const t = tokensFor(coreA.platform, nsRow, v); return 'ext-id/' + t.nsToken + '/' + t.valueToken; };
+    // kept: claimed normally on core A
+    const vKept = value();
+    await coreA.claim('u1', ns, vKept);
+    // stale self-row: platform row for core A, no local owner
+    const vStale = value();
+    store.set(keyOf(vStale), 'core-a');
+    // missing self-row: local row on core A, no platform row
+    const vMissing = value();
+    await coreA.claim('u2', ns, vMissing);
+    store.delete(keyOf(vMissing));
+    // lost: local row on core A, platform row held by core B
+    const vLost = value();
+    await coreA.claim('u3', ns, vLost);
+    store.set(keyOf(vLost), 'core-b');
+    // orphan user: local row of an account that no longer exists
+    const vOrphan = value();
+    await coreA.claim('gone', ns, vOrphan);
+    // another core's row with no local owner here: never touched
+    const vOther = value();
+    await coreB.claim('u9', ns, vOther);
+    const userExists = async (id) => id !== 'gone';
+
+    const dry = await coreA.reconcile({ dryRun: true, userExists });
+    assert.deepStrictEqual(dry, { localRows: 4, staleDeleted: 1, orphanUsersReleased: 1, missingHealed: 1, lostToOtherCore: 1, namespaceMissing: 0 });
+    assert.ok(store.has(keyOf(vStale)), 'dry run writes nothing');
+    assert.strictEqual(coreA.db.rows.length, 4);
+
+    const applied = await coreA.reconcile({ dryRun: false, userExists });
+    assert.deepStrictEqual(applied, dry);
+    assert.ok(!store.has(keyOf(vStale)), 'stale self-row deleted');
+    assert.strictEqual(store.get(keyOf(vMissing)), 'core-a', 'missing self-row re-claimed');
+    assert.strictEqual(store.get(keyOf(vLost)), 'core-b', 'the other core keeps its id');
+    assert.strictEqual(await coreA.holds('u3', ns, vLost), false, 'the lost local row is dropped');
+    assert.ok(!store.has(keyOf(vOrphan)), 'orphan account released');
+    assert.strictEqual(store.get(keyOf(vOther)), 'core-b', 'another core\'s row untouched');
+    assert.strictEqual(await coreA.holds('u1', ns, vKept), true);
+    const again = await coreA.reconcile({ dryRun: false, userExists });
+    assert.deepStrictEqual(again, { localRows: 2, staleDeleted: 0, orphanUsersReleased: 0, missingHealed: 0, lostToOtherCore: 0, namespaceMissing: 0 }, 'idempotent');
+  });
+
+  it('[XIDS10] reconcile reports, and keeps, local rows of a deleted namespace', async () => {
+    const { deleteNamespace } = require('platform/src/externalIdIndex.ts');
+    await coreA.claim('u1', ns, value());
+    await deleteNamespace(coreA.platform, ns, { force: true });
+    const summary = await coreA.reconcile({ dryRun: false, userExists: async () => true });
+    assert.strictEqual(summary.namespaceMissing, 1);
+    assert.strictEqual(coreA.db.rows.length, 1);
+  });
+
   it('[XIDS8] unknown namespace and malformed values are refused without echoing the value', async () => {
     await assertApiError(coreA.claim('u1', 'unknown-ns', value()), 'invalid-parameters-format',
       (err) => assert.strictEqual(err.data.param, 'namespace'));

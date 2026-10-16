@@ -35,6 +35,15 @@ export interface ExternalIdInfo {
   claimedAt: number;
 }
 
+export interface ReconcileSummary {
+  localRows: number;
+  staleDeleted: number;
+  orphanUsersReleased: number;
+  missingHealed: number;
+  lostToOtherCore: number;
+  namespaceMissing: number;
+}
+
 /** `created` is false when the account already held that exact value. */
 export interface ClaimResult {
   externalId: ExternalIdInfo;
@@ -164,6 +173,61 @@ export class ExternalIdsService {
     for (const r of rows) await releaseRow(this.platform, { nsToken: r.nsToken, valueToken: r.valueToken });
     if (rows.length > 0) await this.db.deleteByUser(userId);
     return rows.length;
+  }
+
+  /**
+   * Bring this core's two stores back in line (operator tool, run per core):
+   *   - stale self-row: a platform row pointing here with no local owner: deleted;
+   *   - a local row of an account that no longer exists: released and deleted;
+   *   - missing self-row: a local row with no platform row: re-claimed, or, when
+   *     another core holds the id by now, the local row is deleted (lost);
+   *   - a local row of a namespace that no longer exists: reported, never deleted
+   *     (a lost namespace row is noticed, not silently erased).
+   * Rows pointing at other cores are never touched. Idempotent.
+   */
+  async reconcile (options: { dryRun: boolean, userExists: (userId: string) => Promise<boolean> }): Promise<ReconcileSummary> {
+    const { dryRun, userExists } = options;
+    const summary: ReconcileSummary = { localRows: 0, staleDeleted: 0, orphanUsersReleased: 0, missingHealed: 0, lostToOtherCore: 0, namespaceMissing: 0 };
+    const nsTokens = new Set<string>();
+    for (const ns of await listNamespaces(this.platform)) {
+      const row = await getNamespace(this.platform, ns.namespace);
+      if (row != null) nsTokens.add(namespaceToken(this.platform, row));
+    }
+    const localRows = await this.db.scanAll();
+    summary.localRows = localRows.length;
+    const localKeys = new Set(localRows.map((r) => r.nsToken + '/' + r.valueToken));
+    const platformRows = new Map<string, string>();
+    for (const r of await this.platform.getAllCoreRows('ext-id/')) platformRows.set(r.key, r.coreId);
+
+    for (const [key, coreId] of platformRows) {
+      if (coreId !== this.platform.coreId || localKeys.has(key)) continue;
+      summary.staleDeleted++;
+      if (!dryRun) await this.platform.deleteCoreRowIfValue('ext-id/', key, coreId);
+    }
+
+    const goneUsers = new Set<string>();
+    for (const r of localRows) {
+      const tokens = { nsToken: r.nsToken, valueToken: r.valueToken };
+      if (goneUsers.has(r.userId) || !await userExists(r.userId)) {
+        goneUsers.add(r.userId);
+        summary.orphanUsersReleased++;
+        if (!dryRun) {
+          await releaseRow(this.platform, tokens);
+          await this.db.deleteByUserAndNamespace(r.userId, r.nsToken);
+        }
+        continue;
+      }
+      if (!nsTokens.has(r.nsToken)) summary.namespaceMissing++;
+      const holder = platformRows.get(r.nsToken + '/' + r.valueToken);
+      if (holder === this.platform.coreId) continue;
+      if (holder == null && (dryRun || await claimRow(this.platform, tokens))) {
+        summary.missingHealed++;
+        continue;
+      }
+      summary.lostToOtherCore++;
+      if (!dryRun) await this.db.deleteByUserAndNamespace(r.userId, r.nsToken);
+    }
+    return summary;
   }
 
   /**
