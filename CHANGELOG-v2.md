@@ -1,6 +1,27 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.56 - 2026-10-16
+
+> **Upgrade advice for operators.** This release closes authorization gaps in the cross-account
+> messaging (CMC) and account-delegation namespaces and in the account-field checks. Upgrading is
+> the fix, and we recommend it for every deployment.
+>
+> If you run **2.0.0-rc.53, rc.54 or rc.55** and cannot upgrade right away, set
+> `cmc.retryLoop.enabled: false` in the core's configuration and restart until you do. This
+> stops the retry of failed consent deliveries and the sweep of expired group memberships: a
+> delivery that fails while the setting is off is not retried later, and member accesses then
+> end at their own expiry. Set it back to its default (`true`) after the upgrade.
+>
+> One of the fixes (account fields) has no configuration workaround: it needs the upgrade, on
+> every release before this one.
+
+Security release. Every guard now judges the canonical spelling of a store-prefixed stream id
+(plugin-managed CMC and delegation regions, account fields, access permissions); the CMC retry
+worker processes only records the server wrote; calls to a counterparty are refused when they
+would reach a private or reserved address; moving a stream needs manage rights on its whole
+subtree. Also: a requester can withdraw an open single-use invite (issue 160), usernames and
+platform DNS names share one namespace, and access deletion records can be purged after a
+retention period.
 
 - Access deletion records (operators): new per-core setting
   `accesses.deletionRecords.retentionDays` (default 0 = kept until the account is deleted). Above 0,
