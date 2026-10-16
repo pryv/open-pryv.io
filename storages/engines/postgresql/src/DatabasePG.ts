@@ -567,6 +567,21 @@ CREATE TABLE IF NOT EXISTS alias_index (
 CREATE INDEX IF NOT EXISTS idx_alias_index_user_id
   ON alias_index(user_id);
 
+-- External ids held by this core's accounts (never replicated). The primary
+-- key is the authoritative one-account-per-id check; the unique constraint
+-- keeps one id per account per namespace.
+CREATE TABLE IF NOT EXISTS external_ids (
+  user_id TEXT NOT NULL,
+  ns_token TEXT NOT NULL,
+  value_token TEXT NOT NULL,
+  blinded_value TEXT NOT NULL,
+  claimed_at DOUBLE PRECISION NOT NULL,
+  CONSTRAINT external_ids_value_pkey PRIMARY KEY (ns_token, value_token),
+  CONSTRAINT external_ids_user_ns_key UNIQUE (user_id, ns_token)
+);
+CREATE INDEX IF NOT EXISTS idx_external_ids_user_id
+  ON external_ids(user_id);
+
 -- Series data (replaces InfluxDB)
 
 CREATE TABLE IF NOT EXISTS series_data (

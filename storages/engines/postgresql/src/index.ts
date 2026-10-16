@@ -199,6 +199,10 @@ function getUsersLocalIndex (): unknown {
   return require('./usersLocalIndex.ts').UsersLocalIndexPG;
 }
 
+function getExternalIdsLocal (): unknown {
+  return require('./externalIdsLocal.ts').ExternalIdsLocalPG;
+}
+
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): unknown {
@@ -287,6 +291,7 @@ export { init,
   initStorageLayer,
   getUserAccountStorage,
   getUsersLocalIndex,
+  getExternalIdsLocal,
   getDataStoreModule,
   createPlatformDB,
   createSeriesConnection,

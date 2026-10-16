@@ -68,6 +68,17 @@ const ErrorIds = {
    */
   PayloadTooLarge: 'payload-too-large',
   /**
+   * The external id is held by another account (`data.reason: 'value-taken'`),
+   * or this account already holds another id in that namespace
+   * (`data.reason: 'namespace-taken'`). Never says which account holds it.
+   */
+  ExternalIdAlreadyClaimed: 'external-id-already-claimed',
+  /**
+   * An external-id namespace still has claimed ids and cannot be deleted
+   * without `force`.
+   */
+  ExternalIdNamespaceInUse: 'external-id-namespace-in-use',
+  /**
    * Used for removed API methods
    */
   Gone: 'removed-method',

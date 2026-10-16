@@ -974,6 +974,25 @@ class Platform {
     return await this.#db.listPlatformKvEntries(prefix);
   }
 
+  // Rows whose value is a core id (claim-or-confirm, see PlatformDB). Typed
+  // layers own the prefix and the key (e.g. externalIdIndex for `ext-id/`).
+
+  async claimCoreRow (prefix: string, key: string, coreId: string): Promise<boolean> {
+    return await this.#db.claimCoreRow(prefix, key, coreId);
+  }
+
+  async getCoreRow (prefix: string, key: string): Promise<string | null> {
+    return await this.#db.getCoreRow(prefix, key);
+  }
+
+  async deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean> {
+    return await this.#db.deleteCoreRowIfValue(prefix, key, coreId);
+  }
+
+  async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> {
+    return await this.#db.getAllCoreRows(prefix);
+  }
+
   /**
    * Get all user-to-core mappings.
    */

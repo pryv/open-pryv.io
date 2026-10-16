@@ -44,6 +44,8 @@ interface ErrorFactory {
   goneResource: () => APIErrorT;
   unavailableMethod: (message?: string) => APIErrorT;
   InvalidInvitationToken: () => APIErrorT;
+  externalIdAlreadyClaimed: (namespace: string, reason: 'value-taken' | 'namespace-taken') => APIErrorT;
+  externalIdNamespaceInUse: (namespace: string) => APIErrorT;
 }
 
 /**
@@ -303,6 +305,28 @@ factory.InvalidInvitationToken = () => {
     data: { param: 'invitationToken' }
   };
   return new APIError(ErrorIds.InvalidInvitationToken, ErrorMessages[ErrorIds.InvalidInvitationToken], opts);
+};
+
+/**
+ * The message and data name the namespace only: neither the value, nor the
+ * account or the core holding it.
+ */
+factory.externalIdAlreadyClaimed = function (namespace: string, reason: 'value-taken' | 'namespace-taken') {
+  const message = reason === 'namespace-taken'
+    ? `This account already holds an id in namespace "${namespace}"; use replace to change it.`
+    : `This id of namespace "${namespace}" is already linked to another account.`;
+  return new APIError(ErrorIds.ExternalIdAlreadyClaimed, message, {
+    httpStatus: 409,
+    data: { namespace, reason }
+  });
+};
+
+factory.externalIdNamespaceInUse = function (namespace: string) {
+  return new APIError(ErrorIds.ExternalIdNamespaceInUse,
+    `Namespace "${namespace}" still has linked ids; delete it with force=true to remove the namespace anyway.`, {
+      httpStatus: 409,
+      data: { namespace }
+    });
 };
 
 /**

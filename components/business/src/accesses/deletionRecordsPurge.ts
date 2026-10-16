@@ -21,7 +21,8 @@
  * the next pass, so no index row is ever left pointing at a purged access.
  */
 
-type Callback<T> = (err: Error | null, res?: T) => void;
+import type { Callback } from 'storages/interfaces/_shared/types.ts';
+
 type UserRef = { id: string; username: string };
 type AccessRow = { id?: string; deleted?: number | null };
 

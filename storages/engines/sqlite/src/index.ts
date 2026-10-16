@@ -271,6 +271,10 @@ function getUsersLocalIndex () {
   return DBIndex;
 }
 
+function getExternalIdsLocal () {
+  return require('./externalIdsLocal.ts').ExternalIdsLocalSQLite;
+}
+
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule () {
@@ -290,4 +294,4 @@ function createSeriesConnection (config: Record<string, unknown>): unknown {
   return require('./seriesStorage/index.ts').createSeriesConnection(config);
 }
 
-export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getDataStoreModule, createAuditStorage, createSeriesConnection };
+export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };
