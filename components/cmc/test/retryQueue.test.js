@@ -498,6 +498,22 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(mall._events.get(ev.id).content.attempts, 1);
     });
 
+    it('[RQ30] a refused destination is failed-permanent on the first pass, with no next attempt and no token kept', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'network', deps: { mall, now: () => 0 } });
+      const p = peer(Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' }));
+      const out = await processRetryEvent({ userId: 'u1', retryEvent: ev, deps: depsOf(mall, p, () => 120_000) });
+      assert.equal(out.outcome, 'failed-permanent');
+      assert.equal(p.calls.length, 1);
+      const c = mall._events.get(ev.id).content;
+      assert.equal(c.status, 'failed-permanent');
+      assert.equal(c.attempts, 1);
+      assert.equal(c.lastFailureReason, 'cmc-handler-destination-refused');
+      assert.equal(c.lastFailureDetail.peerReason, 'refused');
+      assert.equal(c.nextAttemptAfter, 60_000, 'not rescheduled');
+      assert.equal(JSON.stringify(c).includes('peer-tok'), false);
+    });
+
     it('[RQ25] a record older than its whole schedule is retired as cmc-retry-stale without a dispatch; a fresh one runs', async () => {
       const mall = fakeMall();
       const day = 24 * 60 * 60 * 1000;

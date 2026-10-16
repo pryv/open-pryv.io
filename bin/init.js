@@ -813,6 +813,15 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   allowedPrivateHosts: []
 # #   requestTimeoutMs: 10000
 
+# # cmc.allowedPrivateHosts — calls to a counterparty (consent, chat,
+# # revocations, delegation and OAuth notices) are refused when its URL points
+# # to a loopback, private, link-local or other reserved address, uses http, or
+# # answers with a redirect; this platform's own host names are always allowed,
+# # IP literals are not. List a private core.url literal and other peers on a
+# # private network here (host names, IPs or CIDR ranges).
+# # cmc:
+# #   allowedPrivateHosts: []
+
 # # access.trustedAuthUrls — let apps request their OWN auth page on
 # # POST /reg/access (optional 'authUrl' body field). Only URLs matching an
 # # entry below are honored (same protocol + host, path on a '/' boundary);

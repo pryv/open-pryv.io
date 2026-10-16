@@ -167,6 +167,13 @@ async function readOfferViaCapability (params: {
       t.id = CmcErrorIds.CAPABILITY_TIMEOUT;
       throw t;
     }
+    // A guarded fetch refusing the capability URL (private or reserved
+    // address, http, redirect, oversized answer).
+    if ((err as { code?: string })?.code === 'EPEERREFUSED') {
+      const r: ApiError = new Error('cmc/accept: capability URL may not be called: ' + (err as Error).message);
+      r.id = CmcErrorIds.CAPABILITY_DESTINATION_REFUSED;
+      throw r;
+    }
     throw err;
   }
 }

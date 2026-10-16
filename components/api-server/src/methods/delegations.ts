@@ -31,6 +31,7 @@ const emailsContainer = require('business/src/emails/container.ts');
 const { getPlatform } = require('platform');
 const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('platform/src/coreIdentity.ts');
 const { getStorageLayer } = require('storage');
+const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
@@ -367,7 +368,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
         apiEndpoint: endpoint,
         path: 'delegations/controlled-side/' + action,
         body,
-        deps: { fetch, logger: getLogger('delegations:outbound') },
+        deps: { fetch: peerFetch, logger: getLogger('delegations:outbound') },
       });
       if (r.ok) return { ok: true, status: r.status, body: r.body };
       return { ok: false, status: r.status, body: (r as { body?: unknown }).body ?? null };
@@ -396,7 +397,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
         apiEndpoint: notifyApiEndpoint,
         path: 'delegations/controlled-side/detach-notify',
         body: {},
-        deps: { fetch, logger: getLogger('delegations:outbound') },
+        deps: { fetch: peerFetch, logger: getLogger('delegations:outbound') },
       });
       if (r.ok) return { ok: true, status: r.status, body: r.body };
       return { ok: false, status: r.status, body: (r as { body?: unknown }).body ?? null };
@@ -413,7 +414,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // holds the detach.
   const cmcConsentGrantsRevokedNotice = cmc.createAccessesDeletePostHook({
     mall,
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:delegation-detach'),
     // A membership of a group account the detached administrator approved is
@@ -470,7 +471,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
         apiEndpoint: controlApiEndpoint,
         path: 'delegations/controlled-side/token',
         body: {},
-        deps: { fetch, logger: getLogger('delegations:outbound') },
+        deps: { fetch: peerFetch, logger: getLogger('delegations:outbound') },
       });
       if (r.ok) return { ok: true, status: r.status, body: r.body };
       return { ok: false, status: r.status, body: (r as { body?: unknown }).body ?? null };
@@ -863,7 +864,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
       if (m.controlApiEndpoint == null) continue;
       const r = await postToPeer({
         apiEndpoint: m.controlApiEndpoint, path: 'delegations/controlled-side/status', body: {},
-        deps: { fetch, timeoutMs: 5000, logger: getLogger('delegations:outbound') },
+        deps: { fetch: peerFetch, timeoutMs: 5000, logger: getLogger('delegations:outbound') },
       });
       const hasEmail = (r.body as { hasEmail?: unknown } | null)?.hasEmail;
       if (r.ok && hasEmail === false) {
@@ -918,7 +919,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
       if (outcome.released) logger.info('account deletion: delegation released on a controlled account of this core', { relId: mirror.relId });
       return;
     }
-    const outbound = { fetch, logger: getLogger('delegations:outbound') };
+    const outbound = { fetch: peerFetch, logger: getLogger('delegations:outbound') };
     if (mirror.status === delegation.STATUS.ACTIVE && mirror.controlApiEndpoint != null) {
       sendWithoutWaiting('delegation release', postToPeer({
         apiEndpoint: mirror.controlApiEndpoint, path: 'delegations/controlled-side/release', body: {}, deps: outbound,

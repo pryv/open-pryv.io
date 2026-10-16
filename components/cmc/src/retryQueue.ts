@@ -316,7 +316,9 @@ async function processDeliveryEvent (params: {
   }
   const nextAttempts = (c.attempts ?? 1) + 1;
   const detail = { peerReason: result.reason, status: result.status };
-  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx') {
+  // A 4xx is the peer's answer; a refused destination can never be called.
+  const refused = result.reason === 'refused';
+  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
     await deps.mall.events.update(userId, {
       ...retryEvent,
       ...serverModification(deps),
@@ -324,7 +326,7 @@ async function processDeliveryEvent (params: {
         ...c,
         status: 'failed-permanent',
         attempts: nextAttempts - 1,
-        lastFailureReason: c.lastFailureReason ?? 'cmc-revoke-delivery-failed',
+        lastFailureReason: refused ? 'cmc-handler-destination-refused' : (c.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
         lastFailureDetail: detail,
         delivery: terminalDelivery(c),
       },
@@ -595,6 +597,9 @@ async function runRetryLoop (params: {
  * delete that threw and left the access in place).
  */
 const NON_RETRYABLE_REASONS = new Set([
+  // The destination may not be called: re-running cannot change that.
+  'cmc-handler-destination-refused',
+  'cmc-capability-destination-refused',
   'cmc-handler-wrong-type',
   'cmc-handler-missing-capability-url',
   'cmc-incoming-refuse-missing-capability-id',
@@ -658,8 +663,10 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-member-access-not-retryable',
 ]);
 
-function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {
+function isRetryableReason (reason: string, detail?: { peerReason?: string; reason?: string } | null): boolean {
   if (NON_RETRYABLE_REASONS.has(reason)) return false;
+  // A refused destination, whichever field the handler put it in.
+  if (detail?.peerReason === 'refused' || detail?.reason === 'refused') return false;
   // detail.peerReason carries the underlying outbound classification when
   // the dispatch wrapper converts it.
   if (detail?.peerReason === 'http-4xx') return false;

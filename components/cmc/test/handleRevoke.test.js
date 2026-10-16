@@ -480,6 +480,19 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(mall.calls.eventsCreated.length, 1);
     });
 
+    it('[HR41] a refused destination is tried once and never queued, even with the retry loop on', async () => {
+      const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const refusal = Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const { fetch, calls } = fakeFetch(refusal);
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch, enqueueRetries: true } });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+      assert.equal(r.peerNotified, false);
+      assert.equal(r.deliveryFailure?.reason, 'refused');
+      assert.equal(r.deliveryQueued, undefined);
+      assert.equal(mall.calls.eventsCreated.length, 0, 'no retry record (it would hold the peer token)');
+    });
+
     it('[HR40] a queue write that fails is reported as a lost notice, never thrown', async () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       mall.events.create = async () => { throw new Error('disk full'); };

@@ -346,6 +346,9 @@ export {
   currentSettings,
   webhookUrlProblem,
   postWebhook,
-  describeCallFailure
+  describeCallFailure,
+  checkedLookup,
+  stripBrackets,
+  normaliseHostName
 };
-export type { AllowList, DestinationSettings };
+export type { AllowList, DestinationSettings, Problem };

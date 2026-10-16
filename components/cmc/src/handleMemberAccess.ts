@@ -460,6 +460,11 @@ async function handleMemberAccess (params: {
       }
       return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { peerErrorId, httpStatus: r.status } };
     }
+    // A destination this core may not call: a policy refusal, not an outage.
+    // Kind and host carry no secret.
+    if (r.reason === 'refused') {
+      return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { reason: 'refused', kind: r.kind, host: r.host } };
+    }
     // Unreachable: the status when there was one, nothing else (no body, no
     // message: the detail lands on a stream every member can read).
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: r.status > 0 ? { httpStatus: r.status } : {} };

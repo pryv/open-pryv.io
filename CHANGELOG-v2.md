@@ -30,6 +30,23 @@
   unchanged. Same rule as the deletion of a trashed stream.
 - `streams.update`: a `parentId` naming one of the stream's descendants is refused with
   `400 invalid-operation` (it was accepted and left the streams unreachable from the root).
+- **Security: calls to a counterparty are refused when they would reach a private address.**
+  Consent (CMC) deliveries, chat, revocations, scope updates, the capability read of an accept,
+  delegation notices and OAuth revocation notices go to URLs the other side supplies. Such a call
+  is now refused, before any connection, when the URL's host is or resolves to a loopback,
+  private, link-local or otherwise reserved address (the address rules of webhooks, checked again
+  at connect time), uses `http:` (unless `cluster.allowInsecurePeerUrl`) or carries credentials;
+  it is also refused when the answer is a redirect or larger than 1 MiB. This platform's own host
+  names (the host of `core.url`, `dns.domain` and its subdomains, the `service.api` host) are always
+  allowed; an IP literal is not trusted that way, so a private `core.url` literal and other peers on
+  a private network are listed in the new `cmc.allowedPrivateHosts` (host names, IPs or CIDR
+  ranges, same grammar as `webhooks.allowedPrivateHosts`; checked at boot). As for webhooks, a peer
+  name is refused when any of its addresses is reserved (a dual-stack name that also publishes a
+  unique-local or link-local IPv6 address included). A refused delivery is
+  permanent: the trigger event reports `cmc-handler-destination-refused` (or
+  `cmc-capability-destination-refused` when an accept's offer read is refused) and it is not
+  retried; an accept whose delivery is refused removes the data grant it had created, as for a
+  rejected one.
 
 ## 2.0.0-rc.55 - 2026-10-15
 

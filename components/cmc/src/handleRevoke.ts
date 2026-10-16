@@ -404,16 +404,17 @@ async function handleRevoke (params: {
     peerDeliveryStatus = delivery.status;
     if (!delivery.ok) {
       deliveryFailure = { reason: delivery.reason, status: delivery.status };
-      // The peer is down (not a 4xx, which is its considered answer): the
-      // notice is queued with its endpoint, since the access that held it
-      // is deleted below, and re-sent by the retry loop over the next hours.
+      // The peer is down (not a 4xx, which is its considered answer, nor a
+      // refused destination, which can never be called): the notice is
+      // queued with its endpoint, since the access that held it is deleted
+      // below, and re-sent by the retry loop over the next hours.
       // Queued only when the wiring says the loop runs (`enqueueRetries`
       // true from config), or when this is the loop's own re-dispatch
       // (`retryContext`, which passes `enqueueRetries: false` to keep a
       // failing trigger from re-queueing itself). Absent = not queued: the
       // record would carry the peer token for a loop that may never run.
       const loopWillSend = deps.enqueueRetries === true || deps.retryContext != null;
-      if (loopWillSend && delivery.reason !== 'http-4xx' && mall.events?.create != null) {
+      if (loopWillSend && delivery.reason !== 'http-4xx' && delivery.reason !== 'refused' && mall.events?.create != null) {
         try {
           await retryQueue.enqueueDelivery({
             userId,
