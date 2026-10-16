@@ -1,5 +1,34 @@
 # Changelog - Internal (no API impact)
 
+## Counterparty calls: destination guard
+
+- `business/src/outbound/peerFetch.ts` (new): `peerFetch(url, init, settings?)`, a fetch-shaped
+  client on `node:http(s)` with the webhook guard's `checkedLookup` pinned at connect, URL checks
+  first (scheme, credentials, IP literal, length), no redirects (3xx refused), a 1 MiB streamed
+  response cap; refusals are `PeerFetchRefusedError` (`code: 'EPEERREFUSED'`, `kind`, `host`).
+  The peer's reason phrase is not forwarded (`Response` refuses bytes node's parser accepts) and the
+  `Response` is built inside a try/catch, so a hostile answer cannot throw out of the listener.
+  `platformHostMatcher` trusts the platform's own host names (never IP literals), cached per config;
+  `describeCmcConfig` is the boot check (`config-validation.js` `checkCmcOutbound`);
+  `setPeerTransportForTests` is the seam `test-helpers` `initTests()` points at `globalThis.fetch`
+  (the api-server suites' shim). `webhooks/destination.ts` exports `checkedLookup`, `stripBrackets`,
+  `normaliseHostName`.
+- Wired as the `fetch` of every counterparty call: CMC dispatch and retry loop (`events.ts`), the
+  group-account member sweep and its dispatch (`cmcMemberSweep.ts`), the accesses update / delete
+  hooks and account deletion (`accesses.ts`, through `localFirstFetch`, whose in-process path is
+  unchanged), the delegation `postToPeer` calls (`delegations.ts`; the admin call to a platform core
+  stays as is) and the OAuth revocation notice (`oauth2.ts`).
+- `cmc`: `requestPeer` maps the refusal to `{ ok:false, reason:'refused', kind, host }`,
+  `isRetryableFailure` false; new error ids `cmc-handler-destination-refused` and
+  `cmc-capability-destination-refused` (non-retryable; `isRetryableReason` also refuses on a
+  `refused` detail); `handleAccept` (deliver: data-grant roll-back; refuse), `handleChat`,
+  `handleSystem` report the new id; `readOfferViaCapability` maps the refusal. `handleRevoke` never
+  queues a refused notice and the retry loop settles a refused delivery row as `failed-permanent`
+  at once; a member-access mint reports `detail.reason: 'refused'` with kind and host. Config:
+  `cmc.allowedPrivateHosts` (default `[]`; test and development configs allow loopback). Tests:
+  business `[PFR1]`..`[PFR11]`, cmc `[CO20]`..`[CO23]`, `[HC13]`, `[HA08b]`, `[HA08c]`, `[HR41]`,
+  `[RQ30]`, `[HMA16b]`, `[MR44b]`.
+
 ## Stream permission walk
 
 - `AccessLogic._getStreamPermissions` keeps the ids it walked and stops on one seen before, so a

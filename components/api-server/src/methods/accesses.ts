@@ -23,6 +23,7 @@ const methodsSchema = require('../schema/accessesMethods.ts');
 const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
+const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const ACCOUNT_ROOT_LEVEL_MESSAGE = "The account root stream can only be granted at the 'read' or 'none' level; grant the account fields themselves to write them.";
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 
@@ -590,7 +591,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
     mall,
     // Lazy fetch resolution — see the delete hook below.
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-update-hook'),
     memberSweep: cmcMemberSweep,
@@ -961,9 +962,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
   // A peer account hosted on this core is reached in-process (localFirstFetch),
-  // not through the core's own public URL; globalThis.fetch is resolved per
-  // call so in-process test shims installed after registration are honoured.
-  const cmcDeliveryFetch = localFirstFetch(api, storageLayer);
+  // not through the core's own public URL; any other peer through the guarded
+  // peerFetch (refused private destinations; tests route it to their shim).
+  const cmcDeliveryFetch = localFirstFetch(api, storageLayer, peerFetch);
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
     // The composed CMC mall (with `.accesses` and `.events`) lets the hook mark
     // the invite a deleted relationship descends from as revoked (local

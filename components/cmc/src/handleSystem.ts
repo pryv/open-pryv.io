@@ -234,10 +234,11 @@ async function handleSystemEvent (params: {
   }
 
   if (!delivery?.ok) {
+    const peerReason = (delivery as { reason?: string } | undefined)?.reason;
     return {
       ok: false,
-      reason: 'cmc-handler-delivery-failed',
-      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason: (delivery as { reason?: string } | undefined)?.reason },
+      reason: peerReason === 'refused' ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
+      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason },
     };
   }
 

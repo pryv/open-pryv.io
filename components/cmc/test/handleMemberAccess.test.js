@@ -324,6 +324,16 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       }
     });
 
+    it('[HMA16b] a refused destination says so in the detail (kind and host only); the ledger gets nothing', async () => {
+      const mall = fakeMall();
+      const refusal = Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const r = await mint(mall, fakePatientCore([refusal]), {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE);
+      assert.deepEqual(r.detail, { reason: 'refused', kind: 'address', host: '10.0.0.1' });
+      assert.equal(mall.calls.eventsCreated.length, 0);
+      noTokenIn(r, 'the failure');
+    });
+
     it('[HMA17] a non-delegable grant (the invite did not ask accessType app) fails before any call', async () => {
       const invite = { ...INVITE, content: { ...INVITE.content, request: { ...INVITE.content.request, accessType: undefined } } };
       const core = fakePatientCore([]);

@@ -423,6 +423,14 @@ function checkWebhooks (config, problems) {
   }
 }
 
+// cmc.allowedPrivateHosts: the private peers counterparty calls may reach.
+function checkCmcOutbound (config, problems) {
+  const { describeCmcConfig } = require('../../components/business/src/outbound/peerFetch.ts');
+  for (const p of describeCmcConfig(config.get('cmc')).problems) {
+    problems.push({ message: p.message, path: p.path, payload: {} });
+  }
+}
+
 // integrity.algorithm: the checksums of events, accesses and attachments.
 // md5 and sha1 are refused, like any value outside the accepted list.
 function checkIntegrityAlgorithm (config, problems) {
@@ -547,6 +555,7 @@ async function validate (config) {
   checkHostedSites(config, problems);
   checkTrustedProxies(config, problems);
   checkWebhooks(config, problems);
+  checkCmcOutbound(config, problems);
   checkIntegrityAlgorithm(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);

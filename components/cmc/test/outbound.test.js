@@ -217,5 +217,44 @@ describe('[CMCOUT] cmc/outbound', () => {
         false
       );
     });
+
+    it('[CO21] a refused destination is NOT retryable', () => {
+      assert.equal(
+        isRetryableFailure({ ok: false, reason: 'refused', status: 0, kind: 'address', host: '10.0.0.1' }),
+        false
+      );
+    });
+  });
+
+  describe('[CMCOUT-RF] refused destinations', () => {
+    it('[CO20] a fetch refusing the destination yields reason refused, with kind and host', async () => {
+      const refusal = Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const { fetch } = fakeFetch(refusal);
+      const r = await postToPeer({ apiEndpoint: 'https://tok@10.0.0.1/', path: 'events', body: {}, deps: { fetch } });
+      assert.deepEqual(r, { ok: false, reason: 'refused', status: 0, kind: 'address', host: '10.0.0.1' });
+    });
+
+    it('[CO22] with the guarded peerFetch, a private counterparty is refused before any connection', async () => {
+      const { peerFetch, setPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
+      const { compileAllowList } = require('business/src/webhooks/destination.ts');
+      setPeerTransportForTests(null);
+      const settings = { allow: compileAllowList([]), allowInsecure: false, isPlatformHost: () => false };
+      const fetch = (url, init) => peerFetch(url, init, settings);
+      for (const apiEndpoint of ['https://tok@10.0.0.1/', 'https://tok@[::1]/', 'https://tok@169.254.169.254/', 'http://tok@peer.example.com/']) {
+        const r = await postToPeer({ apiEndpoint, path: 'events', body: {}, deps: { fetch } });
+        assert.equal(r.ok, false, apiEndpoint);
+        assert.equal(r.reason, 'refused', apiEndpoint);
+        assert.equal(isRetryableFailure(r), false);
+      }
+    });
+
+    it('[CO23] the retry queue never re-runs a refused destination', () => {
+      const { isRetryableReason } = require('../src/retryQueue.ts');
+      assert.equal(isRetryableReason('cmc-handler-destination-refused'), false);
+      assert.equal(isRetryableReason('cmc-capability-destination-refused'), false);
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'refused' }), false);
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { reason: 'refused' }), false);
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'network' }), true);
+    });
   });
 });

@@ -29,7 +29,10 @@ type DeliverResult =
   | { ok: false; reason: 'http-4xx'; status: number; body: unknown }
   | { ok: false; reason: 'http-5xx'; status: number; body: unknown }
   | { ok: false; reason: 'network'; status: 0; error: string }
-  | { ok: false; reason: 'timeout'; status: 0 };
+  | { ok: false; reason: 'timeout'; status: 0 }
+  // The destination may not be called (private or reserved address, http,
+  // redirect, oversized answer): permanent, never retried.
+  | { ok: false; reason: 'refused'; status: 0; kind: string; host: string };
 
 /**
  * Parse a Pryv apiEndpoint URL into (token, base) where `base` is suitable
@@ -158,7 +161,13 @@ async function requestPeer (params: {
     return { ok: false, reason: 'http-5xx', status: res.status, body: parsed };
   } catch (err) {
     if (timer != null) clearTimeout(timer);
-    const errObj = err as { name?: string; code?: string; message?: string } | null;
+    const errObj = err as { name?: string; code?: string; message?: string; kind?: string; host?: string } | null;
+    // A guarded fetch refusing the destination (business/src/outbound/peerFetch.ts).
+    if (errObj?.code === 'EPEERREFUSED') {
+      const refused = { kind: String(errObj.kind ?? 'address'), host: String(errObj.host ?? '') };
+      deps.logger?.warn?.('cmc/outbound: delivery refused', { ...refused, hint: 'cmc.allowedPrivateHosts lists private peers that may be called' });
+      return { ok: false, reason: 'refused', status: 0, ...refused };
+    }
     const isAbort = errObj?.name === 'AbortError' || errObj?.code === 'ABORT_ERR';
     if (isAbort) {
       deps.logger?.warn?.('cmc/outbound: timeout', { host: base, timeoutMs });
@@ -176,6 +185,8 @@ function isRetryableFailure (r: DeliverResult): boolean {
   if (r.ok) return false;
   // 4xx is non-retryable (the peer rejected with a permanent reason).
   if (r.reason === 'http-4xx') return false;
+  // A refused destination stays refused.
+  if (r.reason === 'refused') return false;
   // Everything else (5xx, network, timeout) is retryable.
   return true;
 }

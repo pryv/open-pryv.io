@@ -14,6 +14,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
+const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const emailsStatus = require('business/src/emails/status.ts');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const { isDeepStrictEqual } = require('node:util');
@@ -530,7 +531,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
     mall: mallForCmc,
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger: cmcDispatchLogger,
     selfIdentityFor: cmcSelfIdentityFor,
@@ -634,7 +635,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
     memberSweep: cmcMemberSweep,
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: peerFetch,
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {
       const users = await usersRepository.getAllUsersIdAndName();
