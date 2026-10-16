@@ -57,6 +57,7 @@ const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
 import type { Features } from './features.ts';
 const crypto = require('node:crypto');
@@ -324,6 +325,16 @@ async function handleIncomingAccept (params: {
       });
     }
   }
+  // The responses-stream write-hook checked the capability state when the
+  // accept was written; the requester may have withdrawn the link
+  // (handleInvalidateLink) in the window since. Re-read it here, before minting
+  // the relationship, and refuse if it flipped, so an accept racing a
+  // withdrawal does not open a relationship the requester believes closed.
+  const capabilityStateNow =
+    (capabilityAccess?.clientData as { cmc?: { capability?: { state?: string } } } | undefined)?.cmc?.capability?.state;
+  if (capabilityStateNow === 'invalidated') {
+    return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
+  }
   const inviteEventId: string | null =
     ((capabilityAccess?.clientData as { cmc?: { requestEventId?: string } } | undefined)?.cmc?.requestEventId ?? null) as string | null;
   // The offer copy this accept answers, already on the wire from the accepter
@@ -381,6 +392,38 @@ async function handleIncomingAccept (params: {
       },
     },
   };
+  // Immediately before the mint, read the capability again from storage (the
+  // copy above may be seconds old): a withdrawal that completed meanwhile
+  // must stop the relationship here, not after it exists.
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    let fresh: Awaited<ReturnType<typeof capabilityMod.findCapabilityAccess>> | undefined;
+    try {
+      fresh = await capabilityMod.findCapabilityAccess({
+        userId, capabilityId: capabilityIdToConsume, accessId: capabilityAccess?.id ?? capabilityAccessIdHint, deps: { mall },
+      });
+    } catch (err: unknown) {
+      // A storage error is not a verdict: the responses-stream write hook
+      // already checked this capability once when the accept was written, so
+      // the mint goes on with that check, and the failure is logged.
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability re-read before the mint failed (continuing)', {
+        capabilityId: capabilityIdToConsume, error: String((err as Error)?.message || err),
+      });
+    }
+    if (fresh !== undefined) {
+      const freshState = (fresh?.clientData as { cmc?: { capability?: { state?: string } } } | undefined)?.cmc?.capability?.state;
+      if (freshState === 'invalidated') {
+        return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
+      }
+      // The access found a moment ago is gone (deleted since, which is how a
+      // link is torn down for good): the same withdrawal verdict as a state
+      // flip, since that is what the deletion means for this accept. Not
+      // raised when the first lookup found nothing either: that orphan case
+      // is handled above, with the write hook's check as the authority.
+      if (fresh == null && capabilityAccess != null) {
+        return { ok: false, reason: CmcErrorIds.CAPABILITY_INVALIDATED };
+      }
+    }
+  }
   // A relationship we already hold for this scope is healed in place.
   let access: AccessLike | null = null;
   if (existingForScope != null) {
@@ -597,7 +640,7 @@ async function handleIncomingAccept (params: {
           userId,
           capabilityId: capabilityIdToConsume,
           accessId: capabilityAccess?.id ?? capabilityAccessIdHint,
-          deps: { mall },
+          deps: { mall, logger: deps.logger },
         });
       }
     } catch (err: unknown) {

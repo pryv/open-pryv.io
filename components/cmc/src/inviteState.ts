@@ -11,11 +11,18 @@
  * The trigger event is the state record the requester's app watches, so the
  * outcome of an invite is written there, one write per transition:
  *
- *   single-use  pending    -> accepted | refused | revoked
+ *   single-use  pending    -> accepted | refused | revoked | invalidated
  *               refused    -> accepted   (the subject changed their mind; a
  *                                         refusal does not consume the link)
+ *               refused    -> invalidated
  *               accepted   -> revoked
  *   open-link   pending    -> invalidated
+ *
+ * `invalidated` is the requester withdrawing the link before anyone accepted
+ * it (`consent/invalidate-link-cmc`): for a single-use invite that is a
+ * pending or refused one (a refused link is still acceptable, so still
+ * withdrawable); an accepted one is a relationship, ended with
+ * `consent/revoke-cmc` (`revoked`).
  *
  * An open-link invite has many counterparties, so one subject's answer never
  * changes it: who joined is read from the relationship accesses the requester
@@ -50,7 +57,7 @@ const SINGLE_USE_FROM: Record<InviteTransition, Array<string | undefined>> = {
   accepted: [...PENDING, 'refused'],
   refused: PENDING,
   revoked: [...PENDING, 'accepted'],
-  invalidated: [],
+  invalidated: [...PENDING, 'refused'],
 };
 
 const OPEN_LINK_FROM: Record<InviteTransition, Array<string | undefined>> = {

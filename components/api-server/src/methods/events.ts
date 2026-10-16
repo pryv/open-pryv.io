@@ -563,9 +563,23 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       triggerAccess: context?.access,
     };
   });
+  // A stream id has several store-prefixed spellings that the store resolves
+  // to one stream (`:local:<id>`, `:account::system:email`, ...). Every guard
+  // below compares the canonical spelling, so the aliases are rewritten once,
+  // first, before the shared-secrets / emails / plugin / account guards. The
+  // mall stores the canonical value whatever spelling it is given, so no
+  // stored value changes.
+  function canonicalizeEventStreamIds (context: MethodContext, params: EventsCreateOrUpdateParams, result: EventsCreateOrUpdateResult, next: MethodNext) {
+    const event = params?.update != null ? params.update : params;
+    if (event != null && Array.isArray(event.streamIds)) {
+      event.streamIds = event.streamIds.map((s: string) => (typeof s === 'string' ? storeDataUtils.canonicalStreamId(s) : s));
+    }
+    next();
+  }
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
+    canonicalizeEventStreamIds,
     sharedSecretsCreateGuard,
     emailsCreateGuard,
     // Personal-token accept / refuse triggers: create the app scope they
@@ -1011,6 +1025,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.update.params),
     commonFns.catchForbiddenUpdate(eventSchema('update'),
       () => getUpdates().ignoreProtectedFields, logger),
+    canonicalizeEventStreamIds,
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForUpdate,
     // after the prerequisites, which is what loads the event being updated
@@ -1177,6 +1192,22 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (event.streamIds != null && event.streamIds.length > 1) {
       event.streamIds = [...new Set(event.streamIds)];
     }
+    // Canonicalise store-prefixed ids (`:local:<id>`, `:account::system:<f>`,
+    // ...) so every guard downstream judges the stream the event actually lands
+    // on, not the alias (belt: canonicalizeEventStreamIds already ran first).
+    // An id that routes to the account store must be a known account stream
+    // id: a bare field through `:account:<f>` has no canonical spelling and
+    // would reach the account store around the account-field guards.
+    if (Array.isArray(event.streamIds)) {
+      event.streamIds = event.streamIds.map((s: string) => (typeof s === 'string' ? storeDataUtils.canonicalStreamId(s) : s));
+      const unknownAccount = event.streamIds.filter((s: string) =>
+        typeof s === 'string' &&
+        storeDataUtils.parseStoreIdAndStoreItemId(s)[0] === storeDataUtils.AccountStoreId &&
+        accountStreams.toFieldName(s) === s);
+      if (unknownAccount.length > 0) {
+        return next(errors.unknownReferencedResource('stream', 'streamIds', unknownAccount));
+      }
+    }
     // using context.newEvent now - not params
     context.newEvent = event;
     // used only in the events creation and update
@@ -1284,7 +1315,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     const event = context.oldEvent;
     if (!Array.isArray(event?.streamIds)) return next();
     for (const streamId of event.streamIds) {
-      if (streamId.startsWith(':_system:') || streamId.startsWith(':system:')) {
+      // Judged by the store the id routes to, whatever its spelling.
+      if (typeof streamId === 'string' &&
+          storeDataUtils.parseStoreIdAndStoreItemId(storeDataUtils.canonicalStreamId(streamId))[0] === storeDataUtils.AccountStoreId) {
         return next(errors.invalidOperation('Account events cannot be deleted.'));
       }
     }

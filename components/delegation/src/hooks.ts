@@ -62,7 +62,10 @@ type HookParams = {
   // events.get stream queries: ids and/or {streamId} query objects
   streams?: Array<string | { streamId?: string } | null>;
   clientData?: ClientDataLike | null;
-  update?: { id?: unknown; clientData?: ClientDataLike | null } | null;
+  // streams.create payload (plain) carries parentId at the top level;
+  // streams.update carries it under `update`.
+  parentId?: unknown;
+  update?: { id?: unknown; parentId?: unknown; clientData?: ClientDataLike | null } | null;
   targetAccess?: AccessLike;
   accessToDelete?: AccessLike;
   relatedAccessesToDelete?: AccessLike[];
@@ -420,23 +423,65 @@ function createAccessesUpdateMarkerPreserveHook (): Middleware {
 // ----------------------------------------------------- NAMESPACE WRITE PROTECTION
 
 /**
- * streams.create hook — reject creation of any `:_delegation:*` stream. Unlike
- * the cross-account messaging namespace there is NO user-creatable region: the
- * whole namespace is plugin-managed and auto-provisioned. Tolerates the
- * `{ update: {...} }` wrapper some stream flows pass.
+ * streams.create hook — reject creation of any `:_delegation:*` stream, and
+ * of any stream under a `:_delegation:*` parent. Unlike the cross-account
+ * messaging namespace there is NO user-creatable region: the whole namespace
+ * is plugin-managed and auto-provisioned, and the plugin reads its records by
+ * stream query, so a user stream parented inside it would have its events
+ * read as the plugin's. For every token type, the owner's included.
+ * Tolerates the `{ update: {...} }` wrapper some stream flows pass.
  */
 function createStreamCreateReservedRootHook (deps: Deps): Middleware {
   return function delegationStreamCreateReservedRootHook (context, params, result, next) {
     const target = (params != null && typeof params === 'object' && params.update != null)
       ? params.update
       : params;
-    const id: unknown = target?.id;
-    if (typeof id !== 'string') return next();
-    if (!C.isDelegationStreamId(id)) return next();
-    return next(deps.errors.invalidOperation(
-      'Stream "' + id + '" is reserved and managed by the account-delegation plugin',
-      { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
-    ));
+    // Judge the canonical ids: a `:local:` alias resolves to the same stream.
+    const id: unknown = C.canonicalLocalStreamId(target?.id);
+    if (typeof id === 'string' && C.isDelegationStreamId(id)) {
+      return next(deps.errors.invalidOperation(
+        'Stream "' + id + '" is reserved and managed by the account-delegation plugin',
+        { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
+      ));
+    }
+    const parentId: unknown = C.canonicalLocalStreamId(target?.parentId);
+    if (typeof parentId === 'string' && C.isDelegationStreamId(parentId)) {
+      return next(reservedParentError(deps, parentId, id));
+    }
+    next();
+  };
+}
+
+function reservedParentError (deps: Deps, parentId: string, streamId: unknown): ApiError {
+  return deps.errors.invalidOperation(
+    'Stream parent "' + parentId + '" is reserved and managed by the account-delegation plugin; it takes no user stream',
+    { id: DelegationErrorIds.RESERVED_STREAM, parentId, ...(typeof streamId === 'string' ? { streamId } : {}) }
+  );
+}
+
+/**
+ * streams.update hook — a `:_delegation:*` stream cannot be trashed.
+ * `streams.update` takes `{ id, update: { trashed?, parentId?, ... } }`.
+ * Trashing a reserved stream would break the delegation records on it like a
+ * delete would, so `update.trashed === true` on a `:_delegation:*` stream is
+ * refused. The MOVE checks (a move into the namespace, and a move of a
+ * reserved stream) live in the `streams.update` prerequisites, where the
+ * stored parent is known, so a rename repeating the current parentId is not
+ * treated as a move.
+ */
+function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
+  return function delegationStreamUpdateReservedRootHook (_context, params, _result, next) {
+    const update = params?.update;
+    if (update == null || typeof update !== 'object') return next();
+    if ((update as { trashed?: unknown }).trashed !== true) return next();
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
+    if (typeof id === 'string' && C.isDelegationStreamId(id)) {
+      return next(deps.errors.invalidOperation(
+        'Stream "' + id + '" is reserved by the account-delegation plugin and cannot be trashed',
+        { id: DelegationErrorIds.RESERVED_STREAM, streamId: id }
+      ));
+    }
+    next();
   };
 }
 
@@ -447,7 +492,7 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
  */
 function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
   return function delegationStreamDeleteReservedRootHook (context, params, result, next) {
-    const id: unknown = params?.id;
+    const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id !== 'string') return next();
     if (!C.isDelegationStreamId(id)) return next();
     return next(deps.errors.invalidOperation(
@@ -527,6 +572,7 @@ export {
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,

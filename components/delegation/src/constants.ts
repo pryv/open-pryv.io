@@ -63,9 +63,25 @@ const RESERVED_PARENT_STREAM_IDS = [
 
 // --- Classification predicates ---
 
+// The mall addresses the local store by a `:local:` id prefix: `:local:<id>`
+// resolves to the same stream as `<id>`. Every predicate canonicalises first,
+// so a store-prefixed alias is judged as the reserved id it resolves to and
+// cannot slip past a raw-string guard.
+const LOCAL_STORE_PREFIX = ':local:';
+
+/** Strip any leading `:local:` store prefix(es), returning the canonical id. */
+function canonicalLocalStreamId (streamId: unknown): string | unknown {
+  if (typeof streamId !== 'string') return streamId;
+  let id = streamId;
+  while (id.startsWith(LOCAL_STORE_PREFIX)) id = id.slice(LOCAL_STORE_PREFIX.length);
+  return id;
+}
+
 /** Does this stream-id live anywhere under the `:_delegation:` namespace? */
 function isDelegationStreamId (id: string): boolean {
-  return id === ':_delegation' || id.startsWith(NS);
+  const canonical = canonicalLocalStreamId(id);
+  if (typeof canonical !== 'string') return false;
+  return canonical === ':_delegation' || canonical.startsWith(NS);
 }
 
 /**
@@ -73,8 +89,9 @@ function isDelegationStreamId (id: string): boolean {
  * (`:_delegation:_internal`, `:_delegation:_internal:*`).
  */
 function isDelegationInternalStreamId (id: string): boolean {
-  if (typeof id !== 'string') return false;
-  return id === NS_INTERNAL || id.startsWith(NS_INTERNAL + ':');
+  const canonical = canonicalLocalStreamId(id);
+  if (typeof canonical !== 'string') return false;
+  return canonical === NS_INTERNAL || canonical.startsWith(NS_INTERNAL + ':');
 }
 
 // --- Event-type constants ---
@@ -138,6 +155,7 @@ export {
   controlledStreamId,
 
   // classification predicates
+  canonicalLocalStreamId,
   isDelegationStreamId,
   isDelegationInternalStreamId,
 

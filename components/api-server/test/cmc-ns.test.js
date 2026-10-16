@@ -309,6 +309,229 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     });
   });
 
+  describe('[CMCNS-RP] reserved parents: nothing is created or moved under a plugin-managed region, for any token', function () {
+    // The plugins read their regions by stream query (`:_cmc:_internal:retries`
+    // and its descendants are the retry queue, `:_cmc:inbox` the deliveries),
+    // so a user stream parented there, with a plain id the id checks never
+    // see, would have its events read as the plugin's records. The owner's
+    // personal token, which manages everything, is refused like any other.
+    const CMC_RESERVED_PARENTS = [':_cmc:', ':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries', ':_cmc:_internal:members'];
+    const DELEGATION_RESERVED_PARENTS = [':_delegation:', ':_delegation:_internal'];
+    let plainStreamId;
+
+    before(async function () {
+      // Lazy provisioning, so the reserved parents exist (the refusal must not
+      // be a mere unknown-referenced-resource on a missing parent).
+      await coreRequest.post(eventsPath).set('Authorization', token)
+        .send({ streamIds: [':_cmc:apps:my-app'], type: 'note/txt', content: 'trigger provisioning' });
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: 'rp-plain-' + cuid().slice(-6), name: 'RP plain' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      plainStreamId = res.body.stream.id;
+    });
+
+    it('[CNRP1] streams.create with a plain id under each reserved CMC parent is refused with cmc-reserved-stream', async function () {
+      for (const parentId of CMC_RESERVED_PARENTS) {
+        const res = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(res.status, 400, parentId + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', parentId);
+        assert.strictEqual(res.body?.error?.data?.parentId, parentId);
+      }
+    });
+
+    it('[CNRP2] streams.update moving a plain stream under each reserved CMC parent is refused, and the stream stays where it was', async function () {
+      for (const parentId of CMC_RESERVED_PARENTS) {
+        const res = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(res.status, 400, parentId + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', parentId);
+        assert.strictEqual(res.body?.error?.data?.parentId, parentId);
+      }
+      const after = await coreRequest.get(basePath).set('Authorization', token).query({ parentId: plainStreamId });
+      assert.strictEqual(after.status, 200, JSON.stringify(after.body));
+      const roots = await coreRequest.get(basePath).set('Authorization', token);
+      const still = (roots.body?.streams || []).find((s) => s.id === plainStreamId);
+      assert.ok(still != null, 'the stream is still at the root: ' + JSON.stringify(roots.body?.streams?.map((s) => s.id)));
+      assert.strictEqual(still.parentId ?? null, null);
+    });
+
+    it('[CNRP3] a plugin-managed CMC stream cannot be moved, even by the owner', async function () {
+      for (const id of [':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries']) {
+        for (const parentId of [null, plainStreamId]) {
+          const res = await coreRequest.put(basePath + '/' + encodeURIComponent(id)).set('Authorization', token)
+            .send({ parentId });
+          assert.strictEqual(res.status, 400, id + ' -> ' + parentId + ': ' + JSON.stringify(res.body));
+          assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream', id);
+          assert.strictEqual(res.body?.error?.data?.streamId, id);
+        }
+      }
+    });
+
+    it('[CNRP4] the user-creatable region still takes children: a plain stream created under, and moved into, an app scope', async function () {
+      await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: ':_cmc:apps:rp-app', parentId: ':_cmc:apps', name: 'RP app' });
+      const created = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ name: 'RP notes', parentId: ':_cmc:apps:rp-app' });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      assert.strictEqual(created.body.stream.parentId, ':_cmc:apps:rp-app');
+      const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+        .send({ parentId: ':_cmc:apps:rp-app' });
+      assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+      assert.strictEqual(moved.body.stream.parentId, ':_cmc:apps:rp-app');
+      const back = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+        .send({ parentId: null });
+      assert.strictEqual(back.status, 200, JSON.stringify(back.body));
+      // Under an app scope, the plugin-owned segments are still refused as parents.
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ name: 'attempt', parentId: ':_cmc:apps:rp-app:chats' });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNRP5] an app token with manage on everything gets the same refusal, not a permission error', async function () {
+      const appToken = cuid();
+      const acc = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ type: 'app', name: 'rp-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: '*', level: 'manage' }] });
+      assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+      const created = await coreRequest.post(basePath).set('Authorization', appToken)
+        .send({ name: 'attempt', parentId: ':_cmc:_internal:retries' });
+      assert.strictEqual(created.status, 400, JSON.stringify(created.body));
+      assert.strictEqual(created.body?.error?.data?.id, 'cmc-reserved-stream');
+      const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', appToken)
+        .send({ parentId: ':_cmc:inbox' });
+      assert.strictEqual(moved.status, 400, JSON.stringify(moved.body));
+      assert.strictEqual(moved.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNRP6] the account-delegation namespace is a reserved parent too, on create and on move', async function () {
+      for (const parentId of DELEGATION_RESERVED_PARENTS) {
+        const created = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(created.status, 400, parentId + ': ' + JSON.stringify(created.body));
+        assert.strictEqual(created.body?.error?.data?.id, 'delegation-reserved-stream', parentId);
+        assert.strictEqual(created.body?.error?.data?.parentId, parentId);
+        const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(moved.status, 400, parentId + ': ' + JSON.stringify(moved.body));
+        assert.strictEqual(moved.body?.error?.data?.id, 'delegation-reserved-stream', parentId);
+      }
+      // (A move OF a :_delegation:* stream is not set up here: delegation
+      // streams are provisioned only on a delegation-using account, which this
+      // namespace test is not. [CNRP3] covers the move-of case for CMC.)
+    });
+  });
+
+  describe('[CMCNS-M2] the store-prefix alias must not reach a plugin-managed region', function () {
+    // A stream id may be written in its store-prefixed form (`:local:<id>`),
+    // which the mall resolves to the same local stream as `<id>`. The reserved
+    // and internal guards must see the canonical id, or the alias is a bypass.
+    let plainStreamId;
+
+    before(async function () {
+      await coreRequest.post(eventsPath).set('Authorization', token)
+        .send({ streamIds: [':_cmc:apps:my-app'], type: 'note/txt', content: 'trigger provisioning' });
+      const res = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: 'm2-plain-' + cuid().slice(-6), name: 'M2 plain' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      plainStreamId = res.body.stream.id;
+    });
+
+    it('[CNRP7] streams.create / streams.update via the :local: alias cannot reach a reserved parent (M1)', async function () {
+      for (const parentId of [':local::_cmc:_internal:retries', ':local::_cmc:inbox', ':local::_delegation:_internal']) {
+        const reservedId = parentId.startsWith(':local::_delegation') ? 'delegation-reserved-stream' : 'cmc-reserved-stream';
+        const created = await coreRequest.post(basePath).set('Authorization', token)
+          .send({ name: 'attempt under ' + parentId, parentId });
+        assert.strictEqual(created.status, 400, parentId + ': ' + JSON.stringify(created.body));
+        assert.strictEqual(created.body?.error?.data?.id, reservedId, parentId);
+        const moved = await coreRequest.put(basePath + '/' + encodeURIComponent(plainStreamId)).set('Authorization', token)
+          .send({ parentId });
+        assert.strictEqual(moved.status, 400, parentId + ' move: ' + JSON.stringify(moved.body));
+        assert.strictEqual(moved.body?.error?.data?.id, reservedId, parentId + ' move');
+      }
+      // Creating a plugin-managed stream itself through the alias is refused too.
+      const createId = await coreRequest.post(basePath).set('Authorization', token)
+        .send({ id: ':local::_cmc:_internal:evil', name: 'alias evil', parentId: ':local::_cmc:_internal' });
+      assert.strictEqual(createId.status, 400, JSON.stringify(createId.body));
+      assert.strictEqual(createId.body?.error?.data?.id, 'cmc-reserved-stream');
+    });
+
+    it('[CNM2A] an app token with * contribute cannot craft a retry-queue record via the :local: alias (M2)', async function () {
+      const appToken = cuid();
+      const acc = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ type: 'app', name: 'm2-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: '*', level: 'contribute' }] });
+      assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+      const crafted = {
+        status: 'pending',
+        nextAttemptAfter: 0,
+        originalType: 'consent/accept-cmc',
+        originalStreamIds: [':_cmc:apps:my-app'],
+        originalContent: { capabilityUrl: 'https://attacker@evil.example/' },
+        originalCreatedBy: token,
+      };
+      // The internal subtree is refused by the plugin's internal write guard,
+      // now that it judges the canonical id behind the :local: alias.
+      for (const streamId of [':local::_cmc:_internal:retries', ':local::_cmc:_internal']) {
+        const res = await coreRequest.post('/' + username + '/events').set('Authorization', appToken)
+          .send({ streamIds: [streamId], type: 'cmc-internal/retry-cmc', content: crafted });
+        assert.notStrictEqual(res.status, 201, streamId + ' must not be admitted: ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body?.error?.data?.id, 'cmc-protected-event-write', streamId + ': ' + JSON.stringify(res.body));
+      }
+      // The inbox, likewise, admits no such write from a plain app token.
+      const inboxRes = await coreRequest.post('/' + username + '/events').set('Authorization', appToken)
+        .send({ streamIds: [':local::_cmc:inbox'], type: 'cmc-internal/retry-cmc', content: crafted });
+      assert.notStrictEqual(inboxRes.status, 201, 'inbox must not be admitted: ' + JSON.stringify(inboxRes.body));
+      // No crafted record landed in the queue.
+      const mall = await getMall();
+      const inQueue = await mall.events.get(username, { streams: [{ any: [C.NS_INTERNAL_RETRIES] }], limit: 50 });
+      assert.ok((inQueue || []).every((e) => e.createdBy === 'system' || e.content?.originalContent?.capabilityUrl !== 'https://attacker@evil.example/'),
+        'no attacker record in the retry queue: ' + JSON.stringify((inQueue || []).map((e) => ({ id: e.id, createdBy: e.createdBy }))));
+    });
+
+    it('[CNM2B] the retry loop dispatches only records the plugin wrote (createdBy system, exact stream and type) (S4)', async function () {
+      const mall = await getMall();
+      const u = cuid();
+      await fixtures.user(u);
+      const legit = {
+        status: 'pending',
+        nextAttemptAfter: 0,
+        originalType: 'consent/revoke-cmc',
+        originalStreamIds: [':_cmc:inbox'],
+        originalContent: { marker: 'legit' },
+      };
+      const forgedAuthor = { ...legit, originalContent: { marker: 'forged-author' }, originalCreatedBy: token };
+      const forgedType = { ...legit, originalContent: { marker: 'forged-type' } };
+      // Written by the plugin (no createdBy supplied -> stamped 'system').
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, content: legit });
+      // Written with a forged author (what the alias write or a crafted record leaves).
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, createdBy: token, content: forgedAuthor });
+      // A non-retry type parked in the retries stream by the plugin's own system writes.
+      await mall.events.create(u, { streamIds: [C.NS_INTERNAL_RETRIES], type: 'note/txt', content: forgedType });
+      const seen = [];
+      await C.retryQueue.runRetryLoop({
+        userId: u,
+        deps: {
+          mall,
+          dispatch: async ({ event }) => { seen.push(event?.content?.marker ?? event?.type); return { handled: true, status: 'completed' }; },
+          dispatchDeps: {},
+          now: () => Date.now() + 5000,
+        },
+      });
+      assert.deepStrictEqual(seen, ['legit'],
+        'only the plugin-authored retry record is dispatched: ' + JSON.stringify(seen));
+    });
+
+    it('[CNM2C] events.get through the :local: alias never returns an internal record', async function () {
+      const mall = await getMall();
+      await mall.events.create(username, { streamIds: [C.NS_INTERNAL_RETRIES], type: C.ET_RETRY, content: { status: 'pending', marker: 'read-probe' } });
+      for (const q of [':local::_cmc:_internal:retries', ':local::_cmc:_internal', ':_cmc:_internal:retries']) {
+        const res = await coreRequest.get('/' + username + '/events').set('Authorization', token).query({ streams: [q], limit: 50 });
+        assert.strictEqual(res.status, 200, q + ': ' + JSON.stringify(res.body));
+        assert.deepStrictEqual((res.body.events || []).filter((e) => e.content?.marker === 'read-probe'), [], q + ' leaked an internal record');
+      }
+    });
+  });
+
   describe('[CMCNS-H7] accesses.create / accesses.update forge-prevention', function () {
     // The `clientData.cmc` namespace is plugin-owned. User
     // code attempting to forge fields under it (e.g. `role: counterparty`
