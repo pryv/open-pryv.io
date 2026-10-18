@@ -78,6 +78,18 @@ class ExternalIdsLocalPG {
     }
   }
 
+  async retoken (userId: string, oldNsToken: string, tokens: { nsToken: string, valueToken: string }): Promise<boolean> {
+    try {
+      const res = await this.db.query(
+        'UPDATE external_ids SET ns_token = $1, value_token = $2 WHERE user_id = $3 AND ns_token = $4',
+        [tokens.nsToken, tokens.valueToken, userId, oldNsToken]
+      );
+      return (res.rowCount ?? 0) > 0;
+    } catch (err) {
+      throw asConflict(err);
+    }
+  }
+
   async deleteByUserAndNamespace (userId: string, nsToken: string): Promise<boolean> {
     const res = await this.db.query('DELETE FROM external_ids WHERE user_id = $1 AND ns_token = $2', [userId, nsToken]);
     return (res.rowCount ?? 0) > 0;

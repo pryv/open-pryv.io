@@ -38,6 +38,9 @@
 //     Other PlatformDB namespaces (`core-info/`, `invitation/`, `tls-cert/`,
 //     `acme-account`, `observability/*`, `mail-template/*`,
 //     `access-state/*`, `platform-secrets/*`) likewise stay untouched.
+//   - External ids (`ext-id/` rows) are NOT migrated here: each home core holds
+//     the blinded values in its local table, so each core moves its own ids
+//     with `bin/reconcile-user-cores.js --ext-ids` after the switch.
 //   - Alternatively/additionally, `bin/backfill-access-index.js --resync` on
 //     every core rewrites all access-index rows from authoritative storage in
 //     the CURRENT mode — a complete repair if this migration is ever skipped.
@@ -102,6 +105,15 @@ const USERNAME_FIELD = 'username';
     console.log('  user-unique/    ' + plan.userUnique.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userUnique.toString().padStart(6) + ' already-hashed');
     console.log('  user-indexed/   ' + plan.userIndexed.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userIndexed.toString().padStart(6) + ' already-hashed');
     console.log('  access-index/   ' + plan.accessIndex.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.accessIndex.toString().padStart(6) + ' already-hashed');
+    // External ids are rebuilt by each home core from its local table (which
+    // this tool, running on one core, cannot reach): not migrated here.
+    const extIdRows = (await platformDB.getAllCoreRows('ext-id/')).length;
+    console.log('  ext-id/         ' + extIdRows.toString().padStart(6) + ' rows, not migrated here');
+    const extIdNote = extIdRows > 0
+      ? 'External ids: after the switch, run `node bin/reconcile-user-cores.js --ext-ids` on EVERY core ' +
+        '(it moves that core\'s ids to the hashed tokens); until then that core\'s ids do not resolve.'
+      : null;
+    if (extIdNote != null) console.log(extIdNote);
 
     if (args.command === 'status') {
       process.exit(0);
@@ -121,6 +133,7 @@ const USERNAME_FIELD = 'username';
     console.log('  user-unique/    ' + counts.userUnique);
     console.log('  user-indexed/   ' + counts.userIndexed);
     console.log('  access-index/   ' + counts.accessIndex);
+    if (extIdNote != null) console.log(extIdNote);
     process.exit(0);
   } catch (err) {
     console.error('platform-pii-migrate: ' + ((err && err.stack) || err));

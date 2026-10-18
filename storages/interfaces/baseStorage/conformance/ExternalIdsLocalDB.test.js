@@ -114,6 +114,18 @@ export default function conformanceTests (getDB) {
       assert.deepStrictEqual(await db.scanAll(), [kept]);
     });
 
+    it('[XIDL8] retoken changes both tokens in place, keeps the value and date, and refuses a held key', async () => {
+      const r = row();
+      const other = row();
+      await db.insert(r);
+      await db.insert(other);
+      assert.strictEqual(await db.retoken(r.userId, r.nsToken, { nsToken: 'ns-new', valueToken: 'v-new' }), true);
+      assert.deepStrictEqual(await db.getByUserAndNamespace(r.userId, 'ns-new'), { ...r, nsToken: 'ns-new', valueToken: 'v-new' });
+      assert.strictEqual(await db.getByUserAndNamespace(r.userId, r.nsToken), null);
+      assert.strictEqual(await db.retoken(r.userId, 'no-such-ns', { nsToken: 'x', valueToken: 'y' }), false);
+      await assertConflict(db.retoken(r.userId, 'ns-new', { nsToken: other.nsToken, valueToken: other.valueToken }), 'value-taken');
+    });
+
     it('[XIDL7] scanAll returns every row of the core', async () => {
       const rows = [row(), row(), row()];
       for (const r of rows) await db.insert(r);

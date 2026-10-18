@@ -112,8 +112,20 @@ const USERNAME_FIELD = 'username';
     console.log('  this core: ' + thisCoreId + ' (' + (isSingleCore ? 'single-core' : 'multi-core') + ')');
     console.log('  users on this core: ' + ownedHere.length + ' (of ' + allUsers.length + ' total in repository)');
 
+    // External ids of this core: re-derived from the local table's blinded
+    // values (the platform derives with the new pepper from config).
+    const refreshExtIds = async (dryRun) => {
+      const { refreshExternalIdTokens } = require('business/src/external-ids/refresh.ts');
+      const { getExternalIdsLocal } = require('business/src/external-ids/localIndex.ts');
+      const { getPlatform } = require('platform');
+      return await refreshExternalIdTokens({ platform: await getPlatform(), db: await getExternalIdsLocal(), oldHasher, dryRun });
+    };
+
     if (args.command === 'status') {
       console.log('platform-pii-rotate: would rehash ' + ownedHere.length + ' user(s) with the new pepper.');
+      const ext = await refreshExtIds(true);
+      console.log('platform-pii-rotate: would refresh ' + ext.refreshed + ' external id(s) of this core (' +
+        ext.fresh + ' already on the new pepper, ' + ext.namespaceMissing + ' matching no namespace).');
       console.log('platform-pii-rotate: dns-record/* rows are NOT rotated — re-add runtime DNS entries after the cluster restart.');
       process.exit(0);
     }
@@ -175,10 +187,17 @@ const USERNAME_FIELD = 'username';
       }
     }
 
+    const ext = await refreshExtIds(false);
+
     console.log('platform-pii-rotate: done.');
     console.log('  user-core rows rotated:    ' + userCoreCount);
     console.log('  user-unique rows rotated:  ' + uniqueCount);
     console.log('  user-indexed rows rotated: ' + indexedCount);
+    console.log('  external ids refreshed:    ' + ext.refreshed + ' (' + ext.fresh + ' already fresh)');
+    if (ext.namespaceMissing > 0 || ext.lostToOtherCore > 0 || ext.corrupt > 0) {
+      console.log('  ! external ids: ' + ext.namespaceMissing + ' matching no namespace, ' + ext.lostToOtherCore +
+        ' held by another core, ' + ext.corrupt + ' corrupt; run `node bin/reconcile-user-cores.js --ext-ids` and read its report');
+    }
     console.log('  dns-record rows: untouched (re-add runtime DNS entries manually).');
     process.exit(0);
   } catch (err) {

@@ -29,6 +29,7 @@ import { ExternalIdConflict } from 'storages/interfaces/baseStorage/ExternalIdsL
 import type { ExternalIdsLocalDB } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
 import { parseBlindedValue } from './value.ts';
 import { getExternalIdsLocal } from './localIndex.ts';
+import { refreshExternalIdTokens } from './refresh.ts';
 
 export interface ExternalIdInfo {
   namespace: string;
@@ -37,6 +38,8 @@ export interface ExternalIdInfo {
 
 export interface ReconcileSummary {
   localRows: number;
+  refreshed: number;
+  corruptTokens: number;
   staleDeleted: number;
   orphanUsersReleased: number;
   missingHealed: number;
@@ -185,14 +188,24 @@ export class ExternalIdsService {
    *     (a lost namespace row is noticed, not silently erased).
    * Rows pointing at other cores are never touched. Idempotent.
    */
-  async reconcile (options: { dryRun: boolean, userExists: (userId: string) => Promise<boolean> }): Promise<ReconcileSummary> {
+  async reconcile (options: { dryRun: boolean, userExists: (userId: string) => Promise<boolean>, oldHasher?: { hashFor (field: string, value: string): string } | null }): Promise<ReconcileSummary> {
     const { dryRun, userExists } = options;
-    const summary: ReconcileSummary = { localRows: 0, staleDeleted: 0, orphanUsersReleased: 0, missingHealed: 0, lostToOtherCore: 0, namespaceMissing: 0 };
-    const nsTokens = new Set<string>();
-    for (const ns of await listNamespaces(this.platform)) {
-      const row = await getNamespace(this.platform, ns.namespace);
-      if (row != null) nsTokens.add(namespaceToken(this.platform, row));
-    }
+    // First bring every local row to the current tokens (a mode switch or a
+    // pepper rotation since the last run), so the passes below compare like
+    // with like.
+    const refresh = await refreshExternalIdTokens({ platform: this.platform, db: this.db, oldHasher: options.oldHasher, dryRun });
+    const summary: ReconcileSummary = {
+      localRows: 0,
+      refreshed: refresh.refreshed,
+      corruptTokens: refresh.corrupt,
+      staleDeleted: 0,
+      orphanUsersReleased: 0,
+      missingHealed: 0,
+      // A refresh that lost the new key to another core leaves the local row;
+      // the pass below counts it and drops it.
+      lostToOtherCore: 0,
+      namespaceMissing: refresh.namespaceMissing
+    };
     const localRows = await this.db.scanAll();
     summary.localRows = localRows.length;
     const localKeys = new Set(localRows.map((r) => r.nsToken + '/' + r.valueToken));
@@ -217,7 +230,6 @@ export class ExternalIdsService {
         }
         continue;
       }
-      if (!nsTokens.has(r.nsToken)) summary.namespaceMissing++;
       const holder = platformRows.get(r.nsToken + '/' + r.valueToken);
       if (holder === this.platform.coreId) continue;
       if (holder == null && (dryRun || await claimRow(this.platform, tokens))) {

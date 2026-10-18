@@ -36,8 +36,10 @@
 // rows that point here against the core's local table): stale rows deleted,
 // missing rows re-claimed, ids of deleted accounts released, ids another core
 // holds dropped locally, ids of a deleted namespace reported. Run it after a
-// restore, after a crash during a claim, and before moving a core. It also
-// applies on a single core.
+// restore, after a crash during a claim, before moving a core, and on EVERY
+// core after a switch between cleartext and hashed mode (it first brings the
+// local rows to the current tokens; add `--old-pepper <BASE64>` for the
+// hashed-to-cleartext direction). It also applies on a single core.
 
 const path = require('path');
 
@@ -94,21 +96,32 @@ require('@pryv/boiler').init({
       const { getUsersLocalIndex } = require('storage');
       const usersIndex = await getUsersLocalIndex();
       const service = await getExternalIdsService();
+      let oldHasher = null;
+      if (args.oldPepper != null) {
+        const { PiiHasher } = require('platform/src/PiiHasher.ts');
+        oldHasher = new PiiHasher(args.oldPepper, config.get('platform:piiAlgorithm') || undefined);
+      }
       const s = await service.reconcile({
         dryRun: args.dryRun,
+        oldHasher,
         userExists: async (userId) => (await usersIndex.getNameForId(userId)) != null
       });
       console.log('reconcile-user-cores --ext-ids: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
         ' on core "' + platform.coreId + '"');
       console.log('  local ids                 ' + s.localRows);
+      console.log('  tokens refreshed          ' + s.refreshed);
+      if (s.corruptTokens > 0) {
+        console.log('  ! corrupt tokens          ' + s.corruptTokens + ' (a value token that does not match its blinded value)');
+      }
       console.log('  stale rows deleted        ' + s.staleDeleted);
       console.log('  ids of deleted accounts   ' + s.orphanUsersReleased);
       console.log('  missing rows re-claimed   ' + s.missingHealed);
       console.log('  lost to another core      ' + s.lostToOtherCore);
       console.log('  namespace missing (kept)  ' + s.namespaceMissing);
       if (s.namespaceMissing > 0) {
-        console.log('    ! some local ids belong to a namespace that no longer exists: restore its row ' +
-          '(with its salt) from a backup, or release those ids');
+        console.log('    ! some local ids match no namespace: after a pepper rotation or a switch from ' +
+          'hashed to cleartext mode, run again with --old-pepper <retired pepper>; otherwise restore the ' +
+          'namespace row (with its salt) from a backup, or release those ids');
       }
       process.exit(0);
     }
@@ -141,12 +154,18 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false };
+  const args = { dryRun: false, extIds: false, oldPepper: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--ext-ids') args.extIds = true;
-    else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
+    else if (a === '--old-pepper') {
+      args.oldPepper = argv[++i];
+      if (args.oldPepper == null || args.oldPepper.startsWith('-')) {
+        console.error('--old-pepper: missing <BASE64>');
+        process.exit(1);
+      }
+    } else if (a === '--config') { i++; /* file consumed by boiler at init */ } else {
       console.error('Unknown option: ' + a);
       process.exit(1);
     }
@@ -159,8 +178,10 @@ function printUsage (stream) {
     'Usage:',
     '  node bin/reconcile-user-cores.js            # delete stale + heal missing self-rows',
     '  node bin/reconcile-user-cores.js --dry-run  # report counts; do not write',
-    '  node bin/reconcile-user-cores.js --ext-ids [--dry-run]',
+    '  node bin/reconcile-user-cores.js --ext-ids [--old-pepper <BASE64>] [--dry-run]',
     '                                              # reconcile this core\'s external ids',
+    '                                              # (--old-pepper: the retired pepper, after',
+    '                                              # a rotation or a hashed-to-cleartext switch)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',
