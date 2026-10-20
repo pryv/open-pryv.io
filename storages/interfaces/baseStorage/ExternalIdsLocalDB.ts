@@ -44,8 +44,11 @@ export interface ExternalIdsLocalDB {
   getByUser (userId: string): Promise<ExternalIdRow[]>;
   getByTokens (nsToken: string, valueToken: string): Promise<ExternalIdRow | null>;
   getByUserAndNamespace (userId: string, nsToken: string): Promise<ExternalIdRow | null>;
-  /** Replace the user's id in that namespace (one UPDATE); conflict when the new value is held. */
-  replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<void>;
+  /**
+   * Replace the user's id in that namespace (one UPDATE); conflict when the new
+   * value is held. False when the user holds nothing there (any more).
+   */
+  replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<boolean>;
   /**
    * New tokens for the same id (pepper rotation or mode switch: the derivation
    * changed, the blinded value did not). One UPDATE keyed by (userId,
@@ -65,7 +68,7 @@ const ExternalIdsLocalDB: ExternalIdsLocalDB = {
   async getByUser (userId: string): Promise<ExternalIdRow[]> { throw new Error('Not implemented'); },
   async getByTokens (nsToken: string, valueToken: string): Promise<ExternalIdRow | null> { throw new Error('Not implemented'); },
   async getByUserAndNamespace (userId: string, nsToken: string): Promise<ExternalIdRow | null> { throw new Error('Not implemented'); },
-  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<void> { throw new Error('Not implemented'); },
+  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<boolean> { throw new Error('Not implemented'); },
   async retoken (userId: string, oldNsToken: string, tokens: { nsToken: string, valueToken: string }): Promise<boolean> { throw new Error('Not implemented'); },
   async deleteByUserAndNamespace (userId: string, nsToken: string): Promise<boolean> { throw new Error('Not implemented'); },
   async deleteByUser (userId: string): Promise<number> { throw new Error('Not implemented'); },

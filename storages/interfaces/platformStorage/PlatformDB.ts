@@ -164,7 +164,9 @@ export interface PlatformDB {
   // The `user-core/` claim-or-confirm semantics for any row family that maps
   // a token to the core holding it (e.g. `ext-id/`). The stored key is
   // `prefix + key`; `prefix` follows the platform KV prefix rules (no SQL
-  // LIKE wildcards).
+  // LIKE wildcards). The value is opaque, compared by equality: usually a core
+  // id, any string works (the external-id namespace rows use a serialised row
+  // to make their creation atomic).
   /**
    * ATOMIC claim-or-confirm: install `coreId` under `prefix + key` ONLY when
    * no row holds the key. Returns true when the surviving row points at THIS

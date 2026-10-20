@@ -108,11 +108,16 @@ export async function getNamespace (platform: ExtIdPlatformHandle, namespace: st
   return parseRow(await platform.getPlatformKv(NS_PREFIX + namespace));
 }
 
-export async function listNamespaces (platform: ExtIdPlatformHandle): Promise<ExtIdNamespaceInfo[]> {
+/** Every namespace with its stored row (salt included), from one prefix scan. Server side only. */
+export async function listNamespaceRows (platform: Pick<ExtIdPlatformHandle, 'listPlatformKvEntries'>): Promise<Array<{ namespace: string, row: ExtIdNamespaceRow }>> {
   const entries = await platform.listPlatformKvEntries(NS_PREFIX);
   return entries
-    .map((e) => namespaceInfo(e.key.slice(NS_PREFIX.length), JSON.parse(e.value) as ExtIdNamespaceRow))
+    .map((e) => ({ namespace: e.key.slice(NS_PREFIX.length), row: JSON.parse(e.value) as ExtIdNamespaceRow }))
     .sort((a, b) => a.namespace.localeCompare(b.namespace));
+}
+
+export async function listNamespaces (platform: ExtIdPlatformHandle): Promise<ExtIdNamespaceInfo[]> {
+  return (await listNamespaceRows(platform)).map(({ namespace, row }) => namespaceInfo(namespace, row));
 }
 
 /**
@@ -145,6 +150,9 @@ export async function setNamespace (platform: ExtIdPlatformHandle, namespace: st
     existing = await getNamespace(platform, namespace);
     if (existing == null) throw new Error('external-id namespace vanished during creation: ' + namespace);
   }
+  // A read-modify-write: two concurrent label updates keep one, and an update
+  // racing a delete can bring the row back with its old salt. Admin operations,
+  // accepted; the salt itself never changes here.
   const updated: ExtIdNamespaceRow = {
     ...existing,
     label: label ?? existing.label,
@@ -194,12 +202,15 @@ export function isNamespaceRowEntry (entry: { key?: unknown }): entry is { key: 
  * would orphan the ids claimed under the live salt).
  */
 export async function importNamespaceRows (db: Pick<ExtIdPlatformHandle, 'getPlatformKv' | 'claimCoreRow'>,
-  entries: Array<{ key: string, value: string }>): Promise<{ imported: number, kept: number, saltMismatch: string[] }> {
-  const result = { imported: 0, kept: 0, saltMismatch: [] as string[] };
+  entries: Array<{ key: string, value: string }>): Promise<{ imported: number, kept: number, skipped: number, saltMismatch: string[] }> {
+  const result = { imported: 0, kept: 0, skipped: 0, saltMismatch: [] as string[] };
   for (const entry of entries) {
     const namespace = entry.key.slice(NS_PREFIX.length);
-    if (!isValidNamespaceName(namespace)) continue;
-    const backedUp = JSON.parse(entry.value) as ExtIdNamespaceRow;
+    const backedUp = parseBackedUpRow(entry.value);
+    if (!isValidNamespaceName(namespace) || backedUp == null) {
+      result.skipped++;
+      continue;
+    }
     let live = parseRow(await db.getPlatformKv(NS_PREFIX + namespace));
     if (live == null) {
       if (await db.claimCoreRow(NS_PREFIX, namespace, entry.value)) {
@@ -212,6 +223,15 @@ export async function importNamespaceRows (db: Pick<ExtIdPlatformHandle, 'getPla
     else result.saltMismatch.push(namespace);
   }
   return result;
+}
+
+/** A backed-up namespace row, or null when its shape is not one this module writes. */
+function parseBackedUpRow (value: string): ExtIdNamespaceRow | null {
+  let row: Partial<ExtIdNamespaceRow>;
+  try { row = JSON.parse(value); } catch { return null; }
+  const saltOk = typeof row.salt === 'string' && /^[A-Za-z0-9_-]+$/.test(row.salt) && Buffer.from(row.salt, 'base64url').length === SALT_BYTES;
+  if (!saltOk || typeof row.createdAt !== 'number' || typeof row.label !== 'string' || !MODES.has(row.defaultMode as string)) return null;
+  return row as ExtIdNamespaceRow;
 }
 
 export function namespaceToken (platform: ExtIdPlatformHandle, row: ExtIdNamespaceRow): string {

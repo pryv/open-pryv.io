@@ -693,16 +693,18 @@ class UsersRepository {
       // one of its aliases (a former username is released here too).
       await this.#destroyResetRequests([username, ...aliases]);
     }
+    await this.mall.deleteUser(userId);
     // Release the account's external ids (keyed by id, not by name), so the
-    // same record can be linked again at once. Non-fatal: rows left by a
-    // failure point at a gone account, which the reconcile removes.
+    // same record can be linked again at once. After the data: a deletion that
+    // fails before this point leaves the account with its ids. Non-fatal: rows
+    // left by a failure here point at a gone account, which the reconcile
+    // releases.
     try {
       const { getExternalIdsService } = await import('../external-ids/service.ts');
       await (await getExternalIdsService()).releaseAllForUser(userId);
     } catch (err) {
       logger.warn('external ids not released on account deletion (the reconcile will): ' + (err instanceof Error ? err.message : String(err)));
     }
-    await this.mall.deleteUser(userId);
     // Keyed by id and sent whatever names this process knows: every process
     // drops the account's cached accesses, streams and name mappings (the
     // index is gone, so they cannot be refilled).

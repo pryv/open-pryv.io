@@ -39,7 +39,13 @@
 // restore, after a crash during a claim, before moving a core, and on EVERY
 // core after a switch between cleartext and hashed mode (it first brings the
 // local rows to the current tokens; add `--old-pepper <BASE64>` for the
-// hashed-to-cleartext direction). It also applies on a single core.
+// hashed-to-cleartext direction). It also applies on a single core. Unlike the
+// username pass, run it with this core's API STOPPED: an id is a credential
+// with competing claimants, and a claim or release in flight during the run
+// can be undone by it (a second run with the API stopped repairs that). An
+// empty local table facing rows of this core is refused (exit 3) unless
+// --force-empty-local: it usually means the table was lost, and deleting the
+// rows would free every id of the core.
 
 const path = require('path');
 
@@ -103,6 +109,7 @@ require('@pryv/boiler').init({
       }
       const s = await service.reconcile({
         dryRun: args.dryRun,
+        forceEmptyLocal: args.forceEmptyLocal,
         oldHasher,
         userExists: async (userId) => (await usersIndex.getNameForId(userId)) != null
       });
@@ -118,6 +125,13 @@ require('@pryv/boiler').init({
       console.log('  missing rows re-claimed   ' + s.missingHealed);
       console.log('  lost to another core      ' + s.lostToOtherCore);
       console.log('  namespace missing (kept)  ' + s.namespaceMissing);
+      if (s.refusedEmptyLocal === true) {
+        console.log('    ! REFUSED: this core\'s external-ids table is empty while the platform holds ids for ' +
+          'this core. That is more likely a lost table (a partial restore, a wrong --config) than ids ' +
+          'nobody holds, and deleting the rows would free every id of this core. Nothing was deleted. ' +
+          'Check the core\'s storage; if the table is really meant to be empty, run again with --force-empty-local.');
+        process.exit(3);
+      }
       if (s.namespaceMissing > 0) {
         console.log('    ! some local ids match no namespace: after a pepper rotation or a switch from ' +
           'hashed to cleartext mode, run again with --old-pepper <retired pepper>; otherwise restore the ' +
@@ -154,11 +168,12 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, oldPepper: null };
+  const args = { dryRun: false, extIds: false, oldPepper: null, forceEmptyLocal: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--ext-ids') args.extIds = true;
+    else if (a === '--force-empty-local') args.forceEmptyLocal = true;
     else if (a === '--old-pepper') {
       args.oldPepper = argv[++i];
       if (args.oldPepper == null || args.oldPepper.startsWith('-')) {
@@ -181,7 +196,10 @@ function printUsage (stream) {
     '  node bin/reconcile-user-cores.js --ext-ids [--old-pepper <BASE64>] [--dry-run]',
     '                                              # reconcile this core\'s external ids',
     '                                              # (--old-pepper: the retired pepper, after',
-    '                                              # a rotation or a hashed-to-cleartext switch)',
+    '                                              # a rotation or a hashed-to-cleartext switch;',
+    '                                              # run with this core\'s API stopped;',
+    '                                              # --force-empty-local: allow deleting this',
+    '                                              # core\'s rows when its local table is empty)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

@@ -88,7 +88,8 @@ export default function conformanceTests (getDB) {
       const other = row();
       await db.insert(r);
       await db.insert(other);
-      await db.replaceForUser(r.userId, r.nsToken, { valueToken: 'v2', blindedValue: 'b2', claimedAt: 1760000100 });
+      assert.strictEqual(await db.replaceForUser(r.userId, r.nsToken, { valueToken: 'v2', blindedValue: 'b2', claimedAt: 1760000100 }), true);
+      assert.strictEqual(await db.replaceForUser(cuid(), r.nsToken, { valueToken: 'v3', blindedValue: 'b3', claimedAt: 1 }), false, 'no row: false');
       assert.deepStrictEqual(await db.getByUserAndNamespace(r.userId, r.nsToken),
         { ...r, valueToken: 'v2', blindedValue: 'b2', claimedAt: 1760000100 });
       assert.strictEqual(await db.getByTokens(r.nsToken, r.valueToken), null);

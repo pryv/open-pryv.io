@@ -102,12 +102,14 @@ class ExternalIdsLocalSQLite {
     return r == null ? null : toRow(r);
   }
 
-  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<void> {
+  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<boolean> {
+    let changes = 0;
     try {
-      await execute(() => { this.qReplace.run({ userId, nsToken, ...values }); });
+      await execute(() => { changes = this.qReplace.run({ userId, nsToken, ...values }).changes; });
     } catch (err) {
       throw asConflict(err);
     }
+    return changes > 0;
   }
 
   async retoken (userId: string, oldNsToken: string, tokens: { nsToken: string, valueToken: string }): Promise<boolean> {

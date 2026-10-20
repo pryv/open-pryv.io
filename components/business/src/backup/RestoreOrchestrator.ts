@@ -591,7 +591,7 @@ class RestoreOrchestrator {
       const { importNamespaceRows } = await import('platform/src/externalIdIndex.ts');
       const ns = await importNamespaceRows(this.platformDB, read.extIdNamespaces);
       extIdNamespaceSaltMismatch = ns.saltMismatch;
-      this.logger.info(`External-id namespaces restored: ${ns.imported} written, ${ns.kept} already present`);
+      this.logger.info(`External-id namespaces restored: ${ns.imported} written, ${ns.kept} already present${ns.skipped > 0 ? `, ${ns.skipped} malformed skipped` : ''}`);
       if (ns.saltMismatch.length > 0) {
         this.logger.warn(`External-id namespaces kept with a salt that differs from the backup (not overwritten): ${ns.saltMismatch.join(', ')}`);
       }

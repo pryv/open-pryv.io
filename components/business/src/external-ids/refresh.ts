@@ -20,9 +20,13 @@
  * new key, a stale self-row for the old one.
  */
 
-import { listNamespaces, getNamespace, namespaceToken, tokensFor, claimRow } from 'platform/src/externalIdIndex.ts';
+import { getLogger } from '@pryv/boiler';
+import { listNamespaceRows, namespaceToken, tokensFor, claimRow } from 'platform/src/externalIdIndex.ts';
 import type { ExtIdPlatformHandle, ExtIdNamespaceRow } from 'platform/src/externalIdIndex.ts';
+import { ExternalIdConflict } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
 import type { ExternalIdsLocalDB } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
+
+const logger = getLogger('external-ids');
 
 export interface TokenRefreshSummary {
   fresh: number;
@@ -44,9 +48,7 @@ export async function refreshExternalIdTokens (options: {
   const current = new Map<string, ExtIdNamespaceRow>();
   const bySalt = new Map<string, ExtIdNamespaceRow>();
   const byOld = new Map<string, ExtIdNamespaceRow>();
-  for (const info of await listNamespaces(platform)) {
-    const row = await getNamespace(platform, info.namespace);
-    if (row == null) continue;
+  for (const { row } of await listNamespaceRows(platform)) {
     current.set(namespaceToken(platform, row), row);
     bySalt.set(row.salt, row);
     if (oldHasher != null) byOld.set(oldHasher.hashFor('ext-id-ns', row.salt), row);
@@ -71,7 +73,15 @@ export async function refreshExternalIdTokens (options: {
     }
     const oldNsToken = r.nsToken;
     const oldKey = r.nsToken + '/' + r.valueToken;
-    await db.retoken(r.userId, oldNsToken, tokens);
+    try {
+      await db.retoken(r.userId, oldNsToken, tokens);
+    } catch (err) {
+      if (!(err instanceof ExternalIdConflict)) throw err;
+      // Two local rows deriving to one key: a corrupt row. Counted, the run goes on.
+      summary.corrupt++;
+      logger.warn('external ids refresh: the row of account ' + r.userId + ' collides with another local row once refreshed; left as is');
+      continue;
+    }
     if (await claimRow(platform, tokens)) summary.refreshed++;
     else summary.lostToOtherCore++;
     await platform.deleteCoreRowIfValue('ext-id/', oldKey, platform.coreId);

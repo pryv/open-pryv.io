@@ -67,12 +67,13 @@ class ExternalIdsLocalPG {
     return res.rows.length === 0 ? null : toRow(res.rows[0]);
   }
 
-  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<void> {
+  async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<boolean> {
     try {
-      await this.db.query(
+      const res = await this.db.query(
         'UPDATE external_ids SET value_token = $1, blinded_value = $2, claimed_at = $3 WHERE user_id = $4 AND ns_token = $5',
         [values.valueToken, values.blindedValue, values.claimedAt, userId, nsToken]
       );
+      return (res.rowCount ?? 0) > 0;
     } catch (err) {
       throw asConflict(err);
     }

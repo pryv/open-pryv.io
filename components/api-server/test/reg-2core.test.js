@@ -536,5 +536,59 @@ describe('[RG2C] Two-core integration tests', function () {
       const unclaimed = await httpRequest(CORE_A_PORT, 'POST', '/reg/ext-id/cores', { namespace: ns, blindedValue: crypto.randomBytes(32).toString('base64url') });
       assert.strictEqual(unclaimed.status, 404);
     });
+
+    // A per-user call on a core: Host `<username>.<domain>`, personal token.
+    function userCall (port, user, method, reqPath, body) {
+      return new Promise((resolve, reject) => {
+        const data = body == null ? null : JSON.stringify(body);
+        const r = require('node:http').request({
+          host: '127.0.0.1',
+          port,
+          method,
+          path: reqPath,
+          headers: { host: user.username + '.' + DOMAIN, authorization: user.token, 'content-type': 'application/json', ...(data ? { 'content-length': Buffer.byteLength(data) } : {}) }
+        }, (res) => {
+          let text = '';
+          res.on('data', (c) => { text += c; });
+          res.on('end', () => {
+            let json;
+            try { json = JSON.parse(text); } catch { json = text; }
+            resolve({ status: res.statusCode, body: json });
+          });
+        });
+        r.on('error', reject);
+        if (data) r.write(data);
+        r.end();
+      });
+    }
+
+    async function registerOn (port, username) {
+      const res = await httpRequest(port, 'POST', '/users', {
+        appId: 'test-2core-xid',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en'
+      });
+      assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+      return { username, token: new URL(res.body.apiEndpoint).username };
+    }
+
+    it('[2C52] a claim on Core B of an id held on Core A is refused (409 value-taken) and leaves nothing on B', async () => {
+      const crypto = require('node:crypto');
+      const onA = await registerOn(CORE_A_PORT, 'xida' + Date.now().toString(36));
+      const onB = await registerOn(CORE_B_PORT, 'xidb' + Date.now().toString(36));
+      const value = crypto.randomBytes(32).toString('base64url');
+      const claimA = await userCall(CORE_A_PORT, onA, 'POST', '/account/external-ids', { namespace: ns, blindedValue: value });
+      assert.strictEqual(claimA.status, 201, JSON.stringify(claimA.body));
+      const claimB = await userCall(CORE_B_PORT, onB, 'POST', '/account/external-ids', { namespace: ns, blindedValue: value });
+      assert.strictEqual(claimB.status, 409, JSON.stringify(claimB.body));
+      assert.deepStrictEqual(claimB.body.error.data, { namespace: ns, reason: 'value-taken' });
+      const listB = await userCall(CORE_B_PORT, onB, 'GET', '/account/external-ids');
+      assert.deepStrictEqual(listB.body.externalIds, []);
+      const listA = await userCall(CORE_A_PORT, onA, 'GET', '/account/external-ids');
+      assert.deepStrictEqual(listA.body.externalIds.map((x) => x.namespace), [ns]);
+    });
   });
 });

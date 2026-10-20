@@ -19,10 +19,11 @@
  * two accounts of this core both "win" the platform row.
  */
 
+import { getLogger } from '@pryv/boiler';
 import { factory as errors } from 'errors';
 import { getPlatform } from 'platform';
 import {
-  getNamespace, listNamespaces, namespaceToken, tokensFor, claimRow, releaseRow, getRowCore
+  getNamespace, listNamespaceRows, namespaceToken, tokensFor, claimRow, releaseRow, getRowCore
 } from 'platform/src/externalIdIndex.ts';
 import type { ExtIdPlatformHandle, ExtIdNamespaceRow, ExtIdTokens } from 'platform/src/externalIdIndex.ts';
 import { ExternalIdConflict } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
@@ -30,6 +31,8 @@ import type { ExternalIdsLocalDB } from 'storages/interfaces/baseStorage/Externa
 import { parseBlindedValue } from './value.ts';
 import { getExternalIdsLocal } from './localIndex.ts';
 import { refreshExternalIdTokens } from './refresh.ts';
+
+const logger = getLogger('external-ids');
 
 export interface ExternalIdInfo {
   namespace: string;
@@ -45,6 +48,8 @@ export interface ReconcileSummary {
   missingHealed: number;
   lostToOtherCore: number;
   namespaceMissing: number;
+  /** Set when the local table is empty and stale rows were NOT deleted (see `forceEmptyLocal`). */
+  refusedEmptyLocal?: boolean;
 }
 
 /** `created` is false when the account already held that exact value. */
@@ -123,7 +128,11 @@ export class ExternalIdsService {
     if (!await claimRow(this.platform, tokens)) throw errors.externalIdAlreadyClaimed(namespace, 'value-taken');
     const claimedAt = this.now();
     try {
-      await this.db.replaceForUser(userId, tokens.nsToken, { valueToken: tokens.valueToken, blindedValue, claimedAt });
+      // The row may have gone since it was read (a concurrent release or
+      // deletion): then this is a plain claim of the new value.
+      if (!await this.db.replaceForUser(userId, tokens.nsToken, { valueToken: tokens.valueToken, blindedValue, claimedAt })) {
+        await this.db.insert({ userId, ...tokens, blindedValue, claimedAt });
+      }
     } catch (err) {
       await this.#releaseIfUnowned(tokens);
       if (err instanceof ExternalIdConflict) throw errors.externalIdAlreadyClaimed(namespace, err.reason);
@@ -138,9 +147,8 @@ export class ExternalIdsService {
     const rows = await this.db.getByUser(userId);
     if (rows.length === 0) return [];
     const byToken = new Map<string, string>();
-    for (const ns of await listNamespaces(this.platform)) {
-      const row = await getNamespace(this.platform, ns.namespace);
-      if (row != null) byToken.set(namespaceToken(this.platform, row), ns.namespace);
+    for (const { namespace, row } of await listNamespaceRows(this.platform)) {
+      byToken.set(namespaceToken(this.platform, row), namespace);
     }
     const result: ExternalIdInfo[] = [];
     for (const r of rows) {
@@ -188,7 +196,12 @@ export class ExternalIdsService {
    *     (a lost namespace row is noticed, not silently erased).
    * Rows pointing at other cores are never touched. Idempotent.
    */
-  async reconcile (options: { dryRun: boolean, userExists: (userId: string) => Promise<boolean>, oldHasher?: { hashFor (field: string, value: string): string } | null }): Promise<ReconcileSummary> {
+  async reconcile (options: {
+    dryRun: boolean,
+    userExists: (userId: string) => Promise<boolean>,
+    oldHasher?: { hashFor (field: string, value: string): string } | null,
+    forceEmptyLocal?: boolean
+  }): Promise<ReconcileSummary> {
     const { dryRun, userExists } = options;
     // First bring every local row to the current tokens (a mode switch or a
     // pepper rotation since the last run), so the passes below compare like
@@ -212,10 +225,22 @@ export class ExternalIdsService {
     const platformRows = new Map<string, string>();
     for (const r of await this.platform.getAllCoreRows('ext-id/')) platformRows.set(r.key, r.coreId);
 
+    const staleKeys: string[] = [];
     for (const [key, coreId] of platformRows) {
       if (coreId !== this.platform.coreId || localKeys.has(key)) continue;
-      summary.staleDeleted++;
-      if (!dryRun) await this.platform.deleteCoreRowIfValue('ext-id/', key, coreId);
+      staleKeys.push(key);
+    }
+    summary.staleDeleted = staleKeys.length;
+    // An empty local table facing rows of this core is more likely a lost
+    // table (a partial restore, a wrong --config) than ids nobody holds:
+    // deleting the rows would free every id of the core. Refused unless forced.
+    if (localRows.length === 0 && staleKeys.length > 0 && !dryRun && options.forceEmptyLocal !== true) {
+      summary.refusedEmptyLocal = true;
+      summary.staleDeleted = 0;
+      return summary;
+    }
+    if (!dryRun) {
+      for (const key of staleKeys) await this.platform.deleteCoreRowIfValue('ext-id/', key, this.platform.coreId);
     }
 
     const goneUsers = new Set<string>();
@@ -248,8 +273,12 @@ export class ExternalIdsService {
    * is legitimately ours).
    */
   async #releaseIfUnowned (tokens: ExtIdTokens): Promise<void> {
-    if (await this.db.getByTokens(tokens.nsToken, tokens.valueToken) == null) {
-      await releaseRow(this.platform, tokens);
+    if (await this.db.getByTokens(tokens.nsToken, tokens.valueToken) != null) return;
+    await releaseRow(this.platform, tokens);
+    // Another request of this core may have committed its local row for the
+    // same id between the read above and the delete: claim the row back.
+    if (await this.db.getByTokens(tokens.nsToken, tokens.valueToken) != null && !await claimRow(this.platform, tokens)) {
+      logger.warn('external id: a local row lost its platform row to another core during a compensation; the reconcile reports it');
     }
   }
 }

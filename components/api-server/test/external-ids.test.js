@@ -107,6 +107,12 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
       assert.strictEqual(list.status, 200);
       assert.deepStrictEqual(list.body.externalIds.map((x) => x.namespace), [ns]);
       assert.ok(!JSON.stringify(list.body).includes(v), 'list never returns the value');
+      // The platform key holds the value as is in cleartext mode only.
+      const platform = await require('platform').getPlatform();
+      // A run with `platform__piiMode=cleartext` must really run in that mode.
+      if (process.env.platform__piiMode === 'cleartext') assert.strictEqual(platform.piiModeIsHashed, false);
+      const inKey = (await platform.getAllCoreRows('ext-id/')).some((r) => r.key.includes(v));
+      assert.strictEqual(inKey, !platform.piiModeIsHashed, 'key form matches platform.piiMode (hashed: ' + platform.piiModeIsHashed + ')');
       users.a.value = v;
     });
 
@@ -228,13 +234,20 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
       return lines;
     }
 
+    // Mutation checks (each must make this test fail): echo the raw value in
+    // `parseBlindedValue`'s error; remove `blindedValue` from the
+    // `originalQuery` strip list of `MethodContext.ts` (the query value then
+    // reaches the audit record and its log line).
     it('[XIDG1] claim, refusals, malformed input, replace, release, list and lookups log no value', async function () {
       const c = await makeUser();
       const v = blinded();
       const v2 = blinded();
       const malformed = 'bad*' + blinded();
       const bodies = [];
+      const probe = 'xidg-debug-probe-' + cuid();
       const lines = await captureLogs(async () => {
+        // The capture must see debug lines too, whatever the configured level.
+        require('@pryv/boiler').getLogger('xidg-probe').debug(probe);
         bodies.push((await claim(c, { namespace: ns, blindedValue: v })).body);
         bodies.push((await claim(c, { namespace: ns, blindedValue: v })).body);
         bodies.push((await claim(users.a, { namespace: ns, blindedValue: v })).body);
@@ -244,9 +257,12 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
         bodies.push((await coreRequest.put(`/${c.username}/account/external-ids/${ns}`).set('Authorization', c.token).send({ blindedValue: v2 })).body);
         bodies.push((await coreRequest.get(`/${c.username}/account/external-ids`).set('Authorization', c.token)).body);
         bodies.push((await coreRequest.delete(`/${c.username}/account/external-ids/${ns}`).set('Authorization', c.token)).body);
+        // A mistaken client putting the value in the query of an audited route.
+        bodies.push((await coreRequest.get(`/${c.username}/account/external-ids`).set('Authorization', c.token).query({ blindedValue: v2 })).body);
       });
       assert.ok(lines.some((l) => l.name.endsWith('request-trace') && l.text.includes('/reg/ext-id/cores')),
         'the log channel delivers: the lookup is traced');
+      assert.ok(lines.some((l) => l.text.includes(probe)), 'the capture sees debug lines');
       for (const secret of [v, v2, malformed]) {
         assert.deepStrictEqual(lines.filter((l) => l.text.includes(secret)), [], 'no log line holds a value');
       }

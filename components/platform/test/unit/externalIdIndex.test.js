@@ -105,8 +105,11 @@ describe('[XIDN] external-id index (platform layer)', () => {
     await target.setPlatformKv('ext-id-ns/ns-same', source.store.get('ext-id-ns/ns-same'));
     await idx.setNamespace(target, 'ns-other', {}, 5);
     const liveOther = target.store.get('ext-id-ns/ns-other');
-    const result = await idx.importNamespaceRows(target, entries);
-    assert.deepStrictEqual(result, { imported: 1, kept: 1, saltMismatch: ['ns-other'] });
+    const malformed = [{ key: 'ext-id-ns/ns-bad', value: JSON.stringify({ createdAt: 1, salt: 'short', label: 'x', defaultMode: 'hint' }) },
+      { key: 'ext-id-ns/ns-bad2', value: 'not json' }];
+    const result = await idx.importNamespaceRows(target, [...entries, ...malformed]);
+    assert.deepStrictEqual(result, { imported: 1, kept: 1, skipped: 2, saltMismatch: ['ns-other'] });
+    assert.ok(!target.store.has('ext-id-ns/ns-bad'), 'a malformed row is not installed');
     assert.strictEqual(target.store.get('ext-id-ns/ns-other'), liveOther, 'never overwritten');
     assert.strictEqual(target.store.get('ext-id-ns/ns-new'), source.store.get('ext-id-ns/ns-new'));
   });

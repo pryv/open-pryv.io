@@ -68,10 +68,15 @@ function fakeLocalDB () {
     async getByUser (userId) { return rows.filter((r) => r.userId === userId).map((r) => ({ ...r })); },
     async getByTokens (ns, v) { const r = rows.find((x) => x.nsToken === ns && x.valueToken === v); return r ? { ...r } : null; },
     async getByUserAndNamespace (u, ns) { const r = rows.find((x) => x.userId === u && x.nsToken === ns); return r ? { ...r } : null; },
+    // Runs once just before the next replaceForUser (a concurrent request).
+    beforeReplace: null,
     async replaceForUser (u, ns, values) {
+      if (db.beforeReplace != null) { const hook = db.beforeReplace; db.beforeReplace = null; await hook(); }
       if (rows.some((r) => r.nsToken === ns && r.valueToken === values.valueToken)) throw new ExternalIdConflict('value-taken');
       const r = rows.find((x) => x.userId === u && x.nsToken === ns);
+      if (r == null) return false;
       Object.assign(r, values);
+      return true;
     },
     async retoken (u, oldNs, tokens) {
       const r = rows.find((x) => x.userId === u && x.nsToken === oldNs);
@@ -136,6 +141,12 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(JSON.stringify(await coreA.list('u1')).includes(v), false, 'list never returns the value');
   });
 
+  // Mutation checks, to repeat after touching the code under test (each must make
+  // its test fail): XIDS2, drop the value-taken check of the fake local table
+  // (the engines carry it as the primary key, proven by [XIDL2] / [XIDL4] on both
+  // engines and by the API-level concurrent pair [XIDC4]); XIDS6, remove the
+  // `#releaseIfUnowned` call in `claim`; XIDS11, remove the insert fallback in
+  // `replace`; XIDS12, remove the re-claim in `#releaseIfUnowned`.
   it('[XIDS2] two accounts of the SAME core: the second gets 409 value-taken, the platform row stays', async () => {
     const v = value();
     await coreA.claim('u1', ns, v);
@@ -246,6 +257,68 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(await coreA.holds('u1', ns, vKept), true);
     const again = await coreA.reconcile({ dryRun: false, userExists });
     assert.deepStrictEqual(again, { localRows: 2, refreshed: 0, corruptTokens: 0, staleDeleted: 0, orphanUsersReleased: 0, missingHealed: 0, lostToOtherCore: 0, namespaceMissing: 0 }, 'idempotent');
+  });
+
+  it('[XIDS11] replace after the row vanished (concurrent release) ends as a plain claim, not a lost id', async () => {
+    const v1 = value();
+    const v2 = value();
+    await coreA.claim('u1', ns, v1);
+    coreA.db.beforeReplace = () => coreA.release('u1', ns);
+    const res = await coreA.replace('u1', ns, v2);
+    assert.strictEqual(res.externalId.namespace, ns);
+    assert.strictEqual(await coreA.holds('u1', ns, v2), true, 'the account holds what the answer says');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v2), 'https://core-a.example.test/');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v1), null);
+    assert.deepStrictEqual((await coreA.list('u1')).map((x) => x.namespace), [ns]);
+  });
+
+  it('[XIDS12] a compensation that races another account\'s insert claims the row back', async () => {
+    const v = value();
+    const { tokensFor, getNamespace } = require('platform/src/externalIdIndex.ts');
+    const t = tokensFor(coreA.platform, await getNamespace(coreA.platform, ns), v);
+    // u2's insert fails; right when its compensation deletes the platform row,
+    // u1's insert of the same id commits on this core.
+    coreA.db.failNextInsert = new Error('disk hiccup');
+    const realDelete = coreA.platform.deleteCoreRowIfValue;
+    coreA.platform.deleteCoreRowIfValue = async (...args) => {
+      coreA.platform.deleteCoreRowIfValue = realDelete;
+      const deleted = await realDelete.apply(coreA.platform, args);
+      coreA.db.rows.push({ userId: 'u1', ...t, blindedValue: v, claimedAt: 1 });
+      return deleted;
+    };
+    await assert.rejects(coreA.claim('u2', ns, v), /disk hiccup/);
+    assert.strictEqual(store.get('ext-id/' + t.nsToken + '/' + t.valueToken), 'core-a', 'the platform row is claimed back for u1');
+    assert.strictEqual(await coreA.holds('u1', ns, v), true);
+  });
+
+  it('[XIDS13] the reconcile refuses to delete this core\'s rows when its local table is empty', async () => {
+    await coreA.claim('u1', ns, value());
+    await coreA.claim('u2', ns, value());
+    coreA.db.rows.length = 0;
+    const refused = await coreA.reconcile({ dryRun: false, userExists: async () => true });
+    assert.strictEqual(refused.refusedEmptyLocal, true);
+    assert.strictEqual(extIdRows(store).length, 2, 'nothing deleted');
+    const dry = await coreA.reconcile({ dryRun: true, userExists: async () => true });
+    assert.strictEqual(dry.staleDeleted, 2, 'a dry run still reports');
+    const forced = await coreA.reconcile({ dryRun: false, userExists: async () => true, forceEmptyLocal: true });
+    assert.strictEqual(forced.staleDeleted, 2);
+    assert.strictEqual(extIdRows(store).length, 0);
+  });
+
+  it('[XIDS14] a refresh conflict on one row is counted and the refresh goes on', async () => {
+    const { getNamespace } = require('platform/src/externalIdIndex.ts');
+    const v = value();
+    const vOther = value();
+    await coreA.claim('u1', ns, v);
+    await coreA.claim('u3', ns, vOther);
+    const salt = (await getNamespace(coreA.platform, ns)).salt;
+    // A second, corrupt local row for the same id in its cleartext form.
+    coreA.db.rows.push({ userId: 'u2', nsToken: salt, valueToken: v, blindedValue: v, claimedAt: 1 });
+    coreA.platform.pepper = 'pepper-2';
+    coreB.platform.pepper = 'pepper-2';
+    const s = await coreA.reconcile({ dryRun: false, userExists: async () => true, oldHasher: { hashFor: hmacWith('pepper-1') } });
+    assert.strictEqual(s.corruptTokens, 1);
+    assert.strictEqual(await coreA.holds('u3', ns, vOther), true, 'rows after the conflict are still refreshed');
   });
 
   describe('[XIDR] token refresh', () => {

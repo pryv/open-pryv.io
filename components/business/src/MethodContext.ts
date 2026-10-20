@@ -149,10 +149,13 @@ class MethodContext {
     // recorded, so this is a guard for a caller that puts it in the query
     // string rather than a fix for an observed leak. `readToken` is the
     // attachment link credential: an attachment read refused or failed before
-    // the route replaces the query is audited with it otherwise.
+    // the route replaces the query is audited with it otherwise. `blindedValue`
+    // is an external id's claim credential: no route takes it in a query, so
+    // this is a guard for a client that puts it there.
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }
     if (this.originalQuery?.token) { delete this.originalQuery.token; }
     if (this.originalQuery?.readToken) { delete this.originalQuery.readToken; }
+    if (this.originalQuery?.blindedValue) { delete this.originalQuery.blindedValue; }
     this._tracing = tracing;
   }
 
