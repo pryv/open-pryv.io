@@ -1,5 +1,5 @@
 {
-  "version": "1.3.1",
+  "version": "1.3.2",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -738,7 +738,7 @@
       ]
     },
     "consent/revoke-cmc": {
-      "description": "Cross-account consent revoke (`cmc/revoke-v1` lineage). Either party tears down an established access pair by writing this with the local data-grant access id + an optional localised reason. The notice delivered to the counterparty also carries server-written correlation fields (`acceptEventId`, `revokedAt`); an inbox arrival the receiving core dropped as stale is marked `superseded`.",
+      "description": "Cross-account consent revoke (`cmc/revoke-v1` lineage). Either party tears down an established access pair by writing this with the local data-grant access id + an optional localised reason. The notice delivered to the counterparty also carries server-written fields, among them the correlation fields `acceptEventId` and `revokedAt` and the relationship identifiers (`appCode`, `scopeStreamId`, `offerEventId`, `inviteEventId`, `from`, `backChannelAccessId` / `dataGrantAccessId`, `revokedAccessIds`; see the cross-account messaging implementer's guide for the full list). An inbox arrival the receiving core dropped as stale is marked `superseded` by the receiving core, never by the sender.",
       "type": "object",
       "properties": {
         "accessId": {
