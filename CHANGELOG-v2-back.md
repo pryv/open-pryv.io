@@ -1,5 +1,42 @@
 # Changelog - Internal (no API impact)
 
+## External ids: platform rows, home-core table, tools
+
+- PlatformDB (rqlite and PostgreSQL, shared conformance `[XIDP]`): `claimCoreRow`, `getCoreRow`,
+  `deleteCoreRowIfValue`, `getAllCoreRows`, the `user-core/` claim-or-confirm for any row family
+  whose value is a core id. `user-core/` methods are unchanged.
+- `components/platform/src/externalIdIndex.ts`: `ext-id-ns/<namespace>` rows (generic platform KV;
+  creation atomic through `claimCoreRow`, so a create race keeps one salt) and `ext-id/<nsToken>/
+  <valueToken>` -> core id. Tokens through `hashFor` (`ext-id-ns` over the salt, `ext-id:<nsToken>`
+  over the blinded value): HMAC in hashed mode, the values as is in cleartext mode (salts are
+  base64url so the key keeps its shape).
+- Home-core table `external_ids` (PostgreSQL in `SCHEMA_SQL`, SQLite `external-ids.db`, shared
+  conformance `[XIDL]`): primary key `(ns_token, value_token)` is the authoritative
+  one-account-per-id check (two accounts of one core both "win" the platform row), unique
+  `(user_id, ns_token)`; it keeps the blinded value so the platform rows can be rebuilt.
+- `components/business/src/external-ids/`: `service.ts` (platform row first, then the local row,
+  compensation that never releases a row a local account holds), `refresh.ts` (new tokens after a
+  pepper rotation or a mode switch: local row first, then the new key, then the old key deleted,
+  so every crash state heals with the plain reconcile), `value.ts` (validation and
+  `maskExternalId`).
+- `bin/reconcile-user-cores.js --ext-ids [--old-pepper <BASE64>] [--dry-run]`: token refresh, then
+  stale rows deleted, missing rows re-claimed, ids of deleted accounts released, ids held by
+  another core dropped locally, ids of a deleted namespace reported. `platform-pii-rotate.js`
+  refreshes the core's ids; `platform-pii-migrate.js` leaves `ext-id/` rows to each core's
+  reconcile and prints the instruction.
+- Backups: namespace rows (with their salts) travel in the platform data stream as raw
+  `{ key, value }` entries (an older restore skips them); a restore never overwrites a live
+  namespace whose salt differs and lists it in `extIdNamespaceSaltMismatch`. `ext-id/` rows are
+  not backed up (rebuilt by the reconcile).
+- `routes/reg/addressBudget.ts`: the per-address budget of the invitation-token check, made
+  generic; the external-id lookup and claim refusals use their own instance.
+- `utils/src/redactUrl.ts` masks a `blindedValue` query parameter. `methodCallback` now resolves
+  a function success code before writing (a function reached `writeToHttpResponse` and the
+  response never ended).
+- Tests: `[XIDS]` / `[XIDR]` (service, reconcile, refresh, mutation-checked), `[XIDN]` (platform
+  layer), `[XIDA]` / `[XIDC]` / `[XIDLU]` / `[XIDG]` / `[XIDD]` (API, both engines; `[XIDG]`
+  asserts the value is in no log line, response or audit record), `[2C50]` / `[2C51]` (two cores).
+
 ## Stream permission walk
 
 - `AccessLogic._getStreamPermissions` keeps the ids it walked and stops on one seen before, so a

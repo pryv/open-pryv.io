@@ -162,6 +162,15 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 6. **`components/tracing/` is a permanent no-op shim: keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked were removed during the v2 dependency cleanup. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing`; every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. The opt-in observability layer (`components/business/src/observability/`) is the active telemetry path and runs in parallel, *not* through this component. If a future tracer is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl; the 8 consumers do not need to change.
 
+7. **External ids live in two stores.** The replicated `ext-id/<nsToken>/<valueToken>` row says
+   which core holds an id; only the home core's `external_ids` table says which account. Write
+   the platform row first, and treat the local primary key as the uniqueness check (two
+   accounts of one core both "win" the platform row). A blinded value is a claim credential
+   until linked: never log it (`maskExternalId`), never put it in a URL, never return it from a
+   listing. Drift between the stores is healed by `bin/reconcile-user-cores.js --ext-ids`, run
+   per core. Code: `components/platform/src/externalIdIndex.ts`,
+   `components/business/src/external-ids/`.
+
 ## Common pitfalls for agents
 
 - **Don't assume a single engine.** The engine plugin tree lets operators choose between PostgreSQL (default) and SQLite for `baseStorage` / `dataStore` / `auditStorage`; contributions that hard-code either inside business logic will get rejected. Use `pluginLoader.getEngineModule(pluginLoader.getEngineFor('<storageType>'))`.

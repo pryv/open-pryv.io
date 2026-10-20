@@ -1125,13 +1125,22 @@ node bin/platform-pii-migrate.js status
 node bin/platform-pii-migrate.js up
 
 # 5. Restart the cluster so all workers boot with the new mode.
+
+# 6. With external ids in use: on EVERY core, move that core's ids to the hashed tokens.
+node bin/reconcile-user-cores.js --ext-ids
 ```
 
-The tool is idempotent — partial runs continue safely. It touches `user-core/*`, `user-unique/*`, and `user-indexed/*` rows only. Persistent DNS records (`dns-record/*`) stay cleartext (operator infrastructure names, not user PII).
+The tool is idempotent: partial runs continue safely. It touches `user-core/*`, `user-unique/*`, and `user-indexed/*` rows only. Persistent DNS records (`dns-record/*`) stay cleartext (operator infrastructure names, not user PII). External ids (`ext-id/*`) are left to each core (step 6): the blinded values are in each home core's local table, which this tool, running on one core, cannot reach. Until a core has run step 6, its external ids do not resolve. For the reverse switch (hashed to cleartext), step 6 takes the retired pepper: `--ext-ids --old-pepper <BASE64>`.
 
 ### Pepper rotation
 
-Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-core: one invocation. Multi-core: run on each core in turn, after distributing the new pepper to every core's config. The tool re-derives HMAC tokens for usernames + `isUnique` fields from the home core's user-account storage. Persistent DNS records are unaffected — their subdomains are stored cleartext (operator infrastructure names, not user PII).
+Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-core: one invocation. Multi-core: run on each core in turn, after distributing the new pepper to every core's config. The tool re-derives HMAC tokens for usernames + `isUnique` fields from the home core's user-account storage, and the core's external ids from the blinded values in its local table. Persistent DNS records are unaffected: their subdomains are stored cleartext (operator infrastructure names, not user PII).
+
+### External ids (operators)
+
+External ids map a caller-blinded record id to the core of the one account holding it. Namespaces are created with the admin key: `PUT /system/admin/ext-id-ns/<namespace>` (body `{ label, defaultMode }`). Their rows, with the server-generated salt, are part of the platform backup: losing a namespace's salt orphans every id of that namespace, and a restore never overwrites a live namespace whose salt differs (it reports it).
+
+Run `node bin/reconcile-user-cores.js --ext-ids` (add `--dry-run` to only report) on a core after a restore, after a crash during a claim, before moving the core, and after a PII mode switch (above). It brings the core's ids to the current tokens, deletes the platform rows of this core that no account holds, re-claims the ids its accounts hold, releases the ids of deleted accounts, and reports (never deletes) ids whose namespace is gone. Run it per core: it never touches another core's rows.
 
 ### Hashed-mode caveats
 

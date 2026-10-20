@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **External ids: one account per record id, platform-wide.** A service that knows a third-party
+  record id (an EHR patient id, for example) sends a blinded value `HMAC(K_namespace, id)` it
+  computes with its own key; the platform never sees the id or the key. Admin:
+  `GET|PUT|DELETE /system/admin/ext-id-ns/<namespace>` and `GET /system/admin/ext-id-ns` (label,
+  default mode; the salt is server-generated and never returned; `DELETE` answers
+  `409 external-id-namespace-in-use` while ids are linked, unless `?force=true`). Account, personal
+  token only: `POST /<username>/account/external-ids { namespace, blindedValue }`
+  (`account.externalIds.claim`: 201 linked, 200 already linked), `GET` (`.list`: namespaces and
+  claim dates, never a value), `PUT .../external-ids/<namespace> { blindedValue }` (`.replace`),
+  `DELETE .../external-ids/<namespace>` (`.release`). One id per account per namespace; a second
+  account (on any core) gets `409 external-id-already-claimed` with `data.reason: 'value-taken'`,
+  the same account a second id `'namespace-taken'`; the error never says which account holds it.
+  Lookup without credentials: `POST /reg/ext-id/cores { namespace, blindedValue }` answers
+  `{ server }` (the core holding the id) or 404, unknown namespace and unclaimed id alike. Lookups
+  and refused claims share a per-address budget (10 per minute): past it `429 too-many-attempts`
+  with `Retry-After`. The blinded value is base64url, 16 to 64 bytes, never echoed in an error
+  and never logged. Deleting an account releases its ids at once. The sign-in and registration
+  fields (hint and forced modes) follow in a later release.
 - Access deletion records (operators): new per-core setting
   `accesses.deletionRecords.retentionDays` (default 0 = kept until the account is deleted). Above 0,
   the master removes, once a day, the deletion records of accesses deleted more than that many days
