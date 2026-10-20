@@ -12,8 +12,9 @@
 > delivery that fails while the setting is off is not retried later, and member accesses then
 > end at their own expiry. Set it back to its default (`true`) after the upgrade.
 >
-> One of the fixes (account fields) has no configuration workaround: it needs the upgrade, on
-> every release before this one.
+> This setting covers only the retry-queue part. The other fixes in this release (the
+> reserved-region and account-field checks, the counterparty destination guard, stream moves) have
+> no configuration workaround: they need the upgrade.
 
 Security release. Every guard now judges the canonical spelling of a store-prefixed stream id
 (plugin-managed CMC and delegation regions, account fields, access permissions); the CMC retry
@@ -68,7 +69,6 @@ retention period.
   `cmc-capability-destination-refused` when an accept's offer read is refused) and it is not
   retried; an accept whose delivery is refused removes the data grant it had created, as for a
   rejected one.
-
 - **Security (cross-account messaging, account delegation).** The plugin-managed regions of the
   `:_cmc:` and `:_delegation:` namespaces are now closed to user writes by every supported form of
   a stream id, including the store-prefixed form (`:local:<id>`, which addresses the same stream as
