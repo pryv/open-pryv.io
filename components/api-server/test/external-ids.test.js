@@ -207,6 +207,57 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     });
   });
 
+  describe('[XIDG] the blinded value is never logged', function () {
+    // Every log line of every logger, while `fn` runs (same capture as the
+    // credentials log test).
+    async function captureLogs (fn) {
+      const { inspect } = require('node:util');
+      const proto = Object.getPrototypeOf(require('@pryv/boiler').getLogger('log-capture'));
+      const original = proto.log;
+      const lines = [];
+      proto.log = function (level, msg, ...rest) {
+        lines.push({ level, name: this._name(), text: String(msg) + (rest.length > 0 ? ' ' + inspect(rest, { depth: 8 }) : '') });
+        return original.call(this, level, msg, ...rest);
+      };
+      try {
+        await fn();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } finally {
+        proto.log = original;
+      }
+      return lines;
+    }
+
+    it('[XIDG1] claim, refusals, malformed input, replace, release, list and lookups log no value', async function () {
+      const c = await makeUser();
+      const v = blinded();
+      const v2 = blinded();
+      const malformed = 'bad*' + blinded();
+      const bodies = [];
+      const lines = await captureLogs(async () => {
+        bodies.push((await claim(c, { namespace: ns, blindedValue: v })).body);
+        bodies.push((await claim(c, { namespace: ns, blindedValue: v })).body);
+        bodies.push((await claim(users.a, { namespace: ns, blindedValue: v })).body);
+        bodies.push((await claim(c, { namespace: ns, blindedValue: malformed })).body);
+        bodies.push((await lookup({ namespace: ns, blindedValue: v })).body);
+        bodies.push((await lookup({ namespace: ns, blindedValue: malformed })).body);
+        bodies.push((await coreRequest.put(`/${c.username}/account/external-ids/${ns}`).set('Authorization', c.token).send({ blindedValue: v2 })).body);
+        bodies.push((await coreRequest.get(`/${c.username}/account/external-ids`).set('Authorization', c.token)).body);
+        bodies.push((await coreRequest.delete(`/${c.username}/account/external-ids/${ns}`).set('Authorization', c.token)).body);
+      });
+      assert.ok(lines.some((l) => l.name.endsWith('request-trace') && l.text.includes('/reg/ext-id/cores')),
+        'the log channel delivers: the lookup is traced');
+      for (const secret of [v, v2, malformed]) {
+        assert.deepStrictEqual(lines.filter((l) => l.text.includes(secret)), [], 'no log line holds a value');
+      }
+      const responses = JSON.stringify(bodies);
+      assert.ok(!responses.includes(v2) && !responses.includes(malformed) && !responses.includes(v), 'no response holds a value');
+      const audit = await coreRequest.get(`/${c.username}/events`).set('Authorization', c.token).query({ streams: JSON.stringify([':_audit:']) });
+      const auditText = JSON.stringify(audit.body);
+      assert.ok(!auditText.includes(v) && !auditText.includes(v2) && !auditText.includes(malformed), 'the audit trail holds no value');
+    });
+  });
+
   describe('[XIDD] deletion', function () {
     it('[XIDD1] a namespace with claimed ids is not deleted without force', async function () {
       const res = await coreRequest.delete('/system/admin/ext-id-ns/' + ns).set('authorization', adminKey);

@@ -499,4 +499,42 @@ describe('[RG2C] Two-core integration tests', function () {
         'Expected hostings response');
     });
   });
+
+  describe('External ids across cores', () => {
+    const ns = 'ehr-2c-' + Date.now().toString(36);
+
+    it('[2C50] a namespace created through Core A is visible through Core B, without its salt', async () => {
+      const created = await httpRequest(CORE_A_PORT, 'PUT', '/system/admin/ext-id-ns/' + ns, { label: 'Two-core EHR' }, { Authorization: ADMIN_KEY });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      const seen = await httpRequest(CORE_B_PORT, 'GET', '/system/admin/ext-id-ns/' + ns, null, { Authorization: ADMIN_KEY });
+      assert.strictEqual(seen.status, 200, JSON.stringify(seen.body));
+      assert.strictEqual(seen.body.namespace.label, 'Two-core EHR');
+      assert.ok(!JSON.stringify(seen.body).includes('salt'));
+    });
+
+    it('[2C51] an id held by Core B resolves to Core B from either core; an unclaimed one is 404', async () => {
+      // Seed the claim as Core B would write it (same derivation, same pepper).
+      const crypto = require('node:crypto');
+      const { PiiHasher } = require('platform/src/PiiHasher.ts');
+      const { tokensFor } = require('platform/src/externalIdIndex.ts');
+      const pepper = process.env.platform__piiHmacKey;
+      const handle = { hashFor: (field, value) => pepper ? new PiiHasher(pepper).hashFor(field, value) : value };
+      const nsRow = JSON.parse(await platformDB.getPlatformKv('ext-id-ns/' + ns));
+      const value = crypto.randomBytes(32).toString('base64url');
+      const t = tokensFor(handle, nsRow, value);
+      assert.strictEqual(await platformDB.claimCoreRow('ext-id/', t.nsToken + '/' + t.valueToken, CORE_B_ID), true);
+
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        // Core B's URL as THIS core resolves it (each core resolves its own
+        // URL from its config, the others from the platform rows).
+        const cores = await httpRequest(port, 'GET', '/system/admin/cores', null, { Authorization: ADMIN_KEY });
+        const coreBUrl = (cores.body.cores || cores.body).find((c) => c.id === CORE_B_ID).url;
+        const res = await httpRequest(port, 'POST', '/reg/ext-id/cores', { namespace: ns, blindedValue: value });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.server, coreBUrl, 'routed to core B from port ' + port);
+      }
+      const unclaimed = await httpRequest(CORE_A_PORT, 'POST', '/reg/ext-id/cores', { namespace: ns, blindedValue: crypto.randomBytes(32).toString('base64url') });
+      assert.strictEqual(unclaimed.status, 404);
+    });
+  });
 });
