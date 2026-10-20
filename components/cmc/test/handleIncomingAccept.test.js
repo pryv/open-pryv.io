@@ -620,12 +620,54 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.deepEqual(mall.capability, mall.minted);
     });
 
-    it('[IA16] the capability access is read by id from createdBy', async () => {
+    it('[IA16] the capability access is read by id from createdBy, never by a scan: once for the enrichment, once again from storage right before the mint', async () => {
       const mall = inviteMall('open-link');
       await handleIncomingAccept({
         userId: 'u1', acceptEvent: acceptThroughCapability, selfIdentity: SELF, deps: { mall },
       });
-      assert.deepEqual(mall.calls.getOne, ['cap-acc-1']);
+      assert.deepEqual(mall.calls.getOne, ['cap-acc-1', 'cap-acc-1']);
+    });
+
+    it('[IA24] a capability access deleted between the first read and the re-read refuses the accept: nothing is minted', async () => {
+      const mall = inviteMall('open-link');
+      const created = [];
+      mall.accesses.create = async (_userId, params) => { created.push(params); return { id: 'acc-back-1', ...params }; };
+      // Deleted after the first read: neither the by-id read nor the scan
+      // sees it any more, as with a real storage deletion.
+      const baseGetOne = mall.accesses.getOne;
+      mall.accesses.getOne = async (userId, params) => {
+        if (mall.calls.getOne.length === 0) return baseGetOne(userId, params);
+        mall.calls.getOne.push(params.id);
+        return null;
+      };
+      mall.accesses.get = async () => { mall.calls.gets++; return mall.calls.getOne.length === 0 ? [mall.capability] : []; };
+      const r = await handleIncomingAccept({
+        userId: 'u1', acceptEvent: acceptThroughCapability, selfIdentity: SELF, deps: { mall },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-capability-invalidated');
+      assert.deepEqual(mall.calls.getOne, ['cap-acc-1', 'cap-acc-1']);
+      assert.deepEqual(created, []);
+    });
+
+    it('[IA25] a re-read that fails on storage is logged and the accept goes on with the write hook\'s check', async () => {
+      const mall = inviteMall('open-link');
+      const baseGetOne = mall.accesses.getOne;
+      mall.accesses.getOne = async (userId, params) => {
+        if (mall.calls.getOne.length === 0) return baseGetOne(userId, params);
+        mall.calls.getOne.push(params.id);
+        throw new Error('storage down');
+      };
+      const warns = [];
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptThroughCapability,
+        selfIdentity: SELF,
+        deps: { mall, logger: { warn: (m) => warns.push(m), debug: () => {} } },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(mall.calls.getOne, ['cap-acc-1', 'cap-acc-1']);
+      assert.ok(warns.some((m) => String(m).includes('re-read before the mint failed')), JSON.stringify(warns));
     });
 
     it('[IA17] a failing invite write is logged and the accept still succeeds', async () => {

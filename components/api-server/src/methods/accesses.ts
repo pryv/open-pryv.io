@@ -23,6 +23,7 @@ const methodsSchema = require('../schema/accessesMethods.ts');
 const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
+const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const ACCOUNT_ROOT_LEVEL_MESSAGE = "The account root stream can only be granted at the 'read' or 'none' level; grant the account fields themselves to write them.";
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 
@@ -301,6 +302,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     commonFns.basicAccessAuthorizationCheck,
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
+    canonicalizePermissionStreamIds,
     cmcAccessCreateForgePreventionHook,
     delegationAccessCreateForgePreventionHook,
     delegationAccessCreateLineageHook,
@@ -315,6 +317,34 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   function applyDefaultsForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     params.type ??= 'shared';
+    next();
+  }
+
+  /**
+   * Rewrites every permission `streamId` to its canonical spelling before any
+   * check reads it. The permission walk and the plugin guards below compare
+   * ids, and the stored value is the canonical one: a check that judged
+   * `:local::system:email` as a local stream (reached by a `*` grant on the
+   * local store) while the account field `:system:email` got stored would let
+   * a creator hand out a permission it does not hold. One rewrite, first in
+   * the chain, so every check and the write see the same id.
+   */
+  function canonicalizeStreamPermissions (permissions: unknown) {
+    if (!Array.isArray(permissions)) return;
+    for (const permission of permissions as StreamPermission[]) {
+      if (typeof permission?.streamId === 'string') {
+        permission.streamId = storeDataUtils.canonicalStreamId(permission.streamId);
+      }
+    }
+  }
+
+  function canonicalizePermissionStreamIds (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    canonicalizeStreamPermissions(params.permissions);
+    next();
+  }
+
+  function canonicalizePermissionStreamIdsForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    canonicalizeStreamPermissions(params.update?.permissions);
     next();
   }
 
@@ -409,6 +439,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   function validateAccountStreamPermissions (access: MethodContext['access'], permissions: StreamPermission[]) {
     for (const permission of permissions) {
       if (isStreamBasedPermission(permission)) {
+        // Judge, and store, the canonical spelling: `:account::system:email`
+        // or `:local::system:email` name the same account field as
+        // `:system:email`, and the checks below compare exact ids. Already
+        // done first in both chains; kept here so this validation holds on
+        // its own.
+        permission.streamId = storeDataUtils.canonicalStreamId(permission.streamId);
         if (isUnknownSystemStream(permission.streamId)) {
           return errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId });
         }
@@ -436,9 +472,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return permission.streamId != null;
     }
 
+    // An id that routes to the account store (any spelling) must be a known
+    // account stream id; a system-looking id is judged the same way.
     function isUnknownSystemStream (streamId: string) {
-      return ((streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
-                accountStreams.toFieldName(streamId) === streamId);
+      const routesToAccount = storeDataUtils.parseStoreIdAndStoreItemId(streamId)[0] === storeDataUtils.AccountStoreId;
+      return (routesToAccount || streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
+                accountStreams.toFieldName(streamId) === streamId;
     }
   }
 
@@ -590,7 +629,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
     mall,
     // Lazy fetch resolution — see the delete hook below.
-    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-update-hook'),
     memberSweep: cmcMemberSweep,
@@ -603,6 +642,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Only the declared updatable fields may change; anything else (type,
     // token, id, createdBy, alias...) is refused, never silently ignored.
     commonFns.catchForbiddenUpdate(accessSchema('update'), false, getLogger('accesses')),
+    canonicalizePermissionStreamIdsForUpdate,
     cmcAccessUpdateForgePreventionHook,
     delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
@@ -961,9 +1001,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // path. CMC's own teardown deletes via mall (not this route), so the
   // hook never double-fires for helper-driven revokes.
   // A peer account hosted on this core is reached in-process (localFirstFetch),
-  // not through the core's own public URL; globalThis.fetch is resolved per
-  // call so in-process test shims installed after registration are honoured.
-  const cmcDeliveryFetch = localFirstFetch(api, storageLayer);
+  // not through the core's own public URL; any other peer through the guarded
+  // peerFetch (refused private destinations; tests route it to their shim).
+  const cmcDeliveryFetch = localFirstFetch(api, storageLayer, peerFetch);
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
     // The composed CMC mall (with `.accesses` and `.events`) lets the hook mark
     // the invite a deleted relationship descends from as revoked (local

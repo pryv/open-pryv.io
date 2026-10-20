@@ -15,16 +15,25 @@ const require = createRequire(import.meta.url);
  * requester's own `:_cmc:apps:*` streams. The plugin flips the
  * referenced capability access's `clientData.cmc.capability.state` from
  * `'open'` to `'invalidated'` so subsequent accepts via the same
- * capability URL are rejected by the responses-stream write-hook.
+ * capability URL are rejected by the responses-stream write-hook. Both
+ * modes: an open-link is closed to new joiners; a single-use invite that
+ * nobody accepted yet is withdrawn (a link sent to the wrong person must
+ * not stay usable until it expires, and the app that created it holds no
+ * personal token to delete the capability access).
  *
  * No outbound delivery: the requester is invalidating their own
  * capability locally; there is no peer to notify. The next attempted
  * accept on this capability gets a typed `cmc-capability-invalidated`
- * error from the write-hook.
+ * error from the write-hook. The capability access is kept, with its
+ * permissions, for that typed answer (the retention rule of README.md
+ * "Capability accesses"): deleting it would turn the answer into a bare
+ * 401 / 403 that the accepter reports as `cmc-capability-invalid`. The
+ * offer therefore stays readable through the link, as for an invalidated
+ * open-link; what the link can no longer do is open a relationship.
  *
- * Idempotent (already-invalidated capability) and tolerant (single-use
- * capabilities are auto-consumed on first accept, so invalidate is a
- * no-op for them).
+ * Idempotent (already-invalidated capability). A consumed single-use
+ * capability (accepted) is a no-op reported with `alreadyConsumed: true`:
+ * the relationship it opened is ended with `consent/revoke-cmc`.
  *
  * Already-established data-grant + back-channel relationships minted
  * BEFORE invalidation are NOT touched — use `consent/revoke-cmc` for
@@ -124,12 +133,14 @@ async function handleInvalidateLink (params: {
     return { ok: false, reason: CmcErrorIds.INVALIDATE_LINK_SCOPE_MISMATCH, detail: { capabilityId } };
   }
 
-  // Defensive: single-use capabilities auto-consume on first accept;
-  // there's nothing to invalidate. Return ok with an advisory flag so
-  // the dispatch surface can stamp a meaningful status without
-  // surfacing a "failure" to the requester's app.
-  const mode = acc.clientData?.cmc?.capability?.mode;
-  if (mode === 'single-use') {
+  // A consumed single-use capability was accepted: the link is already
+  // closed and what it opened is a relationship, not this handler's
+  // concern. Return ok with an advisory flag so the dispatch surface
+  // stamps a meaningful status without surfacing a "failure" to the
+  // requester's app. An OPEN single-use capability is withdrawn below,
+  // like an open-link.
+  const capability = acc.clientData?.cmc?.capability;
+  if (capability?.mode === 'single-use' && capability?.state === 'consumed') {
     return { ok: true, eventType: triggerEvent.type, capabilityId, alreadyConsumed: true };
   }
 
@@ -142,6 +153,12 @@ async function handleInvalidateLink (params: {
       reason: flip.reason || 'cmc-invalidate-link-failed',
       detail: { capabilityId },
     };
+  }
+  // A consume landed between the read above and the flip (an accept racing this
+  // withdrawal): the link was accepted, not withdrawn. Report it like the
+  // consumed case rather than stamping the invite invalidated.
+  if (flip.priorState === 'consumed') {
+    return { ok: true, eventType: triggerEvent.type, capabilityId, alreadyConsumed: true };
   }
 
   // Record the outcome on the invite trigger the requester's app watches.

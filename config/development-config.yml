@@ -44,6 +44,9 @@ dnsLess:
 # Local multi-core setups run their cores on http://127.0.0.1.
 cluster:
   allowInsecurePeerUrl: true
+# Local counterparties (consent, delegation, OAuth) answer on the loopback interface.
+cmc:
+  allowedPrivateHosts: ['127.0.0.1', 'localhost', '::1']
 custom:
   systemStreams:
     account:

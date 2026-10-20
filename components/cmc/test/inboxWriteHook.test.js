@@ -176,6 +176,47 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     assert.deepEqual(ctx.newEvent.content.from, { username: 'alice', host: 'example.com' });
   });
 
+  it('[CI11] drops the receiver-owned fields of a revoke at the inbox write, and only of a revoke', async () => {
+    // `backChannelAccessId`, `dataGrantAccessId`, `revokedAccessIds` and
+    // `superseded` are written by the receiving server from its own decision;
+    // a sender's value is dropped before the arrival is stored.
+    const errors = fakeErrors();
+    const mw = createInboxWriteHook({ errors: errors.factory });
+    const ctx = {
+      newEvent: {
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/revoke-cmc',
+        content: {
+          accessId: 'X',
+          acceptEventId: 'acc-1',
+          backChannelAccessId: 'peer-made-this-up',
+          dataGrantAccessId: 'peer-made-this-up-too',
+          revokedAccessIds: ['not-ours'],
+          superseded: 'relationship-re-established',
+        },
+      },
+      access: COUNTERPARTY_ACCESS,
+    };
+    const err = await runMiddleware(mw, ctx, {}, {});
+    assert.equal(err, undefined);
+    assert.deepEqual(ctx.newEvent.content, {
+      accessId: 'X',
+      acceptEventId: 'acc-1',
+      from: { username: 'alice', host: 'example.com' },
+    });
+    // Another inbox type keeps its content as sent (plus the stamped from).
+    const bc = {
+      newEvent: {
+        streamIds: [':_cmc:inbox'],
+        type: 'consent/back-channel-cmc',
+        content: { apiEndpoint: 'https://t@example.com/alice/', superseded: 'not-a-revoke-field' },
+      },
+      access: COUNTERPARTY_ACCESS,
+    };
+    assert.equal(await runMiddleware(mw, bc, {}, {}), undefined);
+    assert.equal(bc.newEvent.content.superseded, 'not-a-revoke-field');
+  });
+
   it('[CI10] refuses an accept or a refuse posted on the inbox, even from a counterparty, and stamps nothing', async () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });

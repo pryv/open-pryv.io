@@ -182,6 +182,16 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual(states, { 'c-404': 'absent', 'c-401': 'absent', 'c-503': 'absent', 'c-net': 'residual', 'c-listed': 'residual' });
     });
 
+    it('[MR44b] a refused destination leaves the child residual with reason refused (nothing can be concluded about it)', async () => {
+      const mall = fakeMall();
+      const rows = [await seed(mall, { childAccessId: 'c-ref' })];
+      const refusal = Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const cores = fakeCores({ deletes: { 'c-ref': refusal }, remaining: { 'grant-tok': ['c-ref'] } });
+      const r = await revokeRecords({ userId: 'group', records: rows, deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [{ childAccessId: 'c-ref', result: 'residual', reason: 'refused' }]);
+      assert.deepEqual(r.residuals.map((x) => x.reason), ['refused']);
+    });
+
     it('[MR45] a record whose relationship is gone, or whose child expired, is settled absent without a call; a settled record is skipped', async () => {
       const mall = fakeMall({ accesses: [MEMBERSHIP] });
       const gone = await seed(mall);

@@ -170,7 +170,7 @@ async function handleChat (params: {
   if (!delivery.ok) {
     return {
       ok: false,
-      reason: 'cmc-handler-delivery-failed',
+      reason: delivery.reason === 'refused' ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
       detail: { status: delivery.status, peerReason: delivery.reason },
     };
   }

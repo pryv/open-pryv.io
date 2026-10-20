@@ -120,9 +120,28 @@ function capabilityIdFromResponsesStreamId (streamId: string): string | null {
 
 // --- Classification predicates ---
 
+// The mall addresses the local store by a `:local:` id prefix: `:local:<id>`
+// resolves to the very same stream as `<id>` (storeDataUtils.parseStoreId...
+// routes `local` to the account's main storage, where every `:_cmc:*` stream
+// lives). A raw-string guard that tests `:local::_cmc:...` would therefore see
+// a non-matching string and pass, while the write reaches the reserved stream.
+// Every classification below is fed through this first, so the prefixed alias
+// is judged as the canonical id it resolves to.
+const LOCAL_STORE_PREFIX = ':local:';
+
+/** Strip any leading `:local:` store prefix(es), returning the canonical id. */
+function canonicalLocalStreamId (streamId: unknown): string | unknown {
+  if (typeof streamId !== 'string') return streamId;
+  let id = streamId;
+  while (id.startsWith(LOCAL_STORE_PREFIX)) id = id.slice(LOCAL_STORE_PREFIX.length);
+  return id;
+}
+
 /** Does this stream-id live anywhere under the :_cmc: namespace? */
 function isCmcStreamId (streamId: string): boolean {
-  return streamId === ':_cmc' || streamId.startsWith(NS);
+  const id = canonicalLocalStreamId(streamId) as string;
+  if (typeof id !== 'string') return false;
+  return id === ':_cmc' || id.startsWith(NS);
 }
 
 // Matches any stream-id whose path contains `:chats` or `:collectors`
@@ -143,7 +162,9 @@ const APP_NESTED_PLUGIN_RE = /:_cmc:apps:[^:]+(?::[^:]+)*:(chats|collectors)(?::
  * The plugin auto-creates these; user code may not.
  */
 function isAppNestedPluginStream (streamId: string): boolean {
-  return APP_NESTED_PLUGIN_RE.test(streamId);
+  const id = canonicalLocalStreamId(streamId);
+  if (typeof id !== 'string') return false;
+  return APP_NESTED_PLUGIN_RE.test(id);
 }
 
 /**
@@ -151,8 +172,10 @@ function isAppNestedPluginStream (streamId: string): boolean {
  * Excludes the plugin-reserved sub-segments (`chats` / `collectors`).
  */
 function isUserCreatableStreamId (streamId: string): boolean {
-  if (!streamId.startsWith(NS_APPS + ':')) return false;
-  if (isAppNestedPluginStream(streamId)) return false;
+  const id = canonicalLocalStreamId(streamId);
+  if (typeof id !== 'string') return false;
+  if (!id.startsWith(NS_APPS + ':')) return false;
+  if (isAppNestedPluginStream(id)) return false;
   return true;
 }
 
@@ -172,8 +195,9 @@ function isPluginManagedStreamId (streamId: string): boolean {
  * subtree.
  */
 function isCmcInternalStreamId (streamId: string): boolean {
-  if (typeof streamId !== 'string') return false;
-  return streamId === NS_INTERNAL || streamId.startsWith(NS_INTERNAL + ':');
+  const id = canonicalLocalStreamId(streamId);
+  if (typeof id !== 'string') return false;
+  return id === NS_INTERNAL || id.startsWith(NS_INTERNAL + ':');
 }
 
 /**
@@ -181,8 +205,9 @@ function isCmcInternalStreamId (streamId: string): boolean {
  * Returns null for ids that aren't under `:_cmc:apps:`.
  */
 function getAppCode (streamId: string): string | null {
-  if (!streamId.startsWith(NS_APPS + ':')) return null;
-  const rest = streamId.substring(NS_APPS.length + 1);
+  const canonical = canonicalLocalStreamId(streamId);
+  if (typeof canonical !== 'string' || !canonical.startsWith(NS_APPS + ':')) return null;
+  const rest = canonical.substring(NS_APPS.length + 1);
   const colonIdx = rest.indexOf(':');
   return colonIdx === -1 ? rest : rest.substring(0, colonIdx);
 }
@@ -211,6 +236,16 @@ const ACCEPT_UPDATE_PRESERVED_FIELDS: readonly string[] = ['features'];
 // status stamps (`delivered` / `completed` / `failed` + its `failure`), the
 // mint's `pending`, a scope request's outcome. Kept from storage on update.
 const CMC_SERVER_OWNED_FIELDS: readonly string[] = ['status', 'failure'];
+// Content fields of a `consent/revoke-cmc` arrival only the RECEIVING server
+// writes: its own handles for the relationship, the ids it tore down, and the
+// marker of a notice it dropped as stale. They describe the receiving account,
+// so a value the sender put there is dropped at the inbox write
+// (inboxWriteHook.ts) and again when the handler records its decision
+// (handleIncomingRevoke.ts): an app never reads a peer's claim as this
+// server's.
+const REVOKE_RECEIVER_OWNED_FIELDS: readonly string[] = [
+  'backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds', 'superseded',
+];
 
 // --- Group accounts: members, member accesses, offboarding ---
 //
@@ -365,6 +400,7 @@ export {
   capabilityIdFromResponsesStreamId,
 
   // classification predicates
+  canonicalLocalStreamId,
   isCmcStreamId,
   isAppNestedPluginStream,
   isUserCreatableStreamId,
@@ -386,6 +422,7 @@ export {
   ACCEPT_SERVER_OWNED_FIELDS,
   ACCEPT_UPDATE_PRESERVED_FIELDS,
   CMC_SERVER_OWNED_FIELDS,
+  REVOKE_RECEIVER_OWNED_FIELDS,
   ET_BACK_CHANNEL,
   ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,

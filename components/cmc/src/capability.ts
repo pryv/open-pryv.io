@@ -53,8 +53,10 @@ import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
  *   'single-use' — the first accept closes the link. Re-clicks return
  *                  `cmc-capability-consumed` (state-flip detected by the
  *                  responses-stream write-hook). A refusal does not close
- *                  it: the subject may still accept later. This is the
- *                  default.
+ *                  it: the subject may still accept later. The requester
+ *                  withdraws it before any accept with
+ *                  `consent/invalidate-link-cmc` (state 'invalidated').
+ *                  This is the default.
  *
  *   'open-link'  — multiple accepts allowed until the requester
  *                  explicitly invalidates the link (open-link
@@ -446,14 +448,22 @@ async function markCapabilityConsumed (params: {
   userId: string;
   capabilityId: string;
   accessId?: string | null;
-  deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string }> {
+  deps: { mall: MallLike; now?: () => number; logger?: { warn?: (msg: string, ctx?: unknown) => void } };
+}): Promise<{ ok: boolean; reason?: string; skipped?: string }> {
   const { userId, capabilityId, accessId, deps } = params;
   const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   if (cmcCd?.capability?.state === 'consumed') {
     return { ok: true }; // idempotent
+  }
+  // A withdrawal won the race (handleInvalidateLink flipped the link to
+  // `invalidated` between the accept's write-hook check and this consume): do
+  // NOT overwrite it with `consumed`. The requester deliberately closed the
+  // link; leaving it `invalidated` keeps the two sides' records coherent.
+  if (cmcCd?.capability?.state === 'invalidated') {
+    deps.logger?.warn?.('cmc/capability: not consuming a capability already invalidated by the requester', { capabilityId });
+    return { ok: true, skipped: 'invalidated' };
   }
   if (deps.mall.accesses.update == null) {
     return { ok: false, reason: 'mall-accesses-update-unavailable' };
@@ -519,24 +529,28 @@ function counterpartyKey (username: string, host: string): string {
 /**
  * Transition a capability access from `state: 'open'` to
  * `state: 'invalidated'`. Called by handleInvalidateLink when the
- * requester invalidates their own open-link capability. Idempotent —
+ * requester closes their own capability: an open-link to new joiners, or
+ * a single-use invite nobody accepted yet. Idempotent —
  * already-`'invalidated'` is a no-op success. Already-`'consumed'`
- * capabilities are also a no-op success (single-use links auto-consume
- * on first accept; nothing to invalidate).
+ * capabilities are also a no-op success (a single-use link was accepted;
+ * nothing to invalidate, the relationship is revoked instead).
  */
 async function markCapabilityInvalidated (params: {
   userId: string;
   capabilityId: string;
   accessId?: string | null;
   deps: { mall: MallLike; now?: () => number };
-}): Promise<{ ok: boolean; reason?: string }> {
+}): Promise<{ ok: boolean; reason?: string; priorState?: string }> {
   const { userId, capabilityId, accessId, deps } = params;
   const acc = await findCapabilityAccess({ userId, capabilityId, accessId, deps });
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   const state = cmcCd?.capability?.state;
   if (state === 'invalidated' || state === 'consumed') {
-    return { ok: true }; // idempotent / no-op
+    // No-op, but report the state read now: a consume that landed between the
+    // caller's own read and this one (handleInvalidateLink) must be surfaced as
+    // `alreadyConsumed`, not as a plain success.
+    return { ok: true, priorState: state };
   }
   if (deps.mall.accesses.update == null) {
     return { ok: false, reason: 'mall-accesses-update-unavailable' };
@@ -558,7 +572,7 @@ async function markCapabilityInvalidated (params: {
       },
     },
   });
-  return { ok: true };
+  return { ok: true, priorState: state as string | undefined };
 }
 
 async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<unknown> {

@@ -36,6 +36,124 @@
 - Tests: `[XIDS]` / `[XIDR]` (service, reconcile, refresh, mutation-checked), `[XIDN]` (platform
   layer), `[XIDA]` / `[XIDC]` / `[XIDLU]` / `[XIDG]` / `[XIDD]` (API, both engines; `[XIDG]`
   asserts the value is in no log line, response or audit record), `[2C50]` / `[2C51]` (two cores).
+## Cross-account messaging: receiver-owned fields of a revoke arrival
+
+- `components/cmc/src/constants.ts`: `REVOKE_RECEIVER_OWNED_FIELDS` (`backChannelAccessId`,
+  `dataGrantAccessId`, `revokedAccessIds`, `superseded`), the content fields of a
+  `consent/revoke-cmc` arrival only the receiving server writes.
+- `inboxWriteHook.ts`: a revoke written to `:_cmc:inbox` has those fields dropped before it is
+  stored (the other inbox types are untouched). `handleIncomingRevoke.ts`: `withoutReceiverOwned`
+  strips the same list on both recording paths, the enrichment (which previously stripped three of
+  them, so a sender's `superseded` survived on an enforced revoke) and the superseded early return
+  (which previously merged the marker onto the sender's content as is, so a sender's access ids and
+  revoked ids survived on a dropped notice). Tests: `[CIR29]`, `[CIR30]`, `[CI11]`.
+
+## Counterparty calls: destination guard
+
+- `business/src/outbound/peerFetch.ts` (new): `peerFetch(url, init, settings?)`, a fetch-shaped
+  client on `node:http(s)` with the webhook guard's `checkedLookup` pinned at connect, URL checks
+  first (scheme, credentials, IP literal, length), no redirects (3xx refused), a 1 MiB streamed
+  response cap; refusals are `PeerFetchRefusedError` (`code: 'EPEERREFUSED'`, `kind`, `host`).
+  The peer's reason phrase is not forwarded (`Response` refuses bytes node's parser accepts) and the
+  `Response` is built inside a try/catch, so a hostile answer cannot throw out of the listener.
+  `platformHostMatcher` trusts the platform's own host names (never IP literals), cached per config;
+  `describeCmcConfig` is the boot check (`config-validation.js` `checkCmcOutbound`);
+  `setPeerTransportForTests` is the seam `test-helpers` `initTests()` points at `globalThis.fetch`
+  (the api-server suites' shim). `webhooks/destination.ts` exports `checkedLookup`, `stripBrackets`,
+  `normaliseHostName`.
+- Wired as the `fetch` of every counterparty call: CMC dispatch and retry loop (`events.ts`), the
+  group-account member sweep and its dispatch (`cmcMemberSweep.ts`), the accesses update / delete
+  hooks and account deletion (`accesses.ts`, through `localFirstFetch`, whose in-process path is
+  unchanged), the delegation `postToPeer` calls (`delegations.ts`; the admin call to a platform core
+  stays as is) and the OAuth revocation notice (`oauth2.ts`).
+- `cmc`: `requestPeer` maps the refusal to `{ ok:false, reason:'refused', kind, host }`,
+  `isRetryableFailure` false; new error ids `cmc-handler-destination-refused` and
+  `cmc-capability-destination-refused` (non-retryable; `isRetryableReason` also refuses on a
+  `refused` detail); `handleAccept` (deliver: data-grant roll-back; refuse), `handleChat`,
+  `handleSystem` report the new id; `readOfferViaCapability` maps the refusal. `handleRevoke` never
+  queues a refused notice and the retry loop settles a refused delivery row as `failed-permanent`
+  at once; a member-access mint reports `detail.reason: 'refused'` with kind and host. Config:
+  `cmc.allowedPrivateHosts` (default `[]`; test and development configs allow loopback). Tests:
+  business `[PFR1]`..`[PFR11]`, cmc `[CO20]`..`[CO23]`, `[HC13]`, `[HA08b]`, `[HA08c]`, `[HR41]`,
+  `[RQ33]`, `[HMA16b]`, `[MR44b]`.
+
+## Cross-account messaging: reserved parents, single-use withdrawal, retry of server-authored accepts
+
+- `components/cmc/src/hooks.ts`: `createStreamCreateReservedRootHook` also checks `parentId`
+  (`isReservedParentId`: a `:_cmc:*` id other than `:_cmc:apps` and the user-creatable region).
+  Same `parentId` check in `components/delegation/src/hooks.ts` on the whole `:_delegation:*`
+  namespace. The create guards are wired first in the `streams.create` chain. Tests: `[CRPP1]`,
+  `[CRPP2]`, `[DSC05]`, `[CNRP1]`, `[CNRP4]` to `[CNRP6]`.
+- Store-prefix canonicalisation. `components/cmc/src/constants.ts` and
+  `components/delegation/src/constants.ts` gained `canonicalLocalStreamId` (strips a leading
+  `:local:` store prefix, which the mall resolves to the same local stream). Every classification
+  predicate (`isCmcStreamId` / `isCmcInternalStreamId` / `isUserCreatableStreamId` / `getAppCode`
+  and the delegation twins) canonicalises first, so the reserved and internal write/read guards,
+  `isReservedParentId`, the member-access permission check (`handleMemberAccess.ts`
+  `resolvesToStoreRoot` also rejects the `:local:` root alias) and the scope-update partition
+  (`handleSystem.ts` `isCmcMachinery`) judge the stream the id resolves to.
+  `api-server/src/methods/streams.ts` normalises `id` / `parentId` / `update.parentId`, and
+  `events.ts` `normalizeStreamIdAndStreamIds` normalises event `streamIds`, once before the guard
+  chains (the mall canonicalises the stored value the same way, so no stored value changes).
+  Tests: `[CNRP7]`, `[CNM2A]` to `[CNM2C]`, `[CRPP1]`.
+- Stream moves. The move checks (a move into a plugin region, and a move of a plugin-managed /
+  `:_delegation:*` stream) run in `api-server/src/methods/streams.ts` `applyPrerequisitesForUpdate`,
+  guarded by the existing `parentChanges`, so a rename that repeats the current `parentId` is not
+  treated as a move; the delegation half is gated on `delegation:active`. The
+  `createStreamUpdateReservedRootHook` of both plugins now refuses only trashing a plugin-managed
+  stream (`update.trashed === true`). Tests: `[CSU01]`, `[CSU02]`, `[DSU01]`, `[DSU02]`, `[CNRP2]`,
+  `[CNRP3]`, `[CNRP6]`.
+- Account-store aliases. `mall/src/helpers/storeDataUtils.ts` gained `canonicalStreamId` (the one
+  spelling a guard compares: `:local:<id>` -> `<id>`, `:local:` -> `*`, nested prefixes resolved
+  again, `:account::system:<f>` -> `:system:<f>`, a bare `:account:<f>` left as is, other stores
+  normalised to `:store:item`). `api-server/src/methods/events.ts`: new `canonicalizeEventStreamIds`
+  first in the `events.create` and `events.update` chains (before the shared-secrets, emails,
+  plugin and account guards); `normalizeStreamIdAndStreamIds` canonicalises again (belt) and refuses
+  an id routing to the account store that is not a known account stream id
+  (`unknown-referenced-resource`); `blockAccountEventDeletion` judges the store the id routes to.
+  `streams.ts` `canonicalizeLocalStreamIds` uses the same canonicaliser (a `:local:` parent is the
+  root, `null`). `accesses.ts` `validateAccountStreamPermissions` rewrites each `permission.streamId`
+  to its canonical form before the checks, and `isUnknownSystemStream` also catches any id routing
+  to the account store. The plugin-side `canonicalLocalStreamId` helpers stay as the plugins' belt.
+  Tests: `[ASA1]` to `[ASA5]` (`account-streams-alias.test.js`).
+  Permission ids are canonicalised first in the `accesses.create` and `accesses.update` chains
+  (`canonicalizePermissionStreamIds` / `...ForUpdate`, right after the params validation, before the
+  plugin forge-prevention hooks and `applyPrerequisitesForCreation`'s `canCreateAccess`); the
+  rewrite in `validateAccountStreamPermissions` stays as the belt. `AccessLogic._getStreamPermissionLevel`
+  (so every `can*` check, the plugin callers of `canCreateAccess` included) and
+  `isStreamForbiddenForReading` judge `storeDataUtils.canonicalStreamId(id)` and key the level cache
+  on it; the permission map is still built from the stored ids as written, so a stored alias stays
+  inert. `canonicalStreamId` leaves an id with no closing store marker (`:az&`) untouched for the
+  callers' format checks. `handleIncomingAccept.ts`: the pre-mint re-read refuses
+  (`cmc-capability-invalidated`) when the capability access found a moment earlier is gone; a
+  storage error on the re-read still continues on the write hook's check. Tests: `[ASA6]`, `[ASA7]`,
+  `[IA24]`, `[IA25]`.
+- `handleIncomingAccept.ts`: the capability access is read again from storage immediately before
+  the mint (not the copy loaded earlier), so a withdrawal completed meanwhile refuses the mint.
+- Retry loop authorship. `components/cmc/src/retryQueue.ts` `runRetryLoop` dispatches only a record
+  the plugin wrote (`isForeignRetryRecord`: positive evidence of a non-plugin write is a
+  `createdBy` whose access id is not `system`, a `type` other than `cmc-internal/retry-cmc`, or a
+  `streamIds` not including the retries stream); a foreign record is retired `failed-permanent`
+  with `cmc-retry-foreign-record` (listed non-retryable) and never dispatched. A production record
+  always carries these fields; an absent field (unit fakes only) is not evidence. Tests: `[RQ32]`,
+  `[CNM2B]`.
+- Accept vs. withdrawal race (`capability.ts`, `handleInvalidateLink.ts`, `handleIncomingAccept.ts`):
+  `markCapabilityInvalidated` returns `priorState`; `handleInvalidateLink` answers
+  `alreadyConsumed` when the state was already `consumed`; `markCapabilityConsumed` does not
+  overwrite an `invalidated` link; `handleIncomingAccept` re-reads the capability state before
+  minting and refuses with `cmc-capability-invalidated` if it flipped. Tests: `[CN102]`.
+- `components/cmc/src/inviteState.ts`: single-use transition `pending | delivered | refused ->
+  invalidated`. `handleInvalidateLink.ts`: the single-use no-op is now for a consumed capability
+  only; an open one flips through `markCapabilityInvalidated` and stamps the invite, like an
+  open-link; the access and its permissions are kept so the later accept gets the typed refusal.
+  Tests: `[IS13]`, `[CMCIL-C]`, `[CMCIL-C2]`, `[CN100]` (the issue's repro with an app token),
+  `[CN101]`, `[CN103]` (the offer stays readable through a withdrawn link).
+- `components/cmc/src/retryQueue.ts` `processRetryEvent`: a trigger record of a
+  `consent/accept-cmc` whose `originalCreatedBy` access id is `system`, or whose
+  `originalStreamIds` holds `:_cmc:inbox`, is marked `failed-permanent` with
+  `cmc-retry-system-authored` (listed non-retryable, with `cmc-retry-stale`) and never
+  dispatched; defence in depth, no path writes such a record today. Tests: `[RQ30]`, `[RQ31]`;
+  the retry fixtures now put a received accept on the capability's responses stream.
 
 ## Stream permission walk
 

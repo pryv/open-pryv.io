@@ -59,6 +59,9 @@ const CmcErrorIds = {
   CAPABILITY_ALREADY_ACCEPTED_BY_YOU: 'cmc-capability-already-accepted-by-you',
   // Capability fetch timed out (network / peer down).
   CAPABILITY_TIMEOUT: 'cmc-capability-timeout',
+  // The capability URL may not be called (private or reserved address,
+  // http, redirect, oversized answer) — permanent.
+  CAPABILITY_DESTINATION_REFUSED: 'cmc-capability-destination-refused',
   // Capability resolved but the offer stream was empty — should not happen
   // in normal flow (the plugin pre-populates the offer at mint), so
   // surface a distinct id for ops.
@@ -154,6 +157,9 @@ const CmcErrorIds = {
   HANDLER_DELIVERY_REJECTED: 'cmc-handler-delivery-rejected',
   // Peer returned 5xx, a timeout, or a network error — retryable.
   HANDLER_DELIVERY_FAILED: 'cmc-handler-delivery-failed',
+  // The peer's apiEndpoint may not be called (private or reserved address,
+  // http, redirect, oversized answer) — permanent.
+  HANDLER_DESTINATION_REFUSED: 'cmc-handler-destination-refused',
 
   // --- Chat / system / revoke routing (per-handler) ---
   // The trigger stream-id is shaped right for the family (chats/

@@ -26,6 +26,10 @@ const require = createRequire(import.meta.url);
  *   - On success, stamp `content.from` server-side from the access's
  *     stored counterparty identity (`clientData.cmc.counterparty`), so
  *     senders can't forge the from-field.
+ *   - On a revoke, drop the fields only the receiving server writes
+ *     (`REVOKE_RECEIVER_OWNED_FIELDS`: its own access ids, the ids it tore
+ *     down, the `superseded` marker). The handler sets them from its own
+ *     decision; a sender's value never reaches the stored arrival.
  *
  * The plugin's outbound HTTPS deliveries call this server-internally
  * via the counterparty access token — that's how chat / system / revoke
@@ -95,8 +99,15 @@ function createInboxWriteHook (deps: Deps): Middleware {
       ));
     }
 
+    const content: Record<string, unknown> = { ...(event.content || {}) };
+    // A revoke's receiver-owned fields describe THIS account (what it holds
+    // for the relationship, what it tore down, whether it dropped the notice
+    // as stale): the handler writes them, a sender's value is dropped here.
+    if (event.type === C.ET_REVOKE) {
+      for (const field of C.REVOKE_RECEIVER_OWNED_FIELDS) delete content[field];
+    }
     event.content = {
-      ...(event.content || {}),
+      ...content,
       from: { username: counterparty.username, host: counterparty.host },
     };
     context.newEvent = event;

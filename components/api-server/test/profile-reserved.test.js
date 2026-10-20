@@ -104,6 +104,8 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
   });
 
   it('[PRS4] an app access named "private" or "public" reaches no profile through /profile/app', async function () {
+    // Compared with what is stored before, so the test does not depend on [PRS3] having run.
+    const languageBefore = (await storedPrivate()).language;
     for (const token of [privateAppToken, publicAppToken]) {
       const get = await coreRequest.get(`/${username}/profile/app`).set('Authorization', token);
       assert.strictEqual(get.status, 400, JSON.stringify(get.body));
@@ -111,6 +113,6 @@ describe('[PRSV] profile: reserved state and reserved ids', function () {
       const put = await coreRequest.put(`/${username}/profile/app`).set('Authorization', token).send({ language: 'xx' });
       assert.strictEqual(put.status, 400, JSON.stringify(put.body));
     }
-    assert.strictEqual((await storedPrivate()).language, 'it', 'the private profile was not written through /profile/app');
+    assert.strictEqual((await storedPrivate()).language, languageBefore, 'the private profile was not written through /profile/app');
   });
 });

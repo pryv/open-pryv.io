@@ -987,6 +987,18 @@ delegation:
 
 # Cross-account messaging and consent (the `:_cmc:` namespace plugin).
 cmc:
+  # Calls to a counterparty (consent deliveries, chat, revocations, delegation
+  # and OAuth notices) go to URLs the other side supplies. Such a call is
+  # refused when the URL's host is, or resolves to, a loopback, private,
+  # link-local or otherwise reserved address (the same rules as webhooks),
+  # uses http (unless cluster.allowInsecurePeerUrl), answers with a redirect or
+  # with more than 1 MiB; a refused delivery is not retried. This platform's
+  # own host names (core.url's host, dns.domain and below, the service.api
+  # host) are always allowed; an IP literal never is by that rule, a private
+  # core.url literal included. List here that literal and the other peers on a
+  # private network that may be called: host names (exact match), IPs or CIDR
+  # ranges, e.g. ['peer.internal', '10.1.2.0/24'].
+  allowedPrivateHosts: []
   # Durable retry of failed deliveries (one worker re-dispatches from the
   # per-user `:_cmc:_internal:retries` queue): a consent revoke whose
   # counterparty could not be reached, an offboarding sweep that left member

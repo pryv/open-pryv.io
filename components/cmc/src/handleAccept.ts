@@ -531,8 +531,10 @@ async function handleAccept (params: {
   if (!delivery?.ok) {
     // 5. 4xx (non-retryable) → roll back the data-grant access so we don't
     // leak a half-formed access pair. 5xx / network → leave the access
-    // in place; the outbound retry queue will re-attempt delivery.
-    if (delivery?.response?.reason === 'http-4xx') {
+    // in place; the outbound retry queue will re-attempt delivery. A
+    // refused destination is as permanent as a 4xx: same roll-back.
+    const refused = delivery?.response?.reason === 'refused';
+    if (delivery?.response?.reason === 'http-4xx' || refused) {
       try {
         if (mall.accesses.delete != null) {
           await mall.accesses.delete(userId, { id: dataGrantAccess.id });
@@ -542,16 +544,20 @@ async function handleAccept (params: {
         // will catch the orphan via the standard "access without paired
         // back-channel" pruning script (not shipped yet).
       }
+      if (refused) {
+        const r = (delivery?.response ?? {}) as { kind?: string; host?: string };
+        return { ok: false, reason: CmcErrorIds.HANDLER_DESTINATION_REFUSED, detail: { status: 0, reason: 'refused', kind: r.kind, host: r.host } };
+      }
       // A refusal by the capability itself (consumed / invalidated /
       // already accepted by you) is the outcome the accepter needs: report
       // its typed id as the reason. detail keeps the peer's body either way.
-      const peerId = (delivery.response?.body as { error?: { data?: { id?: unknown } } } | undefined)?.error?.data?.id;
+      const peerId = (delivery?.response?.body as { error?: { data?: { id?: unknown } } } | undefined)?.error?.data?.id;
       return {
         ok: false,
         reason: typeof peerId === 'string' && CAPABILITY_REFUSAL_IDS.has(peerId)
           ? peerId
           : CmcErrorIds.HANDLER_DELIVERY_REJECTED,
-        detail: { status: delivery.response?.status, body: delivery.response?.body },
+        detail: { status: delivery?.response?.status, body: delivery?.response?.body },
       };
     }
     return {
@@ -898,10 +904,14 @@ async function handleRefuse (params: {
   }
 
   if (!delivery?.ok) {
+    const refused = delivery?.response?.reason === 'refused';
+    const r = (delivery?.response ?? {}) as { kind?: string; host?: string };
     return {
       ok: false,
-      reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
+      reason: refused ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
+      detail: refused
+        ? { status: delivery?.response?.status, reason: 'refused', kind: r.kind, host: r.host }
+        : { status: delivery?.response?.status, reason: delivery?.response?.reason },
     };
   }
 

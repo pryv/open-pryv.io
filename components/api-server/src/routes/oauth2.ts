@@ -40,6 +40,7 @@ const oauth2 = require('oauth2');
 const delegation = require('delegation');
 const { getLogger } = require('@pryv/boiler');
 const { MethodContext } = require('business');
+const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const storages = require('storages');
 // Use @paralleldrive/cuid2 (a production dependency) — the codebase migrated off
 // the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
@@ -740,7 +741,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           apiEndpoint,
           path: 'events',
           body: { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: revokeContent },
-          deps: { fetch: (u: string, i: unknown) => globalThis.fetch(u, i as RequestInit), timeoutMs: 15000, logger },
+          deps: { fetch: peerFetch, timeoutMs: 15000, logger },
         });
         if (delivery != null && delivery.ok === false) {
           logger.warn('oauth2.revokeChain: CMC revoke notify not delivered', delivery);

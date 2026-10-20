@@ -234,10 +234,11 @@ async function handleSystemEvent (params: {
   }
 
   if (!delivery?.ok) {
+    const peerReason = (delivery as { reason?: string } | undefined)?.reason;
     return {
       ok: false,
-      reason: 'cmc-handler-delivery-failed',
-      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason: (delivery as { reason?: string } | undefined)?.reason },
+      reason: peerReason === 'refused' ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
+      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason },
     };
   }
 
@@ -341,7 +342,7 @@ type ScopeUpdateTarget =
   | { ok: false; reason: string; detail?: unknown };
 
 const isCmcMachinery = (p: Record<string, unknown>): boolean =>
-  typeof p?.streamId === 'string' && p.streamId.startsWith(':_cmc:');
+  typeof p?.streamId === 'string' && C.isCmcStreamId(p.streamId);
 
 function firstCollectorStream (streamIds: unknown): string | null {
   if (!Array.isArray(streamIds)) return null;

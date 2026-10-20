@@ -11,13 +11,13 @@ const require = createRequire(import.meta.url);
  * CMC plugin — handleInvalidateLink (capability lifecycle).
  *
  * [CMCIL] covers the requester-side `consent/invalidate-link-cmc`
- * handler: open-link state flip + idempotency + single-use no-op +
- * missing/unknown capabilityId surfaces.
+ * handler: open-link state flip + idempotency + single-use withdrawal of an
+ * open link (consumed: no-op) + missing/unknown capabilityId surfaces.
  */
 
 const assert = require('node:assert/strict');
 const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
-const { mintCapability } = require('../src/capability.ts');
+const { mintCapability, markCapabilityConsumed } = require('../src/capability.ts');
 const { handleInvalidateLink } = require('../src/handleInvalidateLink.ts');
 
 function fakeMall () {
@@ -156,28 +156,72 @@ describe('[CMCIL] cmc/handleInvalidateLink', () => {
     assert.equal(result.reason, 'capability-access-not-found');
   });
 
-  it('[CMCIL-C] single-use capability → returns { ok:true, alreadyConsumed:true }', async () => {
+  it('[CMCIL-C] an open single-use capability is withdrawn: state=invalidated, the invite marked invalidated, the access kept', async () => {
     const mall = fakeMall();
-    await mintCapability({
+    const invite = { ...SINGLE_USE_TRIGGER, streamIds: [APP_STREAM + ':study-1'], content: { ...SINGLE_USE_TRIGGER.content, status: 'delivered' } };
+    mall.events.getOne = async (userId, id) => (id === invite.id ? invite : null);
+    mall.events.update = async (userId, event) => { Object.assign(invite, event); return event; };
+    const r = await mintCapability({
       userId: 'u1',
       triggerEvent: SINGLE_USE_TRIGGER,
       deps: { mall, idGen: () => 'cap-il-c', now: () => 1000 },
     });
-    const updatesBefore = mall.calls.accessesUpdated.length;
     const result = await handleInvalidateLink({
       userId: 'u1',
       triggerEvent: {
         id: 'evt-il-c',
         type: 'consent/invalidate-link-cmc',
         streamIds: [':_cmc:apps:my-app'],
-        content: { capabilityId: 'cap-il-c' },
+        content: { capabilityId: 'cap-il-c', reason: { en: 'sent to the wrong person' } },
+      },
+      deps: { mall },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.capabilityId, 'cap-il-c');
+    assert.equal('alreadyConsumed' in result, false);
+    const acc = mall.accessesById.get(r.accessId);
+    assert.equal(acc.clientData.cmc.capability.mode, 'single-use');
+    assert.equal(acc.clientData.cmc.capability.state, 'invalidated');
+    assert.deepEqual(acc.permissions, [
+      { streamId: ':_cmc:_internal:offer:cap-il-c', level: 'read' },
+      { streamId: ':_cmc:_internal:responses:cap-il-c', level: 'create-only' },
+    ], 'the access is kept as minted, for the typed refusal of a later accept');
+    assert.equal(invite.content.status, 'invalidated');
+    assert.equal(typeof invite.content.invalidatedAt, 'number');
+    assert.deepEqual(invite.content.reason, { en: 'sent to the wrong person' });
+    // Idempotent: a second withdrawal is an ok no-op.
+    const again = await handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: { id: 'evt-il-c2', type: 'consent/invalidate-link-cmc', streamIds: [':_cmc:apps:my-app'], content: { capabilityId: 'cap-il-c' } },
+      deps: { mall },
+    });
+    assert.equal(again.ok, true);
+    assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'invalidated');
+  });
+
+  it('[CMCIL-C2] a consumed single-use capability (accepted) → { ok:true, alreadyConsumed:true }, nothing written', async () => {
+    const mall = fakeMall();
+    const r = await mintCapability({
+      userId: 'u1',
+      triggerEvent: SINGLE_USE_TRIGGER,
+      deps: { mall, idGen: () => 'cap-il-c2', now: () => 1000 },
+    });
+    await markCapabilityConsumed({ userId: 'u1', capabilityId: 'cap-il-c2', deps: { mall } });
+    const updatesBefore = mall.calls.accessesUpdated.length;
+    const result = await handleInvalidateLink({
+      userId: 'u1',
+      triggerEvent: {
+        id: 'evt-il-c2',
+        type: 'consent/invalidate-link-cmc',
+        streamIds: [':_cmc:apps:my-app'],
+        content: { capabilityId: 'cap-il-c2' },
       },
       deps: { mall },
     });
     assert.equal(result.ok, true);
     assert.equal(result.alreadyConsumed, true);
-    // No mutation on single-use access.
     assert.equal(mall.calls.accessesUpdated.length, updatesBefore);
+    assert.equal(mall.accessesById.get(r.accessId).clientData.cmc.capability.state, 'consumed');
   });
 
   it('[CMCIL-D] missing capabilityId → returns cmc-handler-missing-capability-id', async () => {

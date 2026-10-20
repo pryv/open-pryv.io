@@ -84,6 +84,9 @@ webhooks:
 # Local multi-core tests run their cores on http://127.0.0.1.
 cluster:
   allowInsecurePeerUrl: true
+# Test counterparties (consent, delegation, OAuth) answer on the loopback interface.
+cmc:
+  allowedPrivateHosts: ['127.0.0.1', 'localhost', '::1']
 custom:
   systemStreams:
     account:

@@ -206,6 +206,19 @@ describe('[CMCHC] cmc/handleChat', () => {
       assert.equal(r.reason, 'cmc-handler-delivery-failed');
       assert.equal(r.detail.status, 503);
     });
+
+    it('[HC13] surfaces destination-refused when the peer endpoint may not be called', async () => {
+      const refusal = Object.assign(new Error('peer call refused'), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const r = await handleChat({
+        userId: 'u1',
+        triggerEvent: CHAT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch: () => Promise.reject(refusal) },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-destination-refused');
+      assert.equal(r.detail.peerReason, 'refused');
+    });
   });
 
   describe('[CMCHC-FEAT] features gating', () => {

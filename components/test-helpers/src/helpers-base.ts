@@ -108,6 +108,10 @@ async function initTests () {
   _global.withInjectedConfig = withInjectedConfig;
   _global.injectTestConfigSnapshot = injectTestConfigSnapshot;
   await userLocalDirectory.init();
+  // Counterparty calls (consent, delegation, OAuth notices): after their URL
+  // checks, go through `globalThis.fetch`, which the suites replace with an
+  // in-process shim; the guarded client has its own unit tests.
+  require('business/src/outbound/peerFetch.ts').setPeerTransportForTests((url: string, init: RequestInit) => globalThis.fetch(url, init));
 
   if (options.beforeInitTests) {
     await options.beforeInitTests();

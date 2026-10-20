@@ -20,6 +20,38 @@
   with `Retry-After`. The blinded value is base64url, 16 to 64 bytes, never echoed in an error
   and never logged. Deleting an account releases its ids at once. The sign-in and registration
   fields (hint and forced modes) follow in a later release.
+- Cross-account messaging: on a `consent/revoke-cmc` arriving in `:_cmc:inbox`, the `superseded`
+  flag and the other fields the receiving server owns (`backChannelAccessId`, `dataGrantAccessId`,
+  `revokedAccessIds`) are now always written by that server from its own decision, never taken
+  from the sender. A value the sender puts there is dropped at the inbox write; a revoke that was
+  acted upon is stored without `superseded`, and a notice the receiver dropped as stale carries
+  `superseded` alone (no access ids, no revoked ids). Before, a sender could mark its own revoke
+  `superseded`, and apps then presented a torn-down relationship as still live.
+
+## 2.0.0-rc.56 - 2026-10-16
+
+> **Upgrade advice for operators.** This release closes authorization gaps in the cross-account
+> messaging (CMC) and account-delegation namespaces and in the account-field checks. Upgrading is
+> the fix, and we recommend it for every deployment.
+>
+> If you run **2.0.0-rc.53, rc.54 or rc.55** and cannot upgrade right away, set
+> `cmc.retryLoop.enabled: false` in the core's configuration and restart until you do. This
+> stops the retry of failed consent deliveries and the sweep of expired group memberships: a
+> delivery that fails while the setting is off is not retried later, and member accesses then
+> end at their own expiry. Set it back to its default (`true`) after the upgrade.
+>
+> This setting covers only the retry-queue part. The other fixes in this release (the
+> reserved-region and account-field checks, the counterparty destination guard, stream moves) have
+> no configuration workaround: they need the upgrade.
+
+Security release. Every guard now judges the canonical spelling of a store-prefixed stream id
+(plugin-managed CMC and delegation regions, account fields, access permissions); the CMC retry
+worker processes only records the server wrote; calls to a counterparty are refused when they
+would reach a private or reserved address; moving a stream needs manage rights on its whole
+subtree. Also: a requester can withdraw an open single-use invite (issue 160), usernames and
+platform DNS names share one namespace, and access deletion records can be purged after a
+retention period.
+
 - Access deletion records (operators): new per-core setting
   `accesses.deletionRecords.retentionDays` (default 0 = kept until the account is deleted). Above 0,
   the master removes, once a day, the deletion records of accesses deleted more than that many days
@@ -48,6 +80,69 @@
   unchanged. Same rule as the deletion of a trashed stream.
 - `streams.update`: a `parentId` naming one of the stream's descendants is refused with
   `400 invalid-operation` (it was accepted and left the streams unreachable from the root).
+- **Security: calls to a counterparty are refused when they would reach a private address.**
+  Consent (CMC) deliveries, chat, revocations, scope updates, the capability read of an accept,
+  delegation notices and OAuth revocation notices go to URLs the other side supplies. Such a call
+  is now refused, before any connection, when the URL's host is or resolves to a loopback,
+  private, link-local or otherwise reserved address (the address rules of webhooks, checked again
+  at connect time), uses `http:` (unless `cluster.allowInsecurePeerUrl`) or carries credentials;
+  it is also refused when the answer is a redirect or larger than 1 MiB. This platform's own host
+  names (the host of `core.url`, `dns.domain` and its subdomains, the `service.api` host) are always
+  allowed; an IP literal is not trusted that way, so a private `core.url` literal and other peers on
+  a private network are listed in the new `cmc.allowedPrivateHosts` (host names, IPs or CIDR
+  ranges, same grammar as `webhooks.allowedPrivateHosts`; checked at boot). As for webhooks, a peer
+  name is refused when any of its addresses is reserved (a dual-stack name that also publishes a
+  unique-local or link-local IPv6 address included). A refused delivery is
+  permanent: the trigger event reports `cmc-handler-destination-refused` (or
+  `cmc-capability-destination-refused` when an accept's offer read is refused) and it is not
+  retried; an accept whose delivery is refused removes the data grant it had created, as for a
+  rejected one.
+- **Security (cross-account messaging, account delegation).** The plugin-managed regions of the
+  `:_cmc:` and `:_delegation:` namespaces are now closed to user writes by every supported form of
+  a stream id, including the store-prefixed form (`:local:<id>`, which addresses the same stream as
+  `<id>`). A `streams.create` whose `parentId`, or a `streams.update` whose new `parentId`, is
+  inside `:_cmc:` other than `:_cmc:apps` and the user-created streams under it (so `:_cmc:`,
+  `:_cmc:inbox`, the `:_cmc:_internal` subtree, the plugin-owned `chats` / `collectors` segments),
+  or inside `:_delegation:*`, is refused with `400 invalid-operation` (`cmc-reserved-stream` /
+  `delegation-reserved-stream`); a plugin-managed stream cannot be moved out of its place, and
+  cannot be trashed; and an `events.create` into the plugin-internal subtree is refused as before.
+  This holds for every token, the owner's personal token included. Until now a store-prefixed id
+  was judged as a different string and slipped past these checks, so a stream could be placed
+  inside the plugin's internal area (whose events the plugin consumes) or a plugin stream moved
+  under a parent an app grant reaches. A rename that keeps the current `parentId`, and all
+  `:_cmc:apps:*` creation and moves within it, are unchanged.
+- **Security (account fields).** The account-field guards (the primary email, which only
+  `account.update` writes; the non-editable and hidden fields; the level caps on account-stream
+  permissions) now judge the canonical spelling of a stream id, whatever store-prefixed spelling a
+  request uses, on `events.create`, `events.update`, `events.delete`, `accesses.create` and
+  `accesses.update`; an id that routes to the account store without naming a known account field
+  is refused as an unknown stream, and a permission granted through an alias is stored under the
+  canonical id. Until now an alias was judged as a different string, so a request could reach an
+  account field around those guards; in particular an access holding `contribute` on the email
+  field could change the account's primary email (the password-reset address) through the events
+  API. On `accesses.create` and `accesses.update`, a permission naming an account field through a
+  store-prefixed id is judged as that field from the first check on, the creator's own permission
+  check included: an app holding only a `*` grant on the regular streams cannot hand out a
+  permission on an account field through such an id (`403 forbidden`), while an app holding the
+  field itself creates the child as before. Requests that use the canonical ids are unchanged.
+- **Security (cross-account messaging).** The outbound retry worker now processes only records the
+  server itself wrote (author, stream and type all checked); any other event present in the
+  internal retry stream is retired without being processed. Until now a record crafted there could
+  have the worker act on attacker-chosen content. Combined with the write refusal above, which
+  stops such a record being created, and with the existing refusal of a retried accept the server
+  authored.
+- Cross-account messaging: `consent/invalidate-link-cmc` now withdraws a **single-use** invite
+  nobody accepted yet (issue 160): the capability flips to `invalidated`, the `consent/request-cmc`
+  trigger's `content.status` becomes `invalidated` (`invalidatedAt`, `reason`; from `pending`,
+  `delivered` or `refused`), and the patient's later accept fails with `cmc-capability-invalidated`
+  as for an open-link. The app that created the invite does this with its own token, on the
+  invite's stream or an ancestor of it. On a consumed (accepted) single-use capability it stays a
+  no-op success. The invite's offer text stays readable through the capability link until it
+  expires (the link is kept so the later accept gets the typed error), so set a short `expiresAt`
+  on sensitive invites. A withdrawal that races an accept wins: the accept is refused with
+  `cmc-capability-invalidated` and no relationship is left. Until now every single-use invite was a
+  no-op, so a link sent to the wrong person stayed usable until it expired. Clients that enumerate
+  invite statuses: `invalidated` is no longer open-link only.
 
 ## 2.0.0-rc.55 - 2026-10-15
 

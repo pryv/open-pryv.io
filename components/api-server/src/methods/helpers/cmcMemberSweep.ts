@@ -8,6 +8,7 @@
 import * as cmc from 'cmc';
 import { getConfig, getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { peerFetch } from 'business/src/outbound/peerFetch.ts';
 import { buildMallForCmc } from './cmcMall.ts';
 
 import type { MemberSweep } from 'cmc/src/memberSweep.ts';
@@ -46,8 +47,9 @@ async function cmcSelfIdentityFor (userId: string): Promise<{ username: string; 
  * The group-account sweep (cmc/src/memberSweep.ts), built once: it dispatches
  * the server-written offboarding records through the CMC dispatch with the
  * same deps as a trigger written by a client (minus the request-bound ones),
- * and reaches patient cores with the lazily resolved global fetch so an
- * in-process test shim installed after registration is honoured.
+ * and reaches patient cores through the guarded peer fetch (their endpoints
+ * come from the counterparty; the test transport seam routes it to the
+ * in-process shim).
  */
 let cached: MemberSweep | null = null;
 
@@ -55,11 +57,10 @@ async function buildMemberSweep (): Promise<MemberSweep> {
   if (cached != null) return cached;
   const mall = await buildMallForCmc();
   const logger = getLogger('cmc:member-sweep');
-  const fetch = (url: string, init?: RequestInit) => globalThis.fetch(url, init);
   const config = await getConfig();
   const dispatchDeps = {
     mall,
-    fetch,
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:dispatch'),
     selfIdentityFor: cmcSelfIdentityFor,
@@ -68,7 +69,7 @@ async function buildMemberSweep (): Promise<MemberSweep> {
   };
   const built: MemberSweep = cmc.createMemberSweep({
     mall,
-    fetch,
+    fetch: peerFetch,
     timeoutMs: 15_000,
     logger,
     dispatch: cmc.dispatch.dispatch,

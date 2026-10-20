@@ -85,6 +85,27 @@ describe('[CMCIS] cmc/inviteState', () => {
     assert.equal(mall.get('inv-1').content.status, 'invalidated');
   });
 
+  it('[IS13] single-use pending or refused -> invalidated writes (the requester withdrew the link); accepted does not', async () => {
+    for (const from of [undefined, 'pending', 'delivered', 'refused']) {
+      assert.equal(isTransitionAllowed(undefined, from, 'invalidated'), true, String(from));
+      assert.equal(isTransitionAllowed('single-use', from, 'invalidated'), true, String(from));
+    }
+    for (const from of ['accepted', 'revoked', 'invalidated']) {
+      assert.equal(isTransitionAllowed(undefined, from, 'invalidated'), false, from);
+    }
+    for (const to of ['accepted', 'refused', 'revoked']) {
+      assert.equal(isTransitionAllowed(undefined, 'invalidated', to), false, 'invalidated -> ' + to);
+    }
+    const mall = fakeMall(invite({ status: 'refused', refusedBy: { username: 'bob', host: 'h' }, capability: { mode: 'single-use' } }));
+    const res = await stampInvite({ userId: 'u1', inviteEventId: 'inv-1', transition: 'invalidated', fields: { invalidatedAt: 42 }, deps: { mall } });
+    assert.equal(res.written, true);
+    assert.equal(mall.get('inv-1').content.status, 'invalidated');
+    assert.equal(mall.get('inv-1').content.invalidatedAt, 42);
+    const late = await stampInvite({ userId: 'u1', inviteEventId: 'inv-1', transition: 'accepted', deps: { mall } });
+    assert.equal(late.skipped, 'transition-not-allowed');
+    assert.equal(mall.get('inv-1').content.status, 'invalidated');
+  });
+
   it('[IS04] a final state is not overturned by a late write', async () => {
     const cases = [
       [undefined, 'revoked', 'accepted'],

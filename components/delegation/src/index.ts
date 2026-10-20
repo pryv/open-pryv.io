@@ -71,6 +71,7 @@ export const {
   createAccessesUpdateGuardHook,
   createAccessesUpdateMarkerPreserveHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEventsWriteGuardHook,
   createEventsDeleteGuardHook,

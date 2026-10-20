@@ -381,6 +381,37 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(mall.calls.accessesDeleted.length, 0);
     });
 
+    it('[HA08b] rolls back the data-grant when the accept destination is refused (permanent)', async () => {
+      const mall = fakeMall();
+      const refusal = Object.assign(new Error('peer call refused'), { code: 'EPEERREFUSED', kind: 'redirect', host: 'peer.example.com' });
+      let call = 0;
+      const fetch = () => (++call === 1
+        ? Promise.resolve({ status: 200, ok: true, async json () { return { events: [VALID_OFFER] }; }, async text () { return JSON.stringify({ events: [VALID_OFFER] }); } })
+        : Promise.reject(refusal));
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-destination-refused');
+      assert.equal(r.detail.kind, 'redirect');
+      assert.equal(mall.calls.accessesDeleted.length, 1);
+    });
+
+    it('[HA08c] reports capability-destination-refused when the offer read is refused', async () => {
+      const refusal = Object.assign(new Error('peer call refused'), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall: fakeMall(), fetch: () => Promise.reject(refusal) },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-capability-destination-refused');
+    });
+
     it('[HA09] surfaces mall.accesses.create failure', async () => {
       const mall = fakeMall({ failAccessCreate: true });
       const { fetch } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }]);

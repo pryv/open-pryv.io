@@ -22,6 +22,8 @@ const assert = require('node:assert/strict');
 const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createStreamUpdateReservedRootHook,
+  isReservedParentId,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
   createEnsureAcceptScopeHook,
@@ -268,6 +270,92 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const err = await runMiddleware(mw, {}, {}, {});
       assert.equal(err, undefined);
+    });
+
+    it('[CRPP1] rejects a parentId inside a plugin-managed region, whatever the new id', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const parentId of [
+        ':_cmc:',
+        ':_cmc:inbox',
+        ':_cmc:_internal',
+        ':_cmc:_internal:retries',
+        ':_cmc:_internal:members',
+        ':_cmc:_internal:offer:abc',
+        ':_cmc:apps:my-app:chats',
+        ':_cmc:apps:my-app:study-A:collectors:bob--other-org',
+      ]) {
+        for (const params of [{ id: 'plain', parentId }, { parentId }, { update: { id: 'plain', parentId } }]) {
+          const err = await runMiddleware(mw, {}, params, {});
+          assert.ok(err instanceof Error, 'expected reject under ' + parentId + ' for ' + JSON.stringify(params));
+          assert.equal(err.details.id, 'cmc-reserved-stream');
+          assert.equal(err.details.parentId, parentId);
+        }
+      }
+      assert.ok(isReservedParentId(':_cmc:inbox'));
+      assert.equal(isReservedParentId(':_cmc:apps'), false);
+      assert.equal(isReservedParentId(':_cmc:apps:my-app'), false);
+      assert.equal(isReservedParentId('fertility'), false);
+      assert.equal(isReservedParentId(null), false);
+      // The :local: store-prefix alias resolves to the same stream, so it is
+      // judged the same way.
+      assert.ok(isReservedParentId(':local::_cmc:inbox'));
+      assert.ok(isReservedParentId(':local::_cmc:_internal:retries'));
+      assert.equal(isReservedParentId(':local::_cmc:apps'), false);
+      assert.equal(isReservedParentId(':local::_cmc:apps:my-app'), false);
+      const aliasErr = await runMiddleware(mw, {}, { name: 'x', parentId: ':local::_cmc:_internal:retries' }, {});
+      assert.ok(aliasErr instanceof Error, 'the alias parent is refused');
+      assert.equal(aliasErr.details.id, 'cmc-reserved-stream');
+    });
+
+    it('[CRPP2] allows a parentId of :_cmc:apps or a user-created stream under it, for a plain or a :_cmc:apps:* id', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const params of [
+        { id: ':_cmc:apps:my-app', parentId: ':_cmc:apps' },
+        { id: 'plain', parentId: ':_cmc:apps' },
+        { id: ':_cmc:apps:my-app:study-A', parentId: ':_cmc:apps:my-app' },
+        { id: 'notes', parentId: ':_cmc:apps:my-app:study-A' },
+        { id: 'plain', parentId: null },
+        { id: 'plain', parentId: 'fertility' },
+      ]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+      assert.equal(captured.length, 0);
+    });
+  });
+
+  describe('[CMCHOOK-SU] createStreamUpdateReservedRootHook (trashed guard)', () => {
+    // The move checks moved to the streams.update prerequisites (where the
+    // stored parent is known, so a rename repeating the current parentId is
+    // not a move). This hook now refuses only trashing a plugin-managed stream.
+    it('[CSU01] passes through updates that do not trash, and trashing a user stream', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const params of [
+        { id: ':_cmc:inbox', update: { name: 'renamed inbox' } },
+        { id: ':_cmc:inbox', update: { parentId: ':_cmc:' } },
+        { id: 'fertility', update: { trashed: true } },
+        { id: ':_cmc:apps:my-app', update: { trashed: true } },
+        { id: ':_cmc:apps:my-app:study-A', update: { trashed: true } },
+        { id: ':_cmc:inbox', update: { trashed: false } },
+        { id: 'fertility' },
+        {},
+        null,
+      ]) {
+        assert.equal(await runMiddleware(mw, {}, params, {}), undefined, 'expected passthrough for ' + JSON.stringify(params));
+      }
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CSU02] refuses trashing a plugin-managed stream, through the :local: alias too', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamUpdateReservedRootHook({ errors: factory });
+      for (const id of [':_cmc:inbox', ':_cmc:_internal', ':_cmc:_internal:retries', ':_cmc:apps:my-app:chats', ':_cmc:apps:my-app:study-A:collectors:bob--org', ':local::_cmc:inbox']) {
+        const err = await runMiddleware(mw, {}, { id, update: { trashed: true } }, {});
+        assert.ok(err instanceof Error, 'expected reject trashing ' + id);
+        assert.equal(err.details.id, 'cmc-reserved-stream');
+      }
     });
   });
 
