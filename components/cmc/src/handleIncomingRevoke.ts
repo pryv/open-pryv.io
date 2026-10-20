@@ -143,16 +143,20 @@ async function handleIncomingRevoke (params: {
       accessId: createdByAccess.id, noticeAcceptEventId: noticeAccept, pairedAcceptEventId: pairedAccept,
     });
     // The arrival stays in the inbox; marked so an app does not read it as
-    // the end of the relationship it names by scope. Best effort.
+    // the end of the relationship it names by scope. Nothing was torn down
+    // and nothing of ours is named, so the other receiver-owned fields are
+    // dropped the same way `enrichArrival` drops them. Best effort.
     if (typeof event.id === 'string' && mall.events?.updateWithMerge != null) {
+      const mark = (current: Record<string, unknown> | null | undefined): Record<string, unknown> =>
+        ({ ...withoutReceiverOwned(current), superseded: 'relationship-re-established' });
       try {
         await mall.events.updateWithMerge(userId, event.id, (stored) => ({
           ...stored,
-          content: { ...((stored.content as Record<string, unknown> | null | undefined) ?? {}), superseded: 'relationship-re-established' },
+          content: mark(stored.content as Record<string, unknown> | null | undefined),
           modified: Date.now() / 1000,
           modifiedBy: C.SYSTEM_ACCESS_ID,
         }));
-        event.content = { ...(event.content ?? {}), superseded: 'relationship-re-established' };
+        event.content = mark(event.content);
         try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
       } catch (err: unknown) {
         logger?.warn?.('cmc/handleIncomingRevoke: could not mark the superseded revoke arrival', { eventId: event.id, error: String((err as Error)?.message || err) });
@@ -276,6 +280,18 @@ async function handleIncomingRevoke (params: {
 }
 
 /**
+ * The arrival's content without the fields only this server writes
+ * (`REVOKE_RECEIVER_OWNED_FIELDS`). The inbox write hook already drops them
+ * from a peer's write; dropped again here so every path that records a
+ * decision on the arrival starts from the peer's claims alone.
+ */
+function withoutReceiverOwned (content: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const base: Record<string, unknown> = { ...(content || {}) };
+  for (const owned of C.REVOKE_RECEIVER_OWNED_FIELDS) delete base[owned];
+  return base;
+}
+
+/**
  * Add this account's own handles for the relationship to the inbox arrival.
  *
  * Which ids exist depends on the direction, and each side gets the names its
@@ -349,19 +365,16 @@ async function enrichArrival (params: {
   }
 
   try {
-    // Strip the keys this step owns before merging: they describe the RECEIVING
-    // account, so a value the peer put there is meaningless at best. Without
-    // this, a relationship we cannot label (neither stamp present) would keep a
-    // peer-supplied `backChannelAccessId` and an app would read it as ours.
-    // Applied to the arrival as stored at write time (an update landed since
-    // dispatch read it is kept) and, the same way, to the in-memory copy.
-    const enrich = (current: Record<string, unknown> | null | undefined): Record<string, unknown> => {
-      const base: Record<string, unknown> = { ...(current || {}) };
-      for (const owned of ['backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds']) {
-        delete base[owned];
-      }
-      return { ...base, ...added };
-    };
+    // Strip the keys this server owns before merging: they describe the
+    // RECEIVING account, so a value the peer put there is meaningless at best.
+    // Without this, a relationship we cannot label (neither stamp present)
+    // would keep a peer-supplied `backChannelAccessId` and an app would read
+    // it as ours; a peer-supplied `superseded` would present an enforced
+    // revocation as dropped. Applied to the arrival as stored at write time
+    // (an update landed since dispatch read it is kept) and, the same way, to
+    // the in-memory copy.
+    const enrich = (current: Record<string, unknown> | null | undefined): Record<string, unknown> =>
+      ({ ...withoutReceiverOwned(current), ...added });
     await mall.events.updateWithMerge(userId, event.id as string, (stored) => ({
       ...stored,
       content: enrich(stored.content as Record<string, unknown> | null | undefined),

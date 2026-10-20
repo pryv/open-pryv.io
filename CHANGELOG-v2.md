@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- Cross-account messaging: on a `consent/revoke-cmc` arriving in `:_cmc:inbox`, the `superseded`
+  flag and the other fields the receiving server owns (`backChannelAccessId`, `dataGrantAccessId`,
+  `revokedAccessIds`) are now always written by that server from its own decision, never taken
+  from the sender. A value the sender puts there is dropped at the inbox write; a revoke that was
+  acted upon is stored without `superseded`, and a notice the receiver dropped as stale carries
+  `superseded` alone (no access ids, no revoked ids). Before, a sender could mark its own revoke
+  `superseded`, and apps then presented a torn-down relationship as still live.
+
 ## 2.0.0-rc.56 - 2026-10-16
 
 > **Upgrade advice for operators.** This release closes authorization gaps in the cross-account

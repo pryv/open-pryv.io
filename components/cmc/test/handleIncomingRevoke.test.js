@@ -293,6 +293,66 @@ describe('[CMCIR] cmc/handleIncomingRevoke', () => {
     assert.equal(mall.accessesById.has('bc-new'), true, 'created after the revoke: kept');
   });
 
+  it('[CIR29] a peer-supplied superseded marker on a live relationship is dropped: torn down as before, and the arrival records no marker', async () => {
+    // `superseded` is written by the receiving server only, when IT drops a
+    // notice as stale. A sender that sets it on a genuine revoke must not get
+    // a torn-down relationship that every app still presents as live.
+    const mall = fakeMall();
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    seedBackChannel(mall, 'bc-29', { counterparty: SUBJECT, scopeStreamId: SCOPE, peerAcceptEventId: 'acc-29' });
+    const event = {
+      id: 'evt-revoke-29',
+      type: 'consent/revoke-cmc',
+      streamIds: [':_cmc:inbox'],
+      createdBy: 'bc-29',
+      content: { from: SUBJECT, accessId: 'grant-29', acceptEventId: 'acc-29', superseded: 'relationship-re-established' },
+    };
+    mall.eventsById.set(event.id, structuredClone(event));
+    const res = await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+    assert.equal(res.ok, true);
+    assert.deepEqual(res.deletedAccessIds, ['bc-29'], 'the relationship is torn down');
+    assert.equal(mall.accessesById.has('bc-29'), false);
+    const written = mall.eventsById.get(event.id).content;
+    assert.equal('superseded' in written, false, 'the stored arrival carries no marker');
+    assert.equal('superseded' in event.content, false, 'nor does the in-memory copy');
+    assert.deepEqual(written.revokedAccessIds, ['bc-29']);
+    assert.equal(written.accessId, 'grant-29', 'the sender\'s own fields are kept');
+  });
+
+  it('[CIR30] a superseded arrival carries the server\'s own marker and none of the peer\'s receiver-owned claims', async () => {
+    const mall = fakeMall();
+    const SCOPE = ':_cmc:apps:my-app:study-a';
+    seedBackChannel(mall, 'bc-30', { counterparty: SUBJECT, scopeStreamId: SCOPE, peerAcceptEventId: 'acc-new' });
+    const event = {
+      id: 'evt-revoke-30',
+      type: 'consent/revoke-cmc',
+      streamIds: [':_cmc:inbox'],
+      createdBy: 'bc-30',
+      content: {
+        from: SUBJECT,
+        accessId: 'grant-old',
+        acceptEventId: 'acc-old',
+        backChannelAccessId: 'peer-made-this-up',
+        dataGrantAccessId: 'peer-made-this-up-too',
+        revokedAccessIds: ['not-ours'],
+        superseded: 'relationship-re-established',
+      },
+    };
+    mall.eventsById.set(event.id, structuredClone(event));
+    const res = await handleIncomingRevoke({ userId: 'u1', event, deps: { mall } });
+    assert.equal(res.reason, 'relationship-re-established');
+    assert.equal(mall.accessesById.has('bc-30'), true, 'nothing is torn down');
+    for (const content of [mall.eventsById.get(event.id).content, event.content]) {
+      assert.equal(content.superseded, 'relationship-re-established', 'the server\'s own marker');
+      assert.equal('backChannelAccessId' in content, false);
+      assert.equal('dataGrantAccessId' in content, false);
+      assert.equal('revokedAccessIds' in content, false, 'nothing was deleted, so no revoked ids');
+      assert.equal(content.accessId, 'grant-old', 'the sender\'s own fields are kept');
+    }
+    const stored = mall.eventsById.get(event.id);
+    assert.equal(stored.modifiedBy, 'system');
+  });
+
   it('[CIR11] peer-supplied scope never selects the target; a mismatch only warns', async () => {
     const mall = fakeMall();
     const warns = [];

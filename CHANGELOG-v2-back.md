@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## Cross-account messaging: receiver-owned fields of a revoke arrival
+
+- `components/cmc/src/constants.ts`: `REVOKE_RECEIVER_OWNED_FIELDS` (`backChannelAccessId`,
+  `dataGrantAccessId`, `revokedAccessIds`, `superseded`), the content fields of a
+  `consent/revoke-cmc` arrival only the receiving server writes.
+- `inboxWriteHook.ts`: a revoke written to `:_cmc:inbox` has those fields dropped before it is
+  stored (the other inbox types are untouched). `handleIncomingRevoke.ts`: `withoutReceiverOwned`
+  strips the same list on both recording paths, the enrichment (which previously stripped three of
+  them, so a sender's `superseded` survived on an enforced revoke) and the superseded early return
+  (which previously merged the marker onto the sender's content as is, so a sender's access ids and
+  revoked ids survived on a dropped notice). Tests: `[CIR29]`, `[CIR30]`, `[CI11]`.
+
 ## Counterparty calls: destination guard
 
 - `business/src/outbound/peerFetch.ts` (new): `peerFetch(url, init, settings?)`, a fetch-shaped

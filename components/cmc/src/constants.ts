@@ -236,6 +236,16 @@ const ACCEPT_UPDATE_PRESERVED_FIELDS: readonly string[] = ['features'];
 // status stamps (`delivered` / `completed` / `failed` + its `failure`), the
 // mint's `pending`, a scope request's outcome. Kept from storage on update.
 const CMC_SERVER_OWNED_FIELDS: readonly string[] = ['status', 'failure'];
+// Content fields of a `consent/revoke-cmc` arrival only the RECEIVING server
+// writes: its own handles for the relationship, the ids it tore down, and the
+// marker of a notice it dropped as stale. They describe the receiving account,
+// so a value the sender put there is dropped at the inbox write
+// (inboxWriteHook.ts) and again when the handler records its decision
+// (handleIncomingRevoke.ts): an app never reads a peer's claim as this
+// server's.
+const REVOKE_RECEIVER_OWNED_FIELDS: readonly string[] = [
+  'backChannelAccessId', 'dataGrantAccessId', 'revokedAccessIds', 'superseded',
+];
 
 // --- Group accounts: members, member accesses, offboarding ---
 //
@@ -412,6 +422,7 @@ export {
   ACCEPT_SERVER_OWNED_FIELDS,
   ACCEPT_UPDATE_PRESERVED_FIELDS,
   CMC_SERVER_OWNED_FIELDS,
+  REVOKE_RECEIVER_OWNED_FIELDS,
   ET_BACK_CHANNEL,
   ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,
