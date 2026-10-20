@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
+  "version": "1.3.1",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -999,7 +999,7 @@
       }
     },
     "consent/invalidate-link-cmc": {
-      "description": "Requester-side invalidation of an open-link consent capability (`cmc/invalidate-link-v1` lineage). The plugin flips the capability access state to `'invalidated'` so further accepts are rejected. Already-established data-grant + back-channel relationships are UNTOUCHED — use `consent/revoke-cmc` for per-relationship teardown. Single-use capabilities are auto-consumed on first accept; calling invalidate on a single-use capability is a no-op.",
+      "description": "Requester-side withdrawal of a consent capability, open-link or single-use (`cmc/invalidate-link-v1` lineage). Written on the invite's stream or an ancestor of it. The plugin flips the capability access state to `'invalidated'` so further accepts are rejected with `cmc-capability-invalidated`. For a single-use invite nobody accepted yet (server 2.0.0-rc.56 and later), the `consent/request-cmc` trigger's `content.status` also becomes `invalidated` (with `invalidatedAt` and `reason`); on a single-use capability already accepted it stays a no-op success. Already-established data-grant + back-channel relationships are UNTOUCHED: use `consent/revoke-cmc` for per-relationship teardown. The offer text stays readable through the link until the capability expires.",
       "type": "object",
       "properties": {
         "capabilityId": {
