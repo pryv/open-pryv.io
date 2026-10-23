@@ -642,5 +642,38 @@ describe('[RG2C] Two-core integration tests', function () {
       const poll = await httpRequest(CORE_B_PORT, 'GET', '/reg/access/' + created.body.key);
       assert.deepStrictEqual(poll.body.externalId, { namespace: ns, label: 'Two-core EHR', blindedValue: value, mode: 'hint' });
     });
+
+    it('[2C55] a registration on Core A of an id Core B holds creates the account unlinked, with no row on A', async () => {
+      const crypto = require('node:crypto');
+      const { PiiHasher } = require('platform/src/PiiHasher.ts');
+      const { tokensFor } = require('platform/src/externalIdIndex.ts');
+      const pepper = process.env.platform__piiHmacKey;
+      const handle = { hashFor: (field, v) => pepper ? new PiiHasher(pepper).hashFor(field, v) : v };
+      const value = crypto.randomBytes(32).toString('base64url');
+      const t = tokensFor(handle, JSON.parse(await platformDB.getPlatformKv('ext-id-ns/' + ns)), value);
+      assert.strictEqual(await platformDB.claimCoreRow('ext-id/', t.nsToken + '/' + t.valueToken, CORE_B_ID), true);
+      // Every other core unavailable for the time of the test: Core A keeps the registration.
+      const others = (await platformDB.getAllCoreInfos()).filter((c) => c.id !== CORE_A_ID);
+      for (const c of others) await platformDB.setCoreInfo(c.id, { ...c, available: false });
+      try {
+        const username = 'xidun' + Date.now().toString(36);
+        const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+          appId: 'test-2core-xid',
+          username,
+          password: 'testpassw0rd',
+          email: username + '@test.example.com',
+          insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+          language: 'en',
+          externalId: { namespace: ns, blindedValue: value }
+        });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        assert.strictEqual(res.body.externalIdLinked, false);
+        const list = await userCall(CORE_A_PORT, { username, token: new URL(res.body.apiEndpoint).username }, 'GET', '/account/external-ids');
+        assert.deepStrictEqual(list.body.externalIds, []);
+        assert.strictEqual(await platformDB.getCoreRow('ext-id/', t.nsToken + '/' + t.valueToken), CORE_B_ID, 'still held by Core B');
+      } finally {
+        for (const c of others) await platformDB.setCoreInfo(c.id, c);
+      }
+    });
   });
 });
