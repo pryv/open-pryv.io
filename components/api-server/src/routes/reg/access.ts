@@ -30,8 +30,15 @@ const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
 const { clientIp } = require('middleware/src/clientIp.ts');
+const { APIError } = require('errors');
 
 const logger = getLogger('routes:reg:access');
+
+/** The external-ids service, loaded on first use (it needs the storages). */
+async function externalIdsService () {
+  const { getExternalIdsService } = require('business/src/external-ids/service.ts');
+  return await getExternalIdsService();
+}
 
 /**
  * How a log line names an access request: the key alone fetches the granted
@@ -269,6 +276,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     // What the page did with each consent invite of the request (a hint: the
     // requester learns the truth from its own inbox).
     if (state.cmcInviteOutcomes != null) body.cmcInvites = state.cmcInviteOutcomes;
+    // The user declined to link the request's external id (a hint).
+    if (state.externalIdDeclined === true) body.externalIdDeclined = true;
     return body;
   }
 
@@ -366,13 +375,28 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         }
       }
 
+      // External id the app wants linked to the account that signs in. Same
+      // `!= null` rule; the errors name the field, never the value.
+      let externalId;
+      if (req.body.externalId != null) {
+        try {
+          const field = await (await externalIdsService()).parseFlowField(req.body.externalId);
+          externalId = { namespace: field.namespace, label: field.label, blindedValue: field.blindedValue, mode: field.mode };
+        } catch (err) {
+          if (!(err instanceof APIError)) throw err;
+          const apiErr = err as { id: string, message: string, httpStatus?: number, data?: unknown };
+          return res.status(apiErr.httpStatus ?? 400).json({ error: { id: apiErr.id, message: apiErr.message, data: apiErr.data } });
+        }
+      }
+
       const { key, state, expiresAt } = accessState.buildState({
         ...req.body,
         consent: consentForm,
         actAs: req.body.actAs ?? undefined,
         actAsManagedOnly,
         credentialHandoff,
-        cmcInvites
+        cmcInvites,
+        externalId
       }, { unopenedTtlMs: unopenedRequestTtlSeconds() * 1000 });
       // The creator's address bucket, when a per-address budget applies. The
       // address honours `http.trustedProxies` only, so a forged
@@ -521,6 +545,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // Echoed only when sent and true: the app's detection signal, an older
       // core drops the field and echoes nothing.
       if (state.actAsManagedOnly === true) created.actAsManagedOnly = true;
+      // Echoed without the value when sent and understood (detection signal).
+      if (state.externalId !== undefined) created.externalId = { namespace: state.externalId.namespace, mode: state.externalId.mode };
       res.status(201).json(created);
     } catch (err) { next(err); }
   });
@@ -577,6 +603,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (state.credentialHandoff != null) response.credentialHandoff = state.credentialHandoff;
         // Consent invites the page shows next to the app access. Absent otherwise.
         if (state.cmcInvites != null) response.cmcInvites = state.cmcInvites;
+        // The external id to link, with the namespace's display label. The
+        // one place the blinded value goes back: the auth page needs it to
+        // look the id up and to claim it for the account that signs in.
+        // The label was read once, when the request was created.
+        if (state.externalId != null) response.externalId = state.externalId;
       } else if (state.status === 'ACCEPTED') {
         // Either a one-time `handoff` key (no token here) or the inline
         // token; `delegation` rides at the top level in either shape.
@@ -732,6 +763,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // under `cmcInviteOutcomes` is dropped here, validated outcomes or nothing.
       update = { ...update, cmcInviteOutcomes };
 
+      // The user declined to link the request's external id: only `true`,
+      // only on an accepted grant, only when the request carried an id.
+      if (req.body.externalIdDeclined != null) {
+        if (req.body.externalIdDeclined !== true || status !== 'ACCEPTED' || pending.externalId == null) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'externalIdDeclined must be true, with status ACCEPTED, on a request that carries an externalId' }
+          });
+        }
+      }
+      // Carried on every accepted shape below (inline, or rebuilt for a hand-off).
+      const externalIdDeclined: true | undefined = req.body.externalIdDeclined === true ? true : undefined;
+
       // A request created with a consent form is the only one whose
       // ACCEPTED is checked: the server reads the access the page just
       // minted and asks whether it matches what the user was offered.
@@ -791,7 +834,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (apiErr != null) {
           return res.status(400).json({ error: { id: 'invalid-parameters', message: apiErr } });
         }
-        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed, cmcInviteOutcomes };
+        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed, cmcInviteOutcomes, externalIdDeclined };
       } else if (status === 'ACCEPTED' && wantsHandoff && !isDelegatedGrant) {
         // Shape L on a request that asked for a hand-off, not delegated:
         // server conversion. Move the inline token into a one-time secret on
@@ -814,7 +857,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           ttlSeconds
         });
         if ('handoff' in result) {
-          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes };
+          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes, externalIdDeclined };
         } else {
           // Fall back to inline delivery: never worse than today. Log the
           // reason class and a reference to the request, never the token nor

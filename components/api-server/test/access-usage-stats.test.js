@@ -90,6 +90,18 @@ describe('[AUST] access-usage-stats tracking', function () {
     assert.equal(calls[0].update.$inc['calls.events:get'], 1);
   });
 
+  it('[AUS06] a method id with several dots maps to a single-dot counter path', async function () {
+    // The storage layer refuses an update path with more than one dot, so
+    // a counter key keeping the second dot fails the stats write (logged only).
+    await run({
+      access: { id: 'a-real-access' },
+      user: { id: 'u-123', username: 'someone' },
+      methodId: 'account.externalIds.claim',
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(Object.keys(calls[0].update.$inc), ['calls.account:externalIds:claim']);
+  });
+
   it('[AUS05] a batch counts registered methods only, never client-chosen names', async function () {
     const username = cuid();
     const token = cuid();

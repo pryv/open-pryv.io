@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## External ids in the flows (hint mode)
+
+- `ExternalIdsService.parseFlowField` validates the `externalId` of the auth request and of the
+  registration (known namespace, value, mode; forced refused until the completion check exists).
+- Auth request: stored on the core-local access state (`accessState.ts` `externalId`, never
+  replicated), given to the page in the pending poll with the namespace label;
+  `externalIdDeclined` is an updatable field of an ACCEPTED outcome, validated by the route.
+- Registration (`business/src/auth/registration.ts`): validated in `validateOnPlatform` before
+  `validateRegistration` reserves anything, claimed for this core after it
+  (`reserveAtRegistration`), given back in `createUser`'s failure path like the invitation token
+  (`releaseRegistrationClaim`), linked right after `insertOne` (`linkAtRegistration`, best
+  effort: the account is written either way); `externalIdLinked` in the answer.
+- Tests: `[XIDFA]` / `[XIDFR]` / `[XIDFG]` (API, both engines; `[XIDFG1]` asserts no log line
+  holds a value), `[XIDS15]` / `[XIDS16]` (service, mutation-checked give-back).
+
 ## External ids: platform rows, home-core table, tools
 
 - PlatformDB (rqlite and PostgreSQL, shared conformance `[XIDP]`): `claimCoreRow`, `getCoreRow`,

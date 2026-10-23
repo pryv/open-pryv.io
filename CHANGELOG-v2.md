@@ -18,8 +18,18 @@
   `{ server }` (the core holding the id) or 404, unknown namespace and unclaimed id alike. Lookups
   and refused claims share a per-address budget (10 per minute): past it `429 too-many-attempts`
   with `Retry-After`. The blinded value is base64url, 16 to 64 bytes, never echoed in an error
-  and never logged. Deleting an account releases its ids at once. The sign-in and registration
-  fields (hint and forced modes) follow in a later release.
+  and never logged. Deleting an account releases its ids at once.
+- **External ids in the sign-in and registration flows (hint mode).** `POST /reg/access` accepts
+  `externalId: { namespace, blindedValue, mode? }` (`mode` defaults to the namespace's default;
+  `forced` is refused for now with `invalid-parameters-format`, `data.reason:
+  'forced-mode-not-available'`); the 201 echoes `externalId: { namespace, mode }` without the
+  value; the pending poll gives the auth page `externalId: { namespace, label, blindedValue,
+  mode }`. The request never links by itself: the auth page asks the user and links through
+  `account.externalIds.claim`; an `ACCEPTED` post may carry `externalIdDeclined: true` (only on a
+  request with an external id), and the accepted body then carries it too. `POST /users` accepts
+  the same `externalId`: an id nobody holds is linked to the new account, one already held leaves
+  it unlinked; the answer says which (`externalIdLinked: true | false`). A refused external id
+  refuses the registration before anything is reserved.
 - Cross-account messaging: on a `consent/revoke-cmc` arriving in `:_cmc:inbox`, the `superseded`
   flag and the other fields the receiving server owns (`backChannelAccessId`, `dataGrantAccessId`,
   `revokedAccessIds`) are now always written by that server from its own decision, never taken
