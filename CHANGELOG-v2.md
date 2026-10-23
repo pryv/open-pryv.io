@@ -28,6 +28,32 @@
   `superseded` alone (no access ids, no revoked ids). Before, a sender could mark its own revoke
   `superseded`, and apps then presented a torn-down relationship as still live.
 
+## 2.0.0-rc.57 - 2026-10-23
+
+> **Upgrade advice for operators.** This release moves the runtime to Node.js 24.22.1, which carries
+> the Node.js security release of 2026-10-21. We recommend it for every deployment. Docker: pull
+> the new image. Native installs: upgrade Node to 24.22.1 or later and run `npm rebuild` (see
+> INSTALL.md "Node major bumps"); a native host can take the Node upgrade before this release, the
+> previous release runs on 24.22.1 too.
+
+Security release, runtime only: no API change since 2.0.0-rc.56.
+
+- **Security: Node.js 24.22.1.** The Docker image moves from Node 24.18.1 to 24.22.1, which carries
+  the Node.js security release of 2026-10-21 (four high-severity fixes: an out-of-bounds write in
+  the Brotli decoder that can lead to remote code execution, two TLS certificate hostname check
+  bypasses, `dns.resolve` truncating names at a NUL character). The server decodes the responses of
+  its outbound HTTP calls (cross-account messaging counterparties and webhook targets among them),
+  so the Brotli flaw is reachable. `engines.node` is now `>=24.22.1 <25.0.0`; the server warns at
+  boot and `bin/check-config.js` reports a problem on an older Node. Native installs: upgrade Node
+  to 24.22.1 or later and run `npm rebuild` (a host held on 24.18.1 per the earlier advice must be
+  released first, see INSTALL.md "Node major bumps"). The SQLite abort on Node 24.19 to 24.21
+  (nodejs/node#65446) does not occur on 24.22.1
+  ([#162](https://github.com/pryv/open-pryv.io/issues/162)).
+- Dependencies: `follow-redirects` 1.16.1 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8; reached
+  through the ACME client).
+- Event types: the bundled catalogue follows the published 1.3.2 (descriptions of
+  `consent/invalidate-link-cmc` and `consent/revoke-cmc` only; validation unchanged).
+
 ## 2.0.0-rc.56 - 2026-10-16
 
 > **Upgrade advice for operators.** This release closes authorization gaps in the cross-account

@@ -1,8 +1,8 @@
 # Base image digest-pinned for reproducibility + supply-chain integrity.
 # The tag is a moving one (Docker Hub republishes it on every Node patch); the
 # digest freezes the exact image. Re-pin deliberately (quarterly or on a
-# security bump): docker buildx imagetools inspect node:24.18-trixie-slim
-# (the 24.18 line, see below; or the registry manifest API) → update the sha256
+# security bump): docker buildx imagetools inspect node:24.<minor>.<patch>-trixie-slim
+# (or the registry manifest API) → update the sha256
 # below + re-baseline (build with --no-cache locally: the apt upgrade layer is
 # otherwise reused from an earlier build).
 # Debian 13 (trixie) slim: Debian 12 (bookworm) left its remaining critical /
@@ -10,10 +10,13 @@
 # critical, 72 high, none fixable), while trixie receives the fixes, which the
 # `apt-get upgrade` below applies. Slim still apt-installs the build deps the
 # native modules need below.
-# Do NOT re-pin past Node 24.18.x until nodejs/node#65446 is fixed: better-sqlite3
-# rebuilt against 24.19+ headers aborts the process on statement garbage collection.
-# Pinned: node:24.18.1-trixie-slim (security release of the 24.18 line).
-FROM node:24-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
+# Node 24.19.0 to 24.21.x abort the process when better-sqlite3 statements are
+# garbage-collected (nodejs/node#65446); the 24.22.1 runtime does not, whichever
+# headers the addons were built against. Never pin a 24.x below 24.22.1: the
+# Node security release of 2026-10-21 (Brotli decoder RCE, TLS hostname checks)
+# is fixed from 24.22.1 on.
+# Pinned: node:24.22.1-trixie-slim.
+FROM node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 
 WORKDIR /app
 

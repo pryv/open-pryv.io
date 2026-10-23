@@ -122,6 +122,16 @@ if (cluster.isPrimary) {
     const warn = (msg) => logger.warn(msg);
     const error = (msg) => logger.error(msg);
 
+    // engines.node is advisory only (npm does not enforce it), so a native host
+    // held on an older Node would run on silently. Below 24.22.1 the runtime
+    // lacks the Node.js security fixes of 2026-10-21 (Brotli decoder, TLS
+    // hostname checks) and 24.19 to 24.21 abort on SQLite statement GC.
+    const [nodeMajor, nodeMinor, nodePatch] = process.versions.node.split('.').map(Number);
+    if (nodeMajor < 24 || (nodeMajor === 24 && (nodeMinor < 22 || (nodeMinor === 22 && nodePatch < 1)))) {
+      warn(`Node.js ${process.version} is below 24.22.1, the minimum this release supports ` +
+        '(security fixes of 2026-10-21): upgrade Node and run `npm rebuild`, see INSTALL.md "Node major bumps".');
+    }
+
     // Start rqlited when rqlite is the platform engine — master.js owns the lifecycle.
     // When `storages.engines.rqlite.external` is true, skip spawning and connect to an
     // already-running instance (useful for multi-core deployments sharing one rqlited).

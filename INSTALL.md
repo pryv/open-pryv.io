@@ -2,12 +2,13 @@
 
 ## Prerequisites
 
-- **Node.js** 24.x **below 24.19.0** (matches `engines.node` in `package.json`). Once the SQLite
-  driver is built against Node 24.19+ headers, which is what installing on 24.19 or later does, the
-  process aborts when a SQLite statement is garbage-collected
-  ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)); SQLite is the default audit
-  engine, so this hits every native install. The Docker image is not affected (it pins Node
-  24.18.1). Native installs should use 24.18.1, the security release of that line. See "Node major bumps" below for pinning the version.
+- **Node.js** 24.x, **24.22.1 or later** (matches `engines.node` in `package.json`; the Docker
+  image pins 24.22.1). Earlier 24.x releases carry the vulnerabilities fixed by the Node.js security
+  release of 2026-10-21 (among them a Brotli decoder flaw reachable through the server's outbound
+  HTTP calls). Node 24.19.0 to 24.21.x also abort the process when a SQLite statement is
+  garbage-collected ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)), and SQLite
+  is the default audit engine. After moving a host to 24.22.1, rebuild the native modules
+  (`npm rebuild`) so they match the runtime. See "Node major bumps" below.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **InfluxDB** 1.x (optional, for high-throughput HF series; PostgreSQL, the default, and SQLite also serve as series engine)
@@ -880,16 +881,21 @@ curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-`setup_24.x` installs the LATEST 24.x. Until
-[nodejs/node#65446](https://github.com/nodejs/node/issues/65446) is fixed, install and hold a
-version below 24.19.0 instead (check `node -v` on every host, including existing ones that may have
-been upgraded by a routine `apt upgrade`):
+`setup_24.x` installs the LATEST 24.x, which must be 24.22.1 or later. A host held on an earlier
+24.x (the previous advice was to hold 24.18.1) has to be released and upgraded, then its native
+modules rebuilt (check `node -v` on every host):
 
 ```bash
-apt-cache madison nodejs                      # pick a 24.18.x (or earlier 24.x) entry
-sudo apt-get install -y nodejs=24.18.1-1nodesource1
-sudo apt-mark hold nodejs
+sudo apt-mark unhold nodejs
+sudo apt-get update
+sudo apt-get install -y nodejs
+node -v
+npm rebuild
 ```
+
+`node -v` must print v24.22.1 or later. Run `npm rebuild` in the install directory, as the user
+that owns it, so the native modules match the new runtime. You may hold the package again
+(`sudo apt-mark hold nodejs`) to control when Node moves; never move to an earlier 24.x.
 
 If you're running native HTTPS or the embedded DNS as non-root, also
 re-grant `cap_net_bind_service` on the new binary — `apt install nodejs`
