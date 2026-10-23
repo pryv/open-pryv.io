@@ -79,7 +79,14 @@ type BuildStateParams = {
   /** Consent invites the user is asked to answer with the access, validated
    * by the route (`cmcInvites.ts`); set only when the app sent them. */
   cmcInvites?: unknown;
+  /** External id the app wants linked to the account that signs in,
+   * validated by the route; set only when the app sent one. The blinded
+   * value is a claim credential: it goes back only to the auth page, in the
+   * pending poll body. */
+  externalId?: StoredExternalId;
 };
+
+type StoredExternalId = { namespace: string; blindedValue: string; mode: 'hint' | 'forced' };
 
 type AccessState = {
   status: string;
@@ -118,6 +125,10 @@ type AccessState = {
   /** The creator's address bucket, hashed (see `ipRefOf`), when the request
    * counts toward a per-address budget. Never part of a poll body. */
   ipRef?: string;
+  /** See `BuildStateParams.externalId`. */
+  externalId?: StoredExternalId;
+  /** Set on an ACCEPTED state when the user declined to link the external id. */
+  externalIdDeclined?: true;
   [k: string]: unknown;
 };
 
@@ -226,6 +237,7 @@ function buildState (params: BuildStateParams, opts: { unopenedTtlMs?: number } 
   if (params.actAsManagedOnly === true) state.actAsManagedOnly = true;
   if (params.credentialHandoff === 'shared-secret') state.credentialHandoff = 'shared-secret';
   if (params.cmcInvites !== undefined) state.cmcInvites = params.cmcInvites;
+  if (params.externalId !== undefined) state.externalId = params.externalId;
   return { key, state, expiresAt };
 }
 
@@ -428,7 +440,7 @@ async function moveIpPlace (ipRef: string, key: string, expiresAt: number): Prom
  */
 const UPDATABLE_FIELDS = Object.freeze([
   'status', 'username', 'token', 'apiEndpoint',
-  'reasonId', 'message', 'delegation', 'handoff', 'cmcInviteOutcomes'
+  'reasonId', 'message', 'delegation', 'handoff', 'cmcInviteOutcomes', 'externalIdDeclined'
 ]);
 
 /** Of those, the ones that carry free text and so must be strings. Whoever

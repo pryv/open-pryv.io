@@ -52,6 +52,21 @@ export interface ReconcileSummary {
   refusedEmptyLocal?: boolean;
 }
 
+/** A validated `externalId` flow field. `blindedValue` and `tokens` never leave the server side except in the auth request's poll body. */
+export interface FlowExternalId {
+  namespace: string;
+  label: string;
+  blindedValue: string;
+  mode: 'hint' | 'forced';
+  tokens: ExtIdTokens;
+}
+
+export interface RegistrationClaim {
+  field: FlowExternalId;
+  /** True when the platform row points at this core (claimed now, or already ours). */
+  platformClaimed: boolean;
+}
+
 /** `created` is false when the account already held that exact value. */
 export interface ClaimResult {
   externalId: ExternalIdInfo;
@@ -176,6 +191,62 @@ export class ExternalIdsService {
     if (row == null) return null;
     const coreId = await getRowCore(this.platform, tokensFor(this.platform, row, blindedValue));
     return coreId == null ? null : this.platform.coreIdToUrl(coreId);
+  }
+
+  /**
+   * The `externalId` field of a flow (auth request, registration): known
+   * namespace, well-formed value, mode (the namespace's default when absent).
+   * Forced mode is refused until the server check of the sign-in completion
+   * exists. Errors name the field, never the value.
+   */
+  async parseFlowField (raw: unknown): Promise<FlowExternalId> {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw errors.invalidParametersFormat('externalId must be { namespace, blindedValue, mode? }.', { param: 'externalId' });
+    }
+    const field = raw as { namespace?: unknown, blindedValue?: unknown, mode?: unknown };
+    const blindedValue = parseBlindedValue(field.blindedValue, 'externalId.blindedValue');
+    const row = typeof field.namespace === 'string' ? await getNamespace(this.platform, field.namespace) : null;
+    if (row == null) throw errors.invalidParametersFormat('Unknown external-id namespace.', { param: 'externalId.namespace' });
+    const mode = field.mode ?? row.defaultMode;
+    if (mode !== 'hint' && mode !== 'forced') {
+      throw errors.invalidParametersFormat('externalId.mode must be "hint" or "forced".', { param: 'externalId.mode' });
+    }
+    if (mode === 'forced') {
+      throw errors.invalidParametersFormat('The forced mode of external ids is not available on this platform yet.',
+        { param: 'externalId.mode', reason: 'forced-mode-not-available' });
+    }
+    return { namespace: field.namespace as string, label: row.label, blindedValue, mode, tokens: tokensFor(this.platform, row, blindedValue) };
+  }
+
+  /**
+   * Registration, before the account is written: claim the id for this core
+   * when nobody holds it. A held id leaves the registration unlinked (hint
+   * mode: the user is sent to sign in instead).
+   */
+  async reserveAtRegistration (field: FlowExternalId): Promise<RegistrationClaim> {
+    return { field, platformClaimed: await claimRow(this.platform, field.tokens) };
+  }
+
+  /** The account could not be written: give the platform row back. */
+  async releaseRegistrationClaim (claim: RegistrationClaim): Promise<void> {
+    if (claim.platformClaimed) await this.#releaseIfUnowned(claim.field.tokens);
+  }
+
+  /**
+   * The account is written: link the id to it. False when it could not be
+   * linked (held by another account of this core meanwhile); the account
+   * stays, unlinked.
+   */
+  async linkAtRegistration (userId: string, claim: RegistrationClaim): Promise<boolean> {
+    if (!claim.platformClaimed) return false;
+    try {
+      await this.db.insert({ userId, ...claim.field.tokens, blindedValue: claim.field.blindedValue, claimedAt: this.now() });
+      return true;
+    } catch (err) {
+      await this.#releaseIfUnowned(claim.field.tokens);
+      if (err instanceof ExternalIdConflict) return false;
+      throw err;
+    }
   }
 
   /** Account deletion: release every id of the account (platform first, then local). */

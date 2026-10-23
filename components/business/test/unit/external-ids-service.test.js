@@ -321,6 +321,41 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(await coreA.holds('u3', ns, vOther), true, 'rows after the conflict are still refreshed');
   });
 
+  it('[XIDS15] registration: reserve, then link or give back; a held id stays with its holder', async () => {
+    const v = value();
+    const field = await coreA.parseFlowField({ namespace: ns, blindedValue: v });
+    assert.strictEqual(field.mode, 'hint');
+    // reserved then the account could not be written: given back
+    const failed = await coreA.reserveAtRegistration(field);
+    assert.strictEqual(failed.platformClaimed, true);
+    await coreA.releaseRegistrationClaim(failed);
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v), null);
+    // reserved then written: linked
+    const ok = await coreA.reserveAtRegistration(field);
+    assert.strictEqual(await coreA.linkAtRegistration('u1', ok), true);
+    assert.strictEqual(await coreA.holds('u1', ns, v), true);
+    // a second registration of the same id on this core: reserve says ours,
+    // the link loses to u1's local row, and u1 keeps the platform row
+    const again = await coreA.reserveAtRegistration(await coreA.parseFlowField({ namespace: ns, blindedValue: v }));
+    assert.strictEqual(await coreA.linkAtRegistration('u2', again), false);
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v), 'https://core-a.example.test/');
+    // on another core: not reserved, not linked
+    const elsewhere = await coreB.reserveAtRegistration(await coreB.parseFlowField({ namespace: ns, blindedValue: v }));
+    assert.strictEqual(elsewhere.platformClaimed, false);
+    assert.strictEqual(await coreB.linkAtRegistration('u9', elsewhere), false);
+    await coreB.releaseRegistrationClaim(elsewhere);
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v), 'https://core-a.example.test/', 'giving back a claim never taken releases nothing');
+  });
+
+  it('[XIDS16] the flow field: forced refused for now, malformed refused without the value', async () => {
+    await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'forced' }), 'invalid-parameters-format',
+      (err) => assert.strictEqual(err.data.reason, 'forced-mode-not-available'));
+    await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'other' }), 'invalid-parameters-format');
+    await assertApiError(coreA.parseFlowField(null), 'invalid-parameters-format');
+    await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: 'abc' }), 'invalid-parameters-format',
+      (err) => assert.strictEqual(err.data.param, 'externalId.blindedValue'));
+  });
+
   describe('[XIDR] token refresh', () => {
     const userExists = async () => true;
 

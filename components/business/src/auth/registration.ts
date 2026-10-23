@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+import type { FlowExternalId, RegistrationClaim } from 'business/src/external-ids/service.ts';
 const require = createRequire(import.meta.url);
 const { errorHandling } = require('errors');
 const errors = require('errors').factory;
@@ -50,6 +51,10 @@ type MethodContext = {
   user: { id: string; username: string };
   emailProofVerified?: boolean;
   invitationClaimed?: boolean;
+  /** Set when the registration carries an external id and this core holds its platform row. */
+  externalIdClaim?: RegistrationClaim;
+  /** Set once the account is written: whether the id is linked to it. */
+  externalIdLinked?: boolean;
   [k: string]: unknown;
 };
 type RegisterParams = {
@@ -61,11 +66,19 @@ type RegisterParams = {
   hosting?: unknown;
   invitationToken?: unknown;
   emailProof?: string;
+  externalId?: unknown;
   [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
 type Next = (err?: unknown) => void;
 type ApiError = Error & { id?: string; httpStatus?: number };
+
+// Loaded on first use: the service reaches the platform and the storage
+// engines, which are not ready when this module loads.
+async function externalIdsService () {
+  const { getExternalIdsService } = await import('business/src/external-ids/service.ts');
+  return await getExternalIdsService();
+}
 
 class Registration {
   logger: Logger;
@@ -206,6 +219,10 @@ class Registration {
   async validateOnPlatform (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     if (result.forwarded) return next();
     try {
+      // External id: validated before anything is reserved, claimed after.
+      let externalIdField: FlowExternalId | null = null;
+      const externalIds = params.externalId != null ? await externalIdsService() : null;
+      if (externalIds != null) externalIdField = await externalIds.parseFlowField(params.externalId);
       const uniqueFields: Record<string, unknown> = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
         if (streamSettings?.isUnique) {
@@ -228,6 +245,11 @@ class Registration {
       }
       // The invitation token is now consumed; given back if creation fails.
       context.invitationClaimed = validation?.invitationClaimed === true;
+      // Hint mode: claimed for this core when nobody holds it, given back if
+      // creation fails, linked once the account is written.
+      if (externalIds != null && externalIdField != null) {
+        context.externalIdClaim = await externalIds.reserveAtRegistration(externalIdField);
+      }
     } catch (error) {
       return next(error);
     }
@@ -246,6 +268,20 @@ class Registration {
       const usersRepository = await getUsersRepository();
       // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);
+      if (context.externalIdClaim != null) {
+        // Best-effort, like the seeds below: the account is written; an id
+        // that could not be linked leaves it unlinked (and the reconcile
+        // finishes a half-done claim).
+        try {
+          context.externalIdLinked = await (await externalIdsService()).linkAtRegistration(context.newUser.id as string, context.externalIdClaim);
+        } catch (linkErr) {
+          context.externalIdLinked = false;
+          getLogger('registration').warn('external id not linked at registration', {
+            username: context.newUser.username,
+            error: linkErr instanceof Error ? linkErr.message : String(linkErr)
+          });
+        }
+      }
       // Gate: the proof is consumed only now that the user row exists; the
       // founding email is then proved by code, not merely asserted.
       let provenance: { verificationMethod: string; verifiedAt: number | null } | undefined;
@@ -286,6 +322,9 @@ class Registration {
       if (context.invitationClaimed === true) {
         await this.platform.releaseInvitationToken(context.newUser.invitationToken as string, context.newUser.username);
       }
+      if (context.externalIdClaim != null && context.externalIdLinked == null) {
+        await (await externalIdsService()).releaseRegistrationClaim(context.externalIdClaim);
+      }
       return next(err);
     }
     next();
@@ -313,6 +352,9 @@ class Registration {
     }
     result.username = context.newUser.username;
     result.apiEndpoint = ApiEndpoint.build(context.newUser.username, context.newUser.token as string | undefined);
+    // Whether the registration's external id is linked to the new account
+    // (false: another account holds it; the app sends the user to sign in).
+    if (context.externalIdClaim != null) result.externalIdLinked = context.externalIdLinked === true;
     next();
   }
 
