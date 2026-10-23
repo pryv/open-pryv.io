@@ -54,13 +54,13 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: actions/setup-node@v6
         # Node is pinned in every job to the version of the Docker base image
-        # (node:24-trixie-slim digest in the Dockerfile). Node 24.19.0 and later abort
+        # (node:24-trixie-slim digest in the Dockerfile). Node 24.19.0 to 24.21.x abort
         # the process when better-sqlite3 statements are garbage-collected
         # (`RemoveEnvironmentCleanupHook ... Assertion (env) != nullptr`,
-        # nodejs/node#65446), which kills the SQLite engine suite. Unpin once a
-        # fixed 24.x is released and the base image is re-pinned to it.
+        # nodejs/node#65446), which kills the SQLite engine suite; 24.22.1 does not.
+        # Move the image and every job together.
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
           cache: npm
       - name: Setup dev environment
         run: just setup-dev-env
@@ -154,7 +154,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
           cache: npm
       - name: Install dependencies
         # Cannot use --omit=optional: ESLint 9's import-x plugin pulls in
@@ -202,7 +202,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
           cache: npm
       - name: Install dependencies
         run: npm install --ignore-scripts
@@ -226,7 +226,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
           cache: npm
       - name: Production install (--omit=dev — devDependencies pruned)
         run: npm install --omit=dev --ignore-scripts
@@ -245,7 +245,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '24.18.1'
+          node-version: '24.22.1'
           cache: npm
       - name: Install dependencies
         run: npm install --ignore-scripts
