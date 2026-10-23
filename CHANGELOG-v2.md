@@ -23,6 +23,8 @@ Security release, runtime only: no API change since 2.0.0-rc.56.
   ([#162](https://github.com/pryv/open-pryv.io/issues/162)).
 - Dependencies: `follow-redirects` 1.16.1 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8; reached
   through the ACME client).
+- Event types: the bundled catalogue follows the published 1.3.2 (descriptions of
+  `consent/invalidate-link-cmc` and `consent/revoke-cmc` only; validation unchanged).
 
 ## 2.0.0-rc.56 - 2026-10-16
 
