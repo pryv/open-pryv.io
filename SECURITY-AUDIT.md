@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 2 (2026-10-15), covering releases 2.0.0-rc.40 to 2.0.0-rc.53.
+**Report revision:** 3 (2026-10-23), covering releases 2.0.0-rc.40 to 2.0.0-rc.57.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -19,8 +19,8 @@ released **and** deployed on the platforms the maintainers operate (pryv.me incl
 the release's `CHANGELOG-v2.md` entry carries the operator instructions in neutral wording, and this
 report describes the fix at a later revision. Methodology, scope, the surface inventory and the
 areas where no defect was found are published without delay. At this revision every finding counted
-in section 1 is fixed, released and deployed, so none is withheld under this rule; the
-lower-severity defects still open are noted in section 5.
+in section 1 is fixed, released and deployed, so none is withheld under this rule; section 5 says
+what remains open.
 
 ---
 
@@ -34,8 +34,10 @@ shipped in the Docker image.
 **When.** June to October 2026. The work started in June 2026 with the attack-surface inventory and
 ran in full from 7 to 14 October 2026, release by release. A follow-up review of the consent (CMC)
 plugin, of delegation and of access teardown, made in October 2026 alongside the work on group
-accounts in consent, added the findings fixed in 2.0.0-rc.52 and rc.53; they were fixed under the
-same rules (tests that fail without the fix, independent review before merge).
+accounts in consent, added the findings fixed in 2.0.0-rc.52 and rc.53, and a further review of
+how stream ids are compared by the access guards, together with the server's calls to consent
+counterparties, added those fixed in 2.0.0-rc.56; they were fixed under the same rules (tests that
+fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -45,17 +47,17 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-up recorded 50 findings, each rated and described individually in
-section 4 and counted below; the further lower-severity fixes listed under each release are
-described but not counted:
+The review and its follow-ups recorded 52 findings, each rated and described individually in
+section 4 and counted below; the further lower-severity fixes listed under each release, and the
+items reported through the public issue tracker, are described but not counted:
 
 | Severity | Fixed | Open | Accepted |
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
-| High | 20 | 0 | 0 |
+| High | 22 | 0 | 0 |
 | Medium | 23 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **50** | **0** | **0** |
+| **Total** | **52** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -86,6 +88,10 @@ its applicability is stated with it.
 | 2.0.0-rc.51 | 2026-10-13 | 1 High, lower-severity fixes | yes (2026-10-14) |
 | 2.0.0-rc.52 | 2026-10-14 | 1 High, 2 Medium, lower-severity fixes | yes (2026-10-15) |
 | 2.0.0-rc.53 | 2026-10-15 | completion steps of earlier findings, lower-severity fixes | yes (2026-10-15) |
+| 2.0.0-rc.54 | 2026-10-15 | none (not an audit release) | yes (with rc.56) |
+| 2.0.0-rc.55 | 2026-10-15 | lower-severity fixes | yes (with rc.56) |
+| 2.0.0-rc.56 | 2026-10-16 | 2 High, lower-severity fixes | yes (2026-10-16 to 2026-10-23) |
+| 2.0.0-rc.57 | 2026-10-23 | runtime update, not an audit finding: Node.js 24.22.1 for the Node.js security release of 2026-10-21 (Brotli decoder out-of-bounds write reachable through outbound HTTP response decoding; TLS hostname-check bypasses); operator action: pull the new image, or upgrade Node.js to 24.22.1 and run `npm rebuild` on a native install | yes (2026-10-23) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -226,7 +232,12 @@ These are the main checks that held, summarised:
 
 - **Access scoping for writes:** moving an event needs contribute rights on every added and removed
   stream; reserved roots (e-mails, shared secrets, consent, delegation) are guarded on create,
-  update and delete; `create-only` never reads; an explicit `none` wins over a parent grant.
+  update and delete (for a stream id written with its store prefix, only since 2.0.0-rc.56: see
+  that release below); `create-only` never reads; an explicit `none` wins over a parent grant.
+- **Reads through store-prefixed stream ids** (checked again in the 2.0.0-rc.56 follow-up): query
+  stream ids are resolved to their store before the query runs, so the exclusions of internal
+  plugin streams and of hidden account fields apply whatever spelling is used; no read path
+  around them was found.
 - **The `*` scope** never reaches the account or audit stores; non-personal tokens read only their
   own audit stream.
 - **Access creation rules:** personal accesses cannot be created through the API; apps create shared
@@ -1060,6 +1071,142 @@ The completion steps of two 2.0.0-rc.52 findings are described with them above. 
   schedule are retired as `failed-permanent` (`cmc-retry-stale`) without being sent, and stay
   readable for 30 days (see the rc.53 notes). No migration.
 
+2.0.0-rc.54 carries no security fix (logging behaviour changes only).
+
+### Lower-severity fixes in 2.0.0-rc.55 (deployed with 2.0.0-rc.56)
+
+- **Log masking missed some contexts** (Low; completes the 2.0.0-rc.43 item "Credentials in
+  logs"): a logged context holding a BigInt value, or one that cannot be converted to JSON (a
+  circular object, or one whose conversion throws), was written without its credential keys
+  masked (on every log target for a BigInt, on the text console for a context that does not
+  convert); a log message that was not a string (such as a URL object) was not masked; credential
+  keys inside a logged text were matched case-sensitively and for a shorter list of names. Every context and message now goes through the same masking,
+  whatever its shape, with bounded cost; credential keys inside a text are matched for every name
+  masked as an object property, whatever their case.
+- **Container image:** based on Debian 13 instead of Debian 12, whose remaining critical and high
+  operating-system package advisories had no fix; the bundled rqlite is 10.6.0, built with a
+  patched toolchain, and the native install script checks the rqlite archive's checksum. Every
+  release image is now scanned in CI before it is published, and a critical advisory that has a
+  fix stops the release (see section 5).
+- **Operator action:** as for the earlier log items, logs written by earlier releases may hold
+  such values: check their retention. Native installs replace `bin-ext/rqlited` themselves
+  (`INSTALL.md`, "Upgrading the bundled rqlite"); images built `FROM` the open-pryv.io image that
+  install packages now resolve them against Debian 13.
+
+### Fixed in 2.0.0-rc.56 (deployed)
+
+A stream id can be written with the prefix of the store that holds it: `:local:<id>` names the same
+stream as `<id>`, and an account field can be named through the account store's prefix. Both
+findings below come from guards that compared the stream id as written, while the storage layer
+resolved the prefixed spelling to the protected stream.
+
+#### Store-prefixed stream ids passed the guards of the consent and delegation areas
+
+- **Severity:** High (an app or shared access with `contribute` reaching the consent plugin's
+  internal area, which a `*` grant at `contribute` or above does; the effect described below needs
+  the consent retry loop, on by default since 2.0.0-rc.53). Applies to every release carrying the
+  consent and delegation plugins; on releases before 2.0.0-rc.53, the dispatch part applies only
+  where the operator turned the retry loop on.
+- **What could happen:** the guards that close the consent (`:_cmc:`) and delegation
+  (`:_delegation:`) plugin areas to user writes did not recognise a store-prefixed spelling of a
+  protected stream id. A token allowed to manage streams could create a stream inside, or move one
+  into, the plugins' internal areas (the owner's personal token included, which these guards also
+  bind), and an app or shared access could write an event into the consent retry queue. The retry
+  loop then processed such an event as a pending consent action of the account, outside any
+  request and its checks: an app or shared access could have the server carry out consent actions
+  on the account's behalf, such as accepting an offer (which grants a counterparty access to the
+  account's data) or withdrawing a relationship. Reads were not affected (section 4.1).
+- **What changed:** stream ids are brought to their canonical spelling before any guard runs, on
+  `streams.create`, `streams.update`, `events.create` and `events.update`, and the plugins' own
+  checks judge the canonical id. A new or moved stream inside the plugin-managed regions of
+  `:_cmc:` (everything except `:_cmc:apps` and the user-created streams under it) or of
+  `:_delegation:` is refused with `400 invalid-operation` (`cmc-reserved-stream` /
+  `delegation-reserved-stream`),
+  for every token, the owner's personal token included; a plugin-managed stream can no longer be
+  moved or trashed. The retry loop processes only records the server wrote itself (author, stream
+  and type checked) and retires any other record without processing it
+  (`cmc-retry-foreign-record`); as defence in depth, it also never replays an accept the server
+  itself authored. Streams under `:_cmc:apps` are unchanged.
+- **Operator action:** upgrade. Until then, on 2.0.0-rc.53 to rc.55 (or an earlier release with
+  the loop turned on), set `cmc.retryLoop.enabled: false` and restart: the loop then processes no
+  record. This covers only the retry-queue part: placing or moving a stream inside the plugins'
+  areas is refused only by the upgrade. While it is off, a consent delivery that fails is not queued and is not retried later,
+  and expired group memberships are not swept (member accesses end at their own expiry); set it
+  back to its default (`true`) after the upgrade. A read-only check for past use is recommended
+  (streams placed inside the plugins' internal areas; retry records the server did not write,
+  which the upgraded loop retires as `cmc-retry-foreign-record`); any hit is handled case by case.
+
+#### Store-prefixed stream ids passed the account-field guards
+
+- **Severity:** High (an app or shared access holding `contribute` on the account's e-mail field,
+  a permission an account owner can grant). Applies to every 2.0.0 release candidate before
+  rc.56.
+- **What could happen:** the account fields are protected by guards: the primary e-mail is
+  written only through `account.update`, some fields are not editable or are hidden, and
+  permissions on account fields are capped by level. These guards did not recognise an account
+  field named through a store prefix, so a request using such a spelling reached the field around
+  them. In particular, an access holding `contribute` on the e-mail field could change the
+  account's primary e-mail, the address password-reset links are sent to, through the events API:
+  a path to taking over the account. With a personal token, the same gap let the owner write
+  fields that are not editable.
+- **What changed:** the account-field guards judge the canonical spelling of a stream id on
+  `events.create`, `events.update`, `events.delete`, `accesses.create` and `accesses.update`; an
+  id that routes to the account store without naming a known account field is refused as an
+  unknown stream; a permission given through a prefixed spelling is stored under the canonical id,
+  and the creator's own permission check judges that canonical id, so an app holding only a `*`
+  grant on the regular streams cannot hand out a permission on an account field (`403
+  forbidden`). Every permission-level check also judges the canonical id; an account field named
+  through a prefix in a permission stored before the upgrade stays as ineffective as it was.
+  Requests that use canonical ids are unchanged.
+- **Operator action:** upgrade; there is no configuration workaround.
+
+#### Further fixes in 2.0.0-rc.56
+
+- **Stream moves carried children granted at a lower level** (Low-Medium): `streams.update` with
+  a new `parentId` needed manage rights on the moved stream and on the target parent only, so a
+  child granted to the caller at a lower level (`read`, `create-only`, `none`) moved along with
+  its parent into the reach of the accesses that inherit from the target parent. A move by a
+  non-personal access now needs manage rights on every stream of the moved subtree, trashed ones
+  included, as the deletion of a trashed stream already did (2.0.0-rc.44). Residual: an access
+  created before a move keeps the exceptions it inherited from the stream tree as it was then,
+  which after this fix concerns only streams the mover manages.
+- **A stream could be moved under its own descendant** (Low): such a move was accepted and left
+  the streams concerned unreachable from the root; it is refused with `400 invalid-operation`, and
+  the permission walk now stops on a parent chain that loops, should one exist in stored data.
+- **Calls to consent counterparties could reach internal addresses** (Low): consent deliveries,
+  revocations, scope updates, the reading of an offer at accept, delegation notices and OAuth
+  revocation notices go to URLs the other side of the relationship supplies, and these calls had
+  no destination policy. The method, path and body of such a call are fixed by the server and its
+  answer is not returned to the counterparty. These calls now follow the webhook rules
+  (2.0.0-rc.44): a destination that is or resolves to a loopback, private, link-local or otherwise
+  reserved address is refused before any connection, as are `http:` (unless
+  `cluster.allowInsecurePeerUrl`), credentials in the URL, redirects and answers larger than 1 MiB;
+  the platform's own host names are always allowed. A refused delivery is permanent and reported
+  on the triggering event (`cmc-handler-destination-refused`, `cmc-capability-destination-refused`).
+- **A single-use invite could not be withdrawn** (Medium; reported publicly in open-pryv.io#160):
+  `consent/invalidate-link-cmc` was a no-op on a single-use invite, so an invite sent to the wrong
+  person stayed usable until it expired. An invite nobody accepted yet is now withdrawn (a later
+  accept is refused with `cmc-capability-invalidated`), and a withdrawal that races an accept
+  wins. The offer text stays readable through the link until it expires: give sensitive invites a
+  short `expiresAt`.
+- **Usernames and platform names could collide** (Low): an account whose username equalled a
+  core id, a static DNS entry or a runtime DNS record was unreachable at `<username>.<domain>`
+  (those names are answered first), and a new DNS record or core id (administration actions) could
+  take the name of an existing account. Each side now refuses a name the other holds; existing
+  accounts and records keep working.
+- **Access deletion records can be purged** (planned at revision 2, section 5): the new per-core
+  setting `accesses.deletionRecords.retentionDays` (default `0`, kept until the account is
+  erased) removes, once a day, the deletion records of accesses deleted longer ago, with their
+  earlier versions and index rows. Past it, an audit entry or an event author shows such an access
+  by id only, and breach scoping no longer resolves it.
+- **Operator action:** list counterparties on a private network, and a `core.url` given as a
+  private IP address, in the new `cmc.allowedPrivateHosts` (same grammar as
+  `webhooks.allowedPrivateHosts`; checked at boot). Relationships whose counterparty is reached
+  over `http:` or answers with a redirect stop receiving deliveries; check them before the
+  upgrade. Choose a deletion-record retention, if any, with the attribution trade-off above in
+  mind. Clients that enumerate invite statuses: `invalidated` now also applies to single-use
+  invites.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1074,11 +1221,14 @@ streams, webhooks, storage), and database statements have no default timeout. Th
 a limits-hardening batch; a reverse proxy and the operator's own database settings mitigate most of
 them meanwhile.
 
-**Container image.** The Debian 12 base image carries operating-system package advisories for which
-the distribution has published no fix, and the bundled rqlite binary follows upstream releases for
-its own library advisories. `npm` / `npx` were removed from the image in rc.50. Planned: image
-scanning in CI, evaluation of a newer base image, and an rqlite update once upstream ships the
-fixed libraries. The rqlite ports listen on loopback (HTTP) and behind mutual TLS (Raft).
+**Container image.** Since 2.0.0-rc.55 the image is based on Debian 13 and bundles rqlite 10.6.0,
+and every release image is scanned in CI before it is published: a critical advisory that has a
+fix stops the release. The image still carries operating-system package advisories for which the
+distribution has published no fix, and a few advisories of a networking library inside the rqlite
+binary that concern HTTP/2, which the core's rqlite HTTP API (loopback, without TLS) never
+negotiates; these are accepted, each with its reason, until an rqlite release carries the fixed
+library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports listen on loopback
+(HTTP) and behind mutual TLS (Raft).
 
 **Planned for the next major version:**
 
@@ -1107,16 +1257,17 @@ fixed libraries. The rqlite ports listen on loopback (HTTP) and behind mutual TL
   engine does.
 
 **Access deletion records.** A deleted access leaves a deletion record (its name, permissions and
-timestamps) that is kept until the account is erased; API answers never return its token, and
-since 2.0.0-rc.53 the stored record of a consent relationship holds none of its credentials. Since
-2.0.0-rc.53 every consent and delegation teardown leaves such a record too. An opt-in retention
-setting is planned.
+timestamps) that is kept until the account is erased by default; API answers never return its
+token, and since 2.0.0-rc.53 the stored record of a consent relationship holds none of its
+credentials. Since 2.0.0-rc.53 every consent and delegation teardown leaves such a record too. Since
+2.0.0-rc.56 an operator can set a retention period (`accesses.deletionRecords.retentionDays`, see
+that release).
 
-**Open lower-severity defects.** A small number of Low and Low-Medium defects found during the
-review and its follow-up remain open and tracked; they will be described here once fixed. Operators
-should keep daily log rotation on (the default); since 2.0.0-rc.52, `logs.file.rotation.maxSize`
-also caps the size of each daily file. A log file without daily rotation is one growing file, to be
-rotated outside the server.
+**Lower-severity defects.** The Low and Low-Medium defects that were still open at revision 2 are
+fixed in 2.0.0-rc.56 (section 4); the residuals that remain are stated with their items.
+Operators should keep daily log rotation on (the default); since 2.0.0-rc.52,
+`logs.file.rotation.maxSize` also caps the size of each daily file. A log file without daily
+rotation is one growing file, to be rotated outside the server.
 
 ---
 
@@ -1143,3 +1294,4 @@ This report is updated with every release that carries a security fix:
 |---|---|---|---|
 | 1 | 2026-10-14 | 2.0.0-rc.40 to 2.0.0-rc.51 | First publication. Every finding fixed, released and deployed on the maintainers' platforms (2.0.0-rc.51 deployed 2026-10-14). |
 | 2 | 2026-10-15 | 2.0.0-rc.40 to 2.0.0-rc.53 | Adds 2.0.0-rc.52 and rc.53 (follow-up review of consent, delegation and access teardown): 1 High and 2 Medium findings, their completion steps and lower-severity fixes; the SQLite erasure residual noted under rc.51 is closed. Both releases deployed on the maintainers' platforms (2026-10-15). |
+| 3 | 2026-10-23 | 2.0.0-rc.40 to 2.0.0-rc.57 | Adds 2.0.0-rc.54 to rc.57 (rc.57: Node.js runtime update, release table only; follow-up review of how stream ids are compared by the access guards, and of the server's calls to consent counterparties): 2 High findings and lower-severity fixes in rc.55 and rc.56; the lower-severity defects open at revision 2 are fixed; section 5 updated for the container image and the deletion-record retention. rc.54 to rc.57 deployed on the maintainers' platforms (2026-10-16 to 2026-10-23). |
