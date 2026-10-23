@@ -40,7 +40,9 @@ function isBuiltInPropertyName (s: string) {
 }
 
 function sanitizeFieldKey (s: string) {
-  return (s[0] === '$' ? '_' + s.substr(1) : s).replace('.', ':');
+  // Every dot: a method id may have more than one (`account.externalIds.claim`),
+  // and the storage update path allows at most one.
+  return (s[0] === '$' ? '_' + s.substr(1) : s).replaceAll('.', ':');
 }
 
 export { isReservedId, isReservedToken, isBuiltInPropertyName, sanitizeFieldKey };

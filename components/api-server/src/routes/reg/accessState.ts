@@ -86,7 +86,7 @@ type BuildStateParams = {
   externalId?: StoredExternalId;
 };
 
-type StoredExternalId = { namespace: string; blindedValue: string; mode: 'hint' | 'forced' };
+type StoredExternalId = { namespace: string; label: string; blindedValue: string; mode: 'hint' | 'forced' };
 
 type AccessState = {
   status: string;

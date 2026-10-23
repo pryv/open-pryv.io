@@ -107,7 +107,9 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint mode)'
         .send({ status: 'ACCEPTED', username, token, apiEndpoint: reg.body.apiEndpoint, externalIdDeclined: true });
       assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
       assert.strictEqual(accepted.body.externalIdDeclined, true);
-      assert.strictEqual((await coreRequest.get('/reg/access/' + created.body.key)).body.externalIdDeclined, true);
+      const acceptedPoll = await coreRequest.get('/reg/access/' + created.body.key);
+      assert.strictEqual(acceptedPoll.body.externalIdDeclined, true);
+      assert.ok(!('externalId' in acceptedPoll.body), 'the accepted poll carries no external id, so no value');
 
       const plain = await createRequest({});
       const wrong = await coreRequest.post('/reg/access/' + plain.body.key)
@@ -117,6 +119,38 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint mode)'
       assert.strictEqual((await coreRequest.post('/reg/access/' + withId.body.key).send({ status: 'REFUSED', externalIdDeclined: true })).status, 400);
       assert.strictEqual((await coreRequest.post('/reg/access/' + withId.body.key)
         .send({ status: 'ACCEPTED', username, token, apiEndpoint: reg.body.apiEndpoint, externalIdDeclined: 'yes' })).status, 400);
+    });
+  });
+
+  describe('[XIDFA4] externalIdDeclined on a credential hand-off request', function () {
+    let user;
+    before(async function () {
+      const reg = await register();
+      user = { username: reg.username, token: tokenOf(reg.res.body.apiEndpoint) };
+    });
+
+    it('[XIDFA4a] kept when the server converts an inline accept into a hand-off (shape L)', async function () {
+      const created = await createRequest({ credentialHandoff: 'shared-secret', externalId: { namespace: ns, blindedValue: blinded() } });
+      const res = await coreRequest.post('/reg/access/' + created.body.key).send({
+        status: 'ACCEPTED', username: user.username, token: user.token, apiEndpoint: 'https://' + user.username + '.pryv.me/', externalIdDeclined: true
+      });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.handoff?.key, 'converted to a hand-off');
+      assert.strictEqual(res.body.externalIdDeclined, true);
+      assert.strictEqual((await coreRequest.get('/reg/access/' + created.body.key)).body.externalIdDeclined, true);
+    });
+
+    it('[XIDFA4b] kept on a hand-off the page created itself (shape H)', async function () {
+      const created = await createRequest({ credentialHandoff: 'shared-secret', externalId: { namespace: ns, blindedValue: blinded() } });
+      const res = await coreRequest.post('/reg/access/' + created.body.key).send({
+        status: 'ACCEPTED',
+        username: user.username,
+        apiEndpoint: 'https://' + user.username + '.pryv.me/',
+        handoff: { type: 'shared-secret', key: cuid() + '.' + 'h'.repeat(40) },
+        externalIdDeclined: true
+      });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.externalIdDeclined, true);
     });
   });
 
@@ -198,6 +232,50 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint mode)'
       const malformed = await register({ externalId: { namespace: ns, blindedValue: 'short' } });
       assert.strictEqual(malformed.res.status, 400);
       assert.ok(!JSON.stringify(malformed.res.body).includes('short"'));
+    });
+
+    // Mutation check (must make XIDFR5 fail): remove the releaseRegistrationClaim
+    // call in Registration.createUser's catch.
+    it('[XIDFR5] an account write that fails after the claim gives the id and the name back', async function () {
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const repo = await getUsersRepository();
+      const original = repo.insertOne;
+      // A failing insert gives its own reservations back (as insertOne does), then throws.
+      repo.insertOne = async (user) => {
+        await repo.compensateFailedInsert(user);
+        throw new Error('xidfr5 simulated write failure');
+      };
+      const v = blinded();
+      let failed;
+      try {
+        failed = await register({ externalId: { namespace: ns, blindedValue: v } });
+      } finally {
+        repo.insertOne = original;
+      }
+      assert.strictEqual(failed.res.status, 500);
+      assert.strictEqual((await coreRequest.post('/reg/ext-id/cores').send({ namespace: ns, blindedValue: v })).status, 404, 'the id is given back');
+      const again = await register({ externalId: { namespace: ns, blindedValue: v } });
+      assert.strictEqual(again.res.status, 201, JSON.stringify(again.res.body));
+      assert.strictEqual(again.res.body.externalIdLinked, true);
+    });
+
+    // Mutation check (must make XIDFR6 fail): remove the compensateFailedInsert
+    // call in the catch around reserveAtRegistration in Registration.createUser.
+    it('[XIDFR6] a claim that throws gives back what the registration reserved', async function () {
+      const { getExternalIdsService } = require('business/src/external-ids/service.ts');
+      const service = await getExternalIdsService();
+      const original = service.reserveAtRegistration;
+      service.reserveAtRegistration = async () => { throw new Error('xidfr6 simulated platform failure'); };
+      let failed;
+      try {
+        failed = await register({ externalId: { namespace: ns, blindedValue: blinded() } });
+      } finally {
+        service.reserveAtRegistration = original;
+      }
+      assert.strictEqual(failed.res.status, 500);
+      // The platform's unique-email row reserved by the registration is gone.
+      const platform = await require('platform').getPlatform();
+      assert.strictEqual(await platform.getUsersUniqueField('email', failed.username + '@xidf.example.com'), null, 'the email reservation is given back');
     });
 
     it('[XIDFR4] a registration without an external id answers no externalIdLinked', async function () {

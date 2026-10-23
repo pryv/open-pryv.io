@@ -34,6 +34,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const path = require('node:path');
 
+// The fork's IPC channel leads to the test runner, not to a cluster master.
+// Left visible, cluster_kv sends its requests there, nobody answers, and every
+// call times out (a 500 on POST /reg/access). Hide it from the core and keep it
+// for the ready signal only.
+const sendToParent = typeof process.send === 'function' ? process.send.bind(process) : null;
+process.send = undefined;
+
 // Boiler init — must happen before any other require
 require('@pryv/boiler').init({
   appName: 'core-' + (process.env.CORE_ID || 'test'),
@@ -144,8 +151,8 @@ const http = require('node:http');
   });
 
   // Signal ready to parent
-  if (process.send) {
-    process.send({ type: 'ready', port, coreId, baseEngine: config.get('storages:base:engine') });
+  if (sendToParent != null) {
+    sendToParent({ type: 'ready', port, coreId, baseEngine: config.get('storages:base:engine') });
   }
   console.log(`[${coreId}] listening on http://127.0.0.1:${port}`);
 

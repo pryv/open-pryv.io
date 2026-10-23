@@ -590,5 +590,57 @@ describe('[RG2C] Two-core integration tests', function () {
       const listA = await userCall(CORE_A_PORT, onA, 'GET', '/account/external-ids');
       assert.deepStrictEqual(listA.body.externalIds.map((x) => x.namespace), [ns]);
     });
+
+    it('[2C53] a registration landing on Core A and forwarded to Core B links the id there; a refusal keeps its data', async () => {
+      const crypto = require('node:crypto');
+      // Every other core unavailable for the time of the test: Core A must forward to Core B.
+      const others = (await platformDB.getAllCoreInfos()).filter((c) => c.id !== CORE_B_ID);
+      for (const c of others) await platformDB.setCoreInfo(c.id, { ...c, available: false });
+      try {
+        const value = crypto.randomBytes(32).toString('base64url');
+        const username = 'xidfw' + Date.now().toString(36);
+        const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+          appId: 'test-2core-xid',
+          username,
+          password: 'testpassw0rd',
+          email: username + '@test.example.com',
+          insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+          language: 'en',
+          externalId: { namespace: ns, blindedValue: value }
+        });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        assert.strictEqual(res.body.externalIdLinked, true);
+        const coresOnB = await httpRequest(CORE_B_PORT, 'GET', '/system/admin/cores', null, { Authorization: ADMIN_KEY });
+        const coreBUrl = (coresOnB.body.cores || coresOnB.body).find((c) => c.id === CORE_B_ID).url;
+        const found = await httpRequest(CORE_B_PORT, 'POST', '/reg/ext-id/cores', { namespace: ns, blindedValue: value });
+        assert.strictEqual(found.body.server, coreBUrl, 'the account and its id live on Core B');
+
+        const refused = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+          appId: 'test-2core-xid',
+          username: username + 'r',
+          password: 'testpassw0rd',
+          email: username + 'r@test.example.com',
+          insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+          language: 'en',
+          externalId: { namespace: ns, blindedValue: crypto.randomBytes(32).toString('base64url'), mode: 'forced' }
+        });
+        assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+        assert.strictEqual(refused.body.error.data?.reason, 'forced-mode-not-available', 'the target core\'s error data reaches the client');
+      } finally {
+        for (const c of others) await platformDB.setCoreInfo(c.id, c);
+      }
+    });
+
+    it('[2C54] an auth request created on Core B carries the external id to the auth page', async () => {
+      const crypto = require('node:crypto');
+      const value = crypto.randomBytes(32).toString('base64url');
+      const created = await httpRequest(CORE_B_PORT, 'POST', '/reg/access', {
+        requestingAppId: 'test-2core-xid', requestedPermissions: [{ streamId: 'diary', level: 'read' }], externalId: { namespace: ns, blindedValue: value }
+      });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      assert.deepStrictEqual(created.body.externalId, { namespace: ns, mode: 'hint' });
+      const poll = await httpRequest(CORE_B_PORT, 'GET', '/reg/access/' + created.body.key);
+      assert.deepStrictEqual(poll.body.externalId, { namespace: ns, label: 'Two-core EHR', blindedValue: value, mode: 'hint' });
+    });
   });
 });

@@ -381,7 +381,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       if (req.body.externalId != null) {
         try {
           const field = await (await externalIdsService()).parseFlowField(req.body.externalId);
-          externalId = { namespace: field.namespace, blindedValue: field.blindedValue, mode: field.mode };
+          externalId = { namespace: field.namespace, label: field.label, blindedValue: field.blindedValue, mode: field.mode };
         } catch (err) {
           if (!(err instanceof APIError)) throw err;
           const apiErr = err as { id: string, message: string, httpStatus?: number, data?: unknown };
@@ -606,12 +606,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         // The external id to link, with the namespace's display label. The
         // one place the blinded value goes back: the auth page needs it to
         // look the id up and to claim it for the account that signs in.
-        if (state.externalId != null) {
-          const { getPlatform } = require('platform');
-          const { getNamespace } = require('platform/src/externalIdIndex.ts');
-          const row = await getNamespace(await getPlatform(), state.externalId.namespace);
-          response.externalId = { ...state.externalId, label: row?.label ?? state.externalId.namespace };
-        }
+        // The label was read once, when the request was created.
+        if (state.externalId != null) response.externalId = state.externalId;
       } else if (state.status === 'ACCEPTED') {
         // Either a one-time `handoff` key (no token here) or the inline
         // token; `delegation` rides at the top level in either shape.
@@ -776,6 +772,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           });
         }
       }
+      // Carried on every accepted shape below (inline, or rebuilt for a hand-off).
+      const externalIdDeclined: true | undefined = req.body.externalIdDeclined === true ? true : undefined;
 
       // A request created with a consent form is the only one whose
       // ACCEPTED is checked: the server reads the access the page just
@@ -836,7 +834,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         if (apiErr != null) {
           return res.status(400).json({ error: { id: 'invalid-parameters', message: apiErr } });
         }
-        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed, cmcInviteOutcomes };
+        update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: req.body.apiEndpoint, handoff: parsed, cmcInviteOutcomes, externalIdDeclined };
       } else if (status === 'ACCEPTED' && wantsHandoff && !isDelegatedGrant) {
         // Shape L on a request that asked for a hand-off, not delegated:
         // server conversion. Move the inline token into a one-time secret on
@@ -859,7 +857,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           ttlSeconds
         });
         if ('handoff' in result) {
-          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes };
+          update = { status: 'ACCEPTED', username: req.body.username, apiEndpoint: result.apiEndpoint, handoff: result.handoff, cmcInviteOutcomes, externalIdDeclined };
         } else {
           // Fall back to inline delivery: never worse than today. Log the
           // reason class and a reference to the request, never the token nor

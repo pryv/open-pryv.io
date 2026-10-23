@@ -51,6 +51,8 @@ type MethodContext = {
   user: { id: string; username: string };
   emailProofVerified?: boolean;
   invitationClaimed?: boolean;
+  /** The registration's validated external id (validateOnPlatform). */
+  externalIdField?: FlowExternalId;
   /** Set when the registration carries an external id and this core holds its platform row. */
   externalIdClaim?: RegistrationClaim;
   /** Set once the account is written: whether the id is linked to it. */
@@ -71,7 +73,7 @@ type RegisterParams = {
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
 type Next = (err?: unknown) => void;
-type ApiError = Error & { id?: string; httpStatus?: number };
+type ApiError = Error & { id?: string; httpStatus?: number; data?: unknown };
 
 // Loaded on first use: the service reaches the platform and the storage
 // engines, which are not ready when this module loads.
@@ -195,6 +197,8 @@ class Registration {
         const err: ApiError = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
         err.id = body?.error?.id || 'cross-core-registration-failed';
         err.httpStatus = response.status;
+        // The target's details (e.g. which field a refusal names) reach the client too.
+        if (body?.error?.data !== undefined) err.data = body.error.data;
         return next(err);
       }
       // Strip the target's `meta` block — the local api-server will add
@@ -219,10 +223,11 @@ class Registration {
   async validateOnPlatform (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     if (result.forwarded) return next();
     try {
-      // External id: validated before anything is reserved, claimed after.
-      let externalIdField: FlowExternalId | null = null;
-      const externalIds = params.externalId != null ? await externalIdsService() : null;
-      if (externalIds != null) externalIdField = await externalIds.parseFlowField(params.externalId);
+      // External id: validated before anything is reserved, claimed right
+      // before the account is written (createUser).
+      const externalIdField = params.externalId != null
+        ? await (await externalIdsService()).parseFlowField(params.externalId)
+        : null;
       const uniqueFields: Record<string, unknown> = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
         if (streamSettings?.isUnique) {
@@ -245,11 +250,7 @@ class Registration {
       }
       // The invitation token is now consumed; given back if creation fails.
       context.invitationClaimed = validation?.invitationClaimed === true;
-      // Hint mode: claimed for this core when nobody holds it, given back if
-      // creation fails, linked once the account is written.
-      if (externalIds != null && externalIdField != null) {
-        context.externalIdClaim = await externalIds.reserveAtRegistration(externalIdField);
-      }
+      if (externalIdField != null) context.externalIdField = externalIdField;
     } catch (error) {
       return next(error);
     }
@@ -266,6 +267,17 @@ class Registration {
     try {
       const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
+      // Hint mode: the external id is claimed for this core when nobody holds
+      // it, in the same failure domain as the account write: a failing claim
+      // gives back what validateRegistration reserved, as a failed insert does.
+      if (context.externalIdField != null) {
+        try {
+          context.externalIdClaim = await (await externalIdsService()).reserveAtRegistration(context.externalIdField);
+        } catch (reserveErr) {
+          await usersRepository.compensateFailedInsert(context.newUser);
+          throw reserveErr;
+        }
+      }
       // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);
       if (context.externalIdClaim != null) {
