@@ -548,15 +548,9 @@ async function handleAccept (params: {
         const r = (delivery?.response ?? {}) as { kind?: string; host?: string };
         return { ok: false, reason: CmcErrorIds.HANDLER_DESTINATION_REFUSED, detail: { status: 0, reason: 'refused', kind: r.kind, host: r.host } };
       }
-      // A refusal by the capability itself (consumed / invalidated /
-      // already accepted by you) is the outcome the accepter needs: report
-      // its typed id as the reason. detail keeps the peer's body either way.
-      const peerId = (delivery?.response?.body as { error?: { data?: { id?: unknown } } } | undefined)?.error?.data?.id;
       return {
         ok: false,
-        reason: typeof peerId === 'string' && CAPABILITY_REFUSAL_IDS.has(peerId)
-          ? peerId
-          : CmcErrorIds.HANDLER_DELIVERY_REJECTED,
+        reason: capabilityRejectionReason(delivery?.response?.body),
         detail: { status: delivery?.response?.status, body: delivery?.response?.body },
       };
     }
@@ -593,6 +587,20 @@ async function handleAccept (params: {
 }
 
 type AcceptFailure = { ok: false; reason: string; detail?: unknown };
+
+/**
+ * The failure reason of a 4xx answer to a write on the capability's responses
+ * stream (an accept or a refusal). A refusal by the capability itself
+ * (consumed / invalidated / already accepted by you) is the outcome the
+ * accepter needs, so its typed id is the reason; any other 4xx is the generic
+ * rejection. Both are permanent (not retried).
+ */
+function capabilityRejectionReason (body: unknown): string {
+  const peerId = (body as { error?: { data?: { id?: unknown } } } | undefined)?.error?.data?.id;
+  return typeof peerId === 'string' && CAPABILITY_REFUSAL_IDS.has(peerId)
+    ? peerId
+    : CmcErrorIds.HANDLER_DELIVERY_REJECTED;
+}
 
 /**
  * The `approvedBy` record of a membership: `{ delegate: { username,
@@ -889,7 +897,7 @@ async function handleRefuse (params: {
     };
   }
 
-  type DeliveryResult = { ok?: boolean; response?: { status?: number; reason?: string }; [k: string]: unknown };
+  type DeliveryResult = { ok?: boolean; response?: { status?: number; reason?: string; body?: unknown }; [k: string]: unknown };
   let delivery: DeliveryResult | undefined;
   try {
     delivery = await ao.deliverRefuseViaCapability({
@@ -904,14 +912,28 @@ async function handleRefuse (params: {
   }
 
   if (!delivery?.ok) {
-    const refused = delivery?.response?.reason === 'refused';
-    const r = (delivery?.response ?? {}) as { kind?: string; host?: string };
+    if (delivery?.response?.reason === 'refused') {
+      const r = (delivery?.response ?? {}) as { kind?: string; host?: string };
+      return {
+        ok: false,
+        reason: CmcErrorIds.HANDLER_DESTINATION_REFUSED,
+        detail: { status: delivery?.response?.status, reason: 'refused', kind: r.kind, host: r.host },
+      };
+    }
+    // A 4xx is the requester's answer, as for an accept: the capability's own
+    // refusal id (consumed / invalidated) or the generic rejection, both
+    // permanent. Re-sending the refusal cannot change it.
+    if (delivery?.response?.reason === 'http-4xx') {
+      return {
+        ok: false,
+        reason: capabilityRejectionReason(delivery?.response?.body),
+        detail: { status: delivery?.response?.status, body: delivery?.response?.body },
+      };
+    }
     return {
       ok: false,
-      reason: refused ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
-      detail: refused
-        ? { status: delivery?.response?.status, reason: 'refused', kind: r.kind, host: r.host }
-        : { status: delivery?.response?.status, reason: delivery?.response?.reason },
+      reason: 'cmc-handler-delivery-failed',
+      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
     };
   }
 

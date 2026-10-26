@@ -1286,7 +1286,7 @@ error.id: 'cmc-capability-already-accepted-by-you'
 error.data: { acceptedAt: <unix-seconds> }   // creation time of the existing relationship access
 ```
 
-On the accepter's side, the `consent/accept-cmc` trigger fails with `failure.reason: 'cmc-capability-already-accepted-by-you'`; `failure.detail` carries the peer's response body. The same applies to `cmc-capability-consumed` and `cmc-capability-invalidated`. These reasons are not retried.
+On the accepter's side, the `consent/accept-cmc` (or `consent/refuse-cmc`) trigger fails with `failure.reason: 'cmc-capability-already-accepted-by-you'`; `failure.detail` carries the peer's response body. The same applies to `cmc-capability-consumed` and `cmc-capability-invalidated`. These reasons are not retried.
 
 Match is case-insensitive on `username` and uses the same host-slugification rule as `counterpartySlug` (so `Alice` at `PRYV.me` matches an existing `alice` at `pryv.me`). Patient-side UX: show "you already accepted this invite, you don't need to act again." NO new back-channel access is minted; the doctor's account is not touched. A patient whose relationship was revoked (by either side) has no such access any more and can join again through the same link.
 
