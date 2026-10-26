@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 3 (2026-10-23), covering releases 2.0.0-rc.40 to 2.0.0-rc.57.
+**Report revision:** 4 (2026-10-26), covering releases 2.0.0-rc.40 to 2.0.0-rc.58.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -92,6 +92,7 @@ its applicability is stated with it.
 | 2.0.0-rc.55 | 2026-10-15 | lower-severity fixes | yes (with rc.56) |
 | 2.0.0-rc.56 | 2026-10-16 | 2 High, lower-severity fixes | yes (2026-10-16 to 2026-10-23) |
 | 2.0.0-rc.57 | 2026-10-23 | runtime update, not an audit finding: Node.js 24.22.1 for the Node.js security release of 2026-10-21 (Brotli decoder out-of-bounds write reachable through outbound HTTP response decoding; TLS hostname-check bypasses); operator action: pull the new image, or upgrade Node.js to 24.22.1 and run `npm rebuild` on a native install | yes (2026-10-23) |
+| 2.0.0-rc.58 | 2026-10-26 | dependency updates, not audit findings: `body-parser` 1.20.9 (GHSA-27r3-jxmh-p828, denial of service through trailing bytes after a compressed request body), `multer` 2.5.0 (GHSA-q7qp-rjg7-q26m, denial of service through a pending upload filter), `undici` 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c, denial of service), `fast-uri` 3.1.9 (moderate URI parsing advisories); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1295,3 +1296,4 @@ This report is updated with every release that carries a security fix:
 | 1 | 2026-10-14 | 2.0.0-rc.40 to 2.0.0-rc.51 | First publication. Every finding fixed, released and deployed on the maintainers' platforms (2.0.0-rc.51 deployed 2026-10-14). |
 | 2 | 2026-10-15 | 2.0.0-rc.40 to 2.0.0-rc.53 | Adds 2.0.0-rc.52 and rc.53 (follow-up review of consent, delegation and access teardown): 1 High and 2 Medium findings, their completion steps and lower-severity fixes; the SQLite erasure residual noted under rc.51 is closed. Both releases deployed on the maintainers' platforms (2026-10-15). |
 | 3 | 2026-10-23 | 2.0.0-rc.40 to 2.0.0-rc.57 | Adds 2.0.0-rc.54 to rc.57 (rc.57: Node.js runtime update, release table only; follow-up review of how stream ids are compared by the access guards, and of the server's calls to consent counterparties): 2 High findings and lower-severity fixes in rc.55 and rc.56; the lower-severity defects open at revision 2 are fixed; section 5 updated for the container image and the deletion-record retention. rc.54 to rc.57 deployed on the maintainers' platforms (2026-10-16 to 2026-10-23). |
+| 4 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.58 | Adds 2.0.0-rc.58 to the release table: dependency security updates (`body-parser`, `multer`, `undici`, `fast-uri`), not audit findings; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
