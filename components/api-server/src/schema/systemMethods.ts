@@ -87,3 +87,14 @@ const __ex_extIdNamespacesDelete = {
     }, { required: ['namespace'] })
   };
 export { __ex_extIdNamespacesDelete as extIdNamespacesDelete };
+// The value's format is checked by the service, which never echoes it. The
+// username is a lookup key resolved by the caller through the platform: a
+// legacy name outside today's username rule must still be answered.
+const __ex_extIdHolds = {
+    params: helpers.object({
+      username: helpers.string({ minLength: 1, maxLength: 100 }),
+      namespace: extIdNamespace,
+      blindedValue: helpers.string()
+    }, { required: ['username', 'namespace', 'blindedValue'] })
+  };
+export { __ex_extIdHolds as extIdHolds };

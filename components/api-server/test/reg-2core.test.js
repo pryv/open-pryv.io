@@ -622,10 +622,11 @@ describe('[RG2C] Two-core integration tests', function () {
           email: username + 'r@test.example.com',
           insurancenumber: String(Math.floor(Math.random() * 900) + 100),
           language: 'en',
-          externalId: { namespace: ns, blindedValue: crypto.randomBytes(32).toString('base64url'), mode: 'forced' }
+          // Forced, with the id just linked: the target core refuses it.
+          externalId: { namespace: ns, blindedValue: value, mode: 'forced' }
         });
-        assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
-        assert.strictEqual(refused.body.error.data?.reason, 'forced-mode-not-available', 'the target core\'s error data reaches the client');
+        assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
+        assert.deepStrictEqual(refused.body.error.data, { namespace: ns, reason: 'value-taken' }, 'the target core\'s error data reaches the client');
       } finally {
         for (const c of others) await platformDB.setCoreInfo(c.id, c);
       }
@@ -643,6 +644,11 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(poll.body.externalId, { namespace: ns, label: 'Two-core EHR', blindedValue: value, mode: 'hint' });
     });
 
+    // The forced accept across cores (token bound on the account's core, holder
+    // asked on that core's /system/ext-id/holds) is covered by [XIDFC] (remote
+    // arm, fetch seam) and [XIDH] (the holder route over HTTP): the child cores
+    // here run as single-core nodes over one test database, so a cross-core
+    // accept would take the local arm.
     it('[2C55] a registration on Core A of an id Core B holds creates the account unlinked, with no row on A', async () => {
       const crypto = require('node:crypto');
       const { PiiHasher } = require('platform/src/PiiHasher.ts');

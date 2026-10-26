@@ -40,6 +40,7 @@ const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUti
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
 const { getAccessIndex } = require('platform/src/accessIndex.ts');
 const { getNamespace, listNamespaces, setNamespace, deleteNamespace, namespaceInfo } = require('platform/src/externalIdIndex.ts');
+const { getExternalIdsService } = require('business/src/external-ids/service.ts');
 const { APIError } = require('errors');
 
 const { platform } = require('platform') as { platform: Platform };
@@ -307,6 +308,25 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         if (!await deleteNamespace(platform, params.namespace, { force: params.force === true })) {
           return next(errors.unknownResource('external-id namespace', params.namespace));
         }
+        next();
+      } catch (err) {
+        return next(extIdError(err));
+      }
+    }
+  );
+
+  // The holder answer of the forced-mode accept check, asked by the core that
+  // holds the auth request when the account lives here. A boolean and nothing
+  // else: no date, no account, no core. Not audited (a read; one event per
+  // probe in the user's trail would be noise).
+  systemAPI.register('system.extIdHolds',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.extIdHolds.params),
+    async function extIdHolds (_context: MethodContext, params: { username: string, namespace: string, blindedValue: string }, result: ResultBag, next: Next) {
+      try {
+        const userId = await usersRepository.getUserIdForUsername(params.username);
+        if (userId == null) return next(errors.unknownResource('user', params.username));
+        result.holds = await (await getExternalIdsService()).holds(userId, params.namespace, params.blindedValue);
         next();
       } catch (err) {
         return next(extIdError(err));

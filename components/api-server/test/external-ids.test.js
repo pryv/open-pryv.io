@@ -177,6 +177,42 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     });
   });
 
+  describe('[XIDH] holder answer (core to core)', function () {
+    function holds (body, key = adminKey) {
+      const req = coreRequest.post('/system/ext-id/holds');
+      return (key != null ? req.set('authorization', key) : req).send(body);
+    }
+
+    it('[XIDH1] answers a boolean only: true for the holder, false for another account and for an unclaimed id', async function () {
+      const holder = await makeUser();
+      const other = await makeUser();
+      const v = blinded();
+      assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: v })).status, 201);
+      const yes = await holds({ username: holder.username, namespace: ns, blindedValue: v });
+      assert.strictEqual(yes.status, 200, JSON.stringify(yes.body));
+      assert.deepStrictEqual(Object.keys(yes.body).filter((k) => k !== 'meta'), ['holds']);
+      assert.strictEqual(yes.body.holds, true);
+      assert.strictEqual((await holds({ username: other.username, namespace: ns, blindedValue: v })).body.holds, false);
+      assert.strictEqual((await holds({ username: holder.username, namespace: ns, blindedValue: blinded() })).body.holds, false);
+    });
+
+    it('[XIDH2] an account that is not on this core is 404; a bad namespace or value is 400 without the value', async function () {
+      const v = blinded();
+      assert.strictEqual((await holds({ username: 'nobody' + cuid().slice(-6).toLowerCase(), namespace: ns, blindedValue: v })).status, 404);
+      const unknownNs = await holds({ username: users.a.username, namespace: 'no-such-ns', blindedValue: v });
+      assert.strictEqual(unknownNs.status, 400);
+      assert.ok(!JSON.stringify(unknownNs.body).includes(v));
+      const malformed = await holds({ username: users.a.username, namespace: ns, blindedValue: 'short' });
+      assert.strictEqual(malformed.status, 400);
+      assert.ok(!JSON.stringify(malformed.body).includes('short'));
+    });
+
+    it('[XIDH3] the admin key is required', async function () {
+      assert.strictEqual((await holds({ username: users.a.username, namespace: ns, blindedValue: blinded() }, null)).status, 404);
+      assert.strictEqual((await holds({ username: users.a.username, namespace: ns, blindedValue: blinded() }, users.a.token)).status, 404);
+    });
+  });
+
   describe('[XIDL] lookup', function () {
     it('[XIDLU1] POST answers the core URL; unclaimed and unknown namespace are the same 404; GET is not a route', async function () {
       const res = await lookup({ namespace: ns, blindedValue: users.b.value });

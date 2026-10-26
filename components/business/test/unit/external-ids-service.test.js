@@ -347,13 +347,31 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(await coreB.lookupCoreUrl(ns, v), 'https://core-a.example.test/', 'giving back a claim never taken releases nothing');
   });
 
-  it('[XIDS16] the flow field: forced refused for now, malformed refused without the value', async () => {
-    await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'forced' }), 'invalid-parameters-format',
-      (err) => assert.strictEqual(err.data.reason, 'forced-mode-not-available'));
+  it('[XIDS16] the flow field: hint and forced accepted, an unknown mode and a malformed value refused without the value', async () => {
+    assert.strictEqual((await coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'forced' })).mode, 'forced');
+    assert.strictEqual((await coreA.parseFlowField({ namespace: ns, blindedValue: value() })).mode, 'hint', 'the namespace default');
     await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'other' }), 'invalid-parameters-format');
     await assertApiError(coreA.parseFlowField(null), 'invalid-parameters-format');
     await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: 'abc' }), 'invalid-parameters-format',
       (err) => assert.strictEqual(err.data.param, 'externalId.blindedValue'));
+  });
+
+  // Mutation: drop the platform-row condition of `holds` and the stale-row
+  // half fails; drop the local read of `isClaimed` and the last half fails.
+  it('[XIDS17] holds needs both rows; isClaimed sees a platform row or a local row', async () => {
+    const v = value();
+    await coreA.claim('u1', ns, v);
+    assert.strictEqual(await coreA.holds('u1', ns, v), true);
+    const field = await coreB.parseFlowField({ namespace: ns, blindedValue: v });
+    assert.strictEqual(await coreB.isClaimed(field), true, 'held on another core');
+    // a local row left behind while the platform row now names another core
+    const [[key]] = extIdRows(store);
+    store.set(key, 'core-b');
+    assert.strictEqual(await coreA.holds('u1', ns, v), false, 'a stale local row never passes');
+    // a local row with no platform row (a half-done claim) is still claimed
+    store.delete(key);
+    assert.strictEqual(await coreA.isClaimed(await coreA.parseFlowField({ namespace: ns, blindedValue: v })), true);
+    assert.strictEqual(await coreA.isClaimed(await coreA.parseFlowField({ namespace: ns, blindedValue: value() })), false);
   });
 
   describe('[XIDR] token refresh', () => {

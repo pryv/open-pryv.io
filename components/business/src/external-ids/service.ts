@@ -174,11 +174,27 @@ export class ExternalIdsService {
     return result.sort((a, b) => a.namespace.localeCompare(b.namespace));
   }
 
-  /** True when this account holds exactly that id. */
+  /**
+   * True when this account holds exactly that id: the platform row names this
+   * core (it arbitrates between cores) AND the local row names the account (it
+   * arbitrates between the accounts of this core). A local row left behind by
+   * a lost reconcile never passes on its own.
+   */
   async holds (userId: string, namespace: string, rawValue: unknown): Promise<boolean> {
     const tokens = tokensFor(this.platform, await this.#namespaceRow(namespace), parseBlindedValue(rawValue));
     const row = await this.db.getByTokens(tokens.nsToken, tokens.valueToken);
-    return row != null && row.userId === userId;
+    if (row == null || row.userId !== userId) return false;
+    return (await getRowCore(this.platform, tokens)) === this.platform.coreId;
+  }
+
+  /**
+   * Forced-mode registration, before anything is reserved: true when the id is
+   * held anywhere (a platform row on any core, this one included, or a local
+   * row of this core). A stale row fails closed until the reconcile runs.
+   */
+  async isClaimed (field: FlowExternalId): Promise<boolean> {
+    if ((await getRowCore(this.platform, field.tokens)) != null) return true;
+    return (await this.db.getByTokens(field.tokens.nsToken, field.tokens.valueToken)) != null;
   }
 
   /**
@@ -196,8 +212,9 @@ export class ExternalIdsService {
   /**
    * The `externalId` field of a flow (auth request, registration): known
    * namespace, well-formed value, mode (the namespace's default when absent).
-   * Forced mode is refused until the server check of the sign-in completion
-   * exists. Errors name the field, never the value.
+   * Errors name the field, never the value. In forced mode the auth-request
+   * accept is checked server-side (`reg/externalIdCheck.ts`) and a
+   * registration of a held id is refused (`isClaimed`).
    */
   async parseFlowField (raw: unknown): Promise<FlowExternalId> {
     if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -210,10 +227,6 @@ export class ExternalIdsService {
     const mode = field.mode ?? row.defaultMode;
     if (mode !== 'hint' && mode !== 'forced') {
       throw errors.invalidParametersFormat('externalId.mode must be "hint" or "forced".', { param: 'externalId.mode' });
-    }
-    if (mode === 'forced') {
-      throw errors.invalidParametersFormat('The forced mode of external ids is not available on this platform yet.',
-        { param: 'externalId.mode', reason: 'forced-mode-not-available' });
     }
     return { namespace: field.namespace as string, label: row.label, blindedValue, mode, tokens: tokensFor(this.platform, row, blindedValue) };
   }

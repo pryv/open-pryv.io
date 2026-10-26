@@ -1,5 +1,29 @@
 # Changelog - Internal (no API impact)
 
+## External ids: forced mode
+
+- `routes/reg/accessLoader.ts` (new): the access loader of the auth-request accept, extracted from
+  `consentCheck.ts` and shared with the forced check: the platform decides the account's core,
+  then the posted token is loaded for that username locally (`MethodContext` +
+  `retrieveExpandedAccess`) or through that core's `access-info`; it also returns where the
+  account lives (local user id, or the remote core URL).
+- `routes/reg/externalIdCheck.ts` (new): the forced accept check (budget consulted first, token
+  bound, then the holder answer in-process or from the home core's admin-key
+  `/system/ext-id/holds` with `peerUrlProblem` / `peerFetchOptions` / 3 s timeout); only
+  `not-holder` counts in the budget; any failure to answer is `unavailable`.
+- `ExternalIdsService.holds` now requires the platform row to name this core as well as the local
+  row to name the account (a stale local row never passes); `isClaimed` (new) is the forced
+  registration pre-check (a platform row on any core or a local row).
+- `Registration`: forced pre-check in `validateOnPlatform` before `validateRegistration`; in
+  `createUser`, a forced claim that loses the race (`claimRow` false) throws inside the reserve
+  `try`, so `compensateFailedInsert` and the invitation release give everything back.
+- `system.extIdHolds` registered in `audit/ApiMethods.ts` (`ALL_METHODS` and `NOT_AUDITED_METHODS`).
+- Tests: `[XIDS17]`, `[XIDH1-3]`, `[XIDFF1-8]`, `[XIDFC1-4]` / `[XIDFF9]` (remote arm, fetch and
+  platform seams), `[XIDFR7-9]`, `[XIDFG1]` extended; mutation-checked: `[XIDS17]` (platform-row
+  condition of `holds`), `[XIDFF3]` (the accept check), `[XIDFR7]` (the registration pre-check),
+  `[XIDFR9]` (the race refusal). The two-core suite's child cores run as single-core nodes over one
+  test database, so the cross-core forced accept is covered at the unit level, not end to end.
+
 ## Self-identity host: one helper
 
 - `api-server/src/methods/helpers/selfIdentityHost.ts` replaces the four copies of the host
