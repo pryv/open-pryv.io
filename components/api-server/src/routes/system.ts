@@ -83,6 +83,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.delete(Paths.System + '/admin/ext-id-ns/:namespace', setMethodId('system.extIdNamespaces.delete'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, { namespace: req.params.namespace, force: req.query.force === 'true' }, methodCallback(res, next, 204));
   });
+  // --------------------- external-id holder (core to core) ----------------- //
+  expressApp.post(Paths.System + '/ext-id/holds', contentType.json, setMethodId('system.extIdHolds'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, req.body, methodCallback(res, next, 200));
+  });
   // --------------------- event-types dictionary status ----------------- //
   // Reports whether the published event-types dictionary loaded, so operators
   // can alert on a core that is running degraded on its embedded fallback.

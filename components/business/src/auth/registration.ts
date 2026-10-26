@@ -228,6 +228,11 @@ class Registration {
       const externalIdField = params.externalId != null
         ? await (await externalIdsService()).parseFlowField(params.externalId)
         : null;
+      // Forced mode: an id held anywhere refuses the registration before
+      // anything is reserved (the patient already has an account).
+      if (externalIdField?.mode === 'forced' && await (await externalIdsService()).isClaimed(externalIdField)) {
+        throw errors.externalIdAlreadyClaimed(externalIdField.namespace, 'value-taken');
+      }
       const uniqueFields: Record<string, unknown> = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
         if (streamSettings?.isUnique) {
@@ -273,6 +278,11 @@ class Registration {
       if (context.externalIdField != null) {
         try {
           context.externalIdClaim = await (await externalIdsService()).reserveAtRegistration(context.externalIdField);
+          // Forced mode: taken between the pre-check and the claim. Refused
+          // with the full give-back, never an unlinked account.
+          if (context.externalIdField.mode === 'forced' && !context.externalIdClaim.platformClaimed) {
+            throw errors.externalIdAlreadyClaimed(context.externalIdField.namespace, 'value-taken');
+          }
         } catch (reserveErr) {
           await usersRepository.compensateFailedInsert(context.newUser);
           throw reserveErr;

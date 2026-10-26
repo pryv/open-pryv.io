@@ -87,3 +87,12 @@ const __ex_extIdNamespacesDelete = {
     }, { required: ['namespace'] })
   };
 export { __ex_extIdNamespacesDelete as extIdNamespacesDelete };
+// The value's format is checked by the service, which never echoes it.
+const __ex_extIdHolds = {
+    params: helpers.object({
+      username: helpers.username,
+      namespace: extIdNamespace,
+      blindedValue: helpers.string()
+    }, { required: ['username', 'namespace', 'blindedValue'] })
+  };
+export { __ex_extIdHolds as extIdHolds };

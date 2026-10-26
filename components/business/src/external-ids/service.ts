@@ -174,11 +174,27 @@ export class ExternalIdsService {
     return result.sort((a, b) => a.namespace.localeCompare(b.namespace));
   }
 
-  /** True when this account holds exactly that id. */
+  /**
+   * True when this account holds exactly that id: the platform row names this
+   * core (it arbitrates between cores) AND the local row names the account (it
+   * arbitrates between the accounts of this core). A local row left behind by
+   * a lost reconcile never passes on its own.
+   */
   async holds (userId: string, namespace: string, rawValue: unknown): Promise<boolean> {
     const tokens = tokensFor(this.platform, await this.#namespaceRow(namespace), parseBlindedValue(rawValue));
     const row = await this.db.getByTokens(tokens.nsToken, tokens.valueToken);
-    return row != null && row.userId === userId;
+    if (row == null || row.userId !== userId) return false;
+    return (await getRowCore(this.platform, tokens)) === this.platform.coreId;
+  }
+
+  /**
+   * Forced-mode registration, before anything is reserved: true when the id is
+   * held anywhere (a platform row on any core, this one included, or a local
+   * row of this core). A stale row fails closed until the reconcile runs.
+   */
+  async isClaimed (field: FlowExternalId): Promise<boolean> {
+    if ((await getRowCore(this.platform, field.tokens)) != null) return true;
+    return (await this.db.getByTokens(field.tokens.nsToken, field.tokens.valueToken)) != null;
   }
 
   /**

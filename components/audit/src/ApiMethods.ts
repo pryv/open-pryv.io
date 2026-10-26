@@ -97,6 +97,7 @@ const ALL_METHODS = [
   'system.extIdNamespaces.get',
   'system.extIdNamespaces.set',
   'system.extIdNamespaces.delete',
+  'system.extIdHolds',
   'auth.hostings',
   // External ids of the account (personal token), and the core lookup by id.
   'account.externalIds.claim',
@@ -151,6 +152,8 @@ const NOT_AUDITED_METHODS = [
   // read-only, no per-user context
   'system.extIdNamespaces.list',
   'system.extIdNamespaces.get',
+  // the holder answer of the forced accept check: a read, one per probe
+  'system.extIdHolds',
   // the unauthenticated lookup, like auth.cores
   'auth.extIdCores'
 ];

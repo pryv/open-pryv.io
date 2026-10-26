@@ -27,6 +27,7 @@ const errors = require('errors').factory;
 const { reserveInvitationCheck } = require('./invitationCheckBudget.ts');
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
+const { checkForcedAcceptance } = require('./externalIdCheck.ts');
 const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
 const { clientIp } = require('middleware/src/clientIp.ts');
@@ -663,6 +664,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       const hasToken = typeof req.body.token === 'string' && req.body.token !== '';
       const wantsHandoff = pending.credentialHandoff === 'shared-secret';
       const isDelegatedGrant = req.body.delegation != null;
+      // Forced mode: only the account holding the request's external id may
+      // receive the credential (checked below, after the consent check).
+      const isForced = pending.externalId?.mode === 'forced';
 
       // A hand-off describes an accepted grant only (like the delegation hint).
       // Refuse it on any other status BEFORE anything is written: `handoff` is
@@ -722,6 +726,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
               error: { id: 'invalid-parameters', message: 'a delegated grant cannot use a UI-created handoff; post the token inline' }
             });
           }
+          // The forced external-id check needs the token, as the consent check does.
+          if (isForced) {
+            return res.status(400).json({
+              error: { id: 'invalid-parameters', message: 'a request with a forced external id cannot use a UI-created handoff; post the token inline' }
+            });
+          }
         }
       }
 
@@ -771,6 +781,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
             error: { id: 'invalid-parameters', message: 'externalIdDeclined must be true, with status ACCEPTED, on a request that carries an externalId' }
           });
         }
+        // Forced mode has no link question to decline.
+        if (isForced) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: 'externalIdDeclined is not valid on a request with a forced external id' }
+          });
+        }
       }
       // Carried on every accepted shape below (inline, or rebuilt for a hand-off).
       const externalIdDeclined: true | undefined = req.body.externalIdDeclined === true ? true : undefined;
@@ -814,6 +830,48 @@ export default function (expressApp: ExpressApp, app: AppLike) {
             error: {
               id: 'consent-check-unavailable',
               message: 'The consent grant could not be verified by this server. ' +
+                'The access request is unchanged; retry shortly.',
+              data: { reason: outcome.reason }
+            }
+          });
+        }
+      }
+
+      // Forced external id: the credential goes to the holder only. After the
+      // consent check, before any hand-off secret exists; the state stays
+      // NEED_SIGNIN on a refusal so the page can sign in as the holder.
+      if (status === 'ACCEPTED' && isForced && pending.externalId != null) {
+        const outcome = await checkForcedAcceptance({
+          app,
+          username: req.body.username,
+          token: req.body.token,
+          externalId: { namespace: pending.externalId.namespace, blindedValue: pending.externalId.blindedValue },
+          ip: clientIp(req)
+        });
+        if (!outcome.ok && outcome.kind === 'over-budget') {
+          return next(errors.tooManyAttempts(outcome.retryAfter, {
+            message: `Too many external-id lookups or refused claims from this address; retry in ${outcome.retryAfter} s.`,
+            data: { retryAfterSeconds: outcome.retryAfter }
+          }));
+        }
+        if (!outcome.ok && outcome.kind === 'mismatch') {
+          return res.status(400).json({
+            error: {
+              id: 'external-id-mismatch',
+              message: outcome.reason === 'token-invalid'
+                ? 'The access does not belong to this account.'
+                : 'This account is not the one linked to the record of this request.',
+              data: { namespace: pending.externalId.namespace, reason: outcome.reason }
+            }
+          });
+        }
+        if (!outcome.ok && outcome.kind === 'unavailable') {
+          logger.error('external-id check unavailable on access request ' + keyRef(req.params.key) +
+            ' (' + outcome.reason + '): ' + (outcome.detail ?? ''));
+          return res.status(503).json({
+            error: {
+              id: 'external-id-check-unavailable',
+              message: 'The external id of this request could not be checked by this server. ' +
                 'The access request is unchanged; retry shortly.',
               data: { reason: outcome.reason }
             }
