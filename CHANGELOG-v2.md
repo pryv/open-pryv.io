@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **Native installs: replacing the bundled rqlite.** `storages/engines/rqlite/scripts/setup` no
+  longer moves an older `rqlited` left at `var-pryv/rqlite-bin/` (installs that predate
+  2.0.0-rc.1, when the binary lived there) into `bin-ext/`: only a binary of the pinned version is
+  moved; any other is renamed aside with its `rqlite` / `rqbench` companions
+  (`<name>.<version>-not-migrated`) and the pinned version is downloaded. Until now, following
+  INSTALL.md (remove `bin-ext/rqlited`, re-run the script) on such a host installed that older
+  binary, and an rqlite 9 cannot open a 10.x data directory: the core did not start and the
+  directory had to be restored from a backup. INSTALL.md now also describes checking the new
+  binary before stopping the core.
+
 ## 2.0.0-rc.58 - 2026-10-26
 
 - **External ids: one account per record id, platform-wide.** A service that knows a third-party

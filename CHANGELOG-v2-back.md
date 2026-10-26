@@ -15,6 +15,15 @@
 - Tests: `[XIDFA]` / `[XIDFR]` / `[XIDFG]` (API, both engines; `[XIDFG1]` asserts no log line
   holds a value), `[XIDS15]` / `[XIDS16]` (service, mutation-checked give-back).
 
+## rqlite setup: no migration of a stale binary
+
+- `storages/engines/rqlite/scripts/setup`: on Linux, the move of `var-pryv/rqlite-bin/rqlited` to
+  `bin-ext/` happens only when its `-version` is `RQLITE_VERSION`; another version is renamed
+  `rqlited.<version>-not-migrated` in place and the script continues as a fresh install (download,
+  sha256 check). macOS (Homebrew symlinks) unchanged. Checked by hand in scratch directories: stale
+  leftover (not moved, pinned version downloaded), pinned leftover (moved, no download), no leftover
+  (download).
+
 ## External ids: platform rows, home-core table, tools
 
 - PlatformDB (rqlite and PostgreSQL, shared conformance `[XIDP]`): `claimCoreRow`, `getCoreRow`,
