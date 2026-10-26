@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.58 - 2026-10-26
 
 - **External ids: one account per record id, platform-wide.** A service that knows a third-party
   record id (an EHR patient id, for example) sends a blinded value `HMAC(K_namespace, id)` it
