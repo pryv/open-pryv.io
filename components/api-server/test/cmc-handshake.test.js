@@ -2074,6 +2074,30 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual((await liveAccepters(alice, h.capabilityId)).length, 0);
     });
 
+    it('[CN104] a refusal on a consumed or a withdrawn single-use link fails with the capability\'s typed id', async function () {
+      // Consumed: bob accepted, then answers the same link with a refusal.
+      const h = await runFreshHandshake('refuse-consumed');
+      await pollTrigger(alice, h.requestEventId, (c) => c.status === 'accepted', 'CN104 accepted');
+      const refuseId = await postAnswer(bob, 'consent/refuse-cmc', h.capabilityUrl, { reason: { en: 'CN104 late no' } });
+      const refuse = await pollTrigger(bob, refuseId, settled, 'CN104 refuse on consumed');
+      assert.strictEqual(refuse.content.status, 'failed', JSON.stringify(refuse.content));
+      assert.strictEqual(refuse.content.failure?.reason, 'cmc-capability-consumed', JSON.stringify(refuse.content));
+      assert.strictEqual(refuse.content.failure?.detail?.status, 400, JSON.stringify(refuse.content));
+      const accepted = await pollTrigger(alice, h.requestEventId, () => true, 'CN104 still accepted');
+      assert.strictEqual(accepted.content.status, 'accepted', JSON.stringify(accepted.content));
+
+      // Invalidated: the requester withdrew the link before the refusal.
+      const inv = await postInvite('refuse-invalidated');
+      const wd = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [inv.triggerStreamId], type: 'consent/invalidate-link-cmc', content: { capabilityId: inv.capabilityId } });
+      assert.strictEqual(wd.status, 201, JSON.stringify(wd.body));
+      await pollTrigger(alice, inv.requestEventId, (c) => c.status === 'invalidated', 'CN104 invalidated');
+      const refuse2Id = await postAnswer(bob, 'consent/refuse-cmc', inv.capabilityUrl, { reason: { en: 'CN104 no' } });
+      const refuse2 = await pollTrigger(bob, refuse2Id, settled, 'CN104 refuse on invalidated');
+      assert.strictEqual(refuse2.content.status, 'failed', JSON.stringify(refuse2.content));
+      assert.strictEqual(refuse2.content.failure?.reason, 'cmc-capability-invalidated', JSON.stringify(refuse2.content));
+    });
+
     it('[CN103] the offer stays readable through a withdrawn link until it expires (S2)', async function () {
       // The capability access is kept with its permissions after withdrawal so
       // the accept gets the typed cmc-capability-invalidated; a side effect is

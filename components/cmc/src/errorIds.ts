@@ -366,9 +366,10 @@ const CmcErrorIds = {
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];
 
-// The capability's own refusals of an accept (write-hook verdicts on a still
-// valid access). An accepter's trigger reports these as its failure reason
-// rather than the generic HANDLER_DELIVERY_REJECTED; all are permanent.
+// The capability's own refusals of an accept or a refusal (write-hook verdicts
+// on a still valid access). The accepter's accept or refuse trigger reports
+// these as its failure reason rather than the generic
+// HANDLER_DELIVERY_REJECTED; all are permanent.
 const CAPABILITY_REFUSAL_IDS: ReadonlySet<string> = new Set([
   CmcErrorIds.CAPABILITY_CONSUMED,
   CmcErrorIds.CAPABILITY_INVALIDATED,

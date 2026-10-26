@@ -388,6 +388,39 @@ describe('[CMCDISP] cmc/dispatch', () => {
       });
       assert.equal(r.status, 'completed');
     });
+
+    it('[CD07B] a refuse on a consumed or invalidated capability fails with the typed id and is not queued for retry', async () => {
+      for (const id of ['cmc-capability-consumed', 'cmc-capability-invalidated']) {
+        const mall = fakeMall();
+        const created = [];
+        const baseCreate = mall.events.create;
+        mall.events.create = async (userId, params) => {
+          created.push(params);
+          return baseCreate(userId, params);
+        };
+        const body = { error: { id: 'invalid-operation', data: { id } } };
+        const { fetch } = fakeFetch([
+          { status: 200, body: { events: [VALID_OFFER] } },
+          { status: 400, body },
+        ]);
+        const r = await dispatch({
+          userId: 'u1',
+          event: {
+            id: 'evt-refuse',
+            type: 'consent/refuse-cmc',
+            content: { capabilityUrl: 'https://Tok@example.com/', reason: { en: 'no' } },
+          },
+          deps: makeDeps({ mall, fetch }),
+        });
+        assert.equal(r.status, 'failed');
+        assert.equal(r.reason, id);
+        const failed = mall.calls.eventsUpdated[mall.calls.eventsUpdated.length - 1].content;
+        assert.equal(failed.status, 'failed');
+        assert.equal(failed.failure.reason, id);
+        const retry = created.find((e) => e.streamIds?.includes(':_cmc:_internal:retries'));
+        assert.equal(retry, undefined, 'the capability\'s refusal is permanent, no retry: ' + JSON.stringify(retry));
+      }
+    });
   });
 
   describe('[CMCDISP-CRED] the completed trigger carries no usable credential', () => {

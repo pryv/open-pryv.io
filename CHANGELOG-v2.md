@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **CMC: a refusal answered by the capability itself now fails with its typed id, and is not
+  retried.** A `consent/refuse-cmc` trigger whose delivery the requester's core refuses with a
+  4xx used to fail with `failure.reason: 'cmc-handler-delivery-failed'` and was re-sent by the
+  retry loop up to six more times. It now fails as an accept does: `cmc-capability-consumed`,
+  `cmc-capability-invalidated` or `cmc-capability-already-accepted-by-you` when the capability
+  refused it, `cmc-handler-delivery-rejected` for any other 4xx, with `failure.detail: { status,
+  body }` (the peer's answer). Both are permanent: the refusal is sent once. A 5xx, timeout or
+  network error is still `cmc-handler-delivery-failed` and retried.
+
 ## 2.0.0-rc.59 - 2026-10-26
 
 - **External ids: forced mode.** `externalId.mode: 'forced'` (or a namespace whose `defaultMode` is

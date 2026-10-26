@@ -481,6 +481,40 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.reason, 'cmc-handler-delivery-failed');
     });
 
+    it('[HA12B] a capability refusal of the refuse delivery is reported with its typed id, detail kept, as for an accept', async () => {
+      for (const id of ['cmc-capability-consumed', 'cmc-capability-invalidated', 'cmc-capability-already-accepted-by-you']) {
+        const body = { error: { id: 'invalid-operation', data: { id } } };
+        const { fetch } = fakeFetch([
+          { status: 200, body: { events: [VALID_OFFER] } },
+          { status: 400, body },
+        ]);
+        const r = await handleRefuse({
+          userId: 'u1',
+          triggerEvent: REFUSE_TRIGGER,
+          selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+          deps: { fetch },
+        });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, id);
+        assert.deepEqual(r.detail, { status: 400, body });
+      }
+    });
+
+    it('[HA12C] any other 4xx on the refuse delivery is the generic delivery-rejected reason', async () => {
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 400, body: { error: { id: 'invalid-operation', data: { id: 'cmc-something-else' } } } },
+      ]);
+      const r = await handleRefuse({
+        userId: 'u1',
+        triggerEvent: REFUSE_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-delivery-rejected');
+    });
+
     it('[HA13] rejects wrong trigger type', async () => {
       const r = await handleRefuse({
         userId: 'u1',
