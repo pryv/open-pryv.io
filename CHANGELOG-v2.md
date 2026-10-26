@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.60 - 2026-10-26
 
 - **External ids: releasing an id claimed by the wrong account.** `POST /system/admin/ext-id/release
   { namespace, blindedValue, reason }` (admin key): on the core that holds the id, the id is
