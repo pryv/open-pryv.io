@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.59 - 2026-10-26
 
 - **External ids: forced mode.** `externalId.mode: 'forced'` (or a namespace whose `defaultMode` is
   `forced`) is now accepted on `POST /reg/access` and `POST /users` (it answered
