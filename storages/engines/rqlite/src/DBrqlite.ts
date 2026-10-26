@@ -301,6 +301,15 @@ class DBrqlite {
     return rows.map((row: Row) => ({ key: row.key.slice(prefix.length), coreId: row.value }));
   }
 
+  async moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number> {
+    checkKvPrefix('moveCoreRows', prefix);
+    const result = await this.execute(
+      'UPDATE keyValue SET value = ? WHERE key LIKE ? AND value = ?',
+      [toCoreId, prefix + '%', fromCoreId]
+    );
+    return result?.rows_affected ?? 0;
+  }
+
   // --- Core registration --- //
 
   async setCoreInfo (coreId: string, info: CoreInfo) {

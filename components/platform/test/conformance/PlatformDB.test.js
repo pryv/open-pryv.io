@@ -416,6 +416,26 @@ export default function conformanceTests (getDB) {
       it('[XIDP6] must refuse a prefix holding SQL LIKE wildcards', async () => {
         await assert.rejects(() => db.claimCoreRow('ext_id/', 'k', 'core-a'));
         await assert.rejects(() => db.getAllCoreRows('ext-id%'));
+        await assert.rejects(() => db.moveCoreRows('ext_id/', 'core-a', 'core-b'));
+      });
+
+      it('[XIDP7] moves only the rows of the prefix that name the source core', async () => {
+        const src = 'core-src-' + cuid().slice(-6);
+        const dst = 'core-dst-' + cuid().slice(-6);
+        const k1 = 'ns-m/v-' + cuid();
+        const k2 = 'ns-m/v-' + cuid();
+        const other = 'ns-m/v-' + cuid();
+        const elsewhere = 'x-' + cuid();
+        await db.claimCoreRow(prefix, k1, src);
+        await db.claimCoreRow(prefix, k2, src);
+        await db.claimCoreRow(prefix, other, 'core-b');
+        await db.claimCoreRow('ext-id-other/', elsewhere, src);
+        assert.strictEqual(await db.moveCoreRows(prefix, src, dst), 2);
+        assert.strictEqual(await db.getCoreRow(prefix, k1), dst);
+        assert.strictEqual(await db.getCoreRow(prefix, k2), dst);
+        assert.strictEqual(await db.getCoreRow(prefix, other), 'core-b', 'another core untouched');
+        assert.strictEqual(await db.getCoreRow('ext-id-other/', elsewhere), src, 'another prefix untouched');
+        assert.strictEqual(await db.moveCoreRows(prefix, src, dst), 0, 'nothing left to move');
       });
     });
 

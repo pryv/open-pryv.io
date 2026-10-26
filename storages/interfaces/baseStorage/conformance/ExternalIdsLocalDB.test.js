@@ -115,6 +115,18 @@ export default function conformanceTests (getDB) {
       assert.deepStrictEqual(await db.scanAll(), [kept]);
     });
 
+    it('[XIDL9] deletes exactly one id by its tokens, whoever holds it', async () => {
+      const userId = cuid();
+      const a = row({ userId });
+      const kept = row({ userId });
+      await db.insert(a);
+      await db.insert(kept);
+      assert.strictEqual(await db.deleteByTokens(a.nsToken, kept.valueToken), false, 'tokens of two different rows');
+      assert.strictEqual(await db.deleteByTokens(a.nsToken, a.valueToken), true);
+      assert.strictEqual(await db.deleteByTokens(a.nsToken, a.valueToken), false);
+      assert.deepStrictEqual(await db.getByUser(userId), [kept]);
+    });
+
     it('[XIDL8] retoken changes both tokens in place, keeps the value and date, and refuses a held key', async () => {
       const r = row();
       const other = row();

@@ -229,6 +229,15 @@ class DBpostgresql {
     return rows.map((row) => ({ key: row.key.slice(prefix.length), coreId: row.value }));
   }
 
+  async moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number> {
+    checkKvPrefix('moveCoreRows', prefix);
+    const res = await this.db.query(
+      "UPDATE platform_kv SET value = $1 WHERE key LIKE $2 || '%' AND value = $3",
+      [toCoreId, prefix, fromCoreId]
+    );
+    return res.rowCount ?? 0;
+  }
+
   // --- Core registration --- //
 
   async setCoreInfo (coreId: string, info: CoreInfo): Promise<void> {

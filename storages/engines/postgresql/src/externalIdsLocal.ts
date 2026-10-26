@@ -96,6 +96,11 @@ class ExternalIdsLocalPG {
     return (res.rowCount ?? 0) > 0;
   }
 
+  async deleteByTokens (nsToken: string, valueToken: string): Promise<boolean> {
+    const res = await this.db.query('DELETE FROM external_ids WHERE ns_token = $1 AND value_token = $2', [nsToken, valueToken]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async deleteByUser (userId: string): Promise<number> {
     const res = await this.db.query('DELETE FROM external_ids WHERE user_id = $1', [userId]);
     return res.rowCount ?? 0;

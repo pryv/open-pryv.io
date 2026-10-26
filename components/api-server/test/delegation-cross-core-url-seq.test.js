@@ -275,6 +275,29 @@ describe('[DXCU] cross-core delegation peer-URL resolution', function () {
     }
   });
 
+  it('[ADRN2] the server rename moves the external ids held on the source core, and no other', async function () {
+    await seedPeerCore({});
+    const adminKey = config.get('auth:adminAccessKey');
+    const dst = 'dxcu-renamed-' + cuid().slice(-6).toLowerCase();
+    // Known but unavailable: no later registration of this run is placed on it.
+    await platformDB().setCoreInfo(dst, { id: dst, ip: '127.0.0.9', ipv6: null, cname: null, hosting: null, available: false });
+    const held = 'ns-rn/' + cuid();
+    const other = 'ns-rn/' + cuid();
+    await platform.claimCoreRow('ext-id/', held, CORE_B);
+    await platform.claimCoreRow('ext-id/', other, 'core-elsewhere');
+    try {
+      const res = await coreRequest.get('/reg/admin/servers/' + CORE_B + '/rename/' + dst).set('Authorization', adminKey);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.externalIds >= 1, JSON.stringify(res.body));
+      assert.strictEqual(await platform.getCoreRow('ext-id/', held), dst);
+      assert.strictEqual(await platform.getCoreRow('ext-id/', other), 'core-elsewhere');
+    } finally {
+      await coreRequest.get('/reg/admin/servers/' + dst + '/rename/' + CORE_B).set('Authorization', adminKey);
+      await platform.deleteCoreRowIfValue('ext-id/', held, CORE_B);
+      await platform.deleteCoreRowIfValue('ext-id/', other, 'core-elsewhere');
+    }
+  });
+
   it('[SYUU1] /system/users/validate never overwrites a name -> core mapping that appeared after its availability check', async function () {
     await seedPeerCore({});
     const adminKey = config.get('auth:adminAccessKey');

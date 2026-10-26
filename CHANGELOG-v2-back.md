@@ -1,5 +1,37 @@
 # Changelog - Internal (no API impact)
 
+## External ids: admin release and core rename
+
+- `ExternalIdsService.adminRelease` (new): the platform row decides the core; on this core the
+  account holding the id is found in the local table and exactly that id is released by its
+  tokens (`releaseRow`, then the new local `deleteByTokens`, both engines, `[XIDL9]`), so a
+  concurrent `replace` of the holder's id is never released as collateral (`[XIDS19]`,
+  mutation-checked); another core answers `{ kind: 'remote', coreUrl }`, which the route turns
+  into the 307. A stale index row of this core with no account behind it answers 404 and is left
+  to the reconcile (`[XIDAR6]`).
+- `system.extIdRelease` (audited without a user) and `account.externalIds.adminRelease` (the
+  per-user row, emitted directly like `mfa.deactivatedByAdmin`) declared in `audit/ApiMethods.ts`;
+  `methods/helpers/externalIdRelease.ts` holds the mail notice and the audit row (modelled on
+  `mfaChange.ts`). The mail kind is not added to `MAIL_KINDS`: the boot warning about unsent mail
+  classes stays as it was for deployments that switched the other kinds off.
+- PlatformDB `moveCoreRows(prefix, from, to)` (new, both engines): one UPDATE, used by the core
+  rename for `ext-id/` rows. Conformance `[XIDP7]`.
+- Tests: `[XIDAR1-5]` (mutation-checked: without the release in `adminRelease`, XIDAR1/2 fail),
+  `[ADRN2]`, `[XIDP7]`; template set tests count the new template.
+
+## External ids: per-user backup and restore
+
+- `bin/backup.js` per-user section `external-ids` (`users/<userId>/external-ids.jsonl[.gz]`, one
+  `{ namespace, blindedValue, claimedAt }` per id, written whole by every run, newest run wins in
+  a chain; `stats.externalIds` in the user manifest): `writeExternalIds` / `readExternalIds` on the
+  backup writer and reader interfaces, `ExternalIdsService.exportForUser` (`list` now built on it).
+  The restore links the ids after the platform rows (`ExternalIdsService.restoreForUser`, claim
+  then local row through the same `#link` step as `claim`), with the target platform's tokens: an
+  id held by another core or account stays with its holder (`lost`), an unknown namespace is
+  skipped; counts in the restore report (`externalIds`). A backup without the file restores as
+  before. Tests: `[XIDS18]`, `[XIDB2-4]`, `[XIDBK1-2]`; mutation-checked (restore without the
+  platform claim fails `[XIDS18]`, `[XIDB4]`, `[XIDBK1]`).
+
 ## External ids: forced mode
 
 - `routes/reg/accessLoader.ts` (new): the access loader of the auth-request accept, extracted from

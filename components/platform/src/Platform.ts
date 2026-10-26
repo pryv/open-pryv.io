@@ -989,6 +989,10 @@ class Platform {
     return await this.#db.deleteCoreRowIfValue(prefix, key, coreId);
   }
 
+  async moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number> {
+    return await this.#db.moveCoreRows(prefix, fromCoreId, toCoreId);
+  }
+
   async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> {
     return await this.#db.getAllCoreRows(prefix);
   }

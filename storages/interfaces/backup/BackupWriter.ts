@@ -37,6 +37,12 @@ export interface UserBackupWriter {
   writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void>;
   /** Account data as returned by UserAccountStorage.exportAll(). */
   writeAccountData (data: unknown): Promise<void>;
+  /**
+   * The account's external ids, `{ namespace, blindedValue, claimedAt }` each
+   * (a whole collection: every run writes all of them). A blinded value is a
+   * claim credential.
+   */
+  writeExternalIds (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Returns the user manifest (userId, username, chunk inventory, stats). */
   close (): Promise<UserManifest>;
 }
@@ -134,6 +140,7 @@ const UserBackupWriter: UserBackupWriter = {
   async writeSeries (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
   async writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void> { throw new Error('Not implemented'); },
   async writeAccountData (data: unknown): Promise<void> { throw new Error('Not implemented'); },
+  async writeExternalIds (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
   async close (): Promise<UserManifest> { throw new Error('Not implemented'); }
 };
 

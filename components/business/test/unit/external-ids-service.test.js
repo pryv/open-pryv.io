@@ -91,6 +91,12 @@ function fakeLocalDB () {
       rows.splice(i, 1);
       return true;
     },
+    async deleteByTokens (ns, v) {
+      const i = rows.findIndex((r) => r.nsToken === ns && r.valueToken === v);
+      if (i < 0) return false;
+      rows.splice(i, 1);
+      return true;
+    },
     async deleteByUser (u) {
       const before = rows.length;
       for (let i = rows.length - 1; i >= 0; i--) if (rows[i].userId === u) rows.splice(i, 1);
@@ -374,6 +380,27 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(await coreA.isClaimed(await coreA.parseFlowField({ namespace: ns, blindedValue: value() })), false);
   });
 
+  // Mutation: release through `release(userId, namespace)` (the holder's
+  // CURRENT id) instead of by tokens, and V2 is released as collateral.
+  it('[XIDS19] admin release removes exactly the id it found, not the holder\'s new id after a concurrent replace', async () => {
+    const v = value();
+    const v2 = value();
+    await coreA.claim('u1', ns, v);
+    const original = coreA.db.getByTokens.bind(coreA.db);
+    let raced = false;
+    coreA.db.getByTokens = async (nsT, vT) => {
+      const found = await original(nsT, vT);
+      if (!raced) { raced = true; await coreA.replace('u1', ns, v2); } // the holder swaps V for V2 meanwhile
+      return found;
+    };
+    const outcome = await coreA.adminRelease(ns, v);
+    coreA.db.getByTokens = original;
+    assert.strictEqual(outcome.kind, 'released');
+    assert.strictEqual(await coreA.holds('u1', ns, v2), true, 'V2 stays linked');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v2), 'https://core-a.example.test/');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v), null);
+  });
+
   describe('[XIDR] token refresh', () => {
     const userExists = async () => true;
 
@@ -469,6 +496,59 @@ describe('[XIDS] external ids service', () => {
     const summary = await coreA.reconcile({ dryRun: false, userExists: async () => true });
     assert.strictEqual(summary.namespaceMissing, 1);
     assert.strictEqual(coreA.db.rows.length, 1);
+  });
+
+  it('[XIDS18] backup export and restore: relinked with the claim date; an id held elsewhere stays with its holder', async () => {
+    const { deleteNamespace, releaseRow, tokensFor, getNamespace } = require('platform/src/externalIdIndex.ts');
+    const [v1, v2, v3, v4] = [value(), value(), value(), value()];
+    const ns2 = 'ehr-practice-2';
+    const ns3 = 'ehr-practice-3';
+    const ns4 = 'ehr-practice-4';
+    for (const n of [ns2, ns3, ns4]) await setNamespace(coreA.platform, n, { label: n }, 1);
+    await coreA.claim('u1', ns, v1);
+    await coreA.claim('u1', ns2, v2);
+    await coreA.claim('u1', ns3, v3);
+    await coreA.claim('u1', ns4, v4);
+    const exported = await coreA.exportForUser('u1');
+    assert.deepStrictEqual(exported, [
+      { namespace: ns, blindedValue: v1, claimedAt: 1000 },
+      { namespace: ns2, blindedValue: v2, claimedAt: 1000 },
+      { namespace: ns3, blindedValue: v3, claimedAt: 1000 },
+      { namespace: ns4, blindedValue: v4, claimedAt: 1000 }
+    ]);
+    assert.deepStrictEqual(await coreA.list('u1'), [ns, ns2, ns3, ns4].map((namespace) => ({ namespace, claimedAt: 1000 })));
+
+    // The account is deleted (its ids released); meanwhile another core takes
+    // v2 and another account of this core takes v3; ns4 is gone.
+    await coreA.releaseAllForUser('u1');
+    await coreB.claim('b1', ns2, v2);
+    await coreA.claim('u2', ns3, v3);
+    await deleteNamespace(coreA.platform, ns4, { force: true });
+
+    const entries = [...exported.map((e) => ({ ...e, claimedAt: 500 })), { namespace: ns, blindedValue: 'short' }, null];
+    const summary = await coreA.restoreForUser('u1', entries);
+    assert.deepStrictEqual(summary, { restored: 1, lost: 2, namespaceMissing: 1, invalid: 2 });
+    assert.deepStrictEqual(await coreA.list('u1'), [{ namespace: ns, claimedAt: 500 }], 'the claim date of the backup');
+    assert.strictEqual(await coreA.holds('u1', ns, v1), true);
+    assert.strictEqual(await coreA.lookupCoreUrl(ns, v1), 'https://core-a.example.test/');
+    assert.strictEqual(await coreB.holds('b1', ns2, v2), true, 'the other core keeps its id');
+    assert.strictEqual(await coreA.holds('u2', ns3, v3), true, 'the other account keeps its id');
+    assert.strictEqual(coreA.db.rows.length, 2, 'no local row for the lost ids');
+
+    // A second run is a no-op.
+    assert.deepStrictEqual(await coreA.restoreForUser('u1', entries), { restored: 1, lost: 2, namespaceMissing: 1, invalid: 2 });
+    assert.strictEqual(coreA.db.rows.length, 2);
+
+    // The account's own local row, its platform row taken by another core
+    // meanwhile: dropped and counted lost, the other core untouched.
+    const v5 = value();
+    await coreA.claim('u3', ns, v5);
+    await releaseRow(coreA.platform, tokensFor(coreA.platform, await getNamespace(coreA.platform, ns), v5));
+    await coreB.claim('b2', ns, v5);
+    assert.deepStrictEqual(await coreA.restoreForUser('u3', [{ namespace: ns, blindedValue: v5, claimedAt: 1 }]),
+      { restored: 0, lost: 1, namespaceMissing: 0, invalid: 0 });
+    assert.deepStrictEqual(await coreA.list('u3'), []);
+    assert.strictEqual(await coreB.holds('b2', ns, v5), true);
   });
 
   it('[XIDS8] unknown namespace and malformed values are refused without echoing the value', async () => {

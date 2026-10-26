@@ -327,8 +327,10 @@ export default function (expressApp: ExpressApp, app: App) {
           count++;
         }
       }
+      // The external ids held on the source core follow its accounts.
+      const externalIds = await platform.moveCoreRows('ext-id/', srcName, dstName);
 
-      res.json({ count });
+      res.json({ count, externalIds });
     } catch (err) {
       next(err);
     }

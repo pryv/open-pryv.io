@@ -44,6 +44,8 @@ export interface UserBackupReader {
   readAttachments (): AsyncIterable<{ eventId: string | null, fileId: string, stream: Readable }>;
   /** Resolves to null when the archive has no account data file. */
   readAccountData (): Promise<UserAccountStorageExport | null>;
+  /** The account's external ids; nothing for a backup written without them. */
+  readExternalIds (): AsyncIterable<unknown>;
 }
 
 /**
@@ -121,7 +123,8 @@ const UserBackupReader: UserBackupReader = {
   readAudit (): AsyncIterable<AuditExportRow> { throw new Error('Not implemented'); },
   readSeries (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
   readAttachments (): AsyncIterable<{ eventId: string | null, fileId: string, stream: Readable }> { throw new Error('Not implemented'); },
-  async readAccountData (): Promise<UserAccountStorageExport | null> { throw new Error('Not implemented'); }
+  async readAccountData (): Promise<UserAccountStorageExport | null> { throw new Error('Not implemented'); },
+  readExternalIds (): AsyncIterable<unknown> { throw new Error('Not implemented'); }
 };
 
 for (const propName of Object.getOwnPropertyNames(UserBackupReader)) {

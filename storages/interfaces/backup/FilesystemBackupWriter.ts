@@ -245,10 +245,11 @@ interface UserStats {
   audit: number;
   series: number;
   attachments: number;
+  externalIds: number;
 }
 
 function createFilesystemUserBackupWriter (userDir: string, userId: string, username: string, opts: ResolvedWriterOptions): UserBackupWriter {
-  const stats: UserStats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0 };
+  const stats: UserStats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0, externalIds: 0 };
   const chunks: Record<string, string[]> = {};
 
   return createUserBackupWriter({
@@ -316,6 +317,11 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       const filePath = path.join(userDir, jsonlFileName('account', opts.compress));
       // Account data is a single object, not a collection — write as one JSON line
       await writeJsonlFile(filePath, [data], opts.compress, opts.encryptor);
+    },
+
+    async writeExternalIds (items: AsyncIterable<unknown> | unknown[]) {
+      const filePath = path.join(userDir, jsonlFileName('external-ids', opts.compress));
+      stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
     },
 
     async close () {

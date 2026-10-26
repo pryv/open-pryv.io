@@ -386,6 +386,11 @@ async function runRestore (args) {
       console.log(`    - ${c.username}: ${c.reason}`);
     }
   }
+  const xid = report.externalIds;
+  if (xid != null && xid.restored + xid.lost + xid.namespaceMissing + xid.invalid > 0) {
+    console.log(`  External ids: ${xid.restored} restored, ${xid.lost} lost (held by another account or core), ` +
+      `${xid.namespaceMissing + xid.invalid} skipped (${xid.namespaceMissing} of a namespace unknown here, ${xid.invalid} malformed)`);
+  }
   if (report.rolledBack && report.rolledBack.length > 0) {
     console.log(`  Rolled back (integrity failure): ${report.rolledBack.length} users`);
     for (const u of report.rolledBack) {

@@ -98,3 +98,11 @@ const __ex_extIdHolds = {
     }, { required: ['username', 'namespace', 'blindedValue'] })
   };
 export { __ex_extIdHolds as extIdHolds };
+const __ex_extIdRelease = {
+    params: helpers.object({
+      namespace: extIdNamespace,
+      blindedValue: helpers.string(),
+      reason: helpers.string({ minLength: 1, maxLength: 500 })
+    }, { required: ['namespace', 'blindedValue', 'reason'] })
+  };
+export { __ex_extIdRelease as extIdRelease };
