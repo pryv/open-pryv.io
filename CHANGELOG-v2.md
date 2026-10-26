@@ -5,9 +5,9 @@
 - **External ids: forced mode.** `externalId.mode: 'forced'` (or a namespace whose `defaultMode` is
   `forced`) is now accepted on `POST /reg/access` and `POST /users` (it answered
   `forced-mode-not-available` until now). On an auth request in forced mode, only the account that
-  holds the id receives the credential: at `ACCEPTED` the server checks that the posted token
-  belongs to the posted `username` (on that account's own core) and that this account holds the
-  id; otherwise `400 external-id-mismatch`, `data: { namespace, reason: 'token-invalid' |
+  holds the id receives the credential: at `ACCEPTED` the server checks that the posted token is
+  an app access of the posted `username` (on that account's own core) and that this account holds
+  the id; otherwise `400 external-id-mismatch`, `data: { namespace, reason: 'token-invalid' |
   'not-holder' }` (`not-holder` also when nobody holds the id: the auth request never claims),
   and the request stays `NEED_SIGNIN` so the page can sign in as the holder. A check that cannot be
   performed answers `503 external-id-check-unavailable` (`data.reason`), never a pass. A forced

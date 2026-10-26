@@ -64,6 +64,10 @@ export async function checkForcedAcceptance (
     if (loaded.failure.kind === 'token-invalid') return { ok: false, kind: 'mismatch', reason: 'token-invalid' };
     return { ok: false, kind: 'unavailable', reason: loaded.failure.reason, detail: loaded.failure.detail };
   }
+  // The credential of an accepted request is an app access, as the consent
+  // check requires: a shared access the holder handed out must not let its
+  // bearer complete the holder's forced request.
+  if (loaded.access.type !== 'app') return { ok: false, kind: 'mismatch', reason: 'token-invalid' };
 
   let holds: boolean;
   if (loaded.location.kind === 'local') {

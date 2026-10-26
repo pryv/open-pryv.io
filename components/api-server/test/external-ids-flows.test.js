@@ -158,10 +158,19 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint and fo
   describe('[XIDFF] forced mode: only the holder receives the credential', function () {
     let holder, other, v;
 
+    // `token` is an app access minted with the personal token, as the page does.
     async function account () {
       const reg = await register();
       assert.strictEqual(reg.res.status, 201, JSON.stringify(reg.res.body));
-      return { username: reg.username, token: tokenOf(reg.res.body.apiEndpoint), apiEndpoint: reg.res.body.apiEndpoint };
+      const personal = tokenOf(reg.res.body.apiEndpoint);
+      return { username: reg.username, personal, token: await mint(reg.username, personal, 'app'), apiEndpoint: reg.res.body.apiEndpoint };
+    }
+
+    async function mint (username, personal, type) {
+      const res = await coreRequest.post('/' + username + '/accesses').set('Authorization', personal)
+        .send({ name: 'xidff-' + type + '-' + cuid().slice(-6), type, permissions: PERMISSIONS });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      return res.body.access.token;
     }
 
     function accept (key, who, extra = {}) {
@@ -183,7 +192,7 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint and fo
       holder = await account();
       other = await account();
       v = blinded();
-      const claimed = await coreRequest.post('/' + holder.username + '/account/external-ids').set('Authorization', holder.token)
+      const claimed = await coreRequest.post('/' + holder.username + '/account/external-ids').set('Authorization', holder.personal)
         .send({ namespace: ns, blindedValue: v });
       assert.strictEqual(claimed.status, 201, JSON.stringify(claimed.body));
     });
@@ -201,6 +210,17 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint and fo
       const res = await accept(key, { ...holder, token: other.token });
       assert.strictEqual(res.status, 400, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'external-id-mismatch');
+      assert.deepStrictEqual(res.body.error.data, { namespace: ns, reason: 'token-invalid' });
+      await stillPending(key);
+    });
+
+    // Mutation check (must make XIDFFS fail): remove the access-type check in
+    // checkForcedAcceptance (routes/reg/externalIdCheck.ts).
+    it('[XIDFFS] a shared access the holder handed out does not complete the holder\'s forced request', async function () {
+      const shared = await mint(holder.username, holder.personal, 'shared');
+      const key = await forcedRequest();
+      const res = await accept(key, { ...holder, token: shared });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
       assert.deepStrictEqual(res.body.error.data, { namespace: ns, reason: 'token-invalid' });
       await stillPending(key);
     });
@@ -238,10 +258,12 @@ describe('[XIDF] external ids in the sign-in and registration flows (hint and fo
       });
       assert.strictEqual(shapeH.status, 400);
       assert.strictEqual(shapeH.body.error.id, 'invalid-parameters');
-      const declined = await accept(await forcedRequest(), holder, { externalIdDeclined: true });
+      const declinedKey = await forcedRequest();
+      const declined = await accept(declinedKey, holder, { externalIdDeclined: true });
       assert.strictEqual(declined.status, 400);
       assert.strictEqual(declined.body.error.id, 'invalid-parameters');
       await stillPending(key);
+      await stillPending(declinedKey);
     });
 
     it('[XIDFF6] a hand-off request: checked before the server creates the secret', async function () {
