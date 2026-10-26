@@ -3,8 +3,12 @@
 ## External ids: admin release and core rename
 
 - `ExternalIdsService.adminRelease` (new): the platform row decides the core; on this core the
-  account holding the id is found in the local table and the id released through `release`;
-  another core answers `{ kind: 'remote', coreUrl }`, which the route turns into the 307.
+  account holding the id is found in the local table and exactly that id is released by its
+  tokens (`releaseRow`, then the new local `deleteByTokens`, both engines, `[XIDL9]`), so a
+  concurrent `replace` of the holder's id is never released as collateral (`[XIDS19]`,
+  mutation-checked); another core answers `{ kind: 'remote', coreUrl }`, which the route turns
+  into the 307. A stale index row of this core with no account behind it answers 404 and is left
+  to the reconcile (`[XIDAR6]`).
 - `system.extIdRelease` (audited without a user) and `account.externalIds.adminRelease` (the
   per-user row, emitted directly like `mfa.deactivatedByAdmin`) declared in `audit/ApiMethods.ts`;
   `methods/helpers/externalIdRelease.ts` holds the mail notice and the audit row (modelled on

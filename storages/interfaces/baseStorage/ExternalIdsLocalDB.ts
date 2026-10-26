@@ -56,6 +56,8 @@ export interface ExternalIdsLocalDB {
    */
   retoken (userId: string, oldNsToken: string, tokens: { nsToken: string, valueToken: string }): Promise<boolean>;
   deleteByUserAndNamespace (userId: string, nsToken: string): Promise<boolean>;
+  /** Delete exactly this id's row (whoever holds it); false when no such row. */
+  deleteByTokens (nsToken: string, valueToken: string): Promise<boolean>;
   deleteByUser (userId: string): Promise<number>;
   /** Every row of this core: reconcile, pepper rotation, backup. */
   scanAll (): Promise<ExternalIdRow[]>;
@@ -71,6 +73,7 @@ const ExternalIdsLocalDB: ExternalIdsLocalDB = {
   async replaceForUser (userId: string, nsToken: string, values: { valueToken: string, blindedValue: string, claimedAt: number }): Promise<boolean> { throw new Error('Not implemented'); },
   async retoken (userId: string, oldNsToken: string, tokens: { nsToken: string, valueToken: string }): Promise<boolean> { throw new Error('Not implemented'); },
   async deleteByUserAndNamespace (userId: string, nsToken: string): Promise<boolean> { throw new Error('Not implemented'); },
+  async deleteByTokens (nsToken: string, valueToken: string): Promise<boolean> { throw new Error('Not implemented'); },
   async deleteByUser (userId: string): Promise<number> { throw new Error('Not implemented'); },
   async scanAll (): Promise<ExternalIdRow[]> { throw new Error('Not implemented'); },
   async deleteAll (): Promise<void> { throw new Error('Not implemented'); }

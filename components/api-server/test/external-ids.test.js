@@ -256,6 +256,23 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
       const listed = await coreRequest.get(`/${squatter.username}/account/external-ids`).set('Authorization', squatter.token);
       assert.deepStrictEqual(listed.body.externalIds, []);
       assert.strictEqual((await claim(patient, { namespace: ns, blindedValue: v })).status, 201, 'the patient can claim it now');
+      const patientTrail = await auditRows(patient);
+      assert.ok(!patientTrail.some((e) => e.content?.action === 'account.externalIds.adminRelease'), 'only the holder\'s trail records it');
+    });
+
+    it('[XIDAR6] a stale index row of this core with no account behind it: 404, the row left to the reconcile', async function () {
+      const { getExternalIdsService } = require('business/src/external-ids/service.ts');
+      const field = await (await getExternalIdsService()).parseFlowField({ namespace: ns, blindedValue: blinded() });
+      const platform = await require('platform').getPlatform();
+      const key = field.tokens.nsToken + '/' + field.tokens.valueToken;
+      assert.strictEqual(await platform.claimCoreRow('ext-id/', key, platform.coreId), true);
+      try {
+        const res = await release({ namespace: ns, blindedValue: field.blindedValue, reason: 'r' });
+        assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+        assert.strictEqual(await platform.getCoreRow('ext-id/', key), platform.coreId, 'left for the reconcile');
+      } finally {
+        await platform.deleteCoreRowIfValue('ext-id/', key, platform.coreId);
+      }
     });
 
     it('[XIDAR2] the holder\'s trail records the release (namespace and reason, no value)', async function () {
@@ -392,10 +409,12 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     // `parseBlindedValue`'s error; remove `blindedValue` from the
     // `originalQuery` strip list of `MethodContext.ts` (the query value then
     // reaches the audit record and its log line).
-    it('[XIDG1] claim, refusals, malformed input, replace, release, list and lookups log no value', async function () {
+    it('[XIDG1] claim, refusals, malformed input, replace, release, list, lookups and the admin release log no value', async function () {
       const c = await makeUser();
       const v = blinded();
       const v2 = blinded();
+      const v3 = blinded();
+      const v4 = blinded();
       const malformed = 'bad*' + blinded();
       const bodies = [];
       const probe = 'xidg-debug-probe-' + cuid();
@@ -413,15 +432,30 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
         bodies.push((await coreRequest.delete(`/${c.username}/account/external-ids/${ns}`).set('Authorization', c.token)).body);
         // A mistaken client putting the value in the query of an audited route.
         bodies.push((await coreRequest.get(`/${c.username}/account/external-ids`).set('Authorization', c.token).query({ blindedValue: v2 })).body);
+        // The admin release: released (200), nobody holds it (404), held elsewhere (307).
+        const adminRelease = (blindedValue) => coreRequest.post('/system/admin/ext-id/release').set('authorization', adminKey)
+          .send({ namespace: ns, blindedValue, reason: 'xidg' });
+        bodies.push((await claim(c, { namespace: ns, blindedValue: v3 })).body);
+        bodies.push((await adminRelease(v3)).body);
+        bodies.push((await adminRelease(v3)).body);
+        const field = await (await require('business/src/external-ids/service.ts').getExternalIdsService()).parseFlowField({ namespace: ns, blindedValue: v4 });
+        const platform = await require('platform').getPlatform();
+        const key = field.tokens.nsToken + '/' + field.tokens.valueToken;
+        await platform.claimCoreRow('ext-id/', key, 'core-elsewhere');
+        try {
+          bodies.push((await adminRelease(v4)).body);
+        } finally {
+          await platform.deleteCoreRowIfValue('ext-id/', key, 'core-elsewhere');
+        }
       });
       assert.ok(lines.some((l) => l.name.endsWith('request-trace') && l.text.includes('/reg/ext-id/cores')),
         'the log channel delivers: the lookup is traced');
       assert.ok(lines.some((l) => l.text.includes(probe)), 'the capture sees debug lines');
-      for (const secret of [v, v2, malformed]) {
+      for (const secret of [v, v2, v3, v4, malformed]) {
         assert.deepStrictEqual(lines.filter((l) => l.text.includes(secret)), [], 'no log line holds a value');
       }
       const responses = JSON.stringify(bodies);
-      assert.ok(!responses.includes(v2) && !responses.includes(malformed) && !responses.includes(v), 'no response holds a value');
+      for (const secret of [v, v2, v3, v4, malformed]) assert.ok(!responses.includes(secret), 'no response holds a value');
       const audit = await coreRequest.get(`/${c.username}/events`).set('Authorization', c.token).query({ streams: JSON.stringify([':_audit:']) });
       const auditText = JSON.stringify(audit.body);
       assert.ok(!auditText.includes(v) && !auditText.includes(v2) && !auditText.includes(malformed), 'the audit trail holds no value');

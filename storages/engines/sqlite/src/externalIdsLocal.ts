@@ -44,6 +44,7 @@ class ExternalIdsLocalSQLite {
   qReplace!: SqliteStmt;
   qRetoken!: SqliteStmt;
   qDeleteUserNs!: SqliteStmt;
+  qDeleteTokens!: SqliteStmt;
   qDeleteUser!: SqliteStmt;
   qAll!: SqliteStmt<Row>;
   qDeleteAll!: SqliteStmt;
@@ -75,6 +76,7 @@ class ExternalIdsLocalSQLite {
     this.qReplace = this.db.prepare('UPDATE external_ids SET value_token = @valueToken, blinded_value = @blindedValue, claimed_at = @claimedAt WHERE user_id = @userId AND ns_token = @nsToken');
     this.qRetoken = this.db.prepare('UPDATE external_ids SET ns_token = @nsToken, value_token = @valueToken WHERE user_id = @userId AND ns_token = @oldNsToken');
     this.qDeleteUserNs = this.db.prepare('DELETE FROM external_ids WHERE user_id = ? AND ns_token = ?');
+    this.qDeleteTokens = this.db.prepare('DELETE FROM external_ids WHERE ns_token = ? AND value_token = ?');
     this.qDeleteUser = this.db.prepare('DELETE FROM external_ids WHERE user_id = ?');
     this.qAll = this.db.prepare<Row>('SELECT * FROM external_ids');
     this.qDeleteAll = this.db.prepare('DELETE FROM external_ids');
@@ -125,6 +127,12 @@ class ExternalIdsLocalSQLite {
   async deleteByUserAndNamespace (userId: string, nsToken: string): Promise<boolean> {
     let changes = 0;
     await execute(() => { changes = this.qDeleteUserNs.run(userId, nsToken).changes; });
+    return changes > 0;
+  }
+
+  async deleteByTokens (nsToken: string, valueToken: string): Promise<boolean> {
+    let changes = 0;
+    await execute(() => { changes = this.qDeleteTokens.run(nsToken, valueToken).changes; });
     return changes > 0;
   }
 

@@ -91,6 +91,12 @@ function fakeLocalDB () {
       rows.splice(i, 1);
       return true;
     },
+    async deleteByTokens (ns, v) {
+      const i = rows.findIndex((r) => r.nsToken === ns && r.valueToken === v);
+      if (i < 0) return false;
+      rows.splice(i, 1);
+      return true;
+    },
     async deleteByUser (u) {
       const before = rows.length;
       for (let i = rows.length - 1; i >= 0; i--) if (rows[i].userId === u) rows.splice(i, 1);
@@ -372,6 +378,27 @@ describe('[XIDS] external ids service', () => {
     store.delete(key);
     assert.strictEqual(await coreA.isClaimed(await coreA.parseFlowField({ namespace: ns, blindedValue: v })), true);
     assert.strictEqual(await coreA.isClaimed(await coreA.parseFlowField({ namespace: ns, blindedValue: value() })), false);
+  });
+
+  // Mutation: release through `release(userId, namespace)` (the holder's
+  // CURRENT id) instead of by tokens, and V2 is released as collateral.
+  it('[XIDS19] admin release removes exactly the id it found, not the holder\'s new id after a concurrent replace', async () => {
+    const v = value();
+    const v2 = value();
+    await coreA.claim('u1', ns, v);
+    const original = coreA.db.getByTokens.bind(coreA.db);
+    let raced = false;
+    coreA.db.getByTokens = async (nsT, vT) => {
+      const found = await original(nsT, vT);
+      if (!raced) { raced = true; await coreA.replace('u1', ns, v2); } // the holder swaps V for V2 meanwhile
+      return found;
+    };
+    const outcome = await coreA.adminRelease(ns, v);
+    coreA.db.getByTokens = original;
+    assert.strictEqual(outcome.kind, 'released');
+    assert.strictEqual(await coreA.holds('u1', ns, v2), true, 'V2 stays linked');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v2), 'https://core-a.example.test/');
+    assert.strictEqual(await coreB.lookupCoreUrl(ns, v), null);
   });
 
   describe('[XIDR] token refresh', () => {

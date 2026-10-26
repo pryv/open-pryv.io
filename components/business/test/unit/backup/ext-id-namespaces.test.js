@@ -68,6 +68,11 @@ function fakeLocalDB () {
       const i = rows.findIndex((r) => r.userId === u && r.nsToken === ns);
       if (i >= 0) rows.splice(i, 1);
       return i >= 0;
+    },
+    async deleteByTokens (ns, v) {
+      const i = rows.findIndex((r) => r.nsToken === ns && r.valueToken === v);
+      if (i >= 0) rows.splice(i, 1);
+      return i >= 0;
     }
   };
 }

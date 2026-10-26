@@ -177,7 +177,10 @@ export class ExternalIdsService {
     if (coreId != null && coreId !== this.platform.coreId) return { kind: 'remote', coreUrl: this.platform.coreIdToUrl(coreId) };
     const row = await this.db.getByTokens(tokens.nsToken, tokens.valueToken);
     if (row == null) return { kind: 'none' };
-    await this.release(row.userId, namespace);
+    // Exactly this id, by its tokens: a concurrent `replace` of the holder's
+    // id must not have its new id released as collateral.
+    await releaseRow(this.platform, tokens);
+    await this.db.deleteByTokens(tokens.nsToken, tokens.valueToken);
     return { kind: 'released', userId: row.userId, label: nsRow.label };
   }
 
