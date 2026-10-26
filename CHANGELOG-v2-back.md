@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## External ids: admin release and core rename
+
+- `ExternalIdsService.adminRelease` (new): the platform row decides the core; on this core the
+  account holding the id is found in the local table and the id released through `release`;
+  another core answers `{ kind: 'remote', coreUrl }`, which the route turns into the 307.
+- `system.extIdRelease` (audited without a user) and `account.externalIds.adminRelease` (the
+  per-user row, emitted directly like `mfa.deactivatedByAdmin`) declared in `audit/ApiMethods.ts`;
+  `methods/helpers/externalIdRelease.ts` holds the mail notice and the audit row (modelled on
+  `mfaChange.ts`). The mail kind is not added to `MAIL_KINDS`: the boot warning about unsent mail
+  classes stays as it was for deployments that switched the other kinds off.
+- PlatformDB `moveCoreRows(prefix, from, to)` (new, both engines): one UPDATE, used by the core
+  rename for `ext-id/` rows. Conformance `[XIDP7]`.
+- Tests: `[XIDAR1-5]` (mutation-checked: without the release in `adminRelease`, XIDAR1/2 fail),
+  `[ADRN2]`, `[XIDP7]`; template set tests count the new template.
+
 ## External ids: per-user backup and restore
 
 - `bin/backup.js` per-user section `external-ids` (`users/<userId>/external-ids.jsonl[.gz]`, one

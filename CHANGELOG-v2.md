@@ -1,5 +1,23 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **External ids: releasing an id claimed by the wrong account.** `POST /system/admin/ext-id/release
+  { namespace, blindedValue, reason }` (admin key): on the core that holds the id, the id is
+  released from the account holding it and the answer is `{ released: true, notified: 'mail' |
+  'audit-only' }`, never naming the account (`404` when no account holds it). The account's own
+  audit trail gets an `account.externalIds.adminRelease` entry (namespace and reason, never the
+  value), and the account is told by the new `external-id-released` mail when mail is configured
+  (`services.email.enabled.externalIdReleased`, template `externalIdReleasedTemplate`; variables
+  `USERNAME`, `NAMESPACE_LABEL`, `REASON`). A failed mail never undoes the release. Sent to a core
+  that does not hold the id: `307` to the core that does (`{ server }`). Deployments seeded before
+  this release add the template with `bin/mail.js templates set`.
+- **External ids: per-user backup and core rename.** The per-user backup of `bin/backup.js` carries
+  the account's linked ids (namespace, blinded value, claim date); a restore links them again on
+  the restoring core, and an id another account holds by then stays with it (counted `lost` in the
+  restore report). Renaming a core (`/reg/admin/servers/:src/rename/:dst`) moves its external-id
+  index rows; the answer gains `externalIds` (the number moved).
+
 ## 2.0.0-rc.59 - 2026-10-26
 
 - **External ids: forced mode.** `externalId.mode: 'forced'` (or a namespace whose `defaultMode` is
