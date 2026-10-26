@@ -347,9 +347,9 @@ describe('[XIDS] external ids service', () => {
     assert.strictEqual(await coreB.lookupCoreUrl(ns, v), 'https://core-a.example.test/', 'giving back a claim never taken releases nothing');
   });
 
-  it('[XIDS16] the flow field: forced refused for now, malformed refused without the value', async () => {
-    await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'forced' }), 'invalid-parameters-format',
-      (err) => assert.strictEqual(err.data.reason, 'forced-mode-not-available'));
+  it('[XIDS16] the flow field: hint and forced accepted, an unknown mode and a malformed value refused without the value', async () => {
+    assert.strictEqual((await coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'forced' })).mode, 'forced');
+    assert.strictEqual((await coreA.parseFlowField({ namespace: ns, blindedValue: value() })).mode, 'hint', 'the namespace default');
     await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: value(), mode: 'other' }), 'invalid-parameters-format');
     await assertApiError(coreA.parseFlowField(null), 'invalid-parameters-format');
     await assertApiError(coreA.parseFlowField({ namespace: ns, blindedValue: 'abc' }), 'invalid-parameters-format',

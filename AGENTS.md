@@ -168,7 +168,11 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    accounts of one core both "win" the platform row). A blinded value is a claim credential
    until linked: never log it (`maskExternalId`), never put it in a URL, never return it from a
    listing. Drift between the stores is healed by `bin/reconcile-user-cores.js --ext-ids`, run
-   per core. Code: `components/platform/src/externalIdIndex.ts`,
+   per core. "Holds" means both: the platform row names the home core AND the local row names
+   the account. In forced mode the auth-request accept is the only gate (the page mints the
+   access; the server decides whether the app receives it): `routes/reg/externalIdCheck.ts`
+   binds the posted token to the posted username through the shared `accessLoader.ts`, then
+   asks the home core. Code: `components/platform/src/externalIdIndex.ts`,
    `components/business/src/external-ids/`.
 
 ## Common pitfalls for agents

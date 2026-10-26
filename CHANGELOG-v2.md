@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **External ids: forced mode.** `externalId.mode: 'forced'` (or a namespace whose `defaultMode` is
+  `forced`) is now accepted on `POST /reg/access` and `POST /users` (it answered
+  `forced-mode-not-available` until now). On an auth request in forced mode, only the account that
+  holds the id receives the credential: at `ACCEPTED` the server checks that the posted token
+  belongs to the posted `username` (on that account's own core) and that this account holds the
+  id; otherwise `400 external-id-mismatch`, `data: { namespace, reason: 'token-invalid' |
+  'not-holder' }` (`not-holder` also when nobody holds the id: the auth request never claims),
+  and the request stays `NEED_SIGNIN` so the page can sign in as the holder. A check that cannot be
+  performed answers `503 external-id-check-unavailable` (`data.reason`), never a pass. A forced
+  request refuses the page-created hand-off (`handoff`, post the token inline; the server still
+  converts it when the request asked for `credentialHandoff`) and `externalIdDeclined`
+  (`400 invalid-parameters`). `not-holder` refusals count in the per-address budget of the
+  external-id lookups (`429 too-many-attempts`). Registration in forced mode: an id held by any
+  account refuses it with `409 external-id-already-claimed` (`reason: 'value-taken'`) before
+  anything is reserved; an id nobody holds is linked (`externalIdLinked: true`). Admin, core to
+  core: `POST /system/ext-id/holds { username, namespace, blindedValue }` answers
+  `{ holds: boolean }` for an account of that core (404 for another), admin key, not audited.
+
 - **CMC / delegation identity host on a dnsLess core configured with `core.url` only.** The host
   a core presents to counterparties (CMC relationships, delegations, OAuth revoke notices) now
   falls back to the host of `core:url` before `localhost` when neither `dns.domain` nor a

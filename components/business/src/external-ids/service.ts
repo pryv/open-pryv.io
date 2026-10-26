@@ -212,8 +212,9 @@ export class ExternalIdsService {
   /**
    * The `externalId` field of a flow (auth request, registration): known
    * namespace, well-formed value, mode (the namespace's default when absent).
-   * Forced mode is refused until the server check of the sign-in completion
-   * exists. Errors name the field, never the value.
+   * Errors name the field, never the value. In forced mode the auth-request
+   * accept is checked server-side (`reg/externalIdCheck.ts`) and a
+   * registration of a held id is refused (`isClaimed`).
    */
   async parseFlowField (raw: unknown): Promise<FlowExternalId> {
     if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -226,10 +227,6 @@ export class ExternalIdsService {
     const mode = field.mode ?? row.defaultMode;
     if (mode !== 'hint' && mode !== 'forced') {
       throw errors.invalidParametersFormat('externalId.mode must be "hint" or "forced".', { param: 'externalId.mode' });
-    }
-    if (mode === 'forced') {
-      throw errors.invalidParametersFormat('The forced mode of external ids is not available on this platform yet.',
-        { param: 'externalId.mode', reason: 'forced-mode-not-available' });
     }
     return { namespace: field.namespace as string, label: row.label, blindedValue, mode, tokens: tokensFor(this.platform, row, blindedValue) };
   }
