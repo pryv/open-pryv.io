@@ -1,5 +1,16 @@
 # Changelog - Internal (no API impact)
 
+## Self-identity host: one helper
+
+- `api-server/src/methods/helpers/selfIdentityHost.ts` replaces the four copies of the host
+  derivation (`cmcMemberSweep.ts` `cmcSelfIdentityFor`, `delegations.ts`, `delegationAccounts.ts`,
+  `routes/oauth2.ts`, and an inline copy in `delegation-child.test.js`). Order: `dns:domain`, host
+  of `service:api` / `service:register`, host of `core:url` (new), `localhost`; a set but
+  unparseable value falls through to the next source (the OAuth copy's behaviour; the others
+  stopped at `localhost`). A `{username}` placeholder resolves to the username when given (OAuth
+  path, as before), else to `x` (as before).
+- Tests: `[SIDH]` (unit, mutation-checked: without `core:url` `[SIH4]` fails).
+
 ## External ids in the flows (hint mode)
 
 - `ExternalIdsService.parseFlowField` validates the `externalId` of the auth request and of the

@@ -728,18 +728,14 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     const delegation = require('delegation');
     const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
     const { getUsersRepository } = require('business/src/users/index.ts');
+    const { selfIdentityHost } = require('api-server/src/methods/helpers/selfIdentityHost.ts');
     const config = await require('@pryv/boiler').ready();
     const usersRepository = await getUsersRepository();
     const mall = await buildMallForCmc();
     const kidUserId = await usersRepository.getUserIdForUsername(kid.username);
     const selfIdentityFor = async (userId) => {
       const user = await usersRepository.getUserById(userId);
-      let host = config.get('dns:domain');
-      if (host == null || host === '') {
-        const apiUrl = config.get('service:api') || config.get('service:register');
-        try { host = new URL(apiUrl.replace('{username}', 'x')).host; } catch (_e) { host = 'localhost'; }
-      }
-      return { username: user?.username || 'unknown', host };
+      return { username: user?.username || 'unknown', host: selfIdentityHost(config) };
     };
     return cmc.retryQueue.runRetryLoop({
       userId: kidUserId,

@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **CMC / delegation identity host on a dnsLess core configured with `core.url` only.** The host
+  a core presents to counterparties (CMC relationships, delegations, OAuth revoke notices) now
+  falls back to the host of `core:url` before `localhost` when neither `dns.domain` nor a
+  `service` block (derived from `dnsLess.publicUrl`) is configured. Such a core used to present
+  itself as `localhost`, which broke cross-core relationships. Compatibility: peers match
+  relationships on this host, so a deployment that ran in that configuration (already reported
+  invalid by `check-config`) presents a new host after the upgrade; relationships stamped with
+  `localhost` before it did not work across cores in the first place. Every valid configuration
+  resolves to the same host as before.
+
 ## 2.0.0-rc.58 - 2026-10-26
 
 - **Native installs: replacing the bundled rqlite.** `storages/engines/rqlite/scripts/setup` no

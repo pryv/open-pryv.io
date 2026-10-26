@@ -59,6 +59,7 @@ const WebhooksRepository = require('business').webhooks.Repository;
 // CMC back-channel revoke notify — pure DI HTTP sender, no MethodContext needed.
 const { outbound: cmcOutbound } = require('cmc');
 const cmcRelationshipKey = require('cmc/src/relationshipKey.ts');
+const { selfIdentityHost } = require('../methods/helpers/selfIdentityHost.ts');
 // Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
 // transient data-grant about to be rolled back on a peer refusal is never
 // observed as a success. See consentPoll.ts.
@@ -752,21 +753,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     }
   }
 
-  // Self-identity host for the CMC notify `from` — mirrors cmcSelfIdentityFor:
-  // dns.domain → host of service.api/register → localhost. Resolve the per-user
-  // `{username}` template (DNS-per-user deploys) so the host is a real name, not
-  // a literal placeholder (new URL('https://{username}.pryv.me/') does not throw).
+  // Self-identity host for the CMC notify `from`, derived like
+  // cmcSelfIdentityFor. The per-user `{username}` template (DNS-per-user
+  // deploys) resolves to the real name, not a literal placeholder.
   function selfHost (username: string): string {
-    const sub = (v: string): string => v.replace('{username}', username);
-    const dnsDomain = config.get('dns:domain');
-    if (typeof dnsDomain === 'string' && dnsDomain.length > 0) return sub(dnsDomain);
-    for (const key of ['service:api', 'service:register']) {
-      const url = config.get(key);
-      if (typeof url === 'string' && url.length > 0) {
-        try { return new URL(sub(url)).host; } catch { /* try next */ }
-      }
-    }
-    return 'localhost';
+    return selfIdentityHost(config, username);
   }
 
   oauth2.registerRoutes(expressApp, {
