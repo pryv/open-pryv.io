@@ -54,17 +54,22 @@ RQLITE_DATA_DIR=$VAR_PRYV_FOLDER/rqlite-data
 
 # Migrate any previous install from var-pryv/rqlite-bin/ to bin-ext/
 # On Linux only a binary of the pinned version is migrated: an older one left
-# at the old path (an rqlite 9 from before the data directory moved to 10.x is
-# the dangerous case: it cannot open that directory and alters it) is renamed
-# aside, never installed, and the pinned version is downloaded instead.
+# at the old path (an rqlite 9 from an install that predates 2.0.0-rc.1, when
+# the binary lived there, is the dangerous case: it cannot open a 10.x data
+# directory and alters it) is renamed aside with its companions, never
+# installed, and the pinned version is downloaded instead.
 if [[ "$RQLITE_OS" == "linux" && -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
   LEFTOVER_VERSION_LINE=$("$VAR_PRYV_FOLDER/rqlite-bin/rqlited" -version 2>&1 | head -1 || true)
   if [[ "$LEFTOVER_VERSION_LINE" != "rqlited v$RQLITE_VERSION "* ]]; then
-    LEFTOVER_VERSION=$(echo "$LEFTOVER_VERSION_LINE" | awk '{print $2}')
-    STALE="$VAR_PRYV_FOLDER/rqlite-bin/rqlited.${LEFTOVER_VERSION:-unknown}-not-migrated"
-    mv "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" "$STALE"
-    echo "Not migrating $VAR_PRYV_FOLDER/rqlite-bin/rqlited (${LEFTOVER_VERSION:-unknown version}): this repo pins v$RQLITE_VERSION."
-    echo "  Kept as $STALE; the pinned version is downloaded below."
+    # Only a real version token names the file (an error message from a
+    # binary that does not run must not end up in a path).
+    LEFTOVER_VERSION=$(echo "$LEFTOVER_VERSION_LINE" | awk '$1=="rqlited" && $2 ~ /^v[0-9][0-9.]*$/ {print $2}')
+    LEFTOVER_VERSION=${LEFTOVER_VERSION:-unknown}
+    for f in rqlited rqlite rqbench; do
+      [[ -e "$VAR_PRYV_FOLDER/rqlite-bin/$f" ]] && mv "$VAR_PRYV_FOLDER/rqlite-bin/$f" "$VAR_PRYV_FOLDER/rqlite-bin/$f.$LEFTOVER_VERSION-not-migrated" || true
+    done
+    echo "Not migrating $VAR_PRYV_FOLDER/rqlite-bin/rqlited ($LEFTOVER_VERSION): this repo pins v$RQLITE_VERSION."
+    echo "  Kept there as rqlited.$LEFTOVER_VERSION-not-migrated (and its rqlite / rqbench companions); the pinned version is downloaded below."
   fi
 fi
 if [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
