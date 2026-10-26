@@ -27,6 +27,14 @@
   acted upon is stored without `superseded`, and a notice the receiver dropped as stale carries
   `superseded` alone (no access ids, no revoked ids). Before, a sender could mark its own revoke
   `superseded`, and apps then presented a torn-down relationship as still live.
+- **Native installs: replacing the bundled rqlite.** `storages/engines/rqlite/scripts/setup` no
+  longer moves an older `rqlited` left at `var-pryv/rqlite-bin/` (installs before 2.0.0-rc.34)
+  into `bin-ext/`: only a binary of the pinned version is moved; any other is renamed aside
+  (`rqlited.<version>-not-migrated`) and the pinned version is downloaded. Until now, following
+  INSTALL.md (remove `bin-ext/rqlited`, re-run the script) on such a host installed that older
+  binary, and an rqlite 9 cannot open a 10.x data directory: the core did not start and the
+  directory had to be restored from a backup. INSTALL.md now also describes checking the new
+  binary before stopping the core.
 
 ## 2.0.0-rc.57 - 2026-10-23
 

@@ -53,6 +53,20 @@ RQLITE_BIN_DIR=$REPO_ROOT/bin-ext
 RQLITE_DATA_DIR=$VAR_PRYV_FOLDER/rqlite-data
 
 # Migrate any previous install from var-pryv/rqlite-bin/ to bin-ext/
+# On Linux only a binary of the pinned version is migrated: an older one left
+# at the old path (an rqlite 9 from before the data directory moved to 10.x is
+# the dangerous case: it cannot open that directory and alters it) is renamed
+# aside, never installed, and the pinned version is downloaded instead.
+if [[ "$RQLITE_OS" == "linux" && -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
+  LEFTOVER_VERSION_LINE=$("$VAR_PRYV_FOLDER/rqlite-bin/rqlited" -version 2>&1 | head -1 || true)
+  if [[ "$LEFTOVER_VERSION_LINE" != "rqlited v$RQLITE_VERSION "* ]]; then
+    LEFTOVER_VERSION=$(echo "$LEFTOVER_VERSION_LINE" | awk '{print $2}')
+    STALE="$VAR_PRYV_FOLDER/rqlite-bin/rqlited.${LEFTOVER_VERSION:-unknown}-not-migrated"
+    mv "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" "$STALE"
+    echo "Not migrating $VAR_PRYV_FOLDER/rqlite-bin/rqlited (${LEFTOVER_VERSION:-unknown version}): this repo pins v$RQLITE_VERSION."
+    echo "  Kept as $STALE; the pinned version is downloaded below."
+  fi
+fi
 if [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
   echo "Migrating rqlited: $VAR_PRYV_FOLDER/rqlite-bin → $RQLITE_BIN_DIR"
   mkdir -p "$RQLITE_BIN_DIR"
