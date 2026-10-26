@@ -223,9 +223,12 @@ for the server to consider mail configured.
 Run `node bin/check-config.js <your-config.yml>` to see both as warnings before
 you boot.
 
-Templates for all four mail types ship with the server (English and French) and
-are seeded into PlatformDB the first time a core boots with an empty template
-set. Edit them afterwards with `bin/mail.js templates set`, or point
+Templates for every mail type ship with the server (English and French, in
+`components/mail/templates/`) and are seeded into PlatformDB the first time a
+core boots with an empty template set. A mail type added by a later release is
+not seeded on an existing deployment: add its template with
+`bin/mail.js templates set` (each release that adds one says so in its
+changelog). Edit them afterwards with `bin/mail.js templates set`, or point
 `services.email.templatesRootDir` at your own Pug directory to seed that instead.
 
 Legacy alternative: the external `service-mail` process.
