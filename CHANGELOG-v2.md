@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.58 - 2026-10-26
 
 - **Native installs: replacing the bundled rqlite.** `storages/engines/rqlite/scripts/setup` no
   longer moves an older `rqlited` left at `var-pryv/rqlite-bin/` (installs that predate
@@ -11,9 +11,6 @@
   binary, and an rqlite 9 cannot open a 10.x data directory: the core did not start and the
   directory had to be restored from a backup. INSTALL.md now also describes checking the new
   binary before stopping the core.
-
-## 2.0.0-rc.58 - 2026-10-26
-
 - **External ids: one account per record id, platform-wide.** A service that knows a third-party
   record id (an EHR patient id, for example) sends a blinded value `HMAC(K_namespace, id)` it
   computes with its own key; the platform never sees the id or the key. Admin:
