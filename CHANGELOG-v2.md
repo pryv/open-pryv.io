@@ -1,5 +1,13 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **Security: dependencies.** `nodemailer` 10.2.1 (GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w,
+  GHSA-85x2-q946-cp5h: address-parser flaws that could turn display text into a recipient),
+  lockfile only.
+- `unknown-resource` messages without an id no longer end with a space (`Unknown external id`,
+  was `Unknown external id `). The error id and status are unchanged.
+
 ## 2.0.0-rc.58 - 2026-10-26
 
 - **Native installs: replacing the bundled rqlite.** `storages/engines/rqlite/scripts/setup` no

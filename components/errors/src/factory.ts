@@ -266,8 +266,7 @@ factory.unknownReferencedResource = function (resourceType: string, paramKey: st
 factory.unknownResource = function (resourceType?: string, id?: string, innerError?: Error) {
   const message = 'Unknown ' +
         (resourceType || 'resource') +
-        ' ' +
-        (id ? '"' + id + '"' : '');
+        (id ? ' "' + id + '"' : '');
   return new APIError(ErrorIds.UnknownResource, message, {
     httpStatus: 404,
     innerError
