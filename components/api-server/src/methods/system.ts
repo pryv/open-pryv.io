@@ -26,6 +26,7 @@ type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number;
 type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; method?: string; totp?: unknown };
 const commonFns = require('./helpers/commonFunctions.ts');
 const { notifyMfaChange, auditMfaChange } = require('./helpers/mfaChange.ts');
+const { notifyExternalIdReleased, auditExternalIdReleased } = require('./helpers/externalIdRelease.ts');
 const { Profile: MFAProfile } = require('business/src/mfa/index.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');
@@ -327,6 +328,34 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         const userId = await usersRepository.getUserIdForUsername(params.username);
         if (userId == null) return next(errors.unknownResource('user', params.username));
         result.holds = await (await getExternalIdsService()).holds(userId, params.namespace, params.blindedValue);
+        next();
+      } catch (err) {
+        return next(extIdError(err));
+      }
+    }
+  );
+
+  // An administrator releases an id the wrong account claimed. On the core
+  // holding it: released, the holder's trail gets an audit row and the holder
+  // is told by mail when mail is configured; the answer never names the
+  // account. Held on another core: the route answers 307 to that core.
+  systemAPI.register('system.extIdRelease',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.extIdRelease.params),
+    async function extIdRelease (_context: MethodContext, params: { namespace: string, blindedValue: string, reason: string }, result: ResultBag, next: Next) {
+      try {
+        const outcome = await (await getExternalIdsService()).adminRelease(params.namespace, params.blindedValue);
+        if (outcome.kind === 'remote') {
+          result.redirect = outcome.coreUrl;
+          return next();
+        }
+        if (outcome.kind === 'none') return next(errors.unknownResource('external id'));
+        const username = await usersRepository.getUsernameForUserId(outcome.userId);
+        await auditExternalIdReleased(config, outcome.userId, { namespace: params.namespace, reason: params.reason });
+        result.released = true;
+        result.notified = username == null
+          ? 'audit-only'
+          : await notifyExternalIdReleased(config, { id: outcome.userId, username }, { namespaceLabel: outcome.label, reason: params.reason });
         next();
       } catch (err) {
         return next(extIdError(err));

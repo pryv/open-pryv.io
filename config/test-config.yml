@@ -42,6 +42,7 @@ services:
       resetPassword: false
       verifyEmail: false
       mfaChange: false
+      externalIdReleased: false
     method: mandrill
     url: https://mandrillapp.local/api/1.0/messages/send-template.json
     key: "doesnt-matter-in-test"

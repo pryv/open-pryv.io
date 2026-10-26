@@ -83,6 +83,17 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.delete(Paths.System + '/admin/ext-id-ns/:namespace', setMethodId('system.extIdNamespaces.delete'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, { namespace: req.params.namespace, force: req.query.force === 'true' }, methodCallback(res, next, 204));
   });
+  // --------------------- external-id admin release ----------------- //
+  // Held on another core: 307 to that core's same route (the /reg/:email/username pattern).
+  expressApp.post(Paths.System + '/admin/ext-id/release', contentType.json, setMethodId('system.extIdRelease'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, req.body, (err: unknown, result: Record<string, unknown> | null) => {
+      if (err == null && typeof result?.redirect === 'string') {
+        const server = result.redirect.replace(/\/?$/, '/');
+        return res.status(307).location(server + 'system/admin/ext-id/release').json({ server });
+      }
+      methodCallback(res, next, 200)(err, result);
+    });
+  });
   // --------------------- external-id holder (core to core) ----------------- //
   expressApp.post(Paths.System + '/ext-id/holds', contentType.json, setMethodId('system.extIdHolds'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, req.body, methodCallback(res, next, 200));

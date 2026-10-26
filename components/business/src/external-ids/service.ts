@@ -129,6 +129,26 @@ export class ExternalIdsService {
   }
 
   /**
+   * An administrator's release of an id (the remedy for an id claimed by the
+   * wrong account). On the core that holds it: released from the account
+   * holding it (platform row, then local row), that account returned so it can
+   * be told. Held on another core: that core's URL. Held by nobody here: none.
+   * The platform row decides which core holds the id.
+   */
+  async adminRelease (namespace: string, rawValue: unknown): Promise<
+    { kind: 'released'; userId: string; label: string } | { kind: 'remote'; coreUrl: string } | { kind: 'none' }
+  > {
+    const nsRow = await this.#namespaceRow(namespace);
+    const tokens = tokensFor(this.platform, nsRow, parseBlindedValue(rawValue));
+    const coreId = await getRowCore(this.platform, tokens);
+    if (coreId != null && coreId !== this.platform.coreId) return { kind: 'remote', coreUrl: this.platform.coreIdToUrl(coreId) };
+    const row = await this.db.getByTokens(tokens.nsToken, tokens.valueToken);
+    if (row == null) return { kind: 'none' };
+    await this.release(row.userId, namespace);
+    return { kind: 'released', userId: row.userId, label: nsRow.label };
+  }
+
+  /**
    * Swap the account's id in that namespace for a new one: claim the new id,
    * update the local row, release the old id. Behaves as `claim` when the
    * account holds nothing in the namespace.

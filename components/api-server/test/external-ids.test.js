@@ -213,6 +213,124 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     });
   });
 
+  describe('[XIDAR] admin release (squatting remedy)', function () {
+    const nock = require('nock');
+    const { injectTestConfigSnapshot, pollUntil } = require('test-helpers');
+    const { useNock } = require('test-helpers/src/nockScope.ts');
+    useNock();
+    const MANDRILL = 'https://mandrillapp.local';
+    const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
+
+    function release (body, key = adminKey) {
+      const req = coreRequest.post('/system/admin/ext-id/release');
+      return (key != null ? req.set('authorization', key) : req).send(body);
+    }
+
+    async function userWithEmail () {
+      const username = cuid().toLowerCase();
+      const user = await fixtures.user(username, { email: username + '@release.example.com', language: 'en' });
+      const token = cuid();
+      await user.access({ token, type: 'personal' });
+      await user.session(token);
+      return { username, token };
+    }
+
+    async function auditRows (u) {
+      const res = await coreRequest.get(`/${u.username}/events`).set('Authorization', u.token).query({ streams: [':_audit:'], limit: 200 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.events ?? [];
+    }
+
+    it('[XIDAR1] squatter claims, admin releases, the patient claims; the answer names no account and holds no value', async function () {
+      const squatter = await makeUser();
+      const patient = await makeUser();
+      const v = blinded();
+      assert.strictEqual((await claim(squatter, { namespace: ns, blindedValue: v })).status, 201);
+      assert.strictEqual((await claim(patient, { namespace: ns, blindedValue: v })).status, 409);
+      const res = await release({ namespace: ns, blindedValue: v, reason: 'claimed by mistake' });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.released, true);
+      assert.strictEqual(res.body.notified, 'audit-only', 'mail is off in the test configuration');
+      const text = JSON.stringify(res.body);
+      assert.ok(!text.includes(squatter.username) && !text.includes(v), 'no account, no value');
+      const listed = await coreRequest.get(`/${squatter.username}/account/external-ids`).set('Authorization', squatter.token);
+      assert.deepStrictEqual(listed.body.externalIds, []);
+      assert.strictEqual((await claim(patient, { namespace: ns, blindedValue: v })).status, 201, 'the patient can claim it now');
+    });
+
+    it('[XIDAR2] the holder\'s trail records the release (namespace and reason, no value)', async function () {
+      const holder = await userWithEmail();
+      const v = blinded();
+      assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: v })).status, 201);
+      assert.strictEqual((await release({ namespace: ns, blindedValue: v, reason: 'duplicate patient file' })).status, 200);
+      const row = (await auditRows(holder)).find((e) => e.content?.action === 'account.externalIds.adminRelease');
+      assert.ok(row != null, 'no account.externalIds.adminRelease row');
+      assert.deepStrictEqual(row.content.record, { namespace: ns, reason: 'duplicate patient file' });
+      assert.ok(!JSON.stringify(row).includes(v));
+    });
+
+    it('[XIDAR3] with mail on, the holder is told (label and reason, no value); a failed send still releases', async function () {
+      const restore = injectTestConfigSnapshot({ services: { email: { enabled: { externalIdReleased: true } } } });
+      try {
+        const holder = await userWithEmail();
+        const v = blinded();
+        assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: v })).status, 201);
+        const captured = [];
+        nock(MANDRILL).post(MANDRILL_PATH).reply(200, (uri, body) => { captured.push(body); return {}; });
+        const res = await release({ namespace: ns, blindedValue: v, reason: 'wrong patient' });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.notified, 'mail');
+        await pollUntil(async () => captured.length, (n) => n >= 1, { timeoutMs: 3000 });
+        const mail = captured[0];
+        assert.strictEqual(mail.template_name, 'external-id-released');
+        const vars = Object.fromEntries(mail.message.global_merge_vars.map((x) => [x.name, x.content]));
+        assert.strictEqual(vars.USERNAME, holder.username);
+        assert.strictEqual(vars.REASON, 'wrong patient');
+        assert.ok(typeof vars.NAMESPACE_LABEL === 'string' && vars.NAMESPACE_LABEL.length > 0);
+        assert.ok(!JSON.stringify(mail).includes(v), 'the mail holds no value');
+        // The send fails: released all the same, told 'audit-only'.
+        const v2 = blinded();
+        const holder2 = await userWithEmail();
+        assert.strictEqual((await claim(holder2, { namespace: ns, blindedValue: v2 })).status, 201);
+        nock(MANDRILL).post(MANDRILL_PATH).reply(500, {});
+        const failed = await release({ namespace: ns, blindedValue: v2, reason: 'wrong patient' });
+        assert.strictEqual(failed.status, 200, JSON.stringify(failed.body));
+        assert.strictEqual(failed.body.notified, 'audit-only');
+        assert.strictEqual((await coreRequest.post('/reg/ext-id/cores').send({ namespace: ns, blindedValue: v2 })).status, 404, 'released');
+      } finally {
+        restore();
+        nock.cleanAll();
+      }
+    });
+
+    it('[XIDAR4] nobody holds it: 404; unknown namespace, no reason, no admin key: refused, never echoing the value', async function () {
+      const v = blinded();
+      const none = await release({ namespace: ns, blindedValue: v, reason: 'r' });
+      assert.strictEqual(none.status, 404);
+      assert.ok(!JSON.stringify(none.body).includes(v));
+      assert.strictEqual((await release({ namespace: 'no-such-ns', blindedValue: v, reason: 'r' })).status, 400);
+      assert.strictEqual((await release({ namespace: ns, blindedValue: v })).status, 400, 'a reason is required');
+      assert.strictEqual((await release({ namespace: ns, blindedValue: v, reason: 'r' }, null)).status, 404, 'admin key required');
+    });
+
+    it('[XIDAR5] held on another core: 307 to that core\'s release route', async function () {
+      const { getExternalIdsService } = require('business/src/external-ids/service.ts');
+      const field = await (await getExternalIdsService()).parseFlowField({ namespace: ns, blindedValue: blinded() });
+      const platform = await require('platform').getPlatform();
+      const key = field.tokens.nsToken + '/' + field.tokens.valueToken;
+      assert.strictEqual(await platform.claimCoreRow('ext-id/', key, 'core-elsewhere'), true);
+      try {
+        const res = await release({ namespace: ns, blindedValue: field.blindedValue, reason: 'r' });
+        assert.strictEqual(res.status, 307, JSON.stringify(res.body));
+        const server = platform.coreIdToUrl('core-elsewhere').replace(/\/?$/, '/');
+        assert.strictEqual(res.headers.location, server + 'system/admin/ext-id/release');
+        assert.deepStrictEqual(Object.keys(res.body).filter((k) => k !== 'meta'), ['server']);
+      } finally {
+        await platform.deleteCoreRowIfValue('ext-id/', key, 'core-elsewhere');
+      }
+    });
+  });
+
   describe('[XIDL] lookup', function () {
     it('[XIDLU1] POST answers the core URL; unclaimed and unknown namespace are the same 404; GET is not a route', async function () {
       const res = await lookup({ namespace: ns, blindedValue: users.b.value });

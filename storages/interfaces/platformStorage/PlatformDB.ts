@@ -181,6 +181,12 @@ export interface PlatformDB {
   deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean>;
   /** Every row under `prefix`, `key` without the prefix (full scan: tools only). */
   getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>>;
+  /**
+   * Point every row under `prefix` that names `fromCoreId` at `toCoreId`, in
+   * ONE statement (a core rename; no row is ever absent meanwhile). Returns
+   * the number of rows moved.
+   */
+  moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number>;
 
   // --- Core registration (multi-core) -----------------------------
   setCoreInfo (coreId: string, info: CoreInfo): Promise<void>;
@@ -348,6 +354,8 @@ const PlatformDB: PlatformDB = {
   async deleteCoreRowIfValue (prefix: string, key: string, coreId: string): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getAllCoreRows (prefix: string): Promise<Array<{ key: string, coreId: string }>> { throw new Error('Not implemented'); },
+
+  async moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number> { throw new Error('Not implemented'); },
 
   // --- Core registration (multi-core) --- //
 

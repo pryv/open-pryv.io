@@ -98,6 +98,7 @@ const ALL_METHODS = [
   'system.extIdNamespaces.set',
   'system.extIdNamespaces.delete',
   'system.extIdHolds',
+  'system.extIdRelease',
   'auth.hostings',
   // External ids of the account (personal token), and the core lookup by id.
   'account.externalIds.claim',
@@ -132,7 +133,10 @@ const ALL_METHODS = [
   // system methods, whose own calls are audited without a user, so that the
   // account's trail records the change.
   'mfa.recovered',
-  'mfa.deactivatedByAdmin'
+  'mfa.deactivatedByAdmin',
+  // An external id released by an administrator (system.extIdRelease, audited
+  // without a user): recorded in the trail of the account that held it.
+  'account.externalIds.adminRelease'
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -170,6 +174,7 @@ const WITHOUT_USER_METHODS = [
   'system.deactivateMfa',
   'system.extIdNamespaces.set',
   'system.extIdNamespaces.delete',
+  'system.extIdRelease',
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is
