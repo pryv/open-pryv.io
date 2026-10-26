@@ -35,6 +35,7 @@ const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { fromCallback } = require('utils');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
+const { selfIdentityHost } = require('./helpers/selfIdentityHost.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const cmc = require('cmc');
@@ -148,15 +149,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // ---- identity -----------------------------------------------------------
 
   async function selfHost (): Promise<string> {
-    let host = config.get('dns:domain') as string | undefined;
-    if (host == null || host === '') {
-      const apiUrl = (config.get('service:api') || config.get('service:register')) as string | undefined;
-      if (typeof apiUrl === 'string' && apiUrl.length > 0) {
-        try { host = new URL(apiUrl.replace('{username}', 'x')).host; } catch (_e) { /* fallthrough */ }
-      }
-    }
-    if (host == null || host === '') host = 'localhost';
-    return host;
+    return selfIdentityHost(config);
   }
 
   async function selfIdentity (username: string): Promise<{ username: string; host: string; hostSlug: string }> {

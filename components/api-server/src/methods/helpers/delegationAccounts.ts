@@ -29,6 +29,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { User } = require('business/src/users/index.ts');
 const { getPlatform } = require('platform');
 const { buildMallForCmc } = require('./cmcMall.ts');
+const { selfIdentityHost } = require('./selfIdentityHost.ts');
 const { slug } = require('cmc');
 const { ready, getLogger } = require('@pryv/boiler');
 const { USERNAME_REGEXP_STR } = require('../../schema/helpers.ts');
@@ -177,13 +178,5 @@ export async function buildSystemCreateAccountDeps (): Promise<{
 function nowSeconds (): number { return Math.floor(Date.now() / 1000); }
 
 function selfHost (config: { get: (k: string) => unknown }): string {
-  let host = config.get('dns:domain') as string | undefined;
-  if (host == null || host === '') {
-    const apiUrl = (config.get('service:api') || config.get('service:register')) as string | undefined;
-    if (typeof apiUrl === 'string' && apiUrl.length > 0) {
-      try { host = new URL(apiUrl.replace('{username}', 'x')).host; } catch (_e) { /* fallthrough */ }
-    }
-  }
-  if (host == null || host === '') host = 'localhost';
-  return host;
+  return selfIdentityHost(config);
 }
