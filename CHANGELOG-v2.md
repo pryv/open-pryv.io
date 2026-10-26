@@ -49,6 +49,11 @@
   acted upon is stored without `superseded`, and a notice the receiver dropped as stale carries
   `superseded` alone (no access ids, no revoked ids). Before, a sender could mark its own revoke
   `superseded`, and apps then presented a torn-down relationship as still live.
+- **Security: dependencies.** `body-parser` 1.20.9 (GHSA-27r3-jxmh-p828, denial of service through
+  trailing bytes after a compressed request body), `multer` 2.5.0 (GHSA-q7qp-rjg7-q26m, denial of
+  service through a pending upload filter after the request is torn down), `undici` 6.29.1 via the
+  mail templates (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c), `fast-uri` 3.1.9 (four moderate URI
+  parsing advisories). Lockfile only.
 
 ## 2.0.0-rc.57 - 2026-10-23
 
