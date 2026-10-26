@@ -74,7 +74,7 @@ function userIdsOf (manifest: Manifest | null): Set<string> {
  * is no `chain.json`. The reader presents one merged backup: per collection
  * the items of the newest run first, an id seen in a newer run hiding the
  * older version; whole-collection files (profile, account data, series,
- * platform rows) from the newest run that has them. A user a whole-core run
+ * external ids, platform rows) from the newest run that has them. A user a whole-core run
  * newer than their last listing omits was deleted along the chain:
  * `readManifest` lists them under `deletedUsers` instead of `users`, and
  * `openUser` refuses them.
@@ -296,6 +296,10 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
         items.push(item);
       }
       return items[0] || null;
+    },
+
+    readExternalIds () {
+      return readUserJsonl(userDir, 'external-ids', compressed, decryptor);
     }
   });
 }
@@ -404,6 +408,10 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
     async readAccountData () {
       for await (const item of newestFile('account')) return item || null;
       return null;
+    },
+
+    readExternalIds () {
+      return newestFile('external-ids');
     }
   });
 }

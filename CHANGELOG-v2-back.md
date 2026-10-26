@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## External ids: per-user backup and restore
+
+- `bin/backup.js` per-user section `external-ids` (`users/<userId>/external-ids.jsonl[.gz]`, one
+  `{ namespace, blindedValue, claimedAt }` per id, written whole by every run, newest run wins in
+  a chain; `stats.externalIds` in the user manifest): `writeExternalIds` / `readExternalIds` on the
+  backup writer and reader interfaces, `ExternalIdsService.exportForUser` (`list` now built on it).
+  The restore links the ids after the platform rows (`ExternalIdsService.restoreForUser`, claim
+  then local row through the same `#link` step as `claim`), with the target platform's tokens: an
+  id held by another core or account stays with its holder (`lost`), an unknown namespace is
+  skipped; counts in the restore report (`externalIds`). A backup without the file restores as
+  before. Tests: `[XIDS18]`, `[XIDB2-4]`, `[XIDBK1-2]`; mutation-checked (restore without the
+  platform claim fails `[XIDS18]`, `[XIDB4]`, `[XIDBK1]`).
+
 ## External ids: forced mode
 
 - `routes/reg/accessLoader.ts` (new): the access loader of the auth-request accept, extracted from

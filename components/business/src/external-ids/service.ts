@@ -27,7 +27,7 @@ import {
 } from 'platform/src/externalIdIndex.ts';
 import type { ExtIdPlatformHandle, ExtIdNamespaceRow, ExtIdTokens } from 'platform/src/externalIdIndex.ts';
 import { ExternalIdConflict } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
-import type { ExternalIdsLocalDB } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
+import type { ExternalIdsLocalDB, ExternalIdConflictReason } from 'storages/interfaces/baseStorage/ExternalIdsLocalDB.ts';
 import { parseBlindedValue } from './value.ts';
 import { getExternalIdsLocal } from './localIndex.ts';
 import { refreshExternalIdTokens } from './refresh.ts';
@@ -73,6 +73,27 @@ export interface ClaimResult {
   created: boolean;
 }
 
+/**
+ * One id of an account in a per-user backup. The blinded value is a claim
+ * credential: as sensitive as the rest of the backup, never logged.
+ */
+export interface ExternalIdBackupEntry {
+  namespace: string;
+  blindedValue: string;
+  claimedAt: number;
+}
+
+/** What a restore did with the backed-up ids of an account. */
+export interface ExternalIdRestoreSummary {
+  restored: number;
+  /** Held by another account or another core: left with its holder. */
+  lost: number;
+  /** The namespace does not exist on this platform. */
+  namespaceMissing: number;
+  /** Not a well-formed entry. */
+  invalid: number;
+}
+
 export interface ExtIdServicePlatform extends ExtIdPlatformHandle {
   coreIdToUrl (coreId: string): string;
 }
@@ -107,16 +128,28 @@ export class ExternalIdsService {
       if (held.valueToken === tokens.valueToken) return { externalId: { namespace, claimedAt: held.claimedAt }, created: false };
       throw errors.externalIdAlreadyClaimed(namespace, 'namespace-taken');
     }
-    if (!await claimRow(this.platform, tokens)) throw errors.externalIdAlreadyClaimed(namespace, 'value-taken');
     const claimedAt = this.now();
+    const outcome = await this.#link(userId, tokens, blindedValue, claimedAt);
+    if (outcome !== 'linked') throw errors.externalIdAlreadyClaimed(namespace, outcome);
+    return { externalId: { namespace, claimedAt }, created: true };
+  }
+
+  /**
+   * Claim the platform row for this core, then write the local row. When
+   * either is held (another core, another account of this core, another id of
+   * the account in the namespace), nothing is left behind and the reason is
+   * returned.
+   */
+  async #link (userId: string, tokens: ExtIdTokens, blindedValue: string, claimedAt: number): Promise<'linked' | ExternalIdConflictReason> {
+    if (!await claimRow(this.platform, tokens)) return 'value-taken';
     try {
       await this.db.insert({ userId, ...tokens, blindedValue, claimedAt });
     } catch (err) {
       await this.#releaseIfUnowned(tokens);
-      if (err instanceof ExternalIdConflict) throw errors.externalIdAlreadyClaimed(namespace, err.reason);
+      if (err instanceof ExternalIdConflict) return err.reason;
       throw err;
     }
-    return { externalId: { namespace, claimedAt }, created: true };
+    return 'linked';
   }
 
   /** Unlink the account's id in that namespace (idempotent). */
@@ -179,19 +212,78 @@ export class ExternalIdsService {
 
   /** The account's ids: namespaces and claim dates only, never a value. */
   async list (userId: string): Promise<ExternalIdInfo[]> {
+    return (await this.exportForUser(userId)).map(({ namespace, claimedAt }) => ({ namespace, claimedAt }));
+  }
+
+  /**
+   * The account's ids with their blinded values, for its backup. A row of a
+   * deleted namespace is left out (the reconcile reports it).
+   */
+  async exportForUser (userId: string): Promise<ExternalIdBackupEntry[]> {
     const rows = await this.db.getByUser(userId);
     if (rows.length === 0) return [];
     const byToken = new Map<string, string>();
     for (const { namespace, row } of await listNamespaceRows(this.platform)) {
       byToken.set(namespaceToken(this.platform, row), namespace);
     }
-    const result: ExternalIdInfo[] = [];
+    const result: ExternalIdBackupEntry[] = [];
     for (const r of rows) {
       const namespace = byToken.get(r.nsToken);
       // A deleted namespace: the row stays until the reconcile reports it.
-      if (namespace != null) result.push({ namespace, claimedAt: r.claimedAt });
+      if (namespace != null) result.push({ namespace, blindedValue: r.blindedValue, claimedAt: r.claimedAt });
     }
     return result.sort((a, b) => a.namespace.localeCompare(b.namespace));
+  }
+
+  /**
+   * Restore: link the backed-up ids to the account again, with their claim
+   * dates. The tokens are those of this platform (its pepper, the namespace's
+   * salt here). An id held meanwhile by another core or another account is
+   * left with its holder and counted lost, never overwritten; an id of a
+   * namespace this platform does not have is skipped. Idempotent: an id the
+   * account already holds counts as restored.
+   */
+  async restoreForUser (userId: string, entries: unknown[]): Promise<ExternalIdRestoreSummary> {
+    const summary: ExternalIdRestoreSummary = { restored: 0, lost: 0, namespaceMissing: 0, invalid: 0 };
+    if (entries.length === 0) return summary;
+    const namespaces = new Map<string, ExtIdNamespaceRow>();
+    for (const { namespace, row } of await listNamespaceRows(this.platform)) namespaces.set(namespace, row);
+    for (const raw of entries) {
+      const entry = (raw != null && typeof raw === 'object' ? raw : {}) as { namespace?: unknown, blindedValue?: unknown, claimedAt?: unknown };
+      let blindedValue: string;
+      try {
+        blindedValue = parseBlindedValue(entry.blindedValue);
+      } catch {
+        summary.invalid++;
+        continue;
+      }
+      if (typeof entry.namespace !== 'string') {
+        summary.invalid++;
+        continue;
+      }
+      const nsRow = namespaces.get(entry.namespace);
+      if (nsRow == null) {
+        summary.namespaceMissing++;
+        continue;
+      }
+      const claimedAt = typeof entry.claimedAt === 'number' && Number.isFinite(entry.claimedAt) ? entry.claimedAt : this.now();
+      const tokens = tokensFor(this.platform, nsRow, blindedValue);
+      if (await this.#link(userId, tokens, blindedValue, claimedAt) === 'linked') {
+        summary.restored++;
+        continue;
+      }
+      const local = await this.db.getByTokens(tokens.nsToken, tokens.valueToken);
+      if (local != null && local.userId === userId) {
+        if ((await getRowCore(this.platform, tokens)) === this.platform.coreId) {
+          summary.restored++;
+          continue;
+        }
+        // The account's own row, lost to another core: dropped, as the reconcile does.
+        await this.db.deleteByUserAndNamespace(userId, tokens.nsToken);
+      }
+      summary.lost++;
+    }
+    return summary;
   }
 
   /**

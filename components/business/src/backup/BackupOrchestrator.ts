@@ -11,6 +11,7 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import type { AuditStorage } from '../../../../storages/interfaces/auditStorage/AuditStorage.ts';
 import type { UserManifest } from '../../../../storages/interfaces/backup/BackupWriter.ts';
 import type { Chain } from '../../../../storages/interfaces/backup/chain.ts';
+import type { ExternalIdsService } from '../external-ids/service.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -55,6 +56,8 @@ class BackupOrchestrator {
   platformDB!: PlatformDB;
   auditStorage: AuditStorage | null = null;
   seriesConnection: SeriesConnectionLike | null = null;
+  /** The accounts' external ids (not set: none backed up). */
+  externalIds: Pick<ExternalIdsService, 'exportForUser'> | null = null;
   logger!: Logger;
 
   async init () {
@@ -68,6 +71,8 @@ class BackupOrchestrator {
     this.platformDB = storages.platformDB;
     this.auditStorage = storages.auditStorage;
     this.seriesConnection = storages.seriesConnection;
+    const { getExternalIdsService } = await import('business/src/external-ids/service.ts');
+    this.externalIds = await getExternalIdsService();
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('backup');
     return this;
@@ -230,6 +235,13 @@ class BackupOrchestrator {
     // Account data (no timestamps — always full export)
     const accountData = await this.userAccountStorage._exportAll(userId);
     await userWriter.writeAccountData(accountData);
+
+    // External ids (no timestamps: every run writes all of them, so a release
+    // since an earlier run is not undone by the restore). The blinded values
+    // are claim credentials: never logged.
+    if (this.externalIds != null) {
+      await userWriter.writeExternalIds(await this.externalIds.exportForUser(userId));
+    }
 
     // Audit (optional — quiet skip when no engine declares auditStorage;
     // hard fail when configured-but-export-throws, per the strict-mode
@@ -480,6 +492,7 @@ type UserWriter = {
   writeAccountData (data: unknown): Promise<void>;
   writeAudit (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   writeSeries (items: unknown[]): Promise<void>;
+  writeExternalIds (items: unknown[]): Promise<void>;
   close (): Promise<UserManifest>;
 };
 type BackupWriter = {

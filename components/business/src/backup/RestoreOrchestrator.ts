@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { PlatformDB, PlatformEntry } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { ExternalIdsService, ExternalIdRestoreSummary } from '../external-ids/service.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
@@ -70,6 +71,8 @@ class RestoreOrchestrator {
   platformDB!: PlatformDB;
   auditStorage: AuditStorageLike | null = null;
   seriesConnection: SeriesConnectionLike | null = null;
+  /** Links the backed-up external ids again (not set: none restored). */
+  externalIds: Pick<ExternalIdsService, 'restoreForUser'> | null = null;
   logger!: Logger;
   /** Replaces the platform's routing-name check when set (tests). */
   isReservedUsername: ((name: string) => boolean) | null = null;
@@ -87,6 +90,8 @@ class RestoreOrchestrator {
     this.platformDB = storages.platformDB;
     this.auditStorage = storages.auditStorage;
     this.seriesConnection = storages.seriesConnection;
+    const { getExternalIdsService } = await import('business/src/external-ids/service.ts');
+    this.externalIds = await getExternalIdsService();
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('restore');
     await accountStreams.init();
@@ -126,8 +131,9 @@ class RestoreOrchestrator {
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[] } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [] };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], externalIds: ExternalIdRestoreSummary } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], externalIds: emptyExtIdSummary() };
+    const pendingExternalIds: PendingExternalIds[] = [];
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -145,13 +151,15 @@ class RestoreOrchestrator {
         continue;
       }
 
-      await this._restoreSingleUser(reader, userId, username, opts);
+      pendingExternalIds.push(await this._restoreSingleUser(reader, userId, username, opts));
       report.restored.push({ userId, username });
     }
 
     if (platformRead != null) {
       report.extIdNamespaceSaltMismatch = (await this._writePlatform(platformRead)).extIdNamespaceSaltMismatch;
     }
+    // After the platform rows: the namespaces they restore are known.
+    report.externalIds = await this._restoreExternalIds(pendingExternalIds);
 
     this.logger.info(`Restore complete: ${report.restored.length} restored, ${report.skipped.length} skipped`);
     return report;
@@ -196,14 +204,15 @@ class RestoreOrchestrator {
     }
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
 
-    await this._restoreSingleUser(reader, userId, username, opts, targetUserId);
+    const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId);
 
     if (platformRead != null) {
       await this._writePlatform(platformRead);
     }
+    const externalIds = await this._restoreExternalIds([pendingExternalIds]);
 
     this.logger.info(`Single-user restore complete: ${username}`);
-    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts };
+    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, externalIds };
   }
 
   /**
@@ -248,7 +257,11 @@ class RestoreOrchestrator {
   // Internal
   // -------------------------------------------------------------------------
 
-  async _restoreSingleUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId?: string) {
+  /**
+   * Restore one account's data. Its external ids are read here and returned,
+   * not linked: the caller links them after the platform rows are written.
+   */
+  async _restoreSingleUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId?: string): Promise<PendingExternalIds> {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
@@ -396,7 +409,41 @@ class RestoreOrchestrator {
       }
     }
 
+    // External ids: a backup written without them (or a reader that does not
+    // know them) has none.
+    const externalIds: unknown[] = [];
+    if (typeof userReader.readExternalIds === 'function') {
+      for await (const entry of userReader.readExternalIds()) externalIds.push(entry);
+    }
+
     this.logger.info(`User restored: ${username} (${targetUserId})`);
+    return { userId: targetUserId, entries: externalIds };
+  }
+
+  /**
+   * Link the backed-up external ids to their restored accounts, with this
+   * platform's tokens. An id held meanwhile by another account or core stays
+   * with its holder (counted lost); one of a namespace unknown here is skipped.
+   */
+  async _restoreExternalIds (pending: PendingExternalIds[]): Promise<ExternalIdRestoreSummary> {
+    const total = emptyExtIdSummary();
+    if (this.externalIds == null) return total;
+    for (const { userId, entries } of pending) {
+      if (entries.length === 0) continue;
+      const summary = await this.externalIds.restoreForUser(userId, entries);
+      total.restored += summary.restored;
+      total.lost += summary.lost;
+      total.namespaceMissing += summary.namespaceMissing;
+      total.invalid += summary.invalid;
+      if (summary.lost + summary.namespaceMissing + summary.invalid > 0) {
+        this.logger.warn(`External ids of user ${userId}: ${summary.restored} restored, ${summary.lost} held by another account or core (not restored), ` +
+          `${summary.namespaceMissing} of a namespace unknown here (skipped), ${summary.invalid} malformed (skipped)`);
+      }
+    }
+    if (total.restored + total.lost + total.namespaceMissing + total.invalid > 0) {
+      this.logger.info(`External ids: ${total.restored} restored, ${total.lost} lost, ${total.namespaceMissing + total.invalid} skipped`);
+    }
+    return total;
   }
 
   async _importEvents (user: UserRef, events: unknown[]) {
@@ -642,6 +689,10 @@ function parseRawPlatformEntry (entry: { key: string; value: string }) {
   return null;
 }
 
+function emptyExtIdSummary (): ExternalIdRestoreSummary {
+  return { restored: 0, lost: 0, namespaceMissing: 0, invalid: 0 };
+}
+
 export default RestoreOrchestrator;
 export { RestoreOrchestrator };
 
@@ -708,7 +759,10 @@ type UserReader = {
   readAccountData (): Promise<{ accountFields?: unknown[] } | null>;
   readAudit (): AsyncIterable<unknown>;
   readSeries (): AsyncIterable<unknown>;
+  readExternalIds? (): AsyncIterable<unknown>;
 };
+/** The external ids of a restored account, linked after the platform rows. */
+type PendingExternalIds = { userId: string; entries: unknown[] };
 type BackupReaderLike = {
   readManifest (): Promise<Manifest>;
   openUser (userId: string): Promise<UserReader>;
