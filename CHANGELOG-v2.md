@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
+  caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
+  verification resend (`PUT /{username}/account` with `emails.resend`) answered `500
+  unexpected-error` when the in-process SMTP transport refused the recipient permanently (a 5xx
+  reply to `RCPT TO`, e.g. an unknown domain or mailbox). They now answer `400
+  invalid-parameters-format` with `data: { email, reason: 'recipient-rejected' }`; the SMTP
+  server's reply stays in the server log (once, at warn), never in the answer. Unchanged: a
+  temporary deferral (a 4xx reply, e.g. greylisting) and transport failures still answer the
+  generic `500` mail error, and the password reset keeps the generic `500` for every mail failure,
+  so its answer says nothing about the account's address.
+
 ## 2.0.0-rc.62 - 2026-10-27
 
 - **Multi-core registration: a refusal from the core the registration is forwarded to now reaches

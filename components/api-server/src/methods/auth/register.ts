@@ -211,6 +211,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // The code was minted but never reached the address: release the row
         // and the cooldown slot so the caller can retry immediately.
         await challenge.discardChallenge(params.email);
+        if (mailing.isRecipientRejected(err)) return next(mailing.recipientRejectedError(params.email));
         return next(err);
       }
       result.sent = true;
