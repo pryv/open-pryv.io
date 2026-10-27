@@ -1,5 +1,5 @@
 {
-  "version": "1.3.2",
+  "version": "1.3.3",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -1092,7 +1092,7 @@
             "object",
             "null"
           ],
-          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-access-grant-not-delegable`, `cmc-member-access-peer-rejected`, `cmc-member-access-peer-unreachable`, `cmc-member-access-membership-gone`, `cmc-member-access-not-retryable`); `detail` carries at most `peerErrorId` and `httpStatus`, never a peer response body.",
+          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-access-grant-not-delegable`, `cmc-member-access-peer-rejected`, `cmc-member-access-peer-unreachable`, `cmc-member-access-membership-gone`, `cmc-member-access-not-retryable`); `detail` carries at most `peerErrorId`, `httpStatus` and `retryAfterMs` (the peer's Retry-After, in milliseconds, when it sent one), never a peer response body.",
           "properties": {
             "reason": {
               "type": "string"
@@ -1107,6 +1107,9 @@
                   "type": "string"
                 },
                 "httpStatus": {
+                  "type": "number"
+                },
+                "retryAfterMs": {
                   "type": "number"
                 }
               }
@@ -1258,7 +1261,7 @@
             "object",
             "null"
           ],
-          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-revoke-residual`); `detail` carries at most `childAccessId`, `peerErrorId` and `httpStatus`, never a peer response body.",
+          "description": "Server-owned, present when `status` is `failed`: `reason` is an error id (e.g. `cmc-member-revoke-residual`); `detail` carries at most `childAccessId`, `peerErrorId`, `httpStatus` and `retryAfterMs` (the peer's Retry-After, in milliseconds, when it sent one), never a peer response body.",
           "properties": {
             "reason": {
               "type": "string"
@@ -1276,6 +1279,9 @@
                   "type": "string"
                 },
                 "httpStatus": {
+                  "type": "number"
+                },
+                "retryAfterMs": {
                   "type": "number"
                 }
               }

@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { FlowExternalId, RegistrationClaim } from 'business/src/external-ids/service.ts';
 const require = createRequire(import.meta.url);
-const { errorHandling, APIError } = require('errors');
+const { APIError } = require('errors');
 const errors = require('errors').factory;
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
 const challenge = require('business/src/emails/challenge.ts');
@@ -433,15 +433,17 @@ class Registration {
         }
       }
       mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
-        // Don't fail creation process itself (mail isn't critical), just log error
-        if (err) {
-          errorHandling.logError(err, null, this.logger);
+        // The account exists and the 201 is on its way: a failed welcome mail
+        // is logged once, by sendmail itself (warn for a refused recipient,
+        // error otherwise), never as an unexpected error of this request.
+        if (err && !mailing.isLoggedMailFailure(err)) {
+          this.logger.error('welcome mail not sent: ' + err.message, { username });
         }
       });
     })().catch((err: unknown) => {
-      // sendmail can throw synchronously (e.g. a malformed delivery URL): the
-      // account exists and the response is sent, so log it, never crash
-      errorHandling.logError(err instanceof Error ? err : new Error(String(err)), null, this.logger);
+      // Defensive: the account exists and the response is sent, so a throw
+      // here is logged, never crashes, and is not an error of the request.
+      this.logger.error('welcome mail not sent: ' + (err instanceof Error ? err.message : String(err)), { username });
     });
     next();
   }

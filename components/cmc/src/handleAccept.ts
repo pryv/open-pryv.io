@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { CmcLogger, OutboundDeps } from './_types.ts';
+import { retryAfterOf } from './outbound.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -530,8 +531,8 @@ async function handleAccept (params: {
 
   if (!delivery?.ok) {
     // 5. 4xx (non-retryable) → roll back the data-grant access so we don't
-    // leak a half-formed access pair. 5xx / network → leave the access
-    // in place; the outbound retry queue will re-attempt delivery. A
+    // leak a half-formed access pair. 5xx / network / 408 / 429 → leave the
+    // access in place; the outbound retry queue will re-attempt delivery. A
     // refused destination is as permanent as a 4xx: same roll-back.
     const refused = delivery?.response?.reason === 'refused';
     if (delivery?.response?.reason === 'http-4xx' || refused) {
@@ -557,7 +558,7 @@ async function handleAccept (params: {
     return {
       ok: false,
       reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
+      detail: deliveryFailedDetail(delivery?.response),
     };
   }
 
@@ -587,6 +588,18 @@ async function handleAccept (params: {
 }
 
 type AcceptFailure = { ok: false; reason: string; detail?: unknown };
+
+/**
+ * The detail of a retryable delivery failure (5xx, network, timeout, 408 /
+ * 429): the status and outbound reason, plus the peer's Retry-After when it
+ * sent one, which the retry queue honours.
+ */
+function deliveryFailedDetail (response: { status?: number; reason?: string; retryAfterMs?: number } | undefined): { status?: number; reason?: string; retryAfterMs?: number } {
+  const detail: { status?: number; reason?: string; retryAfterMs?: number } = { status: response?.status, reason: response?.reason };
+  const retryAfterMs = retryAfterOf(response);
+  if (retryAfterMs != null) detail.retryAfterMs = retryAfterMs;
+  return detail;
+}
 
 /**
  * The failure reason of a 4xx answer to a write on the capability's responses
@@ -933,7 +946,7 @@ async function handleRefuse (params: {
     return {
       ok: false,
       reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
+      detail: deliveryFailedDetail(delivery?.response),
     };
   }
 

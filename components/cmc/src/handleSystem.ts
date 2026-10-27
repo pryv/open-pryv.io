@@ -235,10 +235,14 @@ async function handleSystemEvent (params: {
 
   if (!delivery?.ok) {
     const peerReason = (delivery as { reason?: string } | undefined)?.reason;
+    const detail: { status?: number; peerReason?: string; retryAfterMs?: number } = { status: (delivery as { status?: number } | undefined)?.status, peerReason };
+    // A 408 / 429 with Retry-After: the retry queue waits at least that long.
+    const retryAfterMs = outbound.retryAfterOf(delivery as { reason?: string; retryAfterMs?: number } | undefined);
+    if (retryAfterMs != null) detail.retryAfterMs = retryAfterMs;
     return {
       ok: false,
       reason: peerReason === 'refused' ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
-      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason },
+      detail,
     };
   }
 

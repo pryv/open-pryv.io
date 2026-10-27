@@ -706,4 +706,94 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       }
     });
   });
+
+  describe('[CRL1] a peer asking to come back later (408 / 429) is retried, no earlier than its Retry-After', () => {
+    const { RETRY_AFTER_MAX_MS, DELIVERY_RETRY_AFTER_MAX_MS } = require('../src/retryQueue.ts');
+    const ENDPOINT = 'https://peer-tok@peer.example.com/';
+    const BODY = { streamIds: [':_cmc:inbox'], type: 'consent/revoke-cmc', content: { accessId: 'acc-1' } };
+    function answering (spec) {
+      return {
+        async fetch () {
+          return {
+            status: spec.status,
+            ok: spec.status < 300,
+            headers: { get: (name) => (spec.headers ?? {})[name.toLowerCase()] ?? null },
+            async json () { return {}; },
+            async text () { return '{}'; },
+          };
+        },
+      };
+    }
+    function enqueue (mall, failureDetail, now) {
+      return enqueueRetry({
+        userId: 'u1',
+        trigger: makeTrigger(),
+        failureReason: 'cmc-handler-delivery-failed',
+        failureDetail,
+        deps: { mall, dispatch: async () => ({}), dispatchDeps: {}, now: () => now },
+      });
+    }
+
+    it('[CRL11] a 429 is enqueued: on the normal schedule without a hint, at the hint with one, the hint capped', async () => {
+      const now = 1_000_000;
+      let ev = await enqueue(fakeMall(), { reason: 'http-retry-later', status: 429 }, now);
+      assert.notEqual(ev, null, 'a 429 is queued for retry');
+      assert.equal(ev.content.nextAttemptAfter, now + BACKOFF_BASE_MS);
+      ev = await enqueue(fakeMall(), { reason: 'http-retry-later', status: 429, retryAfterMs: 120_000 }, now);
+      assert.equal(ev.content.nextAttemptAfter, now + 120_000, 'the Retry-After is the earliest next attempt');
+      ev = await enqueue(fakeMall(), { peerReason: 'http-retry-later', status: 408, retryAfterMs: 24 * 3600_000 }, now);
+      assert.equal(ev.content.nextAttemptAfter, now + RETRY_AFTER_MAX_MS, 'a day is capped');
+      ev = await enqueue(fakeMall(), { reason: 'http-retry-later', status: 429, retryAfterMs: 10 }, now);
+      assert.equal(ev.content.nextAttemptAfter, now + BACKOFF_BASE_MS, 'never below the normal backoff');
+    });
+
+    it('[CRL12] a 403 is not enqueued', async () => {
+      const mall = fakeMall();
+      assert.equal(await enqueue(mall, { peerReason: 'http-4xx', status: 403 }, 0), null);
+      assert.equal(mall._events.size, 0);
+    });
+
+    it('[CRL13] a re-dispatch failing with a 429 again is rescheduled at max(normal backoff, Retry-After)', async () => {
+      const mall = fakeMall();
+      mall._events.set('r-1', { id: 'r-1', content: { originalEventId: 'orig-1', originalType: 'consent/accept-cmc', originalStreamIds: [RESPONSES_STREAM], originalContent: {}, attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      const dispatch = async () => ({ handled: true, status: 'failed', reason: 'cmc-handler-delivery-failed', detail: { status: 429, reason: 'http-retry-later', retryAfterMs: 300_000 } });
+      const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch, dispatchDeps: {}, now: () => 10_000 } });
+      assert.equal(r.outcome, 'rescheduled');
+      assert.equal(mall._events.get('r-1').content.nextAttemptAfter, 10_000 + 300_000);
+      const dispatch403 = async () => ({ handled: true, status: 'failed', reason: 'cmc-handler-delivery-failed', detail: { status: 403, peerReason: 'http-4xx' } });
+      mall._events.set('r-2', { id: 'r-2', content: { originalEventId: 'orig-2', originalType: 'message/chat-cmc', originalContent: {}, attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      const r2 = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-2'), deps: { mall, dispatch: dispatch403, dispatchDeps: {}, now: () => 10_000 } });
+      assert.equal(r2.outcome, 'failed-permanent');
+    });
+
+    it('[CRL14] a delivery record answered 429 is rescheduled (Retry-After honoured, capped), a 403 retires it', async () => {
+      const mall = fakeMall();
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'http-retry-later', failureDetail: { status: 429, retryAfterMs: 300_000 }, deps: { mall, now: () => 0 } });
+      assert.equal(ev.content.nextAttemptAfter, 300_000, 'queued no earlier than the Retry-After (the normal first delay is a minute)');
+      let t = 300_000;
+      let out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: { mall, dispatch: async () => { throw new Error('never'); }, dispatchDeps: answering({ status: 429, headers: { 'retry-after': '600' } }), now: () => t } });
+      assert.equal(out.outcome, 'rescheduled');
+      let c = mall._events.get(ev.id).content;
+      assert.equal(c.nextAttemptAfter, t + 600_000, 'ten minutes asked, more than the normal five');
+      assert.deepEqual(c.lastFailureDetail, { peerReason: 'http-retry-later', status: 429, retryAfterMs: 600_000 });
+      t = c.nextAttemptAfter;
+      out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: { mall, dispatch: async () => { throw new Error('never'); }, dispatchDeps: answering({ status: 408, headers: { 'retry-after': '86400' } }), now: () => t } });
+      assert.equal(out.outcome, 'rescheduled');
+      c = mall._events.get(ev.id).content;
+      assert.equal(c.nextAttemptAfter, t + DELIVERY_RETRY_AFTER_MAX_MS, 'a day is capped at 30 min (the normal 25 min is shorter)');
+      t = c.nextAttemptAfter;
+      out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: { mall, dispatch: async () => { throw new Error('never'); }, dispatchDeps: answering({ status: 403 }), now: () => t } });
+      assert.equal(out.outcome, 'failed-permanent');
+      assert.equal(mall._events.get(ev.id).content.status, 'failed-permanent');
+    });
+
+    it('[CRL15] honourRetryAfter never shortens the normal delay and caps the hint', () => {
+      const { honourRetryAfter } = require('../src/retryQueue.ts');
+      assert.equal(honourRetryAfter({ scheduled: 5_000, now: 0, retryAfterMs: null, capMs: 60_000 }), 5_000);
+      assert.equal(honourRetryAfter({ scheduled: 5_000, now: 0, retryAfterMs: 1_000, capMs: 60_000 }), 5_000);
+      assert.equal(honourRetryAfter({ scheduled: 5_000, now: 0, retryAfterMs: 30_000, capMs: 60_000 }), 30_000);
+      assert.equal(honourRetryAfter({ scheduled: 5_000, now: 0, retryAfterMs: 999_000, capMs: 60_000 }), 60_000);
+      assert.equal(honourRetryAfter({ scheduled: 90_000, now: 0, retryAfterMs: 999_000, capMs: 60_000 }), 90_000);
+    });
+  });
 });

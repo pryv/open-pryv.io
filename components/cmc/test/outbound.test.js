@@ -37,6 +37,7 @@ function fakeFetch (responses) {
     if (spec instanceof Error) return Promise.reject(spec);
     return Promise.resolve({
       status: spec.status,
+      headers: { get: (name) => spec.headers?.[name.toLowerCase()] ?? null },
       ok: spec.status >= 200 && spec.status < 300,
       async json () { return spec.body; },
       async text () { return JSON.stringify(spec.body); },
@@ -255,6 +256,86 @@ describe('[CMCOUT] cmc/outbound', () => {
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'refused' }), false);
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { reason: 'refused' }), false);
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'network' }), true);
+    });
+  });
+
+  describe('[CRL0] 408 and 429 ask to come back later', () => {
+    const { parseRetryAfter, retryAfterOf } = require('../src/outbound.ts');
+    async function post (spec) {
+      const { fetch } = fakeFetch(spec);
+      return await postToPeer({ apiEndpoint: 'https://Tok@example.com/', path: 'events', body: {}, deps: { fetch } });
+    }
+
+    it('[CRL01] a 429 or a 408 is reason http-retry-later and retryable; every other 4xx stays http-4xx and permanent', async () => {
+      for (const status of [408, 429]) {
+        const r = await post({ status, body: { error: 'later' } });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'http-retry-later', String(status));
+        assert.equal(r.status, status);
+        assert.equal(isRetryableFailure(r), true, String(status));
+        assert.equal('retryAfterMs' in r, false, 'no Retry-After header, no hint');
+      }
+      for (const status of [400, 401, 403, 404, 409, 410, 413, 422]) {
+        const r = await post({ status, body: { error: 'no' } });
+        assert.equal(r.reason, 'http-4xx', String(status));
+        assert.equal(isRetryableFailure(r), false, String(status));
+      }
+    });
+
+    it('[CRL02] the Retry-After header is read, in seconds or as an HTTP-date', async () => {
+      const r = await post({ status: 429, body: {}, headers: { 'retry-after': '120' } });
+      assert.equal(r.retryAfterMs, 120_000);
+      assert.equal(retryAfterOf(r), 120_000);
+      const at = new Date(Date.now() + 90_000).toUTCString();
+      const d = await post({ status: 408, body: {}, headers: { 'retry-after': at } });
+      assert.ok(d.retryAfterMs > 80_000 && d.retryAfterMs <= 90_000, String(d.retryAfterMs));
+      const bad = await post({ status: 429, body: {}, headers: { 'retry-after': 'soon' } });
+      assert.equal('retryAfterMs' in bad, false, 'an unreadable value is no hint');
+      // A Retry-After on another answer than 408 / 429 / 503 is ignored.
+      const other = await post({ status: 500, body: {}, headers: { 'retry-after': '120' } });
+      assert.equal(other.reason, 'http-5xx');
+      assert.equal('retryAfterMs' in other, false);
+      assert.equal(retryAfterOf(other), undefined);
+      const forbidden = await post({ status: 403, body: {}, headers: { 'retry-after': '120' } });
+      assert.equal(retryAfterOf(forbidden), undefined);
+    });
+
+    it('[CRL05] a 503 stays http-5xx and retryable, and carries its Retry-After when it sent one', async () => {
+      const r = await post({ status: 503, body: {}, headers: { 'retry-after': '300' } });
+      assert.equal(r.reason, 'http-5xx');
+      assert.equal(isRetryableFailure(r), true);
+      assert.equal(r.retryAfterMs, 300_000);
+      assert.equal(retryAfterOf(r), 300_000);
+      const plain = await post({ status: 503, body: {} });
+      assert.equal(plain.reason, 'http-5xx');
+      assert.equal('retryAfterMs' in plain, false, 'no header, no hint');
+      assert.equal(retryAfterOf(plain), undefined);
+      const bad = await post({ status: 503, body: {}, headers: { 'retry-after': 'soon' } });
+      assert.equal('retryAfterMs' in bad, false, 'an unreadable value is no hint');
+    });
+
+    it('[CRL03] parseRetryAfter: seconds, dates (past reads as 0), garbage', () => {
+      const now = Date.parse('2026-10-27T10:00:00Z');
+      assert.equal(parseRetryAfter('0', now), 0);
+      assert.equal(parseRetryAfter(' 30 ', now), 30_000);
+      assert.equal(parseRetryAfter('Tue, 27 Oct 2026 10:01:00 GMT', now), 60_000);
+      assert.equal(parseRetryAfter('Tue, 27 Oct 2026 09:00:00 GMT', now), 0);
+      assert.equal(parseRetryAfter('Tue Oct 27 10:02:00 2026', now), 120_000, 'asctime form (no zone, means GMT whatever the local zone)');
+      assert.equal(parseRetryAfter('Tue Oct  7 10:02:00 2026', Date.parse('2026-10-07T10:00:00Z')), 120_000, 'asctime form, one-digit day');
+      assert.equal(parseRetryAfter('Tuesday, 27-Oct-26 10:03:00 GMT', now), 180_000, 'obsolete RFC 850 form');
+      assert.equal(parseRetryAfter('-5', now), null);
+      assert.equal(parseRetryAfter('later', now), null);
+      assert.equal(parseRetryAfter('', now), null);
+      assert.equal(parseRetryAfter(null, now), null);
+    });
+
+    it('[CRL04] the retry queue classifier agrees: http-retry-later is retryable in either detail field', () => {
+      const { isRetryableReason } = require('../src/retryQueue.ts');
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'http-retry-later' }), true);
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { reason: 'http-retry-later' }), true);
+      assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'http-4xx' }), false);
+      // A reason that is permanent whatever the transport said stays so.
+      assert.equal(isRetryableReason('cmc-handler-delivery-rejected', { reason: 'http-retry-later' }), false);
     });
   });
 });

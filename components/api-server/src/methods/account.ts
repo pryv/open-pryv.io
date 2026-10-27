@@ -738,6 +738,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         if (ev != null) await emailsContainer.setContent(context.user.id, ev, { verificationSentAt: null });
         await emailsOperations.releaseSendSlot(context.user.id, value);
         if (fatal) throw err;
+        // A failed send is already logged by sendmail, at its own level.
+        if (mailing.isLoggedMailFailure(err)) continue;
         // Do not leak the token: log the address and error message only.
         logger.warn(`verification mail to ${value} failed (add): ${err instanceof Error ? err.message : String(err)}`);
       }

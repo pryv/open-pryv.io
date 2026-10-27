@@ -417,7 +417,7 @@ One write; the local access is destroyed server-side, which is what actually cut
 
 A field that could not be resolved is absent rather than null. Against an older peer you may see only `accessId`, `appCode` and `offerEventId`.
 
-> Delivery requires the back-channel handshake to have completed (that is what stores the peer's endpoint; without it the trigger completes with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing is retried). A peer that cannot be reached after the in-request attempts gets the notice queued (the trigger says `deliveryQueued: true` beside `peerNotified: false`) and re-sent by the sender's retry loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 re-sends in all over about 27 hours, then given up as `failed-permanent` for the operator; a 4xx is your answer and is not retried, and the notices of an account being deleted are not queued. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible after a day-long outage, and reconcile on your own schedule if the relationship matters.
+> Delivery requires the back-channel handshake to have completed (that is what stores the peer's endpoint; without it the trigger completes with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing is retried). A peer that cannot be reached after the in-request attempts gets the notice queued (the trigger says `deliveryQueued: true` beside `peerNotified: false`) and re-sent by the sender's retry loop after 1, 5 and 25 minutes, about 2 hours, then every 6 hours, 8 re-sends in all over about 27 hours, then given up as `failed-permanent` for the operator; a 4xx is your answer and is not retried, except 408 and 429: those mean "not now" and are retried like an outage, each re-send no earlier than your `Retry-After` (delay-seconds or HTTP-date) when you send one, capped at 30 minutes per attempt; and the notices of an account being deleted are not queued. A revoke that never reaches you means YOUR server never ran the teardown, so the withdrawing party's access on your account is still standing even though they consider the relationship over. Treat a missing revoke notification as possible after a day-long outage, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 
@@ -1502,7 +1502,8 @@ Written by the server on the membership's team stream when a membership ends (cl
   outcome?: Array<{ childAccessId, result: 'deleted' | 'absent' | 'residual', reason? }>,
   residuals?: Array<{ counterparty, childAccessId, expires, reason }>,
   failure?: { reason: string,        // 'cmc-member-revoke-residual' when accesses were left in place
-              detail?: { childAccessId?, peerErrorId?, httpStatus? } }
+              detail?: { childAccessId?, peerErrorId?, httpStatus?,
+                         retryAfterMs? } }   // the longest Retry-After a patient core sent with a 408 / 429
 }
 ```
 
@@ -1543,7 +1544,7 @@ Recorded on the trigger, in `content.failure.reason` (the answer then has no `me
 | `cmc-member-access-grant-not-delegable` | The patient's grant is `shared`: invite the patient again with `accessType: 'app'`. |
 | `cmc-member-access-permissions-not-subset` | The patient's core refused the access as beyond the grant (`forbidden`). |
 | `cmc-member-access-peer-rejected` | The patient's core refused the access otherwise (detail: its error id and HTTP status). |
-| `cmc-member-access-peer-unreachable` | The patient's core could not be reached (5xx, network, timeout): ask again shortly. |
+| `cmc-member-access-peer-unreachable` | The patient's core could not be reached (5xx, network, timeout) or asked to be called later (408, 429): ask again shortly, and not before `detail.retryAfterMs` when it is set (the patient core's `Retry-After`). |
 | `cmc-member-access-membership-gone` | The membership ended during the mint; the access was deleted. |
 | `cmc-member-access-not-retryable` | A mint is never replayed from the retry queue. |
 | `cmc-member-revoke-residual` | (sweep record) At least one access could not be deleted; see `residuals`. |
@@ -1585,7 +1586,7 @@ When you write a `cmc/<action>-v1` event to your own `:_cmc:*` scope stream:
 3. Plugin updates the same event's `content.status` as orchestration progresses (`pending` → `delivered` → `completed`, or `failed`).
 4. App watches via `new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:...'] })` + `monitor.on('event', handler)` to receive status updates.
 
-If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the plugin queues for retry as a `cmc-internal/retry-cmc` event in the hidden `:_cmc:_internal:retries` stream (one event per pending delivery, exponential backoff up to a configurable cap, then marked `failed-permanent` for operator review). On terminal failure of the trigger itself, sets `status: 'failed'` with reason.
+If the outbound delivery fails (timeout, peer unreachable, peer 5xx, 408 or 429; any other 4xx is the peer's answer and is not retried), the plugin queues for retry as a `cmc-internal/retry-cmc` event in the hidden `:_cmc:_internal:retries` stream (one event per pending delivery, exponential backoff up to a configurable cap, no earlier than the peer's `Retry-After` after a 408 or 429 (capped at 10 minutes per attempt), then marked `failed-permanent` for operator review). On terminal failure of the trigger itself, sets `status: 'failed'` with reason.
 
 ```ts
 // Trigger event status lifecycle
@@ -1632,8 +1633,8 @@ npm package.
 | `HANDLER_DELEGATION_ENDED` | `cmc-handler-delegation-ended` | The accept was written with a delegate token (account delegation) and the delegation was detached before the accept completed. No data grant is left. Permanent (non-retryable); the account owner may accept again. |
 | `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
 | `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |
-| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx. Exceptions: a 401/403 on the capability read becomes `CAPABILITY_INVALID`, and a refusal carrying the capability's own id (`cmc-capability-consumed`, `cmc-capability-invalidated`, `cmc-capability-already-accepted-by-you`) is reported as that id. `failure.detail` carries the peer's status and body in both cases. Not retried. |
-| `HANDLER_DELIVERY_FAILED` | `cmc-handler-delivery-failed` | Peer returned 5xx, a timeout, or a network error, retryable. |
+| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx (any 4xx but 408 and 429). Exceptions: a 401/403 on the capability read becomes `CAPABILITY_INVALID`, and a refusal carrying the capability's own id (`cmc-capability-consumed`, `cmc-capability-invalidated`, `cmc-capability-already-accepted-by-you`) is reported as that id. `failure.detail` carries the peer's status and body in both cases. Not retried. |
+| `HANDLER_DELIVERY_FAILED` | `cmc-handler-delivery-failed` | Peer returned 5xx, 408 or 429, a timeout, or a network error, retryable. After a 408 / 429 the detail's `reason` (accept, refusal) or `peerReason` (chat, system) is `http-retry-later`, with `retryAfterMs` when the peer sent a `Retry-After`. |
 | `CHAT_STREAM_NOT_CHAT` | `cmc-chat-stream-not-chat` | The chat trigger's streamId doesn't parse as a chats sub-stream under `:_cmc:apps:<app>`. |
 | `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
 | `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished, see Step 4 "Two-phase access materialization". |

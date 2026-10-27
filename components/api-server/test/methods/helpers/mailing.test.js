@@ -177,6 +177,43 @@ describe('[MAIL] Mailing helper methods', () => {
     });
   });
 
+  describe('[MLRJ] telling a refused recipient from a deferred one and from a transport failure', () => {
+    function smtpError (code, command, responseCode) {
+      return Object.assign(new Error('failed'), { code, command }, responseCode != null ? { responseCode } : {});
+    }
+
+    it('[MLRJ1] a RCPT TO refused with a 5xx reply is a rejected recipient', () => {
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'RCPT TO', 550)), 'rejected');
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'RCPT TO', 553)), 'rejected');
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'RCPT TO')), 'rejected', 'no reply code reads as rejected');
+    });
+
+    it('[MLRJ4] a RCPT TO refused with a 4xx reply (greylisting 450, mailbox full 452) is a deferred recipient', () => {
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'RCPT TO', 450)), 'deferred');
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'RCPT TO', 452)), 'deferred');
+    });
+
+    it('[MLRJ2] a refused sender, a refused DATA or a connection failure is neither', () => {
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'MAIL FROM', 550)), null);
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EENVELOPE', 'DATA', 450)), null);
+      assert.strictEqual(mailing.recipientRefusal(smtpError('ECONNECTION', 'CONN')), null);
+      assert.strictEqual(mailing.recipientRefusal(smtpError('EAUTH', 'AUTH PLAIN', 535)), null);
+      assert.strictEqual(mailing.recipientRefusal(null), null);
+    });
+
+    it('[MLRJ3] every failure sendmail reports is marked as already logged', (done) => {
+      mailing.sendmail({ method: 'invalid' }, template, recipient, substitutions, lang, (err) => {
+        try {
+          assert.ok(err != null);
+          assert.strictEqual(mailing.isLoggedMailFailure(err), true);
+          assert.strictEqual(mailing.isLoggedMailFailure(new Error('other')), false);
+          assert.ok(!Object.keys(err).some((k) => /logged/i.test(k)), 'the mark is not an enumerable field');
+          done();
+        } catch (e) { done(e); }
+      });
+    });
+  });
+
   it('[ML07] in-process with no SMTP host: the send is skipped, without error', (done) => {
     const mail = require('mail');
     mail.close().then(() => {

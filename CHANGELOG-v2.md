@@ -16,6 +16,23 @@
   body }` (the peer's answer). Both are permanent: the refusal is sent once. A 5xx, timeout or
   network error is still `cmc-handler-delivery-failed` and retried; a destination refused before
   sending (`cmc-handler-destination-refused`) is unchanged.
+- **CMC: a peer answering 408 or 429 is retried, no earlier than its `Retry-After`.** Every 4xx
+  used to be permanent, so a counterparty behind a rate-limiting or slow proxy lost an accept,
+  refusal, chat, system message, revoke notice or member-access deletion for good. A 408 or 429
+  is now a retryable failure for every delivery kind: `failure.reason:
+  'cmc-handler-delivery-failed'` with `failure.detail.reason` (accept, refusal) or
+  `failure.detail.peerReason` (chat, system) `'http-retry-later'`, plus `retryAfterMs` when the
+  peer sent a `Retry-After` (seconds or HTTP-date). The retry queue schedules the next attempt
+  no earlier than that, never earlier than its normal backoff, and caps the wait at 10 minutes
+  for a trigger and 30 minutes for a queued revoke notice. A revoke notice answered 408 or 429
+  skips the remaining in-request attempts and is queued at once. A member-access deletion left
+  by such an answer is a residual with reason `http-retry-later`; a member-access mint answered
+  408 or 429 fails with `cmc-member-access-peer-unreachable` (was
+  `cmc-member-access-peer-rejected`), with `failure.detail.retryAfterMs` when the patient core
+  sent a `Retry-After`, so the member app knows when to ask again. Every other 4xx stays permanent, including a capability's
+  typed refusal of an accept or refusal. A 503 (already retried) now also honours its
+  `Retry-After` the same way (`failure.detail.retryAfterMs`, reason still `http-5xx`), and a revoke
+  notice answered 503 with a `Retry-After` is queued at once instead of retried within the request.
 - **Register host: `GET /apps`, `GET /apps/{appid}` and `POST /access/invitationtoken/check`
   answered 404 on `reg.<domain>`** (the request fell through to the user route); they are now
   served there as documented, and still at the root of a core.

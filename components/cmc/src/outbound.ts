@@ -27,7 +27,12 @@ const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts'
 type DeliverResult =
   | { ok: true; status: number; body: unknown }
   | { ok: false; reason: 'http-4xx'; status: number; body: unknown }
-  | { ok: false; reason: 'http-5xx'; status: number; body: unknown }
+  // 408 (Request Timeout) or 429 (Too Many Requests): the peer, or a proxy in
+  // front of it, asks to be called again later. Retryable, unlike every other
+  // 4xx; `retryAfterMs` is its Retry-After header, when it sent a valid one.
+  | { ok: false; reason: 'http-retry-later'; status: number; body: unknown; retryAfterMs?: number }
+  // Retryable. A 503 may carry the peer's Retry-After (maintenance, overload).
+  | { ok: false; reason: 'http-5xx'; status: number; body: unknown; retryAfterMs?: number }
   | { ok: false; reason: 'network'; status: 0; error: string }
   | { ok: false; reason: 'timeout'; status: 0 }
   // The destination may not be called (private or reserved address, http,
@@ -153,12 +158,24 @@ async function requestPeer (params: {
     if (res.status >= 200 && res.status < 300) {
       return { ok: true, status: res.status, body: parsed };
     }
+    if (RETRY_LATER_STATUSES.has(res.status)) {
+      const retryAfterMs = parseRetryAfter(res.headers?.get?.('retry-after') ?? null, Date.now());
+      deps.logger?.warn?.('cmc/outbound: peer asks to retry later', { host: base, status: res.status, retryAfterMs });
+      return retryAfterMs == null
+        ? { ok: false, reason: 'http-retry-later', status: res.status, body: parsed }
+        : { ok: false, reason: 'http-retry-later', status: res.status, body: parsed, retryAfterMs };
+    }
     if (res.status >= 400 && res.status < 500) {
       deps.logger?.debug?.('cmc/outbound: peer rejected delivery', { host: base, status: res.status });
       return { ok: false, reason: 'http-4xx', status: res.status, body: parsed };
     }
-    deps.logger?.warn?.('cmc/outbound: peer 5xx', { host: base, status: res.status });
-    return { ok: false, reason: 'http-5xx', status: res.status, body: parsed };
+    const retryAfterMs5xx = res.status === 503
+      ? parseRetryAfter(res.headers?.get?.('retry-after') ?? null, Date.now())
+      : null;
+    deps.logger?.warn?.('cmc/outbound: peer 5xx', { host: base, status: res.status, retryAfterMs: retryAfterMs5xx });
+    return retryAfterMs5xx == null
+      ? { ok: false, reason: 'http-5xx', status: res.status, body: parsed }
+      : { ok: false, reason: 'http-5xx', status: res.status, body: parsed, retryAfterMs: retryAfterMs5xx };
   } catch (err) {
     if (timer != null) clearTimeout(timer);
     const errObj = err as { name?: string; code?: string; message?: string; kind?: string; host?: string } | null;
@@ -179,20 +196,60 @@ async function requestPeer (params: {
 }
 
 /**
+ * The 4xx answers that are not the peer's verdict on the request but a
+ * "not now": a rate limiter (429) or a proxy that gave up waiting (408).
+ */
+const RETRY_LATER_STATUSES = new Set([408, 429]);
+
+/**
+ * A Retry-After header value (RFC 9110: delay-seconds or an HTTP-date) as a
+ * delay in ms from `now`; null when absent or unreadable. A date in the past
+ * reads as 0.
+ */
+function parseRetryAfter (value: string | null | undefined, now: number): number | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  if (v === '') return null;
+  if (/^\d+$/.test(v)) return Number(v) * 1000;
+  // An HTTP-date (any of its three RFC 9110 forms) starts with the weekday;
+  // Date.parse alone would read a bare number such as "-5" as a year.
+  if (!/^[A-Za-z]{3}/.test(v)) return null;
+  // The asctime form ends with the year and carries no zone, but means GMT;
+  // Date.parse would read it as local time.
+  const at = Date.parse(/\d{4}$/.test(v) ? v + ' GMT' : v);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, at - now);
+}
+
+/**
  * Classify a DeliverResult into retry-policy categories.
  */
 function isRetryableFailure (r: DeliverResult): boolean {
   if (r.ok) return false;
-  // 4xx is non-retryable (the peer rejected with a permanent reason).
+  // 4xx is non-retryable (the peer rejected with a permanent reason), except
+  // 408 / 429 (reason 'http-retry-later'), which ask to come back later.
   if (r.reason === 'http-4xx') return false;
   // A refused destination stays refused.
   if (r.reason === 'refused') return false;
-  // Everything else (5xx, network, timeout) is retryable.
+  // Everything else (408 / 429, 5xx, network, timeout) is retryable.
   return true;
+}
+
+/**
+ * The peer's Retry-After of a failed result, in ms, when it sent one (a 408 /
+ * 429, or a 503).
+ */
+function retryAfterOf (r: { reason?: string; retryAfterMs?: number } | null | undefined): number | undefined {
+  if (r == null || (r.reason !== 'http-retry-later' && r.reason !== 'http-5xx')) return undefined;
+  const ms: unknown = r.retryAfterMs;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : undefined;
 }
 
 export {
   DEFAULT_TIMEOUT_MS,
+  RETRY_LATER_STATUSES,
+  parseRetryAfter,
+  retryAfterOf,
   parseApiEndpoint,
   stripCredentials,
   postToPeer,

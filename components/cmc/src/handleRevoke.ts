@@ -422,7 +422,7 @@ async function handleRevoke (params: {
             originalEventId: triggerEvent.id ?? null,
             originalType: C.ET_REVOKE,
             failureReason: delivery.reason,
-            failureDetail: { status: delivery.status },
+            failureDetail: delivery.retryAfterMs != null ? { status: delivery.status, retryAfterMs: delivery.retryAfterMs } : { status: delivery.status },
             deps: { mall: mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
           });
           deliveryQueued = true;
@@ -586,10 +586,10 @@ async function deliverRevokeWithRetry (params: {
   content: Record<string, unknown>;
   deps: OutboundDeps;
   attempts?: number;
-}): Promise<{ ok: boolean; status?: number; reason: string }> {
+}): Promise<{ ok: boolean; status?: number; reason: string; retryAfterMs?: number }> {
   const { apiEndpoint, content, deps } = params;
   const maxAttempts = params.attempts ?? 3;
-  let last: { ok: boolean; status?: number; reason: string } = { ok: false, reason: 'cmc-revoke-delivery-failed' };
+  let last: { ok: boolean; status?: number; reason: string; retryAfterMs?: number } = { ok: false, reason: 'cmc-revoke-delivery-failed' };
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const delivery = await outbound.postToPeer({
@@ -607,6 +607,14 @@ async function deliverRevokeWithRetry (params: {
       // A 4xx is the peer's considered answer — retrying re-sends the same
       // rejected payload. Stop.
       if (!outbound.isRetryableFailure(delivery)) break;
+      // A 408 / 429, or a 503 naming a Retry-After, asks to come back later:
+      // not a blip to absorb within a second. Stop here; the notice is
+      // queued, its Retry-After honoured.
+      const retryAfterMs = outbound.retryAfterOf(delivery);
+      if ((delivery as { reason?: string }).reason === 'http-retry-later' || retryAfterMs != null) {
+        if (retryAfterMs != null) last.retryAfterMs = retryAfterMs;
+        break;
+      }
     } catch (err: unknown) {
       last = { ok: false, reason: 'cmc-revoke-delivery-threw' };
       deps.logger?.warn?.('cmc/handleRevoke: peer notify threw', {
