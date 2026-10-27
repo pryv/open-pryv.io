@@ -51,7 +51,7 @@ const MAX_FUNCTION_NAME_LENGTH = 80;
  * a non-slash on purpose: a class that merely contains '/' also matches a
  * leading one, i.e. an absolute path.
  */
-const SAFE_LOCATION = /^[A-Za-z0-9_.\-][A-Za-z0-9_.\-/]{0,199}:\d{1,7}:\d{1,7}$/;
+const SAFE_LOCATION = /^[A-Za-z0-9_.-][A-Za-z0-9_.\-/]{0,199}:\d{1,7}:\d{1,7}$/;
 /** A Node internal frame location. */
 const SAFE_NODE_LOCATION = /^node:[A-Za-z0-9_/.]{1,100}:\d{1,7}:\d{1,7}$/;
 

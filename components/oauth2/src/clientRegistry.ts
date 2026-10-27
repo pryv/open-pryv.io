@@ -25,11 +25,11 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
 import { validatePublicJwkSet } from './jwks.ts';
+const require = createRequire(import.meta.url);
 
 const storage = require('./storage.ts');
 

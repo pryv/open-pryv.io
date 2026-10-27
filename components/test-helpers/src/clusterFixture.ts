@@ -7,7 +7,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-
 /**
  * Multi-worker test fixture.
  *

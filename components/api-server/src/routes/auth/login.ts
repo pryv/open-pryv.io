@@ -6,15 +6,13 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from '../_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const methodCallback = require('../methodCallback.ts').default;
 const Paths = require('../Paths.ts');
-
-
 
 /**
  * Auth routes.
@@ -65,4 +63,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   return {
     hasProperties
   };
-};
+}

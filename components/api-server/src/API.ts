@@ -14,7 +14,6 @@ const observability = require('business/src/observability/index.ts');
 
 const logger = getLogger('api');
 
-
 type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
 type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; resultArrayLimit?: number; [k: string]: unknown };
 

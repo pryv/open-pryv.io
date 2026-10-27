@@ -6,13 +6,12 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-
 
 /**
  * Webhooks route handling.
@@ -45,4 +44,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-};
+}

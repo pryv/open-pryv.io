@@ -80,7 +80,7 @@ export default function (action: string) {
   }
 
   return schema;
-};
+}
 
 export const attachments = array(object({
   id: string(),

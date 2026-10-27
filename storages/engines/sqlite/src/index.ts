@@ -22,13 +22,13 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Logger } from '@pryv/boiler';
+import type { UserOrId } from '../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
-
-import type { Logger } from '@pryv/boiler';
-import type { UserOrId } from '../../../interfaces/_shared/types.ts';
 
 interface StorageLayerLike {
   connection?: unknown;
@@ -61,33 +61,6 @@ function init (config: Record<string, unknown>, getLogger: (name: string) => Log
 }
 
 // -- BaseStorage --------------------------------------------------------
-
-function buildStub (label: string, methods: string[]): Record<string, (...args: unknown[]) => never> {
-  const stub: Record<string, (...args: unknown[]) => never> = {};
-  for (const m of methods) {
-    stub[m] = function () {
-      throw new Error(`SQLite ${label}.${m}() not yet implemented`);
-    };
-  }
-  return stub;
-}
-
-const USER_STORAGE_METHODS = [
-  'getCollectionInfo', 'find', 'findOne', 'insertOne', 'findOneAndUpdate',
-  'updateOne', 'updateMany', 'delete', 'removeOne', 'removeMany', 'removeAll',
-  'count', 'countAll', 'findDeletions', 'iterateAll',
-  'exportAll', 'importAll', 'clearAll'
-];
-
-const SESSIONS_METHODS = [
-  'get', 'getMatching', 'generate', 'touch', 'expireNow', 'destroy',
-  'clearAll', 'remove', 'removeAllExcept', 'exportAll', 'importAll'
-];
-
-const PRR_METHODS = [
-  'get', 'generate', 'consume', 'destroy', 'destroyAllForUser',
-  'clearAll', 'exportAll', 'importAll'
-];
 
 async function initStorageLayer (storageLayer: StorageLayerLike, _connection: unknown, options: InitOptions): Promise<void> {
   const { DatabaseSQLite } = require('./DatabaseSQLite.ts');

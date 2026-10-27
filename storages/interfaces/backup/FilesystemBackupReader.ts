@@ -407,6 +407,7 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
     },
 
     async readAccountData () {
+      // eslint-disable-next-line no-unreachable-loop -- takes the first item; the for-await return closes the iterator
       for await (const item of newestFile('account')) return item || null;
       return null;
     },

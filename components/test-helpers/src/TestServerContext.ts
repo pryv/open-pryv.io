@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import type { ListenKey } from './portAllocator.ts';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = require('path').dirname(__filename);
@@ -19,7 +20,6 @@ const supertest = require('supertest');
 const { deepMerge } = require('utils');
 const { Fuse } = require('./condition_variable.ts');
 const portAllocator = require('./portAllocator.ts');
-import type { ListenKey } from './portAllocator.ts';
 
 const logger = require('@pryv/boiler').getLogger('test-server-context');
 

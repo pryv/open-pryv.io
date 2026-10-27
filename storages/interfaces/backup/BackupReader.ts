@@ -147,9 +147,11 @@ function validateUserBackupReader (instance: unknown): UserBackupReader {
   return inst as unknown as UserBackupReader;
 }
 
-export { BackupReader,
+export {
+  BackupReader,
   createBackupReader,
   validateBackupReader,
   UserBackupReader,
   createUserBackupReader,
-  validateUserBackupReader };
+  validateUserBackupReader
+};

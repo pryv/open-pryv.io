@@ -8,6 +8,15 @@
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { Readable as NodeReadable } from 'node:stream';
+import type { NormalizedCondition, ScalarValue } from '../../../../shared/contentQueryConditions.ts';
+
+// ---- Types ----
+
+import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
+
+// EventRow equals the canonical SqliteStmt's default row shape, so the
+// shared statement type applies unparameterized.
+import type { SqliteDb, SqliteStmt } from '../types.ts';
 const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
@@ -17,11 +26,6 @@ const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const eventsSchema = require('./schema/events.ts');
 const fullTextSearch = require('./fullTextSearch.ts');
 const { toSQLiteQuery } = require('./streamQueryUtils.ts');
-import type { NormalizedCondition, ScalarValue } from '../../../../shared/contentQueryConditions.ts';
-
-// ---- Types ----
-
-import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
 
 /** A raw events-table row: arbitrary columns per eventsSchema. */
 type EventRow = Record<string, unknown>;
@@ -32,14 +36,15 @@ type DomainEvent = Partial<StoredEvent> & Record<string, unknown>;
 type ColumnDef = { type: string, index?: boolean };
 type TableSchema = Record<string, ColumnDef>;
 
-// EventRow equals the canonical SqliteStmt's default row shape, so the
-// shared statement type applies unparameterized.
-import type { SqliteDb, SqliteStmt } from '../types.ts';
-
 type EventQueries = {
-  getAll: SqliteStmt, getTerms: SqliteStmt, getById: SqliteStmt,
-  getDeletedSince: SqliteStmt, getHistory: SqliteStmt, create: SqliteStmt,
-  deleteByHeadId: SqliteStmt, deleteById: SqliteStmt
+  getAll: SqliteStmt,
+  getTerms: SqliteStmt,
+  getById: SqliteStmt,
+  getDeletedSince: SqliteStmt,
+  getHistory: SqliteStmt,
+  create: SqliteStmt,
+  deleteByHeadId: SqliteStmt,
+  deleteById: SqliteStmt
 };
 
 type LoggerFactory = { getLogger: (name: string) => Logger };
@@ -358,7 +363,7 @@ UserDatabase.prototype.countUnstampedVersionRows = function (this: UserDatabaseI
   return Number(row?.n ?? 0);
 };
 
-UserDatabase.prototype.minimizeEventHistory =async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
+UserDatabase.prototype.minimizeEventHistory = async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
   const minimizeHistoryStatement = `UPDATE events SET ${fieldsToRemove.map(field => `${field} = ${field === 'streamIds' ? '\'' + eventsSchema.ALL_EVENTS_TAG + '\'' : 'NULL'}`).join(', ')} WHERE headId = ?`;
   this.logger.debug(`(async) Minimize event history: ${minimizeHistoryStatement}`);
   await concurrentSafeWrite.execute(() => {

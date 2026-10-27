@@ -5,10 +5,6 @@
  * Refer to LICENSE file
  */
 
-
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-
 /**
  * Ported verbatim from the standalone service-mail repo. Represents a
  * single {type, language} template; presence is probed via the injected

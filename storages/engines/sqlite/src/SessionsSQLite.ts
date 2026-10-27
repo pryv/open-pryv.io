@@ -6,14 +6,14 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { SqliteDb } from './types.ts';
+import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
-
-import type { SqliteDb } from './types.ts';
-import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 // `sessions` table row (queries select subsets of these columns)
 type SessionRow = { id: string; data: string | SessionData; expires: number };
 

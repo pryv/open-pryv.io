@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { CmcLogger, MallAccessesLike } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -35,8 +37,6 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
-
-import type { CmcLogger, MallAccessesLike } from './_types.ts';
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => Error;

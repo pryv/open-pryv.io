@@ -6,6 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Mall as MallContract, MallEvents, MallStreams, DataStore, StoreDescription } from './types.ts';
 const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./helpers/storeDataUtils.ts');
@@ -14,8 +16,6 @@ const MallUserEvents = require('./MallUserEvents.ts').default;
 const MallTransaction = require('./MallTransaction.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const eventsUtils = require('./helpers/eventsUtils.ts');
-
-import type { Mall as MallContract, MallEvents, MallStreams, DataStore, StoreDescription } from './types.ts';
 
 /**
  * Storage for streams and events.

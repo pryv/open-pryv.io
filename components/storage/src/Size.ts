@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
@@ -23,7 +22,7 @@ class Size {
     let dbDocuments = 0;
     let attachedFiles = 0;
     type StoreStorageInfo = { streams?: { count?: number }; events?: { count?: number }; files?: { sizeKb?: number } };
-    for (const [_key, entry] of Object.entries(storageInfo) as Array<[string, StoreStorageInfo]>) {
+    for (const entry of Object.values(storageInfo) as Array<StoreStorageInfo>) {
       if (entry.streams?.count) dbDocuments += entry.streams?.count;
       if (entry.events?.count) dbDocuments += entry.events?.count;
       if (entry.files?.sizeKb) attachedFiles += entry.files?.sizeKb;

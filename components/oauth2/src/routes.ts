@@ -19,11 +19,11 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from './grants/authorization_code.ts';
 import type { NextFunction, Request, Response } from 'express';
+const require = createRequire(import.meta.url);
 
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
@@ -82,7 +82,7 @@ export type Deps = {
    * personal-token validation path. Required for /oauth2/authorize/accept.
    */
   resolveUser?: (params: { username: string; userToken: string })
-    => Promise<{ userId: string; username: string; [key: string]: unknown } | null>;
+  => Promise<{ userId: string; username: string; [key: string]: unknown } | null>;
   /**
    * Mint an app access under the resolved user. Wired by the host app
    * to api.call('accesses.create', ...) (or equivalent). Required for
@@ -170,12 +170,12 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
 
   const scopesSupported = buildScopesSupported();
 
-  const grantTypesSupported = (deps.config.get('oauth:grantTypesSupported') as string[] | undefined)
-    ?? ['authorization_code'];
+  const grantTypesSupported = (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ??
+    ['authorization_code'];
 
   app.get!(
     '/.well-known/oauth-authorization-server',
-    handleWellKnown({ issuer, scopesSupported, grantTypesSupported }),
+    handleWellKnown({ issuer, scopesSupported, grantTypesSupported })
   );
 
   if (deps.platform == null) {

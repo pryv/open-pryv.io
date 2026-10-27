@@ -673,7 +673,3 @@ type StorageLike = {
   accesses: { findOne: (user: UserDef, query: Record<string, unknown>, opts: unknown, cb: NodeCallback) => void };
   sessions: { get: (token: string, cb: NodeCallback) => void; touch: (token: string, cb: NodeCallback) => void };
 };
-type AuthenticationData = {
-  accessToken: string;
-  callerId?: string;
-};

@@ -6,7 +6,6 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-'use strict';
 /**
  * JSON Schema specification of methods data for events.
  */
@@ -28,104 +27,104 @@ const paging = () => helpers.getBaseSchema('integer', { minimum: 0, maximum: EVE
 const finiteTime = () => number({ minimum: -Number.MAX_VALUE, maximum: Number.MAX_VALUE });
 export { EVENTS_GET_MAX_PAGING };
 const __ex_get = {
-    params: object({
-      streams: {},
-      // content / clientData conditions are coerced + validated
-      // programmatically (storages/shared/contentQueryConditions.ts)
-      content: {},
-      clientData: {},
-      types: array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$' }), { nullable: true }),
-      fromTime: finiteTime(),
-      toTime: finiteTime(),
-      sortAscending: boolean(),
-      skip: paging(),
-      limit: paging(),
-      state: string({ enum: ['default', 'trashed', 'all'] }),
-      modifiedSince: finiteTime(),
-      includeDeletions: boolean(),
-      auth: string(),
-      running: boolean()
-    }, { id: 'events.get', additionalProperties: false }),
-    result: object({
-      events: array(event(Action.READ)),
-      eventDeletions: array(itemDeletion)
-    }, {
-      required: ['events']
-    })
-  };
+  params: object({
+    streams: {},
+    // content / clientData conditions are coerced + validated
+    // programmatically (storages/shared/contentQueryConditions.ts)
+    content: {},
+    clientData: {},
+    types: array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$' }), { nullable: true }),
+    fromTime: finiteTime(),
+    toTime: finiteTime(),
+    sortAscending: boolean(),
+    skip: paging(),
+    limit: paging(),
+    state: string({ enum: ['default', 'trashed', 'all'] }),
+    modifiedSince: finiteTime(),
+    includeDeletions: boolean(),
+    auth: string(),
+    running: boolean()
+  }, { id: 'events.get', additionalProperties: false }),
+  result: object({
+    events: array(event(Action.READ)),
+    eventDeletions: array(itemDeletion)
+  }, {
+    required: ['events']
+  })
+};
 export { __ex_get as get };
 const __ex_getOne = {
-    params: object({
-      id: string(),
-      includeHistory: boolean()
-    }, { id: 'events.getOne' }),
-    result: object({
-      event: event(Action.READ),
-      history: array(event(Action.READ))
-    }, {
-      required: ['event']
-    })
-  };
+  params: object({
+    id: string(),
+    includeHistory: boolean()
+  }, { id: 'events.getOne' }),
+  result: object({
+    event: event(Action.READ),
+    history: array(event(Action.READ))
+  }, {
+    required: ['event']
+  })
+};
 export { __ex_getOne as getOne };
 const __ex_create = {
-    params: event(Action.CREATE),
-    result: object({
-      event: event(Action.READ)
-    }, {
-      required: ['event'],
-      additionalProperties: false
-    })
-  };
+  params: event(Action.CREATE),
+  result: object({
+    event: event(Action.READ)
+  }, {
+    required: ['event'],
+    additionalProperties: false
+  })
+};
 export { __ex_create as create };
 const __ex_update = {
-    params: object({
-      // in path for HTTP requests
-      id: string(),
-      // = body of HTTP requests
-      update: event(Action.UPDATE)
-    }, {
-      id: 'events.update',
-      required: ['id', 'update'],
-      additionalProperties: false
-    }),
-    result: object({
-      event: event(Action.READ)
-    }, {
-      required: ['event'],
-      additionalProperties: false
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string(),
+    // = body of HTTP requests
+    update: event(Action.UPDATE)
+  }, {
+    id: 'events.update',
+    required: ['id', 'update'],
+    additionalProperties: false
+  }),
+  result: object({
+    event: event(Action.READ)
+  }, {
+    required: ['event'],
+    additionalProperties: false
+  })
+};
 export { __ex_update as update };
 const __ex_del = {
-    params: object({
-      // in path for HTTP requests
-      id: string()
-    }, {
-      id: 'events.delete',
-      required: ['id']
-    }),
-    result: {
-      anyOf: [
-        object({ event: event(Action.READ) }, {
-          required: ['event'],
-          additionalProperties: false
-        }),
-        object({ eventDeletion: itemDeletion }, {
-          required: ['eventDeletion'],
-          additionalProperties: false
-        })
-      ]
-    }
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string()
+  }, {
+    id: 'events.delete',
+    required: ['id']
+  }),
+  result: {
+    anyOf: [
+      object({ event: event(Action.READ) }, {
+        required: ['event'],
+        additionalProperties: false
+      }),
+      object({ eventDeletion: itemDeletion }, {
+        required: ['eventDeletion'],
+        additionalProperties: false
+      })
+    ]
+  }
+};
 export { __ex_del as del };
 const __ex_deleteAttachment = {
-    params: object({
-      // in path for HTTP requests
-      id: string(),
-      // in path for HTTP requests
-      fileId: string()
-    }, {
-      required: ['id', 'fileId']
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string(),
+    // in path for HTTP requests
+    fileId: string()
+  }, {
+    required: ['id', 'fileId']
+  })
+};
 export { __ex_deleteAttachment as deleteAttachment };

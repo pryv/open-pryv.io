@@ -5,6 +5,10 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { OutboundDeps, RetryContext, CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -77,41 +81,34 @@ const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acce
 const { CmcErrorIds } = require('./errorIds.ts');
 const retryQueue: typeof import('./retryQueue.ts') = require('./retryQueue.ts');
 
-import type { OutboundDeps, RetryContext } from './_types.ts';
-import type { MemberSweep } from './memberSweep.ts';
-
 type Counterparty = { username: string; host: string };
-
-import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
-type MallParams = Record<string, unknown>;
 
 type MallLike = { accesses: MallAccessesLike; events?: MallEventsLike };
 
-
 type RevokeHandlerResult =
   | {
-      ok: true;
-      deletedAccessIds: string[];   // local accesses we deleted (counterparty + data-grant)
-      // Whether the counterparty was actually told. `ok: true` means the
-      // LOCAL revocation succeeded (which is the authoritative part); it
-      // says nothing about the peer. Callers that care whether the other
-      // side knows must read this, not `ok`.
-      peerNotified: boolean;
-      peerDeliveryStatus?: number;
-      // Present only when peerNotified is false — why the peer was not
-      // told, so the trigger event can report it instead of looking like
-      // an unqualified success.
-      deliveryFailure?: { reason: string; status?: number };
-      // The notice is queued for the retry loop (minutes, then hours; then
-      // `failed-permanent` for the operator). Absent when it was delivered,
-      // when the failure is not retryable, or when the loop is off.
-      deliveryQueued?: boolean;
-    }
+    ok: true;
+    deletedAccessIds: string[];   // local accesses we deleted (counterparty + data-grant)
+    // Whether the counterparty was actually told. `ok: true` means the
+    // LOCAL revocation succeeded (which is the authoritative part); it
+    // says nothing about the peer. Callers that care whether the other
+    // side knows must read this, not `ok`.
+    peerNotified: boolean;
+    peerDeliveryStatus?: number;
+    // Present only when peerNotified is false — why the peer was not
+    // told, so the trigger event can report it instead of looking like
+    // an unqualified success.
+    deliveryFailure?: { reason: string; status?: number };
+    // The notice is queued for the retry loop (minutes, then hours; then
+    // `failed-permanent` for the operator). Absent when it was delivered,
+    // when the failure is not retryable, or when the loop is off.
+    deliveryQueued?: boolean;
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: Record<string, unknown>;
-    };
+    ok: false;
+    reason: string;
+    detail?: Record<string, unknown>;
+  };
 
 /**
  * Handle a `consent/revoke-cmc` trigger event.
@@ -229,11 +226,15 @@ async function handleRevoke (params: {
       counterpartyAccess = byId;
     }
     if (counterpartyAccess == null) {
-      return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
-        accessId: explicitAccessId,
-        counterparty,
-        appCode,
-      } };
+      return {
+        ok: false,
+        reason: 'cmc-revoke-counterparty-access-not-found',
+        detail: {
+          accessId: explicitAccessId,
+          counterparty,
+          appCode,
+        }
+      };
     }
     // The trigger may sit on a plain app-scope stream (the client
     // helpers default to the invite's own stream, which is neither
@@ -246,10 +247,14 @@ async function handleRevoke (params: {
   } else {
     counterpartyAccess = findCounterpartyAccess(accesses, counterparty!, appCode, scopeStreamId);
     if (counterpartyAccess == null) {
-      return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
-        counterparty,
-        appCode,
-      } };
+      return {
+        ok: false,
+        reason: 'cmc-revoke-counterparty-access-not-found',
+        detail: {
+          counterparty,
+          appCode,
+        }
+      };
     }
   }
 

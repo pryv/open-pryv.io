@@ -6,6 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { SqliteDb, SqliteStmt, SqliteRunResult as RunResult } from './types.ts';
 const require = createRequire(import.meta.url);
 
 const fs = require('fs');
@@ -13,8 +15,6 @@ const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 const { _internals } = require('./_internals.ts');
-
-import type { SqliteDb, SqliteStmt, SqliteRunResult as RunResult } from './types.ts';
 
 class DBIndex {
   db!: SqliteDb;

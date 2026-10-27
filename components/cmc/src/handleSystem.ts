@@ -5,8 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { CmcLogger, OutboundDeps, CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
 import type { DeliverResult } from './outbound.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -70,25 +71,22 @@ function parseCollectorStreamId (streamId: string): ParsedCollectorStream | null
   return { appCode, scopeStreamId, counterpartySlug, counterparty };
 }
 
-import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
-
-
 type SystemHandlerResult =
   | {
-      ok: true;
-      eventType: string;
-      remoteEventId?: string;
-      currentCount?: number;
-      // Scope-update outcome (handleSystemScopeUpdate).
-      accessId?: string;
-      newPermissions?: Array<Record<string, unknown>>;
-      applied?: boolean;
-    }
+    ok: true;
+    eventType: string;
+    remoteEventId?: string;
+    currentCount?: number;
+    // Scope-update outcome (handleSystemScopeUpdate).
+    accessId?: string;
+    newPermissions?: Array<Record<string, unknown>>;
+    applied?: boolean;
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: unknown;
-    };
+    ok: false;
+    reason: string;
+    detail?: unknown;
+  };
 
 type DeliverSystemParams = {
   remoteApiEndpoint: string;
@@ -189,10 +187,14 @@ async function handleSystemEvent (params: {
     logger: deps.logger,
   });
   if (chosen == null) {
-    return { ok: false, reason: 'cmc-system-counterparty-access-not-found', detail: {
-      appCode: parsed.appCode,
-      counterpartySlug: parsed.counterpartySlug,
-    } };
+    return {
+      ok: false,
+      reason: 'cmc-system-counterparty-access-not-found',
+      detail: {
+        appCode: parsed.appCode,
+        counterpartySlug: parsed.counterpartySlug,
+      }
+    };
   }
 
   const cmc = chosen.clientData?.cmc;

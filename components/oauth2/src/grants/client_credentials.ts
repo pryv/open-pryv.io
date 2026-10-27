@@ -80,7 +80,7 @@ function lifetimes (config: { get (key: string): unknown }) {
 
 export async function handleClientCredentials (
   deps: ClientCredentialsDeps,
-  params: ClientCredentialsParams,
+  params: ClientCredentialsParams
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; status: number; error: string; description?: string }

@@ -164,9 +164,11 @@ function validateUserBackupWriter (instance: unknown): UserBackupWriter {
   return obj as unknown as UserBackupWriter;
 }
 
-export { BackupWriter,
+export {
+  BackupWriter,
   createBackupWriter,
   validateBackupWriter,
   UserBackupWriter,
   createUserBackupWriter,
-  validateUserBackupWriter };
+  validateUserBackupWriter
+};

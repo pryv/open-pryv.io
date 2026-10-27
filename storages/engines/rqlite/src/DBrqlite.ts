@@ -674,7 +674,7 @@ class DBrqlite {
 
   async sweepExpiredWindowedCounters (now = Date.now()): Promise<{ removed: number }> {
     const result = await this.execute(
-      `DELETE FROM keyValue WHERE key LIKE 'counter/%' AND CAST(json_extract(value, '$.windowEndsAt') AS INTEGER) <= ?`,
+      'DELETE FROM keyValue WHERE key LIKE \'counter/%\' AND CAST(json_extract(value, \'$.windowEndsAt\') AS INTEGER) <= ?',
       [now]
     );
     return { removed: result?.rows_affected ?? 0 };
@@ -751,7 +751,7 @@ class DBrqlite {
   async listPlatformKvKeys (prefix: string): Promise<string[]> {
     checkKvPrefix('listPlatformKvKeys', prefix);
     const rows = await this.query(
-      "SELECT key FROM keyValue WHERE key LIKE ?",
+      'SELECT key FROM keyValue WHERE key LIKE ?',
       [prefix + '%']
     );
     return rows.map((r) => r.key);
@@ -763,7 +763,7 @@ class DBrqlite {
   async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> {
     checkKvPrefix('listPlatformKvEntries', prefix);
     const rows = await this.query(
-      "SELECT key, value FROM keyValue WHERE key LIKE ?",
+      'SELECT key, value FROM keyValue WHERE key LIKE ?',
       [prefix + '%']
     );
     return rows.map((r) => ({ key: r.key, value: r.value }));
@@ -781,7 +781,6 @@ function checkKvPrefix (method: string, prefix: string): void {
     throw new Error(`${method}: prefix must not contain SQL LIKE wildcards`);
   }
 }
-
 
 // --- Key helpers (same as SQLite engine) --- //
 
@@ -829,6 +828,5 @@ function getMailTemplateKey (type: string, lang: string, part: string) {
 function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
-
 
 export { DBrqlite };

@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import type { AppLike, PryvRequest } from '../_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 import * as sharedSecrets from 'shared-secrets';
 import { createHandoff, parseHandoffField, tokenlessEndpointError } from './credentialHandoff.ts';
 import type { AccessState } from './accessState.ts';
@@ -1003,4 +1003,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       res.type('text/plain').send(isValid ? 'true' : 'false');
     } catch (err) { next(err); }
   });
-};
+}

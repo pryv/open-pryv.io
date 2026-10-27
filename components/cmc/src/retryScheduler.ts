@@ -36,7 +36,6 @@ const retryQueue = require('./retryQueue.ts');
 
 type RunRetryLoopFn = typeof import('./retryQueue.ts').runRetryLoop;
 
-
 type SchedulerDeps = {
   // Forwarded into runRetryLoop. Same shape as RetryDeps in retryQueue.ts
   // — must include mall, dispatch, dispatchDeps, etc.

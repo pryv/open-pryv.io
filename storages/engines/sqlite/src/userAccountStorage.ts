@@ -30,7 +30,6 @@ const logger = _internals.lazyLogger('sqlite-account-storage');
 const VERSION = '1.0.0';
 const DB_OPTIONS = {};
 
-type Sqlite3Db = ReturnType<typeof openUserDB> extends Promise<infer T> ? T : never;
 type SQLite3Instance = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[]; get: (...args: unknown[]) => Record<string, unknown> | undefined; iterate: (...args: unknown[]) => Iterable<Record<string, unknown>> }; pragma: (s: string) => unknown; unsafeMode: (b: boolean) => unknown; close: () => void };
 
 /** A cached connection and the identity of the file it was opened on. */

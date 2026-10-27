@@ -17,9 +17,6 @@
 
 import type { UserAuditDatabase } from './UserAuditDatabase.js';
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 export interface AuditStorage {
   init(): Promise<AuditStorage>;
   getVersion(): string;
@@ -48,5 +45,7 @@ function validateAuditStorage (instance: unknown): AuditStorage {
   return obj as unknown as AuditStorage;
 }
 
-export { REQUIRED_METHODS,
-  validateAuditStorage };
+export {
+  REQUIRED_METHODS,
+  validateAuditStorage
+};

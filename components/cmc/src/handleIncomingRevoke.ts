@@ -259,7 +259,13 @@ async function handleIncomingRevoke (params: {
   // can join the withdrawal to the invite it knows about. Runs last: it is a
   // convenience, and neither of the steps above should wait on it.
   const enriched = await enrichArrival({
-    userId, event, createdByAccess, scopeStreamId, deletedAccessIds, mall, logger,
+    userId,
+    event,
+    createdByAccess,
+    scopeStreamId,
+    deletedAccessIds,
+    mall,
+    logger,
     notifyEventChanged: deps.notifyEventChanged,
   });
 

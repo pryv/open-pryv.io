@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 // REF: https://stackabuse.com/using-async-hooks-for-request-context-handling-in-node-js
 
 import asyncHooks from 'async_hooks';

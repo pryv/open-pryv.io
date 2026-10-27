@@ -5,8 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike, PryvRequest } from './_types.ts';
-import type { Application, Request, Response, NextFunction } from 'express';
+import type { PryvRequest } from './_types.ts';
+import type { Application, Response, NextFunction } from 'express';
 import { isInProcessSmtpMissing } from 'business/src/emails/mailCapability.ts';
 // `context` is attached by setMinimalMethodContext earlier in the chain.
 const require = createRequire(import.meta.url);
@@ -632,4 +632,4 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
     next();
   }
-};
+}

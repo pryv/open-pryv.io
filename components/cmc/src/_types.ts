@@ -36,7 +36,6 @@ type OutboundDeps = {
   logger?: CmcLogger;
 };
 
-
 // ───────────────────── Mall views (DI seams) ─────────────────────
 // CMC handlers receive `mall` via dependency injection and are unit-tested
 // with simple fakes, so they model narrow promise-based views instead of

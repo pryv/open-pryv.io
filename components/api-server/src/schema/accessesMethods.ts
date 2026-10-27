@@ -21,25 +21,25 @@ const boolean = helpers.boolean;
 const number = helpers.number;
 
 const __ex_get = {
-    params: object({
-      includeDeletions: boolean(),
-      includeExpired: boolean()
-    }, {
-      id: 'accesses.get'
-    }),
-    result: object({
-      accesses: {
-        type: 'array',
-        items: access(Action.READ)
-      },
-      accessDeletions: {
-        type: 'array',
-        items: accessDeletionItem()
-      }
-    }, {
-      required: ['accesses']
-    })
-  };
+  params: object({
+    includeDeletions: boolean(),
+    includeExpired: boolean()
+  }, {
+    id: 'accesses.get'
+  }),
+  result: object({
+    accesses: {
+      type: 'array',
+      items: access(Action.READ)
+    },
+    accessDeletions: {
+      type: 'array',
+      items: accessDeletionItem()
+    }
+  }, {
+    required: ['accesses']
+  })
+};
 export { __ex_get as get };
 
 /** A deletion record: an access as read, without its (dead) token. */
@@ -52,111 +52,111 @@ function accessDeletionItem () {
   return schema;
 }
 const __ex_getOne = {
-    params: object({
-      id: string(),
-      includeHistory: boolean()
-    }, {
-      id: 'accesses.getOne',
-      required: ['id']
-    }),
-    result: object({
-      access: access(Action.READ),
-      current: string(),
-      history: {
-        type: 'array',
-        items: access(Action.READ)
-      }
-    }, {
-      required: ['access']
-    })
-  };
+  params: object({
+    id: string(),
+    includeHistory: boolean()
+  }, {
+    id: 'accesses.getOne',
+    required: ['id']
+  }),
+  result: object({
+    access: access(Action.READ),
+    current: string(),
+    history: {
+      type: 'array',
+      items: access(Action.READ)
+    }
+  }, {
+    required: ['access']
+  })
+};
 export { __ex_getOne as getOne };
 const __ex_create = {
-    params: access(Action.CREATE),
-    result: object({
-      access: access(Action.READ)
-    }, {
-      required: ['access']
-    })
-  };
+  params: access(Action.CREATE),
+  result: object({
+    access: access(Action.READ)
+  }, {
+    required: ['access']
+  })
+};
 export { __ex_create as create };
 const __ex_update = {
-    params: object({
-      id: string(),
-      update: access(Action.UPDATE)
-    }, {
-      id: 'accesses.update',
-      required: ['id', 'update']
-    }),
-    result: object({
-      access: access(Action.READ)
-    }, {
-      required: ['access']
-    })
-  };
+  params: object({
+    id: string(),
+    update: access(Action.UPDATE)
+  }, {
+    id: 'accesses.update',
+    required: ['id', 'update']
+  }),
+  result: object({
+    access: access(Action.READ)
+  }, {
+    required: ['access']
+  })
+};
 export { __ex_update as update };
 const __ex_del = {
-    params: object({
-      // in path for HTTP requests
-      id: string()
-    }, {
-      id: 'accesses.delete',
-      required: ['id']
-    }),
-    result: object({
-      accessDeletion: itemDeletion,
-      relatedDeletions: {
-        type: 'array',
-        items: itemDeletion
-      }
-    }, {
-      required: ['accessDeletion'],
-      additionalProperties: false
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string()
+  }, {
+    id: 'accesses.delete',
+    required: ['id']
+  }),
+  result: object({
+    accessDeletion: itemDeletion,
+    relatedDeletions: {
+      type: 'array',
+      items: itemDeletion
+    }
+  }, {
+    required: ['accessDeletion'],
+    additionalProperties: false
+  })
+};
 export { __ex_del as del };
 const __ex_getInfo = {
-    params: object({}, {
-      id: 'accesses.getInfo'
-    }),
-    result: object({
-      type: string({ enum: ['personal', 'app', 'shared'] }),
-      name: string(),
-      permissions: access.permissions(Action.READ),
-      user: object({
-        username: string()
-      })
-    }, {
-      required: ['type', 'name', 'permissions'],
-      additionalProperties: false
+  params: object({}, {
+    id: 'accesses.getInfo'
+  }),
+  result: object({
+    type: string({ enum: ['personal', 'app', 'shared'] }),
+    name: string(),
+    permissions: access.permissions(Action.READ),
+    user: object({
+      username: string()
     })
-  };
+  }, {
+    required: ['type', 'name', 'permissions'],
+    additionalProperties: false
+  })
+};
 export { __ex_getInfo as getInfo };
 const __ex_checkApp = {
-    params: object({
-      requestingAppId: string(),
-      deviceName: string(),
-      requestedPermissions: access.permissions(Action.CREATE),
-      // `null` is what the /reg/access poll carries when the app sent none,
-      // and some auth pages forward it as is; the match treats it as absent.
-      clientData: object({}, { nullable: true }),
-      // Access-creation parameters of the auth request. Auth pages forward the
-      // whole request to check-app before accesses.create; they do not take
-      // part in the match, but must not make the call invalid.
-      expireAfter: number(),
-      token: string()
-    }, {
-      id: 'accesses.checkApp',
-      required: ['requestingAppId', 'requestedPermissions'],
-      additionalProperties: false
-    }),
-    result: object({
-      matchingAccess: access(Action.READ),
-      mismatchingAccess: access(Action.READ),
-      checkedPermissions: access.permissions(Action.CREATE),
-      error
-    }, {
-      additionalProperties: false
-    })
-  };
+  params: object({
+    requestingAppId: string(),
+    deviceName: string(),
+    requestedPermissions: access.permissions(Action.CREATE),
+    // `null` is what the /reg/access poll carries when the app sent none,
+    // and some auth pages forward it as is; the match treats it as absent.
+    clientData: object({}, { nullable: true }),
+    // Access-creation parameters of the auth request. Auth pages forward the
+    // whole request to check-app before accesses.create; they do not take
+    // part in the match, but must not make the call invalid.
+    expireAfter: number(),
+    token: string()
+  }, {
+    id: 'accesses.checkApp',
+    required: ['requestingAppId', 'requestedPermissions'],
+    additionalProperties: false
+  }),
+  result: object({
+    matchingAccess: access(Action.READ),
+    mismatchingAccess: access(Action.READ),
+    checkedPermissions: access.permissions(Action.CREATE),
+    error
+  }, {
+    additionalProperties: false
+  })
+};
 export { __ex_checkApp as checkApp };

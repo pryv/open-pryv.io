@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodNext, NodeCallback } from './_types.ts';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+import type { AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
 const require = createRequire(import.meta.url);
 const { isDeepStrictEqual } = require('node:util');
 const slugify = require('utils').slugify;
@@ -57,7 +60,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 // The index maps a bare accessId -> its owning user + minimal metadata so an
 // incident responder can scope a breach from an accessId alone. Both hooks
 // are non-fatal (never reject): a PlatformDB failure must not break access CRUD.
-const { reindexAccessNonFatal, tombstoneAccessesNonFatal } = require('platform/src/accessIndex.ts');
+const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 type IndexAccessInput = { id?: unknown; type?: unknown; expires?: unknown; created?: unknown; modified?: unknown };
 
 type AccessLike = {
@@ -71,15 +74,8 @@ type AccessLike = {
   serial?: number;
   [k: string]: unknown;
 };
-import type { MethodNext, NodeCallback } from './_types.ts';
-import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-import type { PermissionLevel, AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
 type MethodContext = BaseMethodContext;
 type StoredScopes = import('./helpers/webhookScopes.ts').StoredScopes;
-
-type UpdatesSettingsHolder = {
-  ignoreProtectedFields: boolean;
-};
 
 // Per-method param + result shapes mirroring components/api-server/src/schema/accessesMethods.ts.
 // Hand-authored (JSON Schema literals there aren't TS-derived yet). Keep these in sync
@@ -1333,7 +1329,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
                     '" (and maybe others) is ' +
                     'missing the required "defaultName".'));
       }
-      let permissionStream: { id: string; name?: string; trashed?: boolean; [k: string]: unknown } | null = null;
+      const permissionStream: { id: string; name?: string; trashed?: boolean; [k: string]: unknown } | null = null;
       (async () => {
         try {
           // checkId
@@ -1400,4 +1396,4 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     next();
   }
-};
+}

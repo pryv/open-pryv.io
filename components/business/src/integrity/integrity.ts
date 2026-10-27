@@ -52,10 +52,6 @@ function getHTTPDigestHeaderForAttachment (subResourceIntegrity: string): string
 // Integrity access and computation for attachments
 // IntegrityMulterDiskStorage, IntegrityCompute, IntegritySet,
 // IntegrityHash were JSDoc-only references that have no real TS declaration.
-type IntegrityAttachments = {
-  isActive: boolean; // Setting: Add integrity hash to attachment if true
-  MulterIntegrityDiskStorage: unknown;
-};
 const attachments = {
   isActive: attachmentsIsActive,
   getHTTPDigestHeaderForAttachment,
@@ -87,13 +83,6 @@ const attachments = {
  * @param save - This computation should be saved for audit
  */
 
-// Setting and computation tools for a Pryv.io db item
-type IntegrityItem<T> = {
-  isActive: boolean; // Setting: Add integrity hash to item if true
-  compute: (item: T) => IntegrityResult;
-  set: (item: T) => T | undefined;
-  hash: (item: T) => string;
-};
 // ------------- events ------------------ //
 
 function computeEvent (event: EventLike): IntegrityResult {

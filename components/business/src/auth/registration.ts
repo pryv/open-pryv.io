@@ -24,7 +24,6 @@ const { getLogger, getConfigSync } = require('@pryv/boiler');
 const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
 const { peerUrlProblem, peerFetchOptions, insecurePeerUrlAllowed } = require('platform/src/coreIdentity.ts');
 const { ApiEndpoint } = require('utils');
-const observability = require('business/src/observability/index.ts');
 
 /**
  * Create (register) a new user

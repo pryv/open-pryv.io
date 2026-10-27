@@ -69,17 +69,6 @@
  */
 
 import * as C from './constants.ts';
-
-/**
- * True when a permission streamId resolves to a store root (`*`, or the local
- * store-prefix alias `:local:` which the permission walk treats as `*`): a
- * member child must name concrete data streams only.
- */
-function resolvesToStoreRoot (streamId: unknown): boolean {
-  if (streamId === '*') return true;
-  const canonical = C.canonicalLocalStreamId(streamId);
-  return canonical === '*' || canonical === '';
-}
 import * as outbound from './outbound.ts';
 import * as slugMod from './slug.ts';
 import * as relationshipKey from './relationshipKey.ts';
@@ -91,6 +80,17 @@ import { levelCapabilityExcess } from 'business/src/accesses/permissionSet.ts';
 import type { PermissionLevel } from 'business/src/types/public.ts';
 import type { CmcAccessLike, CmcLogger, MallLike, OutboundDeps, RetryContext } from './_types.ts';
 import type { StoredLedgerRecord } from './memberLedger.ts';
+
+/**
+ * True when a permission streamId resolves to a store root (`*`, or the local
+ * store-prefix alias `:local:` which the permission walk treats as `*`): a
+ * member child must name concrete data streams only.
+ */
+function resolvesToStoreRoot (streamId: unknown): boolean {
+  if (streamId === '*') return true;
+  const canonical = C.canonicalLocalStreamId(streamId);
+  return canonical === '*' || canonical === '';
+}
 
 type Identity = { username: string; host: string };
 type StreamPermissionLike = { streamId: string; level: string };
@@ -367,12 +367,12 @@ type MemberAccessPayload = {
 
 type MemberAccessResult =
   | {
-      ok: true;
-      response: MemberAccessPayload;
-      memberAccess: { accessId: string; name: string; expires: number; attribution: string };
-      member: Identity;
-      relationshipAccessId: string;
-    }
+    ok: true;
+    response: MemberAccessPayload;
+    memberAccess: { accessId: string; name: string; expires: number; attribution: string };
+    member: Identity;
+    relationshipAccessId: string;
+  }
   | { ok: false; reason: string; detail?: Record<string, unknown> };
 
 type HandlerDeps = OutboundDeps & {

@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 // No-op tracing shim. The architectural slot is preserved so a future
 // tracer can plug in here without touching any of the hot-path consumers
 // documented in AGENTS.md truth #6. Telemetry does NOT route through this

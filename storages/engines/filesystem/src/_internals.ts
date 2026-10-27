@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-import type { Logger } from '@pryv/boiler';
+import type { Logger, ConfigLike } from '@pryv/boiler';
 
 /**
  * Engine-local internals registry.
@@ -14,7 +14,6 @@ import type { Logger } from '@pryv/boiler';
  */
 
 type UserLocalDirectoryLike = { ensureUserDirectory: (userId: string) => Promise<string> };
-import type { ConfigLike } from '@pryv/boiler';
 
 const registry: Record<string, unknown> = {};
 

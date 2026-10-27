@@ -19,7 +19,9 @@ const require = createRequire(import.meta.url);
 const { MigrationRunner, discoverMigrations, createMigrationRunner } = require('./MigrationRunner.ts');
 const { applyOrAnnounce } = require('./applyOrAnnounce.ts');
 
-export { MigrationRunner,
+export {
+  MigrationRunner,
   discoverMigrations,
   createMigrationRunner,
-  applyOrAnnounce };
+  applyOrAnnounce
+};

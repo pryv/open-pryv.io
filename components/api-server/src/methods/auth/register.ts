@@ -394,4 +394,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       return next(errors.unexpectedError(err));
     }
   }
-};
+}

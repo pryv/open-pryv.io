@@ -6,13 +6,12 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-
 
 // Profile route handling.
 export default function (expressApp: ExpressApp, app: AppLike) {
@@ -37,4 +36,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.put(Paths.Profile + '/private', setMethodId('profile.update'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { id: 'private', update: req.body }, methodCallback(res, next, 200));
   });
-};
+}

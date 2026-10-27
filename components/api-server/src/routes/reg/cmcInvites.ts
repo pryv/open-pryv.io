@@ -48,6 +48,7 @@ function isBoundedString (value: unknown, max: number): value is string {
 function isHttpUrl (value: string): boolean {
   // The URL parser strips tabs and newlines before validating; refuse any
   // control character or space up front so what is stored is what was checked.
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
   if (/[\u0000- \u007f]/.test(value)) return false;
   try {
     const url = new URL(value);

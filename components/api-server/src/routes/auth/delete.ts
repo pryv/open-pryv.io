@@ -11,8 +11,6 @@ const require = createRequire(import.meta.url);
 const methodCallback = require('../methodCallback.ts').default;
 const middleware = require('middleware');
 
-
-
 /**
  * Routes for users
  */
@@ -44,4 +42,4 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
       api.call(req.context, req.params, methodCallback(res, next, 200));
     }
   );
-};
+}

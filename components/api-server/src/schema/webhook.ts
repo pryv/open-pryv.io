@@ -83,7 +83,7 @@ export default function (action: string) {
   }
 
   return base;
-};
+}
 
 const run = object({
   status: number(),

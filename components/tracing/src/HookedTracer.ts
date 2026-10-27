@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 // No-op shim. Was a wrapper that stitched async_hooks-tracked spans into the
 // opentracing API; now a passthrough. The architectural slot is preserved so a
 // future tracer can re-introduce hooked spans without touching consumers.

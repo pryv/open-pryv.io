@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -28,24 +29,6 @@ const require = createRequire(import.meta.url);
 const { randomBytes } = require('node:crypto');
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
-
-// Capability accesses minted before the joins were read from the relationship
-// accesses may still carry an `acceptedBy` array. It is no longer written or
-// read.
-type CapabilityCd = {
-  mode?: string;
-  state?: string;
-  stateChangedAt?: number;
-};
-type CmcAccessCd = {
-  kind?: string;
-  capabilityId?: string;
-  requestEventId?: string | null;
-  singleUse?: boolean;
-  capability?: CapabilityCd;
-};
-import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
-
 
 /**
  * Capability semantics chosen at mint time.

@@ -86,4 +86,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.post(Paths.Delegations + '/controlled-side/status', setMethodId('delegations.controlledStatus'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
-};
+}

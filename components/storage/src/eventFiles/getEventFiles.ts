@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { EventFiles as EventFilesT } from '../../../../storages/interfaces/fileStorage/EventFiles.ts';
 const require = createRequire(import.meta.url);

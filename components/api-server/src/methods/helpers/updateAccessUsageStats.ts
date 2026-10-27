@@ -82,4 +82,4 @@ export default async function getUpdateAccessUsageStats (): Promise<Middleware> 
       }, logger);
     }
   }
-};
+}

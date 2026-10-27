@@ -332,4 +332,4 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
         : null);
     });
   }
-};
+}

@@ -383,10 +383,6 @@ type Run = {
   timestamp: number;
 };
 type WebhookState = 'active' | 'inactive';
-type WebhookUpdate = {
-  state: WebhookState;
-  currentRetries: number;
-};
 type User = { id: string; username: string };
 type WebhookMessage = string;
 type WebhooksRepository = {

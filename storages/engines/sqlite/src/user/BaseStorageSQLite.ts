@@ -6,24 +6,22 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
-import type { StoredItem as StoredItemBase } from '../../../../interfaces/_shared/types.ts';
+import type { Callback, UserOrId, Query, UpdateData, QueryOp, FindOptions, StoredItem as StoredItemBase } from '../../../../interfaces/_shared/types.ts';
 import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
-const require = createRequire(import.meta.url);
-
-const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
-const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
-const { _internals } = require('../_internals.ts');
-const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
-const { assertCompareAndSet } = require('../../../../interfaces/_shared/jsonPath.ts');
-
-type Options = FindOptions;
 
 // ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
 // Query / UpdateData / QueryOp come from interfaces/_shared/types.ts.
 
 import type { SqlParam, SqliteDb } from '../types.ts';
+const require = createRequire(import.meta.url);
+
+const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
+const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
+const { splitUpdatePath } = require('../../../../interfaces/_shared/updatePath.ts');
+const { assertCompareAndSet } = require('../../../../interfaces/_shared/jsonPath.ts');
+
+type Options = FindOptions;
 
 /**
  * SQLite narrowing of the shared StoredItem: `id`/`headId`/`deleted` are
@@ -163,11 +161,11 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     // Document field → column-type narrowing (the document↔column boundary).
     const id = copy.id as string;
     delete copy.id;
-    const head_id: SqlParam = this.hasHeadIdCol ? (copy.headId ?? null) : null;
+    const headId: SqlParam = this.hasHeadIdCol ? (copy.headId ?? null) : null;
     delete copy.headId;
     const deleted: SqlParam = this.hasDeletedCol ? (copy.deleted ?? null) : null;
     delete copy.deleted;
-    return { id, head_id, deleted, data: JSON.stringify(copy) };
+    return { id, head_id: headId, deleted, data: JSON.stringify(copy) };
   }
 
   // ---- Query translation ----
@@ -362,11 +360,11 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   protected _insertOneSync (udb: UserDb, item: Partial<TItem>): TItem | null {
     const prepared = this.applyDefaults(item);
-    const { id, head_id, deleted, data } = this.itemToRow(prepared);
+    const { id, head_id: headId, deleted, data } = this.itemToRow(prepared);
     const cols: string[] = ['id'];
     const placeholders: string[] = ['?'];
     const vals: SqlParam[] = [id];
-    if (this.hasHeadIdCol) { cols.push('head_id'); placeholders.push('?'); vals.push(head_id); }
+    if (this.hasHeadIdCol) { cols.push('head_id'); placeholders.push('?'); vals.push(headId); }
     if (this.hasDeletedCol) { cols.push('deleted'); placeholders.push('?'); vals.push(deleted); }
     cols.push('data'); placeholders.push('?'); vals.push(data);
 

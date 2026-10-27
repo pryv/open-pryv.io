@@ -5,8 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, FetchLike, OutboundDeps } from './_types.ts';
+import type { CmcLogger, FetchLike, CmcAccessLike as AccessLike } from './_types.ts';
 import { retryAfterOf } from './outbound.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -31,27 +32,23 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
-const slugMod = require('./slug.ts');
 const chatOrch = require('./chatOrchestration.ts');
 const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 type Counterparty = { username: string; host: string };
 
-import type { CmcAccessLike as AccessLike } from './_types.ts';
-
-
 type ChatHandlerResult =
   | {
-      ok: true;
-      eventType: string;
-      remoteEventId?: string;
-    }
+    ok: true;
+    eventType: string;
+    remoteEventId?: string;
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: Record<string, unknown>;
-    };
+    ok: false;
+    reason: string;
+    detail?: Record<string, unknown>;
+  };
 
 type ChatContent = { content?: unknown; [k: string]: unknown };
 type ParsedChatStreamId = {
@@ -124,10 +121,14 @@ async function handleChat (params: {
     if (member != null) {
       return { ok: false, reason: CmcErrorIds.MEMBER_CHANNEL_NOT_SUPPORTED, detail: { accessId: member.id } };
     }
-    return { ok: false, reason: 'cmc-chat-counterparty-access-not-found', detail: {
-      appCode: parsed.appCode,
-      counterpartySlug: parsed.counterpartySlug,
-    } };
+    return {
+      ok: false,
+      reason: 'cmc-chat-counterparty-access-not-found',
+      detail: {
+        appCode: parsed.appCode,
+        counterpartySlug: parsed.counterpartySlug,
+      }
+    };
   }
 
   const cmc = chosen.clientData?.cmc;

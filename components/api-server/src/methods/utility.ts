@@ -232,7 +232,7 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       }
     }
   }
-};
+}
 
 type ApiCall = {
   method: string;

@@ -7,11 +7,10 @@
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
 import type { UploadedFile } from 'business/src/MethodContext.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
-
 
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
@@ -137,4 +136,4 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
   expressApp.delete(Paths.Events + '/:id/:fileId', setMethodId('events.deleteAttachment'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { id: req.params.id, fileId: req.params.fileId }, methodCallback(res, next, 200));
   });
-};
+}

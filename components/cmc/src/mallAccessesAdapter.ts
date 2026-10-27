@@ -5,8 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
-const require = createRequire(import.meta.url);
+import type { CmcLogger, CmcAccessLike as AccessRow } from './_types.ts';
 
 /**
  * CMC plugin — `mall.accesses` adapter.
@@ -40,7 +39,7 @@ const require = createRequire(import.meta.url);
  *     local-apply branch).
  */
 
-import type { CmcAccessLike as AccessRow } from './_types.ts';
+const require = createRequire(import.meta.url);
 type AccessQuery = Record<string, unknown>;
 type AccessUpdate = Record<string, unknown>;
 type AccessOptions = Record<string, unknown>;

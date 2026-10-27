@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-
 /**
  * PlatformDB + DNS side-effects for the bootstrap CLI.
  *

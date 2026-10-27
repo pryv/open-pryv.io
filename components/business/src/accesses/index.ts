@@ -12,27 +12,3 @@ const __ex_permissionSet = require('./permissionSet.ts');
 export { __ex_permissionSet as permissionSet };
 const __ex_canReadEvent = require('./canReadEvent.ts').canReadEvent;
 export { __ex_canReadEvent as canReadEvent };
-
-type AccessLike = {
-  id: string;
-  token: string;
-  type: string;
-  name: string;
-  deviceName: string | undefined | null;
-  permissions: Array<PermissionLike>;
-  lastUsed: number | undefined | null;
-  expireAfter: number | undefined | null;
-  expires: number | undefined | null;
-  deleted: number | undefined | null;
-  clientData: {} | undefined | null;
-  created: number;
-  createdBy: string;
-  modified: number;
-  modifiedBy: string;
-};
-type PermissionLike = {
-  streamId: string;
-  level: string;
-  feature: string | undefined | null;
-  setting: string | undefined | null;
-};

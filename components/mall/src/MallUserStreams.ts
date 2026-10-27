@@ -5,8 +5,9 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
+
+import type { MallStreams, StreamsGetParams, StoredStream, StoreSupports } from './types.ts';
 const require = createRequire(import.meta.url);
 
 // Typed handle so `throwAPIError: never` flows into return-type inference.
@@ -15,8 +16,6 @@ const streamsUtils = require('./helpers/streamsUtils.ts');
 const { treeUtils } = require('utils');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;
-
-import type { MallStreams, StreamsGetParams, StoredStream, StoreSupports } from './types.ts';
 
 /** Mall-level stream: the stored shape, plus pass-through of store-specific
  *  extra fields. */

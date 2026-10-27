@@ -139,7 +139,7 @@ export async function authenticateClient (params: {
       });
       // Burn the jti for its remaining lifetime — a replay within the window fails.
       const fresh = await markClientAssertionJtiUsed(
-        params.platform, params.clientId, verified.jti, verified.exp * 1000,
+        params.platform, params.clientId, verified.jti, verified.exp * 1000
       );
       if (!fresh) return ASSERTION_FAIL; // replayed
     } catch {

@@ -8,19 +8,6 @@
 import { createRequire } from 'node:module';
 import { fileIdentity } from '../fileIdentity.ts';
 import { closeQuietly } from '../closeQuietly.ts';
-const require = createRequire(import.meta.url);
-
-const path = require('path');
-const fs = require('fs');
-const SQLite3 = require('better-sqlite3');
-const { LRUCache: LRU } = require('lru-cache');
-
-const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
-const { _internals } = require('../_internals.ts');
-
-const CACHE_SIZE = 500;
-const baseStorageLogger = _internals.lazyLogger('sqlite-base-storage');
-const VERSION = '1.0.0';
 
 /**
  * Per-user SQLite file holding the baseStorage tables
@@ -41,6 +28,19 @@ const VERSION = '1.0.0';
  *   CREATE INDEX … ON <name>(head_id) WHEN withHeadId
  */
 import type { SqliteDb } from '../types.ts';
+const require = createRequire(import.meta.url);
+
+const path = require('path');
+const fs = require('fs');
+const SQLite3 = require('better-sqlite3');
+const { LRUCache: LRU } = require('lru-cache');
+
+const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
+const { _internals } = require('../_internals.ts');
+
+const CACHE_SIZE = 500;
+const baseStorageLogger = _internals.lazyLogger('sqlite-base-storage');
+const VERSION = '1.0.0';
 type UserDbLRU = {
   get: (key: string) => UserBaseStorageDb | undefined;
   set: (key: string, value: UserBaseStorageDb) => void;

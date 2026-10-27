@@ -6,11 +6,11 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
-
-import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 type SessionPgRow = { id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown };
 type PgQueryResult = { rows: SessionPgRow[]; rowCount?: number };
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PgQueryResult> };

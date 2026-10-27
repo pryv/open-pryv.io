@@ -763,4 +763,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     result.account = account;
     next();
   }
-};
+}

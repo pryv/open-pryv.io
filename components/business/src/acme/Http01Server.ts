@@ -23,8 +23,6 @@
  * never serves anything else on plain HTTP when letsEncrypt.enabled
  * is on (TLS lives on :443).
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 

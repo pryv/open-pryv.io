@@ -17,30 +17,30 @@ const string = helpers.string;
 const profileData = object({ /* no constraints */ });
 
 const __ex_get = {
-    params: object({
-      // in path for HTTP requests
-      id: string()
-    }, {
-      required: ['id']
-    }),
-    result: object({
-      profile: profileData
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string()
+  }, {
+    required: ['id']
+  }),
+  result: object({
+    profile: profileData
+  })
+};
 export { __ex_get as get };
 const __ex_update = {
-    params: object({
-      // in path for HTTP requests
-      id: string(),
-      // = body of HTTP requests
-      update: profileData
-    }, {
-      required: ['id', 'update']
-    }),
-    result: object({
-      profile: profileData
-    }, {
-      required: ['profile']
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string(),
+    // = body of HTTP requests
+    update: profileData
+  }, {
+    required: ['id', 'update']
+  }),
+  result: object({
+    profile: profileData
+  }, {
+    required: ['profile']
+  })
+};
 export { __ex_update as update };

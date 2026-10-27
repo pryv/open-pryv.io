@@ -6,6 +6,9 @@
  */
 
 import { createRequire } from 'node:module';
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
+
+import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
@@ -15,9 +18,6 @@ const { treeUtils } = require('utils');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { _internals } = require('../_internals.ts');
-import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
-
-import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level stream — the canonical stored shape. */
 type StreamGetOptions = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };

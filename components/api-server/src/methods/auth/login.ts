@@ -562,4 +562,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       next(err ? errors.unexpectedError(err) : null);
     });
   }
-};
+}

@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { MethodNext } from './_types.ts';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const cmc = require('cmc');
@@ -43,9 +46,6 @@ function notifyScopedStreamChange (username: string, stream: { id?: string; pare
     stream: { id: stream.id, parentId: stream.parentId ?? null }
   });
 }
-
-import type { MethodNext } from './_types.ts';
-import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 // Scratchpad fields the streams middleware chain stashes on the context,
 // named and typed (populated mid-chain, hence all optional).
 type MethodContext = BaseMethodContext & {
@@ -605,7 +605,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     notifyScopedStreamChange(context.user.username, { id: params.id }, 'delete');
     rescopeWebhooks(context);
   }
-};
+}
 
 class ItemsStream extends Readable {
   buffer: unknown[];

@@ -18,7 +18,6 @@ const childProcess = require('child_process');
 
 const dependenciesMod = require('./dependencies.ts');
 const dependencies = dependenciesMod.default ?? dependenciesMod;
-const settings = dependencies.settings;
 const storage = dependencies.storage;
 const fs = require('fs');
 const path = require('path');
@@ -236,10 +235,4 @@ function buildCustomAccountProperties () {
     customProperties[accountStreams.toFieldName(stream.id)] = charlatan.Number.number(3);
   });
   return customProperties;
-}
-
-function deleteUsersDataDirectory () {
-  const basePath = userLocalDirectory.getBasePath();
-  fs.rmSync(basePath, { recursive: true, force: true });
-  userLocalDirectory.clearErasedTestOnly();
 }

@@ -265,7 +265,8 @@ function reset () {
   initialized = false;
 }
 
-export { init,
+export {
+  init,
   discover,
   getEngineFor,
   getEngineModule,
@@ -273,4 +274,5 @@ export { init,
   getManifest,
   reset,
   REQUIRED_EXPORTS,
-  VALID_STORAGE_TYPES };
+  VALID_STORAGE_TYPES
+};

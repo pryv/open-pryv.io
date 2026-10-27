@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, MallAccessesLike, MallEventsLike } from './_types.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -45,8 +46,6 @@ const capabilityMod = require('./capability.ts');
 const inviteState = require('./inviteState.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
-import type { CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike } from './_types.ts';
-
 type MallLike = { accesses: MallAccessesLike; events?: MallEventsLike };
 
 type InvalidateLinkEventContent = {
@@ -56,16 +55,16 @@ type InvalidateLinkEventContent = {
 
 type InvalidateLinkResult =
   | {
-      ok: true;
-      eventType: string;
-      capabilityId: string;
-      alreadyConsumed?: boolean;
-    }
+    ok: true;
+    eventType: string;
+    capabilityId: string;
+    alreadyConsumed?: boolean;
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: unknown;
-    };
+    ok: false;
+    reason: string;
+    detail?: unknown;
+  };
 
 /**
  * Handle a `consent/invalidate-link-cmc` trigger event.

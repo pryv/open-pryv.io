@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { ConfigLike } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
@@ -21,7 +20,6 @@ const fsSync = require('fs');
 const { getConfig } = require('@pryv/boiler');
 
 export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED };
-
 
 let config: ConfigLike;
 let basePath: string | undefined;

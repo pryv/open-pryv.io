@@ -6,16 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
-const { createId: cuid } = require('@paralleldrive/cuid2');
-const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordResetRequests.ts');
-
-const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
-
-import type { SqliteDb } from './types.ts';
-
-const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
+import type { SqliteDb } from './types.ts'; // 1 hour
 
 /**
  * SQLite implementation of PasswordResetRequests storage.
@@ -23,6 +15,14 @@ const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
  * Rows are keyed by the sha256 of the token; the token itself is not stored.
  */
 import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
+const require = createRequire(import.meta.url);
+
+const { createId: cuid } = require('@paralleldrive/cuid2');
+const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordResetRequests.ts');
+
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
+
+const DEFAULT_MAX_AGE = 60 * 60 * 1000;
 type Cb<T = unknown> = (err: Error | null, res?: T) => void;
 type ResetRow = { id: string; username: string; expires: number };
 

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const serviceInfo = require('./service-info.ts').default;
 
 const __ex_get = {
-    params: null,
-    result: serviceInfo()
-  };
+  params: null,
+  result: serviceInfo()
+};
 export { __ex_get as get };

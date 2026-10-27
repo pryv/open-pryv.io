@@ -5,7 +5,12 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+
+// Mall handle — pure pass-through to dispatch/retryScheduler (untyped
+// requires); never inspected here.
+import type { CmcLogger, MallLike } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
+import * as C from './constants.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -29,12 +34,6 @@ const require = createRequire(import.meta.url);
 const { RetryScheduler } = require('./retryScheduler.ts');
 const { dispatch } = require('./dispatch.ts');
 const retryQueue: typeof import('./retryQueue.ts') = require('./retryQueue.ts');
-
-// Mall handle — pure pass-through to dispatch/retryScheduler (untyped
-// requires); never inspected here.
-import type { MallLike } from './_types.ts';
-import type { MemberSweep } from './memberSweep.ts';
-import * as C from './constants.ts';
 type Identity = { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
 type BootDeps = {
   config: { get: (key: string) => unknown };

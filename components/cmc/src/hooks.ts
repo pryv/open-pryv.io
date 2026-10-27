@@ -965,7 +965,8 @@ const STAMP_FIELD_MAX = 200;
 // override or isolate, no zero-width or joiner character: the stamp is
 // rendered by the patient's audit page and exported as is, and one member
 // name must not be able to read as another.
-const STAMP_STRING = new RegExp('^[^\\s\\x00-\\x1f\\x7f-\\x9f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2069\\ufeff]+$');
+// eslint-disable-next-line no-control-regex -- rejecting C0/C1 control characters is the point
+const STAMP_STRING = /^[^\s\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]+$/;
 
 function isStampString (v: unknown): v is string {
   return typeof v === 'string' && v.length >= 1 && v.length <= STAMP_FIELD_MAX && STAMP_STRING.test(v);

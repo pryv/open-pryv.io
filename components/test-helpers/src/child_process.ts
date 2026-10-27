@@ -100,5 +100,3 @@ class ChildProcess {
 }
 export default ChildProcess;
 export { ChildProcess };
-
-type ApplicationLauncher = Object;

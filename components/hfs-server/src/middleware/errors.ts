@@ -40,4 +40,4 @@ export default function produceErrorHandlingMiddleware (logger: unknown) {
       error: errorHandling.getPublicErrorData(safeError)
     });
   };
-};
+}

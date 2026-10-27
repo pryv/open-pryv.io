@@ -457,4 +457,4 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       return access.name ?? '';
     }
   }
-};
+}

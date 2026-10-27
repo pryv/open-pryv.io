@@ -32,4 +32,4 @@ export default function (express: unknown) {
       write: morganLoggerStreamWrite
     }
   });
-};
+}

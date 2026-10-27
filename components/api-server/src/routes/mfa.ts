@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
  * MFA routes — HTTP bindings for the mfa.* API methods.
@@ -33,7 +33,6 @@ const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
-
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
@@ -82,7 +81,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     function routeMFARecover (req: PryvRequest, res: Response, next: NextFunction) {
       api.call(req.context, req.body || {}, methodCallback(res, next, 200));
     });
-};
+}
 
 /**
  * Extract the mfaToken from the Authorization header. Accepts `<token>` or

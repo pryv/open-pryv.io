@@ -6,19 +6,19 @@
  */
 
 import { createRequire } from 'node:module';
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
+
+import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
-import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 
 /** The PG streams storage handle is a BaseStoragePG instance — the UserStorage
  *  9-method contract plus its `.db` (used directly by createDeleted). */
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
 type UserStreamsStoragePG = UserStorage & { db: PgDbLike };
-
-import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level stream — the canonical stored shape. */
 type StreamGetOptions = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };

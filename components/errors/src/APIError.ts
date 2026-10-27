@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 type APIErrorOptions = {
   httpStatus?: number;
   data?: unknown;

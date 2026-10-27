@@ -6,9 +6,6 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 /**
  * Per-call transaction wrapper for the shared SQLite baseStorage DB.
@@ -16,6 +13,9 @@ const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
  * concurrentSafeWrite serializes the body so the BEGIN window is exclusive.
  */
 import type { SqliteDb } from './types.ts';
+const require = createRequire(import.meta.url);
+
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 class LocalTransactionSQLite {
   db: SqliteDb;

@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import type {} from 'node:fs';
 
 type StoreTransactionLike = { exec: (func: () => unknown | Promise<unknown>) => Promise<unknown> };

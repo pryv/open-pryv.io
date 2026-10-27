@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Recursively merge source objects into target, mutating target in place.
  * Mirrors lodash's `_.merge` semantics for the call patterns used in this

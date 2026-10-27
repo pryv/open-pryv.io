@@ -27,4 +27,4 @@ export default function (methodId: string) {
     req.context.methodId = methodId;
     next();
   };
-};
+}

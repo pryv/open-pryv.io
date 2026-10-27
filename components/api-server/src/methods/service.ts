@@ -101,4 +101,4 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     result = deepMerge(result, serviceInfo);
     return next();
   }
-};
+}

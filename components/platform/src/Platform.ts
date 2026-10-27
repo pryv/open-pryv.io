@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { ConfigLike as Config } from '@pryv/boiler';
 import type { PlatformDB, CoreInfo, DnsRecord } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
@@ -20,8 +19,6 @@ const AtRestEncryption = require('business/src/acme/AtRestEncryption.ts');
 const errors = require('errors').factory;
 const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
-
-const accountStreams = require('business/src/system-streams/index.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
 const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHasher.ts');

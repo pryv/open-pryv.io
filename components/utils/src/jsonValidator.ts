@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
@@ -183,7 +182,7 @@ function createValidator (options: ValidateOptions = {}) {
   let lastErrors: ZSchemaError[] | null = null;
 
   function compile (schema: JsonSchema): ValidatorFn {
-    let fn = compileCache.get(schema);
+    const fn = compileCache.get(schema);
     if (fn != null) return fn;
     // Per-schema fresh ajv. addUsedSchema:true (default) keeps self-refs
     // resolvable; the per-instance scope guarantees no cross-compile id

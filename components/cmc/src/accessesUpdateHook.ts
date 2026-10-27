@@ -5,7 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { CmcLogger, OutboundDeps, CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } from './_types.ts';
+
+import type { MemberSweep } from './memberSweep.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -53,9 +55,6 @@ function runWithSuppression<T> (fn: () => Promise<T>): Promise<T> {
   return suppressionStorage.run({ suppressed: true }, fn);
 }
 
-import type { CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } from './_types.ts';
-import type { MemberSweep } from './memberSweep.ts';
-
 type MallLike = { events: MallEventsLike; accesses?: MallAccessesLike };
 
 /**
@@ -77,8 +76,6 @@ function coveredScopesOf (access: AccessLike): string[] {
 function isUnderAny (scope: string, roots: string[]): boolean {
   return roots.some((r) => scope === r || scope.startsWith(r + ':'));
 }
-
-
 
 /**
  * The collectors stream on OUR side for the relationship this access

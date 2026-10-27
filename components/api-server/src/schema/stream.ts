@@ -64,4 +64,4 @@ export default function (action: string, ignoreChildren: boolean, refToStreamSch
   }
 
   return schema;
-};
+}

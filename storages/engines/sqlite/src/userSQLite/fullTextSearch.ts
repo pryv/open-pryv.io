@@ -13,9 +13,9 @@
 // following characters _-:
 // see: https://sqlite.org/fts5.html#tokenizers
 
-export { setupForTable };
-
 import type { SqliteDb } from '../types.ts';
+
+export { setupForTable };
 
 /**
  * Add full text search capabilities on a specific table.

@@ -6,12 +6,11 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const Paths = require('./Paths.ts');
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
-
 
 /**
  * Set up events route handling.
@@ -25,4 +24,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.get(Paths.Service + '/infos', setMethodId('service.info'), function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
-};
+}

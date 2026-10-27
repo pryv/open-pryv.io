@@ -8,6 +8,8 @@
 import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
 import type { DatabasePG } from './DatabasePG.ts';
+
+import type { AuditEvent } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
@@ -17,8 +19,6 @@ const IDS_SEPARATOR = ' ';
 // Rows fetched per cursor round-trip by the streamed reads. Bounds memory
 // without making a large read chatty; not configurable on purpose.
 const STREAM_BATCH_SIZE = 1000;
-
-import type { AuditEvent } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
 type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
 // Query condition — `content` is polymorphic on `type`.
 type StreamsQuery = { any?: string[], not?: string[], all?: string[] };

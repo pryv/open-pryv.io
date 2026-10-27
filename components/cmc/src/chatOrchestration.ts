@@ -5,8 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 import type { DeliverResult } from './outbound.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -74,8 +75,6 @@ function parseChatStreamId (streamId: string): ParsedChatStream | null {
 }
 
 type Counterparty = { username: string; host: string };
-
-import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 
 type FindAccessParams = {
   userId: string;

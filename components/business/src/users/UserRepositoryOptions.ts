@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-
 const __ex_SYSTEM_USER_ACCESS_ID = 'system';
 export { __ex_SYSTEM_USER_ACCESS_ID as SYSTEM_USER_ACCESS_ID };
 const __ex_ACCESS_TYPE_PERSONAL = 'personal';

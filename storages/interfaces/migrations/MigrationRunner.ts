@@ -18,6 +18,8 @@
 import type { Migration, MigrationContext } from './migration.js';
 
 import { createRequire } from 'node:module';
+
+import type { LogFn } from '../_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const fs = require('fs');
@@ -59,8 +61,6 @@ export interface AppliedMigration {
   /** True when invoked with `dryRun: true` — migration was not actually executed. */
   dryRun: boolean;
 }
-
-import type { LogFn } from '../_shared/types.ts';
 
 interface RunOptions { targetVersion?: number; dryRun?: boolean }
 
@@ -199,6 +199,8 @@ async function createMigrationRunner ({ logger }: RunnerOptions = {}): Promise<M
   return new MigrationRunner(capabilities, { logger });
 }
 
-export { MigrationRunner,
+export {
+  MigrationRunner,
   discoverMigrations,
-  createMigrationRunner };
+  createMigrationRunner
+};

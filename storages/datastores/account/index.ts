@@ -22,13 +22,13 @@
  */
 
 import { createRequire } from 'node:module';
+import type { DerivedField } from './AccountUserEvents.ts';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 const { CONTENT_QUERY_SUPPORT } = require('../../shared/contentQueryConditions.ts');
 const AccountUserStreams = require('./AccountUserStreams.ts');
 const AccountUserEvents = require('./AccountUserEvents.ts');
-import type { DerivedField } from './AccountUserEvents.ts';
 
 interface SystemStream {
   id: string;

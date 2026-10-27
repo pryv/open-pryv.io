@@ -58,4 +58,4 @@ export default function (action: string) {
   }
 
   return schema;
-};
+}

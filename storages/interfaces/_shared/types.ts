@@ -55,9 +55,14 @@ export type UpdateData = {
 
 /** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
 export type QueryOp = {
-  $eq?: unknown, $ne?: unknown,
-  $gt?: unknown, $gte?: unknown, $lt?: unknown, $lte?: unknown,
-  $in?: unknown[], $type?: string
+  $eq?: unknown,
+  $ne?: unknown,
+  $gt?: unknown,
+  $gte?: unknown,
+  $lt?: unknown,
+  $lte?: unknown,
+  $in?: unknown[],
+  $type?: string
 };
 
 /** find/count options accepted by the engine-base query methods. */

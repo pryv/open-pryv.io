@@ -401,4 +401,4 @@ export default function (expressApp: ExpressApp, app: App) {
     }
     return platform.coreUrl || app.config.get('dnsLess:publicUrl') || 'http://localhost:3000';
   }
-};
+}

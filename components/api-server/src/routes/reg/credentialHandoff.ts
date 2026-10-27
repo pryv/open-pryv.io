@@ -37,13 +37,10 @@
  * and the create is audited on the user's core.
  */
 
-import { getLogger } from '@pryv/boiler';
 import { MethodContext } from 'business';
 import * as delegation from 'delegation';
 import { resolveUserCore, type UserCorePlatform } from './userCore.ts';
 import type { AppLike } from '../_types.ts';
-
-const logger = getLogger('routes:reg:credentialHandoff');
 
 /** How long we wait on another core before giving up and falling back. */
 const REMOTE_TIMEOUT_MS = 3000;

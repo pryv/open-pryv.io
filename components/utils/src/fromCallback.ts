@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Tiny stand-in for the (legacy) `fromCallback` idiom. Wraps a
  * function that accepts a node-style `(err, value)` callback into a Promise.

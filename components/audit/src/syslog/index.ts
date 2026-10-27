@@ -5,12 +5,12 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type SyslogType from './Syslog.ts';
 const require = createRequire(import.meta.url);
 
 const Syslog = require('./Syslog.ts').default;
 const { getConfig } = require('@pryv/boiler');
-
-import type SyslogType from './Syslog.ts';
 
 let syslog: SyslogType | undefined;
 

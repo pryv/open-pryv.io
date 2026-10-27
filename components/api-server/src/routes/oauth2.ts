@@ -122,11 +122,15 @@ type DataGrant = {
   createdBy?: unknown;
   // Widened vs the narrow role/offer view: reuse-detection reads the CMC
   // counterparty back-channel address off the data-grant to notify the app.
-  clientData?: { cmc?: {
-    role?: string; offerEventId?: string; acceptEventId?: string;
-    counterparty?: { apiEndpoint?: string };
-    backChannelApiEndpoint?: string;
-  } };
+  clientData?: {
+    cmc?: {
+      role?: string;
+      offerEventId?: string;
+      acceptEventId?: string;
+      counterparty?: { apiEndpoint?: string };
+      backChannelApiEndpoint?: string;
+    }
+  };
 };
 
 /** The storage-layer accesses repository surface this module calls directly. */
@@ -161,7 +165,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       customAuthStepFn,
       {},
       {},
-      null,
+      null
     );
     try {
       await context.init();
@@ -298,80 +302,78 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     }
 
     let dataGrant: DataGrant | null = null;
-    {
-      if (offer.offerEventId != null) {
-        dataGrant = await findDataGrantByOffer(context, offer.offerEventId);
+    if (offer.offerEventId != null) {
+      dataGrant = await findDataGrantByOffer(context, offer.offerEventId);
+    }
+    if (dataGrant == null) {
+      // First authorization: drive the real CMC accept. The plugin's
+      // dispatch is fire-and-forget w.r.t. the events.create response,
+      // so poll for the data-grant (keyed by the accept event id the
+      // plugin stamps on it) while watching the trigger for failure.
+      const scopeStreamId = OAUTH_CMC_PARENT + ':' + clientId;
+      await ensureStream(context, OAUTH_CMC_PARENT, ':_cmc:apps', 'OAuth2 grants');
+      await ensureStream(context, scopeStreamId, OAUTH_CMC_PARENT, clientId);
+      const created = await apiCall(context, 'events.create', {
+        streamIds: [scopeStreamId],
+        type: 'consent/accept-cmc',
+        content: {
+          capabilityUrl: offer.capabilityUrl,
+          grantedPermissions,
+        },
+      });
+      const acceptEventId = created?.event?.id;
+      if (typeof acceptEventId !== 'string') {
+        throw new Error('oauth2.createAccess: consent accept trigger was not created');
       }
-      if (dataGrant == null) {
-        // First authorization: drive the real CMC accept. The plugin's
-        // dispatch is fire-and-forget w.r.t. the events.create response,
-        // so poll for the data-grant (keyed by the accept event id the
-        // plugin stamps on it) while watching the trigger for failure.
-        const scopeStreamId = OAUTH_CMC_PARENT + ':' + clientId;
-        await ensureStream(context, OAUTH_CMC_PARENT, ':_cmc:apps', 'OAuth2 grants');
-        await ensureStream(context, scopeStreamId, OAUTH_CMC_PARENT, clientId);
-        const created = await apiCall(context, 'events.create', {
-          streamIds: [scopeStreamId],
-          type: 'consent/accept-cmc',
-          content: {
-            capabilityUrl: offer.capabilityUrl,
-            grantedPermissions,
-          },
+      // Key on the trigger's TERMINAL status, never on the mere presence of
+      // the data-grant. handleAccept creates the grant BEFORE delivering the
+      // accept to the peer and rolls it back on a 4xx refusal, so trusting a
+      // grant the instant it appears could mint an OAuth access against a
+      // consent that is about to be refused (an invalidated / consumed link).
+      // The dispatch stamps `status: 'completed'` (+ dataGrantAccessId) on
+      // success and `status: 'failed'` (+ failure) on refusal; resolve the
+      // grant only once the trigger says completed.
+      dataGrant = await awaitConsentOutcome<DataGrant>({
+        getTrigger: async () => {
+          const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
+          return (trigger?.event?.content ?? {}) as ConsentTrigger;
+        },
+        resolveDataGrant: async (trigger) => {
+          const all = await apiCall(context, 'accesses.get', {});
+          const list: DataGrant[] = all?.accesses ?? [];
+          // Prefer the id the dispatch stamped; fall back to the acceptEventId
+          // match for robustness if the stamp is somehow absent.
+          if (typeof trigger.dataGrantAccessId === 'string') {
+            const byId = list.find((a) => a?.id === trigger.dataGrantAccessId);
+            if (byId != null) return byId;
+          }
+          return list.find((a) =>
+            a?.clientData?.cmc?.role === 'counterparty' &&
+            a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
+        },
+        // Success now waits for the FULL accept delivery round-trip (the
+        // trigger reaches `completed` only after the peer answers), so the
+        // deadline MUST exceed the outbound per-attempt delivery timeout
+        // (cmc outbound DEFAULT_TIMEOUT_MS = 15s) with margin. A shorter
+        // budget would turn a slow-but-successful peer (10-15s: cold
+        // container, cross-region) into a 500 for a consent that then
+        // completes in the background.
+        deadlineMs: 25_000,
+        sleepMs: 100,
+        describe: 'acceptEventId=' + acceptEventId,
+      });
+    } else {
+      // Re-authorization: widen the data-grant if this consent grants
+      // entries the current grant lacks (never narrows — the user
+      // manages narrowing via consent scope-update / access update).
+      const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
+      const missing = grantedPermissions.filter((g) => !currentKeys.has(permissionKey(g)));
+      if (missing.length > 0) {
+        const updated = await apiCall(context, 'accesses.update', {
+          id: dataGrant.id,
+          update: { permissions: (dataGrant.permissions ?? []).concat(missing) },
         });
-        const acceptEventId = created?.event?.id;
-        if (typeof acceptEventId !== 'string') {
-          throw new Error('oauth2.createAccess: consent accept trigger was not created');
-        }
-        // Key on the trigger's TERMINAL status, never on the mere presence of
-        // the data-grant. handleAccept creates the grant BEFORE delivering the
-        // accept to the peer and rolls it back on a 4xx refusal, so trusting a
-        // grant the instant it appears could mint an OAuth access against a
-        // consent that is about to be refused (an invalidated / consumed link).
-        // The dispatch stamps `status: 'completed'` (+ dataGrantAccessId) on
-        // success and `status: 'failed'` (+ failure) on refusal; resolve the
-        // grant only once the trigger says completed.
-        dataGrant = await awaitConsentOutcome<DataGrant>({
-          getTrigger: async () => {
-            const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
-            return (trigger?.event?.content ?? {}) as ConsentTrigger;
-          },
-          resolveDataGrant: async (trigger) => {
-            const all = await apiCall(context, 'accesses.get', {});
-            const list: DataGrant[] = all?.accesses ?? [];
-            // Prefer the id the dispatch stamped; fall back to the acceptEventId
-            // match for robustness if the stamp is somehow absent.
-            if (typeof trigger.dataGrantAccessId === 'string') {
-              const byId = list.find((a) => a?.id === trigger.dataGrantAccessId);
-              if (byId != null) return byId;
-            }
-            return list.find((a) =>
-              a?.clientData?.cmc?.role === 'counterparty' &&
-              a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
-          },
-          // Success now waits for the FULL accept delivery round-trip (the
-          // trigger reaches `completed` only after the peer answers), so the
-          // deadline MUST exceed the outbound per-attempt delivery timeout
-          // (cmc outbound DEFAULT_TIMEOUT_MS = 15s) with margin. A shorter
-          // budget would turn a slow-but-successful peer (10-15s: cold
-          // container, cross-region) into a 500 for a consent that then
-          // completes in the background.
-          deadlineMs: 25_000,
-          sleepMs: 100,
-          describe: 'acceptEventId=' + acceptEventId,
-        });
-      } else {
-        // Re-authorization: widen the data-grant if this consent grants
-        // entries the current grant lacks (never narrows — the user
-        // manages narrowing via consent scope-update / access update).
-        const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
-        const missing = grantedPermissions.filter((g) => !currentKeys.has(permissionKey(g)));
-        if (missing.length > 0) {
-          const updated = await apiCall(context, 'accesses.update', {
-            id: dataGrant.id,
-            update: { permissions: (dataGrant.permissions ?? []).concat(missing) },
-          });
-          if (updated?.access != null) dataGrant = updated.access;
-        }
+        if (updated?.access != null) dataGrant = updated.access;
       }
     }
     // The short-TTL OAuth access mirrors EXACTLY this session's
@@ -440,8 +442,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt }: {
-    userId: string; username: string; clientId: string;
-    permissions: Array<Record<string, unknown>>; expiresAt: number;
+    userId: string;
+    username: string;
+    clientId: string;
+    permissions: Array<Record<string, unknown>>;
+    expiresAt: number;
     dpopJkt?: string;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
@@ -520,7 +525,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   //     scopes are rejected upstream by the grant).
   // ---------------------------------------------------------------------
   async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions, jkt }: {
-    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+    userId: string;
+    username: string;
+    clientId: string;
+    scope: string[];
+    expiresAt: number;
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     jkt?: string;

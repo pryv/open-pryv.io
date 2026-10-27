@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Ported verbatim from the standalone service-mail repo. Wraps an
  * `email-templates` delivery instance (`deliveryService`) and orchestrates

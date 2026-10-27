@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { ValidityVerdict } from './certUtils.ts';
 const require = createRequire(import.meta.url);
 /**
  * Watch PlatformDB for a certificate's rotation, materialize it on local
@@ -33,8 +35,6 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { hostnameToDirName, checkValidityWindow } = require('./certUtils.ts');
-
-import type { ValidityVerdict } from './certUtils.ts';
 
 type CertRecord = { certPem: string; chainPem?: string; keyPem: string; expiresAt: number };
 type CertRenewer = { getCertificate (hostname: string): Promise<CertRecord | null> };

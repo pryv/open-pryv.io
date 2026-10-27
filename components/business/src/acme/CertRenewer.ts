@@ -39,7 +39,6 @@ type PlatformDB = {
 };
 type DnsServerLike = { refreshFromPlatform?: () => Promise<unknown> };
 type DnsWriter = { create (name: string, value: string): Promise<unknown>; remove (name: string, value: string): Promise<unknown> };
-type Account = { accountKey: string; accountUrl: string; email: string | null };
 type AcmeAuthz = { identifier: { value: string } };
 type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
 

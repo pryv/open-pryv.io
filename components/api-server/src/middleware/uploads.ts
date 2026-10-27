@@ -8,7 +8,6 @@ import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
 import { removeUploadedFile } from '../methods/helpers/uploadedFiles.ts';
 const require = createRequire(import.meta.url);
-'use strict';
 // A middleware that allows checking uploads and that will at the same time
 // allow uploads for the route.
 const filesUploadSupport = require('middleware').filesUploadSupport;

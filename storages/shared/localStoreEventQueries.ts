@@ -10,10 +10,10 @@
  */
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../interfaces/_shared/types.ts';
+import type { NormalizedCondition } from './contentQueryConditions.ts';
 const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
-import type { NormalizedCondition } from './contentQueryConditions.ts';
 const DELTA_TO_CONSIDER_IS_NOW = 5; // 5 seconds
 
 const localStoreEventQueries = {

@@ -38,10 +38,10 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { UsernameResolver } from './authorization_code.ts';
+const require = createRequire(import.meta.url);
 
 // Kept on the require shim: a typed `storage` import surfaces a pre-existing
 // GrantPermission vs Record<string,unknown> mismatch at the mint boundary that
@@ -142,7 +142,7 @@ export async function handleRefreshToken (
   deps: RefreshTokenDeps,
   params: RefreshGrantParams,
   /** RFC 7638 thumbprint of a proof VERIFIED by the dispatcher, or null. */
-  dpopJkt: string | null = null,
+  dpopJkt: string | null = null
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; status: number; error: string; description?: string }

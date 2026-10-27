@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const business = require('business');
@@ -24,7 +25,6 @@ type MetadataUpdaterLike = { start?: () => void };
 type TypeRepoLike = { tryUpdate: (url: string) => Promise<unknown> };
 type TracerSpan = { end?: () => void };
 type TracerLike = { startSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
-import type { ConfigLike } from '@pryv/boiler';
 type InfluxConnection = unknown;
 
 class Context {

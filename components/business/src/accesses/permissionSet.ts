@@ -167,7 +167,7 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
       if (keepAnnotations && p.level === 'none') {
         throw new Error(
           `invalid consent permission at index ${i}: level 'none' (an exclusion mask) ` +
-          `is not allowed in a consent offer — offers must grant positive access only`
+          'is not allowed in a consent offer — offers must grant positive access only'
         );
       }
       const out: ConsentPermission = { streamId: p.streamId, level: p.level };

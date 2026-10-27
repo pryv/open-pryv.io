@@ -7,7 +7,6 @@
 import type { Request, Response, Application as ExpressApp } from 'express';
 import type { AppLike } from '../_types.ts';
 
-
 /**
  * GET /apps — list applications linked to this service.
  * GET /apps/:appid — specific application metadata.
@@ -34,4 +33,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     }
     res.json({ app: { id: appid, ...info } });
   });
-};
+}

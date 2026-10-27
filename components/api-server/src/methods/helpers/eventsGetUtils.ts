@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { EventsQueryState } from '../../../../../storages/interfaces/_shared/types.ts';
+import type { MethodNext } from '../_types.ts';
+import type { Readable as ReadableStream } from 'node:stream';
 const require = createRequire(import.meta.url);
 /**
  * Helpers used by the events.get method (stream-query coercion, defaults, …).
@@ -32,8 +33,6 @@ const DELEGATION_INTERNAL_NS_ROOT = require('delegation').NS_INTERNAL;
 const CMC_INTERNAL_NS_ROOT = require('cmc').NS_INTERNAL;
 const integrity = require('business/src/integrity/index.ts').default;
 const { getLogger } = require('@pryv/boiler');
-import type { MethodNext } from '../_types.ts';
-import type { Readable as ReadableStream } from 'node:stream';
 
 type AccessLike = {
   canGetEventsOnStream: (streamId: string, storeId: string | undefined) => Promise<boolean> | boolean;
@@ -723,12 +722,4 @@ type GetEventsParams = {
   modifiedSince?: number | null;
   includeDeletions?: boolean;
   [k: string]: unknown;
-};
-type StoreQuery = {
-  id: string;
-  storeId: string;
-  includeTrashed: boolean;
-  childrenDepth: number /* was JSDoc {integer} */;
-  excludedIds: Array<string>;
-  hideStoreRoots?: boolean;
 };

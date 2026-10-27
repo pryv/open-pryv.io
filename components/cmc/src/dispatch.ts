@@ -5,8 +5,12 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps, RetryContext } from './_types.ts';
+import type { CmcLogger, OutboundDeps, RetryContext, MallLike } from './_types.ts';
 import type { CredentialStash } from './credentialScrub.ts';
+import type { MemberAccessOptions } from './handleMemberAccess.ts';
+import type { MemberMintRegistry } from './memberMintRegistry.ts';
+import type { MemberSweep } from './memberSweep.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -42,9 +46,6 @@ const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const handleMemberAccessMod: typeof import('./handleMemberAccess.ts') = require('./handleMemberAccess.ts');
 const handleMemberRevokeMod: typeof import('./handleMemberRevoke.ts') = require('./handleMemberRevoke.ts');
 const retryQueueMod = require('./retryQueue.ts');
-import type { MemberAccessOptions } from './handleMemberAccess.ts';
-import type { MemberMintRegistry } from './memberMintRegistry.ts';
-import type { MemberSweep } from './memberSweep.ts';
 const outbound = require('./outbound.ts');
 const credentialScrub = require('./credentialScrub.ts');
 
@@ -99,14 +100,10 @@ type CmcEvent = {
   [k: string]: unknown;
 };
 
-import type { CmcAccessLike as CmcAccess, MallLike } from './_types.ts';
-
 // Mall proxy types — these methods accept and return runtime payloads that
 // vary by call site (Mongo-style queries, partial events, partial accesses).
 // Keep param/result as `unknown` rather than `any` so consumers get the
 // is-undefined check signal at least, but don't model the deep variants.
-
-
 
 type DispatchDeps = {
   mall: MallLike;

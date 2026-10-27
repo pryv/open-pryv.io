@@ -5,9 +5,11 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
+import type { NormalizedCondition, StoreSupports } from '../../../storages/shared/contentQueryConditions.ts';
+
+import type { MallEvents, EventQuery, EventOptions, StoreSettings, ParamsByStore, AttachmentItem, UpdateManySpec, MallTransactionLike, StoredEvent } from './types.ts';
 const require = createRequire(import.meta.url);
 
 const { deepMerge, pipeThrough } = require('utils');
@@ -19,16 +21,12 @@ const eventsQueryUtils = require('./helpers/eventsQueryUtils.ts');
 
 const errorFactory = require('errors').factory;
 const { getConditionsSupportError } = require('../../../storages/shared/contentQueryConditions.ts');
-import type { NormalizedCondition, StoreSupports } from '../../../storages/shared/contentQueryConditions.ts';
 const integrity = require('business/src/integrity/index.ts').default;
 const { SystemAccessId } = require('@pryv/datastore').defaults;
-
 
 const { Readable } = require('stream');
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
-
-import type { MallEvents, EventQuery, EventOptions, StoreSettings, ParamsByStore, AttachmentItem, UpdateManySpec, MallTransactionLike, StoredEvent } from './types.ts';
 
 /** Mall-level event: the stored shape, plus pass-through of store-specific
  *  extra fields (deepMerge/fieldsToDelete pipelines index by field name). */

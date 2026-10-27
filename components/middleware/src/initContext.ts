@@ -47,4 +47,4 @@ export default function initContext (storageLayer: unknown, customAuthStepFn: Cu
       .then(() => next())
       .catch(next);
   };
-};
+}

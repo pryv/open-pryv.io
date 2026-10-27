@@ -6,14 +6,13 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-
 
 // Event streams route handling.
 export default function (expressApp: ExpressApp, app: AppLike): void {
@@ -40,4 +39,4 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
     });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-};
+}

@@ -18,4 +18,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   if (!config.get('accessTracking:isActive')) { return; }
   const updateAccessUsage = await updateAccessUsageStats();
   api.register('*', updateAccessUsage);
-};
+}

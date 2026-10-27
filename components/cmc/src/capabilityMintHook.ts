@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, MallLike } from './_types.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -30,13 +31,10 @@ const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
-import type { MallLike } from './_types.ts';
-
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
   unexpectedError?: (err: unknown) => Error;
 };
-
 
 type Deps = {
   mall: MallLike;
@@ -235,9 +233,9 @@ function createCapabilityMintHook (deps: Deps): Middleware {
       const wrap = deps.errors.unexpectedError
         ? deps.errors.unexpectedError(err)
         : deps.errors.invalidOperation(
-            'CMC capability mint failed: ' + message,
-            { id: 'cmc-mint-failed', error: message }
-          );
+          'CMC capability mint failed: ' + message,
+          { id: 'cmc-mint-failed', error: message }
+        );
       next(wrap);
     }
   };

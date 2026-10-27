@@ -7,14 +7,6 @@
 
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
-const require = createRequire(import.meta.url);
-
-const path = require('path');
-const fs = require('fs');
-const SQLite3 = require('better-sqlite3');
-
-const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
-const { _internals } = require('./_internals.ts');
 
 /**
  * Shared SQLite connection backing the cross-user baseStorage collections
@@ -25,6 +17,14 @@ const { _internals } = require('./_internals.ts');
  * The shared file lives at `<sqlite.path>/_shared/baseStorage.sqlite`.
  */
 import type { SqliteDb } from './types.ts';
+const require = createRequire(import.meta.url);
+
+const path = require('path');
+const fs = require('fs');
+const SQLite3 = require('better-sqlite3');
+
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
+const { _internals } = require('./_internals.ts');
 
 class DatabaseSQLite {
   db!: SqliteDb;

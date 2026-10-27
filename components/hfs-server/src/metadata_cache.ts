@@ -306,7 +306,7 @@ export { MetadataLoader, MetadataCache, requestClientIp };
 type UsernameEvent = {
   username: string;
   event: {
-  id: string;
+    id: string;
   };
 };
 type AccessModel = CanReadEventAccess & {

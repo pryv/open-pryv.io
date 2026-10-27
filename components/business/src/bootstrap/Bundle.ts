@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-
 /**
  * Bootstrap bundle schema, assembly and validation.
  *

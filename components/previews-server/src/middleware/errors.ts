@@ -32,4 +32,4 @@ export default function (logging: unknown) {
         error: errorHandling.getPublicErrorData(error)
       });
   };
-};
+}

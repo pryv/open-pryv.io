@@ -25,4 +25,4 @@ export default function (res: Response, next: NextFunction, successCode: Success
     // never sends the response).
     result.writeToHttpResponse(res, typeof successCode === 'function' ? successCode(result) : successCode);
   };
-};
+}

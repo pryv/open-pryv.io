@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);

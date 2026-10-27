@@ -9,7 +9,8 @@ const globals = require('globals');
 
 module.exports = [
   ...neostandard({
-    semi: true
+    semi: true,
+    ts: true
   }),
   {
     ignores: [
@@ -18,6 +19,25 @@ module.exports = [
       'external-ressources/**',
       'dist/**'
     ]
+  },
+  {
+    files: ['**/*.ts'],
+    linterOptions: {
+      // `no-explicit-any` disables belong to the `lint-ts-any` gate
+      // (eslint.ts-any.config.js): this config would report them unused
+      reportUnusedDisableDirectives: 'off'
+    },
+    rules: {
+      // same options as the JS rule neostandard sets, plus export lists
+      // written above the definitions
+      '@typescript-eslint/no-use-before-define': ['error', { functions: false, classes: false, variables: false, allowNamedExports: true }],
+      // tsc reports real redeclarations; this rule would also flag the
+      // deliberate interface + value pair sharing one name
+      '@typescript-eslint/no-redeclare': 'off',
+      // `__ex_<name>` is the CommonJS-to-ESM re-export pattern
+      // (`const __ex_x = require(...); export { __ex_x as x }`)
+      camelcase: ['error', { allow: ['^UNSAFE_', '^__ex_'], properties: 'never', ignoreGlobals: true }]
+    }
   },
   {
     files: ['**/test/**/*.js', '**/conformance/**/*.js'],

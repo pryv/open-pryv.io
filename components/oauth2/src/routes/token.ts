@@ -112,7 +112,7 @@ export function handleToken (deps: TokenDeps) {
       try {
         const verified = await verifyDPoPProof(
           Array.isArray(dpopHeader) ? null : dpopHeader,
-          { htm: 'POST', htu: externalRequestUri(req), clockSkewSeconds },
+          { htm: 'POST', htu: externalRequestUri(req), clockSkewSeconds }
         );
         // Refuse issuance for an operator-revoked key BEFORE burning the jti or
         // running any grant: a revoked key must neither mint (authorization_code)
@@ -124,7 +124,7 @@ export function handleToken (deps: TokenDeps) {
           throw new DPoPProofError('key revoked');
         }
         const fresh = await markDPoPJtiUsed(
-          deps.platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000,
+          deps.platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000
         );
         if (!fresh) throw new DPoPProofError('jti replayed');
         dpopJkt = verified.jkt;
@@ -157,7 +157,7 @@ export function handleToken (deps: TokenDeps) {
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
-          dpopJkt,
+          dpopJkt
         );
       }
     } else if (grantType === 'refresh_token') {
@@ -178,7 +178,7 @@ export function handleToken (deps: TokenDeps) {
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
-          dpopJkt,
+          dpopJkt
         );
       }
     } else if (dpopJkt != null && grantType === 'client_credentials') {
@@ -200,7 +200,7 @@ export function handleToken (deps: TokenDeps) {
             resolveAccountUserId: deps.resolveAccountUserId,
             resolveUsername: deps.resolveUsername,
           },
-          { ...body, basic },
+          { ...body, basic }
         );
       }
     } else if (grantType === '') {

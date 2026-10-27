@@ -30,74 +30,74 @@ const updatedEvent = helpers.object({
 });
 
 const __ex_get = {
-    params: object({
-      parentId: string(),
-      state: string({ enum: ['default', 'all'] }),
-      includeDeletionsSince: number(),
-      // access token in the query string (HTTP GET)
-      auth: string()
-    }, { additionalProperties: false }),
-    result: object({
-      streams: array({ $ref: '#/definitions/stream' }),
-      eventDeletions: array(itemDeletion)
-    }, {
-      definitions: {
-        stream: stream(Action.READ, false, '#/definitions/stream')
-      },
-      required: ['streams']
-    })
-  };
+  params: object({
+    parentId: string(),
+    state: string({ enum: ['default', 'all'] }),
+    includeDeletionsSince: number(),
+    // access token in the query string (HTTP GET)
+    auth: string()
+  }, { additionalProperties: false }),
+  result: object({
+    streams: array({ $ref: '#/definitions/stream' }),
+    eventDeletions: array(itemDeletion)
+  }, {
+    definitions: {
+      stream: stream(Action.READ, false, '#/definitions/stream')
+    },
+    required: ['streams']
+  })
+};
 export { __ex_get as get };
 const __ex_create = {
-    params: stream(Action.CREATE),
-    result: object({
-      stream: stream(Action.READ, true)
-    }, {
-      required: ['stream'],
-      additionalProperties: false
-    })
-  };
+  params: stream(Action.CREATE),
+  result: object({
+    stream: stream(Action.READ, true)
+  }, {
+    required: ['stream'],
+    additionalProperties: false
+  })
+};
 export { __ex_create as create };
 const __ex_update = {
-    params: object({
-      // in path for HTTP requests
-      id: string(),
-      // = body of HTTP requests
-      update: { $ref: '#/definitions/stream' }
-    }, {
-      definitions: {
-        stream: stream(Action.UPDATE, false, '#/definitions/stream')
-      },
-      required: ['id', 'update']
-    }),
-    result: object({
-      stream: stream(Action.READ, true)
-    }, {
-      required: ['stream'],
-      additionalProperties: false
-    })
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string(),
+    // = body of HTTP requests
+    update: { $ref: '#/definitions/stream' }
+  }, {
+    definitions: {
+      stream: stream(Action.UPDATE, false, '#/definitions/stream')
+    },
+    required: ['id', 'update']
+  }),
+  result: object({
+    stream: stream(Action.READ, true)
+  }, {
+    required: ['stream'],
+    additionalProperties: false
+  })
+};
 export { __ex_update as update };
 const __ex_del = {
-    params: object({
-      // in path for HTTP requests
-      id: string(),
-      // in query string for HTTP requests
-      mergeEventsWithParent: boolean()
-    }, {
-      required: ['id']
-    }),
-    result: {
-      anyOf: [
-        object({ stream: stream(Action.READ, true) }, {
-          required: ['stream'],
-          additionalProperties: false
-        }),
-        object({ streamDeletion: itemDeletion, updatedEvents: array(updatedEvent) }, {
-          required: ['streamDeletion'],
-          additionalProperties: false
-        })
-      ]
-    }
-  };
+  params: object({
+    // in path for HTTP requests
+    id: string(),
+    // in query string for HTTP requests
+    mergeEventsWithParent: boolean()
+  }, {
+    required: ['id']
+  }),
+  result: {
+    anyOf: [
+      object({ stream: stream(Action.READ, true) }, {
+        required: ['stream'],
+        additionalProperties: false
+      }),
+      object({ streamDeletion: itemDeletion, updatedEvents: array(updatedEvent) }, {
+        required: ['streamDeletion'],
+        additionalProperties: false
+      })
+    ]
+  }
+};
 export { __ex_del as del };

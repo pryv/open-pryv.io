@@ -167,7 +167,7 @@ jobs:
         run: npx eslint .
       - name: TypeScript any / canonical-type gate
         # The TS-only rules of `just lint` (no-explicit-any, canonical type
-        # homes), which the default eslint config above does not apply to .ts.
+        # homes), which the default eslint config above does not include.
         run: npx eslint --config eslint.ts-any.config.js 'components/**/*.ts' 'storages/**/*.ts'
       - name: Open-index-signature ratchet
         run: ./scripts/open-type-ratchet

@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 /**
  * Per-worker parallel-test harness.
@@ -32,6 +31,7 @@ const require = createRequire(import.meta.url);
 
 import type { ChildProcess } from 'child_process';
 import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -488,7 +488,7 @@ async function waitForRqliteReady (url: string, timeoutMs: number, workerId: num
     } catch {
       // not ready yet
     }
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`[parallelWorkerSetup w${workerId}] rqlited at ${url} not ready within ${timeoutMs}ms`);
 }

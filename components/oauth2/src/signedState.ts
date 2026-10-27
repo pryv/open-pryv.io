@@ -104,7 +104,7 @@ export function signState (
   adminKey: string,
   payload: Omit<SignedStatePayload, 'iat' | 'exp'>,
   nowSeconds: number = Math.floor(Date.now() / 1000),
-  ttlSeconds: number = SIGNED_STATE_TTL_SECONDS,
+  ttlSeconds: number = SIGNED_STATE_TTL_SECONDS
 ): string {
   const full: SignedStatePayload = { ...payload, iat: nowSeconds, exp: nowSeconds + ttlSeconds };
   const json = Buffer.from(JSON.stringify(full));
@@ -126,7 +126,7 @@ export type VerifyResult =
 export function verifyState (
   adminKey: string,
   token: string,
-  nowSeconds: number = Math.floor(Date.now() / 1000),
+  nowSeconds: number = Math.floor(Date.now() / 1000)
 ): VerifyResult {
   if (typeof token !== 'string') return { ok: false, reason: 'malformed' };
   const dot = token.indexOf('.');

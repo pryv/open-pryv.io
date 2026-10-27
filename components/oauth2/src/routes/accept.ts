@@ -41,6 +41,9 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Request, Response } from 'express';
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 
 const { generateToken } = require('../secureToken.ts');
@@ -55,9 +58,6 @@ const { logServerError } = require('../serverLog.ts');
 const { checkConsentGrant, normalizePermissions } =
   require('business/src/accesses/permissionSet.ts');
 
-import type { Request, Response } from 'express';
-import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
-
 /** Authenticated user-session handle, opaque to this module. */
 export type UserSession = {
   userId: string;
@@ -71,7 +71,7 @@ export type RefusedSession = { refused: true; description: string };
 
 /** Resolver provided by the route mount: {username, userToken} → session, refusal, or null. */
 export type ResolveUser = (params: { username: string; userToken: string })
-  => Promise<UserSession | RefusedSession | null>;
+=> Promise<UserSession | RefusedSession | null>;
 
 function isRefusedSession (session: UserSession | RefusedSession): session is RefusedSession {
   return session.refused === true;

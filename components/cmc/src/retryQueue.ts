@@ -111,7 +111,6 @@ const MAX_PAGES = 50;
 // URL) that must not be copied into history rows.
 const WRITE_OPTS = { skipVersioning: true };
 
-
 type EventLike = {
   id?: string;
   streamIds?: string[];

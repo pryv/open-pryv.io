@@ -8,13 +8,13 @@
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../interfaces/_shared/types.ts';
 import type { Readable as ReadableType } from 'node:stream';
+import type { NormalizedCondition, StreamGroup } from 'utils';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 const { Readable } = require('stream');
 const timestamp = require('unix-timestamp');
 const { matchesConditions, matchesStreamQuery } = require('utils').eventMatchQuery;
-import type { NormalizedCondition, StreamGroup } from 'utils';
 
 type StreamConfig = { id: string; type: string; [k: string]: unknown };
 type EventLike = {

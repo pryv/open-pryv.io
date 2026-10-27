@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { PermissionLevel, AccessType, Permission, StreamPermission, FeaturePermission } from '../types/public.ts';
+import type { AccessType, Permission, StreamPermission, FeaturePermission } from '../types/public.ts';
 const require = createRequire(import.meta.url);
 /**
  * Business logic for access objects.

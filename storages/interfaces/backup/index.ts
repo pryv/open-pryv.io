@@ -30,7 +30,8 @@ const { createFilesystemBackupReader } = require('./FilesystemBackupReader.ts');
 const { createBackupEncryptor, createBackupDecryptor, DEFAULT_CHUNK } = require('./BackupCipher.ts');
 const { BackupChainError, readChain, planBackupRun, inspectBackup } = require('./chain.ts');
 
-export { BackupWriter,
+export {
+  BackupWriter,
   createBackupWriter,
   validateBackupWriter,
   UserBackupWriter,
@@ -57,4 +58,5 @@ export { BackupWriter,
   BackupChainError,
   readChain,
   planBackupRun,
-  inspectBackup };
+  inspectBackup
+};

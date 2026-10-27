@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const winston = require('winston');
-// eslint-disable-next-line no-unused-expressions
+// eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the property read loads winston-syslog, which registers its transport
 require('winston-syslog').Syslog; // Exposes `winston.transports.Syslog` (ugly, but it's the recommended way)
 
 const { getConfig, getLogger } = require('@pryv/boiler');

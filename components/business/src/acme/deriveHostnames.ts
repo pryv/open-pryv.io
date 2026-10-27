@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-
 /**
  * Derive the hostnames and challenge type for the letsEncrypt feature from
  * the existing topology config, so operators don't have to maintain a

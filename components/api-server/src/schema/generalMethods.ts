@@ -18,18 +18,18 @@ const string = helpers.string;
 const array = helpers.array;
 
 const __ex_getAccessInfo = {
-    params: object({}, { id: 'getAccessInfo' }),
-    result: object({
-      type: {
-        type: 'string',
-        enum: ['personal', 'app', 'shared']
-      },
-      name: string(),
-      permissions: access.permissions(Action.READ)
-    }, {
-      required: ['type', 'name', 'permissions']
-    })
-  };
+  params: object({}, { id: 'getAccessInfo' }),
+  result: object({
+    type: {
+      type: 'string',
+      enum: ['personal', 'app', 'shared']
+    },
+    name: string(),
+    permissions: access.permissions(Action.READ)
+  }, {
+    required: ['type', 'name', 'permissions']
+  })
+};
 export { __ex_getAccessInfo as getAccessInfo };
 /**
  * Most calls in one batch. Matches the chunk size of the JavaScript client
@@ -39,16 +39,16 @@ export { __ex_getAccessInfo as getAccessInfo };
 const BATCH_MAX_CALLS = 1000;
 export { BATCH_MAX_CALLS };
 const __ex_callBatch = {
-    params: array(object({
-      method: string(),
-      params: {
-        type: ['object', 'array']
-      }
-    }, {
-      required: ['method', 'params']
-    }), { maxItems: BATCH_MAX_CALLS }),
-    result: object({
-      results: array(object({}))
-    })
-  };
+  params: array(object({
+    method: string(),
+    params: {
+      type: ['object', 'array']
+    }
+  }, {
+    required: ['method', 'params']
+  }), { maxItems: BATCH_MAX_CALLS }),
+  result: object({
+    results: array(object({}))
+  })
+};
 export { __ex_callBatch as callBatch };

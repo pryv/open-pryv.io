@@ -6,6 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const influx = require('influx');
@@ -42,8 +44,6 @@ interface InfluxDbClient {
   query: (query: string, options?: InfluxQueryOptions) => Promise<InfluxQueryResult>;
   getDatabaseNames: () => Promise<string[]>;
 }
-
-import type { Logger } from '@pryv/boiler';
 
 /**
  * Connection to the influx database. Adds error handling and logging on top

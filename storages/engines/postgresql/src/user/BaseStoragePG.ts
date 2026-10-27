@@ -737,11 +737,10 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
     // $min / $max — same grammar as $inc: a one-level entry is grouped per
     // column so the column is assigned once, a bare key acts on the column.
     // A missing entry stores the operand, which LEAST/GREATEST over NULL gives.
-    for (const [op, source, sqlFn] of [
+    for (const [, source, sqlFn] of [
       ['$min', $min, 'LEAST'] as const,
       ['$max', $max, 'GREATEST'] as const
     ]) {
-      void op;
       const dottedByCol: Record<string, Array<[string, unknown]>> = {};
       for (const [k, v] of Object.entries(source)) {
         const { field, entry } = splitUpdatePath(k);

@@ -13,7 +13,6 @@ const generateId = require('cuid');
 const logger = require('@pryv/boiler').getLogger('databaseFixture');
 const timestamp = require('unix-timestamp');
 const { deepMerge } = require('utils');
-const storage = require('storage'); // eslint-disable-line no-unused-vars -- used in JSDoc types
 const Webhook = require('business').webhooks.Webhook;
 const { getUsersRepository, User } = require('business/src/users/index.ts');
 const integrityFinalCheck = require('test-helpers/src/integrity-final-check.ts');
@@ -527,46 +526,6 @@ class SessionsFixture {
   }
 }
 
-/**
- * A hack that allows session creation. The storage.Sessions interface
- * will not really allow fixture creation, so we're cloning some of the code
- * here.
- */
-class Sessions {
-  collectionInfo;
-  db;
-
-  constructor (db: any) {
-    this.db = db;
-    this.collectionInfo = {
-      name: 'sessions',
-      indexes: [
-        // set TTL index for auto cleanup of expired sessions
-        {
-          index: { expires: 1 },
-          options: { expireAfterSeconds: 0 }
-        }
-      ]
-    };
-  }
-
-  /**
-   * @param {{
-   *       id: string;
-   *     }} user
-   */
-  insertOne (user: any, attributes: any, cb: any) {
-    const id = attributes.id;
-    delete attributes.id;
-    attributes._id = id;
-    this.db.insertOne(this.collectionInfo, attributes, cb);
-  }
-
-  destroy (id: any, cb: any) {
-    this.db.deleteOne(this.collectionInfo, { _id: id }, cb);
-  }
-}
-
 function databaseFixture (dbOrStorageLayer: any) {
   const context = new Context(dbOrStorageLayer);
   return new DatabaseFixture(context);
@@ -578,16 +537,3 @@ async function initMall () {
     mall = await getMall();
   }
 }
-
-type DatabaseShortcuts = {
-  sessions: Sessions;
-  // import('storage').user.X were JSDoc-only namespaced
-  // types that don't translate to TS imports. These are storage layer instances.
-  streams: any;
-  accesses: any;
-  webhooks: any;
-};
-type Attributes = {
-  id: string;
-  _id: string;
-};

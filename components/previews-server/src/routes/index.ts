@@ -12,4 +12,4 @@ export default function index (expressApp: ExpressApp) {
     // common headers (e.g. CORS) are handled in related middleware
     res.sendStatus(200);
   });
-};
+}

@@ -36,7 +36,7 @@ function isReservedToken (s: string) {
  * become a key of a plain object (stream ids, client-chosen tokens).
  */
 function isBuiltInPropertyName (s: string) {
-  return s === 'prototype' || Object.prototype.hasOwnProperty.call(Object.prototype, s);
+  return s === 'prototype' || Object.hasOwn(Object.prototype, s);
 }
 
 function sanitizeFieldKey (s: string) {

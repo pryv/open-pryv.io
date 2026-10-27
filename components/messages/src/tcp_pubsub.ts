@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 // TCP-based pub/sub broker + client — zero external deps.
 // First process to call init() becomes the broker; others connect as clients.
 // Protocol: newline-delimited JSON over TCP.
@@ -357,7 +356,7 @@ function _scheduleReconnect () {
   reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    void _reconnect();
+    _reconnect();
   }, delay);
   reconnectTimer.unref(); // a pending reconnect must never keep the process alive
 }

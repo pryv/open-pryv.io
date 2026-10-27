@@ -21,11 +21,9 @@
 
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
-import { fileURLToPath } from 'node:url';
 import { fileIdentity } from '../fileIdentity.ts';
 import { closeQuietly } from '../closeQuietly.ts';
 const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
 
 const path = require('path');
 const fs = require('fs/promises');

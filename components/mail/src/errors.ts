@@ -5,8 +5,6 @@
  * Refer to LICENSE file
  */
 
-
-
 /**
  * Minimal error-factory preserved from the standalone service-mail repo so
  * the ported Sender/Template/TemplateRepository continue to throw the exact

@@ -13,8 +13,6 @@ import type { Logger } from '@pryv/boiler';
  * All engine files use require('./_internals.ts') instead of host require() calls.
  */
 
-import type { LogFn } from '@pryv/boiler';
-
 const registry: Record<string, unknown> = {};
 
 const _internals = {

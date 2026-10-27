@@ -26,7 +26,7 @@ export default function loadAccess (storageLayer: unknown): RequestHandler {
       next(err);
     }
   } as RequestHandler;
-};
+}
 /**
  * Adds the id of the access (if any was used during API call)
  * within the `Pryv-Access-Id` header of the given result.

@@ -5,13 +5,12 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
+import type { NormalizedCondition } from '../../../../storages/shared/contentQueryConditions.ts';
 const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./storeDataUtils.ts');
-import type { NormalizedCondition } from '../../../../storages/shared/contentQueryConditions.ts';
 
 type StreamId = string;
 type StreamQueryItem = {

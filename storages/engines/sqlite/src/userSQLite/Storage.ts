@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import { fileIdentity } from '../fileIdentity.ts';
 import { closeQuietly } from '../closeQuietly.ts';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -22,7 +23,6 @@ const VERSION = '1.0.0';
 
 interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void>; fileId?: string | null }
 interface SqliteStorageOptions { max?: number; [k: string]: unknown }
-import type { Logger } from '@pryv/boiler';
 
 class SqliteStorage {
   initialized: boolean = false;

@@ -7,12 +7,10 @@
 
 // TypeScript `any` gate — run via `just lint-ts-any` (part of `just lint`).
 //
-// Kept separate from eslint.config.js on purpose: adding a `files: ['**/*.ts']`
-// block there would make every pattern-less neostandard style config apply to
-// .ts files too (style of .ts is tsc + convention, not eslint, for now).
-// This config applies exactly one rule: explicit `any` is banned in TS
-// sources. The few legitimate escape hatches carry a justified
-// eslint-disable comment in place.
+// Kept separate from eslint.config.js, which checks the style of .ts files
+// (neostandard `ts: true`) on the whole repo: this gate has its own scope
+// (test-helpers excluded) and bans explicit `any` in TS sources. The few
+// legitimate escape hatches carry a justified eslint-disable comment in place.
 const tseslint = require('typescript-eslint');
 const { plugins: neostandardPlugins } = require('neostandard');
 

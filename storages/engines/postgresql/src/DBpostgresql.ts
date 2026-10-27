@@ -537,7 +537,7 @@ class DBpostgresql {
 
   async sweepExpiredWindowedCounters (now = Date.now()): Promise<{ removed: number }> {
     const res = await this.db.query(
-      `DELETE FROM platform_kv WHERE key LIKE 'counter/%' AND (value::jsonb ->> 'windowEndsAt')::bigint <= $1`,
+      'DELETE FROM platform_kv WHERE key LIKE \'counter/%\' AND (value::jsonb ->> \'windowEndsAt\')::bigint <= $1',
       [now]
     );
     return { removed: res.rowCount ?? 0 };
@@ -671,6 +671,5 @@ function getMailTemplateKey (type: string, lang: string, part: string) {
 function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
-
 
 export { DBpostgresql };

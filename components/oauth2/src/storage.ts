@@ -298,7 +298,7 @@ export function withAccountUserId (client: OAuthClient, accountUserId: string): 
  * number of rows converted.
  */
 export async function migrateClientAccountIds (
-  platform: PlatformDB, resolveAccountUserId: (username: string) => Promise<string | null>,
+  platform: PlatformDB, resolveAccountUserId: (username: string) => Promise<string | null>
 ): Promise<number> {
   let converted = 0;
   for (const clientId of await listClientIds(platform)) {
@@ -324,7 +324,7 @@ export async function migrateClientAccountIds (
  * Shared by the master-boot migration and the CLI `update`.
  */
 export async function convertClientAccount (
-  client: OAuthClient, resolveAccountUserId: (username: string) => Promise<string | null>,
+  client: OAuthClient, resolveAccountUserId: (username: string) => Promise<string | null>
 ): Promise<OAuthClient | null> {
   const legacy = legacyAccountUsername(client);
   if (legacy == null) return null;
@@ -401,12 +401,12 @@ export async function pruneRevokedClients (platform: PlatformDB, maxAgeMs: numbe
 // the SHA-256 of the code; single-use stays atomic via consumeAccessState.
 
 export async function setCode (
-  platform: PlatformDB, code: string, payload: OAuthCode,
+  platform: PlatformDB, code: string, payload: OAuthCode
 ): Promise<void> {
   await platform.setAccessState(
     codeKey(code),
     payload,
-    payload.expiresAt,
+    payload.expiresAt
   );
 }
 
@@ -436,13 +436,13 @@ export async function consumeCode (platform: PlatformDB, code: string): Promise<
 // --- Refresh tokens (per-core, sliding TTL with absolute cap) --- //
 
 export async function setRefresh (
-  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefresh,
+  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefresh
 ): Promise<void> {
   // Use the SOONER of expiresAt (sliding) and absoluteExpiresAt as the
   // access-state ttl boundary — lazy-expire then enforces both.
   const ttl = Math.min(
     typeof payload.expiresAt === 'number' ? payload.expiresAt : Number.POSITIVE_INFINITY,
-    typeof payload.absoluteExpiresAt === 'number' ? payload.absoluteExpiresAt : Number.POSITIVE_INFINITY,
+    typeof payload.absoluteExpiresAt === 'number' ? payload.absoluteExpiresAt : Number.POSITIVE_INFINITY
   );
   await platform.setAccessState(refreshKey(coreId, token), payload, ttl);
 }
@@ -476,7 +476,7 @@ export async function consumeRefresh (platform: PlatformDB, coreId: string, toke
  * indistinguishable from expired and correctly classified as such.
  */
 export async function markRefreshConsumed (
-  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefreshUsed, expiresAt: number,
+  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefreshUsed, expiresAt: number
 ): Promise<void> {
   await platform.setAccessState(refreshUsedKey(coreId, token), payload, expiresAt);
 }
@@ -496,7 +496,7 @@ export async function getRefreshConsumed (platform: PlatformDB, coreId: string, 
  * of the access-state keyspace.
  */
 export async function markDPoPJtiUsed (
-  platform: PlatformDB, jkt: string, jti: string, expiresAt: number,
+  platform: PlatformDB, jkt: string, jti: string, expiresAt: number
 ): Promise<boolean> {
   return platform.setAccessStateIfAbsent(PREFIX_DPOP_JTI + jkt + '/' + jti, 1, expiresAt);
 }
@@ -512,7 +512,7 @@ export async function markDPoPJtiUsed (
  * access-state keyspace.
  */
 export async function markClientAssertionJtiUsed (
-  platform: PlatformDB, clientId: string, jti: string, expiresAt: number,
+  platform: PlatformDB, clientId: string, jti: string, expiresAt: number
 ): Promise<boolean> {
   return platform.setAccessStateIfAbsent(PREFIX_CASSERT_JTI + clientId + '/' + jti, 1, expiresAt);
 }
@@ -628,7 +628,7 @@ export async function recordDpopKeySeen (platform: PlatformDB, clientId: string,
 
 /** All seen (clientId, jkt) records, optionally scoped to one client. */
 export async function listDpopKeysSeen (
-  platform: PlatformDB, clientId?: string,
+  platform: PlatformDB, clientId?: string
 ): Promise<Array<{ clientId: string; jkt: string; firstSeenAt: number; lastSeenAt: number }>> {
   const scan = clientId != null && clientId.length > 0
     ? PREFIX_DPOP_JKT_SEEN + clientId + '/'

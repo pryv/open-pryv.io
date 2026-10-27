@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, CmcAccessLike as AccessLike, MallAccessesLike, CmcClientData, CounterpartyRef } from './_types.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -42,15 +43,7 @@ type Counterparty = {
   remoteChatStreamId?: string;
   remoteCollectorStreamId?: string;
 };
-
-import type { CmcAccessLike as AccessLike, MallAccessesLike, CmcClientData, CounterpartyRef } from './_types.ts';
 type AccessClientData = { cmc?: CmcClientData; [k: string]: unknown };
-
-type AccessGetParams = Record<string, unknown>;
-type AccessUpdateParams = {
-  id: string;
-  update: { clientData: AccessClientData };
-};
 
 type MallLike = { accesses: MallAccessesLike };
 
@@ -67,15 +60,15 @@ type BackChannelEventContent = {
 
 type IncomingBackChannelResult =
   | {
-      ok: true;
-      dataGrantAccessId: string;
-      counterparty: { username: string; host: string };
-    }
+    ok: true;
+    dataGrantAccessId: string;
+    counterparty: { username: string; host: string };
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: unknown;
-    };
+    ok: false;
+    reason: string;
+    detail?: unknown;
+  };
 
 async function handleIncomingBackChannel (params: {
   userId: string;

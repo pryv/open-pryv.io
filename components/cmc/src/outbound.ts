@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { OutboundDeps } from './_types.ts';
 const require = createRequire(import.meta.url);
 const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts');
 
@@ -22,7 +22,6 @@ const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts'
  * Pure module: takes `fetch` and timeouts via deps so tests can inject a
  * fake. Returns `{ ok, status, body? }` discriminated unions per outcome.
  */
-
 
 type DeliverResult =
   | { ok: true; status: number; body: unknown }

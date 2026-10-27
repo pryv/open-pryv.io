@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { ConfigLike } from '@pryv/boiler';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { Readable } from 'node:stream';
 import type { CanReadEventAccess } from 'business/src/accesses/canReadEvent.ts';
@@ -43,14 +42,12 @@ type PryvRequest = Request & { context: ContextLike; params: { id: string; fileI
 // the `mall!` / `audit!` uses in handlers rely on that ordering
 // (`audit!` additionally guarded by isAuditActive).
 let initialized = false;
-let config: ConfigLike | null = null;
 let mall: MallLike | null = null;
 let isAuditActive = false;
 let audit: AuditLike | null = null;
 async function middlewareFactory (): Promise<RequestHandler> {
   if (initialized) { return attachmentsAccessMiddleware as RequestHandler; }
   const loadedConfig = await getConfig();
-  config = loadedConfig;
   mall = await getMall();
   // -- Audit
   isAuditActive = !!loadedConfig.get('audit:active');

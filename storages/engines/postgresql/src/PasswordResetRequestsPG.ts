@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -16,7 +17,6 @@ const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 type PgDb = {
   query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
-import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 type ResetRow = { id: string; username: string; expires: Date };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 

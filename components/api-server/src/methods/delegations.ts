@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { MethodNext } from './_types.ts';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -43,9 +46,6 @@ const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
 // from production builds; `@paralleldrive/cuid2` is the shipped dependency).
 const { createId: createCuid } = require('@paralleldrive/cuid2');
-
-import type { MethodNext } from './_types.ts';
-import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 type MethodContext = BaseMethodContext & {
   access?: { isPersonal?: () => boolean; clientData?: { delegation?: { kind?: string; relId?: string; delegate?: { username?: string; hostSlug?: string } } } | null } | null;
 };
@@ -511,7 +511,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
       try {
         const self = await selfIdentity(context.user.username);
         const deps = {
-          mall, now: nowSeconds, idGen: newRelId, self,
+          mall,
+          now: nowSeconds,
+          idGen: newRelId,
+          self,
           inviteTtlSeconds: DEFAULT_INVITE_TTL_SECONDS,
           resolveTarget,
           deliverInvite: makeDeliverInvite(),
@@ -534,7 +537,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const controlledUsername = String(params.username || '');
         const self = await selfIdentity(context.user.username);
         const deps = {
-          mall, now: nowSeconds, idGen: newRelId, self,
+          mall,
+          now: nowSeconds,
+          idGen: newRelId,
+          self,
           callControlledSide: makeCallControlledSide(controlledUsername),
         };
         const delegationResult = await delegation.acceptAttach(deps, {
@@ -553,7 +559,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const controlledUsername = String(params.username || '');
         const self = await selfIdentity(context.user.username);
         const deps = {
-          mall, now: nowSeconds, idGen: newRelId, self,
+          mall,
+          now: nowSeconds,
+          idGen: newRelId,
+          self,
           callControlledSide: makeCallControlledSide(controlledUsername),
         };
         await delegation.refuseAttach(deps, { aUserId: context.user.id, controlledUsername });
@@ -571,7 +580,8 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const self = await selfIdentity(context.user.username);
         const deps = { mall, now: nowSeconds, self, resolveTarget, deliverInvite: makeDeliverInvite() };
         await delegation.cancelInvite(deps, {
-          bUserId: context.user.id, bUsername: context.user.username,
+          bUserId: context.user.id,
+          bUsername: context.user.username,
           delegateUsername: String(params.username || ''),
         });
         next();
@@ -609,7 +619,8 @@ export default async function produceDelegationsApiMethods (api: { register (...
       try {
         const controlledUsername = String(params.username || '');
         const deps = {
-          mall, now: nowSeconds,
+          mall,
+          now: nowSeconds,
           callControl: makeCallControl(controlledUsername, context.user.username, String(context.user.id)),
         };
         const res = await delegation.getToken(deps, { aUserId: context.user.id, controlledUsername });
@@ -634,7 +645,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
         if (requested !== '') await assertDelegatedUsernameAllowed(requested);
         const self = await selfIdentity(context.user.username);
         const deps = {
-          mall, now: nowSeconds, idGen: newRelId, self,
+          mall,
+          now: nowSeconds,
+          idGen: newRelId,
+          self,
           resolveTargetCore,
           callCreateAccount: makeCallCreateAccount(),
         };
@@ -662,7 +676,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const delegateUsername = String(params.username || '');
         const self = await selfIdentity(context.user.username);
         const deps = {
-          mall, now: nowSeconds, self,
+          mall,
+          now: nowSeconds,
+          self,
           destroySession,
           resolveTarget,
           deliverInvite: makeDeliverInvite(),
@@ -671,7 +687,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
           logger,
         };
         const outcome = await delegation.detachDelegate(deps, {
-          bUserId: context.user.id, bUsername: context.user.username, delegateUsername,
+          bUserId: context.user.id,
+          bUsername: context.user.username,
+          delegateUsername,
           keepAccessIds: params.keepAccessIds,
         });
         if (outcome.revokedChildAccesses) {
@@ -796,7 +814,8 @@ export default async function produceDelegationsApiMethods (api: { register (...
         const marker = context.access?.clientData?.delegation;
         const delegateUsername = String(marker?.delegate?.username ?? '');
         const deps = {
-          mall, now: nowSeconds,
+          mall,
+          now: nowSeconds,
           self: await selfIdentity(context.user.username),
           destroySession,
           resolveTarget,
@@ -806,8 +825,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
           logger,
         };
         const outcome = await delegation.releaseRelationship(deps, {
-          bUserId: context.user.id, bUsername: context.user.username,
-          relId: String(marker?.relId), delegateUsername,
+          bUserId: context.user.id,
+          bUsername: context.user.username,
+          relId: String(marker?.relId),
+          delegateUsername,
         });
         result.released = outcome.released;
         next();
@@ -856,7 +877,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
       }
       if (m.controlApiEndpoint == null) continue;
       const r = await postToPeer({
-        apiEndpoint: m.controlApiEndpoint, path: 'delegations/controlled-side/status', body: {},
+        apiEndpoint: m.controlApiEndpoint,
+        path: 'delegations/controlled-side/status',
+        body: {},
         deps: { fetch: peerFetch, timeoutMs: 5000, logger: getLogger('delegations:outbound') },
       });
       const hasEmail = (r.body as { hasEmail?: unknown } | null)?.hasEmail;
@@ -896,7 +919,8 @@ export default async function produceDelegationsApiMethods (api: { register (...
     if (target != null && !target.found) return;
     if (target != null && target.isSelf && target.userId != null) {
       const deps = {
-        mall, now: nowSeconds,
+        mall,
+        now: nowSeconds,
         self: await selfIdentity(controlledUsername),
         destroySession,
         resolveTarget,
@@ -906,8 +930,11 @@ export default async function produceDelegationsApiMethods (api: { register (...
         logger,
       };
       const outcome = await delegation.releaseRelationship(deps, {
-        bUserId: target.userId, bUsername: controlledUsername, relId: mirror.relId,
-        delegateUsername: account.username, delegateUserId: account.id,
+        bUserId: target.userId,
+        bUsername: controlledUsername,
+        relId: mirror.relId,
+        delegateUsername: account.username,
+        delegateUserId: account.id,
       });
       if (outcome.released) logger.info('account deletion: delegation released on a controlled account of this core', { relId: mirror.relId });
       return;

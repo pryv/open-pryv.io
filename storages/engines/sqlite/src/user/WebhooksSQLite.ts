@@ -57,9 +57,20 @@ class WebhooksSQLite extends BaseStorageSQLite<StoredWebhook> {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
-        accessId: 1, url: 1, state: 1, runCount: 1, failCount: 1,
-        lastRun: 1, runs: 1, currentRetries: 1, maxRetries: 1,
-        minIntervalMs: 1, created: 1, createdBy: 1, modified: 1, modifiedBy: 1
+        accessId: 1,
+        url: 1,
+        state: 1,
+        runCount: 1,
+        failCount: 1,
+        lastRun: 1,
+        runs: 1,
+        currentRetries: 1,
+        maxRetries: 1,
+        minIntervalMs: 1,
+        created: 1,
+        createdBy: 1,
+        modified: 1,
+        modifiedBy: 1
       }
     }, callback);
   }

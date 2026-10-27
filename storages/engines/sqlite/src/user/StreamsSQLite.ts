@@ -31,7 +31,7 @@ class StreamsSQLite extends BaseStorageSQLite<StreamItem> {
     this.tableName = 'streams';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = false;
-    this.defaultSort = `json_extract(data, '$.name') ASC`;
+    this.defaultSort = 'json_extract(data, \'$.name\') ASC';
   }
 
   rowToItem (row: DbRow): StreamItem | null {
@@ -124,8 +124,14 @@ class StreamsSQLite extends BaseStorageSQLite<StreamItem> {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
-        name: 1, parentId: 1, clientData: 1, trashed: 1,
-        created: 1, createdBy: 1, modified: 1, modifiedBy: 1
+        name: 1,
+        parentId: 1,
+        clientData: 1,
+        trashed: 1,
+        created: 1,
+        createdBy: 1,
+        modified: 1,
+        modifiedBy: 1
       }
     }, cb);
   }

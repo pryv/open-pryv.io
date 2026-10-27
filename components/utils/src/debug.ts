@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 import util from 'util';
 
 function log (...args: unknown[]) {

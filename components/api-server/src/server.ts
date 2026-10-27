@@ -5,8 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
-import type { Logger } from '@pryv/boiler';
+import type { ConfigLike as BoilerConfig, Logger } from '@pryv/boiler';
 import type { ValidityVerdict } from 'business/src/acme/certUtils.ts';
 const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized

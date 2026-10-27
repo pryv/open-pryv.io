@@ -5,8 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
-import type { Logger } from '@pryv/boiler';
+import type { ConfigLike as BoilerConfig, Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -346,6 +345,3 @@ function getApplication (forceNewApp?: boolean) {
 }
 
 export { getApplication };
-type UpdatesSettingsHolder = {
-  ignoreProtectedFields: boolean;
-};

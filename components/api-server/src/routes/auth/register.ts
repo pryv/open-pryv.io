@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from '../_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const path = require('path');
 const methodCallback = require('../methodCallback.ts').default;
@@ -15,7 +15,6 @@ const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
 const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
-
 
 /**
  * Routes for users
@@ -78,4 +77,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.get(path.join(regPath, '/hostings'), setMinimalMethodContext, setMethodId('auth.hostings'), (req: PryvRequest, res: Response, next: NextFunction) => {
     api.call(req.context, {}, methodCallback(res, next, 200));
   });
-};
+}

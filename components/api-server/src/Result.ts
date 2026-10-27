@@ -482,8 +482,3 @@ interface ResultPrivate {
   tracingId: string | null;
 }
 type ToObjectCallback = (err?: Error | null, res?: APIResult | null) => unknown;
-type doneCallBack = () => unknown;
-type itemDeletion = {
-  id: string;
-  deleted: number;
-};

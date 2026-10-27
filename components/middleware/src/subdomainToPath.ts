@@ -45,7 +45,7 @@ export default function (ignoredPaths: string[], ignoredSubdomains?: string[]): 
       return url.startsWith(ignoredPath);
     });
   }
-};
+}
 function looksLikeUsername (candidate: string): boolean {
   const reUsername = new RegExp(USERNAME_REGEXP_STR);
   const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility

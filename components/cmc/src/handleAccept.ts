@@ -5,8 +5,10 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, OutboundDeps } from './_types.ts';
+import type { OutboundDeps, CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
 import { retryAfterOf } from './outbound.ts';
+import type { Features } from './features.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -34,7 +36,6 @@ const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // business/src/accesses/consentEffectiveGuard.ts.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
-import type { Features } from './features.ts';
 
 type OfferShape = {
   id?: string;
@@ -50,8 +51,6 @@ type OfferShape = {
   };
   [k: string]: unknown;
 };
-
-import type { CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
 type MallLike = { accesses: MallAccessesLike; events: MallEventsLike; streams?: MallStreamsLike };
 
 /**
@@ -76,24 +75,23 @@ type DelegationDeps = {
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
 };
 
-
 type AcceptHandlerResult =
   | {
-      ok: true;
-      capabilityId: string | null;
-      dataGrantAccessId: string;
-      dataGrantApiEndpoint: string;
-      offerEventId: string;
-      backChannelApiEndpoint: string | null; // filled later when requester returns it
-      anchorStreamIds: string[];             // chats/collectors anchors created on this side
-      requesterIdentity: { username: string; host: string }; // stamped onto trigger.content.from by dispatch
-      features: Features;                    // resolved; stamped onto trigger.content.features by dispatch
-    }
+    ok: true;
+    capabilityId: string | null;
+    dataGrantAccessId: string;
+    dataGrantApiEndpoint: string;
+    offerEventId: string;
+    backChannelApiEndpoint: string | null; // filled later when requester returns it
+    anchorStreamIds: string[];             // chats/collectors anchors created on this side
+    requesterIdentity: { username: string; host: string }; // stamped onto trigger.content.from by dispatch
+    features: Features;                    // resolved; stamped onto trigger.content.features by dispatch
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: unknown;
-    };
+    ok: false;
+    reason: string;
+    detail?: unknown;
+  };
 
 /**
  * Handle a `consent/accept-cmc` trigger event.

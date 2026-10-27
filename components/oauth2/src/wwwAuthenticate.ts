@@ -25,7 +25,7 @@ import type { OAuth2Error } from './errorMap.ts';
 export function WWW_AUTHENTICATE_BEARER (
   realm: string = 'pryv.io',
   error?: Extract<OAuth2Error, 'invalid_request' | 'invalid_token' | 'insufficient_scope'>,
-  errorDescription?: string,
+  errorDescription?: string
 ): string {
   const parts = [`realm="${escapeQuoted(realm)}"`];
   if (error != null) parts.push(`error="${error}"`);
@@ -43,7 +43,7 @@ export function WWW_AUTHENTICATE_DPOP (
   realm: string = 'pryv.io',
   error?: Extract<OAuth2Error, 'invalid_request' | 'invalid_token' | 'insufficient_scope'>,
   errorDescription?: string,
-  algs: string[] = ['ES256'],
+  algs: string[] = ['ES256']
 ): string {
   const parts = [
     `realm="${escapeQuoted(realm)}"`,

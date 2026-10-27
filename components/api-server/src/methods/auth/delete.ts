@@ -25,4 +25,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.validateUserFilepaths.bind(deletion),
     deletion.checkDeletionGuards.bind(deletion),
     ...deletion.erasureSteps());
-};
+}

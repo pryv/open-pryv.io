@@ -47,11 +47,6 @@ const delegation = require('delegation');
 const { managingAccessBase } = require('business/src/accesses/refs.ts');
 const { withoutUrlUserinfo } = require('business/src/accesses/credentialUrls.ts');
 
-type WebhooksSettingsHolder = {
-  minIntervalMs: number;
-  maxRetries: number;
-  runsSize: number;
-};
 export default async function produceWebhooksApiMethods (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   // Lazy getter instead of slice capture.
@@ -372,4 +367,4 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     if (access.isPersonal()) { return true; }
     return access.id === webhook.accessId;
   }
-};
+}

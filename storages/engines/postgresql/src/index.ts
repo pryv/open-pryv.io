@@ -287,7 +287,8 @@ function getMigrationsCapability (): unknown | null {
   return buildMigrationsCapability();
 }
 
-export { init,
+export {
+  init,
   initStorageLayer,
   getUserAccountStorage,
   getUsersLocalIndex,
@@ -298,4 +299,5 @@ export { init,
   createAuditStorage,
   createFileStorage,
   getMigrationsCapability,
-  reconcileContentIndexes };
+  reconcileContentIndexes
+};

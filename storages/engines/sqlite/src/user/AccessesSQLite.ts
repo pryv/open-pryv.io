@@ -48,7 +48,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = true;
-    this.defaultSort = `json_extract(data, '$.name') ASC`;
+    this.defaultSort = 'json_extract(data, \'$.name\') ASC';
     if (integrityAccesses == null) {
       throw new Error(
         'AccessesSQLite requires an integrityAccesses ref — pass ' +

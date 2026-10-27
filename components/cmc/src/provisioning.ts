@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+
+import type { MallStreamsLike } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -44,8 +46,6 @@ type StreamCreateParams = {
   createdBy?: string;
   modifiedBy?: string;
 };
-
-import type { MallStreamsLike } from './_types.ts';
 type MallStreamsOnly = { streams: MallStreamsLike };
 
 type ProvisionLogger = {

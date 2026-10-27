@@ -19,7 +19,6 @@ const { setMethodId } = require('middleware');
   await commonMeta.loadSettings();
 })();
 
-
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.
 function root (expressApp: ExpressApp, app: AppLike): void {

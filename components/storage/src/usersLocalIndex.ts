@@ -6,13 +6,13 @@
  */
 
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 /**
  * Contains UserName >> UserId Mapping
  */
 
 import type { UsersLocalIndexDB } from 'storages/interfaces/baseStorage/UsersLocalIndexDB.ts';
+const require = createRequire(import.meta.url);
 
 const { getLogger } = require('@pryv/boiler');
 const cache = require('cache').default;

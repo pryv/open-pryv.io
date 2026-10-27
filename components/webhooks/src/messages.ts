@@ -5,5 +5,4 @@
  * Refer to LICENSE file
  */
 
-
 export const BOOT_MESSAGE = 'webhooksServiceBoot';

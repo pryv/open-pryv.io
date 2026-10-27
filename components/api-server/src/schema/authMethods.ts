@@ -141,76 +141,76 @@ const registrationSchema = {
 // extend registration settings with settings from the accountStreams
 registrationSchema.params = loadCustomValidationSettings(registrationSchema.params);
 const __ex_login = {
-    params: object({
-      username: string(),
-      password: string(),
-      appId: string(),
-      origin: string()
-    }, {
-      required: ['username', 'password', 'appId'],
-      additionalProperties: false
-    }),
-    result: object({
-      token: string(),
-      apiEndpoint: string(),
-      // When the user has active MFA the login step returns these INSTEAD of
-      // token/apiEndpoint (the real token is released by mfa.verify). Result
-      // schemas are not runtime-enforced on this path; listed for documentation.
-      mfaToken: string(),
-      mfaMethod: string()
-    }, {
-      required: ['token'],
-      additionalProperties: false
-    })
-  };
+  params: object({
+    username: string(),
+    password: string(),
+    appId: string(),
+    origin: string()
+  }, {
+    required: ['username', 'password', 'appId'],
+    additionalProperties: false
+  }),
+  result: object({
+    token: string(),
+    apiEndpoint: string(),
+    // When the user has active MFA the login step returns these INSTEAD of
+    // token/apiEndpoint (the real token is released by mfa.verify). Result
+    // schemas are not runtime-enforced on this path; listed for documentation.
+    mfaToken: string(),
+    mfaMethod: string()
+  }, {
+    required: ['token'],
+    additionalProperties: false
+  })
+};
 export { __ex_login as login };
 const __ex_logout = {
-    params: object({})
-  };
+  params: object({})
+};
 export { __ex_logout as logout };
 const __ex_register = registrationSchema;
 export { __ex_register as register };
 const __ex_usernameCheck = {
-    params: object({
-      username: helpers.username
-    }, {
-      required: ['username'],
-      messages: {
-        username: {
-          PATTERN: {
-            message: ErrorMessages[ErrorIds.InvalidUsername],
-            code: ErrorIds.InvalidUsername
-          },
-          OBJECT_MISSING_REQUIRED_PROPERTY: {
-            message: ErrorMessages[ErrorIds.UsernameRequired],
-            code: ErrorIds.UsernameRequired
-          }
+  params: object({
+    username: helpers.username
+  }, {
+    required: ['username'],
+    messages: {
+      username: {
+        PATTERN: {
+          message: ErrorMessages[ErrorIds.InvalidUsername],
+          code: ErrorIds.InvalidUsername
+        },
+        OBJECT_MISSING_REQUIRED_PROPERTY: {
+          message: ErrorMessages[ErrorIds.UsernameRequired],
+          code: ErrorIds.UsernameRequired
         }
-      },
-      additionalProperties: false
-    })
-  };
+      }
+    },
+    additionalProperties: false
+  })
+};
 export { __ex_usernameCheck as usernameCheck };
 const __ex_emailCheck = {
-    params: object({
-      email: helpers.email
-    }, {
-      required: ['email'],
-      messages: {
-        email: {
-          PATTERN: {
-            message: ErrorMessages[ErrorIds.InvalidEmail],
-            code: ErrorIds.InvalidEmail
-          },
-          OBJECT_MISSING_REQUIRED_PROPERTY: {
-            message: ErrorMessages[ErrorIds.EmailRequired],
-            code: ErrorIds.EmailRequired
-          }
+  params: object({
+    email: helpers.email
+  }, {
+    required: ['email'],
+    messages: {
+      email: {
+        PATTERN: {
+          message: ErrorMessages[ErrorIds.InvalidEmail],
+          code: ErrorIds.InvalidEmail
+        },
+        OBJECT_MISSING_REQUIRED_PROPERTY: {
+          message: ErrorMessages[ErrorIds.EmailRequired],
+          code: ErrorIds.EmailRequired
         }
-      },
-      additionalProperties: false
-    })
-  };
+      }
+    },
+    additionalProperties: false
+  })
+};
 export { __ex_emailCheck as emailCheck };
 const __ex_emailChallenge = {
   params: object({

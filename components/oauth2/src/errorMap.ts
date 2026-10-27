@@ -113,7 +113,7 @@ export function mapError (pryvErrorId: string): OAuth2Error {
 export function buildErrorResponse (
   oauthError: OAuth2Error,
   description?: string,
-  uri?: string,
+  uri?: string
 ): { error: OAuth2Error; error_description?: string; error_uri?: string } {
   const body: ReturnType<typeof buildErrorResponse> = { error: oauthError };
   if (description != null) body.error_description = description;

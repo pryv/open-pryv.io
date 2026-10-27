@@ -23,12 +23,12 @@
 
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+
+import type { SqliteDb, SqliteStmt } from '../types.ts';
 const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
-
-import type { SqliteDb, SqliteStmt } from '../types.ts';
 
 type InsertRow = { event_id: string; point_time: number; delta_time: number; fields: string };
 

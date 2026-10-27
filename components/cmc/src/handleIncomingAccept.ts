@@ -5,7 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, CmcAccessLike as AccessLike, MallLike } from './_types.ts';
+import type { Features } from './features.ts';
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -59,28 +61,24 @@ const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
-import type { Features } from './features.ts';
 const crypto = require('node:crypto');
 
 type Counterparty = { username: string; host: string };
 
-import type { CmcAccessLike as AccessLike, MallLike } from './_types.ts';
-
 type IncomingAcceptResult =
   | {
-      ok: true;
-      backChannelAccessId: string;
-      backChannelApiEndpoint?: string;
-      anchorStreamIds: string[];
-      appCode: string;
-      counterparty: Counterparty;
-    }
+    ok: true;
+    backChannelAccessId: string;
+    backChannelApiEndpoint?: string;
+    anchorStreamIds: string[];
+    appCode: string;
+    counterparty: Counterparty;
+  }
   | {
-      ok: false;
-      reason: string;
-      detail?: unknown;
-    };
-
+    ok: false;
+    reason: string;
+    detail?: unknown;
+  };
 
 type SelfIdentity = { username: string; host: string };
 

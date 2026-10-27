@@ -135,7 +135,7 @@ function selectCandidateKeys (jwksRaw: { keys: unknown[] } | null | undefined, k
  */
 export async function verifyClientAssertion (
   assertion: unknown,
-  opts: ClientAssertionVerifyOptions,
+  opts: ClientAssertionVerifyOptions
 ): Promise<VerifiedClientAssertion> {
   if (typeof assertion !== 'string' || assertion.length === 0) fail('assertion missing');
   if (assertion.length > MAX_ASSERTION_LENGTH) fail('assertion too large');

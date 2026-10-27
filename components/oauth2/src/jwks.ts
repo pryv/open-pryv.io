@@ -104,6 +104,6 @@ export async function importVerifyKey (jwk: EcP256PublicJwk) {
     { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y },
     { name: 'ECDSA', namedCurve: 'P-256' },
     false,
-    ['verify'],
+    ['verify']
   );
 }

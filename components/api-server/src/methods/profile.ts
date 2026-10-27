@@ -151,4 +151,4 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     params.id = context.access.name;
     next();
   }
-};
+}

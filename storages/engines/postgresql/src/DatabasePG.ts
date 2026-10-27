@@ -6,6 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { Pool } = require('pg');
@@ -83,8 +85,6 @@ interface PoolConfig {
   idleTimeoutMillis: number;
   connectionTimeoutMillis: number;
 }
-
-import type { Logger } from '@pryv/boiler';
 
 /**
  * PostgreSQL connection wrapper with pooling.

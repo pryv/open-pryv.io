@@ -5,8 +5,9 @@
  * Refer to LICENSE file
  */
 
-
 import { createRequire } from 'node:module';
+
+import type MallType from './Mall.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -18,8 +19,6 @@ const { setTimeout } = require('timers/promises');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const Mall = require('./Mall.ts').default;
 const storeDataUtils = require('./helpers/storeDataUtils.ts');
-
-import type MallType from './Mall.ts';
 
 export { getMall, storeDataUtils };
 
@@ -94,4 +93,3 @@ async function buildMall () {
 
   return newMall;
 }
-

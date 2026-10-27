@@ -32,7 +32,6 @@ const { ROOT_PATH, parseJsonPath, resolveJsonPath, matchesConditions } = require
 const MAX_CONDITIONS = 10;
 const MAX_VALUES_PER_IN = 100;
 const OPERATORS: ConditionOp[] = ['eq', 'neq', 'in', 'exists', 'gt', 'gte', 'lt', 'lte', 'prefix'];
-const NUMERIC_OPS = new Set<ConditionOp>(['gt', 'gte', 'lt', 'lte']);
 
 /**
  * Capability announcement of the built-in storage (full operator set on

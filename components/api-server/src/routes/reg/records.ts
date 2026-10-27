@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike, PryvRequest } from '../_types.ts';
+import type { AppLike } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
@@ -33,7 +33,6 @@ const { redactUrl } = require('utils/src/redactUrl.ts');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:records');
-
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const adminAccessKey = app.config.get('auth:adminAccessKey') as string | undefined;
@@ -138,4 +137,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     nudgeMaster(subdomain);
     res.status(200).json({ subdomain, status: 'deleted' });
   });
-};
+}

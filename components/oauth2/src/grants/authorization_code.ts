@@ -112,7 +112,7 @@ export async function handleAuthorizationCode (
   deps: AuthCodeDeps,
   params: GrantParams,
   /** RFC 7638 thumbprint of a proof VERIFIED by the dispatcher, or null. */
-  dpopJkt: string | null = null,
+  dpopJkt: string | null = null
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; status: number; error: string; description?: string }

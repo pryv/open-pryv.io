@@ -7,6 +7,10 @@
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 import { openUploadedFile } from './helpers/uploadedFiles.ts';
+
+import type { MethodNext } from './_types.ts';
+import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
+import type { ReadStream } from 'node:fs';
 const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
@@ -50,10 +54,6 @@ const ReadableDeletionsStream = require('./streams/ReadableDeletionsStream.ts').
 const { Readable } = require('node:stream');
 
 const { integrity } = require('business');
-
-import type { MethodNext } from './_types.ts';
-import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
-import type { ReadStream } from 'node:fs';
 /** System-stream config entry from accountStreams.accountMap. */
 type SystemStreamConfig = { isEditable?: boolean; isIndexed?: boolean; isUnique?: boolean; regexValidation?: string; [k: string]: unknown };
 
@@ -200,7 +200,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const usersRepository = await getUsersRepository();
   const mall = await getMall();
   const platform = await getPlatform();
-  const storageLayer = await getStorageLayer();
+  await getStorageLayer();
   // `:system:email` reads also return the read-only `verification/email` event
   emailsStatus.registerVerificationEvent();
 
@@ -1450,7 +1450,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     });
     return attachments;
   }
-};
+}
 
 /**
  * Fixes req.files structure for when attachments were sent without a filename, in which case

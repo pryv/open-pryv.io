@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Optional DNS server for resolving {username}.{domain} to core IPs.
  *
@@ -23,8 +22,7 @@ import { createSocket } from 'node:dgram';
 import { createServer } from 'node:net';
 import type { Socket as DgramSocket, RemoteInfo } from 'node:dgram';
 import type { Server as NetServer, Socket as NetSocket } from 'node:net';
-import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
-import type { Logger } from '@pryv/boiler';
+import type { ConfigLike as BoilerConfig, Logger } from '@pryv/boiler';
 import { validateRequest, isIgnorableUdpSource } from './wire.ts';
 import type { WireResult, WireHeader } from './wire.ts';
 import { validateDnsRecord, isEncodableAnswer, normalizeStoredRecord } from './recordValidation.ts';
@@ -55,7 +53,6 @@ const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
  *
  */
 const RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa'];
-
 
 /**
  * TCP connections that stay idle this long are dropped (RFC 7766 section 6.2.3
@@ -525,9 +522,19 @@ class DnsServer {
    */
   #encodeResponse (header: ResponseHeader, rawQuestion: Buffer, answers: DnsAnswer[], authorities: DnsAnswer[]): Buffer {
     const h = new Packet.Header({
-      id: header.id, qr: 1, opcode: header.opcode, aa: header.aa, tc: header.tc,
-      rd: header.rd, ra: 0, z: 0, rcode: header.rcode,
-      qdcount: 1, ancount: answers.length, nscount: authorities.length, arcount: 0
+      id: header.id,
+      qr: 1,
+      opcode: header.opcode,
+      aa: header.aa,
+      tc: header.tc,
+      rd: header.rd,
+      ra: 0,
+      z: 0,
+      rcode: header.rcode,
+      qdcount: 1,
+      ancount: answers.length,
+      nscount: authorities.length,
+      arcount: 0
     });
     const headerBuf: Buffer = h.toBuffer();
     let bodyBuf = Buffer.alloc(0);
@@ -543,9 +550,19 @@ class DnsServer {
   /** Encode a header-only reply (qdcount 0): NOTIMP / FORMERR. */
   #encodeHeaderOnly (wire: WireHeader, rcode: number): Buffer {
     const h = new Packet.Header({
-      id: wire.id, qr: 1, opcode: wire.opcode, aa: 0, tc: 0,
-      rd: wire.rd, ra: 0, z: 0, rcode,
-      qdcount: 0, ancount: 0, nscount: 0, arcount: 0
+      id: wire.id,
+      qr: 1,
+      opcode: wire.opcode,
+      aa: 0,
+      tc: 0,
+      rd: wire.rd,
+      ra: 0,
+      z: 0,
+      rcode,
+      qdcount: 0,
+      ancount: 0,
+      nscount: 0,
+      arcount: 0
     });
     return h.toBuffer();
   }

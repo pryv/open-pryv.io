@@ -200,23 +200,23 @@ function uniqueStreamIds (arrayOfStreamiIs: StreamId[]): StreamId[] {
   return [...new Set(arrayOfStreamiIs)];
 }
 export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries: StreamQueryLike[], expandStream: ExpandStreamFn) {
-      async function expandSet (streamIds: StreamId[], storeId: string, excludedIds: StreamId[] = [], opts?: ExpandOptions): Promise<StreamId[]> {
-        const expandedSet = new Set<StreamId>(); // use a Set to avoid duplicate entries;
-        for (const streamId of streamIds) {
-          // skip streamId presents in exluded set
-          if (!excludedIds.includes(streamId)) {
-            (await expandStream(streamId, storeId, excludedIds, opts)).forEach((item: StreamId) => expandedSet.add(item));
-          }
-        }
-        return Array.from(expandedSet);
+  async function expandSet (streamIds: StreamId[], storeId: string, excludedIds: StreamId[] = [], opts?: ExpandOptions): Promise<StreamId[]> {
+    const expandedSet = new Set<StreamId>(); // use a Set to avoid duplicate entries;
+    for (const streamId of streamIds) {
+      // skip streamId presents in exluded set
+      if (!excludedIds.includes(streamId)) {
+        (await expandStream(streamId, storeId, excludedIds, opts)).forEach((item: StreamId) => expandedSet.add(item));
       }
-      const res: ExpandedQuery[] = [];
-      for (const streamQuery of streamQueries) {
-        const expandedQuery = await expandAndTransformStreamQuery(streamQuery, expandSet);
-        if (expandedQuery) { res.push(expandedQuery); }
-      }
-      return res;
-    };
+    }
+    return Array.from(expandedSet);
+  }
+  const res: ExpandedQuery[] = [];
+  for (const streamQuery of streamQueries) {
+    const expandedQuery = await expandAndTransformStreamQuery(streamQuery, expandSet);
+    if (expandedQuery) { res.push(expandedQuery); }
+  }
+  return res;
+};
 async function expandAndTransformStreamQuery (streamQuery: StreamQueryLike, expandSet: ExpandSetFn): Promise<ExpandedQuery | null> {
   let containsAtLeastOneInclusion = false;
   const res: ExpandedQuery = { storeId: streamQuery.storeId };

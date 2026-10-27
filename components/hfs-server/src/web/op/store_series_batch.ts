@@ -138,7 +138,7 @@ class EventMetaDataCache {
 
   async getMeasurementName (eventId: string): Promise<string> {
     const seriesMeta = await this.getSeriesMeta(eventId);
-    const [namespace, name] = seriesMeta.namespaceAndName(); // eslint-disable-line no-unused-vars
+    const [, name] = seriesMeta.namespaceAndName();
     return name;
   }
 
@@ -183,7 +183,7 @@ async function groupByNamespace (batchRequest: BatchRequestLike, resolver: Event
   for (const element of batchRequest.elements()) {
     const eventId = element.eventId;
     const seriesMeta = await resolver.getSeriesMeta(eventId);
-    const [namespace, name] = seriesMeta.namespaceAndName(); // eslint-disable-line no-unused-vars
+    const [namespace] = seriesMeta.namespaceAndName();
     storeToMap(namespace, element);
   }
   return nsToBatch;
@@ -198,5 +198,3 @@ async function groupByNamespace (batchRequest: BatchRequestLike, resolver: Event
 }
 export default storeSeriesBatch;
 export { storeSeriesBatch };
-
-type NamespacedBatchRequests = Map<string, InstanceType<typeof BatchRequest>>;

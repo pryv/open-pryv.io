@@ -6,7 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
-import type { RequestHandler, ErrorRequestHandler, Express } from 'express';
+import type { RequestHandler, ErrorRequestHandler } from 'express';
 const require = createRequire(import.meta.url);
 
 const express = require('express');
@@ -44,9 +44,4 @@ export default function expressApp (commonHeadersMiddleware: RequestHandler, err
     expressApp: app,
     routesDefined
   };
-};
-
-type AppAndEndWare = {
-  expressApp: Express;
-  routesDefined: () => unknown;
-};
+}

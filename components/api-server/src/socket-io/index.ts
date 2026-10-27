@@ -101,7 +101,7 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
       res.setHeader('X-Content-Type-Options', 'nosniff');
     }
   });
-    // Manages socket.io connections and delivers method calls to the api.
+  // Manages socket.io connections and delivers method calls to the api.
   const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);
 
   // Operator client-revoke reaches ALREADY-OPEN sockets. A socket authenticates

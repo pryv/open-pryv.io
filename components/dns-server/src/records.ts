@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Pure helper functions to build dns2 answer objects.
  */

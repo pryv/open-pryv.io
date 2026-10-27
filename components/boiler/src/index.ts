@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-
 /**
  * Pryv Boiler module.
  * @module boiler

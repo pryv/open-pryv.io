@@ -42,7 +42,7 @@ export default async function (): Promise<RequestHandler> {
     noStoreForJson(res);
     next();
   };
-};
+}
 
 /**
  * API answers in JSON are never stored by a cache (they are per account and

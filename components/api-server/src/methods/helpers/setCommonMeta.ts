@@ -51,11 +51,3 @@ export const setCommonMeta = function (result: { meta?: Record<string, unknown> 
   });
   return result;
 };
-
-type MetaInfo = {
-  meta: {
-  apiVersion: string;
-  serverTime: number;
-  serial: string;
-  };
-};

@@ -7,6 +7,8 @@
 
 import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
+
+import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -21,8 +23,6 @@ const errors = ds.errors;
 const timestamp = require('unix-timestamp');
 const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
 const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
-
-import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level event: the canonical stored shape plus the open tail the
  *  deletion-mode field scrubbing indexes dynamically. */
 type EventLike = StoredEvent & { [k: string]: unknown };

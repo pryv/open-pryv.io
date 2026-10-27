@@ -6,14 +6,13 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
-
 
 // Shared accesses route handling.
 export default function (expressApp: ExpressApp, app: AppLike) {
@@ -47,4 +46,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   expressApp.post(Paths.Accesses + '/check-app', setMethodId('accesses.checkApp'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
-};
+}

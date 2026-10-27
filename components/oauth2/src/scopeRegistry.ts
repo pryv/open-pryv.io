@@ -124,7 +124,7 @@ export function isValidCmcOfferName (name: unknown): boolean {
 function cmcParser (body: string): ParsedScope {
   if (!CMC_OFFER_NAME_RE.test(body)) {
     throw new ScopeParseError(
-      `invalid cmc offer name "${body}" — expected 1-64 chars of [a-zA-Z0-9._-], starting alphanumeric`,
+      `invalid cmc offer name "${body}" — expected 1-64 chars of [a-zA-Z0-9._-], starting alphanumeric`
     );
   }
   return {

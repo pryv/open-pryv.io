@@ -5,8 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { ConfigLike as Config } from '@pryv/boiler';
-import type { Logger } from '@pryv/boiler';
+import type { ConfigLike as Config, Logger } from '@pryv/boiler';
 import type { DeletionObjection } from './deletionTeardown.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');

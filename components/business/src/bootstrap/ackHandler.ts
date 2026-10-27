@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-
 /**
  * POST /system/admin/cores/ack handler.
  *

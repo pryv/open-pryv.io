@@ -25,6 +25,10 @@
  */
 
 import { createRequire } from 'node:module';
+
+import type { Request, Response } from 'express';
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { ParsedScope } from '../scopeRegistry.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: converting these to typed ESM imports surfaces
@@ -40,10 +44,6 @@ const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
-
-import type { Request, Response } from 'express';
-import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { ParsedScope } from '../scopeRegistry.ts';
 
 /** Shape of the inputs the host app injects. */
 export type AuthorizeDeps = {
@@ -84,7 +84,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
     if (!validateRedirectUri(client.redirectUris, q.redirect_uri)) {
       return sendHtmlError(res, 400,
-        `redirect_uri does not match any registered URI for this client.`);
+        'redirect_uri does not match any registered URI for this client.');
     }
 
     // From here on, errors redirect the user-agent back to the
@@ -224,7 +224,7 @@ function sendHtmlError (res: Response, status: number, message: string): void {
   res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.end(`<!DOCTYPE html><html><head><title>OAuth error</title></head>` +
+  res.end('<!DOCTYPE html><html><head><title>OAuth error</title></head>' +
     `<body><h1>Authorization failed</h1><p>${escapeHtml(message)}</p></body></html>`);
 }
 
@@ -241,7 +241,7 @@ function sendErrorRedirect (
   errorEnum: string,
   state: string,
   issuer: string,
-  description?: string,
+  description?: string
 ): void {
   const sep = redirectUri.indexOf('?') >= 0 ? '&' : '?';
   let url = redirectUri + sep + 'error=' + encodeURIComponent(errorEnum);

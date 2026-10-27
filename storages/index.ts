@@ -139,7 +139,7 @@ async function _doInit (config?: BoilerConfig) {
 
   // 1. Database connection (based on baseStorage engine)
   const baseEngine = pluginLoader.getEngineFor('baseStorage');
-  let database = null;
+  const database = null;
   let databasePG = null;
   if (baseEngine === 'postgresql') {
     const { DatabasePG } = require('./engines/postgresql/src/DatabasePG.ts');
@@ -260,16 +260,16 @@ function reset () {
 // Node 24 require(esm) the CJS consumer's namespace object exposes them
 // via getter functions backed by these bindings.
 // `undefined` matches the original `instances?.X` getter behavior pre-init.
-let database: unknown = undefined;
-let databasePG: unknown = undefined;
-let connection: unknown = undefined;
-let storageLayer: unknown = undefined;
-let userAccountStorage: unknown = undefined;
-let usersLocalIndex: unknown = undefined;
-let platformDB: unknown = undefined;
-let auditStorage: unknown = undefined;
-let seriesConnection: unknown = undefined;
-let dataStoreModule: unknown = undefined;
+let database: unknown;
+let databasePG: unknown;
+let connection: unknown;
+let storageLayer: unknown;
+let userAccountStorage: unknown;
+let usersLocalIndex: unknown;
+let platformDB: unknown;
+let auditStorage: unknown;
+let seriesConnection: unknown;
+let dataStoreModule: unknown;
 
 function _refreshExports (): void {
   database = instances?.database ?? _earlyDatabase ?? undefined;

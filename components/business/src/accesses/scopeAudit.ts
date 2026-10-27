@@ -123,4 +123,3 @@ export async function auditAccessScope (userId: string, accesses: AccessRow[], d
   }
   return result;
 }
-

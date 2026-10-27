@@ -6,12 +6,11 @@
  */
 import { createRequire } from 'node:module';
 import type { AppLike, PryvRequest } from './_types.ts';
-import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+import type { Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
-
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
@@ -31,4 +30,4 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       api.call(req.context, req.query, methodCallback(res, next, 200));
     });
   }
-};
+}

@@ -11,7 +11,7 @@ const request = require('./request.ts').default;
 const DynamicInstanceManager = require('./DynamicInstanceManager.ts').default;
 const instanceTestSetup = require('./instanceTestSetup.ts');
 const { TestServerContext, TestServer } = require('./TestServerContext.ts');
-const child_process = require('./child_process.ts').default;
+const childProcess = require('./child_process.ts').default;
 const syncPrimitives = require('./condition_variable.ts');
 const databaseFixture = require('./databaseFixture.ts').default;
 const portAllocator = require('./portAllocator.ts');
@@ -41,7 +41,8 @@ export {
   instanceTestSetup,
   TestServerContext,
   TestServer,
-  child_process,
+  // eslint-disable-next-line camelcase -- public export name, read by consumers as `child_process`
+  childProcess as child_process,
   syncPrimitives,
   databaseFixture,
   portAllocator,
