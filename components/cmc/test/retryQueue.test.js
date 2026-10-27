@@ -454,6 +454,14 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
         assert.equal(r.outcome, 'failed-permanent');
         assert.ok(mall._accesses.has('grant-1'), 'server-authored');
+        // The requester's back-channel arrived on the grant: an earlier
+        // delivery went through, only its answer was lost.
+        mall = mallWithGrants();
+        mall._accesses.get('grant-1').clientData.cmc.backChannelApiEndpoint = 'https://bc@peer.example.com/';
+        mall._events.set('r-1', makeRetryEvent({ attempts: MAX_ATTEMPTS }));
+        r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.ok(mall._accesses.has('grant-1'), 'back-channel present');
         // A chat that fails for good has no grant to release.
         mall = mallWithGrants();
         mall._events.set('r-1', makeRetryEvent({ originalType: 'message/cmc-chat', attempts: MAX_ATTEMPTS }));

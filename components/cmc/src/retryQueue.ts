@@ -66,7 +66,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const { isRetryableFailure, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
-const { findDataGrantByAcceptEventId } = require('./handleAccept.ts');
+const { findDataGrantByAcceptEventId, hasBackChannel } = require('./handleAccept.ts');
 
 const MAX_ATTEMPTS = 6;
 const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
@@ -587,6 +587,12 @@ async function releaseFailedAcceptGrant (params: { userId: string; retryEvent: R
     if ((trigger?.content as { status?: unknown } | undefined)?.status === 'completed') return;
     const grant = await findDataGrantByAcceptEventId({ mall: deps.mall, userId, acceptEventId });
     if (grant?.id == null) return;
+    // The requester's back-channel arrived: an earlier delivery went through,
+    // only its answer was lost. The relationship stands.
+    if (hasBackChannel(grant)) {
+      deps.logger?.info?.('cmc/retry: an accept failed for good but its grant carries the back-channel: kept', { retryEventId: retryEvent.id, acceptEventId });
+      return;
+    }
     await accesses.delete(userId, { id: grant.id });
     deps.logger?.info?.('cmc/retry: the data grant of an accept that never reached its counterparty was deleted', {
       retryEventId: retryEvent.id, acceptEventId, accessId: grant.id,

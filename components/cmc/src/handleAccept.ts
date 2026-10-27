@@ -535,7 +535,16 @@ async function handleAccept (params: {
     // access in place; the outbound retry queue will re-attempt delivery. A
     // refused destination is as permanent as a 4xx: same roll-back.
     const refused = delivery?.response?.reason === 'refused';
-    if (delivery?.response?.reason === 'http-4xx' || refused) {
+    const rejection = delivery?.response?.reason === 'http-4xx' ? capabilityRejectionReason(delivery?.response?.body) : null;
+    if ((rejection === CmcErrorIds.CAPABILITY_CONSUMED || rejection === CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU) &&
+        hasBackChannel(dataGrantAccess)) {
+      // The requester already took THIS accept: an earlier delivery whose
+      // answer was lost (a timeout) went through, and its back-channel has
+      // arrived on the grant. The relationship stands: complete, keep the grant.
+      deps.logger?.info?.('cmc/handleAccept: the capability was already used by this accept (back-channel present): completed', {
+        acceptEventId: triggerEvent?.id, dataGrantAccessId: dataGrantAccess.id, reason: rejection,
+      });
+    } else if (delivery?.response?.reason === 'http-4xx' || refused) {
       try {
         if (mall.accesses.delete != null) {
           await mall.accesses.delete(userId, { id: dataGrantAccess.id });
@@ -554,12 +563,13 @@ async function handleAccept (params: {
         reason: capabilityRejectionReason(delivery?.response?.body),
         detail: { status: delivery?.response?.status, body: delivery?.response?.body },
       };
+    } else {
+      return {
+        ok: false,
+        reason: 'cmc-handler-delivery-failed',
+        detail: deliveryFailedDetail(delivery?.response),
+      };
     }
-    return {
-      ok: false,
-      reason: 'cmc-handler-delivery-failed',
-      detail: deliveryFailedDetail(delivery?.response),
-    };
   }
 
   // Anchor streams already provisioned at step 2a (so they could be
@@ -774,6 +784,16 @@ async function findAccessById (mall: MallLike, userId: string, accessId: string)
   if (typeof mall.accesses?.get !== 'function') return null;
   const list = await mall.accesses.get(userId, {});
   return (Array.isArray(list) ? list : []).find((a) => a?.id === accessId) ?? null;
+}
+
+/**
+ * True when the requester's back-channel has arrived on this data grant
+ * (stamped by handleIncomingBackChannel): the requester took the accept, the
+ * relationship formed, whatever the accepter's side last heard.
+ */
+function hasBackChannel (access: CmcAccessLike | null | undefined): boolean {
+  const endpoint = (access?.clientData?.cmc as { backChannelApiEndpoint?: unknown } | undefined)?.backChannelApiEndpoint;
+  return typeof endpoint === 'string' && endpoint.length > 0;
 }
 
 async function deleteGrantQuietly (mall: MallLike, userId: string, accessId: string, deps: OutboundDeps): Promise<void> {
@@ -1039,6 +1059,7 @@ export {
   handleAccept,
   handleRefuse,
   findDataGrantByAcceptEventId,
+  hasBackChannel,
   inferCounterparty,
   pickScopeFromTrigger,
   pickScopeFromOfferOrTrigger,

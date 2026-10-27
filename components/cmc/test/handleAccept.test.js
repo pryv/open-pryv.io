@@ -882,6 +882,40 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.dataGrantApiEndpoint, 'https://tok-e@recipient.example.com/');
       assert.equal(mall.calls.accessesCreated.length, 0);
     });
+
+    it('[HA42B] a re-dispatch the requester refuses as already used: completes when the back-channel arrived on the grant, rolls back otherwise', async () => {
+      for (const id of ['cmc-capability-consumed', 'cmc-capability-already-accepted-by-you']) {
+        for (const backChannel of [true, false]) {
+          const existing = {
+            id: 'acc-existing',
+            token: 'tok-e',
+            apiEndpoint: 'https://tok-e@recipient.example.com/',
+            clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept', ...(backChannel ? { backChannelApiEndpoint: 'https://bc@requester.example.com/' } : {}) } },
+          };
+          const mall = fakeMallWithNames(['my-app'], [existing]);
+          const { fetch } = fakeFetch([
+            { status: 200, body: { events: [VALID_OFFER] } },
+            { status: 400, body: { error: { id: 'invalid-operation', data: { id } } } },
+          ]);
+          const r = await handleAccept({
+            userId: 'u1',
+            triggerEvent: DUP_TRIGGER,
+            selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+            deps: { mall, fetch },
+          });
+          const label = id + (backChannel ? ', back-channel' : ', no back-channel');
+          if (backChannel) {
+            assert.equal(r.ok, true, label + ': ' + JSON.stringify(r));
+            assert.equal(r.dataGrantAccessId, 'acc-existing', label);
+            assert.equal(mall.calls.accessesDeleted.length, 0, label + ': grant kept');
+          } else {
+            assert.equal(r.ok, false, label);
+            assert.equal(r.reason, id, label);
+            assert.equal(mall.calls.accessesDeleted.length, 1, label + ': grant rolled back');
+          }
+        }
+      }
+    });
   });
 
   describe('[CMCHA-DEL] accept given through an account delegation', () => {
