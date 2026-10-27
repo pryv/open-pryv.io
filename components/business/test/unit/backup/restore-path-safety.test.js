@@ -79,7 +79,13 @@ function makeOrchestrator () {
   };
   o.saved = [];
   o.eventFiles = {
-    async saveAttachmentFromStream (stream, userId, eventId, fileId) { writes.push('eventFiles.save'); o.saved.push({ userId, eventId, fileId }); },
+    // Reads the stream to its end, as the real one does: an unread file stream
+    // would still be opening its file when the test removes the backup.
+    async saveAttachmentFromStream (stream, userId, eventId, fileId) {
+      writes.push('eventFiles.save');
+      o.saved.push({ userId, eventId, fileId });
+      if (stream != null) await new Promise((resolve, reject) => stream.on('error', reject).on('close', resolve).resume());
+    },
     async removeAllForUser () { writes.push('eventFiles.removeAllForUser'); }
   };
   o.auditStorage = null;
@@ -288,10 +294,40 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual(byId, { 'file-ref': 'evt1', 'file-orphan': null });
 
       const { o } = makeOrchestrator();
+      // Every attachment stream the reader hands out, to check none is left open
       const reader2 = createFilesystemBackupReader(backupDir);
+      const handedOut = [];
+      const openUser = reader2.openUser.bind(reader2);
+      reader2.openUser = async (...args) => {
+        const userReader = await openUser(...args);
+        const readAttachments = userReader.readAttachments.bind(userReader);
+        userReader.readAttachments = async function * () {
+          for await (const a of await readAttachments()) { handedOut.push(a); yield a; }
+        };
+        return userReader;
+      };
       await o.restoreUser(CUID2_ID, reader2, { overwrite: true });
       assert.deepStrictEqual(o.saved.map((s) => s.fileId), ['file-ref'], 'only the referenced file is restored');
       assert.deepStrictEqual(o.saved.map((s) => s.eventId), ['evt1']);
+      // The file not restored included: its stream is closed by the time the
+      // restore returns, so removing the backup next cannot fail under it.
+      assert.deepStrictEqual(handedOut.map((a) => [a.fileId, a.stream.closed]).sort(), [['file-orphan', true], ['file-ref', true]]);
+    });
+
+    it('[BKRSA] the restore returns only once the stream of a file it does not restore is closed', async function () {
+      // A stream whose opening completes later, as a file stream's open does on
+      // a busy server: destroying it does not cancel that opening.
+      let closedAt = null;
+      const slowToOpen = new Readable({
+        construct (callback) { setTimeout(callback, 50); },
+        read () { this.push(null); }
+      });
+      slowToOpen.once('close', () => { closedAt = Date.now(); });
+      const userReader = makeUserReader({ attachments: [{ eventId: null, fileId: 'file-orphan', stream: slowToOpen }] });
+      const { o } = makeOrchestrator();
+      await o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }], userReader), { overwrite: true });
+      assert.ok(closedAt != null && slowToOpen.closed, 'the stream is closed when the restore returns');
+      assert.deepStrictEqual(o.saved, [], 'nothing restored');
     });
 
     it('[BKRS6] the reader refuses a user id that leaves the backup users folder', async function () {

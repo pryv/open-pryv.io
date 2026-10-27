@@ -347,7 +347,7 @@ class RestoreOrchestrator {
     let unreferencedAttachments = 0;
     for await (const { eventId, fileId, stream } of await userReader.readAttachments()) {
       if (eventId == null) {
-        (stream as { destroy?: () => void } | null)?.destroy?.();
+        await discardStream(stream);
         unreferencedAttachments++;
         continue;
       }
@@ -691,6 +691,29 @@ function parseRawPlatformEntry (entry: { key: string; value: string }) {
 
 function emptyExtIdSummary (): ExternalIdRestoreSummary {
   return { restored: 0, lost: 0, namespaceMissing: 0, invalid: 0 };
+}
+
+type DiscardableStream = { destroy?: () => void; closed?: boolean; on?: (event: string, fn: () => void) => unknown; once?: (event: string, fn: () => void) => unknown };
+
+/**
+ * Let go of an attachment stream that is not read, and wait until it is
+ * closed. A file stream opens its file asynchronously and `destroy()` does
+ * not cancel that open: without the wait, the open (and its file descriptor)
+ * outlives the restore, and if the file is gone by then (a backup directory
+ * removed after the restore) its error is raised with no listener.
+ */
+async function discardStream (stream: unknown): Promise<void> {
+  const s = stream as DiscardableStream | null;
+  if (s == null || typeof s.destroy !== 'function') return;
+  if (s.closed === true || typeof s.once !== 'function' || typeof s.on !== 'function') {
+    s.destroy();
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    s.on!('error', () => {});
+    s.once!('close', () => resolve());
+    s.destroy!();
+  });
 }
 
 export default RestoreOrchestrator;
