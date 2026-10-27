@@ -48,6 +48,13 @@ const CORE_B_ID = 'core-b';
 const CORE_A_IP = '127.0.0.1';
 const CORE_B_IP = '127.0.0.2';
 const CORE_C_PORT = 13020;
+// Each core's hosting: a registration posted with `hosting` is placed on that
+// core (an un-pinned one goes to the core with the fewest users, a tie being
+// decided by the platform row order).
+const CORE_A_HOSTING = 'hosting-a';
+const CORE_B_HOSTING = 'hosting-b';
+const CORE_A_URL = `http://127.0.0.1:${CORE_A_PORT}/`;
+const CORE_B_URL = `http://127.0.0.1:${CORE_B_PORT}/`;
 // Hosted sites: `sitehome` on both cores, `siteonly` on core A only (core B
 // must still refuse it as a username, from core A's advertisement).
 const SITE_DIR = '/tmp/rg2c-hosted-site';
@@ -179,9 +186,11 @@ describe('[RG2C] Two-core integration tests', function () {
     platformDB = new DBrqlite(RQLITE_URL);
     await platformDB.init();
 
-    // Seed core info in PlatformDB so cores can find each other
-    await seedCoreInfo(CORE_A_ID, CORE_A_IP);
-    await seedCoreInfo(CORE_B_ID, CORE_B_IP);
+    // Seed core info in PlatformDB so cores can find each other: each core
+    // reads the other cores' URLs when it boots, before the other one has
+    // registered itself, so the rows carry the URLs from the start.
+    await seedCoreInfo(CORE_A_ID, CORE_A_IP, CORE_A_PORT, CORE_A_HOSTING);
+    await seedCoreInfo(CORE_B_ID, CORE_B_IP, CORE_B_PORT, CORE_B_HOSTING);
 
     // Start DNS server (in-process, ephemeral port)
     // platformDB (DBrqlite) exposes getUserCore, getCoreInfo, getAllCoreInfos
@@ -253,6 +262,7 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_PORT: String(CORE_A_PORT),
       CORE_ID: CORE_A_ID,
       CORE_IP: CORE_A_IP,
+      CORE_HOSTING: CORE_A_HOSTING,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
     });
 
@@ -261,6 +271,7 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_PORT: String(CORE_B_PORT),
       CORE_ID: CORE_B_ID,
       CORE_IP: CORE_B_IP,
+      CORE_HOSTING: CORE_B_HOSTING,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR } })
     });
 
@@ -293,8 +304,8 @@ describe('[RG2C] Two-core integration tests', function () {
 
   // --- Helper: seed core info in PlatformDB ---
 
-  async function seedCoreInfo (coreId, ip) {
-    await platformDB.setCoreInfo(coreId, { id: coreId, ip, ipv6: null, cname: null, hosting: null, available: true });
+  async function seedCoreInfo (coreId, ip, port, hosting) {
+    await platformDB.setCoreInfo(coreId, { id: coreId, url: `http://127.0.0.1:${port}`, ip, ipv6: null, cname: null, hosting, available: true });
   }
 
   // --- Tests ---
@@ -305,6 +316,12 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.ok(expected, 'the test process has a base engine');
       assert.strictEqual(coreA.readyInfo.baseEngine, expected, 'core A');
       assert.strictEqual(coreB.readyInfo.baseEngine, expected, 'core B');
+      // Multi-core nodes, each advertising its own URL (a single-core node
+      // would take the local path for every cross-core call)
+      for (const [core, port] of [[coreA, CORE_A_PORT], [coreB, CORE_B_PORT]]) {
+        assert.strictEqual(core.readyInfo.isSingleCore, false, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.coreUrl, `http://127.0.0.1:${port}`, core.readyInfo.coreId);
+      }
     });
 
     it('[2C01] both cores must respond to HTTP requests', async () => {
@@ -331,6 +348,16 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(coresA, coresB,
         'Both cores must see the same set of cores in PlatformDB');
     });
+
+    it('[2C03] each core resolves both cores to the URLs they listen on', async () => {
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const res = await httpRequest(port, 'GET', '/system/admin/cores', null, { Authorization: ADMIN_KEY });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const urlOf = (id) => (res.body.cores || []).find((c) => c.id === id)?.url;
+        assert.strictEqual(urlOf(CORE_A_ID), CORE_A_URL, 'core A seen from port ' + port);
+        assert.strictEqual(urlOf(CORE_B_ID), CORE_B_URL, 'core B seen from port ' + port);
+      }
+    });
   });
 
   describe('Registration + PlatformDB replication', () => {
@@ -347,7 +374,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: testEmail,
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: CORE_A_HOSTING
       });
     });
 
@@ -385,7 +413,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: dnsUser + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: CORE_B_HOSTING
       });
     });
 
@@ -404,6 +433,7 @@ describe('[RG2C] Two-core integration tests', function () {
   });
 
   describe('Hosted sites', () => {
+    // Pinned to the core it is posted to, so that core refuses it itself
     async function register (port, username) {
       return httpRequest(port, 'POST', '/users', {
         appId: 'test-2core-sites',
@@ -411,7 +441,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: username + '-' + Date.now().toString(36) + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: port === CORE_A_PORT ? CORE_A_HOSTING : CORE_B_HOSTING
       });
     }
 
@@ -455,26 +486,34 @@ describe('[RG2C] Two-core integration tests', function () {
     it('[2C44] a core whose site name is another core\'s id does not start', async () => {
       let started = null;
       try {
-        started = await startCore({
-          DNS_DOMAIN: DOMAIN,
-          RQLITE_URL,
-          ADMIN_KEY,
-          CORE_PORT: String(CORE_C_PORT),
-          CORE_ID: 'core-c',
-          CORE_IP: '127.0.0.3',
-          HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
-        });
-      } catch (err) {
-        assert.match(err.message, /exited with code 1/);
+        try {
+          started = await startCore({
+            DNS_DOMAIN: DOMAIN,
+            RQLITE_URL,
+            ADMIN_KEY,
+            CORE_PORT: String(CORE_C_PORT),
+            CORE_ID: 'core-c',
+            CORE_IP: '127.0.0.3',
+            HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
+          });
+        } catch (err) {
+          assert.match(err.message, /exited with code 1/);
+        }
+        if (started != null) {
+          await stopCore(started);
+          assert.fail('core-c must refuse a site named after core-b');
+        }
+        // core-b's own name still resolves to core-b, even if core-c's row
+        // (written before its boot check refused) advertises that name
+        await dnsServer.refreshFromPlatform();
+        assert.deepStrictEqual(await resolver.resolve4(`${CORE_B_ID}.${DOMAIN}`), [CORE_B_IP]);
+      } finally {
+        // core-c's row stays behind, with a URL nobody listens on and no
+        // users: the least-loaded core, where every later registration that
+        // names no hosting would be forwarded. Take it out of the selection.
+        const row = await platformDB.getCoreInfo('core-c');
+        if (row != null) await platformDB.setCoreInfo('core-c', { ...row, available: false });
       }
-      if (started != null) {
-        await stopCore(started);
-        assert.fail('core-c must refuse a site named after core-b');
-      }
-      // core-b's own name still resolves to core-b, even if core-c's row
-      // (written before its boot check refused) advertises that name
-      await dnsServer.refreshFromPlatform();
-      assert.deepStrictEqual(await resolver.resolve4(`${CORE_B_ID}.${DOMAIN}`), [CORE_B_IP]);
     });
   });
 
@@ -562,6 +601,7 @@ describe('[RG2C] Two-core integration tests', function () {
       });
     }
 
+    // The account is created on the core it is posted to (pinned by hosting)
     async function registerOn (port, username) {
       const res = await httpRequest(port, 'POST', '/users', {
         appId: 'test-2core-xid',
@@ -569,7 +609,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: username + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: port === CORE_A_PORT ? CORE_A_HOSTING : CORE_B_HOSTING
       });
       assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
       return { username, token: new URL(res.body.apiEndpoint).username };

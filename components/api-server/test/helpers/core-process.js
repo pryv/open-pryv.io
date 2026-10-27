@@ -12,7 +12,13 @@
  *   CORE_PORT       — HTTP port to listen on
  *   CORE_ID         — core identifier (e.g. 'core-a')
  *   CORE_IP         — IP for this core (e.g. '127.0.0.1')
- *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li')
+ *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li'). When set, the core
+ *                     runs MULTI-core: `core.url` is `http://127.0.0.1:<CORE_PORT>`,
+ *                     given to boiler through the environment before it loads,
+ *                     so the core-identity plugin sees it. Without it, the core
+ *                     is a single-core node.
+ *   CORE_HOSTING    — optional `core:hosting`; a registration posted with
+ *                     `hosting: <it>` is placed on this core.
  *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
  *   ADMIN_KEY       — auth:adminAccessKey
  *   storages__<kind>__engine — the test run's storage engines; pass
@@ -40,6 +46,18 @@ const path = require('node:path');
 // for the ready signal only.
 const sendToParent = typeof process.send === 'function' ? process.send.bind(process) : null;
 process.send = undefined;
+
+// Multi-core identity, known BEFORE boiler init: the core-identity config
+// plugin decides `core:url` and `core:isSingleCore` once, while boiler loads,
+// and a later `config.set` does not revisit that decision. Boiler reads the
+// environment with `__` as the key separator, as production reaches the
+// plugin with its config. With an explicit `core.url` and dnsLess off, the
+// core runs multi-core and advertises that URL to the others.
+if (process.env.DNS_DOMAIN) {
+  process.env.core__id = process.env.CORE_ID || 'single';
+  process.env.core__url = 'http://127.0.0.1:' + (process.env.CORE_PORT || '3000');
+  process.env.dns__domain = process.env.DNS_DOMAIN;
+}
 
 // Boiler init — must happen before any other require
 require('@pryv/boiler').init({
@@ -76,6 +94,7 @@ const http = require('node:http');
   config.set('core:id', coreId);
   config.set('core:ip', coreIp);
   config.set('core:available', true);
+  if (process.env.CORE_HOSTING) config.set('core:hosting', process.env.CORE_HOSTING);
   config.set('dns:domain', domain);
   config.set('auth:adminAccessKey', adminKey);
   // platform.piiMode defaults to "hashed" since 2.0.0-rc.3; multi-core child
@@ -152,7 +171,17 @@ const http = require('node:http');
 
   // Signal ready to parent
   if (sendToParent != null) {
-    sendToParent({ type: 'ready', port, coreId, baseEngine: config.get('storages:base:engine') });
+    sendToParent({
+      type: 'ready',
+      port,
+      coreId,
+      baseEngine: config.get('storages:base:engine'),
+      isSingleCore: config.get('core:isSingleCore'),
+      coreUrl: config.get('core:url'),
+      hosting: config.get('core:hosting') ?? null,
+      pgDatabase: config.get('storages:engines:postgresql:database'),
+      sqlitePath: config.get('storages:engines:sqlite:path')
+    });
   }
   console.log(`[${coreId}] listening on http://127.0.0.1:${port}`);
 
