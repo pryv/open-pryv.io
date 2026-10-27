@@ -79,6 +79,17 @@ describe('[XCRF] cross-core registration forward: the answer the client gets', f
     assert.match(err.innerError.message, /core-b at http:\/\/127\.0\.0\.1:13999\/: connect ECONNREFUSED/);
   });
 
+  it('[XCRF5] a 4xx that is not an API answer (a proxy\'s HTML 404, an empty 400) answers 503, not the 4xx', async function () {
+    const html = async () => new Response('<html><body>404 Not Found</body></html>', { status: 404, headers: { 'content-type': 'text/html' } });
+    for (const [label, answer] of [['html 404', html], ['empty 400', answering(400, {})]]) {
+      const { err } = await forward(answer);
+      assert.strictEqual(err.httpStatus, 503, label);
+      assert.strictEqual(err.id, 'cross-core-registration-failed', label);
+      assert.strictEqual(err.data, null, label);
+      assert.match(err.innerError.message, /core-b answered 40[04] \(not an API error\)/, label);
+    }
+  });
+
   it('[XCRF4] an accepted forward fills the result from the target\'s answer, without its meta', async function () {
     const { err, result } = await forward(answering(201, { username: 'xcrfuser', apiEndpoint: 'https://t@xcrfuser.example/', meta: { apiVersion: 'x' } }));
     assert.strictEqual(err, undefined);

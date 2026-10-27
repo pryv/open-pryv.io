@@ -212,22 +212,24 @@ class Registration {
       }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        // A refusal of the registration (a 4xx) reaches the client as the
-        // target answered it: its body is already the public error data. A
-        // 401/403 is the target refusing the forward itself (cores not sharing
-        // the admin key) and a 5xx is the target's own fault: neither is the
-        // client's, and neither is relayed. Always an APIError: a plain Error
+        // A refusal of the registration (a 4xx carrying an API error id)
+        // reaches the client as the target answered it: its body is already
+        // the public error data. A 401/403 is the target refusing the forward
+        // itself (cores not sharing the admin key), a 4xx with no API error
+        // id is not the target answering (e.g. a proxy's HTML 404 for a wrong
+        // core URL), and a 5xx is the target's own fault: none is the
+        // client's, and none is relayed. Always an APIError: a plain Error
         // would become a 500 unexpected-error.
         const relayed = response.status >= 400 && response.status < 500 &&
-          response.status !== 401 && response.status !== 403;
+          response.status !== 401 && response.status !== 403 &&
+          typeof body?.error?.id === 'string';
         if (relayed) {
-          return next(new APIError(
-            body?.error?.id || 'cross-core-registration-failed',
-            body?.error?.message || ('Cross-core registration forward refused: ' + response.status),
-            { httpStatus: response.status, data: body?.error?.data }));
+          return next(new APIError(body.error.id,
+            typeof body.error.message === 'string' ? body.error.message : 'The registration was refused.',
+            { httpStatus: response.status, data: body.error.data }));
         }
         return next(forwardFailed('The core selected for this registration did not accept it.',
-          selectedCoreId + ' answered ' + response.status + ' ' + (body?.error?.id ?? '')));
+          selectedCoreId + ' answered ' + response.status + ' ' + (body?.error?.id ?? '(not an API error)')));
       }
       // Strip the target's `meta` block — the local api-server will add
       // its own meta on the way out. Copy every other field into result.

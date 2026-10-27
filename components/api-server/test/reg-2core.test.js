@@ -353,6 +353,8 @@ describe('[RG2C] Two-core integration tests', function () {
     // Clean up rqlite data
     const fs = require('node:fs');
     fs.rmSync(RQLITE_DATA_DIR, { recursive: true, force: true });
+    // rqlited's log too, unless the run asked for logs (kept to read then)
+    if (!process.env.LOGS) fs.rmSync(RQLITE_LOG_FILE, { force: true });
     fs.rmSync(SITE_DIR, { recursive: true, force: true });
     // The cores' own user data (their pools are closed: the cores stopped)
     await resetCoresData(false);
