@@ -31,7 +31,8 @@ type DeliverResult =
   // front of it, asks to be called again later. Retryable, unlike every other
   // 4xx; `retryAfterMs` is its Retry-After header, when it sent a valid one.
   | { ok: false; reason: 'http-retry-later'; status: number; body: unknown; retryAfterMs?: number }
-  | { ok: false; reason: 'http-5xx'; status: number; body: unknown }
+  // Retryable. A 503 may carry the peer's Retry-After (maintenance, overload).
+  | { ok: false; reason: 'http-5xx'; status: number; body: unknown; retryAfterMs?: number }
   | { ok: false; reason: 'network'; status: 0; error: string }
   | { ok: false; reason: 'timeout'; status: 0 }
   // The destination may not be called (private or reserved address, http,
@@ -168,8 +169,13 @@ async function requestPeer (params: {
       deps.logger?.debug?.('cmc/outbound: peer rejected delivery', { host: base, status: res.status });
       return { ok: false, reason: 'http-4xx', status: res.status, body: parsed };
     }
-    deps.logger?.warn?.('cmc/outbound: peer 5xx', { host: base, status: res.status });
-    return { ok: false, reason: 'http-5xx', status: res.status, body: parsed };
+    const retryAfterMs5xx = res.status === 503
+      ? parseRetryAfter(res.headers?.get?.('retry-after') ?? null, Date.now())
+      : null;
+    deps.logger?.warn?.('cmc/outbound: peer 5xx', { host: base, status: res.status, retryAfterMs: retryAfterMs5xx });
+    return retryAfterMs5xx == null
+      ? { ok: false, reason: 'http-5xx', status: res.status, body: parsed }
+      : { ok: false, reason: 'http-5xx', status: res.status, body: parsed, retryAfterMs: retryAfterMs5xx };
   } catch (err) {
     if (timer != null) clearTimeout(timer);
     const errObj = err as { name?: string; code?: string; message?: string; kind?: string; host?: string } | null;
@@ -229,9 +235,12 @@ function isRetryableFailure (r: DeliverResult): boolean {
   return true;
 }
 
-/** The peer's Retry-After of a failed result, in ms, when it sent one. */
+/**
+ * The peer's Retry-After of a failed result, in ms, when it sent one (a 408 /
+ * 429, or a 503).
+ */
 function retryAfterOf (r: { reason?: string; retryAfterMs?: number } | null | undefined): number | undefined {
-  if (r == null || r.reason !== 'http-retry-later') return undefined;
+  if (r == null || (r.reason !== 'http-retry-later' && r.reason !== 'http-5xx')) return undefined;
   const ms: unknown = r.retryAfterMs;
   return typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : undefined;
 }

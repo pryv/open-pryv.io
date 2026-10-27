@@ -291,10 +291,27 @@ describe('[CMCOUT] cmc/outbound', () => {
       assert.ok(d.retryAfterMs > 80_000 && d.retryAfterMs <= 90_000, String(d.retryAfterMs));
       const bad = await post({ status: 429, body: {}, headers: { 'retry-after': 'soon' } });
       assert.equal('retryAfterMs' in bad, false, 'an unreadable value is no hint');
-      // A Retry-After on any other answer is not this classifier's business.
-      const other = await post({ status: 503, body: {}, headers: { 'retry-after': '120' } });
+      // A Retry-After on another answer than 408 / 429 / 503 is ignored.
+      const other = await post({ status: 500, body: {}, headers: { 'retry-after': '120' } });
       assert.equal(other.reason, 'http-5xx');
+      assert.equal('retryAfterMs' in other, false);
       assert.equal(retryAfterOf(other), undefined);
+      const forbidden = await post({ status: 403, body: {}, headers: { 'retry-after': '120' } });
+      assert.equal(retryAfterOf(forbidden), undefined);
+    });
+
+    it('[CRL05] a 503 stays http-5xx and retryable, and carries its Retry-After when it sent one', async () => {
+      const r = await post({ status: 503, body: {}, headers: { 'retry-after': '300' } });
+      assert.equal(r.reason, 'http-5xx');
+      assert.equal(isRetryableFailure(r), true);
+      assert.equal(r.retryAfterMs, 300_000);
+      assert.equal(retryAfterOf(r), 300_000);
+      const plain = await post({ status: 503, body: {} });
+      assert.equal(plain.reason, 'http-5xx');
+      assert.equal('retryAfterMs' in plain, false, 'no header, no hint');
+      assert.equal(retryAfterOf(plain), undefined);
+      const bad = await post({ status: 503, body: {}, headers: { 'retry-after': 'soon' } });
+      assert.equal('retryAfterMs' in bad, false, 'an unreadable value is no hint');
     });
 
     it('[CRL03] parseRetryAfter: seconds, dates (past reads as 0), garbage', () => {

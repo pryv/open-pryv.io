@@ -607,10 +607,11 @@ async function deliverRevokeWithRetry (params: {
       // A 4xx is the peer's considered answer — retrying re-sends the same
       // rejected payload. Stop.
       if (!outbound.isRetryableFailure(delivery)) break;
-      // A 408 / 429 asks to come back later: not a blip to absorb within a
-      // second. Stop here; the notice is queued, its Retry-After honoured.
-      if ((delivery as { reason?: string }).reason === 'http-retry-later') {
-        const retryAfterMs = outbound.retryAfterOf(delivery);
+      // A 408 / 429, or a 503 naming a Retry-After, asks to come back later:
+      // not a blip to absorb within a second. Stop here; the notice is
+      // queued, its Retry-After honoured.
+      const retryAfterMs = outbound.retryAfterOf(delivery);
+      if ((delivery as { reason?: string }).reason === 'http-retry-later' || retryAfterMs != null) {
         if (retryAfterMs != null) last.retryAfterMs = retryAfterMs;
         break;
       }

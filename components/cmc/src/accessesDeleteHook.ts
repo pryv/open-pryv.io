@@ -254,9 +254,10 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           if (delivery.ok) { delivered = true; break; }
           lastReason = (delivery as { reason?: string }).reason ?? lastReason;
           if (!outbound.isRetryableFailure(delivery)) { retryable = false; break; }
-          // A 408 / 429 asks to come back later: stop here, the notice is
-          // queued with its Retry-After.
-          if (lastReason === 'http-retry-later') { lastRetryAfterMs = outbound.retryAfterOf(delivery); break; }
+          // A 408 / 429, or a 503 naming a Retry-After, asks to come back
+          // later: stop here, the notice is queued with its Retry-After.
+          const hint = outbound.retryAfterOf(delivery);
+          if (lastReason === 'http-retry-later' || hint != null) { lastRetryAfterMs = hint; break; }
         } catch (err: unknown) {
           lastReason = 'cmc-revoke-delivery-threw';
           deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery threw', {

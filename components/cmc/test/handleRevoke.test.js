@@ -502,6 +502,27 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(mall.calls.eventsCreated.length, 0);
     });
 
+    it('[CRL28] a 503 naming a Retry-After ends the in-request round and queues the notice no earlier than it; a bare 503 is retried in-request as before', async () => {
+      const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 503, body: {}, headers: { 'retry-after': '600' } });
+      const before = Date.now();
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch, enqueueRetries: true } });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1, 'a peer in maintenance is not called again within the request');
+      assert.equal(r.deliveryQueued, true);
+      const q = mall.calls.eventsCreated[0];
+      assert.equal(q.content.lastFailureReason, 'http-5xx');
+      assert.deepEqual(q.content.lastFailureDetail, { status: 503, retryAfterMs: 600_000 });
+      assert.ok(q.content.nextAttemptAfter >= before + 600_000, 'the Retry-After is the earliest next attempt');
+
+      const mall2 = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const bare = fakeFetch({ status: 503, body: {} });
+      const r2 = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall: mall2, fetch: bare.fetch, enqueueRetries: true } });
+      assert.equal(r2.deliveryQueued, true);
+      assert.ok(bare.calls.length > 1, 'a bare 503 keeps the in-request retries');
+      assert.deepEqual(mall2.calls.eventsCreated[0].content.lastFailureDetail, { status: 503 });
+    });
+
     it('[HR41] a refused destination is tried once and never queued, even with the retry loop on', async () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       const refusal = Object.assign(new Error("peer call refused: address, host '10.0.0.1'"), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' });

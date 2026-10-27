@@ -25,7 +25,9 @@
   408 or 429 fails with `cmc-member-access-peer-unreachable` (was
   `cmc-member-access-peer-rejected`), with `failure.detail.retryAfterMs` when the patient core
   sent a `Retry-After`, so the member app knows when to ask again. Every other 4xx stays permanent, including a capability's
-  typed refusal of an accept or refusal.
+  typed refusal of an accept or refusal. A 503 (already retried) now also honours its
+  `Retry-After` the same way (`failure.detail.retryAfterMs`, reason still `http-5xx`), and a revoke
+  notice answered 503 with a `Retry-After` is queued at once instead of retried within the request.
 
 ## 2.0.0-rc.60 - 2026-10-26
 
