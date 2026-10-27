@@ -303,6 +303,9 @@ clean-test-data:
     # Per-user directories (each holds the user's audit SQLite + the SQLite
     # baseStorage file when the SQLite engine is in use).
     find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+    # The two-core suite's per-core user directories (it removes them itself;
+    # this catches an interrupted run).
+    rm -rf ./var-pryv/users-2core-* 2>/dev/null || true
     # Filesystem-engine storage roots (attachments + previews live at
     # var-pryv/<dir> by default per override-config.yml, NOT under
     # users/, so the find above doesn't touch them).
@@ -361,6 +364,12 @@ clean-test-data:
           { echo "ERROR: PostgreSQL unreachable at $PG_HOST:$PG_PORT — pryv-node (dev DB) NOT reset."; \
             echo "       The platform DB and the user index can diverge across cleans."; \
             exit 1; }
+        # The two-core suite's per-core databases: it creates and drops them
+        # itself; dropped here only after an interrupted run, never created.
+        for db in pryv-node-test-2core-a pryv-node-test-2core-b pryv-node-test-2core-c; do
+          $TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force "$db" 2>/dev/null || \
+            echo "WARN: could not drop $db at $PG_HOST:$PG_PORT"
+        done
       fi
     else
       echo "ERROR: dropdb/createdb not found in PATH — cannot reset PostgreSQL."

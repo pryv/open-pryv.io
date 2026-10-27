@@ -55,6 +55,13 @@ const CORE_A_HOSTING = 'hosting-a';
 const CORE_B_HOSTING = 'hosting-b';
 const CORE_A_URL = `http://127.0.0.1:${CORE_A_PORT}/`;
 const CORE_B_URL = `http://127.0.0.1:${CORE_B_PORT}/`;
+// Each core's own user data (`CORE_DATA_NAME` of core-process.js): database
+// `pryv-node-test-<name>`, directory `var-pryv/users-<name>`. The platform
+// store (the rqlite below) is shared, as on a real cluster.
+const CORE_A_DATA = '2core-a';
+const CORE_B_DATA = '2core-b';
+const CORE_C_DATA = '2core-c';
+const CORE_DATA_NAMES = [CORE_A_DATA, CORE_B_DATA, CORE_C_DATA];
 // Hosted sites: `sitehome` on both cores, `siteonly` on core A only (core B
 // must still refuse it as a username, from core A's advertisement).
 const SITE_DIR = '/tmp/rg2c-hosted-site';
@@ -133,6 +140,34 @@ function startCore (env) {
       process.stderr.write(`[${env.CORE_ID}:err] ${d.toString()}`);
     });
   });
+}
+
+function usesPostgres () {
+  const config = getConfigUnsafe(true);
+  return ['base', 'series', 'file', 'audit'].some((kind) => config.get('storages:' + kind + ':engine') === 'postgresql');
+}
+
+// Drop (and with `create`, recreate empty) every core's own user data. An
+// empty database is all a core needs: it creates its schema on first connect.
+async function resetCoresData (create) {
+  const fs = require('node:fs');
+  for (const name of CORE_DATA_NAMES) {
+    fs.rmSync(path.resolve(SERVICE_CORE_ROOT, 'var-pryv/users-' + name), { recursive: true, force: true });
+  }
+  if (!usesPostgres()) return;
+  const { Client } = require('pg');
+  const pg = getConfigUnsafe(true).get('storages:engines:postgresql');
+  const client = new Client({ host: pg.host, port: pg.port, user: pg.user, password: pg.password || undefined, database: 'postgres' });
+  await client.connect();
+  try {
+    for (const name of CORE_DATA_NAMES) {
+      // Not in a transaction: CREATE DATABASE refuses to run inside one.
+      await client.query(`DROP DATABASE IF EXISTS "pryv-node-test-${name}" WITH (FORCE)`);
+      if (create) await client.query(`CREATE DATABASE "pryv-node-test-${name}"`);
+    }
+  } finally {
+    await client.end();
+  }
 }
 
 function stopCore (child) {
@@ -250,6 +285,9 @@ describe('[RG2C] Two-core integration tests', function () {
     fs.mkdirSync(SITE_DIR, { recursive: true });
     fs.writeFileSync(path.join(SITE_DIR, 'index.html'), '<p>rg2c hosted site</p>');
 
+    // Each core's own, empty, user data
+    await resetCoresData(true);
+
     // Start Core A and Core B
     const coreEnv = {
       DNS_DOMAIN: DOMAIN,
@@ -263,6 +301,7 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_ID: CORE_A_ID,
       CORE_IP: CORE_A_IP,
       CORE_HOSTING: CORE_A_HOSTING,
+      CORE_DATA_NAME: CORE_A_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
     });
 
@@ -272,6 +311,7 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_ID: CORE_B_ID,
       CORE_IP: CORE_B_IP,
       CORE_HOSTING: CORE_B_HOSTING,
+      CORE_DATA_NAME: CORE_B_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR } })
     });
 
@@ -290,10 +330,8 @@ describe('[RG2C] Two-core integration tests', function () {
     const fs = require('node:fs');
     fs.rmSync('/tmp/rqlite-2core-test', { recursive: true, force: true });
     fs.rmSync(SITE_DIR, { recursive: true, force: true });
-    // Clean up users created by child cores in shared MongoDB + PlatformDB
-    const { getUsersRepository } = require('business/src/users/index.ts');
-    const usersRepository = await getUsersRepository();
-    await usersRepository.deleteAll();
+    // The cores' own user data (their pools are closed: the cores stopped)
+    await resetCoresData(false);
     // Restore integrity check setting
     if (savedIntegrityCheck != null) {
       process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
@@ -318,9 +356,12 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(coreB.readyInfo.baseEngine, expected, 'core B');
       // Multi-core nodes, each advertising its own URL (a single-core node
       // would take the local path for every cross-core call)
-      for (const [core, port] of [[coreA, CORE_A_PORT], [coreB, CORE_B_PORT]]) {
+      // and each on its own user data
+      for (const [core, port, data] of [[coreA, CORE_A_PORT, CORE_A_DATA], [coreB, CORE_B_PORT, CORE_B_DATA]]) {
         assert.strictEqual(core.readyInfo.isSingleCore, false, core.readyInfo.coreId);
         assert.strictEqual(core.readyInfo.coreUrl, `http://127.0.0.1:${port}`, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.pgDatabase, 'pryv-node-test-' + data, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.sqlitePath, path.resolve(SERVICE_CORE_ROOT, 'var-pryv/users-' + data), core.readyInfo.coreId);
       }
     });
 
@@ -399,6 +440,36 @@ describe('[RG2C] Two-core integration tests', function () {
       const users = res.body.users || res.body;
       const found = Array.isArray(users) && users.some(u => u.username === testUser);
       assert.ok(found, `User ${testUser} should appear in admin/users on Core A`);
+    });
+
+    it('[2C13] an account posted to Core A for Core B\'s hosting lives in Core B\'s data only; Core A answers 421 for it', async () => {
+      const username = 'tcb' + Date.now().toString(36);
+      const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const token = new URL(res.body.apiEndpoint).username;
+      // Each core lists the accounts of its own user data
+      const listed = async (port) => {
+        const users = await httpRequest(port, 'GET', '/system/admin/users', null, { Authorization: ADMIN_KEY });
+        assert.strictEqual(users.status, 200, JSON.stringify(users.body));
+        return (users.body.users || users.body).some((u) => u.username === username);
+      };
+      assert.strictEqual(await listed(CORE_A_PORT), false, 'not in Core A\'s data');
+      assert.strictEqual(await listed(CORE_B_PORT), true, 'in Core B\'s data');
+      // Core A sends the client to Core B; Core B serves it
+      const onA = await httpRequest(CORE_A_PORT, 'GET', '/' + username + '/access-info', null, { Authorization: token });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error.id, 'wrong-core');
+      assert.strictEqual(onA.body.error.coreUrl, CORE_B_URL);
+      const onB = await httpRequest(CORE_B_PORT, 'GET', '/' + username + '/access-info', null, { Authorization: token });
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
     });
   });
 
@@ -479,6 +550,7 @@ describe('[RG2C] Two-core integration tests', function () {
         CORE_PORT: String(CORE_C_PORT),
         CORE_ID: 'core-c',
         CORE_IP: '127.0.0.3',
+        CORE_DATA_NAME: CORE_C_DATA,
         HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR + '-missing' } })
       }), /exited with code 1/);
     });
@@ -494,6 +566,7 @@ describe('[RG2C] Two-core integration tests', function () {
             CORE_PORT: String(CORE_C_PORT),
             CORE_ID: 'core-c',
             CORE_IP: '127.0.0.3',
+            CORE_DATA_NAME: CORE_C_DATA,
             HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
           });
         } catch (err) {

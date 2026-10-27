@@ -19,6 +19,12 @@
  *                     is a single-core node.
  *   CORE_HOSTING    — optional `core:hosting`; a registration posted with
  *                     `hosting: <it>` is placed on this core.
+ *   CORE_DATA_NAME  — optional (e.g. '2core-a'): this core's own user data,
+ *                     PostgreSQL database `pryv-node-test-<name>` (set with
+ *                     `config.set`; the caller creates it before the boot and
+ *                     drops it after) and local directory `var-pryv/users-<name>`
+ *                     (SQLite storage, users index, attachments). Absent: the
+ *                     test configuration's database and directory.
  *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
  *   ADMIN_KEY       — auth:adminAccessKey
  *   storages__<kind>__engine — the test run's storage engines; pass
@@ -103,6 +109,14 @@ const http = require('node:http');
   config.set('platform:piiHmacKey', process.env.PII_HMAC_KEY || 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=');
   config.set('storages:platform:engine', 'rqlite');
   config.set('storages:engines:rqlite:url', rqliteUrl);
+  // This core's own user data, as on a real cluster (the platform store
+  // stays shared). Read at `storages.init()` / first use, both inside
+  // `app.initiate()` below.
+  const dataName = process.env.CORE_DATA_NAME || null;
+  if (dataName != null) {
+    config.set('storages:engines:postgresql:database', 'pryv-node-test-' + dataName);
+    config.set('storages:engines:sqlite:path', path.resolve(__dirname, '../../../../var-pryv/users-' + dataName));
+  }
   config.set('dnsLess:publicUrl', `http://127.0.0.1:${port}`);
   // service:api format needed by api-endpoint.js for building apiEndpoints
   if (domain) {
