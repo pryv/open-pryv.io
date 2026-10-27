@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## Dependencies: qs 6.16.1
+
+- `qs` (direct dependency and `overrides`) raised to `^6.16.1`, locked at 6.16.1: GHSA-6pq8-jhm2-2vcw
+  (`qs.stringify` with `arrayFormat: 'comma'` throws on an array element carrying a non-callable own
+  `toString`, a DoS) affects `>= 6.7.0, <= 6.16.0`. `npm audit --omit=dev`: 0 vulnerabilities.
+
 ## Dependencies: node-forge 1.4.2, runtime audit allowlist emptied
 
 - `node-forge` bumped to `^1.4.2` (also used by `acme-client`, deduped): 1.4.2 is outside the
