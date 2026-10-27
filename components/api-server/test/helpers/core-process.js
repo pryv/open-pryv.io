@@ -129,6 +129,30 @@ const http = require('node:http');
   // the service-info file): without it the core boots degraded, on the
   // embedded fallback, refusing every type that is not in it.
   config.set('service:eventTypes', require('../../../../test/service-info.json').eventTypes);
+  // CMC retry loop timings, so a queued notice goes out within a test.
+  if (process.env.CMC_RETRY_INTERVAL_MS) config.set('cmc:retryLoop:intervalMs', Number(process.env.CMC_RETRY_INTERVAL_MS));
+  if (process.env.CMC_DELIVERY_BACKOFF_BASE_MS) {
+    require('cmc/src/retryQueue.ts').setDeliveryBackoffBaseMsForTests(Number(process.env.CMC_DELIVERY_BACKOFF_BASE_MS));
+  }
+  // Calls to a peer account (CMC) go to `http://{username}.<domain>/`, which
+  // only the suite's own DNS server resolves: answer them from the core that
+  // hosts the account (the platform says which), at its listening URL.
+  if (domain) {
+    const { setPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
+    const { getPlatform } = require('platform');
+    const suffix = '.' + domain;
+    setPeerTransportForTests(async (rawUrl, init) => {
+      const u = new URL(rawUrl);
+      if (u.hostname.endsWith(suffix)) {
+        const username = u.hostname.slice(0, -suffix.length);
+        const platform = await getPlatform();
+        const peerCoreId = await platform.getUserCore(username);
+        const info = peerCoreId != null ? await platform.getCoreInfo(peerCoreId) : null;
+        if (info?.url != null) return await fetch(info.url.replace(/\/$/, '') + '/' + username + u.pathname + u.search, init);
+      }
+      return await fetch(rawUrl, init);
+    });
+  }
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);

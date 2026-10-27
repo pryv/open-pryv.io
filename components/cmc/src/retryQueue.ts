@@ -278,14 +278,24 @@ async function enqueueRetry (params: {
   return event;
 }
 
+let deliveryBackoffBaseMs = DELIVERY_BACKOFF_BASE_MS;
+
 /** The next attempt of a delivery record (minutes, then hours). */
 function nextDeliveryAttemptAt (params: { attempts: number; now: number }): number {
   const { attempts, now } = params;
   const delay = Math.min(
-    DELIVERY_BACKOFF_BASE_MS * Math.pow(BACKOFF_MULTIPLIER, Math.max(0, attempts - 1)),
+    deliveryBackoffBaseMs * Math.pow(BACKOFF_MULTIPLIER, Math.max(0, attempts - 1)),
     DELIVERY_MAX_DELAY_MS
   );
   return now + delay;
+}
+
+/**
+ * Tests that run real cores (child processes): a shorter first delay, so a
+ * queued delivery is due within the test. `null` restores the default.
+ */
+function setDeliveryBackoffBaseMsForTests (ms: number | null): void {
+  deliveryBackoffBaseMs = ms ?? DELIVERY_BACKOFF_BASE_MS;
 }
 
 /**
@@ -1142,6 +1152,7 @@ export {
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,
+  setDeliveryBackoffBaseMsForTests,
   honourRetryAfter,
   isRetryableReason,
   enqueueRetry,
