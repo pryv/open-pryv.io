@@ -12,7 +12,9 @@ const require = createRequire(import.meta.url);
  * Sequential — some tests modify platform state.
  */
 
-/* global initTests, initCore, coreRequest, assert, config */
+/* global initTests, initCore, coreRequest, assert, config, app, injectTestConfigSnapshot */
+
+const { listeningAgent } = require('test-helpers');
 
 describe('[RGGF] Register gap features', () => {
   let adminAccessKey;
@@ -110,6 +112,72 @@ describe('[RGGF] Register gap features', () => {
         assert.strictEqual(refused.body.error.id, 'too-many-attempts');
         assert.ok(Number(refused.headers['retry-after']) >= 1, 'a Retry-After header is set');
         assert.strictEqual((await checkFrom('203.0.113.51')).status, 200);
+      } finally {
+        await require('../src/routes/reg/invitationCheckBudget.ts').clear();
+      }
+    });
+  });
+
+  // --- The register host maps every request to /reg/*: the same answers there ---
+
+  describe('[RGHO] on the register host (reg.<domain>)', () => {
+    const regHost = 'reg.test-reg-host.pryv.li';
+    let regRequest;
+    // The test core runs dnsLess, where the register-host mapping is off. Put
+    // the front of a DNS-topology app (its host mapping middleware included)
+    // before the test core, so a reg.<domain> request reaches the core's routes
+    // exactly as on a DNS deployment.
+    before(async () => {
+      const { expressAppInit } = require('../src/expressApp.ts');
+      const restore = injectTestConfigSnapshot({ dnsLess: { isActive: false } });
+      let front;
+      try {
+        front = await expressAppInit(app.logging);
+      } finally {
+        restore();
+      }
+      front.use((req, res, next) => app.expressApp(req, res, next));
+      regRequest = await listeningAgent(front);
+    });
+    // A fall-through to the per-user router answers 404 'Unknown user "reg"'.
+    function assertNotUserRoute (res) {
+      assert.ok(!/Unknown user/.test(res.text), 'answered by the user route: ' + res.text);
+    }
+
+    it('[RHAP] GET /apps lists the same apps as at the root of a core', async () => {
+      const atRoot = await coreRequest.get('/apps');
+      assert.strictEqual(atRoot.status, 200, atRoot.text);
+      const res = await regRequest.get('/apps').set('Host', regHost);
+      assertNotUserRoute(res);
+      assert.strictEqual(res.status, 200, res.text);
+      assert.deepStrictEqual(res.body.apps, atRoot.body.apps);
+    });
+
+    it('[RHAO] GET /apps/{appid} answers from the apps list', async () => {
+      const unknown = await regRequest.get('/apps/nonexistent-app-xyz').set('Host', regHost);
+      assertNotUserRoute(unknown);
+      assert.strictEqual(unknown.status, 404, unknown.text);
+      assert.strictEqual(unknown.body.error.message, 'Unknown app: nonexistent-app-xyz');
+      const apps = (await coreRequest.get('/apps')).body.apps;
+      if (apps.length > 0) {
+        const res = await regRequest.get('/apps/' + apps[0].id).set('Host', regHost);
+        assert.strictEqual(res.status, 200, res.text);
+        assert.strictEqual(res.body.app.id, apps[0].id);
+      }
+    });
+
+    it('[RHIV] POST /access/invitationtoken/check answers true/false, as at the root of a core', async () => {
+      const token = 'rhiv-token';
+      try {
+        const res = await regRequest.post('/access/invitationtoken/check').set('Host', regHost)
+          .set('X-Forwarded-For', '203.0.113.60').send({ invitationtoken: token });
+        assertNotUserRoute(res);
+        assert.strictEqual(res.status, 200, res.text);
+        assert.ok(['true', 'false'].includes(res.text), 'plain-text true or false: ' + res.text);
+        const atRoot = await coreRequest.post('/access/invitationtoken/check')
+          .set('X-Forwarded-For', '203.0.113.61').send({ invitationtoken: token });
+        assert.strictEqual(atRoot.status, 200, atRoot.text);
+        assert.strictEqual(res.text, atRoot.text);
       } finally {
         await require('../src/routes/reg/invitationCheckBudget.ts').clear();
       }

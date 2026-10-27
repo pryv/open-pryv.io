@@ -984,8 +984,10 @@ export default function (expressApp: ExpressApp, app: AppLike) {
    * POST /access/invitationtoken/check — Check validity of an invitation token.
    * Returns plain text 'true' or 'false'. Within a per-address budget (see
    * `invitationCheckBudget.ts`): past it, 429 with Retry-After.
+   * Served at the root of a core and under `/reg` (the register host
+   * `reg.<domain>` maps its requests to `/reg/*`, see expressApp.ts).
    */
-  expressApp.post('/access/invitationtoken/check', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(['/access/invitationtoken/check', '/reg/access/invitationtoken/check'], async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const retryAfterSeconds = await reserveInvitationCheck(clientIp(req));
       if (retryAfterSeconds != null) {

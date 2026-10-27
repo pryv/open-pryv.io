@@ -11,6 +11,9 @@
   body }` (the peer's answer). Both are permanent: the refusal is sent once. A 5xx, timeout or
   network error is still `cmc-handler-delivery-failed` and retried; a destination refused before
   sending (`cmc-handler-destination-refused`) is unchanged.
+- **Register host: `GET /apps`, `GET /apps/{appid}` and `POST /access/invitationtoken/check`
+  answered 404 on `reg.<domain>`** (the request fell through to the user route); they are now
+  served there as documented, and still at the root of a core.
 
 ## 2.0.0-rc.60 - 2026-10-26
 

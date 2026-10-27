@@ -12,17 +12,19 @@ import type { AppLike } from '../_types.ts';
  * GET /apps — list applications linked to this service.
  * GET /apps/:appid — specific application metadata.
  * Config-based: reads from config 'appList'.
+ * Served at the root of a core and under `/reg` (the register host
+ * `reg.<domain>` maps its requests to `/reg/*`, see expressApp.ts).
  */
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const appsList = (app.config.get('appList') || {}) as Record<string, Record<string, unknown>>;
 
-  expressApp.get('/apps', (req: Request, res: Response) => {
+  expressApp.get(['/apps', '/reg/apps'], (req: Request, res: Response) => {
     const data = Object.entries(appsList).map(([id, info]) => ({ id, ...info }));
     res.json({ apps: data });
   });
 
-  expressApp.get('/apps/:appid', (req: Request, res: Response) => {
+  expressApp.get(['/apps/:appid', '/reg/apps/:appid'], (req: Request, res: Response) => {
     const appid = req.params.appid as string;
     const info = appsList[appid];
     if (!info) {
