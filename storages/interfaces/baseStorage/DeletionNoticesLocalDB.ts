@@ -23,7 +23,7 @@ export interface DeletionNoticeRow {
   deletedUserId: string;
   /** The relationship access the notice is about (deleted with the account). */
   accessId: string | null;
-  /** The peer's endpoint, with its token while pending, the host only once terminal. */
+  /** The peer's endpoint, with its token while pending, without it once terminal. */
   apiEndpoint: string;
   path: string;
   /** The request body, as the notice was built. */

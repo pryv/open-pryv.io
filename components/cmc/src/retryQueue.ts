@@ -658,7 +658,7 @@ async function runDeletionOutboxPass (params: {
   }
   try {
     summary.pendingTotal = await outbox.countPending();
-  } catch (_e) { /* the idle back-off reads 0 */ }
+  } catch (_e) { /* reported as 0 */ }
   return summary;
 }
 

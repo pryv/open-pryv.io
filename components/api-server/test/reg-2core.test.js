@@ -320,7 +320,8 @@ describe('[RG2C] Two-core integration tests', function () {
       ADMIN_KEY,
       // A queued CMC notice is due in half a second, the loop ticks often
       CMC_RETRY_INTERVAL_MS: '300',
-      CMC_DELIVERY_BACKOFF_BASE_MS: '500'
+      CMC_DELIVERY_BACKOFF_BASE_MS: '500',
+      CMC_PEERS_VIA_PLATFORM: '1'
     };
 
     coreAEnv = {
@@ -949,8 +950,10 @@ describe('[RG2C] Two-core integration tests', function () {
       }
       return null;
     }
+    // The access, null when there is none, undefined when the core did not answer the list.
     async function grantTo (port, owner, peerUsername) {
       const res = await call(port, owner, 'GET', 'accesses');
+      if (res.status !== 200) return undefined;
       return (res.body?.accesses || []).find((a) => a?.clientData?.cmc?.counterparty?.username === peerUsername) ?? null;
     }
 
@@ -1002,7 +1005,7 @@ describe('[RG2C] Two-core integration tests', function () {
       await stopCore(coreA);
       coreA = await startCore(coreAEnv);
       coreB = await startCore(coreBEnv);
-      const gone = await poll(async () => (await grantTo(CORE_B_PORT, bob, alice.username)) == null);
+      const gone = await poll(async () => (await grantTo(CORE_B_PORT, bob, alice.username)) === null);
       assert.ok(gone, 'the counterparty tore the relationship down');
     });
   });

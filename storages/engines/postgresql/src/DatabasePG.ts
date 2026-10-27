@@ -584,7 +584,7 @@ CREATE INDEX IF NOT EXISTS idx_external_ids_user_id
 
 -- CMC revoke notices of deleted accounts still to deliver (core-level, never
 -- replicated, outside the per-user backup). A delivered row is deleted; a
--- failed-permanent one keeps the endpoint host only. Times in ms.
+-- failed-permanent one keeps the endpoint without its token. Times in ms.
 CREATE TABLE IF NOT EXISTS cmc_deletion_notices (
   id TEXT PRIMARY KEY,
   deleted_user_id TEXT NOT NULL,

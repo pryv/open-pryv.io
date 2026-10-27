@@ -8,7 +8,7 @@
   `cmc-deletion-notices.db` in the engine path; engine getter `getDeletionNoticesLocal()`,
   host resolver `business/src/auth/deletionNotices.ts`. Never replicated, outside the per-user
   backup, listed by no API route. A pending row holds the peer endpoint with its token; a
-  delivered row is deleted, a `failed-permanent` one keeps the host only and is pruned after 30
+  delivered row is deleted, a `failed-permanent` one keeps the endpoint without its token and is pruned after 30
   days.
 - `cmc` retry queue: `attemptDelivery` (one send of a queued delivery and its verdict) extracted
   from `processDeliveryEvent`, which applies it unchanged; `enqueueDeletionNotice` and

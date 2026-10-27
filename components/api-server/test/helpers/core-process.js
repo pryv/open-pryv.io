@@ -135,9 +135,11 @@ const http = require('node:http');
     require('cmc/src/retryQueue.ts').setDeliveryBackoffBaseMsForTests(Number(process.env.CMC_DELIVERY_BACKOFF_BASE_MS));
   }
   // Calls to a peer account (CMC) go to `http://{username}.<domain>/`, which
-  // only the suite's own DNS server resolves: answer them from the core that
-  // hosts the account (the platform says which), at its listening URL.
-  if (domain) {
+  // only the suite's own DNS server resolves: with CMC_PEERS_VIA_PLATFORM,
+  // answer them from the core that hosts the account (the platform says
+  // which), at its listening URL. This replaces the guarded peer client
+  // (its URL checks still run).
+  if (domain && process.env.CMC_PEERS_VIA_PLATFORM === '1') {
     const { setPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
     const { getPlatform } = require('platform');
     const suffix = '.' + domain;
