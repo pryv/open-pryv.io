@@ -125,6 +125,10 @@ const http = require('node:http');
     config.set('service:api', `http://127.0.0.1:${port}/{username}/`);
   }
   config.set('service:register', `http://127.0.0.1:${port}/reg/`);
+  // The event-types dictionary of the test runs (this process does not load
+  // the service-info file): without it the core boots degraded, on the
+  // embedded fallback, refusing every type that is not in it.
+  config.set('service:eventTypes', require('../../../../test/service-info.json').eventTypes);
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);
