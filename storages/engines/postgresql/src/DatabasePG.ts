@@ -582,6 +582,26 @@ CREATE TABLE IF NOT EXISTS external_ids (
 CREATE INDEX IF NOT EXISTS idx_external_ids_user_id
   ON external_ids(user_id);
 
+-- CMC revoke notices of deleted accounts still to deliver (core-level, never
+-- replicated, outside the per-user backup). A delivered row is deleted; a
+-- failed-permanent one keeps the endpoint without its token. Times in ms.
+CREATE TABLE IF NOT EXISTS cmc_deletion_notices (
+  id TEXT PRIMARY KEY,
+  deleted_user_id TEXT NOT NULL,
+  access_id TEXT,
+  api_endpoint TEXT NOT NULL,
+  path TEXT NOT NULL,
+  body JSONB,
+  attempts INTEGER NOT NULL,
+  next_attempt_after BIGINT NOT NULL,
+  status TEXT NOT NULL,
+  last_failure_reason TEXT,
+  last_failure_detail JSONB,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cmc_deletion_notices_due
+  ON cmc_deletion_notices(status, next_attempt_after);
+
 -- Series data (replaces InfluxDB)
 
 CREATE TABLE IF NOT EXISTS series_data (

@@ -21,6 +21,16 @@
   stream named by a permission skipped the reserved-id check of `streams.create`, so `null`,
   `constructor` and similar ids could be created that way. `accesses.create` and `accesses.update`
   now answer `400 invalid-item-id` for them, as `streams.create` does.
+- **CMC: the revoke notices of an account being deleted are now queued and re-sent.** Deleting an
+  account sends a `consent/revoke-cmc` notice to every counterparty; one whose core could not be
+  reached during the deletion (network error, timeout, 5xx, 408 / 429) was logged and lost, so the
+  counterparty kept the relationship as active after the erasure. Such a notice is now held in a
+  core-level outbox that outlives the account and re-sent by the retry loop on the schedule of any
+  other revoke notice (1, 5 and 25 minutes, about 2 hours, then every 6 hours; 8 re-sends over
+  about 27 hours, then `failed-permanent` for the operator, kept 30 days without its token). The
+  deletion itself still does not wait for the other cores. A re-sent notice answered `403
+  invalid-access-token` (the counterparty already deleted the access it is sent through) is
+  settled. Nothing is queued when `cmc.retryLoop.enabled` is false.
 - **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
   caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
   verification resend (`PUT /{username}/account` with `emails.resend`) answered `500

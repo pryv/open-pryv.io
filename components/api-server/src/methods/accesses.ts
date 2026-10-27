@@ -48,6 +48,7 @@ const { getLogger, ready } = require('@pryv/boiler');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
+const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { localFirstFetch } = require('./helpers/localDelivery.ts');
 const { contextForAccess, reprepareWebhookScopes, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
@@ -74,6 +75,7 @@ type AccessLike = {
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { PermissionLevel, AccessType, Permission, StreamPermission } from 'business/src/types/public.ts';
+import type { DeletionNoticeRow } from 'storages/interfaces/baseStorage/DeletionNoticesLocalDB.ts';
 type MethodContext = BaseMethodContext;
 type StoredScopes = import('./helpers/webhookScopes.ts').StoredScopes;
 
@@ -1048,14 +1050,17 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // (the peer then deletes the access it holds for this account: the data
   // grant given to it, or its back-channel to it). Built WITHOUT the mall: the
   // local bookkeeping writes the account's own events, which are being erased,
-  // and so is the retry queue: a notice the peer cannot take during the
-  // in-request attempts is logged and lost (there is no account left to hold
-  // it). Awaited within a bound by the teardown (trackTeardownDelivery): a
-  // slow peer holds the deletion a few seconds at most.
+  // and so is the account's retry queue: a notice the peer cannot take during
+  // the in-request attempts goes to the core's deletion outbox instead, which
+  // outlives the account (drained by the retry loop). Awaited within a bound
+  // by the teardown (trackTeardownDelivery): a slow peer holds the deletion a
+  // few seconds at most.
   const cmcAccountDeletionNotice = cmc.createAccessesDeletePostHook({
     fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:account-deletion'),
+    enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
+    deletionOutbox: { insert: async (row: DeletionNoticeRow) => (await getDeletionNoticesLocal()).insert(row) },
   });
   setDeletionTeardownStep('cmc', async function revokeCmcRelationshipsOfDeletedAccount (account: { id: string }) {
     const all = (await mallForCmc.accesses.get(account.id, {})) as AccessLike[];

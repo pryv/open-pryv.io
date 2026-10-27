@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## CMC deletion outbox (revoke notices of deleted accounts)
+
+- New core-level store `DeletionNoticesLocalDB` (`storages/interfaces/baseStorage/`, conformance
+  suite `[DNLD]`) on the base storage engine: PostgreSQL table `cmc_deletion_notices` (bootstrap
+  DDL in `DatabasePG.ts`, index on `(status, next_attempt_after)`), SQLite file
+  `cmc-deletion-notices.db` in the engine path; engine getter `getDeletionNoticesLocal()`,
+  host resolver `business/src/auth/deletionNotices.ts`. Never replicated, outside the per-user
+  backup, listed by no API route. A pending row holds the peer endpoint with its token; a
+  delivered row is deleted, a `failed-permanent` one keeps the endpoint without its token and is pruned after 30
+  days.
+- `cmc` retry queue: `attemptDelivery` (one send of a queued delivery and its verdict) extracted
+  from `processDeliveryEvent`, which applies it unchanged; `enqueueDeletionNotice` and
+  `runDeletionOutboxPass` (stale after 30 h, `403 invalid-access-token` settles). The accesses
+  delete hook takes a `deletionOutbox` dep (used when no `mall` is wired, same
+  `enqueueRetries` gate); `auth.delete`'s CMC teardown step passes it. `bootRetryLoop` runs a
+  third scheduler for the outbox on the designated worker (eager at boot, retry-loop interval,
+  stopped by `stopAll`).
+- Tests: `[CMCOB]`, `[DH27-29]`, `[BRL10]`, `[CND01-02]` (in-process, both engines) and `[2C60]`
+  (two cores: delete while the peer core is down, restart, deliver). The two-core child cores
+  answer `http://{username}.<domain>/` peer calls from the hosting core (test transport) and take
+  `CMC_RETRY_INTERVAL_MS` / `CMC_DELIVERY_BACKOFF_BASE_MS` (`setDeliveryBackoffBaseMsForTests`).
+
 ## Dependencies: qs 6.16.1
 
 - `qs` (direct dependency and `overrides`) raised to `^6.16.1`, locked at 6.16.1: GHSA-6pq8-jhm2-2vcw

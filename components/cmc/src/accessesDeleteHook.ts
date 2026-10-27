@@ -59,6 +59,7 @@ import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import * as retryQueue from './retryQueue.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
 import type { MemberSweep } from './memberSweep.ts';
+import type { DeletionOutbox } from './retryQueue.ts';
 
 // Outbound delivery deps + an optional mall so the hook can also do local
 // invite bookkeeping (marking a single-use invite revoked). mall is optional:
@@ -78,6 +79,9 @@ type DeleteHookDeps = OutboundDeps & {
   // Absent or false, nothing is queued (a record carries the peer token, so a
   // wiring that forgets the flag fails safe).
   enqueueRetries?: boolean;
+  // Account deletion (no `mall`: the account's own queue is being erased): the
+  // core-level outbox the notice is queued in instead, same gate.
+  deletionOutbox?: Pick<DeletionOutbox, 'insert'>;
 };
 
 type DeleteHookResult = {
@@ -271,17 +275,32 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         }
       }
       let deliveryQueued: boolean | undefined;
-      if (!delivered && retryable && deps.enqueueRetries === true && deps.mall?.events?.create != null) {
+      const queue = deps.enqueueRetries !== true
+        ? null
+        : deps.mall?.events?.create != null ? 'user' : deps.deletionOutbox != null ? 'deletion-outbox' : null;
+      if (!delivered && retryable && queue != null) {
+        const failureDetail = lastRetryAfterMs != null ? { status: lastStatus, retryAfterMs: lastRetryAfterMs } : { status: lastStatus };
         try {
-          await retryQueue.enqueueDelivery({
-            userId,
-            delivery: { apiEndpoint, path: 'events', body },
-            originalEventId: null,
-            originalType: C.ET_REVOKE,
-            failureReason: lastReason,
-            failureDetail: lastRetryAfterMs != null ? { status: lastStatus, retryAfterMs: lastRetryAfterMs } : { status: lastStatus },
-            deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
-          });
+          if (queue === 'user') {
+            await retryQueue.enqueueDelivery({
+              userId,
+              delivery: { apiEndpoint, path: 'events', body },
+              originalEventId: null,
+              originalType: C.ET_REVOKE,
+              failureReason: lastReason,
+              failureDetail,
+              deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
+            });
+          } else {
+            await retryQueue.enqueueDeletionNotice({
+              deletedUserId: userId,
+              accessId: access.id,
+              delivery: { apiEndpoint, path: 'events', body },
+              failureReason: lastReason,
+              failureDetail,
+              deps: { outbox: deps.deletionOutbox!, logger: deps.logger },
+            });
+          }
           deliveryQueued = true;
         } catch (err: unknown) {
           deps.logger?.error?.('cmc/accessesDeleteHook: the revoke notice could not be queued', {
