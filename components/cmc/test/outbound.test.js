@@ -303,7 +303,9 @@ describe('[CMCOUT] cmc/outbound', () => {
       assert.equal(parseRetryAfter(' 30 ', now), 30_000);
       assert.equal(parseRetryAfter('Tue, 27 Oct 2026 10:01:00 GMT', now), 60_000);
       assert.equal(parseRetryAfter('Tue, 27 Oct 2026 09:00:00 GMT', now), 0);
-      assert.equal(parseRetryAfter('Tue Oct 27 10:02:00 2026 GMT', now), 120_000, 'asctime form');
+      assert.equal(parseRetryAfter('Tue Oct 27 10:02:00 2026', now), 120_000, 'asctime form (no zone, means GMT whatever the local zone)');
+      assert.equal(parseRetryAfter('Tue Oct  7 10:02:00 2026', Date.parse('2026-10-07T10:00:00Z')), 120_000, 'asctime form, one-digit day');
+      assert.equal(parseRetryAfter('Tuesday, 27-Oct-26 10:03:00 GMT', now), 180_000, 'obsolete RFC 850 form');
       assert.equal(parseRetryAfter('-5', now), null);
       assert.equal(parseRetryAfter('later', now), null);
       assert.equal(parseRetryAfter('', now), null);

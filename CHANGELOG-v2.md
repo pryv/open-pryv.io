@@ -23,7 +23,8 @@
   skips the remaining in-request attempts and is queued at once. A member-access deletion left
   by such an answer is a residual with reason `http-retry-later`; a member-access mint answered
   408 or 429 fails with `cmc-member-access-peer-unreachable` (was
-  `cmc-member-access-peer-rejected`). Every other 4xx stays permanent, including a capability's
+  `cmc-member-access-peer-rejected`), with `failure.detail.retryAfterMs` when the patient core
+  sent a `Retry-After`, so the member app knows when to ask again. Every other 4xx stays permanent, including a capability's
   typed refusal of an accept or refusal.
 
 ## 2.0.0-rc.60 - 2026-10-26

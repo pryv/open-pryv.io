@@ -201,13 +201,13 @@ sequenceDiagram
     alt 2xx
         Peer-->>HTTPSClient: response
         HTTPSClient-->>Plugin: ok
-    else 4xx (non-retryable)
+    else 4xx other than 408 / 429 (non-retryable)
         Peer-->>HTTPSClient: 4xx error
         HTTPSClient-->>Plugin: terminal failure
         Plugin->>APIServer: events.update trigger status='failed'
         APIServer->>Storage: persist
-    else timeout / 5xx / network
-        Peer--xHTTPSClient: timeout or 5xx
+    else timeout / 5xx / network / 408 / 429
+        Peer--xHTTPSClient: timeout, 5xx, 408 or 429
         HTTPSClient-->>Plugin: transient failure
         Plugin->>APIServer: events.create on :_cmc:_internal:retries<br/>content carries apiEndpoint, payload, attempts, nextAttemptAt
         APIServer->>Storage: persist retry event
@@ -236,7 +236,8 @@ sequenceDiagram
 
 **Retry policy** (`retryQueue.ts`):
 - A trigger re-dispatched: 1 immediate attempt + retries at 1 s, 5 s, 25 s, 125 s, then 10 min (`MAX_ATTEMPTS` 6), then `failed-permanent`. The synthetic trigger is rebuilt from the record's snapshot of the original content.
-- A revoke notice re-sent (`content.delivery`, written by `handleRevoke` and the accesses-delete hook after their in-request attempts): the stored request is posted again at 1 min, 5 min, 25 min, about 2 h, then every 6 h (`DELIVERY_MAX_ATTEMPTS` 8 re-sends from the loop after the in-request round, about 27 h in all), then `failed-permanent`; a 4xx retires it at once. The endpoint keeps its token while the record is pending (the stream is unreadable by any API path) and loses it at either terminal state.
+- A revoke notice re-sent (`content.delivery`, written by `handleRevoke` and the accesses-delete hook after their in-request attempts): the stored request is posted again at 1 min, 5 min, 25 min, about 2 h, then every 6 h (`DELIVERY_MAX_ATTEMPTS` 8 re-sends from the loop after the in-request round, about 27 h in all), then `failed-permanent`; a 4xx retires it at once, except 408 and 429 (outbound reason `http-retry-later`), which are retried like a 5xx.
+- `Retry-After` (`honourRetryAfter`): when the peer answered 408 or 429 with a valid `Retry-After` (delay-seconds or HTTP-date), the failure detail carries it as `retryAfterMs` and the next attempt is scheduled no earlier than it, and never earlier than the normal backoff. The hint is capped per attempt: `RETRY_AFTER_MAX_MS` (10 min) for a trigger, `DELIVERY_RETRY_AFTER_MAX_MS` (30 min) for a delivery record, so both schedules stay inside their stale windows. A revoke notice answered 408 or 429 skips its remaining in-request attempts and is queued at once. The endpoint keeps its token while the record is pending (the stream is unreadable by any API path) and loses it at either terminal state.
 - A pending record older than its whole schedule plus a margin (`STALE_AFTER_MS` 2 h for a trigger, `DELIVERY_STALE_AFTER_MS` 30 h for a delivery, from the record's `time`) is retired as `failed-permanent`, `cmc-retry-stale`, with no dispatch: a loop started on a core that ran with it off never replays the backlog built up meanwhile.
 - A trigger record of a `consent/accept-cmc` authored by the server (`originalCreatedBy` is the `system` access id, or the record sits on `:_cmc:inbox`, where the only accept is the server's mirror of a received one) is retired as `failed-permanent`, `cmc-retry-system-authored`, with no dispatch. No path writes such a record; re-dispatching one would mint again (the mirror: the peer's back-channel access; an apps-stream copy: the owner's data grant, a `system` author reading as the owner's accept).
 - Only a record the plugin itself wrote is ever dispatched: the loop checks the record's author (`createdBy` `system`, stamped by the mall on the plugin's own write), the exact retries stream and the retry type. A record failing any of these (a legacy stream parented inside the queue, or anything placed there by other means) is retired as `failed-permanent`, `cmc-retry-foreign-record`, never run. A production record always carries all three fields.
@@ -593,7 +594,7 @@ is the residual cost of best-effort delivery.
 
 **Anchor stream history preservation:** chat + collector streams are NOT deleted on revoke. They become orphan-but-readable; the user can still scroll history. If the two parties later re-accept, the plugin re-creates the access pair pointing at the existing streams. (Re-acceptance is exercised by the handshake suite's revoke and re-accept cases.)
 
-**Delivery requires a peer endpoint, and is retried for hours.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, the revoke completes locally with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing can be retried. If the peer could not be reached (`network`, `timeout`, `http-5xx`) after the three in-request attempts, the notice is queued as a delivery record with its endpoint and body (the access that held the endpoint is deleted in the same handler) and the trigger reports `deliveryQueued: true`; the retry loop re-sends it over about 27 hours (retry policy above), then marks it `failed-permanent`. A 4xx is the peer's answer and is reported, not queued. The accesses-delete post-hook queues the same way; the account-deletion notices cannot (no account is left to hold the record) and stay best-effort.
+**Delivery requires a peer endpoint, and is retried for hours.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, the revoke completes locally with `deliveryFailure.reason: 'cmc-revoke-no-peer-endpoint'` and nothing can be retried. If the peer could not be reached (`network`, `timeout`, `http-5xx`) after the three in-request attempts, or asked to be called again later (`http-retry-later`: a 408 or 429, which ends the in-request round at once), the notice is queued as a delivery record with its endpoint and body (the access that held the endpoint is deleted in the same handler) and the trigger reports `deliveryQueued: true`; the retry loop re-sends it over about 27 hours (retry policy above), then marks it `failed-permanent`, each re-send no earlier than the peer's `Retry-After` when it sent one (capped at 30 min). Any other 4xx is the peer's answer and is reported, not queued. The accesses-delete post-hook queues the same way; the account-deletion notices cannot (no account is left to hold the record) and stay best-effort.
 
 ---
 

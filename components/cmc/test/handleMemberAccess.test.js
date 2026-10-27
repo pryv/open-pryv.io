@@ -369,18 +369,18 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       }
     });
 
-    it('[CRL27] a 429 or 408 from the patient core is "unreachable, try again" (the member app may retry), never "rejected"; a 400 stays rejected', async () => {
-      for (const [answer, reason] of [
-        [{ status: 429, body: null, headers: { 'retry-after': '30' } }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE],
-        [{ status: 408, body: null }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE],
-        [{ status: 400, body: { error: { id: 'x' } } }, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED],
+    it('[CRL27] a 429 or 408 from the patient core is "unreachable, try again" (the member app may retry), never "rejected", with its Retry-After; a 400 stays rejected', async () => {
+      for (const [answer, reason, detail] of [
+        [{ status: 429, body: null, headers: { 'retry-after': '30' } }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, { httpStatus: 429, retryAfterMs: 30_000 }],
+        [{ status: 408, body: null }, CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, { httpStatus: 408 }],
+        [{ status: 400, body: { error: { id: 'x' } } }, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, null],
       ]) {
         const mall = fakeMall();
         await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
         const core = fakePatientCore([{ status: 200, body: { access: { ...CHILD, expires: 1_000_000 + 100 } } }, answer]);
         const r = await mint(mall, core, {});
         assert.equal(r.reason, reason, JSON.stringify(r));
-        if (reason === CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE) assert.deepEqual(r.detail, { httpStatus: answer.status });
+        if (detail != null) assert.deepEqual(r.detail, detail);
       }
     });
 

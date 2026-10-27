@@ -62,7 +62,8 @@
  * The success payload travels on the dispatch result only; the stored
  * trigger gets `memberAccess` without the token, `member` and
  * `relationshipAccessId`. A failure detail is at most `{ peerErrorId,
- * httpStatus }`: no peer body is ever persisted on a stream every member can
+ * httpStatus, retryAfterMs }` (the last for a 408 / 429 that sent a
+ * Retry-After): no peer body is ever persisted on a stream every member can
  * read. The mint is never retried from the queue (a token minted on a retry
  * would reach nobody): the handler refuses to run with a retry context.
  */
@@ -480,9 +481,18 @@ async function handleMemberAccess (params: {
     if (r.reason === 'refused') {
       return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: { reason: 'refused', kind: r.kind, host: r.host } };
     }
-    // Unreachable: the status when there was one, nothing else (no body, no
-    // message: the detail lands on a stream every member can read).
-    return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: r.status > 0 ? { httpStatus: r.status } : {} };
+    // Unreachable: the status when there was one, and the Retry-After of a
+    // 408 / 429, nothing else (no body, no message: the detail lands on a
+    // stream every member can read).
+    const retryAfterMs = outbound.retryAfterOf(r);
+    return {
+      ok: false,
+      reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE,
+      detail: {
+        ...(r.status > 0 ? { httpStatus: r.status } : {}),
+        ...(retryAfterMs != null ? { retryAfterMs } : {}),
+      },
+    };
   };
   const unreachable = (): MemberAccessResult => ({ ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_UNREACHABLE, detail: {} });
   const ledgerDeps = { mall, logger: deps.logger, now };

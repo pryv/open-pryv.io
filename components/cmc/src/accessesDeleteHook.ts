@@ -246,7 +246,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
       let lastStatus: number | undefined;
       let lastReason = 'cmc-revoke-delivery-failed';
       let lastRetryAfterMs: number | undefined;
-      const body ={ streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content };
+      const body = { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content };
       for (let attempt = 1; attempt <= 3 && !delivered; attempt++) {
         try {
           const delivery = await outbound.postToPeer({ apiEndpoint, path: 'events', body, deps });

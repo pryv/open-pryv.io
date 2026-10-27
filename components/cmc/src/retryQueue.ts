@@ -74,7 +74,8 @@ const BACKOFF_MULTIPLIER = 5;
 const DELIVERY_MAX_ATTEMPTS = 8;
 const DELIVERY_MAX_DELAY_MS = 6 * 60 * 60 * 1000; // 6 h
 const DELIVERY_BACKOFF_BASE_MS = 60_000;
-// The trigger schedule spans about 23 min, the delivery one about 27 h.
+// The trigger schedule spans about 23 min, the delivery one about 27 h; with
+// Retry-After hints at their caps (below), up to about 1 h and 28 h.
 const STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 h
 const DELIVERY_STALE_AFTER_MS = 30 * 60 * 60 * 1000; // 30 h
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 d

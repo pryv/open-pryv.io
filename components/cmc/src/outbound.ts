@@ -208,7 +208,9 @@ function parseRetryAfter (value: string | null | undefined, now: number): number
   // An HTTP-date (any of its three RFC 9110 forms) starts with the weekday;
   // Date.parse alone would read a bare number such as "-5" as a year.
   if (!/^[A-Za-z]{3}/.test(v)) return null;
-  const at = Date.parse(v);
+  // The asctime form ends with the year and carries no zone, but means GMT;
+  // Date.parse would read it as local time.
+  const at = Date.parse(/\d{4}$/.test(v) ? v + ' GMT' : v);
   if (Number.isNaN(at)) return null;
   return Math.max(0, at - now);
 }
