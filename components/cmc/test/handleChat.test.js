@@ -37,6 +37,7 @@ function fakeFetch (responses) {
       if (spec instanceof Error) return Promise.reject(spec);
       return Promise.resolve({
         status: spec.status,
+        headers: { get: (name) => spec.headers?.[name.toLowerCase()] ?? null },
         ok: spec.status >= 200 && spec.status < 300,
         async json () { return spec.body; },
         async text () { return JSON.stringify(spec.body); },
@@ -205,6 +206,28 @@ describe('[CMCHC] cmc/handleChat', () => {
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-delivery-failed');
       assert.equal(r.detail.status, 503);
+    });
+
+    it('[CRL22] a 429 or 408 from the peer is retryable and carries the Retry-After; a 403 is not', async () => {
+      const { isRetryableReason } = require('../src/retryQueue.ts');
+      for (const status of [429, 408]) {
+        const r = await handleChat({
+          userId: 'u1',
+          triggerEvent: CHAT_TRIGGER,
+          selfIdentity: SELF,
+          deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch: fakeFetch({ status, body: {}, headers: { 'retry-after': '20' } }).fetch },
+        });
+        assert.equal(r.reason, 'cmc-handler-delivery-failed');
+        assert.deepEqual(r.detail, { status, peerReason: 'http-retry-later', retryAfterMs: 20_000 });
+        assert.equal(isRetryableReason(r.reason, r.detail), true, String(status));
+      }
+      const r = await handleChat({
+        userId: 'u1',
+        triggerEvent: CHAT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch: fakeFetch({ status: 403, body: {} }).fetch },
+      });
+      assert.equal(isRetryableReason(r.reason, r.detail), false);
     });
 
     it('[HC13] surfaces destination-refused when the peer endpoint may not be called', async () => {

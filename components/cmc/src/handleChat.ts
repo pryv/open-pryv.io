@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { CmcLogger, FetchLike, OutboundDeps } from './_types.ts';
+import { retryAfterOf } from './outbound.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -62,7 +63,7 @@ type ParsedChatStreamId = {
   counterparty: { username: string; hostSlug: string; [k: string]: unknown };
   [k: string]: unknown;
 };
-type DeliveryResult = { ok: boolean; status?: number; reason?: string; body?: { event?: { id?: string; [k: string]: unknown } } & Record<string, unknown> };
+type DeliveryResult = { ok: boolean; status?: number; reason?: string; retryAfterMs?: number; body?: { event?: { id?: string; [k: string]: unknown } } & Record<string, unknown> };
 
 /**
  * Handle a `message/chat-cmc` trigger event.
@@ -168,10 +169,14 @@ async function handleChat (params: {
   }
 
   if (!delivery.ok) {
+    const detail: { status?: number; peerReason?: string; retryAfterMs?: number } = { status: delivery.status, peerReason: delivery.reason };
+    // A 408 / 429 with Retry-After: the retry queue waits at least that long.
+    const retryAfterMs = retryAfterOf(delivery);
+    if (retryAfterMs != null) detail.retryAfterMs = retryAfterMs;
     return {
       ok: false,
       reason: delivery.reason === 'refused' ? CmcErrorIds.HANDLER_DESTINATION_REFUSED : 'cmc-handler-delivery-failed',
-      detail: { status: delivery.status, peerReason: delivery.reason },
+      detail,
     };
   }
 

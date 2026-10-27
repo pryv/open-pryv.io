@@ -66,6 +66,7 @@ function fakeFetch (responses) {
       if (spec instanceof Error) return Promise.reject(spec);
       return Promise.resolve({
         status: spec.status,
+        headers: { get: (name) => spec.headers?.[name.toLowerCase()] ?? null },
         ok: spec.status >= 200 && spec.status < 300,
         async json () { return spec.body; },
         async text () { return JSON.stringify(spec.body); },
@@ -381,6 +382,30 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(mall.calls.accessesDeleted.length, 0);
     });
 
+    it('[CRL20] a 429 or 408 on the accept delivery is retryable like a 5xx: grant kept, Retry-After carried; a typed 400 stays permanent', async () => {
+      const { isRetryableReason } = require('../src/retryQueue.ts');
+      for (const status of [429, 408]) {
+        const mall = fakeMall();
+        const { fetch } = fakeFetch([
+          { status: 200, body: { events: [VALID_OFFER] } },
+          { status, body: { error: 'later' }, headers: { 'retry-after': '30' } },
+        ]);
+        const r = await handleAccept({ userId: 'u1', triggerEvent: ACCEPT_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { mall, fetch } });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'cmc-handler-delivery-failed', String(status));
+        assert.deepEqual(r.detail, { status, reason: 'http-retry-later', retryAfterMs: 30_000 });
+        assert.equal(isRetryableReason(r.reason, r.detail), true);
+        assert.equal(mall.calls.accessesDeleted.length, 0, 'the data grant stays for the retry');
+      }
+      const mall = fakeMall();
+      const body = { error: { id: 'invalid-operation', data: { id: 'cmc-capability-invalidated' } } };
+      const { fetch } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }, { status: 400, body }]);
+      const r = await handleAccept({ userId: 'u1', triggerEvent: ACCEPT_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { mall, fetch } });
+      assert.equal(r.reason, 'cmc-capability-invalidated');
+      assert.equal(isRetryableReason(r.reason, r.detail), false);
+      assert.equal(mall.calls.accessesDeleted.length, 1);
+    });
+
     it('[HA08b] rolls back the data-grant when the accept destination is refused (permanent)', async () => {
       const mall = fakeMall();
       const refusal = Object.assign(new Error('peer call refused'), { code: 'EPEERREFUSED', kind: 'redirect', host: 'peer.example.com' });
@@ -513,6 +538,26 @@ describe('[CMCHA] cmc/handleAccept', () => {
       });
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-delivery-rejected');
+    });
+
+    it('[CRL21] a 429 or 408 on the refuse delivery is a retryable delivery failure carrying the Retry-After; a typed 400 stays permanent', async () => {
+      const { isRetryableReason } = require('../src/retryQueue.ts');
+      for (const status of [429, 408]) {
+        const { fetch } = fakeFetch([
+          { status: 200, body: { events: [VALID_OFFER] } },
+          { status, body: { error: 'later' }, headers: { 'retry-after': '45' } },
+        ]);
+        const r = await handleRefuse({ userId: 'u1', triggerEvent: REFUSE_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { fetch } });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'cmc-handler-delivery-failed', String(status));
+        assert.deepEqual(r.detail, { status, reason: 'http-retry-later', retryAfterMs: 45_000 });
+        assert.equal(isRetryableReason(r.reason, r.detail), true);
+      }
+      const body = { error: { id: 'invalid-operation', data: { id: 'cmc-capability-consumed' } } };
+      const { fetch } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }, { status: 400, body }]);
+      const r = await handleRefuse({ userId: 'u1', triggerEvent: REFUSE_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { fetch } });
+      assert.equal(r.reason, 'cmc-capability-consumed');
+      assert.equal(isRetryableReason(r.reason, r.detail), false);
     });
 
     it('[HA13] rejects wrong trigger type', async () => {

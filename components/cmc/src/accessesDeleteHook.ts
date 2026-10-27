@@ -245,7 +245,8 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
       let retryable = true;
       let lastStatus: number | undefined;
       let lastReason = 'cmc-revoke-delivery-failed';
-      const body = { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content };
+      let lastRetryAfterMs: number | undefined;
+      const body ={ streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content };
       for (let attempt = 1; attempt <= 3 && !delivered; attempt++) {
         try {
           const delivery = await outbound.postToPeer({ apiEndpoint, path: 'events', body, deps });
@@ -253,6 +254,9 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           if (delivery.ok) { delivered = true; break; }
           lastReason = (delivery as { reason?: string }).reason ?? lastReason;
           if (!outbound.isRetryableFailure(delivery)) { retryable = false; break; }
+          // A 408 / 429 asks to come back later: stop here, the notice is
+          // queued with its Retry-After.
+          if (lastReason === 'http-retry-later') { lastRetryAfterMs = outbound.retryAfterOf(delivery); break; }
         } catch (err: unknown) {
           lastReason = 'cmc-revoke-delivery-threw';
           deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery threw', {
@@ -274,7 +278,7 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
             originalEventId: null,
             originalType: C.ET_REVOKE,
             failureReason: lastReason,
-            failureDetail: { status: lastStatus },
+            failureDetail: lastRetryAfterMs != null ? { status: lastStatus, retryAfterMs: lastRetryAfterMs } : { status: lastStatus },
             deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
           });
           deliveryQueued = true;

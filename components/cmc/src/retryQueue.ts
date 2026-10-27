@@ -30,7 +30,9 @@ const require = createRequire(import.meta.url);
  * Backoff schedule (ms): 1_000, 5_000, 25_000, 125_000, 600_000 — capped
  * at MAX_DELAY_MS = 10 minutes. After MAX_ATTEMPTS = 6 the event is
  * marked 'failed-permanent' and stops getting picked up; operator can
- * decide whether to delete or hand-process.
+ * decide whether to delete or hand-process. When the peer answered 408 or
+ * 429 with a Retry-After, the next attempt is no earlier than it says
+ * (capped: RETRY_AFTER_MAX_MS, DELIVERY_RETRY_AFTER_MAX_MS).
  *
  * A second kind of record, the DELIVERY (`content.delivery`), queues one
  * outbound request rather than a trigger: a `consent/revoke-cmc` notice
@@ -62,7 +64,7 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
-const { isRetryableFailure, postToPeer, stripCredentials } = require('./outbound.ts');
+const { isRetryableFailure, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 
 const MAX_ATTEMPTS = 6;
@@ -76,6 +78,13 @@ const DELIVERY_BACKOFF_BASE_MS = 60_000;
 const STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 h
 const DELIVERY_STALE_AFTER_MS = 30 * 60 * 60 * 1000; // 30 h
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 d
+// The longest wait a peer's Retry-After (408 / 429) may impose on one
+// attempt. A trigger record keeps its own cap (MAX_DELAY_MS), so its six
+// attempts stay well inside STALE_AFTER_MS; a delivery record waits at most
+// 30 min on the attempts whose normal delay is shorter, so its eight attempts
+// stay inside DELIVERY_STALE_AFTER_MS. A hint never shortens the normal delay.
+const RETRY_AFTER_MAX_MS = MAX_DELAY_MS;
+const DELIVERY_RETRY_AFTER_MAX_MS = 30 * 60 * 1000; // 30 min
 const STALE_REASON = 'cmc-retry-stale';
 // A retried `consent/accept-cmc` whose author is the server (`createdBy`
 // `system`, or a record on `:_cmc:inbox`, where the only accept is the
@@ -185,6 +194,27 @@ function nextAttemptAt (params: { attempts: number; now: number }): number {
 }
 
 /**
+ * The peer's Retry-After carried by a failure detail (`retryAfterMs`, set by
+ * the handlers from an outbound 408 / 429), or null.
+ */
+function retryAfterHintOf (detail: unknown): number | null {
+  if (detail == null || typeof detail !== 'object') return null;
+  const ms = (detail as { retryAfterMs?: unknown }).retryAfterMs;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
+/**
+ * The next attempt with a peer's Retry-After honoured: never earlier than the
+ * normal schedule (`scheduled`), never earlier than the hint, and the hint
+ * itself capped at `capMs`.
+ */
+function honourRetryAfter (params: { scheduled: number; now: number; retryAfterMs: number | null; capMs: number }): number {
+  const { scheduled, now, retryAfterMs, capMs } = params;
+  if (retryAfterMs == null) return scheduled;
+  return Math.max(scheduled, now + Math.min(retryAfterMs, capMs));
+}
+
+/**
  * Enqueue a retry event after a handler returned a retryable failure.
  *
  * If the failure was non-retryable (4xx-style) we skip enqueueing and
@@ -216,7 +246,9 @@ async function enqueueRetry (params: {
     attempts: 1,
     lastFailureReason: failureReason,
     lastFailureDetail: failureDetail ?? null,
-    nextAttemptAfter: nextAttemptAt({ attempts: 1, now }),
+    nextAttemptAfter: honourRetryAfter({
+      scheduled: nextAttemptAt({ attempts: 1, now }), now, retryAfterMs: retryAfterHintOf(failureDetail), capMs: RETRY_AFTER_MAX_MS,
+    }),
     status: 'pending',
   };
 
@@ -272,7 +304,9 @@ async function enqueueDelivery (params: {
     attempts: 1,
     lastFailureReason: params.failureReason,
     lastFailureDetail: params.failureDetail ?? null,
-    nextAttemptAfter: nextDeliveryAttemptAt({ attempts: 1, now }),
+    nextAttemptAfter: honourRetryAfter({
+      scheduled: nextDeliveryAttemptAt({ attempts: 1, now }), now, retryAfterMs: retryAfterHintOf(params.failureDetail), capMs: DELIVERY_RETRY_AFTER_MAX_MS,
+    }),
     status: 'pending',
   };
   const event = await deps.mall.events.create(userId, {
@@ -299,8 +333,9 @@ function terminalDelivery (c: RetryContent): RetryContent['delivery'] {
 
 /**
  * One attempt of a delivery record: the request re-sent as stored. A 2xx
- * settles it; a 4xx (the peer's considered answer) retires it at once;
- * anything else reschedules it on the delivery schedule until
+ * settles it; a 4xx (the peer's considered answer) retires it at once,
+ * except 408 / 429; anything else reschedules it on the delivery schedule
+ * (no earlier than the peer's Retry-After, see honourRetryAfter) until
  * DELIVERY_MAX_ATTEMPTS.
  */
 async function processDeliveryEvent (params: {
@@ -314,7 +349,7 @@ async function processDeliveryEvent (params: {
   const d = c.delivery!;
   const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
   const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
-  let result: { ok: boolean; status?: number; reason?: string };
+  let result: { ok: boolean; status?: number; reason?: string; retryAfterMs?: number };
   try {
     result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
   } catch (err: unknown) {
@@ -331,8 +366,12 @@ async function processDeliveryEvent (params: {
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
   const nextAttempts = (c.attempts ?? 1) + 1;
-  const detail = { peerReason: result.reason, status: result.status };
-  // A 4xx is the peer's answer; a refused destination can never be called.
+  const retryAfterMs = retryAfterOf(result) ?? null;
+  const detail = retryAfterMs == null
+    ? { peerReason: result.reason, status: result.status }
+    : { peerReason: result.reason, status: result.status, retryAfterMs };
+  // A 4xx is the peer's answer (408 / 429 are 'http-retry-later', retried);
+  // a refused destination can never be called.
   const refused = result.reason === 'refused';
   if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
     await deps.mall.events.update(userId, {
@@ -355,7 +394,14 @@ async function processDeliveryEvent (params: {
   await deps.mall.events.update(userId, {
     ...retryEvent,
     ...serverModification(deps),
-    content: { ...c, attempts: nextAttempts, lastFailureDetail: detail, nextAttemptAfter: nextDeliveryAttemptAt({ attempts: nextAttempts, now }) },
+    content: {
+      ...c,
+      attempts: nextAttempts,
+      lastFailureDetail: detail,
+      nextAttemptAfter: honourRetryAfter({
+        scheduled: nextDeliveryAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs, capMs: DELIVERY_RETRY_AFTER_MAX_MS,
+      }),
+    },
   }, null, WRITE_OPTS);
   deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: nextAttempts });
   return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
@@ -496,7 +542,9 @@ async function processRetryEvent (params: {
       attempts: nextAttempts,
       lastFailureReason: dispatched.reason ?? 'unknown',
       lastFailureDetail: dispatched.detail ?? null,
-      nextAttemptAfter: nextAttemptAt({ attempts: nextAttempts, now }),
+      nextAttemptAfter: honourRetryAfter({
+        scheduled: nextAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs: retryAfterHintOf(dispatched.detail), capMs: RETRY_AFTER_MAX_MS,
+      }),
     },
   }, null, WRITE_OPTS);
   deps.logger?.debug?.('cmc/retry: rescheduled', {
@@ -776,6 +824,8 @@ function isRetryableReason (reason: string, detail?: { peerReason?: string; reas
   if (NON_RETRYABLE_REASONS.has(reason)) return false;
   // A refused destination, whichever field the handler put it in.
   if (detail?.peerReason === 'refused' || detail?.reason === 'refused') return false;
+  // A 408 / 429: the peer asks to come back later, whichever field carries it.
+  if (detail?.peerReason === 'http-retry-later' || detail?.reason === 'http-retry-later') return true;
   // detail.peerReason carries the underlying outbound classification when
   // the dispatch wrapper converts it.
   if (detail?.peerReason === 'http-4xx') return false;
@@ -798,12 +848,15 @@ export {
   STALE_AFTER_MS,
   DELIVERY_STALE_AFTER_MS,
   FAILED_RETENTION_MS,
+  RETRY_AFTER_MAX_MS,
+  DELIVERY_RETRY_AFTER_MAX_MS,
   STALE_REASON,
   SYSTEM_AUTHORED_REASON,
   FOREIGN_RECORD_REASON,
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,
+  honourRetryAfter,
   isRetryableReason,
   enqueueRetry,
   enqueueDelivery,
