@@ -177,6 +177,36 @@ describe('[MAIL] Mailing helper methods', () => {
     });
   });
 
+  describe('[MLRJ] telling a refused recipient from a transport failure', () => {
+    function smtpError (code, command) {
+      return Object.assign(new Error('failed'), { code, command });
+    }
+
+    it('[MLRJ1] a refused RCPT TO is a refused recipient', () => {
+      assert.strictEqual(mailing.isRecipientRejected(smtpError('EENVELOPE', 'RCPT TO')), true);
+    });
+
+    it('[MLRJ2] a refused sender, a refused DATA or a connection failure is not', () => {
+      assert.strictEqual(mailing.isRecipientRejected(smtpError('EENVELOPE', 'MAIL FROM')), false);
+      assert.strictEqual(mailing.isRecipientRejected(smtpError('EENVELOPE', 'DATA')), false);
+      assert.strictEqual(mailing.isRecipientRejected(smtpError('ECONNECTION', 'CONN')), false);
+      assert.strictEqual(mailing.isRecipientRejected(smtpError('EAUTH', 'AUTH PLAIN')), false);
+      assert.strictEqual(mailing.isRecipientRejected(null), false);
+    });
+
+    it('[MLRJ3] every failure sendmail reports is marked as already logged', (done) => {
+      mailing.sendmail({ method: 'invalid' }, template, recipient, substitutions, lang, (err) => {
+        try {
+          assert.ok(err != null);
+          assert.strictEqual(mailing.isLoggedMailFailure(err), true);
+          assert.strictEqual(mailing.isLoggedMailFailure(new Error('other')), false);
+          assert.ok(!Object.keys(err).some((k) => /logged/i.test(k)), 'the mark is not an enumerable field');
+          done();
+        } catch (e) { done(e); }
+      });
+    });
+  });
+
   it('[ML07] in-process with no SMTP host: the send is skipped, without error', (done) => {
     const mail = require('mail');
     mail.close().then(() => {
