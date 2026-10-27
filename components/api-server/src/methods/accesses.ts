@@ -551,7 +551,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
       return;
     }
-    // create new stream
+    // create new stream (same id screen as streams.create)
+    const [, itemId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
+    if (string.isReservedId(itemId) || string.isBuiltInPropertyName(itemId)) {
+      throw errors.invalidItemId('The specified id "' + permission.streamId + '" is not allowed.');
+    }
     const newStream: { id: string; name: string; parentId: string | null; clientData?: { 'pryv-cmc-virtual'?: { revealedBy: string } } } = {
       id: permission.streamId,
       name: permission.defaultName,

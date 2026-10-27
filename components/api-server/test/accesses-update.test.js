@@ -608,6 +608,47 @@ describe('[ACUP] accesses.update', function () {
       assert.strictEqual(res.status, 400);
       assert.strictEqual(await streamExists(streamId), false);
     });
+
+    it('[SYM07] an app caller allowed by the chain rules still creates no stream through defaultName', async function () {
+      const starAppToken = cuid();
+      const starAppId = 'starapp_' + username;
+      const starSharedId = 'starshared_' + username;
+      await fixtureUser.access({
+        id: starAppId,
+        token: starAppToken,
+        name: 'Star app access',
+        type: 'app',
+        permissions: [{ streamId: '*', level: 'manage' }]
+      });
+      await fixtureUser.access({
+        id: starSharedId,
+        token: cuid(),
+        name: 'Star shared access',
+        type: 'shared',
+        permissions: [{ streamId: stream1.attrs.id, level: 'read' }],
+        createdBy: starAppId,
+        modifiedBy: starAppId
+      });
+      const streamId = 'upd-star-' + cuid();
+      const res = await coreRequest
+        .put(path(starSharedId))
+        .set('Authorization', starAppToken)
+        .send({ permissions: [{ streamId, level: 'read', defaultName: 'Not created' }] });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.access.permissions.find((p) => p.streamId === streamId && p.level === 'read'));
+      assert.strictEqual(await streamExists(streamId), false, 'only a personal caller creates streams');
+    });
+
+    it('[SYM08] a permission with defaultName on a reserved stream id is refused', async function () {
+      for (const streamId of ['null', 'constructor']) {
+        const res = await coreRequest
+          .put(path(appAccessId))
+          .set('Authorization', personalToken)
+          .send({ permissions: kept().concat({ streamId, level: 'read', defaultName: 'Reserved' }) });
+        assert.strictEqual(res.status, 400, streamId + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, ErrorIds.InvalidItemId);
+      }
+    });
   });
 
   describe('[ACUP07] checkApp head-only', function () {
