@@ -410,7 +410,7 @@ clean-test-data:
     fi
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
-    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
+    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + two-core suite (pryv-node-test-2core-a/b/c DBs + var-pryv/users-2core-* dirs) + rqlite keyValue + custom-extensions stale fixture"
 
 # Reset per-worker test state for parallel mode. Wipes worker-private
 # PG DBs (pryv-node-test-w0..N), per-worker user

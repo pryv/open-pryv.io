@@ -18,8 +18,14 @@
   is listed by B only; A answers 421 with B's URL; fails on a shared database). `[2C56]`/`[2C57]`:
   the forced external-id accept on core A for a holder of core B, checked over HTTP on B
   (mutation-checked: B stopped, A answers 503 `external-id-check-unavailable`).
-- The registration forward relays the target core's refusal as an `APIError` (see
-  `CHANGELOG-v2.md`); `[2C53]` covers it (mutation-checked).
+- The registration forward relays the target core's 4xx refusal (not 401/403) as an `APIError`,
+  and answers 503 `cross-core-registration-failed` for anything else, an unreachable target
+  included (see `CHANGELOG-v2.md`). `[2C53]` covers the relay, `[2C58]` the unreachable target
+  (both mutation-checked).
+- The children load the test event-types dictionary (`service:eventTypes` from
+  `test/service-info.json`); they used to boot degraded on the embedded fallback.
+- `stopCore` sends SIGKILL to a child still running 5 s after SIGTERM (the check used
+  `child.killed`, true as soon as a signal is sent, so it never fired).
 
 ## Mail: a failed send is logged once, at its level
 

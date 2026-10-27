@@ -170,13 +170,19 @@ async function resetCoresData (create) {
   }
 }
 
+// `child.killed` only says a signal was sent; the exit code or signal says the
+// process is gone.
+function hasExited (child) {
+  return child.exitCode != null || child.signalCode != null;
+}
+
 function stopCore (child) {
   return new Promise((resolve) => {
-    if (!child || child.killed) return resolve();
+    if (!child || hasExited(child)) return resolve();
     child.once('exit', () => resolve());
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (!hasExited(child)) child.kill('SIGKILL');
     }, 5000).unref();
   });
 }
@@ -202,6 +208,10 @@ describe('[RG2C] Two-core integration tests', function () {
       console.log('rqlited binary not found, skipping 2-core tests');
       this.skip();
     }
+
+    // Each core's own, empty, user data (first: a PostgreSQL failure then
+    // leaves nothing running)
+    await resetCoresData(true);
 
     // Start rqlite (single node)
     await rqliteProcess.start({
@@ -284,9 +294,6 @@ describe('[RG2C] Two-core integration tests', function () {
     fs.rmSync(SITE_DIR, { recursive: true, force: true });
     fs.mkdirSync(SITE_DIR, { recursive: true });
     fs.writeFileSync(path.join(SITE_DIR, 'index.html'), '<p>rg2c hosted site</p>');
-
-    // Each core's own, empty, user data
-    await resetCoresData(true);
 
     // Start Core A and Core B
     const coreEnv = {
@@ -877,6 +884,28 @@ describe('[RG2C] Two-core integration tests', function () {
         const lookup = await httpRequest(CORE_A_PORT, 'GET', `/reg/cores?username=${username}`);
         assert.notStrictEqual(lookup.status, 200, 'no account on the platform: ' + JSON.stringify(lookup.body));
       });
+    });
+  });
+
+  // Last: it stops Core B.
+  describe('Core B down', () => {
+    it('[2C58] a registration Core A forwards to an unreachable Core B answers 503, not a 500', async () => {
+      await stopCore(coreB);
+      const username = 'tcdown' + Date.now().toString(36);
+      const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'cross-core-registration-failed');
+      assert.ok(!JSON.stringify(res.body).includes(String(CORE_B_PORT)), 'the answer does not name the other core');
+      const lookup = await httpRequest(CORE_A_PORT, 'GET', `/reg/cores?username=${username}`);
+      assert.notStrictEqual(lookup.status, 200, 'no account on the platform: ' + JSON.stringify(lookup.body));
     });
   });
 });

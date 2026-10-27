@@ -9,9 +9,9 @@
  * Boots a service-core API server in a child process for integration testing.
  *
  * Env vars consumed:
- *   CORE_PORT       — HTTP port to listen on
- *   CORE_ID         — core identifier (e.g. 'core-a')
- *   CORE_IP         — IP for this core (e.g. '127.0.0.1')
+ *   CORE_PORT:      HTTP port to listen on
+ *   CORE_ID:        core identifier (e.g. 'core-a')
+ *   CORE_IP:        IP for this core (e.g. '127.0.0.1')
  *   DNS_DOMAIN:     domain (e.g. 'test-2core.pryv.li'). When set, the core
  *                     runs MULTI-core: `core.url` is `http://127.0.0.1:<CORE_PORT>`,
  *                     given to boiler through the environment before it loads,
@@ -25,9 +25,9 @@
  *                     drops it after) and local directory `var-pryv/users-<name>`
  *                     (SQLite storage, users index, attachments). Absent: the
  *                     test configuration's database and directory.
- *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
- *   ADMIN_KEY       — auth:adminAccessKey
- *   storages__<kind>__engine — the test run's storage engines; pass
+ *   RQLITE_URL:     rqlite HTTP endpoint (e.g. 'http://localhost:14001')
+ *   ADMIN_KEY:      auth:adminAccessKey
+ *   storages__<kind>__engine: the test run's storage engines; pass
  *                     `childStorageEngineEnv()` (test-helpers) so the core uses
  *                     the same engines as the test process.
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core

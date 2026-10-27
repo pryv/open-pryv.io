@@ -164,6 +164,15 @@ class Registration {
    * Downstream chain steps must no-op when `result.forwarded` is set.
    */
   async forwardIfCrossCore (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
+    // A forward that could not be completed: 503 for the client, the target's
+    // answer or the network cause for the log only. Logged at warn here: the
+    // API error log records a non-500 at info, below an operator's level.
+    const logger = this.logger;
+    function forwardFailed (message: string, detail: string) {
+      const inner = new Error('Cross-core registration forward: ' + detail);
+      logger.warn(inner.message);
+      return new APIError('cross-core-registration-failed', message, { httpStatus: 503, innerError: inner });
+    }
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
       // Forwarded here by another core: create the account here, never forward again.
@@ -186,20 +195,39 @@ class Registration {
       // 30 s timeout: a hung target must not wedge the landing worker (leaves
       // headroom for password-hashing cost on the target); redirects refused.
       // targetUrl is slash-terminated (Platform.coreIdToUrl convention).
-      const response = await fetch(targetUrl + 'users', peerFetchOptions({
-        method: 'POST',
-        headers: { 'content-type': 'application/json', [REGISTRATION_FORWARD_HEADER]: forward },
-        body: forwardedBody
-      }, 30000));
+      let response;
+      try {
+        response = await fetch(targetUrl + 'users', peerFetchOptions({
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [REGISTRATION_FORWARD_HEADER]: forward },
+          body: forwardedBody
+        }, 30000));
+      } catch (err) {
+        // Unreachable, timed out or redirecting: the registration was not
+        // refused, it could not be placed. The network cause (ECONNREFUSED,
+        // ENOTFOUND, ...) sits on `cause`, which the log would not show.
+        const cause = (err as { cause?: { message?: string } })?.cause?.message ?? (err as Error)?.message;
+        return next(forwardFailed('The core selected for this registration is unreachable.',
+          selectedCoreId + ' at ' + targetUrl + ': ' + cause));
+      }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        // An APIError, so the API chain answers the target's status and id
-        // (a plain Error would become a 500 unexpected-error). The target's
-        // details (e.g. which field a refusal names) reach the client too.
-        return next(new APIError(
-          body?.error?.id || 'cross-core-registration-failed',
-          body?.error?.message || ('Cross-core registration forward failed: ' + response.status),
-          { httpStatus: response.status, data: body?.error?.data }));
+        // A refusal of the registration (a 4xx) reaches the client as the
+        // target answered it: its body is already the public error data. A
+        // 401/403 is the target refusing the forward itself (cores not sharing
+        // the admin key) and a 5xx is the target's own fault: neither is the
+        // client's, and neither is relayed. Always an APIError: a plain Error
+        // would become a 500 unexpected-error.
+        const relayed = response.status >= 400 && response.status < 500 &&
+          response.status !== 401 && response.status !== 403;
+        if (relayed) {
+          return next(new APIError(
+            body?.error?.id || 'cross-core-registration-failed',
+            body?.error?.message || ('Cross-core registration forward refused: ' + response.status),
+            { httpStatus: response.status, data: body?.error?.data }));
+        }
+        return next(forwardFailed('The core selected for this registration did not accept it.',
+          selectedCoreId + ' answered ' + response.status + ' ' + (body?.error?.id ?? '')));
       }
       // Strip the target's `meta` block — the local api-server will add
       // its own meta on the way out. Copy every other field into result.
