@@ -41,6 +41,29 @@ export function isLoggedMailFailure (err: unknown): boolean {
   return err != null && typeof err === 'object' && (err as { [LOGGED_MAIL_FAILURE]?: boolean })[LOGGED_MAIL_FAILURE] === true;
 }
 
+// Set on the error `sendmail` reports when the SMTP server rejected the
+// recipient address (see recipientRefusal). The error itself stays the generic
+// one, so a caller that must not tell the address apart (password reset) is
+// unchanged; a caller whose own input the address is answers a 400 instead.
+const RECIPIENT_REJECTED = Symbol.for('pryv.mailing.recipientRejected');
+
+/**
+ * True when `err` is a `sendmail` failure caused by the SMTP server rejecting
+ * the recipient address (a permanent refusal, not a temporary deferral).
+ */
+export function isRecipientRejected (err: unknown): boolean {
+  return err != null && typeof err === 'object' && (err as { [RECIPIENT_REJECTED]?: boolean })[RECIPIENT_REJECTED] === true;
+}
+
+/**
+ * The client-facing answer for a recipient address the SMTP server rejected,
+ * on a request where the address is the caller's own input.
+ */
+export function recipientRejectedError (email: string): Error {
+  return errors.invalidParametersFormat('The mail server refused this email address. Please check it.',
+    { email, reason: 'recipient-rejected' });
+}
+
 type SmtpErrorLike = { code?: unknown; command?: unknown; responseCode?: unknown };
 
 /**
@@ -192,6 +215,9 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
         // mailbox): user input, not a fault of this server. The message
         // carries the SMTP server's reply.
         logger.warn('Sending email failed (in-process): ' + template + ' mail, recipient rejected: ' + detail);
+        const failure = markLogged(errors.unexpectedError(GENERIC_SENDMAIL_ERROR));
+        Object.defineProperty(failure, RECIPIENT_REJECTED, { value: true, enumerable: false });
+        return callback(failure);
       } else if (refusal === 'deferred') {
         // A temporary refusal (greylisting, mailbox full): not a fault of
         // this server either, but the mail is lost, nothing re-sends it.

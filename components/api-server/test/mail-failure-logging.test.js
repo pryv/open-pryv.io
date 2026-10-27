@@ -388,5 +388,81 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
         restore();
       }
     });
+
+    /** A 400 naming the refused address, without the SMTP reply, logged once at warn by the sender only. */
+    function assertRecipientRejectedAnswer (res, lines, email) {
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format', JSON.stringify(res.body));
+      assert.deepStrictEqual(res.body.error.data, { email, reason: 'recipient-rejected' });
+      assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body)), 'the SMTP reply stays out of the answer');
+      assertLoggedOnceAsRejected(lines);
+    }
+
+    /** Add an address to the account with mail switched off, so only the resend sends. */
+    async function addAddressQuietly (user, email) {
+      const restore = injectTestConfigSnapshot(mailConfig({ host: null }));
+      try {
+        const res = await request.put('/' + user.username + '/account').set('Authorization', user.token)
+          .send({ emails: { add: [email] } });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      } finally {
+        restore();
+      }
+    }
+
+    function resendConfig (transport) {
+      return Object.assign(mailConfig(transport), { account: { emailVerification: { requireAtRegistration: false, resendCooldownMs: 0 } } });
+    }
+
+    it('[MLFL32] verification resend to a refused recipient answers 400 recipient-rejected (the address is the caller\'s input)', async function () {
+      const user = await registerQuietly();
+      const email = 'mlfl-' + cuid.slug().toLowerCase() + '@does-not-exist.invalid';
+      await addAddressQuietly(user, email);
+      const restore = injectTestConfigSnapshot(resendConfig(rejectingTransport()));
+      try {
+        let res;
+        const lines = await captureLogs(async () => {
+          res = await request.put('/' + user.username + '/account').set('Authorization', user.token)
+            .send({ emails: { resend: [email] } });
+        });
+        assertRecipientRejectedAnswer(res, lines, email);
+      } finally {
+        restore();
+      }
+    });
+
+    it('[MLFL33] verification resend to a deferred recipient (4xx, temporary) still answers the generic mail error', async function () {
+      const user = await registerQuietly();
+      const email = 'mlfl-' + cuid.slug().toLowerCase() + '@does-not-exist.invalid';
+      await addAddressQuietly(user, email);
+      const restore = injectTestConfigSnapshot(resendConfig(deferringTransport()));
+      try {
+        let res;
+        await captureLogs(async () => {
+          res = await request.put('/' + user.username + '/account').set('Authorization', user.token)
+            .send({ emails: { resend: [email] } });
+        });
+        assert.strictEqual(res.status, 500, JSON.stringify(res.body));
+        assert.match(res.body.error.message, /Sending email failed\. Please try again later or contact support\./);
+      } finally {
+        restore();
+      }
+    });
+
+    it('[MLFL34] registration email code to a refused recipient answers 400 recipient-rejected', async function () {
+      const email = 'mlfl-' + cuid.slug().toLowerCase() + '@does-not-exist.invalid';
+      const restore = injectTestConfigSnapshot(Object.assign(mailConfig(rejectingTransport(), { emailChallengeTemplate: template }), {
+        account: { emailVerification: { requireAtRegistration: true, registrationCodeResendCooldownMs: 0 } }
+      }));
+      try {
+        let res;
+        const lines = await captureLogs(async () => {
+          res = await request.post('/reg/email-challenge').send({ email });
+        });
+        assertRecipientRejectedAnswer(res, lines, email);
+      } finally {
+        restore();
+      }
+    });
   });
 });
