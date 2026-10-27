@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.61 - 2026-10-27
 
 - **CMC: a refusal answered by the capability itself now fails with its typed id, and is not
   retried.** A `consent/refuse-cmc` trigger whose delivery the requester's core refuses with a
