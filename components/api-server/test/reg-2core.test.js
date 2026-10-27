@@ -36,21 +36,52 @@ const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');
 const RQLITE_BIN = path.resolve(SERVICE_CORE_ROOT, 'bin-ext/rqlited');
 
+// Several checkouts of this repository may run their suites at once on one
+// machine, each on its own PostgreSQL port (5432, 5433, ...). This suite's
+// ports and temp paths follow the same offset, in steps of 100, so two such
+// runs never meet. The PostgreSQL port is the reference because no test
+// overrides it (parallel workers move rqlite, not PostgreSQL). The canonical
+// setup (5432) keeps offset 0 and the historical names.
+function workspaceOffsetFrom (config) {
+  const pgPort = Number(config.get('storages:engines:postgresql:port'));
+  const index = pgPort - 5432;
+  return Number.isInteger(index) && index > 0 && index < 50 ? index : 0;
+}
+const WORKSPACE_OFFSET = workspaceOffsetFrom(getConfigUnsafe(true));
+const PORT_SHIFT = WORKSPACE_OFFSET * 100;
+const TMP_SUFFIX = WORKSPACE_OFFSET === 0 ? '' : '-' + (WORKSPACE_OFFSET + 1);
+
 const DOMAIN = 'test-2core.pryv.li';
 const ADMIN_KEY = 'test-2core-admin-key';
-const RQLITE_PORT = 14001;
-const RQLITE_RAFT_PORT = 14002;
+const RQLITE_PORT = 14001 + PORT_SHIFT;
+const RQLITE_RAFT_PORT = 14002 + PORT_SHIFT;
 const RQLITE_URL = `http://localhost:${RQLITE_PORT}`;
-const CORE_A_PORT = 13000;
-const CORE_B_PORT = 13010;
+const RQLITE_DATA_DIR = '/tmp/rqlite-2core-test' + TMP_SUFFIX;
+const RQLITE_LOG_FILE = '/tmp/rqlite-2core-test' + TMP_SUFFIX + '.log';
+const CORE_A_PORT = 13000 + PORT_SHIFT;
+const CORE_B_PORT = 13010 + PORT_SHIFT;
 const CORE_A_ID = 'core-a';
 const CORE_B_ID = 'core-b';
 const CORE_A_IP = '127.0.0.1';
 const CORE_B_IP = '127.0.0.2';
-const CORE_C_PORT = 13020;
+const CORE_C_PORT = 13020 + PORT_SHIFT;
+// Each core's hosting: a registration posted with `hosting` is placed on that
+// core (an un-pinned one goes to the core with the fewest users, a tie being
+// decided by the platform row order).
+const CORE_A_HOSTING = 'hosting-a';
+const CORE_B_HOSTING = 'hosting-b';
+const CORE_A_URL = `http://127.0.0.1:${CORE_A_PORT}/`;
+const CORE_B_URL = `http://127.0.0.1:${CORE_B_PORT}/`;
+// Each core's own user data (`CORE_DATA_NAME` of core-process.js): database
+// `pryv-node-test-<name>`, directory `var-pryv/users-<name>`. The platform
+// store (the rqlite below) is shared, as on a real cluster.
+const CORE_A_DATA = '2core-a';
+const CORE_B_DATA = '2core-b';
+const CORE_C_DATA = '2core-c';
+const CORE_DATA_NAMES = [CORE_A_DATA, CORE_B_DATA, CORE_C_DATA];
 // Hosted sites: `sitehome` on both cores, `siteonly` on core A only (core B
 // must still refuse it as a username, from core A's advertisement).
-const SITE_DIR = '/tmp/rg2c-hosted-site';
+const SITE_DIR = '/tmp/rg2c-hosted-site' + TMP_SUFFIX;
 const SITE_BOTH = 'sitehome';
 const SITE_A_ONLY = 'siteonly';
 
@@ -128,13 +159,47 @@ function startCore (env) {
   });
 }
 
+function usesPostgres () {
+  const config = getConfigUnsafe(true);
+  return ['base', 'series', 'file', 'audit'].some((kind) => config.get('storages:' + kind + ':engine') === 'postgresql');
+}
+
+// Drop (and with `create`, recreate empty) every core's own user data. An
+// empty database is all a core needs: it creates its schema on first connect.
+async function resetCoresData (create) {
+  const fs = require('node:fs');
+  for (const name of CORE_DATA_NAMES) {
+    fs.rmSync(path.resolve(SERVICE_CORE_ROOT, 'var-pryv/users-' + name), { recursive: true, force: true });
+  }
+  if (!usesPostgres()) return;
+  const { Client } = require('pg');
+  const pg = getConfigUnsafe(true).get('storages:engines:postgresql');
+  const client = new Client({ host: pg.host, port: pg.port, user: pg.user, password: pg.password || undefined, database: 'postgres' });
+  await client.connect();
+  try {
+    for (const name of CORE_DATA_NAMES) {
+      // Not in a transaction: CREATE DATABASE refuses to run inside one.
+      await client.query(`DROP DATABASE IF EXISTS "pryv-node-test-${name}" WITH (FORCE)`);
+      if (create) await client.query(`CREATE DATABASE "pryv-node-test-${name}"`);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+// `child.killed` only says a signal was sent; the exit code or signal says the
+// process is gone.
+function hasExited (child) {
+  return child.exitCode != null || child.signalCode != null;
+}
+
 function stopCore (child) {
   return new Promise((resolve) => {
-    if (!child || child.killed) return resolve();
+    if (!child || hasExited(child)) return resolve();
     child.once('exit', () => resolve());
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (!hasExited(child)) child.kill('SIGKILL');
     }, 5000).unref();
   });
 }
@@ -161,17 +226,21 @@ describe('[RG2C] Two-core integration tests', function () {
       this.skip();
     }
 
+    // Each core's own, empty, user data (first: a PostgreSQL failure then
+    // leaves nothing running)
+    await resetCoresData(true);
+
     // Start rqlite (single node)
     await rqliteProcess.start({
       coreId: 'test-node',
       binPath: RQLITE_BIN,
-      dataDir: '/tmp/rqlite-2core-test',
+      dataDir: RQLITE_DATA_DIR,
       httpPort: RQLITE_PORT,
       raftPort: RQLITE_RAFT_PORT,
       dnsDomain: null,
       coreIp: null,
       // rqlited's own output: to a file, not the test runner's stdout.
-      logFile: '/tmp/rqlite-2core-test.log',
+      logFile: RQLITE_LOG_FILE,
       log: (msg) => { if (process.env.LOGS) console.log('[rqlite]', msg); }
     });
 
@@ -179,9 +248,11 @@ describe('[RG2C] Two-core integration tests', function () {
     platformDB = new DBrqlite(RQLITE_URL);
     await platformDB.init();
 
-    // Seed core info in PlatformDB so cores can find each other
-    await seedCoreInfo(CORE_A_ID, CORE_A_IP);
-    await seedCoreInfo(CORE_B_ID, CORE_B_IP);
+    // Seed core info in PlatformDB so cores can find each other: each core
+    // reads the other cores' URLs when it boots, before the other one has
+    // registered itself, so the rows carry the URLs from the start.
+    await seedCoreInfo(CORE_A_ID, CORE_A_IP, CORE_A_PORT, CORE_A_HOSTING);
+    await seedCoreInfo(CORE_B_ID, CORE_B_IP, CORE_B_PORT, CORE_B_HOSTING);
 
     // Start DNS server (in-process, ephemeral port)
     // platformDB (DBrqlite) exposes getUserCore, getCoreInfo, getAllCoreInfos
@@ -253,6 +324,8 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_PORT: String(CORE_A_PORT),
       CORE_ID: CORE_A_ID,
       CORE_IP: CORE_A_IP,
+      CORE_HOSTING: CORE_A_HOSTING,
+      CORE_DATA_NAME: CORE_A_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
     });
 
@@ -261,6 +334,8 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_PORT: String(CORE_B_PORT),
       CORE_ID: CORE_B_ID,
       CORE_IP: CORE_B_IP,
+      CORE_HOSTING: CORE_B_HOSTING,
+      CORE_DATA_NAME: CORE_B_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR } })
     });
 
@@ -277,12 +352,12 @@ describe('[RG2C] Two-core integration tests', function () {
     });
     // Clean up rqlite data
     const fs = require('node:fs');
-    fs.rmSync('/tmp/rqlite-2core-test', { recursive: true, force: true });
+    fs.rmSync(RQLITE_DATA_DIR, { recursive: true, force: true });
+    // rqlited's log too, unless the run asked for logs (kept to read then)
+    if (!process.env.LOGS) fs.rmSync(RQLITE_LOG_FILE, { force: true });
     fs.rmSync(SITE_DIR, { recursive: true, force: true });
-    // Clean up users created by child cores in shared MongoDB + PlatformDB
-    const { getUsersRepository } = require('business/src/users/index.ts');
-    const usersRepository = await getUsersRepository();
-    await usersRepository.deleteAll();
+    // The cores' own user data (their pools are closed: the cores stopped)
+    await resetCoresData(false);
     // Restore integrity check setting
     if (savedIntegrityCheck != null) {
       process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
@@ -293,8 +368,8 @@ describe('[RG2C] Two-core integration tests', function () {
 
   // --- Helper: seed core info in PlatformDB ---
 
-  async function seedCoreInfo (coreId, ip) {
-    await platformDB.setCoreInfo(coreId, { id: coreId, ip, ipv6: null, cname: null, hosting: null, available: true });
+  async function seedCoreInfo (coreId, ip, port, hosting) {
+    await platformDB.setCoreInfo(coreId, { id: coreId, url: `http://127.0.0.1:${port}`, ip, ipv6: null, cname: null, hosting, available: true });
   }
 
   // --- Tests ---
@@ -305,6 +380,21 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.ok(expected, 'the test process has a base engine');
       assert.strictEqual(coreA.readyInfo.baseEngine, expected, 'core A');
       assert.strictEqual(coreB.readyInfo.baseEngine, expected, 'core B');
+      // Multi-core nodes, each advertising its own URL (a single-core node
+      // would take the local path for every cross-core call)
+      // and each on its own user data, on this checkout's ports (shifted by
+      // 100 per PostgreSQL port above 5432, so parallel checkouts never meet)
+      const shift = workspaceOffsetFrom(getConfigUnsafe(true)) * 100;
+      for (const [core, base] of [[coreA, 13000], [coreB, 13010]]) {
+        assert.strictEqual(core.readyInfo.port, base + shift, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.rqliteUrl, `http://localhost:${14001 + shift}`, core.readyInfo.coreId);
+      }
+      for (const [core, port, data] of [[coreA, CORE_A_PORT, CORE_A_DATA], [coreB, CORE_B_PORT, CORE_B_DATA]]) {
+        assert.strictEqual(core.readyInfo.isSingleCore, false, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.coreUrl, `http://127.0.0.1:${port}`, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.pgDatabase, 'pryv-node-test-' + data, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.sqlitePath, path.resolve(SERVICE_CORE_ROOT, 'var-pryv/users-' + data), core.readyInfo.coreId);
+      }
     });
 
     it('[2C01] both cores must respond to HTTP requests', async () => {
@@ -331,6 +421,16 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(coresA, coresB,
         'Both cores must see the same set of cores in PlatformDB');
     });
+
+    it('[2C03] each core resolves both cores to the URLs they listen on', async () => {
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const res = await httpRequest(port, 'GET', '/system/admin/cores', null, { Authorization: ADMIN_KEY });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const urlOf = (id) => (res.body.cores || []).find((c) => c.id === id)?.url;
+        assert.strictEqual(urlOf(CORE_A_ID), CORE_A_URL, 'core A seen from port ' + port);
+        assert.strictEqual(urlOf(CORE_B_ID), CORE_B_URL, 'core B seen from port ' + port);
+      }
+    });
   });
 
   describe('Registration + PlatformDB replication', () => {
@@ -347,7 +447,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: testEmail,
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: CORE_A_HOSTING
       });
     });
 
@@ -372,6 +473,36 @@ describe('[RG2C] Two-core integration tests', function () {
       const found = Array.isArray(users) && users.some(u => u.username === testUser);
       assert.ok(found, `User ${testUser} should appear in admin/users on Core A`);
     });
+
+    it('[2C13] an account posted to Core A for Core B\'s hosting lives in Core B\'s data only; Core A answers 421 for it', async () => {
+      const username = 'tcb' + Date.now().toString(36);
+      const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const token = new URL(res.body.apiEndpoint).username;
+      // Each core lists the accounts of its own user data
+      const listed = async (port) => {
+        const users = await httpRequest(port, 'GET', '/system/admin/users', null, { Authorization: ADMIN_KEY });
+        assert.strictEqual(users.status, 200, JSON.stringify(users.body));
+        return (users.body.users || users.body).some((u) => u.username === username);
+      };
+      assert.strictEqual(await listed(CORE_A_PORT), false, 'not in Core A\'s data');
+      assert.strictEqual(await listed(CORE_B_PORT), true, 'in Core B\'s data');
+      // Core A sends the client to Core B; Core B serves it
+      const onA = await httpRequest(CORE_A_PORT, 'GET', '/' + username + '/access-info', null, { Authorization: token });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error.id, 'wrong-core');
+      assert.strictEqual(onA.body.error.coreUrl, CORE_B_URL);
+      const onB = await httpRequest(CORE_B_PORT, 'GET', '/' + username + '/access-info', null, { Authorization: token });
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+    });
   });
 
   describe('DNS resolution', () => {
@@ -385,7 +516,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: dnsUser + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: CORE_B_HOSTING
       });
     });
 
@@ -404,6 +536,7 @@ describe('[RG2C] Two-core integration tests', function () {
   });
 
   describe('Hosted sites', () => {
+    // Pinned to the core it is posted to, so that core refuses it itself
     async function register (port, username) {
       return httpRequest(port, 'POST', '/users', {
         appId: 'test-2core-sites',
@@ -411,7 +544,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: username + '-' + Date.now().toString(36) + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: port === CORE_A_PORT ? CORE_A_HOSTING : CORE_B_HOSTING
       });
     }
 
@@ -448,6 +582,7 @@ describe('[RG2C] Two-core integration tests', function () {
         CORE_PORT: String(CORE_C_PORT),
         CORE_ID: 'core-c',
         CORE_IP: '127.0.0.3',
+        CORE_DATA_NAME: CORE_C_DATA,
         HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR + '-missing' } })
       }), /exited with code 1/);
     });
@@ -455,26 +590,35 @@ describe('[RG2C] Two-core integration tests', function () {
     it('[2C44] a core whose site name is another core\'s id does not start', async () => {
       let started = null;
       try {
-        started = await startCore({
-          DNS_DOMAIN: DOMAIN,
-          RQLITE_URL,
-          ADMIN_KEY,
-          CORE_PORT: String(CORE_C_PORT),
-          CORE_ID: 'core-c',
-          CORE_IP: '127.0.0.3',
-          HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
-        });
-      } catch (err) {
-        assert.match(err.message, /exited with code 1/);
+        try {
+          started = await startCore({
+            DNS_DOMAIN: DOMAIN,
+            RQLITE_URL,
+            ADMIN_KEY,
+            CORE_PORT: String(CORE_C_PORT),
+            CORE_ID: 'core-c',
+            CORE_IP: '127.0.0.3',
+            CORE_DATA_NAME: CORE_C_DATA,
+            HOSTED_SITES_JSON: JSON.stringify({ [CORE_B_ID]: { static: SITE_DIR } })
+          });
+        } catch (err) {
+          assert.match(err.message, /exited with code 1/);
+        }
+        if (started != null) {
+          await stopCore(started);
+          assert.fail('core-c must refuse a site named after core-b');
+        }
+        // core-b's own name still resolves to core-b, even if core-c's row
+        // (written before its boot check refused) advertises that name
+        await dnsServer.refreshFromPlatform();
+        assert.deepStrictEqual(await resolver.resolve4(`${CORE_B_ID}.${DOMAIN}`), [CORE_B_IP]);
+      } finally {
+        // core-c's row stays behind, with a URL nobody listens on and no
+        // users: the least-loaded core, where every later registration that
+        // names no hosting would be forwarded. Take it out of the selection.
+        const row = await platformDB.getCoreInfo('core-c');
+        if (row != null) await platformDB.setCoreInfo('core-c', { ...row, available: false });
       }
-      if (started != null) {
-        await stopCore(started);
-        assert.fail('core-c must refuse a site named after core-b');
-      }
-      // core-b's own name still resolves to core-b, even if core-c's row
-      // (written before its boot check refused) advertises that name
-      await dnsServer.refreshFromPlatform();
-      assert.deepStrictEqual(await resolver.resolve4(`${CORE_B_ID}.${DOMAIN}`), [CORE_B_IP]);
     });
   });
 
@@ -562,6 +706,7 @@ describe('[RG2C] Two-core integration tests', function () {
       });
     }
 
+    // The account is created on the core it is posted to (pinned by hosting)
     async function registerOn (port, username) {
       const res = await httpRequest(port, 'POST', '/users', {
         appId: 'test-2core-xid',
@@ -569,7 +714,8 @@ describe('[RG2C] Two-core integration tests', function () {
         password: 'testpassw0rd',
         email: username + '@test.example.com',
         insurancenumber: String(Math.floor(Math.random() * 900) + 100),
-        language: 'en'
+        language: 'en',
+        hosting: port === CORE_A_PORT ? CORE_A_HOSTING : CORE_B_HOSTING
       });
       assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
       return { username, token: new URL(res.body.apiEndpoint).username };
@@ -644,11 +790,6 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(poll.body.externalId, { namespace: ns, label: 'Two-core EHR', blindedValue: value, mode: 'hint' });
     });
 
-    // The forced accept across cores (token bound on the account's core, holder
-    // asked on that core's /system/ext-id/holds) is covered by [XIDFC] (remote
-    // arm, fetch seam) and [XIDH] (the holder route over HTTP): the child cores
-    // here run as single-core nodes over one test database, so a cross-core
-    // accept would take the local arm.
     it('[2C55] a registration on Core A of an id Core B holds creates the account unlinked, with no row on A', async () => {
       const crypto = require('node:crypto');
       const { PiiHasher } = require('platform/src/PiiHasher.ts');
@@ -680,6 +821,116 @@ describe('[RG2C] Two-core integration tests', function () {
       } finally {
         for (const c of others) await platformDB.setCoreInfo(c.id, c);
       }
+    });
+
+    // A forced auth request on Core A, for an id held by an account of Core B:
+    // only Core B's data can bind the posted token to the account and say who
+    // holds the id, so Core A must ask Core B over HTTP (access-info with the
+    // token, then /system/ext-id/holds with the admin key).
+    describe('forced accept across cores', () => {
+      const PERMISSIONS = [{ streamId: 'diary', level: 'read' }];
+      let holder, other, value;
+
+      async function accountOnB (prefix) {
+        const user = await registerOn(CORE_B_PORT, prefix + Date.now().toString(36));
+        const minted = await userCall(CORE_B_PORT, user, 'POST', '/accesses', { name: 'rg2c-app-' + user.username, type: 'app', permissions: PERMISSIONS });
+        assert.strictEqual(minted.status, 201, JSON.stringify(minted.body));
+        return { ...user, appToken: minted.body.access.token, apiEndpoint: `http://${user.token}@${user.username}.${DOMAIN}/` };
+      }
+
+      async function forcedRequest (port) {
+        const created = await httpRequest(port, 'POST', '/reg/access', {
+          requestingAppId: 'test-2core-xid', requestedPermissions: PERMISSIONS, externalId: { namespace: ns, blindedValue: value, mode: 'forced' }
+        });
+        assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+        return created.body.key;
+      }
+
+      function accept (port, key, who, token) {
+        return httpRequest(port, 'POST', '/reg/access/' + key, { status: 'ACCEPTED', username: who.username, token, apiEndpoint: who.apiEndpoint });
+      }
+
+      async function statusOf (port, key) {
+        return (await httpRequest(port, 'GET', '/reg/access/' + key)).body.status;
+      }
+
+      before(async () => {
+        const crypto = require('node:crypto');
+        holder = await accountOnB('xidh');
+        other = await accountOnB('xido');
+        value = crypto.randomBytes(32).toString('base64url');
+        const claimed = await userCall(CORE_B_PORT, holder, 'POST', '/account/external-ids', { namespace: ns, blindedValue: value });
+        assert.strictEqual(claimed.status, 201, JSON.stringify(claimed.body));
+      });
+
+      it('[2C56] the holder\'s accept on Core A is checked on Core B and delivered', async () => {
+        const key = await forcedRequest(CORE_A_PORT);
+        const res = await accept(CORE_A_PORT, key, holder, holder.appToken);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.status, 'ACCEPTED');
+        assert.strictEqual(res.body.token, holder.appToken);
+        assert.strictEqual(await statusOf(CORE_A_PORT, key), 'ACCEPTED');
+        // The same accept on Core B, the holder's core, takes the local check
+        const keyOnB = await forcedRequest(CORE_B_PORT);
+        const onB = await accept(CORE_B_PORT, keyOnB, holder, holder.appToken);
+        assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+        assert.strictEqual(onB.body.token, holder.appToken);
+      });
+
+      it('[2C57] on Core A, a non-holder of Core B is refused and a forced registration of the held id creates nothing', async () => {
+        const key = await forcedRequest(CORE_A_PORT);
+        // Another account of Core B, accepting as itself: not the holder
+        const notHolder = await accept(CORE_A_PORT, key, other, other.appToken);
+        assert.strictEqual(notHolder.status, 400, JSON.stringify(notHolder.body));
+        assert.strictEqual(notHolder.body.error.id, 'external-id-mismatch');
+        assert.deepStrictEqual(notHolder.body.error.data, { namespace: ns, reason: 'not-holder' });
+        // Naming the holder with a token of its own: Core B does not bind it
+        const wrongToken = await accept(CORE_A_PORT, key, holder, other.appToken);
+        assert.strictEqual(wrongToken.status, 400, JSON.stringify(wrongToken.body));
+        assert.deepStrictEqual(wrongToken.body.error.data, { namespace: ns, reason: 'token-invalid' });
+        assert.strictEqual(await statusOf(CORE_A_PORT, key), 'NEED_SIGNIN', 'the request is unchanged');
+
+        const username = 'xidfr' + Date.now().toString(36);
+        const registered = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+          appId: 'test-2core-xid',
+          username,
+          password: 'testpassw0rd',
+          email: username + '@test.example.com',
+          insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+          language: 'en',
+          hosting: CORE_A_HOSTING,
+          externalId: { namespace: ns, blindedValue: value, mode: 'forced' }
+        });
+        assert.strictEqual(registered.status, 409, JSON.stringify(registered.body));
+        assert.strictEqual(registered.body.error.id, 'external-id-already-claimed');
+        assert.deepStrictEqual(registered.body.error.data, { namespace: ns, reason: 'value-taken' });
+        const users = await httpRequest(CORE_A_PORT, 'GET', '/system/admin/users', null, { Authorization: ADMIN_KEY });
+        assert.ok(!(users.body.users || users.body).some((u) => u.username === username), 'no account on Core A');
+        const lookup = await httpRequest(CORE_A_PORT, 'GET', `/reg/cores?username=${username}`);
+        assert.notStrictEqual(lookup.status, 200, 'no account on the platform: ' + JSON.stringify(lookup.body));
+      });
+    });
+  });
+
+  // Last: it stops Core B.
+  describe('Core B down', () => {
+    it('[2C58] a registration Core A forwards to an unreachable Core B answers 503, not a 500', async () => {
+      await stopCore(coreB);
+      const username = 'tcdown' + Date.now().toString(36);
+      const res = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'cross-core-registration-failed');
+      assert.ok(!JSON.stringify(res.body).includes(String(CORE_B_PORT)), 'the answer does not name the other core');
+      const lookup = await httpRequest(CORE_A_PORT, 'GET', `/reg/cores?username=${username}`);
+      assert.notStrictEqual(lookup.status, 200, 'no account on the platform: ' + JSON.stringify(lookup.body));
     });
   });
 });

@@ -9,13 +9,25 @@
  * Boots a service-core API server in a child process for integration testing.
  *
  * Env vars consumed:
- *   CORE_PORT       — HTTP port to listen on
- *   CORE_ID         — core identifier (e.g. 'core-a')
- *   CORE_IP         — IP for this core (e.g. '127.0.0.1')
- *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li')
- *   RQLITE_URL      — rqlite HTTP endpoint (e.g. 'http://localhost:14001')
- *   ADMIN_KEY       — auth:adminAccessKey
- *   storages__<kind>__engine — the test run's storage engines; pass
+ *   CORE_PORT:      HTTP port to listen on
+ *   CORE_ID:        core identifier (e.g. 'core-a')
+ *   CORE_IP:        IP for this core (e.g. '127.0.0.1')
+ *   DNS_DOMAIN:     domain (e.g. 'test-2core.pryv.li'). When set, the core
+ *                     runs MULTI-core: `core.url` is `http://127.0.0.1:<CORE_PORT>`,
+ *                     given to boiler through the environment before it loads,
+ *                     so the core-identity plugin sees it. Without it, the core
+ *                     is a single-core node.
+ *   CORE_HOSTING:   optional `core:hosting`; a registration posted with
+ *                     `hosting: <it>` is placed on this core.
+ *   CORE_DATA_NAME: optional (e.g. '2core-a'): this core's own user data,
+ *                     PostgreSQL database `pryv-node-test-<name>` (set with
+ *                     `config.set`; the caller creates it before the boot and
+ *                     drops it after) and local directory `var-pryv/users-<name>`
+ *                     (SQLite storage, users index, attachments). Absent: the
+ *                     test configuration's database and directory.
+ *   RQLITE_URL:     rqlite HTTP endpoint (e.g. 'http://localhost:14001')
+ *   ADMIN_KEY:      auth:adminAccessKey
+ *   storages__<kind>__engine: the test run's storage engines; pass
  *                     `childStorageEngineEnv()` (test-helpers) so the core uses
  *                     the same engines as the test process.
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
@@ -40,6 +52,18 @@ const path = require('node:path');
 // for the ready signal only.
 const sendToParent = typeof process.send === 'function' ? process.send.bind(process) : null;
 process.send = undefined;
+
+// Multi-core identity, known BEFORE boiler init: the core-identity config
+// plugin decides `core:url` and `core:isSingleCore` once, while boiler loads,
+// and a later `config.set` does not revisit that decision. Boiler reads the
+// environment with `__` as the key separator, as production reaches the
+// plugin with its config. With an explicit `core.url` and dnsLess off, the
+// core runs multi-core and advertises that URL to the others.
+if (process.env.DNS_DOMAIN) {
+  process.env.core__id = process.env.CORE_ID || 'single';
+  process.env.core__url = 'http://127.0.0.1:' + (process.env.CORE_PORT || '3000');
+  process.env.dns__domain = process.env.DNS_DOMAIN;
+}
 
 // Boiler init — must happen before any other require
 require('@pryv/boiler').init({
@@ -76,6 +100,7 @@ const http = require('node:http');
   config.set('core:id', coreId);
   config.set('core:ip', coreIp);
   config.set('core:available', true);
+  if (process.env.CORE_HOSTING) config.set('core:hosting', process.env.CORE_HOSTING);
   config.set('dns:domain', domain);
   config.set('auth:adminAccessKey', adminKey);
   // platform.piiMode defaults to "hashed" since 2.0.0-rc.3; multi-core child
@@ -84,6 +109,14 @@ const http = require('node:http');
   config.set('platform:piiHmacKey', process.env.PII_HMAC_KEY || 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=');
   config.set('storages:platform:engine', 'rqlite');
   config.set('storages:engines:rqlite:url', rqliteUrl);
+  // This core's own user data, as on a real cluster (the platform store
+  // stays shared). Read at `storages.init()` / first use, both inside
+  // `app.initiate()` below.
+  const dataName = process.env.CORE_DATA_NAME || null;
+  if (dataName != null) {
+    config.set('storages:engines:postgresql:database', 'pryv-node-test-' + dataName);
+    config.set('storages:engines:sqlite:path', path.resolve(__dirname, '../../../../var-pryv/users-' + dataName));
+  }
   config.set('dnsLess:publicUrl', `http://127.0.0.1:${port}`);
   // service:api format needed by api-endpoint.js for building apiEndpoints
   if (domain) {
@@ -92,6 +125,10 @@ const http = require('node:http');
     config.set('service:api', `http://127.0.0.1:${port}/{username}/`);
   }
   config.set('service:register', `http://127.0.0.1:${port}/reg/`);
+  // The event-types dictionary of the test runs (this process does not load
+  // the service-info file): without it the core boots degraded, on the
+  // embedded fallback, refusing every type that is not in it.
+  config.set('service:eventTypes', require('../../../../test/service-info.json').eventTypes);
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);
@@ -152,7 +189,18 @@ const http = require('node:http');
 
   // Signal ready to parent
   if (sendToParent != null) {
-    sendToParent({ type: 'ready', port, coreId, baseEngine: config.get('storages:base:engine') });
+    sendToParent({
+      type: 'ready',
+      port,
+      coreId,
+      baseEngine: config.get('storages:base:engine'),
+      isSingleCore: config.get('core:isSingleCore'),
+      coreUrl: config.get('core:url'),
+      hosting: config.get('core:hosting') ?? null,
+      rqliteUrl: config.get('storages:engines:rqlite:url'),
+      pgDatabase: config.get('storages:engines:postgresql:database'),
+      sqlitePath: config.get('storages:engines:sqlite:path')
+    });
   }
   console.log(`[${coreId}] listening on http://127.0.0.1:${port}`);
 

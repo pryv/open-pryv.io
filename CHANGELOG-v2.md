@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Multi-core registration: a refusal from the core the registration is forwarded to now reaches
+  the client with its own status.** A `POST /users` that the landing core forwards to another core
+  answered `500 unexpected-error` whenever that core refused it (e.g. `409 item-already-exists`
+  for a taken username, `409 external-id-already-claimed`); a refusal (a 4xx other than 401 and
+  403, answered with an API error) now reaches the client with the target core's status, error id,
+  message and `data`. A forward the target does not accept (401, 403), a 4xx that is not an API
+  error (e.g. a proxy's page), a 5xx from the target, or a target that cannot be reached answers
+  `503 cross-core-registration-failed`, and the target's answer or the network cause is logged on
+  the landing core (at warn), never returned to the client.
 - **CMC: a refusal answered by the capability itself now fails with its typed id, and is not
   retried.** A `consent/refuse-cmc` trigger whose delivery the requester's core refuses with a
   4xx used to fail with `failure.reason: 'cmc-handler-delivery-failed'` and was re-sent by the

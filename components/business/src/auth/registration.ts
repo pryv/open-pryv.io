@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { FlowExternalId, RegistrationClaim } from 'business/src/external-ids/service.ts';
 const require = createRequire(import.meta.url);
+const { APIError } = require('errors');
 const errors = require('errors').factory;
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
 const challenge = require('business/src/emails/challenge.ts');
@@ -72,7 +73,6 @@ type RegisterParams = {
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
 type Next = (err?: unknown) => void;
-type ApiError = Error & { id?: string; httpStatus?: number; data?: unknown };
 
 // Loaded on first use: the service reaches the platform and the storage
 // engines, which are not ready when this module loads.
@@ -164,6 +164,15 @@ class Registration {
    * Downstream chain steps must no-op when `result.forwarded` is set.
    */
   async forwardIfCrossCore (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
+    // A forward that could not be completed: 503 for the client, the target's
+    // answer or the network cause for the log only. Logged at warn here: the
+    // API error log records a non-500 at info, below an operator's level.
+    const logger = this.logger;
+    function forwardFailed (message: string, detail: string) {
+      const inner = new Error('Cross-core registration forward: ' + detail);
+      logger.warn(inner.message);
+      return new APIError('cross-core-registration-failed', message, { httpStatus: 503, innerError: inner });
+    }
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
       // Forwarded here by another core: create the account here, never forward again.
@@ -186,19 +195,41 @@ class Registration {
       // 30 s timeout: a hung target must not wedge the landing worker (leaves
       // headroom for password-hashing cost on the target); redirects refused.
       // targetUrl is slash-terminated (Platform.coreIdToUrl convention).
-      const response = await fetch(targetUrl + 'users', peerFetchOptions({
-        method: 'POST',
-        headers: { 'content-type': 'application/json', [REGISTRATION_FORWARD_HEADER]: forward },
-        body: forwardedBody
-      }, 30000));
+      let response;
+      try {
+        response = await fetch(targetUrl + 'users', peerFetchOptions({
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [REGISTRATION_FORWARD_HEADER]: forward },
+          body: forwardedBody
+        }, 30000));
+      } catch (err) {
+        // Unreachable, timed out or redirecting: the registration was not
+        // refused, it could not be placed. The network cause (ECONNREFUSED,
+        // ENOTFOUND, ...) sits on `cause`, which the log would not show.
+        const cause = (err as { cause?: { message?: string } })?.cause?.message ?? (err as Error)?.message;
+        return next(forwardFailed('The core selected for this registration is unreachable.',
+          selectedCoreId + ' at ' + targetUrl + ': ' + cause));
+      }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err: ApiError = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
-        err.id = body?.error?.id || 'cross-core-registration-failed';
-        err.httpStatus = response.status;
-        // The target's details (e.g. which field a refusal names) reach the client too.
-        if (body?.error?.data !== undefined) err.data = body.error.data;
-        return next(err);
+        // A refusal of the registration (a 4xx carrying an API error id)
+        // reaches the client as the target answered it: its body is already
+        // the public error data. A 401/403 is the target refusing the forward
+        // itself (cores not sharing the admin key), a 4xx with no API error
+        // id is not the target answering (e.g. a proxy's HTML 404 for a wrong
+        // core URL), and a 5xx is the target's own fault: none is the
+        // client's, and none is relayed. Always an APIError: a plain Error
+        // would become a 500 unexpected-error.
+        const relayed = response.status >= 400 && response.status < 500 &&
+          response.status !== 401 && response.status !== 403 &&
+          typeof body?.error?.id === 'string';
+        if (relayed) {
+          return next(new APIError(body.error.id,
+            typeof body.error.message === 'string' ? body.error.message : 'The registration was refused.',
+            { httpStatus: response.status, data: body.error.data }));
+        }
+        return next(forwardFailed('The core selected for this registration did not accept it.',
+          selectedCoreId + ' answered ' + response.status + ' ' + (body?.error?.id ?? '(not an API error)')));
       }
       // Strip the target's `meta` block — the local api-server will add
       // its own meta on the way out. Copy every other field into result.
