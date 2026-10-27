@@ -11,6 +11,14 @@
   The test stub of `saveAttachmentFromStream` reads its stream to the end, as the real one does.
   Test `[BKRSA]` (a stream whose opening completes 50 ms later) fails on the previous code
   every time; `[BKRS]` passed 30 runs in a row.
+- The wait is bounded (10 s, `discardTimeoutMs`): a stream that never closes is reported at warn
+  and the restore goes on (`[BKRSC]`).
+- Encrypted backups: `FilesystemBackupReader` joined the file stream to the decrypting stream
+  with `pipe`, so destroying the plaintext side (an attachment not restored) left the file open
+  until the process ended (one descriptor per such attachment), and a failed open of the file
+  was raised with no listener. It now uses `pipeline`: the file stream is destroyed with the
+  plaintext side and its errors reach the consumer. `[BKRSB]` (descriptor count back to its
+  level after the restore, backup removed at once) fails with `pipe` every time.
 
 ## Mail: a failed send is logged once, at its level
 

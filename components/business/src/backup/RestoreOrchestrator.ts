@@ -78,6 +78,8 @@ class RestoreOrchestrator {
   isReservedUsername: ((name: string) => boolean) | null = null;
   /** Replaces the platform's word-list check when set (tests). */
   isListedUsername: ((name: string) => boolean) | null = null;
+  /** How long a restore waits for an attachment it does not restore to close (default 10 s; tests). */
+  discardTimeoutMs: number | null = null;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -347,7 +349,9 @@ class RestoreOrchestrator {
     let unreferencedAttachments = 0;
     for await (const { eventId, fileId, stream } of await userReader.readAttachments()) {
       if (eventId == null) {
-        await discardStream(stream);
+        await discardStream(stream, () => this.logger.warn(
+          `attachment file ${fileId} of user ${targetUserId} (not restored) did not close in time; the restore goes on`),
+        this.discardTimeoutMs ?? DISCARD_TIMEOUT_MS);
         unreferencedAttachments++;
         continue;
       }
@@ -701,19 +705,28 @@ type DiscardableStream = { destroy?: () => void; closed?: boolean; on?: (event: 
  * not cancel that open: without the wait, the open (and its file descriptor)
  * outlives the restore, and if the file is gone by then (a backup directory
  * removed after the restore) its error is raised with no listener.
+ * The wait is bounded (`timeoutMs`): a stream from a reader that never emits
+ * `close` must not stall the restore; `onTimeout` reports it.
  */
-async function discardStream (stream: unknown): Promise<void> {
+const DISCARD_TIMEOUT_MS = 10_000;
+async function discardStream (stream: unknown, onTimeout: () => void, timeoutMs: number = DISCARD_TIMEOUT_MS): Promise<void> {
   const s = stream as DiscardableStream | null;
   if (s == null || typeof s.destroy !== 'function') return;
   if (s.closed === true || typeof s.once !== 'function' || typeof s.on !== 'function') {
     s.destroy();
     return;
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   await new Promise<void>((resolve) => {
+    // The error of a stream being discarded is not a restore error (e.g. its
+    // file gone by the time its open runs): heard here, never raised.
     s.on!('error', () => {});
     s.once!('close', () => resolve());
+    timer = setTimeout(() => { onTimeout(); resolve(); }, timeoutMs);
+    timer.unref?.();
     s.destroy!();
   });
+  clearTimeout(timer);
 }
 
 export default RestoreOrchestrator;
