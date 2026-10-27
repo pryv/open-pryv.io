@@ -185,6 +185,8 @@ type RetryDeps = {
   now?: () => number;
   logger?: CmcLogger;
 };
+// What a send of a queued delivery reads (the fetch is in dispatchDeps).
+type DeliveryAttemptDeps = Pick<RetryDeps, 'dispatchDeps' | 'now' | 'logger'>;
 
 /**
  * Compute the next-attempt-after timestamp given attempts count.
@@ -368,7 +370,7 @@ async function attemptDelivery (params: {
   delivery: { apiEndpoint: string; path: string; body: unknown };
   attempts: number;
   now: number;
-  deps: RetryDeps;
+  deps: DeliveryAttemptDeps;
   logContext?: Record<string, unknown>;
 }): Promise<DeliveryVerdict> {
   const { delivery: d, attempts, now, deps } = params;
@@ -557,7 +559,7 @@ function isPeerAccessGone (v: DeliveryVerdict): boolean {
  */
 async function runDeletionOutboxPass (params: {
   outbox: DeletionOutbox;
-  deps: RetryDeps;
+  deps: DeliveryAttemptDeps;
   limit?: number;
 }): Promise<{
   processed: number;
