@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## 2.0.0-rc.61 - 2026-10-27
+## Unreleased
 
 - **Multi-core registration: a refusal from the core the registration is forwarded to now reaches
   the client with its own status.** A `POST /users` that the landing core forwards to another core
@@ -11,6 +11,9 @@
   error (e.g. a proxy's page), a 5xx from the target, or a target that cannot be reached answers
   `503 cross-core-registration-failed`, and the target's answer or the network cause is logged on
   the landing core (at warn), never returned to the client.
+
+## 2.0.0-rc.61 - 2026-10-27
+
 - **CMC: a refusal answered by the capability itself now fails with its typed id, and is not
   retried.** A `consent/refuse-cmc` trigger whose delivery the requester's core refuses with a
   4xx used to fail with `failure.reason: 'cmc-handler-delivery-failed'` and was re-sent by the
