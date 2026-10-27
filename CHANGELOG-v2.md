@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.62 - 2026-10-27
 
 - **Multi-core registration: a refusal from the core the registration is forwarded to now reaches
   the client with its own status.** A `POST /users` that the landing core forwards to another core
