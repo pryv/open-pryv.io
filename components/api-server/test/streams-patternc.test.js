@@ -195,6 +195,23 @@ describe('[STRP] streams (Pattern C)', function () {
       assert.strictEqual(res.body.stream.id, 'pas-encode-de-bleu');
     });
 
+    it('[P84S] must keep a predefined id made of valid characters as given', async function () {
+      for (const id of ['keep-a--b', '-keep-edges-', '0--0']) {
+        const res = await coreRequest
+          .post(basePath)
+          .set('Authorization', token)
+          .send({ id, name: 'Kept ' + id });
+
+        assert.strictEqual(res.status, 201);
+        assert.strictEqual(res.body.stream.id, id);
+        const got = await coreRequest
+          .get(basePath)
+          .set('Authorization', token)
+          .query({ parentId: id });
+        assert.strictEqual(got.status, 200);
+      }
+    });
+
     it('[P2B3] must return a correct error if the parent stream is unknown', async function () {
       const res = await coreRequest
         .post(basePath)
