@@ -197,6 +197,7 @@ const http = require('node:http');
       isSingleCore: config.get('core:isSingleCore'),
       coreUrl: config.get('core:url'),
       hosting: config.get('core:hosting') ?? null,
+      rqliteUrl: config.get('storages:engines:rqlite:url'),
       pgDatabase: config.get('storages:engines:postgresql:database'),
       sqlitePath: config.get('storages:engines:sqlite:path')
     });

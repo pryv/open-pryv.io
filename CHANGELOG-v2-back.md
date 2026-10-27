@@ -24,6 +24,11 @@
   (both mutation-checked).
 - The children load the test event-types dictionary (`service:eventTypes` from
   `test/service-info.json`); they used to boot degraded on the embedded fallback.
+- The suite's ports (rqlite 14001/14002, cores 13000/13010/13020) and temp paths
+  (`/tmp/rqlite-2core-test*`, `/tmp/rg2c-hosted-site`) shift with the checkout's PostgreSQL port:
+  +100 per port above 5432, and a `-<n>` suffix on the paths, so checkouts that run their suites
+  side by side on offset ports no longer collide. The canonical setup (5432, CI) is unchanged.
+  `[2C00]` asserts the children's port and rqlite URL.
 - `stopCore` sends SIGKILL to a child still running 5 s after SIGTERM (the check used
   `child.killed`, true as soon as a signal is sent, so it never fired).
 

@@ -36,18 +36,35 @@ const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');
 const RQLITE_BIN = path.resolve(SERVICE_CORE_ROOT, 'bin-ext/rqlited');
 
+// Several checkouts of this repository may run their suites at once on one
+// machine, each on its own PostgreSQL port (5432, 5433, ...). This suite's
+// ports and temp paths follow the same offset, in steps of 100, so two such
+// runs never meet. The PostgreSQL port is the reference because no test
+// overrides it (parallel workers move rqlite, not PostgreSQL). The canonical
+// setup (5432) keeps offset 0 and the historical names.
+function workspaceOffsetFrom (config) {
+  const pgPort = Number(config.get('storages:engines:postgresql:port'));
+  const index = pgPort - 5432;
+  return Number.isInteger(index) && index > 0 && index < 50 ? index : 0;
+}
+const WORKSPACE_OFFSET = workspaceOffsetFrom(getConfigUnsafe(true));
+const PORT_SHIFT = WORKSPACE_OFFSET * 100;
+const TMP_SUFFIX = WORKSPACE_OFFSET === 0 ? '' : '-' + (WORKSPACE_OFFSET + 1);
+
 const DOMAIN = 'test-2core.pryv.li';
 const ADMIN_KEY = 'test-2core-admin-key';
-const RQLITE_PORT = 14001;
-const RQLITE_RAFT_PORT = 14002;
+const RQLITE_PORT = 14001 + PORT_SHIFT;
+const RQLITE_RAFT_PORT = 14002 + PORT_SHIFT;
 const RQLITE_URL = `http://localhost:${RQLITE_PORT}`;
-const CORE_A_PORT = 13000;
-const CORE_B_PORT = 13010;
+const RQLITE_DATA_DIR = '/tmp/rqlite-2core-test' + TMP_SUFFIX;
+const RQLITE_LOG_FILE = '/tmp/rqlite-2core-test' + TMP_SUFFIX + '.log';
+const CORE_A_PORT = 13000 + PORT_SHIFT;
+const CORE_B_PORT = 13010 + PORT_SHIFT;
 const CORE_A_ID = 'core-a';
 const CORE_B_ID = 'core-b';
 const CORE_A_IP = '127.0.0.1';
 const CORE_B_IP = '127.0.0.2';
-const CORE_C_PORT = 13020;
+const CORE_C_PORT = 13020 + PORT_SHIFT;
 // Each core's hosting: a registration posted with `hosting` is placed on that
 // core (an un-pinned one goes to the core with the fewest users, a tie being
 // decided by the platform row order).
@@ -64,7 +81,7 @@ const CORE_C_DATA = '2core-c';
 const CORE_DATA_NAMES = [CORE_A_DATA, CORE_B_DATA, CORE_C_DATA];
 // Hosted sites: `sitehome` on both cores, `siteonly` on core A only (core B
 // must still refuse it as a username, from core A's advertisement).
-const SITE_DIR = '/tmp/rg2c-hosted-site';
+const SITE_DIR = '/tmp/rg2c-hosted-site' + TMP_SUFFIX;
 const SITE_BOTH = 'sitehome';
 const SITE_A_ONLY = 'siteonly';
 
@@ -217,13 +234,13 @@ describe('[RG2C] Two-core integration tests', function () {
     await rqliteProcess.start({
       coreId: 'test-node',
       binPath: RQLITE_BIN,
-      dataDir: '/tmp/rqlite-2core-test',
+      dataDir: RQLITE_DATA_DIR,
       httpPort: RQLITE_PORT,
       raftPort: RQLITE_RAFT_PORT,
       dnsDomain: null,
       coreIp: null,
       // rqlited's own output: to a file, not the test runner's stdout.
-      logFile: '/tmp/rqlite-2core-test.log',
+      logFile: RQLITE_LOG_FILE,
       log: (msg) => { if (process.env.LOGS) console.log('[rqlite]', msg); }
     });
 
@@ -335,7 +352,7 @@ describe('[RG2C] Two-core integration tests', function () {
     });
     // Clean up rqlite data
     const fs = require('node:fs');
-    fs.rmSync('/tmp/rqlite-2core-test', { recursive: true, force: true });
+    fs.rmSync(RQLITE_DATA_DIR, { recursive: true, force: true });
     fs.rmSync(SITE_DIR, { recursive: true, force: true });
     // The cores' own user data (their pools are closed: the cores stopped)
     await resetCoresData(false);
@@ -363,7 +380,13 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(coreB.readyInfo.baseEngine, expected, 'core B');
       // Multi-core nodes, each advertising its own URL (a single-core node
       // would take the local path for every cross-core call)
-      // and each on its own user data
+      // and each on its own user data, on this checkout's ports (shifted by
+      // 100 per PostgreSQL port above 5432, so parallel checkouts never meet)
+      const shift = workspaceOffsetFrom(getConfigUnsafe(true)) * 100;
+      for (const [core, base] of [[coreA, 13000], [coreB, 13010]]) {
+        assert.strictEqual(core.readyInfo.port, base + shift, core.readyInfo.coreId);
+        assert.strictEqual(core.readyInfo.rqliteUrl, `http://localhost:${14001 + shift}`, core.readyInfo.coreId);
+      }
       for (const [core, port, data] of [[coreA, CORE_A_PORT, CORE_A_DATA], [coreB, CORE_B_PORT, CORE_B_DATA]]) {
         assert.strictEqual(core.readyInfo.isSingleCore, false, core.readyInfo.coreId);
         assert.strictEqual(core.readyInfo.coreUrl, `http://127.0.0.1:${port}`, core.readyInfo.coreId);
