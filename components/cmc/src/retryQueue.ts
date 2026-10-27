@@ -340,12 +340,72 @@ function terminalDelivery (c: RetryContent): RetryContent['delivery'] {
   return { ...c.delivery, apiEndpoint: stripCredentials(c.delivery.apiEndpoint) };
 }
 
+/** What one send of a queued delivery decided; the caller stores it. */
+type DeliveryVerdict = {
+  outcome: 'succeeded' | 'rescheduled' | 'failed-permanent';
+  // Rescheduled: the number of the next attempt; failed-permanent: the
+  // attempts made; succeeded: the attempts made, this one included.
+  attempts: number;
+  // The peer's answer: outbound reason ('http-4xx', 'network', 'refused', ...) and HTTP status.
+  reason?: string;
+  status?: number;
+  refused?: boolean;
+  nextAttemptAfter?: number;
+  detail?: { peerReason?: string; status?: number; retryAfterMs?: number };
+};
+
 /**
- * One attempt of a delivery record: the request re-sent as stored. A 2xx
- * settles it; a 4xx (the peer's considered answer) retires it at once,
- * except 408 / 429; anything else reschedules it on the delivery schedule
- * (no earlier than the peer's Retry-After, see honourRetryAfter) until
- * DELIVERY_MAX_ATTEMPTS.
+ * One send of a queued delivery (`attempts` made so far), and the verdict:
+ * a 2xx settles it; a 4xx (the peer's considered answer) or a refused
+ * destination retires it at once, except 408 / 429; anything else reschedules
+ * it on the delivery schedule (no earlier than the peer's Retry-After, see
+ * honourRetryAfter) until DELIVERY_MAX_ATTEMPTS. Stores nothing: an event
+ * record (processDeliveryEvent) and a deletion-notice row apply it alike.
+ */
+async function attemptDelivery (params: {
+  delivery: { apiEndpoint: string; path: string; body: unknown };
+  attempts: number;
+  now: number;
+  deps: RetryDeps;
+  logContext?: Record<string, unknown>;
+}): Promise<DeliveryVerdict> {
+  const { delivery: d, attempts, now, deps } = params;
+  const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
+  const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
+  let result: { ok: boolean; status?: number; reason?: string; retryAfterMs?: number };
+  try {
+    result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
+  } catch (err: unknown) {
+    result = { ok: false, reason: 'network' };
+    deps.logger?.warn?.('cmc/retry: delivery threw', { ...params.logContext, error: String((err as Error)?.message || err) });
+  }
+  if (result.ok) return { outcome: 'succeeded', attempts };
+  const nextAttempts = attempts + 1;
+  const retryAfterMs = retryAfterOf(result) ?? null;
+  const detail = retryAfterMs == null
+    ? { peerReason: result.reason, status: result.status }
+    : { peerReason: result.reason, status: result.status, retryAfterMs };
+  // A 4xx is the peer's answer (408 / 429 are 'http-retry-later', retried);
+  // a refused destination can never be called.
+  const refused = result.reason === 'refused';
+  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
+    return { outcome: 'failed-permanent', attempts: nextAttempts - 1, reason: result.reason, status: result.status, refused, detail };
+  }
+  return {
+    outcome: 'rescheduled',
+    attempts: nextAttempts,
+    reason: result.reason,
+    status: result.status,
+    detail,
+    nextAttemptAfter: honourRetryAfter({
+      scheduled: nextDeliveryAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs, capMs: DELIVERY_RETRY_AFTER_MAX_MS,
+    }),
+  };
+}
+
+/**
+ * One attempt of a delivery record: the request re-sent as stored, the
+ * verdict of attemptDelivery written back onto the record.
  */
 async function processDeliveryEvent (params: {
   userId: string;
@@ -355,65 +415,46 @@ async function processDeliveryEvent (params: {
 }): Promise<{ outcome: 'succeeded' | 'rescheduled' | 'failed-permanent'; retryEventId?: string; attempts?: number }> {
   const { userId, retryEvent, deps, now } = params;
   const c = retryEvent.content;
-  const d = c.delivery!;
-  const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
-  const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
-  let result: { ok: boolean; status?: number; reason?: string; retryAfterMs?: number };
-  try {
-    result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
-  } catch (err: unknown) {
-    result = { ok: false, reason: 'network' };
-    deps.logger?.warn?.('cmc/retry: delivery threw', { retryEventId: retryEvent.id, error: String((err as Error)?.message || err) });
-  }
-  if (result.ok) {
+  const v = await attemptDelivery({ delivery: c.delivery!, attempts: c.attempts ?? 1, now, deps, logContext: { retryEventId: retryEvent.id } });
+  if (v.outcome === 'succeeded') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
       ...serverModification(deps),
       content: { ...c, status: 'succeeded', delivery: terminalDelivery(c) },
     }, null, WRITE_OPTS);
-    deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: c.attempts ?? 1 });
+    deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: v.attempts });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
-  const nextAttempts = (c.attempts ?? 1) + 1;
-  const retryAfterMs = retryAfterOf(result) ?? null;
-  const detail = retryAfterMs == null
-    ? { peerReason: result.reason, status: result.status }
-    : { peerReason: result.reason, status: result.status, retryAfterMs };
-  // A 4xx is the peer's answer (408 / 429 are 'http-retry-later', retried);
-  // a refused destination can never be called.
-  const refused = result.reason === 'refused';
-  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
+  if (v.outcome === 'failed-permanent') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
       ...serverModification(deps),
       content: {
         ...c,
         status: 'failed-permanent',
-        attempts: nextAttempts - 1,
-        lastFailureReason: refused ? 'cmc-handler-destination-refused' : (c.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
-        lastFailureDetail: detail,
+        attempts: v.attempts,
+        lastFailureReason: v.refused === true ? 'cmc-handler-destination-refused' : (c.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
+        lastFailureDetail: v.detail,
         delivery: terminalDelivery(c),
       },
     }, null, WRITE_OPTS);
     deps.logger?.warn?.('cmc/retry: delivery failed-permanent (the counterparty was never told)', {
-      retryEventId: retryEvent.id, originalType: c.originalType, attempts: nextAttempts - 1, reason: result.reason, status: result.status,
+      retryEventId: retryEvent.id, originalType: c.originalType, attempts: v.attempts, reason: v.reason, status: v.status,
     });
-    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: nextAttempts - 1 };
+    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: v.attempts };
   }
   await deps.mall.events.update(userId, {
     ...retryEvent,
     ...serverModification(deps),
     content: {
       ...c,
-      attempts: nextAttempts,
-      lastFailureDetail: detail,
-      nextAttemptAfter: honourRetryAfter({
-        scheduled: nextDeliveryAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs, capMs: DELIVERY_RETRY_AFTER_MAX_MS,
-      }),
+      attempts: v.attempts,
+      lastFailureDetail: v.detail,
+      nextAttemptAfter: v.nextAttemptAfter,
     },
   }, null, WRITE_OPTS);
-  deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: nextAttempts });
-  return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
+  deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: v.attempts });
+  return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: v.attempts };
 }
 
 /** `modified` (write time, unix seconds) and `modifiedBy` for a retry event the plugin updates. */
