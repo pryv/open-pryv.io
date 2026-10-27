@@ -547,6 +547,67 @@ describe('[ACUP] accesses.update', function () {
       assert.strictEqual(updateRes.status, 200,
         `update should accept checkApp output verbatim, got ${updateRes.status}: ${JSON.stringify(updateRes.body)}`);
     });
+
+    // keeps the managed shared access (on stream0's child) inside the app's scope
+    const kept = () => [
+      { streamId: stream0.attrs.id, level: 'manage' },
+      { streamId: stream1.attrs.id, level: 'contribute' }
+    ];
+
+    async function streamExists (streamId) {
+      const res = await coreRequest
+        .get('/' + username + '/streams')
+        .set('Authorization', personalToken)
+        .query({ parentId: streamId });
+      return res.status === 200;
+    }
+
+    it('[SYM03] a permission with defaultName on a missing stream creates the stream, as on create', async function () {
+      const streamId = 'upd-new-' + cuid();
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ permissions: kept().concat({ streamId, level: 'read', defaultName: 'Created by update' }) });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.access.permissions.find((p) => p.streamId === streamId && p.level === 'read'));
+      const got = await coreRequest
+        .get('/' + username + '/streams')
+        .set('Authorization', personalToken);
+      const created = got.body.streams.find((s) => s.id === streamId);
+      assert.ok(created, 'the missing stream must be created');
+      assert.strictEqual(created.name, 'Created by update');
+    });
+
+    it('[SYM04] a permission without defaultName may name a stream that does not exist yet', async function () {
+      const streamId = 'upd-later-' + cuid();
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ permissions: kept().concat({ streamId, level: 'read' }) });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.access.permissions.find((p) => p.streamId === streamId && p.level === 'read'));
+      assert.strictEqual(await streamExists(streamId), false, 'no stream is created without defaultName');
+    });
+
+    it('[SYM05] a permission with defaultName on an invalid stream id is refused', async function () {
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ permissions: kept().concat({ streamId: 'Not Valid', level: 'read', defaultName: 'Bad' }) });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, ErrorIds.InvalidRequestStructure);
+    });
+
+    it('[SYM06] an app caller cannot create a stream through defaultName on its managed shared access', async function () {
+      const streamId = 'upd-app-' + cuid();
+      const res = await coreRequest
+        .put(path(sharedAccessId))
+        .set('Authorization', appAccessToken)
+        .send({ permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }, { streamId, level: 'read', defaultName: 'Nope' }] });
+      // outside the app's scope: refused by the chain rules either way
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(await streamExists(streamId), false);
+    });
   });
 
   describe('[ACUP07] checkApp head-only', function () {

@@ -514,63 +514,68 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!access.isPersonal()) { return next(); } // not needed for personal access
     for (const permission of params.permissions!) {
       try {
-        await ensureStream(permission);
+        await ensurePermissionStream(context, permission);
       } catch (e) {
         return next(e);
       }
     }
     return next();
-    async function ensureStream (permission: StreamPermission) {
-      // We ensure stream Exists only if streamid is !== '*' and if a defaultName is providedd
-      if (permission.streamId == null ||
-                permission.streamId === '*' ||
-                permission.defaultName == null) { return; }
-      // CMC plugin owns the `:_cmc:*` namespace: reserved parents are
-      // provisioned at user-creation time, user-creatable scopes under
-      // `:_cmc:apps:<app>` and plugin-managed sub-streams are created on
-      // demand by the plugin. Letting this code attempt creation here
-      // would hit the local-store streamId regex which rejects the
-      // colon and fail valid permissions like `:_cmc:inbox` or
-      // `:_cmc:apps:<app>` at access-create time.
-      if (permission.streamId.startsWith(':_cmc:')) { return; }
-      const existingStream = await context.streamForStreamId(permission.streamId, null);
-      if (existingStream != null) {
-        if (!existingStream.trashed) { return; }
-        // untrash stream
-        const update = { id: existingStream.id, trashed: false };
-        try {
-          await mall.streams.update(context.user.id, update);
-        } catch (err) {
-          throw errors.unexpectedError(err);
-        }
-        return;
-      }
-      // create new stream
-      const newStream: { id: string; name: string; parentId: string | null; clientData?: { 'pryv-cmc-virtual'?: { revealedBy: string } } } = {
-        id: permission.streamId,
-        name: permission.defaultName,
-        parentId: null
-      };
+  }
 
-      // check validity of Id if stream is local store
-      const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
-      if (storeId === 'local') {
-        if (!commonFns.isValidStreamIdForCreation(permission.streamId)) {
-          throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden character(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
-        }
-      } else {
-        newStream.parentId = ':' + storeId + ':';
-      }
-
-      context.initTrackingProperties(newStream);
+  // Creates (or untrashes) the stream a permission names when the permission
+  // carries a `defaultName`; shared by accesses.create and accesses.update.
+  // A permission without `defaultName` may name a stream that does not exist
+  // yet: it applies once that stream is created.
+  async function ensurePermissionStream (context: MethodContext, permission: StreamPermission) {
+    // We ensure stream Exists only if streamid is !== '*' and if a defaultName is providedd
+    if (permission.streamId == null ||
+              permission.streamId === '*' ||
+              permission.defaultName == null) { return; }
+    // CMC plugin owns the `:_cmc:*` namespace: reserved parents are
+    // provisioned at user-creation time, user-creatable scopes under
+    // `:_cmc:apps:<app>` and plugin-managed sub-streams are created on
+    // demand by the plugin. Letting this code attempt creation here
+    // would hit the local-store streamId regex which rejects the
+    // colon and fail valid permissions like `:_cmc:inbox` or
+    // `:_cmc:apps:<app>` at access-create time.
+    if (permission.streamId.startsWith(':_cmc:')) { return; }
+    const existingStream = await context.streamForStreamId(permission.streamId, null);
+    if (existingStream != null) {
+      if (!existingStream.trashed) { return; }
+      // untrash stream
+      const update = { id: existingStream.id, trashed: false };
       try {
-        await mall.streams.create(context.user.id, newStream);
+        await mall.streams.update(context.user.id, update);
       } catch (err) {
-        if (err instanceof APIError) {
-          throw err;
-        }
         throw errors.unexpectedError(err);
       }
+      return;
+    }
+    // create new stream
+    const newStream: { id: string; name: string; parentId: string | null; clientData?: { 'pryv-cmc-virtual'?: { revealedBy: string } } } = {
+      id: permission.streamId,
+      name: permission.defaultName,
+      parentId: null
+    };
+
+    // check validity of Id if stream is local store
+    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
+    if (storeId === 'local') {
+      if (!commonFns.isValidStreamIdForCreation(permission.streamId)) {
+        throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden character(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
+      }
+    } else {
+      newStream.parentId = ':' + storeId + ':';
+    }
+
+    context.initTrackingProperties(newStream);
+    try {
+      await mall.streams.create(context.user.id, newStream);
+    } catch (err) {
+      if (err instanceof APIError) {
+        throw err;
+      }
+      throw errors.unexpectedError(err);
     }
   }
 
@@ -653,6 +658,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     oauthNameUpdateGuard,
     applyAccountStreamsValidationForUpdate,
     enforceUpdateChainRules,
+    createDataStructureFromUpdatePermissions,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
     rescopeWebhooksOfUpdatedAccess,
@@ -660,6 +666,21 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     emitUpdateNotifications,
     cmcAccessesUpdatePostHookMiddleware
   );
+
+  // Mirror of `createDataStructureFromPermissions` for the update path: a
+  // permission carrying `defaultName` gets its missing stream created, as on
+  // create (personal callers only, like create).
+  async function createDataStructureFromUpdatePermissions (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    if (!context.access.isPersonal() || !Array.isArray(params.update?.permissions)) { return next(); }
+    for (const permission of params.update.permissions) {
+      try {
+        await ensurePermissionStream(context, permission);
+      } catch (e) {
+        return next(e);
+      }
+    }
+    return next();
+  }
 
   // Mirror of `cleanupPermissions` for the update path. UPDATE accepts the
   // same {defaultName, name} extras as CREATE (the defaultName/name symmetry
