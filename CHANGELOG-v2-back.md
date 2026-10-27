@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## Dependencies: node-forge 1.4.2, runtime audit allowlist emptied
+
+- `node-forge` bumped to `^1.4.2` (also used by `acme-client`, deduped): 1.4.2 is outside the
+  range of GHSA-86w9-cpqp-85rv (RSA PKCS#1 v1.5 signature verification), which had no patched
+  release until now and was allowlisted in `scripts/audit-prod-deps`.
+- The two other allowlist entries were stale: the brace-expansion advisory (GHSA-mh99-v99m-4gvg)
+  now lists the patched 1.x line (1.1.21 installed) and js-yaml got a 4.x fix for
+  GHSA-5p4m-2wfm-xmqj (4.3.2 installed). The allowlist is empty, so any new high or critical
+  runtime advisory fails the CI audit job again. `npm audit --omit=dev`: 0 vulnerabilities.
+
 ## Restore: an attachment not restored is closed before the restore goes on
 
 - `RestoreOrchestrator.restoreUser` let go of the stream of an attachment no event references
