@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-<<<<<<< HEAD
 - **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
   caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
   verification resend (`PUT /{username}/account` with `emails.resend`) answered `500
