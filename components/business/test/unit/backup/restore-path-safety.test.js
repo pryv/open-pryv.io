@@ -15,6 +15,7 @@ const { Readable } = require('node:stream');
 const { RestoreOrchestrator } = require('business/src/backup/RestoreOrchestrator.ts');
 const { createFilesystemBackupWriter } = require('storages/interfaces/backup/FilesystemBackupWriter.ts');
 const { createFilesystemBackupReader } = require('storages/interfaces/backup/FilesystemBackupReader.ts');
+const { createBackupEncryptor } = require('storages/interfaces/backup/BackupCipher.ts');
 
 // A backup may come from storage the operator does not control: what it names
 // (user ids, usernames, attachment entries) must not choose where the restore
@@ -79,7 +80,13 @@ function makeOrchestrator () {
   };
   o.saved = [];
   o.eventFiles = {
-    async saveAttachmentFromStream (stream, userId, eventId, fileId) { writes.push('eventFiles.save'); o.saved.push({ userId, eventId, fileId }); },
+    // Reads the stream to its end, as the real one does: an unread file stream
+    // would still be opening its file when the test removes the backup.
+    async saveAttachmentFromStream (stream, userId, eventId, fileId) {
+      writes.push('eventFiles.save');
+      o.saved.push({ userId, eventId, fileId });
+      if (stream != null) await new Promise((resolve, reject) => stream.on('error', reject).on('close', resolve).resume());
+    },
     async removeAllForUser () { writes.push('eventFiles.removeAllForUser'); }
   };
   o.auditStorage = null;
@@ -241,14 +248,17 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
     beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-bkrs-')); });
     afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-    async function writeBackup (dir, { referencedFileId = 'file-ref' } = {}) {
-      const writer = createFilesystemBackupWriter(dir, { compress: false });
+    async function writeBackup (dir, { referencedFileId = 'file-ref', encryptor = null, orphan = null } = {}) {
+      const writer = createFilesystemBackupWriter(dir, { compress: false, encryptor });
       const uw = await writer.openUser(CUID2_ID, 'validname');
       await uw.writeEvents([{ id: 'evt1', streamIds: ['s1'], type: 'file/attached', attachments: [{ id: referencedFileId }] }]);
       await uw.writeAttachment('evt1', referencedFileId, Readable.from([Buffer.from('referenced')]));
+      // A file no event references, written (and encrypted) like the others
+      if (orphan != null) await uw.writeAttachment('evt1', 'file-orphan', Readable.from([orphan]));
       await uw.writeAccountData({ accountFields: [{ field: 'language', value: 'en' }] });
       const userManifest = await uw.close();
       await writer.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', backupTimestamp: 1, userManifests: [userManifest] });
+      if (encryptor != null) await writer.close();
       return path.join(dir, 'users', CUID2_ID, 'attachments');
     }
 
@@ -288,10 +298,74 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual(byId, { 'file-ref': 'evt1', 'file-orphan': null });
 
       const { o } = makeOrchestrator();
+      // Every attachment stream the reader hands out, to check none is left open
       const reader2 = createFilesystemBackupReader(backupDir);
+      const handedOut = [];
+      const openUser = reader2.openUser.bind(reader2);
+      reader2.openUser = async (...args) => {
+        const userReader = await openUser(...args);
+        const readAttachments = userReader.readAttachments.bind(userReader);
+        userReader.readAttachments = async function * () {
+          for await (const a of await readAttachments()) { handedOut.push(a); yield a; }
+        };
+        return userReader;
+      };
       await o.restoreUser(CUID2_ID, reader2, { overwrite: true });
       assert.deepStrictEqual(o.saved.map((s) => s.fileId), ['file-ref'], 'only the referenced file is restored');
       assert.deepStrictEqual(o.saved.map((s) => s.eventId), ['evt1']);
+      // The file not restored included: its stream is closed by the time the
+      // restore returns, so removing the backup next cannot fail under it.
+      assert.deepStrictEqual(handedOut.map((a) => [a.fileId, a.stream.closed]).sort(), [['file-orphan', true], ['file-ref', true]]);
+    });
+
+    it('[BKRSA] the restore returns only once the stream of a file it does not restore is closed', async function () {
+      // A stream whose opening completes later, as a file stream's open does on
+      // a busy server: destroying it does not cancel that opening.
+      let closedAt = null;
+      const slowToOpen = new Readable({
+        construct (callback) { setTimeout(callback, 50); },
+        read () { this.push(null); }
+      });
+      slowToOpen.once('close', () => { closedAt = Date.now(); });
+      const userReader = makeUserReader({ attachments: [{ eventId: null, fileId: 'file-orphan', stream: slowToOpen }] });
+      const { o } = makeOrchestrator();
+      await o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }], userReader), { overwrite: true });
+      assert.ok(closedAt != null && slowToOpen.closed, 'the stream is closed when the restore returns');
+      assert.deepStrictEqual(o.saved, [], 'nothing restored');
+    });
+
+    // Open descriptors of this process (macOS and Linux)
+    function openFds () { return fs.readdirSync('/dev/fd').length; }
+
+    async function fdsBackTo (count, withinMs) {
+      const until = Date.now() + withinMs;
+      while (openFds() > count && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10));
+      return openFds();
+    }
+
+    it('[BKRSB] in an encrypted backup, a file the restore does not restore leaves no descriptor open and raises nothing once the backup is gone', async function () {
+      const backupDir = path.join(tmp, 'backup');
+      const encryptor = createBackupEncryptor({ passphrase: 'pw' });
+      // Larger than one read, so the file is still open when the restore lets it go
+      await writeBackup(backupDir, { encryptor, orphan: Buffer.alloc(1024 * 1024, 7) });
+      const before = openFds();
+      const { o } = makeOrchestrator();
+      await o.restoreUser(CUID2_ID, createFilesystemBackupReader(backupDir, { secrets: { passphrase: 'pw' } }), { overwrite: true });
+      assert.deepStrictEqual(o.saved.map((s) => s.fileId), ['file-ref'], 'only the referenced file is restored');
+      // The backup removed at once, as a cleanup would: nothing may still be opening a file in it
+      fs.rmSync(backupDir, { recursive: true, force: true });
+      assert.strictEqual(await fdsBackTo(before, 2000), before, 'every descriptor the restore opened is closed');
+    });
+
+    it('[BKRSC] a stream that never closes does not stall the restore; it is reported', async function () {
+      const neverCloses = new Readable({ emitClose: false, read () {} });
+      const userReader = makeUserReader({ attachments: [{ eventId: null, fileId: 'file-orphan', stream: neverCloses }] });
+      const { o } = makeOrchestrator();
+      const warnings = [];
+      o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+      o.discardTimeoutMs = 50;
+      await o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }], userReader), { overwrite: true });
+      assert.ok(warnings.some((w) => w.includes('file-orphan') && w.includes('did not close')), JSON.stringify(warnings));
     });
 
     it('[BKRS6] the reader refuses a user id that leaves the backup users folder', async function () {

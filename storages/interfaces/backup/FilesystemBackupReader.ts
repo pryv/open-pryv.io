@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { pipeline } = require('node:stream');
 const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 const { createBackupDecryptor } = require('./BackupCipher.ts');
 const {
@@ -502,8 +503,15 @@ function listAttachmentFiles (attachDir: string): string[] {
 
 function openAttachment (attachDir: string, fileId: string, decryptor: BackupDecryptor | null): NodeJS.ReadableStream {
   const fileStream = fs.createReadStream(path.join(attachDir, fileId), { flags: NO_FOLLOW_READ_FLAGS });
+  if (decryptor == null) return fileStream;
   // Decrypt the blob on the fly so the consumer receives plaintext bytes.
-  return decryptor ? fileStream.pipe(decryptor.decryptStream()) : fileStream;
+  // pipeline, not pipe: destroying the plaintext side (a consumer that does
+  // not read it) also destroys the file stream and closes its descriptor, and
+  // a failure of the file stream (its open included) reaches the consumer
+  // through the plaintext side instead of being raised with no listener.
+  const plain = decryptor.decryptStream();
+  pipeline(fileStream, plain, () => {});
+  return plain;
 }
 
 /**
