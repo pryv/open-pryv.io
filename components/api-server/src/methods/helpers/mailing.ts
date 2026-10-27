@@ -19,8 +19,9 @@ const GENERIC_SENDMAIL_ERROR = 'Sending email failed. Please try again later or 
 
 // Every failure `sendmail` reports through its callback has already been
 // logged here, once, at the level it deserves: a recipient the SMTP server
-// refused is user input (warn), anything else (transport down, template
-// missing, PlatformDB not ready, bad settings) is an error. The returned error
+// refused (user input) or deferred (a temporary refusal) is a warning,
+// anything else (transport down, template missing, PlatformDB not ready, bad
+// settings) is an error. The returned error
 // carries this mark so that a caller sending in the background (the response
 // already went out) does not log it a second time. A global symbol, so the
 // mark is seen whichever way this module was loaded.
@@ -40,20 +41,28 @@ export function isLoggedMailFailure (err: unknown): boolean {
   return err != null && typeof err === 'object' && (err as { [LOGGED_MAIL_FAILURE]?: boolean })[LOGGED_MAIL_FAILURE] === true;
 }
 
-type SmtpErrorLike = { code?: unknown; command?: unknown; rejected?: unknown };
+type SmtpErrorLike = { code?: unknown; command?: unknown; responseCode?: unknown };
 
 /**
- * Whether the SMTP server refused the recipient. nodemailer reports a refused
- * RCPT TO (the only recipient, or all of them) as `code: 'EENVELOPE'`,
- * `command: 'RCPT TO'`, with the refused addresses in `rejected` and the
- * server's reply (e.g. "550 5.1.2 Domain not found") in the message. A refused
- * MAIL FROM, a refused DATA or a connection failure is not the recipient's
- * doing and stays a transport failure.
+ * How the SMTP server refused the recipient, or null when it did not.
+ * nodemailer reports a refused RCPT TO (the only recipient, or all of them)
+ * as `code: 'EENVELOPE'`, `command: 'RCPT TO'`, with the server's reply in
+ * the message and its code in `responseCode`:
+ * - a 5xx reply (e.g. "550 5.1.2 Domain not found") is `'rejected'`: the
+ *   address itself is refused, user input;
+ * - a 4xx reply (greylisting "450 4.7.1", mailbox full "452") is
+ *   `'deferred'`: the server asks to try again later. Nothing here sends a
+ *   mail twice, so the mail is not delivered.
+ * A refusal without a reply code reads as `'rejected'`. A refused MAIL FROM,
+ * a refused DATA or a connection failure is not about the recipient and
+ * stays a transport failure (null).
  */
-export function isRecipientRejected (err: unknown): boolean {
-  if (err == null || typeof err !== 'object') return false;
+export function recipientRefusal (err: unknown): 'rejected' | 'deferred' | null {
+  if (err == null || typeof err !== 'object') return null;
   const e = err as SmtpErrorLike;
-  return e.code === 'EENVELOPE' && e.command === 'RCPT TO';
+  if (e.code !== 'EENVELOPE' || e.command !== 'RCPT TO') return null;
+  const replyCode = typeof e.responseCode === 'number' ? e.responseCode : NaN;
+  return replyCode >= 400 && replyCode < 500 ? 'deferred' : 'rejected';
 }
 
 /**
@@ -84,10 +93,12 @@ export const sendmail = function (emailSettings: EmailSettings, template: string
         try {
           url = new URL(template + '/' + lang, emailSettings.url).toString();
         } catch (err) {
-          // A malformed services.email.url: reported like any other failure,
-          // never thrown at a caller that sends in the background.
+          // A malformed services.email.url: reported through the callback,
+          // never thrown at a caller that sends in the background. The error
+          // is the one a request answering with it gave before (an unexpected
+          // error wrapping the URL error), so its client text is unchanged.
           logger.error('Sending email failed, invalid mail-service URL: ' + (err instanceof Error ? err.message : String(err)));
-          callback(markLogged(errors.unexpectedError(GENERIC_SENDMAIL_ERROR)));
+          callback(markLogged(errors.unexpectedError(err)));
           return;
         }
         const data: MicroserviceData = {
@@ -175,11 +186,16 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
       // Transport/config errors can carry internal detail (SMTP host,
       // connection failures) — same operator-only rule as parseError.
       const detail = err instanceof Error ? err.message : String(err);
-      if (isRecipientRejected(err)) {
+      const refusal = recipientRefusal(err);
+      if (refusal === 'rejected') {
         // The address the account gave was refused (unknown domain or
         // mailbox): user input, not a fault of this server. The message
         // carries the SMTP server's reply.
         logger.warn('Sending email failed (in-process): ' + template + ' mail, recipient rejected: ' + detail);
+      } else if (refusal === 'deferred') {
+        // A temporary refusal (greylisting, mailbox full): not a fault of
+        // this server either, but the mail is lost, nothing re-sends it.
+        logger.warn('Sending email failed (in-process): ' + template + ' mail, recipient deferred by the SMTP server (temporary), not sent and not retried: ' + detail);
       } else {
         logger.error('Sending email failed (in-process): ' + template + ' mail: ' + detail);
       }

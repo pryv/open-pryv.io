@@ -8,13 +8,15 @@
 /**
  * A mail sent after the response went out (welcome, MFA change, external-id
  * release, verification mail of an added address) that fails is logged once:
- * at warn when the SMTP server refused the recipient (user input), at error
- * for a transport or configuration failure, and never as an unexpected error
- * of a request that already answered. A request that answers the client with
- * the failure (password reset) still does.
+ * at warn when the SMTP server refused the recipient (user input) or deferred
+ * it (a 4xx reply, temporary), at error for a transport or configuration
+ * failure, and never as an unexpected error of a request that already
+ * answered. A request that answers the client with the failure (password
+ * reset) still does.
  *
- * The SMTP server is a small local one that refuses every RCPT TO, so the
- * failure has the shape the real transport gives it.
+ * The SMTP servers are small local ones that refuse every RCPT TO (one with a
+ * 5xx, one with a 4xx reply), so the failure has the shape the real transport
+ * gives it.
  */
 
 import { createRequire } from 'node:module';
@@ -39,6 +41,7 @@ const { notifyExternalIdReleased } = require('api-server/src/methods/helpers/ext
 const TRUSTED_APP = 'pryv-test-no-cors';
 const MAIL_ON = { welcome: true, resetPassword: true, verifyEmail: true, mfaChange: true, externalIdReleased: true };
 const REJECT_REPLY = '550 5.1.2 Recipient address rejected: Domain not found';
+const DEFER_REPLY = '450 4.7.1 Recipient address rejected: Greylisted, try again later';
 
 // The lines a failed send can produce: the sender's own, a caller's second
 // log, or the failure wrapped as an unexpected error.
@@ -52,6 +55,7 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
   let restoreConfig;
   let template;
   let smtp;
+  let deferringSmtp;
 
   before(async function () {
     await getConfig();
@@ -73,12 +77,14 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
     const platformDB = require('storages').platformDB;
     await platformDB.setMailTemplate(template, 'en', 'subject', '| Hello');
     await platformDB.setMailTemplate(template, 'en', 'html', 'p Hello');
-    smtp = await rejectingSmtpServer();
+    smtp = await rejectingSmtpServer(REJECT_REPLY);
+    deferringSmtp = await rejectingSmtpServer(DEFER_REPLY);
   });
 
   after(async function () {
     await require('mail').close();
     if (smtp != null) await smtp.close();
+    if (deferringSmtp != null) await deferringSmtp.close();
     restoreConfig();
     if (fixtures != null) await fixtures.context.cleanEverything();
   });
@@ -90,10 +96,11 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
   });
 
   /**
-   * A local SMTP server that accepts the session and refuses every RCPT TO,
-   * as a relay does for an address whose domain does not exist.
+   * A local SMTP server that accepts the session and answers every RCPT TO
+   * with `rcptReply`: a 5xx as a relay does for an address whose domain does
+   * not exist, a 4xx as a greylisting relay does on first contact.
    */
-  async function rejectingSmtpServer () {
+  async function rejectingSmtpServer (rcptReply) {
     const server = net.createServer((socket) => {
       socket.setEncoding('utf8');
       socket.on('error', () => {});
@@ -108,7 +115,7 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
           const verb = line.slice(0, 4).toUpperCase();
           if (verb === 'EHLO' || verb === 'HELO') socket.write('250 mlfl.test\r\n');
           else if (verb === 'MAIL') socket.write('250 2.1.0 Ok\r\n');
-          else if (verb === 'RCPT') socket.write(REJECT_REPLY + '\r\n');
+          else if (verb === 'RCPT') socket.write(rcptReply + '\r\n');
           else if (verb === 'RSET') socket.write('250 2.0.0 Ok\r\n');
           else if (verb === 'QUIT') { socket.write('221 2.0.0 Bye\r\n'); socket.end(); } else socket.write('502 5.5.2 Error: command not recognized\r\n');
         }
@@ -131,6 +138,10 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
 
   function rejectingTransport () {
     return { host: '127.0.0.1', port: smtp.port, secure: false, ignoreTLS: true, connectionTimeout: 3000 };
+  }
+
+  function deferringTransport () {
+    return { host: '127.0.0.1', port: deferringSmtp.port, secure: false, ignoreTLS: true, connectionTimeout: 3000 };
   }
 
   async function failingTransport () {
@@ -164,7 +175,8 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
     const original = proto.log;
     const lines = [];
     proto.log = function (level, msg, ...rest) {
-      lines.push({ level, name: this._name(), text: String(msg) + (rest.length > 0 ? ' ' + inspect(rest, { depth: 6 }) : '') });
+      // `_name` is a boiler internal: fall back so a rename does not throw here.
+      lines.push({ level, name: typeof this._name === 'function' ? this._name() : this.name, text: String(msg) + (rest.length > 0 ? ' ' + inspect(rest, { depth: 6 }) : '') });
       return original.call(this, level, msg, ...rest);
     };
     try {
@@ -192,6 +204,17 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
     assert.strictEqual(failures[0].level, 'warn', show(lines));
     assert.match(failures[0].text, /recipient rejected/);
     assert.match(failures[0].text, /550 5\.1\.2/, 'the log carries the rejection reason');
+    assert.deepStrictEqual(lines.filter((l) => l.level === 'error'), [], 'nothing at error: ' + show(lines));
+  }
+
+  /** Exactly one failure line, at warn, saying the recipient was deferred, with the reply. */
+  function assertLoggedOnceAsDeferred (lines) {
+    const failures = failureLines(lines);
+    assert.strictEqual(failures.length, 1, 'logged once: ' + show(lines));
+    assert.strictEqual(failures[0].level, 'warn', show(lines));
+    assert.match(failures[0].text, /recipient deferred by the SMTP server \(temporary\), not sent and not retried/);
+    assert.ok(!/recipient rejected/.test(failures[0].text), 'a deferral is not worded as a rejection: ' + show(lines));
+    assert.match(failures[0].text, /450 4\.7\.1/, 'the log carries the server reply');
     assert.deepStrictEqual(lines.filter((l) => l.level === 'error'), [], 'nothing at error: ' + show(lines));
   }
 
@@ -268,6 +291,19 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
           assert.strictEqual(res.status, 201, JSON.stringify(res.body));
         });
         assertLoggedOnceAsError(lines, /no template found for mlfl-missing-/);
+      } finally {
+        restore();
+      }
+    });
+
+    it('[MLFL14] a recipient deferred with a 4xx reply (greylisting): 201, logged once at warn as deferred, no unexpected error', async function () {
+      const restore = injectTestConfigSnapshot(mailConfig(deferringTransport()));
+      try {
+        const lines = await captureLogs(async () => {
+          const res = await request.post('/users').send(registerBody());
+          assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        });
+        assertLoggedOnceAsDeferred(lines);
       } finally {
         restore();
       }
