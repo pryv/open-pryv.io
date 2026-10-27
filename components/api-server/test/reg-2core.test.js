@@ -758,11 +758,6 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(poll.body.externalId, { namespace: ns, label: 'Two-core EHR', blindedValue: value, mode: 'hint' });
     });
 
-    // The forced accept across cores (token bound on the account's core, holder
-    // asked on that core's /system/ext-id/holds) is covered by [XIDFC] (remote
-    // arm, fetch seam) and [XIDH] (the holder route over HTTP): the child cores
-    // here run as single-core nodes over one test database, so a cross-core
-    // accept would take the local arm.
     it('[2C55] a registration on Core A of an id Core B holds creates the account unlinked, with no row on A', async () => {
       const crypto = require('node:crypto');
       const { PiiHasher } = require('platform/src/PiiHasher.ts');
@@ -794,6 +789,94 @@ describe('[RG2C] Two-core integration tests', function () {
       } finally {
         for (const c of others) await platformDB.setCoreInfo(c.id, c);
       }
+    });
+
+    // A forced auth request on Core A, for an id held by an account of Core B:
+    // only Core B's data can bind the posted token to the account and say who
+    // holds the id, so Core A must ask Core B over HTTP (access-info with the
+    // token, then /system/ext-id/holds with the admin key).
+    describe('forced accept across cores', () => {
+      const PERMISSIONS = [{ streamId: 'diary', level: 'read' }];
+      let holder, other, value;
+
+      async function accountOnB (prefix) {
+        const user = await registerOn(CORE_B_PORT, prefix + Date.now().toString(36));
+        const minted = await userCall(CORE_B_PORT, user, 'POST', '/accesses', { name: 'rg2c-app-' + user.username, type: 'app', permissions: PERMISSIONS });
+        assert.strictEqual(minted.status, 201, JSON.stringify(minted.body));
+        return { ...user, appToken: minted.body.access.token, apiEndpoint: `http://${user.token}@${user.username}.${DOMAIN}/` };
+      }
+
+      async function forcedRequest (port) {
+        const created = await httpRequest(port, 'POST', '/reg/access', {
+          requestingAppId: 'test-2core-xid', requestedPermissions: PERMISSIONS, externalId: { namespace: ns, blindedValue: value, mode: 'forced' }
+        });
+        assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+        return created.body.key;
+      }
+
+      function accept (port, key, who, token) {
+        return httpRequest(port, 'POST', '/reg/access/' + key, { status: 'ACCEPTED', username: who.username, token, apiEndpoint: who.apiEndpoint });
+      }
+
+      async function statusOf (port, key) {
+        return (await httpRequest(port, 'GET', '/reg/access/' + key)).body.status;
+      }
+
+      before(async () => {
+        const crypto = require('node:crypto');
+        holder = await accountOnB('xidh');
+        other = await accountOnB('xido');
+        value = crypto.randomBytes(32).toString('base64url');
+        const claimed = await userCall(CORE_B_PORT, holder, 'POST', '/account/external-ids', { namespace: ns, blindedValue: value });
+        assert.strictEqual(claimed.status, 201, JSON.stringify(claimed.body));
+      });
+
+      it('[2C56] the holder\'s accept on Core A is checked on Core B and delivered', async () => {
+        const key = await forcedRequest(CORE_A_PORT);
+        const res = await accept(CORE_A_PORT, key, holder, holder.appToken);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.status, 'ACCEPTED');
+        assert.strictEqual(res.body.token, holder.appToken);
+        assert.strictEqual(await statusOf(CORE_A_PORT, key), 'ACCEPTED');
+        // The same accept on Core B, the holder's core, takes the local check
+        const keyOnB = await forcedRequest(CORE_B_PORT);
+        const onB = await accept(CORE_B_PORT, keyOnB, holder, holder.appToken);
+        assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+        assert.strictEqual(onB.body.token, holder.appToken);
+      });
+
+      it('[2C57] on Core A, a non-holder of Core B is refused and a forced registration of the held id creates nothing', async () => {
+        const key = await forcedRequest(CORE_A_PORT);
+        // Another account of Core B, accepting as itself: not the holder
+        const notHolder = await accept(CORE_A_PORT, key, other, other.appToken);
+        assert.strictEqual(notHolder.status, 400, JSON.stringify(notHolder.body));
+        assert.strictEqual(notHolder.body.error.id, 'external-id-mismatch');
+        assert.deepStrictEqual(notHolder.body.error.data, { namespace: ns, reason: 'not-holder' });
+        // Naming the holder with a token of its own: Core B does not bind it
+        const wrongToken = await accept(CORE_A_PORT, key, holder, other.appToken);
+        assert.strictEqual(wrongToken.status, 400, JSON.stringify(wrongToken.body));
+        assert.deepStrictEqual(wrongToken.body.error.data, { namespace: ns, reason: 'token-invalid' });
+        assert.strictEqual(await statusOf(CORE_A_PORT, key), 'NEED_SIGNIN', 'the request is unchanged');
+
+        const username = 'xidfr' + Date.now().toString(36);
+        const registered = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+          appId: 'test-2core-xid',
+          username,
+          password: 'testpassw0rd',
+          email: username + '@test.example.com',
+          insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+          language: 'en',
+          hosting: CORE_A_HOSTING,
+          externalId: { namespace: ns, blindedValue: value, mode: 'forced' }
+        });
+        assert.strictEqual(registered.status, 409, JSON.stringify(registered.body));
+        assert.strictEqual(registered.body.error.id, 'external-id-already-claimed');
+        assert.deepStrictEqual(registered.body.error.data, { namespace: ns, reason: 'value-taken' });
+        const users = await httpRequest(CORE_A_PORT, 'GET', '/system/admin/users', null, { Authorization: ADMIN_KEY });
+        assert.ok(!(users.body.users || users.body).some((u) => u.username === username), 'no account on Core A');
+        const lookup = await httpRequest(CORE_A_PORT, 'GET', `/reg/cores?username=${username}`);
+        assert.notStrictEqual(lookup.status, 200, 'no account on the platform: ' + JSON.stringify(lookup.body));
+      });
     });
   });
 });
