@@ -1329,7 +1329,6 @@ export default async function produceAccessesApiMethods (api: { register (...arg
                     '" (and maybe others) is ' +
                     'missing the required "defaultName".'));
       }
-      const permissionStream: { id: string; name?: string; trashed?: boolean; [k: string]: unknown } | null = null;
       (async () => {
         try {
           // checkId
@@ -1339,7 +1338,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
             delete permission.defaultName;
           }
           // checkSimilar
-          if (permissionStream == null) {
+          if (existingStream == null) {
             // new streams are created at "root" level so we check the children's name of root (id)
             const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
             const rootStreams = await mall.streams.get(context.user.id, {

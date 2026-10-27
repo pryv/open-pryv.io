@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 
-import type { SqliteDb } from './types.ts'; // 1 hour
+import type { SqliteDb } from './types.ts';
 
 /**
  * SQLite implementation of PasswordResetRequests storage.
@@ -22,7 +22,7 @@ const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordRese
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
-const DEFAULT_MAX_AGE = 60 * 60 * 1000;
+const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 type Cb<T = unknown> = (err: Error | null, res?: T) => void;
 type ResetRow = { id: string; username: string; expires: number };
 
