@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 - **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
   caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
   verification resend (`PUT /{username}/account` with `emails.resend`) answered `500
@@ -12,6 +13,22 @@
   temporary deferral (a 4xx reply, e.g. greylisting) and transport failures still answer the
   generic `500` mail error, and the password reset keeps the generic `500` for every mail failure,
   so its answer says nothing about the account's address.
+- **CMC: an accept that fails for good no longer leaves its data grant behind.** Accepting mints
+  the data grant on the accepter's account before the accept is delivered, and keeps it while
+  the delivery is retried (5xx, network error, timeout, 408 / 429). When the accept's retry
+  record ends `failed-permanent` (attempts exhausted, a later attempt failing for good, or retired
+  as `cmc-retry-stale`), the relationship never formed, yet the grant stayed until the account
+  owner deleted it. The retry loop now deletes it (the access whose `clientData.cmc.acceptEventId`
+  is the accept's id), unless the trigger says the accept completed or the grant already carries
+  the requester's back-channel (`clientData.cmc.backChannelApiEndpoint`: an earlier delivery did
+  arrive, only its answer was lost). A 4xx or a refused destination already rolled the grant back;
+  unchanged.
+- **CMC: a retried accept that the requester already took completes instead of deleting the live
+  grant.** When an accept's answer was lost (a timeout) after the requester had taken it, the
+  retry was refused with `cmc-capability-consumed` or `cmc-capability-already-accepted-by-you`, and
+  the accept rolled back its data grant although the requester had formed the relationship (its
+  back-channel had arrived on that grant). A grant carrying the back-channel now means the
+  relationship stands: the retried accept completes and the grant is kept.
 
 ## 2.0.0-rc.62 - 2026-10-27
 

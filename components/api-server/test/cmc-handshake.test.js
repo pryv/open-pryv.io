@@ -3284,6 +3284,56 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.ok(!(bobSide.body.accesses || []).some((a) => a.id === firstGrant.id), 'the revoked grant is gone');
     });
 
+    it('[CN88] the requester never back: an accept that never reached it fails for good and its data grant is deleted', async function () {
+      const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const mall = await buildMallForCmc();
+      const bobUserId = await (await getUsersRepository()).getUserIdForUsername(bob.username);
+      const appRoot = ':_cmc:apps:rq-app-d';
+      const scope = appRoot + ':study-rq-d';
+      await ensureStream(alice.streamsPath, alice.token, { id: appRoot, parentId: ':_cmc:apps', name: 'rq-app-d' });
+      await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: appRoot, name: 'study-rq-d' });
+      const reqRes = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({
+          streamIds: [scope],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            request: { title: { en: 'study-rq-d' }, description: { en: 'CN88' }, consent: { en: 'I consent.' }, permissions: [{ streamId: 'fertility', level: 'read' }] },
+            requesterMeta: { username: alice.username, appId: 'rq-app-d' },
+          },
+        });
+      assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+      await ensureStream(bob.streamsPath, bob.token, { id: appRoot, parentId: ':_cmc:apps', name: 'rq-app-d' });
+      // The offer still reads (the grant is minted from it); the accept's
+      // delivery to the requester fails at the socket.
+      const shim = globalThis.fetch;
+      globalThis.fetch = async (url, init) => {
+        if (String(url).includes(alice.username) && String(init?.method ?? 'GET').toUpperCase() === 'POST') throw new Error('ECONNREFUSED (simulated outage)');
+        return shim(url, init);
+      };
+      const outage = { restore () { globalThis.fetch = shim; } };
+      try {
+        const accRes = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token)
+          .send({ streamIds: [appRoot], type: 'consent/accept-cmc', content: { capabilityUrl: reqRes.body.event.content.capabilityUrl, accessName: 'cmc-grant-rq-d-' + Date.now() } });
+        assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+        const acceptId = accRes.body.event.id;
+        const failed = await pollStreamFor(bob.eventsPath, bob.token, appRoot, 'consent/accept-cmc', (e) => e.id === acceptId && e.content?.status === 'failed');
+        assert.ok(failed != null, 'the accept failed during the outage');
+        const grantOf = async () => ((await coreRequest.get(bob.accessesPath).set('Authorization', bob.token)).body.accesses || [])
+          .find((a) => a?.clientData?.cmc?.acceptEventId === acceptId);
+        assert.ok(await grantOf() != null, 'premise: the grant is kept for the retries');
+
+        // Past the record's whole schedule: retired, and its grant with it.
+        const summary = await runLoop(mall, bobUserId, Date.now() + 3 * 60 * 60 * 1000);
+        assert.ok(summary.failedPermanent >= 1, JSON.stringify(summary));
+        assert.equal(await grantOf(), undefined, 'the grant of the relationship that never formed is deleted');
+      } finally {
+        outage.restore();
+      }
+    });
+
     it('[CN87] the requester never back: the notice is failed-permanent after the last attempt, the record keeps the host without the token', async function () {
       const { getMall } = require('mall');
       const mall = await getMall();

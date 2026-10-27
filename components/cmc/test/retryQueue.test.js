@@ -396,6 +396,84 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         assert.equal(stored.modifiedBy, 'system', outcome + ': modifiedBy');
       }
     });
+
+    describe('[RQGR] an accept that fails for good: the data grant it minted is deleted', () => {
+      // The accept's data grant (matched by `clientData.cmc.acceptEventId`),
+      // another relationship's grant, and the trigger as stored.
+      function mallWithGrants (triggerStatus = 'failed') {
+        const mall = fakeMall();
+        const accesses = new Map([
+          ['grant-1', { id: 'grant-1', clientData: { cmc: { role: 'counterparty', acceptEventId: 'orig-1' } } }],
+          ['grant-other', { id: 'grant-other', clientData: { cmc: { role: 'counterparty', acceptEventId: 'orig-9' } } }],
+        ]);
+        mall.accesses = {
+          async get () { return Array.from(accesses.values()); },
+          async delete (_userId, { id }) { accesses.delete(id); },
+        };
+        mall._accesses = accesses;
+        mall._events.set('orig-1', { id: 'orig-1', type: 'consent/accept-cmc', content: { status: triggerStatus } });
+        mall.events.getOne = async (_userId, id) => mall._events.get(id) ?? null;
+        return mall;
+      }
+      const failing = async () => ({ handled: true, status: 'failed', reason: 'cmc-handler-delivery-failed', detail: { peerReason: 'http-5xx' } });
+
+      it('[RQGR1] after MAX_ATTEMPTS: the accept\'s grant is deleted, no other', async () => {
+        const mall = mallWithGrants();
+        mall._events.set('r-1', makeRetryEvent({ attempts: MAX_ATTEMPTS }));
+        const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.deepEqual([...mall._accesses.keys()], ['grant-other']);
+      });
+
+      it('[RQGR2] a record retired as stale: the accept\'s grant is deleted', async () => {
+        const mall = mallWithGrants();
+        mall._events.set('r-1', { ...makeRetryEvent(), time: 0 });
+        const dispatch = async () => { throw new Error('a stale record is never dispatched'); };
+        const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch, dispatchDeps: {}, now: () => 3 * 60 * 60 * 1000 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.equal(mall._events.get('r-1').content.lastFailureReason, 'cmc-retry-stale');
+        assert.deepEqual([...mall._accesses.keys()], ['grant-other']);
+      });
+
+      it('[RQGR3] kept: a rescheduled accept, an accept whose trigger completed, a server-authored accept, another type', async () => {
+        // Rescheduled: the grant is what the next attempt re-delivers.
+        let mall = mallWithGrants();
+        mall._events.set('r-1', makeRetryEvent());
+        let r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'rescheduled');
+        assert.ok(mall._accesses.has('grant-1'), 'rescheduled');
+        // The trigger says the accept completed: the relationship stands.
+        mall = mallWithGrants('completed');
+        mall._events.set('r-1', makeRetryEvent({ attempts: MAX_ATTEMPTS }));
+        r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.ok(mall._accesses.has('grant-1'), 'completed trigger');
+        // Server-authored: never dispatched, it minted nothing.
+        mall = mallWithGrants();
+        mall._events.set('r-1', makeRetryEvent({ originalCreatedBy: 'system' }));
+        r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.ok(mall._accesses.has('grant-1'), 'server-authored');
+        // A chat that fails for good has no grant to release.
+        mall = mallWithGrants();
+        mall._events.set('r-1', makeRetryEvent({ originalType: 'message/cmc-chat', attempts: MAX_ATTEMPTS }));
+        r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0 } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.equal(mall._accesses.size, 2, 'another type');
+      });
+
+      it('[RQGR4] a failed delete is logged, the record stays failed-permanent', async () => {
+        const mall = mallWithGrants();
+        mall.accesses.delete = async () => { throw new Error('storage down'); };
+        mall._events.set('r-1', makeRetryEvent({ attempts: MAX_ATTEMPTS }));
+        const warnings = [];
+        const logger = { warn: (msg) => warnings.push(msg), info: () => {}, debug: () => {} };
+        const r = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get('r-1'), deps: { mall, dispatch: failing, dispatchDeps: {}, now: () => 0, logger } });
+        assert.equal(r.outcome, 'failed-permanent');
+        assert.equal(mall._events.get('r-1').content.status, 'failed-permanent');
+        assert.ok(warnings.some((w) => /could not be deleted/.test(w)), JSON.stringify(warnings));
+      });
+    });
   });
 
   describe('[CMCRQ-LP] runRetryLoop', () => {

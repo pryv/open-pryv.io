@@ -1038,6 +1038,7 @@ function sameIdentity (a: { username: string; host: string }, b: { username: str
 export {
   handleAccept,
   handleRefuse,
+  findDataGrantByAcceptEventId,
   inferCounterparty,
   pickScopeFromTrigger,
   pickScopeFromOfferOrTrigger,

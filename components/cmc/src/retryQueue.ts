@@ -66,6 +66,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const { isRetryableFailure, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
+const { findDataGrantByAcceptEventId } = require('./handleAccept.ts');
 
 const MAX_ATTEMPTS = 6;
 const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
@@ -151,6 +152,13 @@ type MallLike = {
     // The real mall's delete takes the stored event; optional so unit fakes
     // may omit it (terminal records are then kept).
     delete?: (userId: string, event: EventLike) => Promise<unknown>;
+    getOne?: (userId: string, eventId: string) => Promise<EventLike | null>;
+  };
+  // Used to delete the data grant of an accept that failed for good; optional
+  // so unit fakes may omit it (the grant is then kept).
+  accesses?: {
+    get?: (userId: string, params: MallParams) => Promise<unknown>;
+    delete?: (userId: string, params: { id: string }) => Promise<unknown>;
   };
 };
 type DeliveryDeps = {
@@ -455,6 +463,7 @@ async function processRetryEvent (params: {
     deps.logger?.warn?.('cmc/retry: a pending record older than its schedule was retired, not replayed', {
       retryEventId: retryEvent.id, originalType: c.originalType, enqueuedAt: retryEvent.time, kind: c.delivery != null ? 'delivery' : 'trigger',
     });
+    await releaseFailedAcceptGrant({ userId, retryEvent, deps });
     return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: c.attempts ?? 1 };
   }
   if (c.delivery != null) {
@@ -531,6 +540,7 @@ async function processRetryEvent (params: {
       retryEventId: retryEvent.id,
       reason: dispatched.reason,
     });
+    await releaseFailedAcceptGrant({ userId, retryEvent, deps });
     return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: nextAttempts - 1 };
   }
 
@@ -553,6 +563,39 @@ async function processRetryEvent (params: {
     attempts: nextAttempts,
   });
   return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
+}
+
+/**
+ * A `consent/accept-cmc` whose record ends failed-permanent never formed its
+ * relationship, yet the data grant its first dispatch minted on this side is
+ * kept for the retries (handleAccept rolls it back only on a 4xx or a refused
+ * destination). It is deleted here: the grant matching the accept
+ * (`clientData.cmc.acceptEventId`), unless the trigger says the accept
+ * completed. Not for a server-authored accept record (never dispatched, it
+ * minted nothing). Best effort: a failure is logged, the record stays
+ * failed-permanent and the user can still delete the access.
+ */
+async function releaseFailedAcceptGrant (params: { userId: string; retryEvent: RetryEvent; deps: RetryDeps }): Promise<void> {
+  const { userId, retryEvent, deps } = params;
+  const c = retryEvent.content;
+  if (c.originalType !== C.ET_ACCEPT || c.delivery != null || isSystemAuthoredAccept(c)) return;
+  const acceptEventId = c.originalEventId;
+  const accesses = deps.mall.accesses;
+  if (typeof acceptEventId !== 'string' || acceptEventId.length === 0 || accesses?.delete == null) return;
+  try {
+    const trigger = deps.mall.events.getOne != null ? await deps.mall.events.getOne(userId, acceptEventId) : null;
+    if ((trigger?.content as { status?: unknown } | undefined)?.status === 'completed') return;
+    const grant = await findDataGrantByAcceptEventId({ mall: deps.mall, userId, acceptEventId });
+    if (grant?.id == null) return;
+    await accesses.delete(userId, { id: grant.id });
+    deps.logger?.info?.('cmc/retry: the data grant of an accept that never reached its counterparty was deleted', {
+      retryEventId: retryEvent.id, acceptEventId, accessId: grant.id,
+    });
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/retry: the data grant of an accept that failed for good could not be deleted', {
+      retryEventId: retryEvent.id, acceptEventId, error: String((err as Error)?.message || err),
+    });
+  }
 }
 
 /**
