@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { FlowExternalId, RegistrationClaim } from 'business/src/external-ids/service.ts';
 const require = createRequire(import.meta.url);
-const { errorHandling } = require('errors');
+const { errorHandling, APIError } = require('errors');
 const errors = require('errors').factory;
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
 const challenge = require('business/src/emails/challenge.ts');
@@ -73,7 +73,6 @@ type RegisterParams = {
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
 type Next = (err?: unknown) => void;
-type ApiError = Error & { id?: string; httpStatus?: number; data?: unknown };
 
 // Loaded on first use: the service reaches the platform and the storage
 // engines, which are not ready when this module loads.
@@ -194,12 +193,13 @@ class Registration {
       }, 30000));
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err: ApiError = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
-        err.id = body?.error?.id || 'cross-core-registration-failed';
-        err.httpStatus = response.status;
-        // The target's details (e.g. which field a refusal names) reach the client too.
-        if (body?.error?.data !== undefined) err.data = body.error.data;
-        return next(err);
+        // An APIError, so the API chain answers the target's status and id
+        // (a plain Error would become a 500 unexpected-error). The target's
+        // details (e.g. which field a refusal names) reach the client too.
+        return next(new APIError(
+          body?.error?.id || 'cross-core-registration-failed',
+          body?.error?.message || ('Cross-core registration forward failed: ' + response.status),
+          { httpStatus: response.status, data: body?.error?.data }));
       }
       // Strip the target's `meta` block — the local api-server will add
       // its own meta on the way out. Copy every other field into result.
