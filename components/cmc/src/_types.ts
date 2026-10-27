@@ -24,6 +24,8 @@ type FetchInit = {
 type FetchLike = (url: string, init?: FetchInit) => Promise<{
   status: number;
   ok?: boolean;
+  // Absent on unit fakes; a real fetch always has it (read for Retry-After).
+  headers?: { get: (name: string) => string | null };
   json: () => Promise<unknown>;
   text: () => Promise<string>;
 }>;

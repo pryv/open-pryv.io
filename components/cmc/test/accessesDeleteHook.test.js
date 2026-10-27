@@ -33,6 +33,7 @@ function fakeFetch (responses) {
       if (spec instanceof Error) return Promise.reject(spec);
       return Promise.resolve({
         status: spec.status,
+        headers: { get: (name) => spec.headers?.[name.toLowerCase()] ?? null },
         ok: spec.status >= 200 && spec.status < 300,
         async json () { return spec.body; },
         async text () { return JSON.stringify(spec.body); },
@@ -514,6 +515,25 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       assert.equal(q.content.delivery.body.content.accessId, REQUESTER_SIDE_ACCESS.id);
       assert.equal(q.content.originalEventId, null);
       assert.equal(errors.some((m) => m.includes('NOT notified')), false, 'queued is not lost');
+    });
+
+    it('[CRL25] a 429 or 408 ends the in-request round at once and queues the notice no earlier than its Retry-After; a 403 queues nothing', async () => {
+      for (const status of [429, 408]) {
+        const mall = mallWithQueue();
+        const { fetch, calls } = fakeFetch({ status, body: {}, headers: { 'retry-after': '120' } });
+        const before = Date.now();
+        const results = await createAccessesDeletePostHook({ fetch, mall, enqueueRetries: true })('u1', [REQUESTER_SIDE_ACCESS]);
+        assert.equal(calls.length, 1, 'no in-request hammering of a peer that asked to wait');
+        assert.equal(results[0].deliveryQueued, true, String(status));
+        const q = mall.created[0];
+        assert.equal(q.content.lastFailureReason, 'http-retry-later');
+        assert.deepEqual(q.content.lastFailureDetail, { status, retryAfterMs: 120_000 });
+        assert.ok(q.content.nextAttemptAfter >= before + 120_000);
+      }
+      const mall = mallWithQueue();
+      const results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 403, body: {} }).fetch, mall, enqueueRetries: true })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(mall.created.length, 0);
     });
 
     it('[DH26] not queued for a 4xx, without a mall, with the loop off or with a wiring that says nothing; then the loss is logged', async () => {

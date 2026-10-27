@@ -111,7 +111,7 @@ function fakeCores (plan = {}) {
         spec = plan.listFails ? { status: 503, body: null } : { status: 200, body: { accesses: remaining.map((id) => ({ id })) } };
       }
       if (spec instanceof Error) return Promise.reject(spec);
-      return Promise.resolve({ status: spec.status, ok: spec.status >= 200 && spec.status < 300, async json () { return spec.body; }, async text () { return JSON.stringify(spec.body); } });
+      return Promise.resolve({ status: spec.status, ok: spec.status >= 200 && spec.status < 300, headers: { get: (name) => spec.headers?.[name.toLowerCase()] ?? null }, async json () { return spec.body; }, async text () { return JSON.stringify(spec.body); } });
     },
   };
 }
@@ -233,6 +233,36 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.equal(stored.outcome.length, 2);
       assert.equal(JSON.stringify(stored).includes('leak'), false);
       assert.equal(r1.eventId.length > 0, true);
+    });
+
+    it('[CRL26] a 429 or 408 on a child deletion leaves a retryable residual; the failure carries the longest Retry-After, which the queued retry honours', async () => {
+      const { isRetryableReason, enqueueRetry, RETRY_AFTER_MAX_MS } = require('../src/retryQueue.ts');
+      for (const status of [429, 408]) {
+        const mall = fakeMall();
+        await seed(mall);
+        await seed(mall, { childAccessId: 'child-2' });
+        mall.eventsMap.set('sweep-1', triggerFor([
+          { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'child-1', expires: NOW + 3600 },
+          { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'child-2', expires: NOW + 3600 },
+        ]));
+        const cores = fakeCores({
+          deletes: {
+            'child-1': { status, body: {}, headers: { 'retry-after': '60' } },
+            'child-2': { status, body: {}, headers: { 'retry-after': '240' } },
+          },
+          remaining: { 'grant-tok': ['child-1', 'child-2'] },
+        });
+        const r = await handleMemberRevoke({ userId: 'group', triggerEvent: triggerFor(mall.eventsMap.get('sweep-1').content.records), deps: revokeDeps(mall, cores) });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, CmcErrorIds.MEMBER_REVOKE_RESIDUAL);
+        assert.deepEqual(r.detail, { childAccessId: 'child-1', httpStatus: status, retryAfterMs: 240_000 });
+        assert.deepEqual(r.residuals.map((x) => x.reason), ['http-retry-later', 'http-retry-later']);
+        assert.equal(isRetryableReason(r.reason, r.detail), true);
+        const queueMall = fakeMall();
+        queueMall.events.create = async (u, params) => ({ id: 'q-1', ...params });
+        const q = await enqueueRetry({ userId: 'group', trigger: { id: 'sweep-1', type: C.ET_MEMBER_REVOKE, content: {} }, failureReason: r.reason, failureDetail: r.detail, deps: { mall: queueMall, dispatch: async () => ({}), dispatchDeps: {}, now: () => 0 } });
+        assert.equal(q.content.nextAttemptAfter, Math.min(240_000, RETRY_AFTER_MAX_MS));
+      }
     });
 
     it('[MR11] a clean sweep completes; a snapshot record the ledger no longer holds is reported absent', async () => {

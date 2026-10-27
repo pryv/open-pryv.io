@@ -52,7 +52,7 @@ type Residual = { counterparty: Identity; childAccessId: string; expires: number
 type RevokeDeps = OutboundDeps & { mall: MallLike; now?: () => number };
 
 /** How the patient core answered one child's deletion. */
-type ChildVerdict = { result: 'deleted' | 'absent' | 'residual'; reason?: string; peerErrorId?: string; httpStatus?: number };
+type ChildVerdict = { result: 'deleted' | 'absent' | 'residual'; reason?: string; peerErrorId?: string; httpStatus?: number; retryAfterMs?: number };
 
 function peerErrorIdOf (body: unknown): string | undefined {
   const err = (body as { error?: { id?: unknown; data?: { id?: unknown } } } | null | undefined)?.error;
@@ -82,7 +82,9 @@ async function deleteChildThroughGrant (grantApiEndpoint: string, childAccessId:
     }
     return { result: 'residual', reason: 'peer-rejected', peerErrorId, httpStatus: r.status };
   }
-  return { result: 'residual', reason: r.reason, httpStatus: r.status || undefined };
+  // A 408 / 429 keeps its Retry-After: the queued retry of the trigger waits for it.
+  const retryAfterMs = outbound.retryAfterOf(r);
+  return { result: 'residual', reason: r.reason, httpStatus: r.status || undefined, ...(retryAfterMs != null ? { retryAfterMs } : {}) };
 }
 
 /**
@@ -111,7 +113,7 @@ async function revokeRecords (params: {
   userId: string;
   records: StoredLedgerRecord[];
   deps: RevokeDeps;
-}): Promise<{ outcome: Outcome[]; residuals: Residual[]; firstResidual?: ChildVerdict & { childAccessId: string } }> {
+}): Promise<{ outcome: Outcome[]; residuals: Residual[]; firstResidual?: ChildVerdict & { childAccessId: string }; retryAfterMs?: number }> {
   const { userId, records, deps } = params;
   const now = deps.now ?? (() => Date.now() / 1000);
   const ledgerDeps = { mall: deps.mall, logger: deps.logger, now };
@@ -199,12 +201,17 @@ async function revokeRecords (params: {
       });
     }
   }
-  return { outcome, residuals, firstResidual };
+  // The longest Retry-After any residual's peer asked for.
+  let retryAfterMs: number | undefined;
+  for (const [, v] of verdicts) {
+    if (v.verdict.result === 'residual' && v.verdict.retryAfterMs != null) retryAfterMs = Math.max(retryAfterMs ?? 0, v.verdict.retryAfterMs);
+  }
+  return { outcome, residuals, firstResidual, ...(retryAfterMs != null ? { retryAfterMs } : {}) };
 }
 
 type MemberRevokeResult =
   | { ok: true; outcome: Outcome[]; residuals: Residual[] }
-  | { ok: false; reason: string; detail?: { childAccessId?: string; peerErrorId?: string; httpStatus?: number }; outcome: Outcome[]; residuals: Residual[] };
+  | { ok: false; reason: string; detail?: { childAccessId?: string; peerErrorId?: string; httpStatus?: number; retryAfterMs?: number }; outcome: Outcome[]; residuals: Residual[] };
 
 const MAX_PASSES = 3;
 
@@ -256,6 +263,7 @@ async function handleMemberRevoke (params: {
   const outcome: Outcome[] = [];
   const residuals: Residual[] = [];
   let firstResidual: (ChildVerdict & { childAccessId: string }) | undefined;
+  let retryAfterMs: number | undefined;
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const all = membershipAccessId == null ? [] : await ledger.recordsOfMembership(ledgerDeps, userId, membershipAccessId);
     const wanted = all.filter((r) => {
@@ -271,6 +279,7 @@ async function handleMemberRevoke (params: {
     outcome.push(...r.outcome);
     residuals.push(...r.residuals);
     if (firstResidual == null) firstResidual = r.firstResidual;
+    if (r.retryAfterMs != null) retryAfterMs = Math.max(retryAfterMs ?? 0, r.retryAfterMs);
   }
   // Snapshot records the ledger no longer has (pruned between the write and
   // a retry): reported absent so the trigger's record is complete.
@@ -309,6 +318,7 @@ async function handleMemberRevoke (params: {
         childAccessId: firstResidual?.childAccessId,
         ...(firstResidual?.peerErrorId != null ? { peerErrorId: firstResidual.peerErrorId } : {}),
         ...(firstResidual?.httpStatus != null ? { httpStatus: firstResidual.httpStatus } : {}),
+        ...(retryAfterMs != null ? { retryAfterMs } : {}),
       },
       outcome,
       residuals,
