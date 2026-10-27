@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## Mail: a failed send is logged once, at its level
+
+- Mail failures are logged once, at the level they deserve (issue #163). A welcome mail whose
+  recipient the SMTP server refused was logged twice at error, the second time as
+  `unexpected-error (500)` although the registration had answered 201. `sendmail`
+  (`methods/helpers/mailing.ts`) now logs every failure it reports itself: a refused recipient
+  (nodemailer `EENVELOPE` on `RCPT TO`, `recipientRefusal`) at warn with the server's reply,
+  worded "recipient rejected" for a 5xx reply and "recipient deferred ... not sent and not
+  retried" for a 4xx one (greylisting, mailbox full: temporary, but nothing re-sends a mail);
+  anything else (transport down, template missing, PlatformDB not ready, an invalid
+  `services.email.method` or mail-service URL) at error. The error it hands back is marked (`isLoggedMailFailure`) so the senders that run
+  after the response (welcome mail, MFA change notice, external-id release notice, verification
+  mail of an added address) no longer log it a second time, and the welcome mail no longer goes
+  through `errorHandling.logError`. Requests that answer the client with the failure (password
+  reset, verification resend, registration code) answer as before. A malformed mail-service URL
+  is reported through the callback instead of being thrown, as the same unexpected error a
+  request answered with before. Tests: `[MLFL11-14]`, `[MLFL21-24]`, `[MLFL31]`, `[MLRJ1-4]`;
+  mutation-checked (`[MLFL*]` all fail on the previous code, `[MLFL14]` and `[MLRJ4]` added
+  after that check).
+
 ## External ids: admin release and core rename
 
 - `ExternalIdsService.adminRelease` (new): the platform row decides the core; on this core the

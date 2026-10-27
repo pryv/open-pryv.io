@@ -10,7 +10,7 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
-import { sendmail } from './mailing.ts';
+import { sendmail, isLoggedMailFailure } from './mailing.ts';
 
 /**
  * What an administrator's release of an external id leaves for the account
@@ -61,6 +61,8 @@ export async function notifyExternalIdReleased (
     });
     return 'mail';
   } catch (err: unknown) {
+    // A failed send is already logged by sendmail, at its own level.
+    if (isLoggedMailFailure(err)) return 'audit-only';
     logger.warn(`external-id release notice for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
     return 'audit-only';
   }

@@ -10,7 +10,7 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
-import { sendmail } from './mailing.ts';
+import { sendmail, isLoggedMailFailure } from './mailing.ts';
 
 /**
  * What an MFA change leaves behind besides the change itself: an e-mail
@@ -47,6 +47,8 @@ const CHANGE_FLAGS: Record<MfaChange, string> = {
  */
 export function notifyMfaChange (config: ConfigLike, user: UserRef, change: MfaChange): void {
   sendMfaChangeNotice(config, user, change).catch((err: unknown) => {
+    // A failed send is already logged by sendmail, at its own level.
+    if (isLoggedMailFailure(err)) return;
     logger.warn(`MFA change notice (${change}) for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
   });
 }
