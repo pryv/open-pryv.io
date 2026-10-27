@@ -12,14 +12,14 @@
  *   CORE_PORT       — HTTP port to listen on
  *   CORE_ID         — core identifier (e.g. 'core-a')
  *   CORE_IP         — IP for this core (e.g. '127.0.0.1')
- *   DNS_DOMAIN      — domain (e.g. 'test-2core.pryv.li'). When set, the core
+ *   DNS_DOMAIN:     domain (e.g. 'test-2core.pryv.li'). When set, the core
  *                     runs MULTI-core: `core.url` is `http://127.0.0.1:<CORE_PORT>`,
  *                     given to boiler through the environment before it loads,
  *                     so the core-identity plugin sees it. Without it, the core
  *                     is a single-core node.
- *   CORE_HOSTING    — optional `core:hosting`; a registration posted with
+ *   CORE_HOSTING:   optional `core:hosting`; a registration posted with
  *                     `hosting: <it>` is placed on this core.
- *   CORE_DATA_NAME  — optional (e.g. '2core-a'): this core's own user data,
+ *   CORE_DATA_NAME: optional (e.g. '2core-a'): this core's own user data,
  *                     PostgreSQL database `pryv-node-test-<name>` (set with
  *                     `config.set`; the caller creates it before the boot and
  *                     drops it after) and local directory `var-pryv/users-<name>`

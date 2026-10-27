@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## Two-core test harness: real multi-core children over separate user data
+
+- The two-core suite (`components/api-server/test/reg-2core.test.js`) ran its child cores as
+  single-core nodes over one test database, so every cross-core path took the local one. The
+  children (`test/helpers/core-process.js`) now receive `core.id`, `core.url` and `dns.domain`
+  through the environment before boiler loads (the core-identity plugin decides single or
+  multi-core once, at load), a `core.hosting` (`CORE_HOSTING`) and their own user data
+  (`CORE_DATA_NAME`: PostgreSQL database `pryv-node-test-<name>`, directory
+  `var-pryv/users-<name>`, created empty and dropped by the suite). The platform store stays
+  shared. The suite seeds the core rows with their URLs (each core reads the others' at boot),
+  pins registrations to a core with `hosting`, and marks the refused core-c unavailable after
+  `[2C44]`. `just clean-test-data` drops the per-core databases and directories an interrupted
+  run leaves.
+- Proof tests: `[2C00]` (multi-core, own URL, own database and directory per child), `[2C03]`
+  (each core resolves both to the URLs they listen on), `[2C13]` (an account forwarded to core B
+  is listed by B only; A answers 421 with B's URL; fails on a shared database). `[2C56]`/`[2C57]`:
+  the forced external-id accept on core A for a holder of core B, checked over HTTP on B
+  (mutation-checked: B stopped, A answers 503 `external-id-check-unavailable`).
+- The registration forward relays the target core's refusal as an `APIError` (see
+  `CHANGELOG-v2.md`); `[2C53]` covers it (mutation-checked).
+
 ## External ids: admin release and core rename
 
 - `ExternalIdsService.adminRelease` (new): the platform row decides the core; on this core the
