@@ -105,6 +105,8 @@ export type CreateAccess = (params: {
     /** Registry client: offer synthesised by the extension's grammar, no CMC. */
     kind: 'synthesised';
     permissions: Array<Record<string, unknown>>;
+    /** The app asked for a pseudonym (the grant's alias) instead of the username. */
+    randomAlias?: boolean;
   };
   grantedPermissions?: Array<Record<string, unknown>>;
 }) => Promise<{
@@ -249,7 +251,7 @@ export function handleAccept (deps: AcceptDeps) {
         scope: granted,
         expiresAt: accessExpiresAt,
         offer: synthesised != null
-          ? { kind: 'synthesised', permissions: synthesised.offer.permissions }
+          ? { kind: 'synthesised', permissions: synthesised.offer.permissions, randomAlias: synthesised.offer.randomAlias === true }
           : payload.offer!,
         grantedPermissions,
       });

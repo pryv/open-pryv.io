@@ -343,13 +343,21 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
 
   // A registry client (no app account, no CMC): the durable consent record
   // is a data-grant named after the client, found again by that identity on
-  // re-authorization. It carries a routable alias (the id the app sees for
-  // the user, never the username) and no expiry: it lives until the user
-  // withdraws it. Re-authorization widens it, never narrows it.
+  // re-authorization, with no expiry: it lives until the user withdraws it.
+  // When the app asked for a pseudonym, the grant carries a routable alias,
+  // the id the app sees for the user; otherwise the app sees the username,
+  // like any Pryv app. Re-authorization widens the grant, never narrows it.
+  // A re-authorization that switches between the two (the consent screen
+  // shows which one) withdraws the old grant first: its sessions die and its
+  // alias is released, then a new grant is made.
   async function ensureRegistryGrant (context: Ctx, clientId: string,
-    grantedPermissions: Array<Record<string, unknown>>): Promise<DataGrant> {
+    grantedPermissions: Array<Record<string, unknown>>, wantAlias: boolean): Promise<DataGrant> {
     const permissions = stripConsentAnnotations(grantedPermissions);
     let grant = await findRegistryGrant(context, clientId);
+    if (grant != null && (typeof grant.alias === 'string' && grant.alias.length > 0) !== wantAlias) {
+      await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: grant.id });
+      grant = null;
+    }
     if (grant == null) {
       try {
         const created = await apiCall(context, 'accesses.create', {
@@ -357,7 +365,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           name: REGISTRY_GRANT_PREFIX + clientId,
           deviceName: REGISTRY_GRANT_DEVICE,
           permissions,
-          randomAlias: true,
+          ...(wantAlias ? { randomAlias: true } : {}),
           clientData: { oauth: { grantOf: clientId } },
         });
         if (created?.access == null || typeof created.access.id !== 'string') {
@@ -447,7 +455,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     }
 
     const dataGrant = (offer as { kind?: string }).kind === 'synthesised'
-      ? await ensureRegistryGrant(context, clientId, grantedPermissions)
+      ? await ensureRegistryGrant(context, clientId, grantedPermissions, (offer as { randomAlias?: boolean }).randomAlias === true)
       : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
 
     // The short-TTL OAuth access mirrors EXACTLY this session's
@@ -622,7 +630,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     jkt?: string;
-  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string | null }> {
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string; aliased: boolean }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
       const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
@@ -642,20 +650,25 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
     const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
-    return { ...minted, permissions: effective, subject: dataGrant.alias ?? null };
+    return { ...minted, ...grantSubject(dataGrant, username), permissions: effective };
   }
 
   // ---------------------------------------------------------------------
   // resolveGrantSubject — the id a registry client sees for the user: the
-  // alias of the consent data-grant (never the username or the user id).
-  // Null when the grant has none or is gone.
+  // alias of the consent data-grant when the app asked for a pseudonym, the
+  // username otherwise (never the user id). Null when the grant is gone.
   // ---------------------------------------------------------------------
+  function grantSubject (grant: DataGrant, username: string): { subject: string; aliased: boolean } {
+    const aliased = typeof grant.alias === 'string' && grant.alias.length > 0;
+    return { subject: aliased ? grant.alias as string : username, aliased };
+  }
+
   async function resolveGrantSubject ({ userId, username, dataGrantAccessId }: {
     userId: string; username: string; dataGrantAccessId: string;
-  }): Promise<string | null> {
+  }): Promise<{ subject: string; aliased: boolean } | null> {
     try {
       const head = await readDataGrantHead(userId, username, dataGrantAccessId);
-      return typeof head.alias === 'string' && head.alias.length > 0 ? head.alias : null;
+      return grantSubject(head, username);
     } catch (err: unknown) {
       if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
       throw err;
@@ -679,7 +692,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (grantId != null) {
       try {
         const head = await readDataGrantHead(userId, username, grantId);
-        subject = typeof head.alias === 'string' && head.alias.length > 0 ? head.alias : null;
+        subject = grantSubject(head, username).subject;
       } catch (err: unknown) {
         if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
         throw err;

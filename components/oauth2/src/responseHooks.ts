@@ -13,8 +13,9 @@
  * user who unticked part of the offer, or narrowed the grant later, sees a
  * narrower scope. The same token list is the `scopeTokens` every hook gets.
  * Static per-client extras and the extension's `tokenResponse` fields are
- * added under the core fields; `apiEndpoint` is never sent (it names the
- * account); `id_token` is added when `openid` was granted.
+ * added under the core fields; `apiEndpoint` (it names the account) is sent
+ * only when the app sees the username, never with a pseudonym; `id_token` is
+ * added when `openid` was granted.
  *
  * App-account clients do not go through here: their response is unchanged.
  */
@@ -36,7 +37,7 @@ export type RegistryGrant = {
   coreTokens: string[];
   grammarTokens: string[];
   permissions: ExtPermission[];
-  /** The id the app sees for the user (the grant's alias); null when none. */
+  /** The id the app sees for the user (alias or username); null when none. */
   subject: string | null;
   nonce?: string;
 };

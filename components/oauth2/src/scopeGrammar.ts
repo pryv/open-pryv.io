@@ -145,7 +145,7 @@ function callParse (
     logServerError(`oauth extension ${ext.name}: scopeGrammar.parse produced invalid permissions`, err);
     return { ok: false, description: 'scope could not be parsed' };
   }
-  const offer: SynthOffer = { ...(r.offer as SynthOffer), permissions };
+  const offer: SynthOffer = { ...(r.offer as SynthOffer), permissions, randomAlias: (r.offer as SynthOffer).randomAlias === true };
   return { ok: true, tokens: r.tokens as string[], offer };
 }
 

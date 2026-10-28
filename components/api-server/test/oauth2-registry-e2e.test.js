@@ -32,7 +32,8 @@ const AUD = 'https://resource.test/base';
 const RSA_PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   .privateKey.export({ type: 'pkcs8', format: 'pem' });
 
-// Toy grammar: `read/<streamId>` reads one stream; `ctx/user` is a context token.
+// Toy grammar: `read/<streamId>` reads one stream; `ctx/user` is a context
+// token; `ctx/pseudo` asks for a pseudonym (the grant's alias) instead of the username.
 const toyExtension = {
   apiVersion: 1,
   name: 'toy-e2e',
@@ -41,14 +42,14 @@ const toyExtension = {
       const tokens = [...new Set(scopeString.split(/\s+/).filter((t) => t !== ''))];
       const permissions = [];
       for (const t of tokens) {
-        if (t === 'ctx/user') continue;
+        if (t === 'ctx/user' || t === 'ctx/pseudo') continue;
         if (!t.startsWith('read/')) return { ok: false, description: 'unknown token ' + t };
         permissions.push({ streamId: t.slice('read/'.length), level: 'read' });
       }
-      return { ok: true, tokens, offer: { permissions } };
+      return { ok: true, tokens, offer: { permissions, randomAlias: tokens.includes('ctx/pseudo') } };
     },
     echo ({ permissions, requestedTokens }) {
-      return requestedTokens.filter((t) => t === 'ctx/user' ||
+      return requestedTokens.filter((t) => t === 'ctx/user' || t === 'ctx/pseudo' ||
         permissions.some((p) => 'read/' + p.streamId === t));
     },
   },
@@ -94,7 +95,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       clientId,
       kind: 'registry',
       redirectUris: [REDIRECT_URI],
-      scope: ['read/health', 'read/diary', 'ctx/user'],
+      scope: ['read/health', 'read/diary', 'ctx/user', 'ctx/pseudo'],
       grantTypes: ['authorization_code', 'refresh_token'],
       tokenEndpointAuthMethod: 'none',
       allowedAudiences: [AUD],
@@ -125,7 +126,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     if (fixtures != null) await fixtures.clean();
   });
 
-  async function runFlow (scope = 'openid read/health ctx/user') {
+  async function runFlow (scope = 'openid read/health ctx/user ctx/pseudo') {
     const { verifier, challenge } = pkce();
     const authRes = await coreRequest.get('/oauth2/authorize').query({
       client_id: clientId,
@@ -176,7 +177,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
   it('[OREG1] the full flow mints a data-grant with an alias and no expiry, and a session that reads', async () => {
     first = await runFlow();
     const b = first.token;
-    assert.deepEqual(b.scope.split(' ').sort(), ['ctx/user', 'openid', 'read/health']);
+    assert.deepEqual(b.scope.split(' ').sort(), ['ctx/pseudo', 'ctx/user', 'openid', 'read/health']);
     assert.equal(b.apiEndpoint, undefined);
     assert.equal(b.refresh_token, undefined, 'no offline_access requested');
     const list = await grants();
@@ -198,13 +199,13 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
   });
 
   it('[OREG2] re-authorization reuses and widens the same grant and keeps its alias', async () => {
-    const again = await runFlow('read/health read/diary');
+    const again = await runFlow('read/health read/diary ctx/pseudo');
     const list = await grants();
     assert.equal(list.length, 1);
     assert.deepEqual(list[0].permissions.map((p) => p.streamId).sort(), ['diary', 'health']);
     const sub = JSON.parse(Buffer.from(first.token.id_token.split('.')[1], 'base64url')).sub;
     assert.equal(list[0].alias, sub);
-    assert.deepEqual(again.token.scope.split(' ').sort(), ['read/diary', 'read/health']);
+    assert.deepEqual(again.token.scope.split(' ').sort(), ['ctx/pseudo', 'read/diary', 'read/health']);
   });
 
   it('[OREG3] introspection: active with the grant alias, then inactive once the grant is withdrawn', async () => {
@@ -222,6 +223,31 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const after = await introspect(first.token.access_token);
     assert.deepEqual(after.body, { active: false });
     const read = await coreRequest.get('/' + username + '/events').set('Authorization', first.token.access_token);
+    assert.equal(read.status, 403);
+  });
+
+  let plain;
+
+  it('[OREG5] without a pseudonym the app sees the username, like any Pryv app', async () => {
+    plain = await runFlow('openid read/health ctx/user');
+    const b = plain.token;
+    const [grant] = await grants();
+    assert.equal(grant.alias ?? null, null);
+    assert.equal(b.user, username);
+    assert.equal(JSON.parse(Buffer.from(b.id_token.split('.')[1], 'base64url')).sub, username);
+    assert.ok(typeof b.apiEndpoint === 'string' && b.apiEndpoint.includes(username), 'apiEndpoint: ' + b.apiEndpoint);
+    const intro = await introspect(b.access_token);
+    assert.equal(intro.body.sub, username);
+  });
+
+  it('[OREG6] switching to a pseudonym withdraws the old grant (its sessions die) and makes an aliased one', async () => {
+    const [before] = await grants();
+    await runFlow('read/health ctx/pseudo');
+    const list = await grants();
+    assert.equal(list.length, 1);
+    assert.notEqual(list[0].id, before.id);
+    assert.equal(typeof list[0].alias, 'string');
+    const read = await coreRequest.get('/' + username + '/events').set('Authorization', plain.token.access_token);
     assert.equal(read.status, 403);
   });
 

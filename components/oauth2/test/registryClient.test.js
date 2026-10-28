@@ -52,7 +52,7 @@ const TABLE = {
   'cat=http://x.example|lab.read': [['lab', 'read']],
   'data/a.write': [['a', 'contribute']],
 };
-const CONTEXT = ['ctx/patient', 'who'];
+const CONTEXT = ['ctx/patient', 'who', 'pseudo'];
 const COVERS = { read: ['read', 'contribute', 'manage'], contribute: ['contribute', 'manage'] };
 
 let lastCtx = {};
@@ -75,7 +75,7 @@ function toyExtension () {
           }
         }
         const permissions = [...levels.entries()].sort().map(([streamId, level]) => ({ streamId, level }));
-        return { ok: true, tokens, offer: { permissions } };
+        return { ok: true, tokens, offer: { permissions, ...(tokens.includes('pseudo') ? { randomAlias: true } : {}) } };
       },
       echo ({ permissions, requestedTokens }) {
         return requestedTokens.filter((t) => CONTEXT.includes(t) ||
@@ -227,7 +227,7 @@ function tokenDeps (platform, config, more = {}) {
     platform,
     resolveUsername: async (id) => (id === 'u-alice' ? 'alice' : null),
     resolveAccess: async ({ accessId }) => ({ accessToken: 'session-token-' + accessId.split('-')[1], apiEndpoint: 'https://alice.example.com/' }),
-    resolveGrantSubject: async () => ALIAS,
+    resolveGrantSubject: async () => ({ subject: ALIAS, aliased: true }),
     revokeAccessLocal: async () => {},
     ...more,
   };
@@ -418,7 +418,14 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       const platform = fakePlatform(); await seed(platform);
       const { calls } = await flow({ platform, config: fakeConfig() });
       assert.equal(calls.length, 1);
-      assert.deepEqual(calls[0].offer, { kind: 'synthesised', permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] });
+      assert.deepEqual(calls[0].offer, { kind: 'synthesised', permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }], randomAlias: false });
+    });
+    it('[OXO05] the app asks for a pseudonym through its scope: the offer and the mint carry randomAlias', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      await persistClient(platform, { ...REGISTRY_CLIENT, scope: [...REGISTRY_CLIENT.scope, 'pseudo'] });
+      const { calls, offer } = await flow({ platform, config: fakeConfig(), query: { scope: 'data/a.read pseudo' } });
+      assert.equal(offer.offer.randomAlias, true);
+      assert.equal(calls[0].offer.randomAlias, true);
     });
     it('[OXO04] a grant wider than the offer is refused (all or nothing by default)', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -499,6 +506,14 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       const { token } = await flow({ platform, config: fakeConfig(), more: { resolveGrantSubject: async () => null } });
       assert.equal(token.statusCode, 500);
     });
+    it('[OXT08] without a pseudonym the app sees the username, and gets apiEndpoint like any Pryv app', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const { token } = await flow({ platform, config: fakeConfig(), more: { resolveGrantSubject: async () => ({ subject: 'alice', aliased: false }) } });
+      assert.equal(token.statusCode, 200, token.raw);
+      assert.equal(token.body.apiEndpoint, 'https://alice.example.com/');
+      assert.equal(token.body.patient, 'alice');
+      assert.equal(decodeJwt(token.body.id_token).payload.sub, 'alice');
+    });
     it('[OXT06] refresh: the echo follows the effective (narrowed) permissions', async () => {
       const platform = fakePlatform(); await seed(platform);
       const now = Date.now();
@@ -524,6 +539,7 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
           apiEndpoint: 'https://alice.example.com/',
           permissions: [{ streamId: 'b', level: 'read' }],
           subject: ALIAS,
+          aliased: true,
         }),
       }))({ headers: {}, body: { grant_type: 'refresh_token', refresh_token: 'RT-X', client_id: 'reg-app' } }, res);
       assert.equal(res.statusCode, 200, res.raw);

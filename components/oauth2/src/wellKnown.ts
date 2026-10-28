@@ -88,7 +88,9 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
 export function buildOpenIdConfiguration (cfg: DiscoveryConfig): Record<string, unknown> {
   return {
     ...buildDiscoveryDocument({ ...cfg, oidc: true }),
-    subject_types_supported: ['pairwise'],
+    // `pairwise` when the app asked for a pseudonym (a per-grant alias), `public`
+    // (the username) otherwise.
+    subject_types_supported: ['public', 'pairwise'],
     id_token_signing_alg_values_supported: ['RS256'],
     claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', ...(cfg.claimsSupported ?? [])],
   };

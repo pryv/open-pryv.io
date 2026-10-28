@@ -51,6 +51,12 @@ export type ClientView = Omit<OAuthClient, 'clientSecretHash' | 'jwks'>;
 export type SynthOffer = {
   permissions: ExtPermission[];
   allowUserChoice?: boolean;
+  /**
+   * The app asked for a pseudonym: the grant gets a routable alias, which is
+   * the subject the app sees. Absent / false: the app sees the username, like
+   * any Pryv app.
+   */
+  randomAlias?: boolean;
   title?: Record<string, string>;
   description?: Record<string, string>;
   consent?: Record<string, string>;
@@ -62,7 +68,8 @@ export type ParseResult =
   | { ok: false; description: string };
 
 /**
- * Context handed to the response hooks. `scopeTokens` are the GRANTED tokens:
+ * Context handed to the response hooks. `subject` is the grant's alias when the
+ * app asked for a pseudonym, the username otherwise. `scopeTokens` are the GRANTED tokens:
  * the core tokens granted plus the grammar's echo over the minted permissions
  * (never what was requested but not granted).
  */

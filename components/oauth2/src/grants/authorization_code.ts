@@ -81,10 +81,14 @@ export type AuthCodeDeps = {
   resolveGrantSubject?: GrantSubjectResolver;
 };
 
-/** The id a registry client sees for the user (never the username or user id). */
+/**
+ * The id a registry client sees for the user: the grant's alias when the app
+ * asked for a pseudonym (`aliased`), the username otherwise. Null when the
+ * grant is gone.
+ */
 export type GrantSubjectResolver = (params: {
   userId: string; username: string; dataGrantAccessId: string;
-}) => Promise<string | null>;
+}) => Promise<{ subject: string; aliased: boolean } | null>;
 
 /** Canonical username for a user id on this core, or null when absent. */
 export type UsernameResolver = (userId: string) => Promise<string | null>;
@@ -279,14 +283,17 @@ export async function handleAuthorizationCode (
     // Registry client: scope echo, extras, hooks and id_token are computed
     // BEFORE the refresh row exists, so a failing hook leaves none behind.
     let registry: RegistryResponseParts | null = null;
+    // An aliased grant never reveals the username: no apiEndpoint then.
+    let registryAliased = true;
     if (row.kind === 'registry') {
       if (!isRegistryClient(client)) {
         return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, restart the authorization flow' };
       }
       try {
-        const subject = row.dataGrantAccessId != null && typeof deps.resolveGrantSubject === 'function' && username != null
+        const resolved = row.dataGrantAccessId != null && typeof deps.resolveGrantSubject === 'function' && username != null
           ? await deps.resolveGrantSubject({ userId: row.userId, username, dataGrantAccessId: row.dataGrantAccessId })
           : null;
+        registryAliased = resolved?.aliased !== false;
         registry = await prepareRegistryResponse({
           client: client!,
           grantType: 'authorization_code',
@@ -295,7 +302,7 @@ export async function handleAuthorizationCode (
           coreTokens: row.coreTokens ?? [],
           grammarTokens: row.grammarTokens ?? [],
           permissions: (row.permissions ?? []) as unknown as Array<Record<string, unknown>>,
-          subject,
+          subject: resolved?.subject ?? null,
           nonce: row.nonce,
         });
       } catch (err) {
@@ -355,6 +362,7 @@ export async function handleAuthorizationCode (
           expires_in: accessTokenTTL,
           ...(refreshToken != null ? { refresh_token: refreshToken } : {}),
           scope: registry.scopeTokens.join(' '),
+          ...(registryAliased ? {} : { apiEndpoint }),
         },
       };
     }

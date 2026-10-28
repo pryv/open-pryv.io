@@ -91,8 +91,10 @@ export type MintRefreshedAccess = (params: {
   apiEndpoint: string;
   /** The permissions actually minted (grant ∩ the data-grant's current ones). */
   permissions?: Array<Record<string, unknown>>;
-  /** The id a registry client sees for the user (the grant's alias), or null. */
+  /** The id a registry client sees for the user (alias or username), or null. */
   subject?: string | null;
+  /** Whether `subject` is the grant's alias (then the username is never sent). */
+  aliased?: boolean;
 }>;
 
 /**
@@ -431,6 +433,7 @@ export async function handleRefreshToken (
         expires_in: accessTokenTTL,
         refresh_token: newRefresh,
         scope: registry.scopeTokens.join(' '),
+        ...(access.aliased === false ? { apiEndpoint: access.apiEndpoint } : {}),
       },
     };
   }
