@@ -381,13 +381,15 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     try {
       const events = await mall.events.getHistory(context.user.id, params.id);
       result.history = [];
-      events.forEach((e: WireEvent) => {
+      for (const e of events as WireEvent[]) {
         if (result.event!.streamIds == null) { // event might be deleted - limit result to modified property
           result.event = { id: e.id, modified: e.modified };
-        } else {
+        } else if (Array.isArray(e.streamIds) && await canReadEvent(context.access, e)) {
+          // Each version is checked like the head: an event moved out of a
+          // stream the access cannot read keeps its earlier versions there.
           result.history!.push(e);
         }
-      });
+      }
       // Breach-scope: includeHistory discloses N prior versions alongside the
       // head, so the read's record count is 1 + the history length, not 1.
       if (Array.isArray(result.history) && result.history.length > 0) {
