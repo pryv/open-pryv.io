@@ -1,5 +1,24 @@
 # Changelog - Internal (no API impact)
 
+## Lint: the TypeScript sources are style-checked
+
+- `eslint.config.js` enables neostandard's `ts` option, so `just lint` and CI's `npx eslint .` now
+  check the `.ts` sources (spacing, semicolons, unused code, import order, ...), which no gate did
+  before. A `**/*.ts` block keeps the JS options of `no-use-before-define` (plus export lists
+  written above the definitions), leaves redeclarations to tsc (`no-redeclare` off: interface +
+  value pairs sharing a name are deliberate), allows the `__ex_<name>` re-export names, and turns
+  off the unused-directive report so the `no-explicit-any` disables of the separate `lint-ts-any`
+  gate are not flagged.
+- One autofix pass over the repo (mostly indentation, blank lines, imports moved to the top), then
+  the rest by hand: unused imports, types and locals removed, dead helpers deleted (the SQLite
+  `buildStub`, three unused `*_METHODS` arrays, `deleteUsersDataDirectory` and a `Sessions` class
+  in the test helpers, an unused `NUMERIC_OPS`), targeted disables with a reason where the flagged
+  construct is deliberate (control-character regexes, a for-await taking the first item). No
+  behaviour change, except that `accesses.checkApp` no longer runs its root-stream name lookup
+  for a permission whose stream exists (the lookup could not change anything there).
+- `storages/index.ts` drops the always-null `database` handle left from the MongoDB engine (const,
+  early copy, `registerInternals` parameter, exported binding); nothing read it.
+
 ## CMC deletion outbox (revoke notices of deleted accounts)
 
 - New core-level store `DeletionNoticesLocalDB` (`storages/interfaces/baseStorage/`, conformance
