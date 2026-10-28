@@ -332,14 +332,33 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
   }
 
+  /**
+   * An access holds one level per stream: the permission map is keyed by
+   * stream id, so a second entry for the same stream (in any spelling) would
+   * silently replace the first, the kept level depending on the order. Refused
+   * instead, once the ids are canonical.
+   */
+  function duplicateStreamPermissionError (permissions: unknown) {
+    if (!Array.isArray(permissions)) return null;
+    const seen = new Set<string>();
+    for (const permission of permissions as StreamPermission[]) {
+      if (typeof permission?.streamId !== 'string') continue;
+      if (seen.has(permission.streamId)) {
+        return errors.invalidRequestStructure(`Stream "${permission.streamId}" appears in more than one permission; give each stream a single level.`, { streamId: permission.streamId });
+      }
+      seen.add(permission.streamId);
+    }
+    return null;
+  }
+
   function canonicalizePermissionStreamIds (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     canonicalizeStreamPermissions(params.permissions);
-    next();
+    next(duplicateStreamPermissionError(params.permissions));
   }
 
   function canonicalizePermissionStreamIdsForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     canonicalizeStreamPermissions(params.update?.permissions);
-    next();
+    next(duplicateStreamPermissionError(params.update?.permissions));
   }
 
   /**

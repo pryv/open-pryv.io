@@ -82,4 +82,34 @@ describe('[ACIN] accesses input checks', function () {
     assert.strictEqual(res.status, 400, res.text);
     assert.strictEqual(res.body.error.id, 'invalid-operation');
   });
+
+  // An access holds one level per stream: two entries for the same stream
+  // would silently keep only one of them, depending on their order.
+  const duplicates = [
+    [{ streamId: 'acin', level: 'manage' }, { streamId: 'acin', level: 'read' }],
+    [{ streamId: 'acin', level: 'read' }, { streamId: 'acin', level: 'none' }],
+    [{ streamId: 'acin', level: 'read' }, { streamId: ':local:acin', level: 'manage' }],
+    [{ streamId: '*', level: 'read' }, { streamId: ':local:*', level: 'contribute' }]
+  ];
+
+  it('[ACDP1] two permissions on the same stream are refused at creation', async function () {
+    for (const permissions of duplicates) {
+      const res = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ name: 'dup ' + cuid(), type: 'app', permissions });
+      assert.strictEqual(res.status, 400, JSON.stringify(permissions) + ' ' + res.text);
+      assert.strictEqual(res.body.error.id, 'invalid-request-structure', res.text);
+    }
+  });
+
+  it('[ACDP2] two permissions on the same stream are refused at update', async function () {
+    const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+      .send({ name: 'dup update', type: 'app', permissions: [{ streamId: 'acin', level: 'read' }] });
+    assert.strictEqual(created.status, 201, created.text);
+    for (const permissions of duplicates) {
+      const res = await coreRequest.put('/' + username + '/accesses/' + created.body.access.id).set('Authorization', token)
+        .send({ permissions });
+      assert.strictEqual(res.status, 400, JSON.stringify(permissions) + ' ' + res.text);
+      assert.strictEqual(res.body.error.id, 'invalid-request-structure', res.text);
+    }
+  });
 });

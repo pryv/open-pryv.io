@@ -102,6 +102,15 @@
   `auth.emailVerificationPageURL`, check-config now reports a warning, as boot does, instead of a
   problem. Only an explicit `services.email.enabled.verifyEmail: true` makes the page URL required.
 
+### Fixed
+
+- **`accesses.create` and `accesses.update` refuse two permissions on the same stream.** An access
+  holds one level per stream, so a second entry for a stream (in any spelling: `a` and `:local:a`,
+  `*` and `:local:*`) silently replaced the first one, the kept level depending on the order: the
+  access stored and listed both entries but applied only the last. Such a request now answers `400
+  invalid-request-structure` naming the stream; give each stream a single level. Accesses already
+  stored with duplicates keep their current behaviour (the last entry applies).
+
 ## 2.0.0-rc.65 - 2026-10-29
 
 ### BREAKING and security
