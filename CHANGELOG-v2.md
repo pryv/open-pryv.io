@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
   digits and dashes (1 to 100 characters) was still slugified, which changed some valid ids: a
