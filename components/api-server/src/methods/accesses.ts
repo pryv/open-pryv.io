@@ -771,14 +771,19 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * the update touches clientData, the binding (present or absent) must
    * come through unchanged. Defense-in-depth: with uniform enforcement
    * a stolen bound token cannot reach this method in the first place.
+   * Same for `clientData.oauth`, the link of an OAuth session to its consent
+   * data-grant: removing it would let the session outlive a withdrawn grant.
    */
   function dpopBindingUpdateGuard (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     const updatedClientData = params.update?.clientData as Record<string, unknown> | null | undefined;
     if (updatedClientData === undefined) return next(); // clientData untouched
-    const currentDpop = (params.targetAccess as { clientData?: { dpop?: unknown } })?.clientData?.dpop;
-    const updatedDpop = updatedClientData == null ? undefined : updatedClientData.dpop;
-    if (JSON.stringify(currentDpop ?? null) !== JSON.stringify(updatedDpop ?? null)) {
-      return next(errors.forbidden('The clientData.dpop key binding cannot be created, changed or removed through accesses.update.'));
+    const currentClientData = (params.targetAccess as { clientData?: Record<string, unknown> })?.clientData;
+    for (const key of ['dpop', 'oauth']) {
+      const current = currentClientData?.[key];
+      const updated = updatedClientData == null ? undefined : updatedClientData[key];
+      if (JSON.stringify(current ?? null) !== JSON.stringify(updated ?? null)) {
+        return next(errors.forbidden('The clientData.' + key + ' key cannot be created, changed or removed through accesses.update.'));
+      }
     }
     next();
   }

@@ -813,6 +813,58 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(refreshRes.status, 400, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
       assert.equal(refreshRes.body.error, 'invalid_grant');
     });
+
+    it('[OE31] revoking the consent data-grant kills the live session accesses at once, refreshed ones and their sub-accesses included', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const codeBearer = r.tokenRes.body.access_token;
+      // A second session minted by the refresh grant (platform-created row).
+      const refreshRes = await coreRequest.post('/oauth2/token').type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+      assert.equal(refreshRes.status, 200, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
+      const refreshedBearer = refreshRes.body.access_token;
+      // A sub-access the refreshed session created.
+      const createRes = await coreRequest.post('/' + username + '/accesses')
+        .set('Authorization', refreshedBearer)
+        .send({ name: 'oe31-sub-' + cuid(), type: 'shared', permissions: [{ streamId: 'health', level: 'read' }] });
+      assert.equal(createRes.status, 201, JSON.stringify(createRes.body));
+      const subToken = createRes.body.access.token;
+      for (const token of [codeBearer, refreshedBearer, subToken]) {
+        assert.equal((await coreRequest.get('/' + username + '/access-info').set('Authorization', token)).status, 200,
+          'premise: the token authenticates before the revocation');
+      }
+
+      // The user revokes the consent this chain was granted under (the account
+      // may hold one grant per offer; the session names its own).
+      const dataGrantId = (await accessInfo(codeBearer)).clientData?.oauth?.dataGrantId;
+      assert.equal(typeof dataGrantId, 'string', 'premise: the session names its data-grant');
+      const accessesRes = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+      const dataGrant = (accessesRes.body.accesses ?? []).find((a) => a.id === dataGrantId);
+      assert.ok(dataGrant?.clientData?.cmc?.role === 'counterparty', 'the named data-grant must exist before revocation');
+      const delRes = await coreRequest.delete('/' + username + '/accesses/' + encodeURIComponent(dataGrant.id))
+        .set('Authorization', personalToken);
+      assert.ok(delRes.status === 200 || delRes.status === 204, JSON.stringify(delRes.body));
+
+      // No wait: the sessions must not outlive the consent until their own expiry.
+      for (const [label, token] of [['code-grant session', codeBearer], ['refreshed session', refreshedBearer], ['sub-access', subToken]]) {
+        const after = await coreRequest.get('/' + username + '/access-info').set('Authorization', token);
+        assert.notEqual(after.status, 200, 'the ' + label + ' must be revoked with the data-grant: ' + describeRes(after));
+      }
+    });
+
+    it('[OE32] the data-grant link of a session access cannot be changed or removed through accesses.update', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const session = await accessInfo(r.tokenRes.body.access_token);
+      assert.equal(typeof session.clientData?.oauth?.dataGrantId, 'string',
+        'premise: the session carries its data-grant link: ' + JSON.stringify(session.clientData));
+      for (const clientData of [{ oauth: null }, { oauth: { dataGrantId: 'cother' } }, null]) {
+        const res = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(session.id))
+          .set('Authorization', personalToken)
+          .send({ clientData });
+        assert.equal(res.status, 403, 'clientData ' + JSON.stringify(clientData) + ': ' + describeRes(res));
+      }
+    });
   });
 
   describe('[OAUTH-E2E-REFUSE] refuse path', function () {

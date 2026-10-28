@@ -47,7 +47,7 @@ const storages = require('storages');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 // Permission-lexicon single point + composite access refs.
 const { permissionKey } = require('business/src/accesses/permissionSet.ts');
-const { parseAccessRef, isManagedBy } = require('business/src/accesses/refs.ts');
+const { parseAccessRef } = require('business/src/accesses/refs.ts');
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
@@ -55,7 +55,8 @@ const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffec
 const cache = require('cache').default;
 const { pubsub } = require('messages');
 const { fromCallback } = require('utils');
-const WebhooksRepository = require('business').webhooks.Repository;
+// The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
+const { deleteAccessChain } = require('../methods/helpers/accessDeletion.ts');
 // CMC back-channel revoke notify — pure DI HTTP sender, no MethodContext needed.
 const { outbound: cmcOutbound } = require('cmc');
 const cmcRelationshipKey = require('cmc/src/relationshipKey.ts');
@@ -396,6 +397,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       deviceName: 'oauth-session-' + cuid(),
       permissions: withSessionSelfRevoke(permissions),
       expireAfter,
+      clientData: sessionClientData(dataGrant.id),
     };
     const result = await apiCall(context, 'accesses.create', params);
     const a = result?.access;
@@ -441,13 +443,25 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return head;
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt }: {
+  // A session access names the consent data-grant it was minted under, so
+  // deleting that grant deletes the session with it (accessDeletion.ts)
+  // instead of leaving it valid until its own expiry. Written only here;
+  // accesses.update refuses to change it.
+  function sessionClientData (dataGrantAccessId: string, dpopJkt?: string): Record<string, unknown> {
+    return {
+      oauth: { dataGrantId: parseAccessRef(dataGrantAccessId).base },
+      ...(dpopJkt != null ? { dpop: { jkt: dpopJkt } } : {}),
+    };
+  }
+
+  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId }: {
     userId: string;
     username: string;
     clientId: string;
     permissions: Array<Record<string, unknown>>;
     expiresAt: number;
     dpopJkt?: string;
+    dataGrantAccessId?: string;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
@@ -471,7 +485,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       expires: Math.floor(expiresAt / 1000),
       // Sender-constrained sessions carry the key thumbprint the
       // resource layer checks the per-request proof against.
-      ...(dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {}),
+      ...(dataGrantAccessId != null
+        ? { clientData: sessionClientData(dataGrantAccessId, dpopJkt) }
+        : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
     };
     const ApiEndpoint = require('utils').ApiEndpoint;
     return await new Promise((resolve, reject) => {
@@ -552,7 +568,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // Session selfRevoke override AFTER the intersection — the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
-    return mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    return mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
   }
 
   // ---------------------------------------------------------------------
@@ -651,17 +667,16 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // ---------------------------------------------------------------------
-  // revokeChain — collapse a refresh chain on detected reuse. Storage-direct:
-  // soft-delete the durable data-grant + all live oauth session accesses for
-  // (user, client) + their descendants, cascade webhooks, invalidate the access
-  // cache cluster-wide, then best-effort notify the counterparty app. Mirrors
-  // the accesses.delete method chain's teardown without a MethodContext.
+  // revokeChain — collapse a refresh chain on detected reuse, without a
+  // MethodContext: delete the durable data-grant + all live oauth session
+  // accesses for (user, client) + their descendants through the accesses.delete
+  // teardown, invalidate the access cache cluster-wide, then best-effort notify
+  // the counterparty app.
   // ---------------------------------------------------------------------
   async function revokeChain ({ userId, username, clientId, dataGrantAccessId }: {
     userId: string; username: string; clientId: string; dataGrantAccessId?: string;
   }): Promise<void> {
-    const sl = storageLayer as { accesses?: AccessesRepo; webhooks?: unknown; events?: unknown };
-    const accessesRepository = sl.accesses;
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
     if (accessesRepository == null) throw new Error('oauth2.revokeChain: storageLayer.accesses unavailable');
     const user = { id: userId, username };
 
@@ -675,46 +690,37 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         accessesRepository.findOne(user, { id: base }, null, cb));
     }
 
-    // 2. Collect the delete set: data-grant head + live oauth session accesses +
-    //    their descendants (a stolen app session can mint shared sub-accesses;
-    //    leaving them alive = incomplete revoke). Dedup by id; skip already-deleted.
-    const ids = new Set<string>();
-    if (dataGrant != null && typeof dataGrant.id === 'string') ids.add(dataGrant.id);
-    const sessions: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
-      accessesRepository.find(user, { type: 'app', name: 'oauth:' + clientId, deleted: null }, null, cb))) ?? [];
-    for (const s of sessions) if (typeof s.id === 'string') ids.add(s.id);
-    // Descendants are matched on the creating access's id inside `createdBy`
-    // (an access created under a caller id is recorded as `<id> <callerId>`),
-    // expired ones included: the whole chain is revoked.
-    const live: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
-      accessesRepository.find(user, { deleted: null }, null, cb))) ?? [];
-    for (const id of [...ids]) {
-      for (const k of live) {
-        if (typeof k.id === 'string' && k.id !== id && isManagedBy(k, id)) ids.add(k.id);
+    // 2. Delete through the teardown accesses.delete uses (accessDeletion.ts):
+    //    webhooks stopped, aliases released, breach-scope index tombstoned,
+    //    credential URLs scrubbed, cache busted per token. The data-grant goes
+    //    first and takes the sessions minted under it with their sub-accesses
+    //    (a stolen session can mint shared sub-accesses; leaving them alive =
+    //    incomplete revoke); then any live session of this client still left
+    //    (minted under another grant of the client, or before sessions named
+    //    their grant), with its own sub-accesses.
+    if (dataGrant != null && typeof dataGrant.id === 'string' && dataGrant.deleted == null) await deleteOrForce(dataGrant.id);
+    for (const id of await liveSessionIds()) await deleteOrForce(id);
+
+    async function liveSessionIds (): Promise<string[]> {
+      const sessions: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
+        accessesRepository!.find(user, { type: 'app', name: 'oauth:' + clientId, deleted: null }, null, cb))) ?? [];
+      return sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string');
+    }
+    // A failing side effect (a webhook store error) must not leave the chain
+    // alive: fall back to the bare soft-delete, as this teardown did before.
+    async function deleteOrForce (id: string): Promise<void> {
+      try {
+        await deleteAccessChain(user, { id });
+      } catch (err: unknown) {
+        logger.warn('oauth2.revokeChain: teardown of ' + id + ' failed, soft-deleting it bare', err);
+        await fromCallback((cb: (e: unknown) => void) => accessesRepository!.delete(user, { id }, cb));
       }
     }
-    const idList = [...ids];
 
-    // 3. Webhooks cascade BEFORE the delete (retry-safe), then soft-delete all ids.
-    const webhooksRepository = new WebhooksRepository(sl.webhooks, sl.events, sl.accesses);
-    for (const id of idList) {
-      try { await webhooksRepository.deleteByAccess(user, id); } catch (err: unknown) {
-        logger.warn('oauth2.revokeChain: webhook cascade failed for ' + id, err);
-      }
-    }
-    if (idList.length > 0) {
-      await fromCallback((cb: (e: unknown) => void) =>
-        accessesRepository.delete(user, { $or: idList.map((id) => ({ id })) }, cb));
-    }
-    // Parity gap vs accesses.delete: it also releases any `randomAlias` reservation
-    // carried by a deleted access. Not replicated here — oauth session/app accesses
-    // do not mint aliases, and the ALIASES primitive is not shipped, so no alias can
-    // leak today. Revisit if aliased descendants become reachable.
-
-    // 4. Cache invalidation (MANDATORY): the cache validates a token on `expires`
+    // 3. Cache invalidation (MANDATORY): the cache validates a token on `expires`
     //    only, never `deleted`, so soft-deleted rows keep validating from cache.
     //    unsetUserData clears every access-logic for the user cluster-wide,
-    //    covering sessions + descendants + the data-grant head (app-held token).
+    //    covering a row the bare fallback above deleted.
     cache.unsetUserData(userId);
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: 'refresh-token reuse detected' });

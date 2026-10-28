@@ -1,5 +1,19 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the
+  consent data-grant of an OAuth client (from the account app, `accesses.delete`, or a revoke from
+  the client) killed the refresh chain but left the client's current session accesses
+  (`oauth:<clientId>`) valid until their own expiry (`oauth.accessTokenTTL`, one hour by default).
+  They are now deleted with the grant, together with the accesses they created, and reported in
+  the response's `relatedDeletions`. A session access minted from now on names its grant in
+  `clientData.oauth.dataGrantId`; like `clientData.dpop`, that key cannot be changed or removed
+  through `accesses.update` (`403`). Sessions minted before the upgrade carry no link and still
+  expire on their own (one hour at most). Refresh-token reuse now revokes the chain through the
+  same teardown as `accesses.delete`, so aliases are released, credentials scrubbed from the
+  deletion records and running webhooks stopped there too.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,

@@ -11,7 +11,7 @@ import { pubsub, WEBHOOKS_DELETE, USERNAME_BASED_ACCESSES_CHANGED } from 'messag
 import { getStorageLayer } from 'storage';
 import { getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
-import { managedAccessesOf } from 'business/src/accesses/refs.ts';
+import { managedAccessesOf, isManagedBy, parseAccessRef } from 'business/src/accesses/refs.ts';
 import { withoutCredentialUrls } from 'business/src/accesses/credentialUrls.ts';
 import WebhooksRepository from 'business/src/webhooks/repository.ts';
 import { tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
@@ -119,6 +119,30 @@ async function scrubOrWarn (accessesRepository: ScrubRepository, user: DeletionU
   }
 }
 
+/**
+ * An OAuth session access names the consent data-grant it was minted under
+ * (`clientData.oauth.dataGrantId`, written by the OAuth routes only). A
+ * withdrawn grant takes those sessions with it, and what they created,
+ * instead of leaving their tokens valid until their own expiry.
+ */
+function isSessionOfGrant (access: AccessRow, grantBaseId: string): boolean {
+  const oauth = access?.clientData?.oauth as { dataGrantId?: unknown } | undefined;
+  return access?.type === 'app' && oauth?.dataGrantId === grantBaseId;
+}
+
+function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, known: AccessRow[]): AccessRow[] {
+  const seen = new Set<string>(known.map((a) => a.id).concat(grantBaseId));
+  const live = (a: AccessRow) => !seen.has(a.id) && !(a.expires != null && now > a.expires);
+  const sessions = all.filter((a) => live(a) && isSessionOfGrant(a, grantBaseId));
+  for (const s of sessions) seen.add(s.id);
+  const created = sessions.flatMap((s) => managedAccessesOf(all, s.id, now)).filter((a) => {
+    if (seen.has(a.id)) return false;
+    seen.add(a.id);
+    return true;
+  });
+  return sessions.concat(created);
+}
+
 type DeletionOutcome = {
   // False when no such live access exists (nothing was done).
   deleted: boolean;
@@ -151,9 +175,14 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   // inside `createdBy` (an access created under a caller id is recorded as
   // `<id> <callerId>`).
   let related: AccessRow[] = params.relatedAccessesToDelete ?? [];
-  if (params.relatedAccessesToDelete == null && accessToDelete.type !== 'personal') {
+  const grantBaseId = parseAccessRef(params.id).base;
+  let sessionIds: string[] = [];
+  if (accessToDelete.type !== 'personal') {
     const all = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
-    related = managedAccessesOf(all, params.id, timestamp.now());
+    if (params.relatedAccessesToDelete == null) related = managedAccessesOf(all, params.id, timestamp.now());
+    const sessions = sessionsOfGrant(all, grantBaseId, timestamp.now(), related);
+    sessionIds = sessions.filter((a) => isSessionOfGrant(a, grantBaseId)).map((a) => a.id);
+    related = related.concat(sessions);
   }
   let idsToDelete: Array<{ id: string }> = [{ id: params.id }].concat(related.map((a) => ({ id: a.id })));
 
@@ -208,13 +237,18 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   }
   if (deleteErr != null) throw deleteErr;
   for (const row of rowsToScrub) await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, row);
-  // An access created through the deleted one between the find above and
+  // An access created through the deleted one (or through a deleted session
+  // of it, or a session a refresh minted under it) between the find above and
   // the delete (or by a request that authenticated before the cache bust)
-  // would survive it unmanaged. The deleted access can create nothing any
+  // would survive it unmanaged. The deleted accesses can create nothing any
   // more, so one more pass is final. Reported like the others.
   if (accessToDelete.type !== 'personal') {
     const all = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
-    const late = managedAccessesOf(all, params.id, timestamp.now());
+    const now = timestamp.now();
+    const deletedIds = new Set(idsToDelete.map((d) => d.id));
+    const late = all.filter((a) => typeof a.id === 'string' && !deletedIds.has(a.id) &&
+      !(a.expires != null && now > a.expires) &&
+      (isManagedBy(a, params.id) || isSessionOfGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {
