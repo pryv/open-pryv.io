@@ -321,6 +321,18 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       }, res);
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     });
+    it('[OTR-CF5] Basic identifies the client: refresh without client_id in the body → 200', async () => {
+      const { plaintext, hash } = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: hash } });
+      await seedRefresh(platform, 'RT-CF5');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'refresh_token', refresh_token: 'RT-CF5' },
+        headers: { authorization: basicAuth('myapp', plaintext) },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
     it('[OTR-CF3] confidential client refresh with wrong secret → 401 invalid_client', async () => {
       const { hash } = await mintSecret();
       const platform = fakePlatform({ myapp: { clientSecretHash: hash } });

@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **`/oauth2/token` accepts a client identified by HTTP Basic alone.** A confidential client
+  authenticating with `client_secret_basic` was refused (`400 invalid_request`, "client_id is
+  required") unless it repeated `client_id` in the form body, on the code exchange and on refresh.
+  RFC 6749 lets the Authorization header identify the client: `client_id` in the body is now
+  optional then. A body `client_id` that differs from the Basic one is still refused
+  (`401 invalid_client`).
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,

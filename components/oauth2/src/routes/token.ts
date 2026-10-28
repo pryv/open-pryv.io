@@ -94,9 +94,15 @@ function decodeBasicAuth (headerValue: unknown): { client_id: string; client_sec
 
 export function handleToken (deps: TokenDeps) {
   return async function token (req: Request, res: Response): Promise<void> {
-    const body = req.body ?? {};
-    const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
     const basic = decodeBasicAuth(req.headers?.authorization);
+    // RFC 6749 §2.3.1 / §3.2.1: a client authenticating with HTTP Basic is
+    // identified by it, so client_id in the body is optional then. When both
+    // are given and differ, the grant refuses the request (invalid_client).
+    const rawBody = req.body ?? {};
+    const body = basic != null && (typeof rawBody.client_id !== 'string' || rawBody.client_id === '')
+      ? { ...rawBody, client_id: basic.client_id }
+      : rawBody;
+    const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
 
     let outcome;
     // DPoP (RFC 9449 §5): a proof on the token request opts this
