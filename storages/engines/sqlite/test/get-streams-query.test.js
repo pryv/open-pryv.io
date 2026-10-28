@@ -56,13 +56,13 @@ describe('[USQL] userSQLite toSqliteQuery()', function () {
       { not: ['E'] }
     ]];
     const sqllite = toSQLiteQuery(clean);
-    assert.strictEqual(sqllite, '("A" OR "B" OR "C") AND "F" NOT "D" NOT "E" NOT "F" NOT "E"');
+    assert.strictEqual(sqllite, '("A" OR "B" OR "C") AND "F" NOT ("D" OR "E" OR "F") NOT "E"');
   });
 
   it('[3TTK] must convert to SQLite including expansion with "ALL" and "NOT"', async function () {
     const clean = [[{ any: ['A', 'E'] }, { any: ['D'] }, { any: ['C'] }, { not: ['D', 'F'] }]];
     const sqllite = toSQLiteQuery(clean);
-    assert.strictEqual(sqllite, '("A" OR "E") AND "D" AND "C" NOT "D" NOT "F"');
+    assert.strictEqual(sqllite, '("A" OR "E") AND "D" AND "C" NOT ("D" OR "F")');
   });
 
   it('[WCN1] must give no filter (null) for "*" alone, and keep NOT next to "*"', async function () {

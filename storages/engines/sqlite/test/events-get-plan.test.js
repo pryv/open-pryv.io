@@ -131,4 +131,18 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     assert.deepStrictEqual(userDb.getAllActions().map((r) => r.term), prefixed('action-'));
     assert.deepStrictEqual(prefixed('access-'), ['access-x', 'access-x:1']);
   });
+
+  it('[SQQP7] accepts hundreds of excluded streams in one `not` (a large expanded subtree)', async function () {
+    const not = ['b'];
+    for (let i = 0; i < 600; i++) not.push('sqqp-excluded-' + i);
+    const { rows } = await run({ streams: [[{ any: ['a'] }, { not }]], toTime: 1030 }, {});
+    const expected = [];
+    for (let i = 30; i >= 0; i--) if (i % 3 === 1 && i !== 7) expected.push('sqqp-' + i);
+    assert.deepStrictEqual(rows.map((e) => e.id), expected);
+    const star = await run({ streams: [[{ any: ['*'] }, { not }]], toTime: 1030 }, {});
+    const expectedStar = [];
+    for (let i = 30; i >= 0; i--) if (i % 3 !== 0 && i !== 7) expectedStar.push('sqqp-' + i);
+    expectedStar.push('sqqp-audit');
+    assert.deepStrictEqual(star.rows.map((e) => e.id), expectedStar);
+  });
 });

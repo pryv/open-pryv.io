@@ -43,7 +43,16 @@ function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
           anys.push('(' + addQuotes(andItem.any).join(' OR ') + ')');
         }
       } else if (andItem.not != null && andItem.not.length > 0) {
-        nots.push(' NOT ' + addQuotes(andItem.not).join(' NOT '));
+        // One NOT over an OR group: FTS5 flattens a run of ORs into a single
+        // node, while each NOT nests one level deeper. A chain of NOTs failed
+        // past 255 excluded ids (an expanded subtree), "fts5 expression tree
+        // is too large"; `a NOT (x OR y)` matches the same rows as
+        // `a NOT x NOT y`.
+        if (andItem.not.length === 1) {
+          nots.push(' NOT ' + addQuotes(andItem.not)[0]);
+        } else {
+          nots.push(' NOT (' + addQuotes(andItem.not).join(' OR ') + ')');
+        }
       } else {
         throw new Error('Go a query block with no any or not item ' + andBlock);
       }

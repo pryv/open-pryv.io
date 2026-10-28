@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- **SQLite engine: `events.get` no longer fails when an excluded subtree holds more than about 250
+  streams.** An excluded stream is expanded to all its descendants, and each one became a separate
+  `NOT` term of the full-text query; past 255 terms SQLite refused the query ("fts5 expression tree
+  is too large") and the request ended with a dropped connection instead of events. This hit
+  queries naming such a subtree in `not`, and every read of an account whose plugin-internal
+  streams (excluded from every client read) had grown past that size, e.g. many CMC capabilities.
+  The excluded ids are now one `NOT (a OR b OR ...)` group. PostgreSQL was not affected.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
