@@ -386,6 +386,28 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       }, res);
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     });
+    it('[OTA-CF7] Basic identifies the client: client_id may be absent from the body (RFC 6749 §3.2.1) → 200', async () => {
+      const platform = fakePlatform();
+      const { plaintext, hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF7');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      const { client_id: _omitted, ...body } = exchange(verifier, { code: 'CODE-CF7' });
+      await handler({ body, headers: { authorization: basicAuth('myapp', plaintext) } }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
+    it('[OTA-CF8] a body client_id that differs from Basic → 401 invalid_client', async () => {
+      const platform = fakePlatform();
+      const { plaintext, hash } = await mintSecret();
+      await registerClient(platform, 'other', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF8');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF8' }), headers: { authorization: basicAuth('other', plaintext) } }, res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
+    });
     it('[OTA-CF4] confidential client with wrong secret → 401 invalid_client', async () => {
       const platform = fakePlatform();
       const { hash } = await mintSecret();
