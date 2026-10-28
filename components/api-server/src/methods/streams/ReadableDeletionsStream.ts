@@ -4,19 +4,22 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import { createRequire } from 'node:module';
 import { Transform } from 'node:stream';
-
-type StreamReadCheck = { canGetEventsOnStream (streamId: string, storeId: string): Promise<boolean> };
+import type { CanReadEventAccess } from 'business/src/accesses/canReadEvent.ts';
+const require = createRequire(import.meta.url);
+const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 
 /**
- * Keeps the event deletion records the access can read: those whose kept
- * `streamIds` include a stream readable by it. A record without streams (every
- * deletion mode but keep-everything) is dropped.
+ * Keeps the event deletion records the access can read: the ones whose kept
+ * `streamIds` the access could read as a live event (one stream readable, none
+ * withheld from it by a `none` / `create-only` grant, forced streams honoured).
+ * A record without streams (every deletion mode but keep-everything) is dropped.
  */
 class ReadableDeletionsStream extends Transform {
-  access: StreamReadCheck;
+  access: CanReadEventAccess;
 
-  constructor (access: StreamReadCheck) {
+  constructor (access: CanReadEventAccess) {
     super({ objectMode: true });
     this.access = access;
   }
@@ -29,10 +32,7 @@ class ReadableDeletionsStream extends Transform {
   }
 
   async isReadable (event: { streamIds?: string[] }): Promise<boolean> {
-    for (const streamId of event.streamIds ?? []) {
-      if (await this.access.canGetEventsOnStream(streamId, 'local')) return true;
-    }
-    return false;
+    return await canReadEvent(this.access, event);
   }
 }
 

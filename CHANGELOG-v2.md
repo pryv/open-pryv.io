@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **`events.get` with `includeDeletions` no longer returns the deletion record of an event sitting
+  in a stream withheld from the access.** With `versioning.deletionMode: keep-everything` (the only
+  mode where a deletion record keeps its streams), an access that does not read the whole store got
+  the records with at least one readable stream, even when another of their streams was `none` or
+  `create-only` for it. A record is now returned only when its event would have been readable while
+  live (the same rule as `events.getOne`: no stream withheld, forced streams honoured).
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
