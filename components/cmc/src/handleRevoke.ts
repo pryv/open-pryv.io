@@ -604,6 +604,11 @@ async function deliverRevokeWithRetry (params: {
         deps,
       });
       if (delivery.ok) return { ok: true, status: delivery.status, reason: 'delivered' };
+      if (outbound.isPeerAccessGone(delivery)) {
+        // The peer revoked first: nothing left to tell it.
+        deps.logger?.info?.('cmc/handleRevoke: revoke notice settled, peer access already gone', { accessId: content.accessId, status: delivery.status });
+        return { ok: true, status: delivery.status, reason: 'peer-access-gone' };
+      }
       last = {
         ok: false,
         status: delivery.status,

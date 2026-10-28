@@ -40,6 +40,9 @@
   (two cores: delete while the peer core is down, restart, deliver). The two-core child cores
   answer `http://{username}.<domain>/` peer calls from the hosting core (test transport) and take
   `CMC_RETRY_INTERVAL_MS` / `CMC_DELIVERY_BACKOFF_BASE_MS` (`setDeliveryBackoffBaseMsForTests`).
+- The settle rule (`isPeerAccessGone`) moved to `cmc/outbound.ts` and applies to the in-request
+  attempts of `handleRevoke` and of the accesses delete hook and to the per-user loop's revoke
+  delivery records, as it did to the outbox. Tests `[CRL29-31]`.
 
 ## Dependencies: qs 6.16.1
 

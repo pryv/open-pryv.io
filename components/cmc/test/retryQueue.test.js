@@ -881,5 +881,34 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(honourRetryAfter({ scheduled: 5_000, now: 0, retryAfterMs: 999_000, capMs: 60_000 }), 60_000);
       assert.equal(honourRetryAfter({ scheduled: 90_000, now: 0, retryAfterMs: 999_000, capMs: 60_000 }), 90_000);
     });
+
+    it('[CRL29] a revoke delivery record answered 403 invalid-access-token is settled (the peer revoked first); a 403 forbidden still retires it', async () => {
+      const goneAnswer = {
+        async fetch () {
+          return { status: 403, ok: false, headers: { get: () => null }, async json () { return { error: { id: 'invalid-access-token' } }; } };
+        },
+      };
+      const mall = fakeMall();
+      const warns = [];
+      const logger = { warn: (m) => warns.push(m), info () {}, debug () {}, error () {} };
+      const ev = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'http-5xx', failureDetail: { status: 503 }, deps: { mall, now: () => 0 } });
+      const out = await processRetryEvent({ userId: 'u1', retryEvent: mall._events.get(ev.id), deps: { mall, dispatch: async () => { throw new Error('never'); }, dispatchDeps: goneAnswer, logger, now: () => ev.content.nextAttemptAfter } });
+      assert.equal(out.outcome, 'succeeded');
+      const c = mall._events.get(ev.id).content;
+      assert.equal(c.status, 'succeeded');
+      assert.equal(c.settledReason, 'peer-access-gone');
+      assert.equal(c.delivery.apiEndpoint.includes('@'), false, 'the token leaves the settled record');
+      assert.equal(warns.some((m) => m.includes('failed-permanent')), false, 'no false failure');
+
+      const mall2 = fakeMall();
+      const ev2 = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'consent/revoke-cmc', failureReason: 'http-5xx', failureDetail: { status: 503 }, deps: { mall: mall2, now: () => 0 } });
+      const out2 = await processRetryEvent({ userId: 'u1', retryEvent: mall2._events.get(ev2.id), deps: { mall: mall2, dispatch: async () => { throw new Error('never'); }, dispatchDeps: answering({ status: 403 }), now: () => ev2.content.nextAttemptAfter } });
+      assert.equal(out2.outcome, 'failed-permanent');
+
+      const mall3 = fakeMall();
+      const ev3 = await enqueueDelivery({ userId: 'u1', delivery: { apiEndpoint: ENDPOINT, path: 'events', body: BODY }, originalType: 'message/chat-cmc', failureReason: 'http-5xx', failureDetail: { status: 503 }, deps: { mall: mall3, now: () => 0 } });
+      const out3 = await processRetryEvent({ userId: 'u1', retryEvent: mall3._events.get(ev3.id), deps: { mall: mall3, dispatch: async () => { throw new Error('never'); }, dispatchDeps: goneAnswer, now: () => ev3.content.nextAttemptAfter } });
+      assert.equal(out3.outcome, 'failed-permanent', 'only a revoke notice is settled by it');
+    });
   });
 });

@@ -235,6 +235,18 @@ function isRetryableFailure (r: DeliverResult): boolean {
 }
 
 /**
+ * A 403 `invalid-access-token` (a 401 with that id is read the same way) to a revoke notice means
+ * the access the notice is sent through is gone: the peer already tore the
+ * relationship down (a notice delivered twice, or the peer revoked first).
+ * That is the end state the notice exists to produce. Takes a raw result
+ * (`body`) or a delivery verdict (`errorId`).
+ */
+function isPeerAccessGone (r: { status?: number; errorId?: string; body?: unknown }): boolean {
+  const errorId = r.errorId ?? (r.body as { error?: { id?: unknown } } | null | undefined)?.error?.id;
+  return (r.status === 401 || r.status === 403) && errorId === 'invalid-access-token';
+}
+
+/**
  * The peer's Retry-After of a failed result, in ms, when it sent one (a 408 /
  * 429, or a 503).
  */
@@ -254,5 +266,6 @@ export {
   postToPeer,
   requestPeer,
   isRetryableFailure,
+  isPeerAccessGone,
 };
 export type { DeliverResult };

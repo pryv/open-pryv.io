@@ -31,6 +31,14 @@
   deletion itself still does not wait for the other cores. A re-sent notice answered `403
   invalid-access-token` (the counterparty already deleted the access it is sent through) is
   settled. Nothing is queued when `cmc.retryLoop.enabled` is false.
+- **CMC: a revoke notice answered `403 invalid-access-token` counts as delivered on every path.**
+  That answer means the counterparty already deleted the access the notice is sent through (it
+  revoked first). A revoke trigger (`consent/revoke-cmc`) now reports `peerNotified: true` with no
+  `deliveryFailure` instead of `peerNotified: false` with `deliveryFailure: { reason: 'http-4xx',
+  status: 403 }`; `accesses.delete` no longer logs the counterparty as "NOT notified"; and a queued
+  revoke notice is marked `succeeded` (`settledReason: 'peer-access-gone'`) instead of
+  `failed-permanent`. Any other 4xx, including `403 forbidden` (an expired access), is still a
+  failure.
 - **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
   caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
   verification resend (`PUT /{username}/account` with `emails.resend`) answered `500
