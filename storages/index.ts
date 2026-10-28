@@ -24,7 +24,6 @@ const { getConfig, getLogger } = require('@pryv/boiler');
 // connection coordinates the series wiring reads directly.
 type EngineConfig = { host?: string; port?: number; [k: string]: unknown };
 type Instances = {
-  database: unknown;
   databasePG: unknown;
   connection: unknown;
   storageLayer: unknown;
@@ -40,9 +39,8 @@ type Instances = {
  * Register all host internals that engines may need.
  * Called once during init(), after database connections are created.
  */
-function registerInternals (config: BoilerConfig, database: unknown, databasePG: unknown, storageLayer: unknown) {
+function registerInternals (config: BoilerConfig, databasePG: unknown, storageLayer: unknown) {
   // Live instances
-  if (database) internals.register('database', database);
   if (databasePG) internals.register('databasePG', databasePG);
   internals.register('storageLayer', storageLayer);
 
@@ -96,7 +94,6 @@ let initializing = false;
 // Early-published references: set as soon as created during init() so that
 // sub-components calling back into the barrel (e.g. PG userAccountStorage
 // calling getDatabasePG()) can find them before `instances` is assembled.
-let _earlyDatabase: unknown = null;
 let _earlyDatabasePG: unknown = null;
 
 /**
@@ -139,7 +136,6 @@ async function _doInit (config?: BoilerConfig) {
 
   // 1. Database connection (based on baseStorage engine)
   const baseEngine = pluginLoader.getEngineFor('baseStorage');
-  const database = null;
   let databasePG = null;
   if (baseEngine === 'postgresql') {
     const { DatabasePG } = require('./engines/postgresql/src/DatabasePG.ts');
@@ -147,16 +143,15 @@ async function _doInit (config?: BoilerConfig) {
   }
   // sqlite: no shared `connection` object; the engine's initStorageLayer
   // creates DatabaseSQLite internally.
-  const connection = database || databasePG || null;
+  const connection = databasePG || null;
 
   // Publish early so sub-component inits can find the connections
-  _earlyDatabase = database;
   _earlyDatabasePG = databasePG;
   _refreshExports();
 
   // 2. Register internals
   const storageLayer = new StorageLayer();
-  registerInternals(cfg, database, databasePG, storageLayer);
+  registerInternals(cfg, databasePG, storageLayer);
 
   // 3. Initialize engines (must be before storageLayer.init which calls engine.initStorageLayer)
   initEngines(cfg);
@@ -224,7 +219,6 @@ async function _doInit (config?: BoilerConfig) {
   const dataStoreModule = dsModule.getDataStoreModule();
 
   instances = {
-    database,
     databasePG,
     connection,
     storageLayer,
@@ -247,7 +241,6 @@ function reset () {
   }
   instances = null;
   initializing = false;
-  _earlyDatabase = null;
   _earlyDatabasePG = null;
   _refreshExports();
   internals.clearAll();
@@ -260,7 +253,6 @@ function reset () {
 // Node 24 require(esm) the CJS consumer's namespace object exposes them
 // via getter functions backed by these bindings.
 // `undefined` matches the original `instances?.X` getter behavior pre-init.
-let database: unknown;
 let databasePG: unknown;
 let connection: unknown;
 let storageLayer: unknown;
@@ -272,7 +264,6 @@ let seriesConnection: unknown;
 let dataStoreModule: unknown;
 
 function _refreshExports (): void {
-  database = instances?.database ?? _earlyDatabase ?? undefined;
   databasePG = instances?.databasePG ?? _earlyDatabasePG ?? undefined;
   connection = instances?.connection;
   storageLayer = instances?.storageLayer;
@@ -299,7 +290,6 @@ export {
   init,
   reset,
   pluginLoader,
-  database,
   databasePG,
   connection,
   storageLayer,
