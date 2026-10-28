@@ -115,7 +115,11 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   if (!Array.isArray(client.grantTypes) || client.grantTypes.length === 0) {
     throw new Error('grantTypes required (at least one)');
   }
-  validateCmcOffers(client);
+  if (client.kind === 'registry') {
+    validateRegistryClient(client);
+  } else {
+    validateCmcOffers(client);
+  }
   const validated = { ...client, updatedAt: Date.now() };
   // Inline public JWK Set (private_key_jwt): validate on write — EC P-256
   // public keys ONLY; any key carrying a private `d` is rejected outright,
@@ -169,6 +173,51 @@ function validateCmcOffers (client: OAuthClient): void {
       }
     }
   }
+}
+
+const AUTH_METHODS = ['none', 'client_secret_basic', 'private_key_jwt'];
+
+/**
+ * Rules for a registry client (operator-registered, no app account). Its
+ * `scope` is a maximum scope set in the installed extension's grammar, which
+ * the CLI process does not load: it is checked at /authorize.
+ */
+function validateRegistryClient (client: OAuthClient): void {
+  if (client.accountUserId != null) throw new Error('registry client: accountUserId is not allowed (no app account)');
+  if (client.cmcOffers != null && Object.keys(client.cmcOffers).length > 0) {
+    throw new Error('registry client: cmcOffers are not allowed (offers are synthesised from the scope)');
+  }
+  if (!AUTH_METHODS.includes(client.tokenEndpointAuthMethod as string)) {
+    throw new Error('registry client: tokenEndpointAuthMethod must be one of ' + AUTH_METHODS.join(', '));
+  }
+  if (client.tokenEndpointAuthMethod === 'client_secret_basic' && client.clientSecretHash == null) {
+    throw new Error('registry client: client_secret_basic needs a client secret');
+  }
+  if (client.tokenEndpointAuthMethod === 'private_key_jwt' && client.jwks == null) {
+    throw new Error('registry client: private_key_jwt needs a jwks');
+  }
+  if (client.grantTypes.includes('client_credentials')) {
+    throw new Error('registry client: client_credentials is not available (no app account)');
+  }
+  if (!Array.isArray(client.scope) || client.scope.length === 0) {
+    throw new Error('registry client: scope (the maximum scope set) is required');
+  }
+  for (const a of client.allowedAudiences ?? []) {
+    let u: URL;
+    try { u = new URL(a); } catch { throw new Error(`allowedAudiences: "${a}" is not a valid URL`); }
+    if (u.protocol !== 'https:' || u.hash !== '') throw new Error(`allowedAudiences: "${a}" must be an absolute https URL without fragment`);
+  }
+  for (const [k, v] of Object.entries(client.tokenResponseExtras ?? {})) {
+    if (!['string', 'boolean', 'number'].includes(typeof v)) throw new Error(`tokenResponseExtras["${k}"] must be a string, boolean or number`);
+  }
+  if (client.status != null && client.status !== 'active' && client.status !== 'suspended') {
+    throw new Error('status must be active or suspended');
+  }
+}
+
+/** Whether a client is registered without an app account. */
+export function isRegistryClient (client: OAuthClient | null | undefined): boolean {
+  return client?.kind === 'registry';
 }
 
 /**

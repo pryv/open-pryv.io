@@ -22,6 +22,7 @@ import * as routes from './routes.ts';
 import * as wwwAuthenticate from './wwwAuthenticate.ts';
 import * as storage from './storage.ts';
 import * as jwks from './jwks.ts';
+import * as extension from './extension.ts';
 
 export {
   scopeRegistry,
@@ -33,6 +34,7 @@ export {
   wwwAuthenticate,
   storage,
   jwks,
+  extension,
 };
 
 // Convenience top-level re-exports — the most-frequently-used surface.

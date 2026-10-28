@@ -40,7 +40,7 @@
 import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { UsernameResolver } from './authorization_code.ts';
+import type { UsernameResolver, AuthCodeAccessRevoker } from './authorization_code.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: a typed `storage` import surfaces a pre-existing
@@ -50,9 +50,11 @@ const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 const { logServerError } = require('../serverLog.ts');
-const { getClient } = require('../clientRegistry.ts');
+const { getClient, isRegistryClient } = require('../clientRegistry.ts');
 const { authenticateClient } = require('../clientSecret.ts');
-const { tokenEndpointAudiences } = require('../issuer.ts');
+const { tokenEndpointAudiences, issuerFromConfig } = require('../issuer.ts');
+const { prepareRegistryResponse } = require('../responseHooks.ts');
+const { indexSession } = require('../introspection.ts');
 
 /**
  * Mint a new app access for the resolved (userId, clientId, scope)
@@ -83,7 +85,15 @@ export type MintRefreshedAccess = (params: {
    * server can enforce proof-of-possession on every request.
    */
   jkt?: string;
-}) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+}) => Promise<{
+  accessId: string;
+  accessToken: string;
+  apiEndpoint: string;
+  /** The permissions actually minted (grant ∩ the data-grant's current ones). */
+  permissions?: Array<Record<string, unknown>>;
+  /** The id a registry client sees for the user (the grant's alias), or null. */
+  subject?: string | null;
+}>;
 
 /**
  * Collapse a refresh chain on detected reuse: soft-delete the durable data-grant
@@ -111,6 +121,8 @@ export type RefreshTokenDeps = {
    * carry the user id only (PlatformDB is replicated and must not hold usernames).
    */
   resolveUsername: UsernameResolver;
+  /** Removes a just-minted access when the response cannot be built. */
+  revokeAccessLocal?: AuthCodeAccessRevoker;
 };
 
 export type RefreshGrantParams = {
@@ -247,6 +259,12 @@ export async function handleRefreshToken (
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }
+  if (client?.status === 'suspended') {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+  }
+  if (row.kind === 'registry' && !isRegistryClient(client)) {
+    return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, re-authorize' };
+  }
 
   // DPoP binding continuity (RFC 9449 §5): a bound chain must rotate
   // with a proof by the SAME key; an unbound chain can never acquire a
@@ -329,6 +347,35 @@ export async function handleRefreshToken (
     };
   }
 
+  // Registry client: the scope echo follows the EFFECTIVE permissions (a
+  // grant narrowed since the last rotation narrows the answer). Computed
+  // before the new refresh row exists; on failure the new access is removed.
+  let registry = null;
+  if (row.kind === 'registry') {
+    try {
+      registry = await prepareRegistryResponse({
+        client,
+        grantType: 'refresh_token',
+        issuer: issuerFromConfig(deps.config),
+        config: deps.config,
+        coreTokens: row.coreTokens ?? [],
+        grammarTokens: row.grammarTokens ?? [],
+        permissions: access.permissions ?? row.permissions ?? [],
+        subject: access.subject ?? null,
+      });
+    } catch (err: unknown) {
+      logServerError('refresh_token: registry token response failed', err);
+      if (typeof deps.revokeAccessLocal === 'function') {
+        try {
+          await deps.revokeAccessLocal({ userId: row.userId, username, accessId: access.accessId, clientId: row.clientId });
+        } catch (revokeErr: unknown) {
+          logServerError('refresh_token: revoke of the unanswered access failed', revokeErr);
+        }
+      }
+      return { ok: false, status: 500, error: 'server_error', description: 'failed to build the token response' };
+    }
+  }
+
   // Mint a new refresh token. Sliding TTL, but never past the original
   // absolute cap (RFC 6749 §6 — refresh chain ≤ original consent ceiling).
   const newRefresh = generateToken();
@@ -343,6 +390,21 @@ export async function handleRefreshToken (
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     ...(row.permissions != null ? { permissions: row.permissions } : {}),
     ...(boundJkt != null ? { jkt: boundJkt } : {}),
+    ...(row.kind === 'registry'
+      ? { kind: 'registry', coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
+      : {}),
+    ...(row.audience != null ? { audience: row.audience } : {}),
+  });
+
+  await indexSession(deps.platform, access.accessToken, {
+    userId: row.userId,
+    accessId: access.accessId,
+    clientId: row.clientId,
+    coreId,
+    expiresAt: accessExpiresAt,
+    ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+    ...(row.kind === 'registry' ? { coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] } : {}),
+    ...(row.audience != null ? { audience: row.audience } : {}),
   });
 
   await audit('oauth.token.refreshed', {
@@ -359,6 +421,19 @@ export async function handleRefreshToken (
     ...(boundJkt != null ? { dpopJkt: boundJkt } : {}),
   });
 
+  if (registry != null) {
+    return {
+      ok: true,
+      body: {
+        ...registry.extra,
+        access_token: access.accessToken,
+        token_type: boundJkt != null ? 'DPoP' : 'Bearer',
+        expires_in: accessTokenTTL,
+        refresh_token: newRefresh,
+        scope: registry.scopeTokens.join(' '),
+      },
+    };
+  }
   return {
     ok: true,
     body: {

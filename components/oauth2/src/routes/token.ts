@@ -21,8 +21,9 @@
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from '../grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
+import type { MintRefreshedAccess } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
@@ -42,9 +43,7 @@ export type TokenDeps = {
     userId: string; username: string; accessId: string; jkt: string;
   }) => Promise<void>;
   /** Required when grant_type=refresh_token is dispatched. */
-  mintRefreshedAccess?: (params: {
-    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
-  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  mintRefreshedAccess?: MintRefreshedAccess;
   /** Required when grant_type=client_credentials is dispatched. */
   mintClientAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
@@ -61,6 +60,8 @@ export type TokenDeps = {
   revokeAccessLocal?: AuthCodeAccessRevoker;
   /** Canonical username for a user id on this core (rows carry the id only). */
   resolveUsername: UsernameResolver;
+  /** Registry clients: the id the app sees for the user (the grant's alias). */
+  resolveGrantSubject?: GrantSubjectResolver;
 };
 
 /**
@@ -68,7 +69,7 @@ export type TokenDeps = {
  * header. Returns null if absent or malformed. The values are URL-
  * decoded per spec (the header carries percent-encoded credentials).
  */
-function decodeBasicAuth (headerValue: unknown): { client_id: string; client_secret: string } | null {
+export function decodeBasicAuth (headerValue: unknown): { client_id: string; client_secret: string } | null {
   if (typeof headerValue !== 'string') return null;
   // RFC 7617 §2: the `Basic` auth-scheme name is case-INSENSITIVE (`basic`,
   // `BASIC`, … are all valid). The base64 credentials stay strict.
@@ -154,6 +155,7 @@ export function handleToken (deps: TokenDeps) {
             ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
             ...(deps.resolveAccess != null ? { resolveAccess: deps.resolveAccess } : {}),
             ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
+            ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
@@ -175,6 +177,7 @@ export function handleToken (deps: TokenDeps) {
             platform: deps.platform,
             mintRefreshedAccess: deps.mintRefreshedAccess,
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
+            ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },

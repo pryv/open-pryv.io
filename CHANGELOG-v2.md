@@ -14,6 +14,28 @@
   same teardown as `accesses.delete`, so aliases are released, credentials scrubbed from the
   deletion records and running webhooks stopped there too.
 
+- **OAuth (experimental, opt-in): clients without an app account, an OAuth extension point, OpenID
+  Connect and token introspection.** Nothing changes unless an operator configures it.
+  - `customExtensions:oauthExtension` loads a module (contract `apiVersion: 1`) that supplies a
+    whole-scope grammar for *registry* clients and may add fields to the token response, the
+    id_token and the introspection answer. A module that cannot be loaded fails the boot.
+  - `bin/oauth-client.js create-registry <clientId>` registers a client with no app account: its
+    `--scope` is a maximum scope set in the extension's grammar; `suspend` / `resume` toggle it.
+    Its consent offer is synthesised from the requested scope and travels by reference: the signed
+    state carries a digest, the consent UI reads the offer from the new `POST
+    /oauth2/authorize/offer`, and `/accept` re-derives it. The durable consent record is an access
+    `oauth-grant:<clientId>` with a routable alias and no expiry; the id the app sees for the user is
+    that alias, never the username, and `apiEndpoint` is not sent to such clients.
+  - The `scope` of a registry client's token response is recomputed from the permissions actually
+    granted. `openid` (with `oauth:signingKeys`, RS256) adds an `id_token`;
+    `/.well-known/openid-configuration` and `/oauth2/jwks` are served when keys are configured.
+    `offline_access` is required for a refresh token.
+  - `aud` is required and checked when a client has `allowedAudiences`. `POST /oauth2/authorize`
+    (form body) is accepted; a parameter given twice is refused on both methods.
+  - `POST /oauth2/introspect` (RFC 7662) for confidential clients registered with
+    `--can-introspect`; a token whose session lives on another core answers `421` with that
+    core's URL.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,

@@ -100,6 +100,13 @@ require('@pryv/boiler').init({
       case 'rotate-secret':
         await runRotateSecret(platform, args, getClient, persistClient);
         break;
+      case 'create-registry':
+        await runCreateRegistry(platform, args, persistClient, getClient);
+        break;
+      case 'suspend':
+      case 'resume':
+        await runSetStatus(platform, args, getClient, persistClient);
+        break;
       default:
         console.error('Unknown command: ' + args.command);
         printUsage(process.stderr);
@@ -225,6 +232,91 @@ async function runCreate (platform, args, persistClient, getClient) {
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     account:       ' + username + ' (user id ' + accountUserId + ')');
+}
+
+// A registry client has no app account: the operator registers it directly,
+// on any core. Its scope is the MAXIMUM scope set in the grammar of the OAuth
+// extension installed on the cores (customExtensions:oauthExtension).
+async function runCreateRegistry (platform, args, persistClient, getClient) {
+  const clientId = args.positional[0];
+  if (!clientId) throw new Error('create-registry: <clientId> required');
+  const idError = oauthStorage().clientIdError(clientId);
+  if (idError != null) throw new Error('create-registry: ' + idError);
+  if (await getClient(platform, clientId) != null) {
+    throw new Error('create-registry: client "' + clientId + '" already exists; revoke it first');
+  }
+  if (await localUserId(clientId) != null || await hostingCoreOf(clientId) != null) {
+    throw new Error('create-registry: "' + clientId + '" is an account name on this platform; a client_id must not be one');
+  }
+  if (!args.flags['redirect-uri'] || args.flags['redirect-uri'].length === 0) {
+    throw new Error('create-registry: at least one --redirect-uri is required');
+  }
+  if (!args.flags.scope || args.flags.scope.length === 0) {
+    throw new Error('create-registry: at least one --scope is required (the maximum scope set)');
+  }
+  const authMethod = args.flagsScalar['auth-method'] ?? 'none';
+  const jwks = resolveJwks(args);
+  let secret = null;
+  if (authMethod === 'client_secret_basic') {
+    const { mintSecret } = require('oauth2/src/clientSecret.ts');
+    secret = await mintSecret();
+  } else if (authMethod === 'private_key_jwt' && jwks == null) {
+    throw new Error('create-registry: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+  } else if (authMethod !== 'none' && authMethod !== 'private_key_jwt') {
+    throw new Error('create-registry: --auth-method must be none, client_secret_basic or private_key_jwt');
+  }
+  const extras = {};
+  for (const kv of args.flags.extra ?? []) {
+    const eq = kv.indexOf('=');
+    if (eq <= 0) throw new Error('create-registry: --extra expects key=value, got "' + kv + '"');
+    const raw = kv.slice(eq + 1);
+    extras[kv.slice(0, eq)] = raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+  }
+  const grantTypes = (args.flags['grant-type'] && args.flags['grant-type'].length > 0)
+    ? args.flags['grant-type']
+    : ['authorization_code', 'refresh_token'];
+  await persistClient(platform, {
+    clientId,
+    kind: 'registry',
+    redirectUris: args.flags['redirect-uri'],
+    scope: args.flags.scope.flatMap((s) => s.split(/\s+/).filter((t) => t !== '')),
+    clientName: args.flagsScalar.name ?? clientId,
+    clientUri: args.flagsScalar['client-uri'],
+    logoUri: args.flagsScalar['logo-uri'],
+    policyUri: args.flagsScalar['policy-uri'],
+    tosUri: args.flagsScalar['tos-uri'],
+    contacts: args.flags.contact ?? [],
+    registeredBy: process.env.USER ?? 'operator',
+    registeredAt: Date.now(),
+    status: 'active',
+    grantTypes,
+    tokenEndpointAuthMethod: authMethod,
+    allowedAudiences: args.flags.audience ?? [],
+    tokenResponseExtras: extras,
+    launchTypes: args.flags['launch-type'] ?? [],
+    canIntrospect: args.flagsScalar['can-introspect'] === true,
+    omitApiEndpoint: true,
+    ...(secret != null ? { clientSecretHash: secret.hash } : {}),
+    ...(jwks != null ? { jwks } : {}),
+  });
+  console.log('OK   registry client created: ' + clientId);
+  console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
+  console.log('     grant_types:   ' + grantTypes.join(', '));
+  console.log('     auth method:   ' + authMethod);
+  if (secret != null) {
+    console.log('     client_secret: ' + secret.plaintext);
+    console.log('     (shown once: store it now)');
+  }
+}
+
+async function runSetStatus (platform, args, getClient, persistClient) {
+  const clientId = args.positional[0];
+  if (!clientId) throw new Error(args.command + ': <clientId> required');
+  const existing = await getClient(platform, clientId);
+  if (existing == null) throw new Error(args.command + ': no client "' + clientId + '"');
+  const status = args.command === 'suspend' ? 'suspended' : 'active';
+  await persistClient(platform, { ...existing, status });
+  console.log('OK   client ' + clientId + ' is ' + status);
 }
 
 async function runShow (platform, args, getClient, computeThumbprint) {
@@ -526,6 +618,8 @@ async function hostingCoreOf (username) {
   }
 }
 
+const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type'];
+
 function parseArgs (argv) {
   const result = { command: null, positional: [], flags: {}, flagsScalar: {} };
   let i = 0;
@@ -539,7 +633,7 @@ function parseArgs (argv) {
         result.flagsScalar[key] = true;
       } else {
         // Multi-valued flags: --redirect-uri, --scope, --grant-type, --cmc-offer
-        if (key === 'redirect-uri' || key === 'scope' || key === 'grant-type' || key === 'cmc-offer') {
+        if (MULTI_FLAGS.includes(key)) {
           if (!result.flags[key]) result.flags[key] = [];
           result.flags[key].push(val);
         } else {
@@ -566,7 +660,17 @@ function printUsage (stream) {
     '  node bin/oauth-client.js unrevoke-key <jkt> --yes\n' +
     '  node bin/oauth-client.js list-revoked-keys\n' +
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
-    '  node bin/oauth-client.js rotate-secret <clientId>\n\n' +
+    '  node bin/oauth-client.js rotate-secret <clientId>\n' +
+    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> [flags]\n' +
+    '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
+    'Flags (create-registry): a client with no app account; --scope is its maximum\n' +
+    'scope set in the grammar of the installed OAuth extension.\n' +
+    '  --auth-method none|client_secret_basic|private_key_jwt   (default none; the\n' +
+    '                            secret is printed once)\n' +
+    '  --audience <url>          (multi) resource values the client may request (aud)\n' +
+    '  --extra <key>=<value>     (multi) static extra field of every token response\n' +
+    '  --launch-type <s>         (multi)   --contact <s> (multi)\n' +
+    '  --policy-uri <uri>  --tos-uri <uri>  --can-introspect (resource-server role)\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
     '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +

@@ -34,9 +34,11 @@ import { generateToken } from '../secureToken.ts';
 import * as storage from '../storage.ts';
 import type { OAuthCode, LegacyOAuthCode } from '../storage.ts';
 import { audit } from '../audit.ts';
-import { getClient } from '../clientRegistry.ts';
+import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { authenticateClient } from '../clientSecret.ts';
-import { tokenEndpointAudiences } from '../issuer.ts';
+import { tokenEndpointAudiences, issuerFromConfig } from '../issuer.ts';
+import { prepareRegistryResponse } from '../responseHooks.ts';
+import type { RegistryResponseParts } from '../responseHooks.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
 import { logServerError } from '../serverLog.ts';
 
@@ -75,7 +77,14 @@ export type AuthCodeDeps = {
    * must not hold usernames.
    */
   resolveUsername: UsernameResolver;
+  /** The id a registry client sees for the user: the grant's alias, or null. */
+  resolveGrantSubject?: GrantSubjectResolver;
 };
+
+/** The id a registry client sees for the user (never the username or user id). */
+export type GrantSubjectResolver = (params: {
+  userId: string; username: string; dataGrantAccessId: string;
+}) => Promise<string | null>;
 
 /** Canonical username for a user id on this core, or null when absent. */
 export type UsernameResolver = (userId: string) => Promise<string | null>;
@@ -234,6 +243,9 @@ export async function handleAuthorizationCode (
     if (!auth.ok) {
       return { ok: false, status: auth.status, error: auth.error, description: auth.description };
     }
+    if (client?.status === 'suspended') {
+      return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+    }
 
     if (!row.accessId) {
       // Should not happen if accept.ts ran cleanly. Defensive guard so a
@@ -264,25 +276,60 @@ export async function handleAuthorizationCode (
       }
     }
 
-    // Mint refresh token. Sliding TTL with absolute cap.
+    // Registry client: scope echo, extras, hooks and id_token are computed
+    // BEFORE the refresh row exists, so a failing hook leaves none behind.
+    let registry: RegistryResponseParts | null = null;
+    if (row.kind === 'registry') {
+      if (!isRegistryClient(client)) {
+        return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, restart the authorization flow' };
+      }
+      try {
+        const subject = row.dataGrantAccessId != null && typeof deps.resolveGrantSubject === 'function' && username != null
+          ? await deps.resolveGrantSubject({ userId: row.userId, username, dataGrantAccessId: row.dataGrantAccessId })
+          : null;
+        registry = await prepareRegistryResponse({
+          client: client!,
+          grantType: 'authorization_code',
+          issuer: issuerFromConfig(deps.config),
+          config: deps.config,
+          coreTokens: row.coreTokens ?? [],
+          grammarTokens: row.grammarTokens ?? [],
+          permissions: (row.permissions ?? []) as unknown as Array<Record<string, unknown>>,
+          subject,
+          nonce: row.nonce,
+        });
+      } catch (err) {
+        logServerError('authorization_code: registry token response failed', err);
+        return { ok: false, status: 500, error: 'server_error', description: 'failed to build the token response' };
+      }
+    }
+
+    // Mint refresh token. Sliding TTL with absolute cap. A registry client
+    // gets one only when `offline_access` was granted.
     const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
     const now = Date.now();
-    const refreshToken = generateToken();
-    await storage.setRefresh(deps.platform, coreId, refreshToken, {
-      clientId: row.clientId,
-      userId: row.userId,
-      scope: row.scope,
-      issuedAt: now,
-      lastUsedAt: now,
-      expiresAt: now + refreshTokenTTL * 1000,
-      absoluteExpiresAt: now + refreshTokenAbsoluteTTL * 1000,
-      // Granular (cmc) grants: the refresh chain stays bound to the
-      // durable data-grant — refresh dies when the consent is revoked —
-      // and carries this session's granted subset for the re-mints.
-      ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
-      ...(row.permissions != null ? { permissions: row.permissions } : {}),
-      ...(dpopJkt != null ? { jkt: dpopJkt } : {}),
-    });
+    const refreshToken = registry == null || registry.refresh ? generateToken() : null;
+    if (refreshToken != null) {
+      await storage.setRefresh(deps.platform, coreId, refreshToken, {
+        clientId: row.clientId,
+        userId: row.userId,
+        scope: row.scope,
+        issuedAt: now,
+        lastUsedAt: now,
+        expiresAt: now + refreshTokenTTL * 1000,
+        absoluteExpiresAt: now + refreshTokenAbsoluteTTL * 1000,
+        // Granular (cmc) grants: the refresh chain stays bound to the
+        // durable data-grant — refresh dies when the consent is revoked —
+        // and carries this session's granted subset for the re-mints.
+        ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+        ...(row.permissions != null ? { permissions: row.permissions } : {}),
+        ...(dpopJkt != null ? { jkt: dpopJkt } : {}),
+        ...(row.kind === 'registry'
+          ? { kind: 'registry' as const, coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
+          : {}),
+        ...(row.audience != null ? { audience: row.audience } : {}),
+      });
+    }
 
     await audit('oauth.code.exchanged', {
       clientId: row.clientId,
@@ -298,6 +345,19 @@ export async function handleAuthorizationCode (
       ...(dpopJkt != null ? { dpopJkt } : {}),
     });
 
+    if (registry != null) {
+      return {
+        ok: true,
+        body: {
+          ...registry.extra,
+          access_token: accessToken,
+          token_type: dpopJkt != null ? 'DPoP' : 'Bearer',
+          expires_in: accessTokenTTL,
+          ...(refreshToken != null ? { refresh_token: refreshToken } : {}),
+          scope: registry.scopeTokens.join(' '),
+        },
+      };
+    }
     return {
       ok: true,
       body: {

@@ -39,6 +39,12 @@ export type DiscoveryConfig = {
   scopesSupported: string[];
   /** Grant types currently wired. Defaults conservatively. */
   grantTypesSupported?: string[];
+  /** OpenID Connect on: the JWK Set is published. */
+  oidc?: boolean;
+  /** /oauth2/introspect is mounted. */
+  introspection?: boolean;
+  /** Claims the id_token may carry beyond the standard ones. */
+  claimsSupported?: string[];
 };
 
 /**
@@ -67,8 +73,36 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     // A client that presents a DPoP proof on /oauth2/token receives a
     // sender-constrained (DPoP) token; omitting it yields a Bearer token.
     dpop_signing_alg_values_supported: ['ES256'],
+    ...(cfg.oidc === true ? { jwks_uri: issuer + '/oauth2/jwks' } : {}),
+    ...(cfg.introspection === true ? { introspection_endpoint: issuer + '/oauth2/introspect' } : {}),
     // Cache headers + non-standard `apiEndpoint` extension are
     // implementation details, not advertised in the discovery doc.
+  };
+}
+
+/**
+ * The OpenID Connect discovery document (`/.well-known/openid-configuration`):
+ * the RFC 8414 document plus the OIDC members. Subjects are pairwise (the id
+ * an app sees is specific to its grant).
+ */
+export function buildOpenIdConfiguration (cfg: DiscoveryConfig): Record<string, unknown> {
+  return {
+    ...buildDiscoveryDocument({ ...cfg, oidc: true }),
+    subject_types_supported: ['pairwise'],
+    id_token_signing_alg_values_supported: ['RS256'],
+    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', ...(cfg.claimsSupported ?? [])],
+  };
+}
+
+/** Serve a static JSON document the way the discovery doc is served. */
+export function handleStaticJson (doc: Record<string, unknown>) {
+  const body = JSON.stringify(doc);
+  return function (req: Request, res: Response): void {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.statusCode = 200;
+    res.end(body);
   };
 }
 

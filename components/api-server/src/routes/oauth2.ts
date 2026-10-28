@@ -42,11 +42,13 @@ const { getLogger } = require('@pryv/boiler');
 const { MethodContext } = require('business');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const storages = require('storages');
+const { getPlatform } = require('platform');
+const { ExtensionLoader } = require('utils').extension;
 // Use @paralleldrive/cuid2 (a production dependency) — the codebase migrated off
 // the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
 const { createId: cuid } = require('@paralleldrive/cuid2');
 // Permission-lexicon single point + composite access refs.
-const { permissionKey } = require('business/src/accesses/permissionSet.ts');
+const { permissionKey, stripConsentAnnotations } = require('business/src/accesses/permissionSet.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
@@ -110,12 +112,27 @@ type OAuthMethodResult = {
   event?: { id?: unknown; content?: Record<string, unknown> };
 };
 
+/** The signed CMC offer material an /accept carries (see the oauth2 component). */
+type CmcOffer = {
+  offerName: string;
+  capabilityUrl: string;
+  capabilityId: string | null;
+  offerEventId: string | null;
+  permissions: Array<Record<string, unknown>>;
+};
+
+/** Registry clients: identity of the durable consent record (one per user and client). */
+const REGISTRY_GRANT_PREFIX = 'oauth-grant:';
+const REGISTRY_GRANT_DEVICE = 'oauth-grant';
+
 /** A CMC data-grant access row, as read back from accesses.get / findOne. */
 type DataGrant = {
   id: string;
   type?: string;
   name?: string;
+  deviceName?: string | null;
   alias?: string | null;
+  created?: number;
   token?: unknown;
   permissions?: Array<Record<string, unknown>>;
   deleted?: unknown;
@@ -124,6 +141,8 @@ type DataGrant = {
   // Widened vs the narrow role/offer view: reuse-detection reads the CMC
   // counterparty back-channel address off the data-grant to notify the app.
   clientData?: {
+    oauth?: { grantOf?: string; dataGrantId?: string };
+    dpop?: { jkt?: string };
     cmc?: {
       role?: string;
       offerEventId?: string;
@@ -239,69 +258,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return null;
   }
 
-  // ---------------------------------------------------------------------
-  // createAccess — mints the short-TTL OAuth app access under the
-  // resolved user's auth (full accesses.create chain runs).
-  //
-  // Granular (cmc-offer) grants first ensure the durable CMC
-  // data-grant exists:
-  //   - first authorization → a real `consent/accept-cmc` trigger is
-  //     written with the user's personal token (the CMC plugin
-  //     orchestrates the data-grant + back-channel pair + audit);
-  //   - re-authorization → the existing data-grant is reused, widened
-  //     via accesses.update when the new consent grants entries the
-  //     current grant lacks (the CMC post-hook notifies the app).
-  // The short-TTL access is then minted from the data-grant's CURRENT
-  // permissions — the data-grant is the single source of granted
-  // authority, and CMC revocation/scope-update governs the chain.
-  // ---------------------------------------------------------------------
-  async function createAccess ({ session, clientId, scope, expiresAt, offer, grantedPermissions }: {
-    session: { userId: string; username: string; _context?: Ctx };
-    clientId: string;
-    scope: string[];
-    expiresAt: number;
-    offer?: {
-      offerName: string;
-      capabilityUrl: string;
-      capabilityId: string | null;
-      offerEventId: string | null;
-      permissions: Array<Record<string, unknown>>;
-    };
-    grantedPermissions?: Array<Record<string, unknown>>;
-  }): Promise<{
-    accessId: string;
-    accessToken: string;
-    apiEndpoint: string;
-    dataGrantAccessId?: string;
-    permissions?: Array<Record<string, unknown>>;
-  }> {
-    const context = session._context;
-    if (context == null) {
-      throw new Error('oauth2.createAccess: session missing _context (resolveUser did not run?)');
-    }
-
-    if (offer == null || !Array.isArray(grantedPermissions) || grantedPermissions.length === 0) {
-      throw new Error('oauth2.createAccess: a granular consent grant (offer + grantedPermissions) is required');
-    }
-
-    // Effective-permission guard (hierarchical-masking class). /accept
-    // already ran the pure entry-subset check; here — with the user's
-    // stream tree available — verify the granted subset does not WIDEN the
-    // offer at any stream (a dropped restrictive descendant re-inheriting a
-    // broader ancestor). Reject as a consent error the endpoint maps to 400.
-    const eff = await assertGrantedWithinOffer({
-      userId: context.user.id,
-      granted: grantedPermissions,
-      offered: offer.permissions,
-    });
-    if (!eff.ok) {
-      const e = new Error(
-        'granted permissions widen the offer under the stream hierarchy: ' +
-        JSON.stringify(eff.violations)) as Error & { code: string };
-      e.code = 'consent-widens-offer';
-      throw e;
-    }
-
+  // The durable CMC data-grant of a granular grant: created through a real
+  // `consent/accept-cmc` on the first authorization, reused and widened on
+  // re-authorization (see createAccess).
+  async function ensureCmcGrant (context: Ctx, clientId: string, offer: CmcOffer,
+    grantedPermissions: Array<Record<string, unknown>>): Promise<DataGrant> {
     let dataGrant: DataGrant | null = null;
     if (offer.offerEventId != null) {
       dataGrant = await findDataGrantByOffer(context, offer.offerEventId);
@@ -377,6 +338,118 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         if (updated?.access != null) dataGrant = updated.access;
       }
     }
+    return dataGrant!;
+  }
+
+  // A registry client (no app account, no CMC): the durable consent record
+  // is a data-grant named after the client, found again by that identity on
+  // re-authorization. It carries a routable alias (the id the app sees for
+  // the user, never the username) and no expiry: it lives until the user
+  // withdraws it. Re-authorization widens it, never narrows it.
+  async function ensureRegistryGrant (context: Ctx, clientId: string,
+    grantedPermissions: Array<Record<string, unknown>>): Promise<DataGrant> {
+    const permissions = stripConsentAnnotations(grantedPermissions);
+    let grant = await findRegistryGrant(context, clientId);
+    if (grant == null) {
+      try {
+        const created = await apiCall(context, 'accesses.create', {
+          type: 'app',
+          name: REGISTRY_GRANT_PREFIX + clientId,
+          deviceName: REGISTRY_GRANT_DEVICE,
+          permissions,
+          randomAlias: true,
+          clientData: { oauth: { grantOf: clientId } },
+        });
+        if (created?.access == null || typeof created.access.id !== 'string') {
+          throw new Error('oauth2.createAccess: accesses.create returned no data-grant');
+        }
+        return created.access;
+      } catch (err: unknown) {
+        // A concurrent first consent may have won the (type, name, deviceName) slot.
+        grant = await findRegistryGrant(context, clientId);
+        if (grant == null) throw err;
+      }
+    }
+    const currentKeys = new Set((grant.permissions ?? []).map(permissionKey));
+    const missing = permissions.filter((g: Record<string, unknown>) => !currentKeys.has(permissionKey(g)));
+    if (missing.length > 0) {
+      const updated = await apiCall(context, 'accesses.update', {
+        id: grant.id,
+        update: { permissions: (grant.permissions ?? []).concat(missing) },
+      });
+      if (updated?.access != null) grant = updated.access;
+    }
+    return grant;
+  }
+
+  async function findRegistryGrant (context: Ctx, clientId: string): Promise<DataGrant | null> {
+    const result = await apiCall(context, 'accesses.get', {});
+    return (result?.accesses ?? []).find((a) =>
+      a?.type === 'app' && a?.name === REGISTRY_GRANT_PREFIX + clientId &&
+      a?.deviceName === REGISTRY_GRANT_DEVICE && a?.clientData?.oauth?.grantOf === clientId) ?? null;
+  }
+
+  // ---------------------------------------------------------------------
+  // createAccess — mints the short-TTL OAuth app access under the
+  // resolved user's auth (full accesses.create chain runs).
+  //
+  // Granular (cmc-offer) grants first ensure the durable CMC
+  // data-grant exists:
+  //   - first authorization → a real `consent/accept-cmc` trigger is
+  //     written with the user's personal token (the CMC plugin
+  //     orchestrates the data-grant + back-channel pair + audit);
+  //   - re-authorization → the existing data-grant is reused, widened
+  //     via accesses.update when the new consent grants entries the
+  //     current grant lacks (the CMC post-hook notifies the app).
+  // The short-TTL access is then minted from the data-grant's CURRENT
+  // permissions — the data-grant is the single source of granted
+  // authority, and CMC revocation/scope-update governs the chain.
+  // ---------------------------------------------------------------------
+  async function createAccess ({ session, clientId, scope, expiresAt, offer, grantedPermissions }: {
+    session: { userId: string; username: string; _context?: Ctx };
+    clientId: string;
+    scope: string[];
+    expiresAt: number;
+    offer?: CmcOffer | { kind: 'synthesised'; permissions: Array<Record<string, unknown>> };
+    grantedPermissions?: Array<Record<string, unknown>>;
+  }): Promise<{
+    accessId: string;
+    accessToken: string;
+    apiEndpoint: string;
+    dataGrantAccessId?: string;
+    permissions?: Array<Record<string, unknown>>;
+  }> {
+    const context = session._context;
+    if (context == null) {
+      throw new Error('oauth2.createAccess: session missing _context (resolveUser did not run?)');
+    }
+
+    if (offer == null || !Array.isArray(grantedPermissions) || grantedPermissions.length === 0) {
+      throw new Error('oauth2.createAccess: a granular consent grant (offer + grantedPermissions) is required');
+    }
+
+    // Effective-permission guard (hierarchical-masking class). /accept
+    // already ran the pure entry-subset check; here — with the user's
+    // stream tree available — verify the granted subset does not WIDEN the
+    // offer at any stream (a dropped restrictive descendant re-inheriting a
+    // broader ancestor). Reject as a consent error the endpoint maps to 400.
+    const eff = await assertGrantedWithinOffer({
+      userId: context.user.id,
+      granted: grantedPermissions,
+      offered: offer.permissions,
+    });
+    if (!eff.ok) {
+      const e = new Error(
+        'granted permissions widen the offer under the stream hierarchy: ' +
+        JSON.stringify(eff.violations)) as Error & { code: string };
+      e.code = 'consent-widens-offer';
+      throw e;
+    }
+
+    const dataGrant = (offer as { kind?: string }).kind === 'synthesised'
+      ? await ensureRegistryGrant(context, clientId, grantedPermissions)
+      : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
+
     // The short-TTL OAuth access mirrors EXACTLY this session's
     // granted subset; the durable data-grant (granted + CMC channel
     // anchors) is the consent ceiling that revocation/scope-update
@@ -549,7 +622,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     jkt?: string;
-  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string | null }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
       const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
@@ -568,7 +641,78 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // Session selfRevoke override AFTER the intersection — the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
-    return mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    return { ...minted, permissions: effective, subject: dataGrant.alias ?? null };
+  }
+
+  // ---------------------------------------------------------------------
+  // resolveGrantSubject — the id a registry client sees for the user: the
+  // alias of the consent data-grant (never the username or the user id).
+  // Null when the grant has none or is gone.
+  // ---------------------------------------------------------------------
+  async function resolveGrantSubject ({ userId, username, dataGrantAccessId }: {
+    userId: string; username: string; dataGrantAccessId: string;
+  }): Promise<string | null> {
+    try {
+      const head = await readDataGrantHead(userId, username, dataGrantAccessId);
+      return typeof head.alias === 'string' && head.alias.length > 0 ? head.alias : null;
+    } catch (err: unknown) {
+      if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
+      throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // introspectAccess — /oauth2/introspect on the home core: the session
+  // must be live, unexpired and its consent data-grant still live.
+  // ---------------------------------------------------------------------
+  async function introspectAccess ({ userId, accessId, clientId, dataGrantAccessId }: {
+    userId: string; accessId: string; clientId: string; dataGrantAccessId?: string;
+  }): Promise<{ permissions: Array<Record<string, unknown>>; created: number; expires: number; subject: string | null; dpopJkt?: string } | null> {
+    const username = await resolveUsername(userId);
+    if (username == null) return null;
+    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
+    const now = Math.floor(Date.now() / 1000);
+    if (access == null || access.deleted != null || typeof access.expires !== 'number' || access.expires <= now) return null;
+    let subject: string | null = null;
+    const grantId = dataGrantAccessId ?? access.clientData?.oauth?.dataGrantId;
+    if (grantId != null) {
+      try {
+        const head = await readDataGrantHead(userId, username, grantId);
+        subject = typeof head.alias === 'string' && head.alias.length > 0 ? head.alias : null;
+      } catch (err: unknown) {
+        if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
+        throw err;
+      }
+    }
+    return {
+      permissions: access.permissions ?? [],
+      created: typeof access.created === 'number' ? access.created : 0,
+      expires: access.expires,
+      subject,
+      ...(typeof access.clientData?.dpop?.jkt === 'string' ? { dpopJkt: access.clientData.dpop.jkt } : {}),
+    };
+  }
+
+  async function coreUrlFor (coreId: string): Promise<string> {
+    const platform = await getPlatform();
+    return platform.coreIdToUrl(coreId);
+  }
+
+  // ---------------------------------------------------------------------
+  // The operator's OAuth extension (customExtensions:oauthExtension), loaded
+  // at mount: a broken module fails the boot, not a user's first consent.
+  // ---------------------------------------------------------------------
+  function loadOAuthExtension (): unknown {
+    const extensionPath = String(config.get('customExtensions:oauthExtension') ?? '');
+    if (extensionPath === '') return null;
+    const loader = new ExtensionLoader(String(config.get('customExtensions:defaultFolder') ?? ''));
+    const ext = oauth2.extension.createExtension(loader.loadFrom(extensionPath).fn, {
+      options: config.get('oauth:extensionOptions') ?? {},
+      logger: getLogger('oauth2:extension'),
+    });
+    logger.info('OAuth extension loaded: ' + ext.name + ' (' + extensionPath + ')');
+    return ext;
   }
 
   // ---------------------------------------------------------------------
@@ -777,6 +921,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
 
   oauth2.registerRoutes(expressApp, {
     config,
+    extension: loadOAuthExtension(),
+    resolveGrantSubject,
+    introspectAccess,
+    coreUrlFor,
     platform: storages.platformDB,
     mintRefreshedAccess,
     mintClientAccess,

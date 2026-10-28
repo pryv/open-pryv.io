@@ -218,6 +218,9 @@ sso:
 customExtensions:
   defaultFolder: 'REPLACE ME'
   customAuthStepFn: ''
+  # Module path of an OAuth extension (scope grammar for registry clients +
+  # token-response hooks). Loaded at boot: a broken module fails the boot.
+  oauthExtension: ''
 
 # === PER-CORE: external service integrations ===
 # SMS provider URLs and email provider credentials may legitimately vary per region/deployment.
@@ -976,6 +979,13 @@ oauth:
   audAllowList: []                 # optional list of accepted aud values on /oauth2/authorize
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
+  # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).
+  extensionOptions: {}
+  # OpenID Connect (PER-CORE secret, YAML only): RSA keys signing id_tokens,
+  # [{ kid, alg: RS256, privateKeyFile | privateKeyPem }]. The first signs, all
+  # are published at /oauth2/jwks. Empty: OIDC off, `openid` is refused.
+  signingKeys: []
+  idTokenTTL: 300                  # seconds
 
 # Shared secrets — hand a secret to a third party by one-time key instead of
 # by URL query parameter. Inert unless a client calls it: no listener, no

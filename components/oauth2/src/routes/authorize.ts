@@ -34,7 +34,9 @@ const require = createRequire(import.meta.url);
 // Kept on the require shim: converting these to typed ESM imports surfaces
 // pre-existing cross-module type gaps (the cmc ParsedScope extension, nullable
 // offer.capabilityId) that belong to the TS-migration track, not here.
-const { getClient, validateRedirectUri } = require('../clientRegistry.ts');
+const { getClient, validateRedirectUri, isRegistryClient } = require('../clientRegistry.ts');
+const { resolveRequestedScope } = require('../scopeGrammar.ts');
+const { hasSigningKeys } = require('../signingKeys.ts');
 const { mapError } = require('../errorMap.ts');
 const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
 const { signState } = require('../signedState.ts');
@@ -63,7 +65,21 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     const consentUrl = String(deps.config.get('oauth:consentUrl') ?? '').replace(/\/$/, '');
     if (!consentUrl) return sendServerError(res, 'oauth:consentUrl not configured');
 
-    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    // GET reads the query, POST a form body (OpenID Connect Core §3.1.2.1).
+    // A parameter given twice (or a structured value) is refused on both,
+    // before anything else (RFC 6749 §3.1).
+    if (req.method === 'POST') {
+      const contentType = String(req.headers?.['content-type'] ?? '');
+      if (!/^application\/x-www-form-urlencoded\b/i.test(contentType)) {
+        return sendHtmlError(res, 400, 'The authorization request must be form-encoded.');
+      }
+    }
+    const raw = ((req.method === 'POST' ? req.body : req.query) ?? {}) as Record<string, unknown>;
+    const repeated = Object.keys(raw).filter((k) => raw[k] != null && typeof raw[k] !== 'string');
+    if (repeated.length > 0) {
+      return sendHtmlError(res, 400, 'Parameter(s) given more than once: ' + repeated.join(', '));
+    }
+    const q = raw as Record<string, string | undefined>;
 
     // 1. Parameter shape — these MUST be present before we can do anything
     //    useful, including building an error redirect.
@@ -110,6 +126,27 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
     if (!isNonEmptyString(q.state)) {
       return redirectError('invalid_request', 'state parameter is required (CSRF defense)');
+    }
+    if (client.status === 'suspended') {
+      return redirectError('access_denied', 'this client is suspended');
+    }
+
+    // Resource indicator: a client registered with a list of audiences must
+    // name one of them (trailing slash ignored); no code otherwise.
+    let audience: string | undefined;
+    if (Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0) {
+      if (!isNonEmptyString(q.aud)) {
+        return redirectError('invalid_request', 'aud is required for this client');
+      }
+      const wanted = trimSlash(String(q.aud));
+      audience = client.allowedAudiences.find((a: string) => trimSlash(a) === wanted);
+      if (audience == null) {
+        return redirectError('invalid_request', 'aud is not a resource this client may access');
+      }
+    }
+
+    if (isRegistryClient(client)) {
+      return authorizeRegistryClient();
     }
 
     // Scope validation — must parse cleanly through the registered
@@ -186,21 +223,63 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       scope: requestedScopeTokens,
       userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
       ...(offer != null ? { offer } : {}),
+      ...(audience != null ? { audience } : {}),
     });
+    return redirectToConsent(signed);
+
+    // Registry client: the whole scope string goes to the extension's
+    // grammar; the synthesised offer is NOT put in the state (its size is
+    // unbounded), only its digest: /accept and the consent UI re-derive it.
+    async function authorizeRegistryClient (): Promise<void> {
+      if (q.nonce != null && (!isNonEmptyString(q.nonce) || String(q.nonce).length > MAX_NONCE_LENGTH)) {
+        return redirectError('invalid_request', `nonce must be 1 to ${MAX_NONCE_LENGTH} characters`);
+      }
+      const resolved = resolveRequestedScope(client, isNonEmptyString(q.scope) ? String(q.scope) : '',
+        { oidcEnabled: hasSigningKeys(deps.config) });
+      if (!resolved.ok) return redirectError('invalid_scope', resolved.description);
+
+      await audit('oauth.consent.shown', {
+        clientId: client.clientId,
+        requestedScope: resolved.requested,
+        offerKind: 'synthesised',
+      });
+      const signed = signState(adminKey, {
+        clientId: client.clientId,
+        redirectUri: String(q.redirect_uri),
+        state,
+        codeChallenge: String(q.code_challenge),
+        codeChallengeMethod: 'S256',
+        scope: resolved.requested,
+        userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
+        offerRef: { kind: 'synthesised', digest: resolved.digest },
+        ...(isNonEmptyString(q.nonce) ? { nonce: String(q.nonce) } : {}),
+        ...(audience != null ? { audience } : {}),
+      });
+      return redirectToConsent(signed);
+    }
 
     // Pass the API endpoint to the consent UI as `pryvApi` so the UI
     // can target /oauth2/authorize/accept + /refuse without needing
     // its own config (operators can serve app-web-auth3 from anywhere).
-    const sep = consentUrl.indexOf('?') >= 0 ? '&' : '?';
-    const consentRedirect = consentUrl + sep +
-      'state=' + encodeURIComponent(signed) +
-      '&pryvApi=' + encodeURIComponent(issuer);
-    res.statusCode = 302;
-    res.setHeader('Location', consentRedirect);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Pragma', 'no-cache');
-    res.end();
+    function redirectToConsent (signed: string): void {
+      const sep = consentUrl.indexOf('?') >= 0 ? '&' : '?';
+      const consentRedirect = consentUrl + sep +
+        'state=' + encodeURIComponent(signed) +
+        '&pryvApi=' + encodeURIComponent(issuer);
+      res.statusCode = 302;
+      res.setHeader('Location', consentRedirect);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Pragma', 'no-cache');
+      res.end();
+    }
   };
+}
+
+/** Upper bound on the OpenID Connect `nonce` (it rides in the signed state). */
+const MAX_NONCE_LENGTH = 512;
+
+function trimSlash (s: string): string {
+  return s.replace(/\/+$/, '');
 }
 
 function isNonEmptyString (v: unknown): boolean {

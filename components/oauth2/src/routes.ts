@@ -21,11 +21,17 @@
 import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from './grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from './grants/authorization_code.ts';
+import type { OAuthExtension } from './extension.ts';
+import type { IntrospectAccess } from './introspection.ts';
 import type { NextFunction, Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
-const { handleWellKnown } = require('./wellKnown.ts');
+const { handleWellKnown, handleStaticJson, buildOpenIdConfiguration } = require('./wellKnown.ts');
+const { setExtension, getExtension } = require('./extension.ts');
+const { loadSigningKeys, publicJwkSet } = require('./signingKeys.ts');
+const { handleOffer } = require('./routes/offer.ts');
+const { handleIntrospect } = require('./introspection.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 const { handleAuthorize } = require('./routes/authorize.ts');
 const { handleAccept } = require('./routes/accept.ts');
@@ -148,6 +154,14 @@ export type Deps = {
    * PlatformDB is replicated to every core and must not hold usernames.
    */
   resolveUsername?: UsernameResolver;
+  /** Operator-installed extension (scope grammar + response hooks), or null. */
+  extension?: OAuthExtension | null;
+  /** Registry clients: the id the app sees for the user (the grant's alias). */
+  resolveGrantSubject?: GrantSubjectResolver;
+  /** Re-read a session for /oauth2/introspect; the route mounts only with it. */
+  introspectAccess?: IntrospectAccess;
+  /** Public URL of a core (wrong-core introspection answer). */
+  coreUrlFor?: (coreId: string) => string | Promise<string>;
 };
 
 /**
@@ -168,15 +182,31 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     return;
   }
 
-  const scopesSupported = buildScopesSupported();
+  // The operator's extension (if any) is installed before anything reads it.
+  // Bad signing-key config throws here: the boot fails, not the first login.
+  setExtension(deps.extension ?? null);
+  const signingKeys = loadSigningKeys(deps.config);
+  const oidc = signingKeys.length > 0;
+  const introspection = deps.platform != null && typeof deps.introspectAccess === 'function';
+
+  const scopesSupported = buildScopesSupported(oidc);
 
   const grantTypesSupported = (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ??
     ['authorization_code'];
+  const discovery = {
+    issuer,
+    scopesSupported,
+    grantTypesSupported,
+    oidc,
+    introspection,
+    claimsSupported: deps.extension?.claimsSupported ?? [],
+  };
 
-  app.get!(
-    '/.well-known/oauth-authorization-server',
-    handleWellKnown({ issuer, scopesSupported, grantTypesSupported })
-  );
+  app.get!('/.well-known/oauth-authorization-server', handleWellKnown(discovery));
+  if (oidc) {
+    app.get!('/.well-known/openid-configuration', handleStaticJson(buildOpenIdConfiguration(discovery)));
+    app.get!('/oauth2/jwks', handleStaticJson(publicJwkSet(signingKeys)));
+  }
 
   if (deps.platform == null) {
     console.warn('[oauth2] platform not provided — only the discovery doc is mounted');
@@ -189,8 +219,12 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   }
 
   // Every async handler goes through `guardRoute` (see there).
-  app.get!('/oauth2/authorize',
-    guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform })));
+  const authorize = guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform }));
+  app.get!('/oauth2/authorize', authorize);
+  app.post!('/oauth2/authorize', authorize);
+
+  app.post!('/oauth2/authorize/offer',
+    guardRoute(handleOffer({ config: deps.config, platform: deps.platform })));
 
   app.post!('/oauth2/authorize/accept',
     guardRoute(handleAccept({
@@ -218,7 +252,18 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       resolveAccess: deps.resolveAccess,
       revokeAccessLocal: deps.revokeAccessLocal,
       resolveUsername: deps.resolveUsername,
+      ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
     })));
+
+  if (introspection) {
+    app.post!('/oauth2/introspect',
+      guardRoute(handleIntrospect({
+        config: deps.config,
+        platform: deps.platform,
+        introspectAccess: deps.introspectAccess,
+        coreUrlFor: deps.coreUrlFor,
+      })));
+  }
 }
 
 /**
@@ -226,8 +271,22 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
  * advertisement. No namespace ships a closed enum — scope tokens
  * reference per-client consent offers (`cmc:<offer-name>`) or other
  * parser-owned grammars — so each namespace advertises a wildcard
- * hint per RFC 8414 conventions.
+ * hint per RFC 8414 conventions. An installed extension adds what its
+ * grammar advertises, and the core tokens it serves.
  */
-function buildScopesSupported (): string[] {
-  return listNamespaces().map((ns: string) => `${ns}:*`);
+function buildScopesSupported (oidc: boolean): string[] {
+  const out: string[] = listNamespaces().map((ns: string) => `${ns}:*`);
+  const ext = getExtension();
+  if (ext != null) {
+    let advertised: unknown = [];
+    try {
+      advertised = ext.scopeGrammar.supported?.() ?? [];
+    } catch (err: unknown) {
+      logServerError(`oauth extension ${ext.name}: scopeGrammar.supported threw`, err);
+    }
+    if (Array.isArray(advertised)) out.push(...advertised.filter((s): s is string => typeof s === 'string'));
+    if (oidc) out.push('openid');
+    out.push('offline_access');
+  }
+  return [...new Set(out)];
 }

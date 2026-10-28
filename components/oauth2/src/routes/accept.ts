@@ -44,12 +44,16 @@ import { createRequire } from 'node:module';
 
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { ResolvedScope } from '../scopeGrammar.ts';
 const require = createRequire(import.meta.url);
+
+const { resolveStateOffer } = require('./offer.ts');
 
 const { generateToken } = require('../secureToken.ts');
 const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
+const { indexSession } = require('../introspection.ts');
 const { audit } = require('../audit.ts');
 const { logServerError } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
@@ -96,6 +100,10 @@ export type CreateAccess = (params: {
     capabilityUrl: string;
     capabilityId: string | null;
     offerEventId: string | null;
+    permissions: Array<Record<string, unknown>>;
+  } | {
+    /** Registry client: offer synthesised by the extension's grammar, no CMC. */
+    kind: 'synthesised';
     permissions: Array<Record<string, unknown>>;
   };
   grantedPermissions?: Array<Record<string, unknown>>;
@@ -151,7 +159,14 @@ export function handleAccept (deps: AcceptDeps) {
     // caller): the granular cmc-offer grant carries
     // `grantedPermissions` — the kept subset of the offer's signed
     // permission set (full lexicon: stream AND feature permissions).
-    if (payload.offer == null) {
+    // A registry client's state carries the offer by reference: re-derive
+    // it (digest-checked) instead of reading it from the state.
+    let synthesised: ResolvedScope | null = null;
+    if (payload.offer == null && payload.offerRef != null) {
+      const r = await resolveStateOffer({ config: deps.config, platform: deps.platform }, payload);
+      if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
+      synthesised = r.resolved;
+    } else if (payload.offer == null) {
       // Every authorize-issued state carries the resolved offer; a
       // state without one is stale or foreign.
       return sendJson(res, 400, {
@@ -159,6 +174,9 @@ export function handleAccept (deps: AcceptDeps) {
         error_description: 'signed state carries no consent offer — restart the authorization flow',
       });
     }
+    const offered = synthesised != null
+      ? { permissions: synthesised.offer.permissions, allowUserChoice: synthesised.offer.allowUserChoice === true }
+      : { permissions: payload.offer!.permissions, allowUserChoice: payload.offer!.allowUserChoice === true };
     if (!Array.isArray(body.grantedPermissions)) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedPermissions must be an array' });
     }
@@ -183,7 +201,7 @@ export function handleAccept (deps: AcceptDeps) {
     // must still be granted.
     let offeredConsent;
     try {
-      offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
+      offeredConsent = normalizePermissions(offered.permissions, { consent: true });
     } catch (e: unknown) {
       // The offer in the signed state was validated at /authorize
       // (resolveOffer rejects e.g. exclusion masks), so reaching here means
@@ -193,7 +211,7 @@ export function handleAccept (deps: AcceptDeps) {
         error_description: 'consent offer is invalid: ' + ((e as Error)?.message ?? String(e)),
       });
     }
-    const check = checkConsentGrant(grantedPermissions, offeredConsent, payload.offer.allowUserChoice === true);
+    const check = checkConsentGrant(grantedPermissions, offeredConsent, offered.allowUserChoice);
     if (!check.ok) {
       const offending = summariseOffending(check.offending);
       const description =
@@ -230,7 +248,9 @@ export function handleAccept (deps: AcceptDeps) {
         clientId: payload.clientId,
         scope: granted,
         expiresAt: accessExpiresAt,
-        offer: payload.offer,
+        offer: synthesised != null
+          ? { kind: 'synthesised', permissions: synthesised.offer.permissions }
+          : payload.offer!,
         grantedPermissions,
       });
     } catch (err: unknown) {
@@ -261,6 +281,17 @@ export function handleAccept (deps: AcceptDeps) {
       });
     }
 
+    await indexSession(deps.platform, access.accessToken, {
+      userId: session.userId,
+      accessId: access.accessId,
+      clientId: payload.clientId,
+      coreId: String(deps.config.get('core:id') ?? 'single'),
+      expiresAt: accessExpiresAt,
+      ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
+      ...(synthesised != null ? { coreTokens: synthesised.coreTokens, grammarTokens: synthesised.grammarTokens } : {}),
+      ...(payload.audience != null ? { audience: payload.audience } : {}),
+    });
+
     // Mint code + persist with the access id so the grant can return the
     // access after PKCE verification (user is gone by then). The token is
     // NOT stored: the platform store is replicated to every core, so the
@@ -279,6 +310,15 @@ export function handleAccept (deps: AcceptDeps) {
       coreId: String(deps.config.get('core:id') ?? 'single'),
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
       ...(access.permissions != null ? { permissions: access.permissions } : {}),
+      ...(synthesised != null
+        ? {
+            kind: 'registry',
+            coreTokens: synthesised.coreTokens,
+            grammarTokens: synthesised.grammarTokens,
+            ...(payload.nonce != null ? { nonce: payload.nonce } : {}),
+          }
+        : {}),
+      ...(payload.audience != null ? { audience: payload.audience } : {}),
     });
 
     await audit('oauth.consent.granted', {
