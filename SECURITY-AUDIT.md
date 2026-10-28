@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 5 (2026-10-26), covering releases 2.0.0-rc.40 to 2.0.0-rc.59.
+**Report revision:** 6 (2026-10-28), covering releases 2.0.0-rc.40 to 2.0.0-rc.63.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -94,6 +94,7 @@ its applicability is stated with it.
 | 2.0.0-rc.57 | 2026-10-23 | runtime update, not an audit finding: Node.js 24.22.1 for the Node.js security release of 2026-10-21 (Brotli decoder out-of-bounds write reachable through outbound HTTP response decoding; TLS hostname-check bypasses); operator action: pull the new image, or upgrade Node.js to 24.22.1 and run `npm rebuild` on a native install | yes (2026-10-23) |
 | 2.0.0-rc.58 | 2026-10-26 | dependency updates, not audit findings: `body-parser` 1.20.9 (GHSA-27r3-jxmh-p828, denial of service through trailing bytes after a compressed request body), `multer` 2.5.0 (GHSA-q7qp-rjg7-q26m, denial of service through a pending upload filter), `undici` 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c, denial of service), `fast-uri` 3.1.9 (moderate URI parsing advisories); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
 | 2.0.0-rc.59 | 2026-10-26 | dependency update, not an audit finding: `nodemailer` 10.2.1 (GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h, moderate: address-parser flaws that could turn display text into a recipient); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
+| 2.0.0-rc.63 | 2026-10-28 | dependency updates, not audit findings: `node-forge` 1.4.2 (GHSA-86w9-cpqp-85rv, high: RSA PKCS#1 v1.5 signature verification; no patched release existed before 1.4.2), `qs` 6.16.1 (GHSA-6pq8-jhm2-2vcw, moderate: denial of service in `qs.stringify` with `arrayFormat: 'comma'`, a function the server does not call at runtime); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-28) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1299,3 +1300,4 @@ This report is updated with every release that carries a security fix:
 | 3 | 2026-10-23 | 2.0.0-rc.40 to 2.0.0-rc.57 | Adds 2.0.0-rc.54 to rc.57 (rc.57: Node.js runtime update, release table only; follow-up review of how stream ids are compared by the access guards, and of the server's calls to consent counterparties): 2 High findings and lower-severity fixes in rc.55 and rc.56; the lower-severity defects open at revision 2 are fixed; section 5 updated for the container image and the deletion-record retention. rc.54 to rc.57 deployed on the maintainers' platforms (2026-10-16 to 2026-10-23). |
 | 4 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.58 | Adds 2.0.0-rc.58 to the release table: dependency security updates (`body-parser`, `multer`, `undici`, `fast-uri`), not audit findings; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
 | 5 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.59 | Adds 2.0.0-rc.59 to the release table: `nodemailer` 10.2.1 (moderate dependency advisories), not an audit finding; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
+| 6 | 2026-10-28 | 2.0.0-rc.40 to 2.0.0-rc.63 | Adds 2.0.0-rc.63 to the release table: `node-forge` 1.4.2 (high dependency advisory) and `qs` 6.16.1 (moderate), not audit findings; counts unchanged. rc.60 to rc.62 carried no security fix. Deployed on the maintainers' platforms (2026-10-28). |
