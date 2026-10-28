@@ -3568,6 +3568,115 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.ok(!(res.body?.accesses || []).some((a) => a.id === dataGrant.id), 'gone when the deletion answered');
       assert.deepStrictEqual(outbound.filter((u) => u.includes(accepter.username)), [], 'no request to this core\'s own URL');
     });
+
+    // The counterparty as if on another core: the deleted account's
+    // relationship endpoints rewritten to the URL form `service:api` does
+    // not use (the fetch shim routes both), so the deletion's notices go out
+    // through the network fetch, where an outage can be simulated.
+    async function asForeignPeers (owner) {
+      const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      const apiFormat = (await require('@pryv/boiler').getConfig()).get('service:api');
+      const mall = await buildMallForCmc();
+      const ownerId = await (await getUsersRepository()).getUserIdForUsername(owner.username);
+      const rels = ((await mall.accesses.get(ownerId, {})) || [])
+        .filter((a) => a?.deleted == null && a?.clientData?.cmc?.counterparty?.apiEndpoint != null);
+      for (const a of rels) {
+        const cp = a.clientData.cmc.counterparty;
+        const token = new URL(cp.apiEndpoint).username;
+        const foreign = apiFormat.includes('127.0.0.1')
+          ? `https://${token}@${cp.username}.pryv.me/`
+          : `http://${token}@127.0.0.1:3000/${cp.username}/`;
+        await mall.accesses.update(ownerId, { id: a.id, update: { clientData: { cmc: { ...a.clientData.cmc, counterparty: { ...cp, apiEndpoint: foreign } } } } });
+      }
+      return { ownerId, count: rels.length };
+    }
+    function peerAnswering (username, answer) {
+      const shim = globalThis.fetch;
+      globalThis.fetch = async (url, init) => String(url).includes(username) ? answer() : shim(url, init);
+      return () => { globalThis.fetch = shim; };
+    }
+    const unreachable = () => { throw new Error('ECONNREFUSED (simulated outage)'); };
+    async function deletionOutbox () {
+      return await require('business/src/auth/deletionNotices.ts').getDeletionNoticesLocal();
+    }
+    // One pass as the designated worker runs it, at `atMs`.
+    async function runOutboxPass (outbox, atMs) {
+      return await C.retryQueue.runDeletionOutboxPass({ outbox, deps: { dispatchDeps: { fetch: (url, init) => globalThis.fetch(url, init) }, now: () => atMs } });
+    }
+
+    it('[CND01] the counterparty unreachable during the deletion: the notice waits in the core\'s outbox, the pass delivers it later; a second delivery finds the access gone and settles', async function () {
+      await freshPair();
+      const h = await runFreshHandshake('study-del-d', 'del-app-d');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const accepter = bob;
+      const { ownerId, count } = await asForeignPeers(alice);
+      assert.strictEqual(count, 1, 'premise: one relationship to tell');
+      const outbox = await deletionOutbox();
+      await outbox.deleteAll();
+      const restore = peerAnswering(accepter.username, unreachable);
+      const t0 = Date.now();
+      try {
+        await deleteAccount(alice);
+      } finally {
+        restore();
+      }
+      assert.ok(Date.now() - t0 < 10_000, 'the deletion is not held by the outage');
+      let res = await coreRequest.get(accepter.accessesPath).set('Authorization', accepter.token);
+      assert.ok((res.body?.accesses || []).some((a) => a.id === dataGrant.id), 'not told yet: the data grant is still there');
+      const rows = await outbox.listAll();
+      assert.strictEqual(rows.length, 1, JSON.stringify(rows));
+      const row = rows[0];
+      assert.strictEqual(row.deletedUserId, ownerId);
+      assert.strictEqual(row.status, 'pending');
+      assert.strictEqual(row.attempts, 1);
+      assert.ok(row.apiEndpoint.includes('@'), 'the endpoint carries the token while pending');
+      assert.strictEqual(row.body.type, 'consent/revoke-cmc');
+
+      const r = await runOutboxPass(outbox, row.nextAttemptAfter);
+      assert.strictEqual(r.succeeded, 1, JSON.stringify(r));
+      assert.deepStrictEqual(await outbox.listAll(), [], 'a delivered row is deleted');
+      assert.ok(await pollGone(accepter, dataGrant.id), 'the counterparty tore the relationship down');
+
+      // The same notice once more (a crash between the answer and the row
+      // delete): the access it is sent through is gone, the row settles.
+      await outbox.insert(row);
+      const again = await runOutboxPass(outbox, row.nextAttemptAfter);
+      assert.strictEqual(again.settled, 1, JSON.stringify(again));
+      assert.deepStrictEqual(await outbox.listAll(), []);
+      res = await coreRequest.get(accepter.accessesPath).set('Authorization', accepter.token);
+      assert.strictEqual(res.status, 200);
+    });
+
+    it('[CND02] the counterparty refuses the notice later (a 4xx): failed-permanent, kept without the token', async function () {
+      await freshPair();
+      const h = await runFreshHandshake('study-del-e', 'del-app-e');
+      await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      const accepter = bob;
+      await asForeignPeers(alice);
+      const outbox = await deletionOutbox();
+      await outbox.deleteAll();
+      let restore = peerAnswering(accepter.username, unreachable);
+      try {
+        await deleteAccount(alice);
+      } finally {
+        restore();
+      }
+      const [row] = await outbox.listAll();
+      assert.ok(row != null, 'queued');
+      restore = peerAnswering(accepter.username, () => Response.json({ error: { id: 'invalid-parameters-format', message: 'no' } }, { status: 400 }));
+      let r;
+      try {
+        r = await runOutboxPass(outbox, row.nextAttemptAfter);
+      } finally {
+        restore();
+      }
+      assert.strictEqual(r.failedPermanent, 1, JSON.stringify(r));
+      const [failed] = await outbox.listAll();
+      assert.strictEqual(failed.status, 'failed-permanent');
+      assert.ok(!failed.apiEndpoint.includes('@'), 'the host only: ' + failed.apiEndpoint);
+      await outbox.deleteAll();
+    });
   });
 
   // A consent grant minted as `app` (offer `request.accessType: 'app'`) lets

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
+  digits and dashes (1 to 100 characters) was still slugified, which changed some valid ids: a
+  double dash was collapsed (`a--b` was stored as `a-b`) and leading or trailing dashes were
+  dropped, so a client computing its stream ids could not find the stream it had created. Such an
+  id is now stored exactly as sent. An id with other characters is still slugified as before
+  (`pas encodé de bleu!` becomes `pas-encode-de-bleu`). Note: re-sending such an id (e.g. `a--b`)
+  now creates that stream instead of answering `409` because the normalised `a-b` existed.
+- **`accesses.update` creates a missing stream from a permission's `defaultName`, as
+  `accesses.create` does.** When a personal access updates an access with a stream permission
+  carrying `defaultName` and that stream does not exist, the stream is created with that name at
+  the root of its store (or untrashed if it is trashed); a local id must then be a valid creation
+  id (otherwise `400 invalid-request-structure`). Before, `defaultName` was accepted and dropped.
+  Unchanged, now documented: on both create and update, a permission without `defaultName` may
+  name a stream that does not exist yet; it is stored as is and applies once a stream with that id
+  is created.
+- **A permission's `defaultName` no longer creates a stream with a reserved id.** Creating the
+  stream named by a permission skipped the reserved-id check of `streams.create`, so `null`,
+  `constructor` and similar ids could be created that way. `accesses.create` and `accesses.update`
+  now answer `400 invalid-item-id` for them, as `streams.create` does.
+- **CMC: the revoke notices of an account being deleted are now queued and re-sent.** Deleting an
+  account sends a `consent/revoke-cmc` notice to every counterparty; one whose core could not be
+  reached during the deletion (network error, timeout, 5xx, 408 / 429) was logged and lost, so the
+  counterparty kept the relationship as active after the erasure. Such a notice is now held in a
+  core-level outbox that outlives the account and re-sent by the retry loop on the schedule of any
+  other revoke notice (1, 5 and 25 minutes, about 2 hours, then every 6 hours; 8 re-sends over
+  about 27 hours, then `failed-permanent` for the operator, kept 30 days without its token). The
+  deletion itself still does not wait for the other cores. A re-sent notice answered `403
+  invalid-access-token` (the counterparty already deleted the access it is sent through) is
+  settled. Nothing is queued when `cmc.retryLoop.enabled` is false.
 - **A mail address the SMTP server rejects now answers `400`, not `500`, where the address is the
   caller's own input.** The registration email code (`POST /reg/email-challenge`) and the
   verification resend (`PUT /{username}/account` with `emails.resend`) answered `500

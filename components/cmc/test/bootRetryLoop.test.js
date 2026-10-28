@@ -101,6 +101,50 @@ describe('[CMCBRL] cmc/bootRetryLoop', () => {
     assert.equal(sched.ledgerScheduler.stats().running, false);
   });
 
+  it('[BRL10] the deletion outbox has a pass of its own: run once at boot (a due row goes out), then on the interval; stopAll stops it', async () => {
+    const rows = new Map([['n1', {
+      id: 'n1',
+      deletedUserId: 'gone',
+      accessId: 'a1',
+      apiEndpoint: 'https://tok@peer.example.com/',
+      path: 'events',
+      body: { type: 'consent/revoke-cmc' },
+      attempts: 1,
+      nextAttemptAfter: 0,
+      status: 'pending',
+      lastFailureReason: 'network',
+      lastFailureDetail: null,
+      createdAt: Date.now(),
+    }]]);
+    const outbox = {
+      async insert () { throw new Error('unused'); },
+      async listDue () { return [...rows.values()].filter((r) => r.status === 'pending'); },
+      async countPending () { return rows.size; },
+      async update (r) { rows.set(r.id, r); return true; },
+      async delete (id) { return rows.delete(id); },
+      async pruneFailedBefore () { return 0; },
+    };
+    const posted = [];
+    const logged = [];
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      mall: { events: { async get () { return []; } } },
+      fetch: async (url) => { posted.push(url); return { status: 201, ok: true, headers: { get: () => null }, async json () { return {}; } }; },
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true, intervalMs: 60_000 } } }),
+      userIdsProvider: () => [],
+      isLoopWorker: () => true,
+      deletionOutbox: async () => outbox,
+      logger: { info: (m) => logged.push(m), warn: (m) => logged.push(m), debug () {} },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(posted, ['https://peer.example.com/events'], 'the eager boot pass delivered the due row');
+    assert.equal(rows.size, 0);
+    assert.ok(logged.some((m) => m.includes('deletion outbox pass started')));
+    assert.equal(sched.outboxScheduler.stats().running, true);
+    await sched.stopAll();
+    assert.equal(sched.outboxScheduler.stats().running, false);
+  });
+
   it('[BRL09] the master names the loop worker (PRYV_CMC_LOOP_WORKER), so a restarted designated worker keeps the loop running; without it, cluster worker 1 or a standalone process', () => {
     const { defaultIsLoopWorker } = require('../src/bootRetryLoop.ts');
     assert.equal(defaultIsLoopWorker({ PRYV_CMC_LOOP_WORKER: '1' }), true);

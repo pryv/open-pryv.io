@@ -19,6 +19,7 @@ const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
+const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const emailsStatus = require('business/src/emails/status.ts');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const { isDeepStrictEqual } = require('node:util');
@@ -649,6 +650,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
     memberSweep: cmcMemberSweep,
+    deletionOutbox: getDeletionNoticesLocal,
     fetch: peerFetch,
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {

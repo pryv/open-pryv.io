@@ -299,8 +299,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       // strips all colons, which would munge the user-facing path. Today only
       // CMC needs this; if more plugins adopt :path:style: IDs, generalize
       // via a registry instead of more special-cases.
+      // An id already made of valid characters is kept as given: slugify
+      // would otherwise rewrite it (e.g. collapse `a--b` into `a-b`) and a
+      // client computing the id could no longer find its stream.
       const isPathStyleId = streamId.startsWith(':_cmc:');
-      const slugId = isPathStyleId ? streamId : slugify(streamId);
+      const keepAsGiven = isPathStyleId || commonFns.isValidStreamIdForCreation(streamId);
+      const slugId = keepAsGiven ? streamId : slugify(streamId);
       if (string.isReservedId(streamId) || string.isReservedId(slugId) ||
           string.isBuiltInPropertyName(streamId) || string.isBuiltInPropertyName(slugId)) {
         return process.nextTick(next.bind(null, errors.invalidItemId('The specified id "' + params.id + '" is not allowed.')));

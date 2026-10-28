@@ -208,6 +208,7 @@ describe('[RG2C] Two-core integration tests', function () {
   this.timeout(120000);
 
   let coreA, coreB;
+  let coreAEnv, coreBEnv;
   let dnsServer, dnsPort, resolver;
   let platformDB;
   let savedIntegrityCheck;
@@ -316,10 +317,14 @@ describe('[RG2C] Two-core integration tests', function () {
     const coreEnv = {
       DNS_DOMAIN: DOMAIN,
       RQLITE_URL,
-      ADMIN_KEY
+      ADMIN_KEY,
+      // A queued CMC notice is due in half a second, the loop ticks often
+      CMC_RETRY_INTERVAL_MS: '300',
+      CMC_DELIVERY_BACKOFF_BASE_MS: '500',
+      CMC_PEERS_VIA_PLATFORM: '1'
     };
 
-    coreA = await startCore({
+    coreAEnv = {
       ...coreEnv,
       CORE_PORT: String(CORE_A_PORT),
       CORE_ID: CORE_A_ID,
@@ -327,9 +332,10 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_HOSTING: CORE_A_HOSTING,
       CORE_DATA_NAME: CORE_A_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
-    });
+    };
+    coreA = await startCore(coreAEnv);
 
-    coreB = await startCore({
+    coreBEnv = {
       ...coreEnv,
       CORE_PORT: String(CORE_B_PORT),
       CORE_ID: CORE_B_ID,
@@ -337,7 +343,8 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_HOSTING: CORE_B_HOSTING,
       CORE_DATA_NAME: CORE_B_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR } })
-    });
+    };
+    coreB = await startCore(coreBEnv);
 
     // The DNS server read the core-info rows before the cores registered
     await dnsServer.refreshFromPlatform();
@@ -913,6 +920,96 @@ describe('[RG2C] Two-core integration tests', function () {
   });
 
   // Last: it stops Core B.
+  describe('Consent relationships across cores', () => {
+    const APP = 'rg2c-app';
+    const APP_ROOT = ':_cmc:apps:' + APP;
+
+    async function register (port, hosting, prefix) {
+      const username = prefix + Date.now().toString(36);
+      const res = await httpRequest(port, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting
+      });
+      assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+      return { username, token: new URL(res.body.apiEndpoint).username };
+    }
+    function call (port, actor, method, resource, body) {
+      return httpRequest(port, method, '/' + actor.username + '/' + resource, body, { Authorization: actor.token });
+    }
+    async function poll (fn, timeoutMs = 30000) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < timeoutMs) {
+        const v = await fn();
+        if (v) return v;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return null;
+    }
+    // The access, null when there is none, undefined when the core did not answer the list.
+    async function grantTo (port, owner, peerUsername) {
+      const res = await call(port, owner, 'GET', 'accesses');
+      if (res.status !== 200) return undefined;
+      return (res.body?.accesses || []).find((a) => a?.clientData?.cmc?.counterparty?.username === peerUsername) ?? null;
+    }
+
+    it('[2C60] an account deleted while the counterparty\'s core is down: the revoke notice survives a restart and reaches the counterparty once its core is back', async () => {
+      const alice = await register(CORE_A_PORT, CORE_A_HOSTING, 'cmca');
+      const bob = await register(CORE_B_PORT, CORE_B_HOSTING, 'cmcb');
+      const study = APP_ROOT + ':study-2c60';
+      for (const [port, actor, streams] of [
+        [CORE_A_PORT, alice, [{ id: APP_ROOT, parentId: ':_cmc:apps', name: APP }, { id: study, parentId: APP_ROOT, name: 'study' }]],
+        [CORE_B_PORT, bob, [{ id: APP_ROOT, parentId: ':_cmc:apps', name: APP }, { id: 'diary', name: 'Diary' }]]
+      ]) {
+        for (const s of streams) {
+          const res = await call(port, actor, 'POST', 'streams', s);
+          assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        }
+      }
+      const offer = await call(CORE_A_PORT, alice, 'POST', 'events', {
+        streamIds: [study],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          request: { title: { en: 'study' }, description: { en: 'two-core relationship' }, consent: { en: 'I consent.' }, permissions: [{ streamId: 'diary', level: 'read' }] },
+          requesterMeta: { username: alice.username, appId: APP }
+        }
+      });
+      assert.strictEqual(offer.status, 201, JSON.stringify(offer.body));
+      const accept = await call(CORE_B_PORT, bob, 'POST', 'events', {
+        streamIds: [APP_ROOT],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl: offer.body.event.content.capabilityUrl, accessName: 'rg2c-grant-' + Date.now() }
+      });
+      assert.strictEqual(accept.status, 201, JSON.stringify(accept.body));
+      // The relationship is formed once the back-channel reached the accepter.
+      const backChannel = await poll(async () => {
+        const res = await call(CORE_B_PORT, bob, 'GET', 'events?streams[]=:_cmc:inbox&types[]=consent/back-channel-cmc');
+        return (res.body?.events || []).find((e) => e.content?.from?.username === alice.username);
+      });
+      assert.ok(backChannel != null, 'premise: the relationship formed across the cores');
+      const grant = await grantTo(CORE_B_PORT, bob, alice.username);
+      assert.ok(grant != null, 'premise: the accepter holds the data grant given to the requester');
+
+      await stopCore(coreB);
+      const t0 = Date.now();
+      const del = await httpRequest(CORE_A_PORT, 'DELETE', '/users/' + alice.username, null, { Authorization: ADMIN_KEY });
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      assert.ok(Date.now() - t0 < 15000, 'the deletion is not held by the unreachable core');
+      // Core A restarts with the notice queued; then core B comes back.
+      await stopCore(coreA);
+      coreA = await startCore(coreAEnv);
+      coreB = await startCore(coreBEnv);
+      const gone = await poll(async () => (await grantTo(CORE_B_PORT, bob, alice.username)) === null);
+      assert.ok(gone, 'the counterparty tore the relationship down');
+    });
+  });
+
   describe('Core B down', () => {
     it('[2C58] a registration Core A forwards to an unreachable Core B answers 503, not a 500', async () => {
       await stopCore(coreB);

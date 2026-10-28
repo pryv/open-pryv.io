@@ -559,4 +559,63 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       assert.equal(mall.created.length, 0);
     });
   });
+
+  describe('[CMCDH-OB] account deletion: no mall, the notice goes to the core\'s deletion outbox', () => {
+    function outbox ({ fail = false } = {}) {
+      const rows = [];
+      return { rows, async insert (row) { if (fail) throw new Error('engine down'); rows.push(row); } };
+    }
+
+    it('[DH27] after the in-request attempts one row is queued with the endpoint, the body and the deleted account; nothing is lost', async () => {
+      const box = outbox();
+      const { fetch, calls } = fakeFetch({ status: 503, body: {} });
+      const errors = [];
+      const logger = { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} };
+      const results = await createAccessesDeletePostHook({ fetch, enqueueRetries: true, deletionOutbox: box, logger })('gone-user', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(calls.length, 3);
+      assert.equal(results[0].peerNotified, false);
+      assert.equal(results[0].deliveryQueued, true);
+      assert.equal(box.rows.length, 1);
+      const row = box.rows[0];
+      assert.equal(row.deletedUserId, 'gone-user');
+      assert.equal(row.accessId, REQUESTER_SIDE_ACCESS.id);
+      assert.equal(row.apiEndpoint, 'https://peer-tok@peer.example.org/');
+      assert.equal(row.path, 'events');
+      assert.equal(row.status, 'pending');
+      assert.equal(row.attempts, 1);
+      assert.deepEqual(row.body, JSON.parse(calls[0].init.body), 'the body as sent in-request');
+      assert.equal(row.body.type, 'consent/revoke-cmc');
+      assert.equal(errors.some((m) => m.includes('NOT notified')), false);
+    });
+
+    it('[DH28] nothing queued for a 4xx, with the loop off, or when a mall is wired (the account\'s own queue wins)', async () => {
+      let box = outbox();
+      let results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 400, body: {} }).fetch, enqueueRetries: true, deletionOutbox: box })('gone-user', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(box.rows.length, 0);
+
+      box = outbox();
+      results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: false, deletionOutbox: box })('gone-user', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(box.rows.length, 0);
+
+      box = outbox();
+      const mall = fakeMallWithInvite();
+      const created = [];
+      mall.events.create = async (userId, params) => { created.push(params); return { id: 'r-1', ...params }; };
+      results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, mall, enqueueRetries: true, deletionOutbox: box })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, true);
+      assert.equal(created.length, 1);
+      assert.equal(box.rows.length, 0);
+    });
+
+    it('[DH29] an outbox that cannot take the row: the loss is logged, the hook does not throw', async () => {
+      const errors = [];
+      const logger = { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} };
+      const results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, enqueueRetries: true, deletionOutbox: outbox({ fail: true }), logger })('gone-user', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.ok(errors.some((m) => m.includes('could not be queued')));
+      assert.ok(errors.some((m) => m.includes('NOT notified')));
+    });
+  });
 });

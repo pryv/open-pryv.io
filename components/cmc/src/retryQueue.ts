@@ -184,6 +184,8 @@ type RetryDeps = {
   now?: () => number;
   logger?: CmcLogger;
 };
+// What a send of a queued delivery reads (the fetch is in dispatchDeps).
+type DeliveryAttemptDeps = Pick<RetryDeps, 'dispatchDeps' | 'now' | 'logger'>;
 
 /**
  * Compute the next-attempt-after timestamp given attempts count.
@@ -275,14 +277,24 @@ async function enqueueRetry (params: {
   return event;
 }
 
+let deliveryBackoffBaseMs = DELIVERY_BACKOFF_BASE_MS;
+
 /** The next attempt of a delivery record (minutes, then hours). */
 function nextDeliveryAttemptAt (params: { attempts: number; now: number }): number {
   const { attempts, now } = params;
   const delay = Math.min(
-    DELIVERY_BACKOFF_BASE_MS * Math.pow(BACKOFF_MULTIPLIER, Math.max(0, attempts - 1)),
+    deliveryBackoffBaseMs * Math.pow(BACKOFF_MULTIPLIER, Math.max(0, attempts - 1)),
     DELIVERY_MAX_DELAY_MS
   );
   return now + delay;
+}
+
+/**
+ * Tests that run real cores (child processes): a shorter first delay, so a
+ * queued delivery is due within the test. `null` restores the default.
+ */
+function setDeliveryBackoffBaseMsForTests (ms: number | null): void {
+  deliveryBackoffBaseMs = ms ?? DELIVERY_BACKOFF_BASE_MS;
 }
 
 /**
@@ -339,12 +351,83 @@ function terminalDelivery (c: RetryContent): RetryContent['delivery'] {
   return { ...c.delivery, apiEndpoint: stripCredentials(c.delivery.apiEndpoint) };
 }
 
+/** What one send of a queued delivery decided; the caller stores it. */
+type DeliveryVerdict = {
+  outcome: 'succeeded' | 'rescheduled' | 'failed-permanent';
+  // Rescheduled: the number of the next attempt; failed-permanent: the
+  // attempts made; succeeded: the attempts made, this one included.
+  attempts: number;
+  // The peer's answer: outbound reason ('http-4xx', 'network', 'refused', ...) and HTTP status.
+  reason?: string;
+  status?: number;
+  // The error id of the peer's answer body, when it has one.
+  errorId?: string;
+  refused?: boolean;
+  nextAttemptAfter?: number;
+  detail?: { peerReason?: string; status?: number; retryAfterMs?: number };
+};
+
 /**
- * One attempt of a delivery record: the request re-sent as stored. A 2xx
- * settles it; a 4xx (the peer's considered answer) retires it at once,
- * except 408 / 429; anything else reschedules it on the delivery schedule
- * (no earlier than the peer's Retry-After, see honourRetryAfter) until
- * DELIVERY_MAX_ATTEMPTS.
+ * One send of a queued delivery (`attempts` made so far), and the verdict:
+ * a 2xx settles it; a 4xx (the peer's considered answer) or a refused
+ * destination retires it at once, except 408 / 429; anything else reschedules
+ * it on the delivery schedule (no earlier than the peer's Retry-After, see
+ * honourRetryAfter) until DELIVERY_MAX_ATTEMPTS. Stores nothing: an event
+ * record (processDeliveryEvent) and a deletion-notice row apply it alike.
+ */
+async function attemptDelivery (params: {
+  delivery: { apiEndpoint: string; path: string; body: unknown };
+  attempts: number;
+  now: number;
+  deps: DeliveryAttemptDeps;
+  logContext?: Record<string, unknown>;
+}): Promise<DeliveryVerdict> {
+  const { delivery: d, attempts, now, deps } = params;
+  const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
+  const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
+  let result: { ok: boolean; status?: number; reason?: string; retryAfterMs?: number; body?: unknown };
+  try {
+    result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
+  } catch (err: unknown) {
+    result = { ok: false, reason: 'network' };
+    deps.logger?.warn?.('cmc/retry: delivery threw', { ...params.logContext, error: String((err as Error)?.message || err) });
+  }
+  if (result.ok) return { outcome: 'succeeded', attempts };
+  const nextAttempts = attempts + 1;
+  const retryAfterMs = retryAfterOf(result) ?? null;
+  const detail = retryAfterMs == null
+    ? { peerReason: result.reason, status: result.status }
+    : { peerReason: result.reason, status: result.status, retryAfterMs };
+  // A 4xx is the peer's answer (408 / 429 are 'http-retry-later', retried);
+  // a refused destination can never be called.
+  const refused = result.reason === 'refused';
+  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
+    const errorId = (result.body as { error?: { id?: unknown } } | null | undefined)?.error?.id;
+    return {
+      outcome: 'failed-permanent',
+      attempts: nextAttempts - 1,
+      reason: result.reason,
+      status: result.status,
+      ...(typeof errorId === 'string' ? { errorId } : {}),
+      refused,
+      detail,
+    };
+  }
+  return {
+    outcome: 'rescheduled',
+    attempts: nextAttempts,
+    reason: result.reason,
+    status: result.status,
+    detail,
+    nextAttemptAfter: honourRetryAfter({
+      scheduled: nextDeliveryAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs, capMs: DELIVERY_RETRY_AFTER_MAX_MS,
+    }),
+  };
+}
+
+/**
+ * One attempt of a delivery record: the request re-sent as stored, the
+ * verdict of attemptDelivery written back onto the record.
  */
 async function processDeliveryEvent (params: {
   userId: string;
@@ -354,65 +437,228 @@ async function processDeliveryEvent (params: {
 }): Promise<{ outcome: 'succeeded' | 'rescheduled' | 'failed-permanent'; retryEventId?: string; attempts?: number }> {
   const { userId, retryEvent, deps, now } = params;
   const c = retryEvent.content;
-  const d = c.delivery!;
-  const dd = (deps.dispatchDeps ?? {}) as Partial<DeliveryDeps>;
-  const peerDeps: DeliveryDeps = { fetch: dd.fetch!, timeoutMs: dd.timeoutMs, logger: deps.logger ?? dd.logger };
-  let result: { ok: boolean; status?: number; reason?: string; retryAfterMs?: number };
-  try {
-    result = await postToPeer({ apiEndpoint: d.apiEndpoint, path: d.path, body: d.body, deps: peerDeps });
-  } catch (err: unknown) {
-    result = { ok: false, reason: 'network' };
-    deps.logger?.warn?.('cmc/retry: delivery threw', { retryEventId: retryEvent.id, error: String((err as Error)?.message || err) });
-  }
-  if (result.ok) {
+  const v = await attemptDelivery({ delivery: c.delivery!, attempts: c.attempts ?? 1, now, deps, logContext: { retryEventId: retryEvent.id } });
+  if (v.outcome === 'succeeded') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
       ...serverModification(deps),
       content: { ...c, status: 'succeeded', delivery: terminalDelivery(c) },
     }, null, WRITE_OPTS);
-    deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: c.attempts ?? 1 });
+    deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: v.attempts });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
-  const nextAttempts = (c.attempts ?? 1) + 1;
-  const retryAfterMs = retryAfterOf(result) ?? null;
-  const detail = retryAfterMs == null
-    ? { peerReason: result.reason, status: result.status }
-    : { peerReason: result.reason, status: result.status, retryAfterMs };
-  // A 4xx is the peer's answer (408 / 429 are 'http-retry-later', retried);
-  // a refused destination can never be called.
-  const refused = result.reason === 'refused';
-  if (nextAttempts > DELIVERY_MAX_ATTEMPTS || result.reason === 'http-4xx' || refused) {
+  if (v.outcome === 'failed-permanent') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
       ...serverModification(deps),
       content: {
         ...c,
         status: 'failed-permanent',
-        attempts: nextAttempts - 1,
-        lastFailureReason: refused ? 'cmc-handler-destination-refused' : (c.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
-        lastFailureDetail: detail,
+        attempts: v.attempts,
+        lastFailureReason: v.refused === true ? 'cmc-handler-destination-refused' : (c.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
+        lastFailureDetail: v.detail,
         delivery: terminalDelivery(c),
       },
     }, null, WRITE_OPTS);
     deps.logger?.warn?.('cmc/retry: delivery failed-permanent (the counterparty was never told)', {
-      retryEventId: retryEvent.id, originalType: c.originalType, attempts: nextAttempts - 1, reason: result.reason, status: result.status,
+      retryEventId: retryEvent.id, originalType: c.originalType, attempts: v.attempts, reason: v.reason, status: v.status,
     });
-    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: nextAttempts - 1 };
+    return { outcome: 'failed-permanent', retryEventId: retryEvent.id, attempts: v.attempts };
   }
   await deps.mall.events.update(userId, {
     ...retryEvent,
     ...serverModification(deps),
     content: {
       ...c,
-      attempts: nextAttempts,
-      lastFailureDetail: detail,
-      nextAttemptAfter: honourRetryAfter({
-        scheduled: nextDeliveryAttemptAt({ attempts: nextAttempts, now }), now, retryAfterMs, capMs: DELIVERY_RETRY_AFTER_MAX_MS,
-      }),
+      attempts: v.attempts,
+      lastFailureDetail: v.detail,
+      nextAttemptAfter: v.nextAttemptAfter,
     },
   }, null, WRITE_OPTS);
-  deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: nextAttempts });
-  return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: nextAttempts };
+  deps.logger?.debug?.('cmc/retry: delivery rescheduled', { retryEventId: retryEvent.id, attempts: v.attempts });
+  return { outcome: 'rescheduled', retryEventId: retryEvent.id, attempts: v.attempts };
+}
+
+// -- Revoke notices of deleted accounts --------------------------------------
+//
+// The account and its own queue are gone, so these notices wait in a
+// core-level outbox (one row each, see the baseStorage DeletionNoticesLocalDB)
+// handed in by the host. Same schedule and verdicts as a delivery record;
+// a delivered row is deleted at once.
+
+type DeletionNotice = {
+  id: string;
+  deletedUserId: string;
+  accessId: string | null;
+  apiEndpoint: string;
+  path: string;
+  body: unknown;
+  attempts: number;
+  nextAttemptAfter: number;
+  status: 'pending' | 'failed-permanent';
+  lastFailureReason: string | null;
+  lastFailureDetail: unknown;
+  createdAt: number;
+};
+type DeletionOutbox = {
+  insert: (row: DeletionNotice) => Promise<void>;
+  listDue: (now: number, limit: number) => Promise<DeletionNotice[]>;
+  countPending: () => Promise<number>;
+  update: (row: DeletionNotice) => Promise<boolean>;
+  delete: (id: string) => Promise<boolean>;
+  pruneFailedBefore: (createdBefore: number) => Promise<number>;
+};
+
+/**
+ * Queue the revoke notice of a deleted account whose first attempts failed
+ * retryably; first due on the delivery schedule. Returns the row.
+ */
+async function enqueueDeletionNotice (params: {
+  deletedUserId: string;
+  accessId: string | null;
+  delivery: { apiEndpoint: string; path: string; body: unknown };
+  failureReason: string;
+  failureDetail?: unknown;
+  deps: { outbox: Pick<DeletionOutbox, 'insert'>; now?: () => number; logger?: CmcLogger };
+}): Promise<DeletionNotice> {
+  const { delivery, deps } = params;
+  const now = (deps.now ?? Date.now)();
+  const { createId } = require('@paralleldrive/cuid2');
+  const row: DeletionNotice = {
+    id: createId(),
+    deletedUserId: params.deletedUserId,
+    accessId: params.accessId,
+    apiEndpoint: delivery.apiEndpoint,
+    path: delivery.path,
+    body: delivery.body,
+    attempts: 1,
+    nextAttemptAfter: honourRetryAfter({
+      scheduled: nextDeliveryAttemptAt({ attempts: 1, now }), now, retryAfterMs: retryAfterHintOf(params.failureDetail), capMs: DELIVERY_RETRY_AFTER_MAX_MS,
+    }),
+    status: 'pending',
+    lastFailureReason: params.failureReason,
+    lastFailureDetail: params.failureDetail ?? null,
+    createdAt: now,
+  };
+  await deps.outbox.insert(row);
+  deps.logger?.info?.('cmc/retry: revoke notice of a deleted account queued', {
+    deletionNoticeId: row.id,
+    deletedUserId: row.deletedUserId,
+    accessId: row.accessId,
+    host: stripCredentials(delivery.apiEndpoint),
+    nextAttemptAfter: row.nextAttemptAfter,
+  });
+  return row;
+}
+
+/**
+ * A 403 `invalid-access-token` (401 without a token) means the access the
+ * notice is sent through is gone: the peer already tore the relationship down
+ * (a notice delivered twice, or the peer revoked meanwhile). That is the end
+ * state the notice exists to produce.
+ */
+function isPeerAccessGone (v: DeliveryVerdict): boolean {
+  return (v.status === 401 || v.status === 403) && v.errorId === 'invalid-access-token';
+}
+
+/**
+ * One pass over the outbox: the failed rows past their retention pruned,
+ * then the due rows (oldest first, at most `limit`) sent once each. A row
+ * past its whole schedule is retired unsent.
+ */
+async function runDeletionOutboxPass (params: {
+  outbox: DeletionOutbox;
+  deps: DeliveryAttemptDeps;
+  limit?: number;
+}): Promise<{
+  processed: number;
+  succeeded: number;
+  settled: number;
+  rescheduled: number;
+  failedPermanent: number;
+  pruned: number;
+  pendingTotal: number;
+}> {
+  const { outbox, deps } = params;
+  const limit = params.limit ?? 100;
+  const now = (deps.now ?? Date.now)();
+  const summary = { processed: 0, succeeded: 0, settled: 0, rescheduled: 0, failedPermanent: 0, pruned: 0, pendingTotal: 0 };
+  const logOf = (row: DeletionNotice) => ({ deletionNoticeId: row.id, deletedUserId: row.deletedUserId, accessId: row.accessId });
+  try {
+    summary.pruned = await outbox.pruneFailedBefore(now - FAILED_RETENTION_MS);
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/retry: deletion outbox prune failed', { error: String((err as Error)?.message || err) });
+  }
+  let due: DeletionNotice[] = [];
+  try {
+    due = await outbox.listDue(now, limit);
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/retry: deletion outbox read failed', { error: String((err as Error)?.message || err) });
+  }
+  for (const row of due) {
+    summary.processed += 1;
+    try {
+      const host = stripCredentials(row.apiEndpoint);
+      if (now - row.createdAt > DELIVERY_STALE_AFTER_MS) {
+        await outbox.update({
+          ...row,
+          apiEndpoint: host,
+          status: 'failed-permanent',
+          lastFailureReason: STALE_REASON,
+          lastFailureDetail: { enqueuedAt: row.createdAt, retiredAt: now },
+        });
+        deps.logger?.warn?.('cmc/retry: a revoke notice of a deleted account older than its schedule was retired, not sent (the counterparty was never told)', {
+          ...logOf(row), host, attempts: row.attempts,
+        });
+        summary.failedPermanent += 1;
+        continue;
+      }
+      const v = await attemptDelivery({
+        delivery: { apiEndpoint: row.apiEndpoint, path: row.path, body: row.body },
+        attempts: row.attempts,
+        now,
+        deps,
+        logContext: { deletionNoticeId: row.id },
+      });
+      if (v.outcome === 'succeeded') {
+        await outbox.delete(row.id);
+        deps.logger?.info?.('cmc/retry: revoke notice of a deleted account delivered', { ...logOf(row), host, attempts: v.attempts });
+        summary.succeeded += 1;
+      } else if (v.outcome === 'failed-permanent' && isPeerAccessGone(v)) {
+        await outbox.delete(row.id);
+        deps.logger?.info?.('cmc/retry: revoke notice of a deleted account settled, peer access already gone', { ...logOf(row), host, status: v.status });
+        summary.settled += 1;
+      } else if (v.outcome === 'failed-permanent') {
+        await outbox.update({
+          ...row,
+          apiEndpoint: host,
+          status: 'failed-permanent',
+          attempts: v.attempts,
+          lastFailureReason: v.refused === true ? 'cmc-handler-destination-refused' : (row.lastFailureReason ?? 'cmc-revoke-delivery-failed'),
+          lastFailureDetail: v.detail ?? null,
+        });
+        deps.logger?.warn?.('cmc/retry: revoke notice of a deleted account failed-permanent (the counterparty was never told)', {
+          ...logOf(row), host, attempts: v.attempts, reason: v.reason, status: v.status,
+        });
+        summary.failedPermanent += 1;
+      } else {
+        await outbox.update({
+          ...row,
+          attempts: v.attempts,
+          nextAttemptAfter: v.nextAttemptAfter!,
+          lastFailureDetail: v.detail ?? null,
+        });
+        deps.logger?.debug?.('cmc/retry: revoke notice of a deleted account rescheduled', { deletionNoticeId: row.id, attempts: v.attempts });
+        summary.rescheduled += 1;
+      }
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/retry: deletion outbox processing threw', { deletionNoticeId: row.id, error: String((err as Error)?.message || err) });
+    }
+  }
+  try {
+    summary.pendingTotal = await outbox.countPending();
+  } catch (_e) { /* reported as 0 */ }
+  return summary;
 }
 
 /** `modified` (write time, unix seconds) and `modifiedBy` for a retry event the plugin updates. */
@@ -905,13 +1151,17 @@ export {
   NON_RETRYABLE_REASONS,
   nextAttemptAt,
   nextDeliveryAttemptAt,
+  setDeliveryBackoffBaseMsForTests,
   honourRetryAfter,
   isRetryableReason,
   enqueueRetry,
   enqueueDelivery,
+  enqueueDeletionNotice,
   processRetryEvent,
   runRetryLoop,
+  runDeletionOutboxPass,
 };
+export type { DeletionNotice, DeletionOutbox };
 // Re-export for type-completeness (isRetryableFailure is the outbound-level
 // classifier; tests may want to verify our two helpers stay aligned).
 export { isRetryableFailure };

@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 // requires); never inspected here.
 import type { CmcLogger, MallLike } from './_types.ts';
 import type { MemberSweep } from './memberSweep.ts';
+import type { DeletionOutbox } from './retryQueue.ts';
 import * as C from './constants.ts';
 const require = createRequire(import.meta.url);
 
@@ -55,6 +56,11 @@ type BootDeps = {
   // beside the retry loop (`cmc:memberAccess:sweepIntervalMs`), once at boot
   // then on the interval, on the same designated worker.
   memberSweep?: MemberSweep;
+  // The core's outbox of revoke notices from deleted accounts (host-resolved,
+  // storage-agnostic here): drained by a pass of its own on the same worker,
+  // at the retry-loop interval, once at boot (a row queued before a restart
+  // goes out as soon as it is due).
+  deletionOutbox?: () => Promise<DeletionOutbox>;
 };
 
 /**
@@ -96,7 +102,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     // counterparty is not retried, a member offboarding that left residuals
     // on a patient core is not re-swept, memberships that expired or vanished
     // are not swept (their children expire on their own, within maxTtl).
-    deps.logger?.warn?.('cmc/bootRetryLoop: cmc.retryLoop.enabled is false: undeliverable revoke notices are not retried, residual member accesses are not re-swept, expired memberships are not swept');
+    deps.logger?.warn?.('cmc/bootRetryLoop: cmc.retryLoop.enabled is false: undeliverable revoke notices are not retried (the notices of a deleted account included), residual member accesses are not re-swept, expired memberships are not swept');
     return null;
   }
   if (deps.userIdsProvider == null) {
@@ -184,11 +190,32 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
     (scheduler as { ledgerScheduler?: unknown }).ledgerScheduler = ledgerScheduler;
     deps.logger?.info?.('cmc/bootRetryLoop: member ledger pass started', { sweepIntervalMs });
   }
-  // One handle to stop both at shutdown (the in-flight tick is awaited).
+  // The deletion outbox pass: not per user (the accounts are gone), so its
+  // scheduler visits one sentinel id and the pass reads the outbox itself.
+  if (deps.deletionOutbox != null) {
+    const getOutbox = deps.deletionOutbox;
+    const outboxScheduler = new RetryScheduler({
+      retryDeps,
+      userIdsProvider: () => ['deletion-outbox'],
+      logger: deps.logger,
+      runRetryLoop: async () => {
+        const r = await retryQueue.runDeletionOutboxPass({ outbox: await getOutbox(), deps: retryDeps, limit: perUserLimit as number });
+        return { processed: r.processed, succeeded: r.succeeded + r.settled, rescheduled: r.rescheduled, failedPermanent: r.failedPermanent, skipped: 0, pendingTotal: r.pendingTotal };
+      },
+    });
+    outboxScheduler.start(intervalMs);
+    outboxScheduler.tick().catch((err: unknown) => {
+      deps.logger?.warn?.('cmc/bootRetryLoop: the first deletion outbox pass failed', { error: String((err as Error)?.message || err) });
+    });
+    (scheduler as { outboxScheduler?: unknown }).outboxScheduler = outboxScheduler;
+    deps.logger?.info?.('cmc/bootRetryLoop: deletion outbox pass started', { intervalMs });
+  }
+  // One handle to stop them all at shutdown (the in-flight tick is awaited).
   (scheduler as { stopAll?: () => Promise<void> }).stopAll = async () => {
     await scheduler.stop();
-    const ledger = (scheduler as { ledgerScheduler?: { stop: () => Promise<void> } }).ledgerScheduler;
-    if (ledger != null) await ledger.stop();
+    const others = scheduler as { ledgerScheduler?: { stop: () => Promise<void> }; outboxScheduler?: { stop: () => Promise<void> } };
+    if (others.ledgerScheduler != null) await others.ledgerScheduler.stop();
+    if (others.outboxScheduler != null) await others.outboxScheduler.stop();
   };
   return scheduler;
 }

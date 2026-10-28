@@ -203,6 +203,10 @@ function getExternalIdsLocal (): unknown {
   return require('./externalIdsLocal.ts').ExternalIdsLocalPG;
 }
 
+function getDeletionNoticesLocal (): unknown {
+  return require('./deletionNoticesLocal.ts').DeletionNoticesLocalPG;
+}
+
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): unknown {
@@ -293,6 +297,7 @@ export {
   getUserAccountStorage,
   getUsersLocalIndex,
   getExternalIdsLocal,
+  getDeletionNoticesLocal,
   getDataStoreModule,
   createPlatformDB,
   createSeriesConnection,
