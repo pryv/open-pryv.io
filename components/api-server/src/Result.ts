@@ -17,6 +17,7 @@ const SingleObjectSerializationStream = require('./methods/streams/SingleObjectS
 const { Transform, pipeline } = require('stream');
 const { pipeThrough } = require('utils');
 const { getLogger } = require('@pryv/boiler');
+const { APIError, factory: errorsFactory } = require('errors');
 
 const logger = getLogger('result');
 
@@ -184,7 +185,14 @@ class Result {
 
   // Sends the content of Result to the HttpResponse stream passed in parameters.
   //
-  writeToHttpResponse (res: Response, successCode: number) {
+  /**
+   * @param onStreamError for a streamed result, receives an error raised while
+   *   the streams are read (a store query fails on its first row, not when it
+   *   is prepared). Meant to be the request's error handler: before the first
+   *   byte it answers a normal JSON error; after, it can only cut the
+   *   connection. Without it such an error only cuts the connection.
+   */
+  writeToHttpResponse (res: Response, successCode: number, onStreamError?: (err: Error) => void) {
     const rawOnEnd = this._private.onEndCallback;
     // The end-callback is async (it writes the audit record) and its result was
     // dropped on the floor, so a rejection inside it became an unhandled
@@ -217,9 +225,14 @@ class Result {
         return;
       }
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId!);
-      const stream = this.writeStreams(res, successCode);
+      let failed = false;
+      const onError = onStreamError == null
+        ? undefined
+        : (err: Error) => { failed = true; onStreamError(err); };
+      const stream = this.writeStreams(res, successCode, onError);
       stream.on('close', () => {
-        if (onEndCallBack) { onEndCallBack(); }
+        // A failed call is audited by the error handler it was handed to.
+        if (onEndCallBack && !failed) { onEndCallBack(); }
         this._private.tracing.finishSpan(writeTracingId);
         this.closeTracing();
       });
@@ -230,7 +243,7 @@ class Result {
     }
   }
 
-  writeStreams (res: Response, successCode: number) {
+  writeStreams (res: Response, successCode: number, onError?: (err: Error) => void) {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.statusCode = successCode;
@@ -254,6 +267,28 @@ class Result {
     }
 
     const resultStream = new ResultStream(this._private.tracing, this._private.tracingId!);
+    if (onError != null) {
+      // The response is kept out of the pipeline, which would destroy it on
+      // the first error: the error goes to `onError` instead, so one raised
+      // before any byte was written (the head is still unsent) is answered as
+      // a JSON error rather than a cut connection. Still the ONE place errors
+      // on this chain are reported.
+      pipeline(new MultiStream(streams), resultStream, (err: NodeJS.ErrnoException | null) => {
+        if (err == null) return;
+        if (res.destroyed) { // the client went away (or the error is already answered)
+          logger.debug('streamed response ended early (client went away)', err.code);
+          return;
+        }
+        resultStream.unpipe(res);
+        if (!res.headersSent) res.removeHeader('Transfer-Encoding');
+        onError(err instanceof APIError ? err : errorsFactory.unexpectedError(err));
+      });
+      resultStream.pipe(res);
+      // pipe() does not stop the sources when the client goes away; this does
+      // (the pipeline above then destroys every stream on the way down).
+      res.on('close', () => { if (!res.writableFinished) resultStream.destroy(); });
+      return res;
+    }
     // The ONE place errors on this chain are reported. Inner wraps use a no-op
     // callback precisely because the same error arrives here.
     pipeline(new MultiStream(streams), resultStream, res, (err: NodeJS.ErrnoException | null) => {

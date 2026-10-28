@@ -251,6 +251,80 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     assert.strictEqual(uncaught, null);
   });
 
+  // The same paths with an error handler, as the HTTP routes call it: the
+  // response is then kept out of the pipeline so a read error can be answered.
+  // Client hang-ups must still release every source and are not errors.
+
+  it('[RSAC1] with an error handler, a client going away still releases every source', async function () {
+    const result = new Result({ isStreamResult: true });
+    // Big enough not to fit in the buffers between the source and the
+    // response: a smaller one runs to completion unaided once the response is
+    // gone, and passes whether or not anything released it.
+    const a = resourceSource(20000);
+    const b = resourceSource(20000);
+    const c = resourceSource(20000);
+    result.addToConcatArrayStream('events', countingStream2(a.stream));
+    result.addToConcatArrayStream('events', countingStream2(b.stream));
+    result.closeConcatArrayStream('events');
+    result.addStream('eventDeletions', pipeThroughReal(c.stream, new CleanDeletedEventsStream()));
+
+    const errors = [];
+    result.writeToHttpResponse(responseThatDiesAfterFirstChunk(), 200, (err) => errors.push(err));
+
+    const ok = await until(() => a.released && b.released && c.released);
+    assert.ok(ok, `every source must be released: a=${a.released} b=${b.released} c=${c.released}`);
+    assert.ok(a.stream.destroyed && b.stream.destroyed && c.stream.destroyed);
+    assert.deepStrictEqual(errors, [], 'a client hang-up is not handed to the error handler');
+    assert.strictEqual(uncaught, null);
+  });
+
+  it('[RSAC2] with an error handler, a fully consumed response runs onEnd once and no handler', async function () {
+    const result = new Result({ isStreamResult: true });
+    const a = resourceSource(20);
+    const b = resourceSource(20);
+    result.addToConcatArrayStream('events', countingStream2(a.stream));
+    result.addToConcatArrayStream('events', countingStream2(b.stream));
+    result.closeConcatArrayStream('events');
+
+    const res = fullResponse();
+    let onEndCalls = 0;
+    result.onEnd(() => { onEndCalls++; });
+    const errors = [];
+    result.writeToHttpResponse(res, 200, (err) => errors.push(err));
+
+    const ok = await until(() => onEndCalls === 1);
+    assert.ok(ok, 'onEnd runs on the happy path');
+    assert.ok(a.released && b.released, 'both generators completed');
+    assert.deepStrictEqual(errors, []);
+    assert.strictEqual(uncaught, null);
+  });
+
+  it('[RSAC3] a source failing goes to the error handler once, releases the others, skips onEnd', async function () {
+    const result = new Result({ isStreamResult: true });
+    const failing = new Readable({ objectMode: true, read () { this.destroy(new Error('read failure')); } });
+    const pending = resourceSource(1000);
+    result.addToConcatArrayStream('events', countingStream2(failing));
+    result.addToConcatArrayStream('events', countingStream2(pending.stream));
+    result.closeConcatArrayStream('events');
+
+    const res = fullResponse();
+    res.headersSent = false;
+    res.removeHeader = () => {};
+    let onEndCalls = 0;
+    result.onEnd(() => { onEndCalls++; });
+    const errors = [];
+    result.writeToHttpResponse(res, 200, (err) => { errors.push(err); res.end(); });
+
+    const ok = await until(() => errors.length === 1 && pending.released);
+    assert.ok(ok, `handler called (${errors.length}) and pending source released (${pending.released})`);
+    assert.strictEqual(errors[0].id, 'unexpected-error', 'handed over as an API error');
+    await until(() => res.writableFinished);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.strictEqual(errors.length, 1, 'exactly once');
+    assert.strictEqual(onEndCalls, 0, 'the error handler audits a failed call, not onEnd');
+    assert.strictEqual(uncaught, null);
+  });
+
   // Production wraps a store stream in ConvertEventFromStoreStream and then the
   // audit counter; reproduce both hops through the real class.
   function countingStream2 (source) {
