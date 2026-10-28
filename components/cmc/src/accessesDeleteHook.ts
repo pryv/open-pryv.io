@@ -256,6 +256,12 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
           const delivery = await outbound.postToPeer({ apiEndpoint, path: 'events', body, deps });
           lastStatus = delivery.status;
           if (delivery.ok) { delivered = true; break; }
+          if (outbound.isPeerAccessGone(delivery)) {
+            // The peer revoked first: nothing left to tell it.
+            delivered = true;
+            deps.logger?.info?.('cmc/accessesDeleteHook: revoke notice settled, peer access already gone', { accessId: access.id, status: delivery.status });
+            break;
+          }
           lastReason = (delivery as { reason?: string }).reason ?? lastReason;
           if (!outbound.isRetryableFailure(delivery)) { retryable = false; break; }
           // A 408 / 429, or a 503 naming a Retry-After, asks to come back
