@@ -145,4 +145,13 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     expectedStar.push('sqqp-audit');
     assert.deepStrictEqual(star.rows.map((e) => e.id), expectedStar);
   });
+
+  it('[SQQP8] stream ids carrying quotes stay inside the match expression', async function () {
+    for (const id of ["o'q", 'd"q', "x' OR 1=1 --"]) {
+      const { rows } = await run({ streams: [[{ any: [id] }]] }, {});
+      assert.deepStrictEqual(rows, [], 'any ' + id);
+      const not = await run({ streams: [[{ any: ['a'] }, { not: [id] }]], toTime: 1030 }, {});
+      assert.ok(not.rows.length > 0, 'not ' + id);
+    }
+  });
 });

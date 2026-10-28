@@ -30,7 +30,7 @@ function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
   }
 
   function processAndBlock (andBlock: AndBlock): string | null {
-    if (typeof andBlock === 'string') return '"' + andBlock + '"';
+    if (typeof andBlock === 'string') return addQuotes([andBlock])[0];
 
     const anys: string[] = [];
     const nots: string[] = [];
@@ -70,6 +70,7 @@ function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
   }
 }
 
+// A stream id is an FTS5 phrase: a double quote inside it is doubled.
 function addQuotes (array: string[]): string[] {
-  return array.map((x) => '"' + x + '"');
+  return array.map((x) => '"' + String(x).replace(/"/g, '""') + '"');
 }

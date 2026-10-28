@@ -11,6 +11,9 @@
   queries naming such a subtree in `not`, and every read of an account whose plugin-internal
   streams (excluded from every client read) had grown past that size, e.g. many CMC capabilities.
   The excluded ids are now one `NOT (a OR b OR ...)` group. PostgreSQL was not affected.
+- **SQLite engine: stream ids are escaped in the full-text query.** A quote in a stream id was
+  pasted into the query as is. Ids reaching it are those of existing, accessible streams, and stream
+  creation does not produce quotes, so this is hardening.
 
 ## 2.0.0-rc.63 - 2026-10-28
 
