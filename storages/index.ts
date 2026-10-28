@@ -91,9 +91,9 @@ function initEngines (config: BoilerConfig) {
 let instances: Instances | null = null;
 let initializing = false;
 
-// Early-published references: set as soon as created during init() so that
+// Early-published reference: set as soon as created during init() so that
 // sub-components calling back into the barrel (e.g. PG userAccountStorage
-// calling getDatabasePG()) can find them before `instances` is assembled.
+// calling getDatabasePG()) can find it before `instances` is assembled.
 let _earlyDatabasePG: unknown = null;
 
 /**
