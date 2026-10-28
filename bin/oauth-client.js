@@ -618,9 +618,10 @@ async function hostingCoreOf (username) {
   }
 }
 
-const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type'];
-
 function parseArgs (argv) {
+  // Declared here, not at module level: parseArgs runs from the async block
+  // at the top of the file, before module-level constants are initialized.
+  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type'];
   const result = { command: null, positional: [], flags: {}, flagsScalar: {} };
   let i = 0;
   result.command = argv[i++] ?? null;
