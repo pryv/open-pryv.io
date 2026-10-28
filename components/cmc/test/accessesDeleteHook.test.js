@@ -536,6 +536,20 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       assert.equal(mall.created.length, 0);
     });
 
+    it('[CRL30] a 403 invalid-access-token (the peer revoked first) settles the notice: told, nothing queued, no loss logged', async () => {
+      const mall = mallWithQueue();
+      const errors = [];
+      const logger = { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} };
+      const { fetch, calls } = fakeFetch({ status: 403, body: { error: { id: 'invalid-access-token' } } });
+      const results = await createAccessesDeletePostHook({ fetch, mall, enqueueRetries: true, logger })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(calls.length, 1);
+      assert.equal(results[0].peerNotified, true);
+      assert.equal(results[0].peerDeliveryStatus, 403);
+      assert.equal(results[0].deliveryQueued, undefined);
+      assert.equal(mall.created.length, 0);
+      assert.equal(errors.some((m) => m.includes('NOT notified')), false);
+    });
+
     it('[DH26] not queued for a 4xx, without a mall, with the loop off or with a wiring that says nothing; then the loss is logged', async () => {
       let mall = mallWithQueue();
       let results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 404, body: {} }).fetch, mall, enqueueRetries: true })('u1', [REQUESTER_SIDE_ACCESS]);

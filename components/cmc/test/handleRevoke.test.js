@@ -502,6 +502,20 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(mall.calls.eventsCreated.length, 0);
     });
 
+    it('[CRL31] a 403 invalid-access-token (the peer revoked first) reports the peer as told, with no delivery failure and nothing queued', async () => {
+      const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 403, body: { error: { id: 'invalid-access-token' } } });
+      const r = await handleRevoke({ userId: 'u1', triggerEvent: TRIGGER, selfIdentity: SELF, deps: { mall, fetch, enqueueRetries: true } });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+      assert.equal(r.peerNotified, true);
+      assert.equal(r.peerDeliveryStatus, 403);
+      assert.equal(r.deliveryFailure, undefined);
+      assert.equal(r.deliveryQueued, undefined);
+      assert.equal(mall.calls.eventsCreated.length, 0);
+      assert.ok(mall.calls.deleted.some((d) => d.id === COUNTERPARTY_ACCESS.id), 'the local teardown is done');
+    });
+
     it('[CRL28] a 503 naming a Retry-After ends the in-request round and queues the notice no earlier than it; a bare 503 is retried in-request as before', async () => {
       const mall = mallWithQueue([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 503, body: {}, headers: { 'retry-after': '600' } });

@@ -64,7 +64,7 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
-const { isRetryableFailure, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
+const { isRetryableFailure, isPeerAccessGone, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 const { findDataGrantByAcceptEventId, hasBackChannel } = require('./handleAccept.ts');
 
@@ -136,6 +136,9 @@ type RetryContent = {
   lastFailureDetail?: unknown;
   nextAttemptAfter?: number;
   status: 'pending' | 'succeeded' | 'failed-permanent';
+  // Set on a revoke delivery record marked succeeded without being taken:
+  // the peer had already deleted the access it is sent through.
+  settledReason?: 'peer-access-gone';
   // A delivery record: the one request to re-send. `apiEndpoint` carries
   // the peer token while the record is pending (this stream is unreadable
   // by any API path); it is replaced by the credential-free URL once the
@@ -448,6 +451,16 @@ async function processDeliveryEvent (params: {
     deps.logger?.info?.('cmc/retry: delivery succeeded', { retryEventId: retryEvent.id, attempts: v.attempts });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
   }
+  if (v.outcome === 'failed-permanent' && c.originalType === C.ET_REVOKE && isPeerAccessGone(v)) {
+    // The peer revoked first: the relationship is down on both sides.
+    await deps.mall.events.update(userId, {
+      ...retryEvent,
+      ...serverModification(deps),
+      content: { ...c, status: 'succeeded', settledReason: 'peer-access-gone', lastFailureDetail: v.detail, delivery: terminalDelivery(c) },
+    }, null, WRITE_OPTS);
+    deps.logger?.info?.('cmc/retry: revoke notice settled, peer access already gone', { retryEventId: retryEvent.id, status: v.status });
+    return { outcome: 'succeeded', retryEventId: retryEvent.id };
+  }
   if (v.outcome === 'failed-permanent') {
     await deps.mall.events.update(userId, {
       ...retryEvent,
@@ -550,16 +563,6 @@ async function enqueueDeletionNotice (params: {
     nextAttemptAfter: row.nextAttemptAfter,
   });
   return row;
-}
-
-/**
- * A 403 `invalid-access-token` (401 without a token) means the access the
- * notice is sent through is gone: the peer already tore the relationship down
- * (a notice delivered twice, or the peer revoked meanwhile). That is the end
- * state the notice exists to produce.
- */
-function isPeerAccessGone (v: DeliveryVerdict): boolean {
-  return (v.status === 401 || v.status === 403) && v.errorId === 'invalid-access-token';
 }
 
 /**
