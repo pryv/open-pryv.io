@@ -19,9 +19,12 @@
  *     enum + the client's `state` + `iss` parameter (RFC 9207) for
  *     other validation failures.
  *
- * Cross-core routing (multi-core deployments): see follow-up commit —
- * for now, /oauth2/authorize lands on whichever core received the
- * request; cross-core code/refresh forwarding happens at /oauth2/token.
+ * Cross-core routing (multi-core deployments): /oauth2/authorize runs on
+ * whichever core received the request (the client lookup reads the
+ * cluster-wide PlatformDB). The issuer is per core, and nothing is
+ * forwarded between cores: the code and refresh exchanges at
+ * /oauth2/token must reach the core that issued them (another core
+ * answers `invalid_grant`, see grants/authorization_code.ts).
  */
 
 import { createRequire } from 'node:module';
@@ -190,7 +193,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
 
     // Pass the API endpoint to the consent UI as `pryvApi` so the UI
     // can target /oauth2/authorize/accept + /refuse without needing
-    // its own config (operators can serve app-web-auth3 from anywhere).
+    // its own config (operators can serve the consent UI from anywhere).
     const sep = consentUrl.indexOf('?') >= 0 ? '&' : '?';
     const consentRedirect = consentUrl + sep +
       'state=' + encodeURIComponent(signed) +

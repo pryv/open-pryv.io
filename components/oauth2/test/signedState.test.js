@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  *
  * Round-trip + tamper-resistance + clock-window tests. The signed
  * state carries the validated /oauth2/authorize parameters across the
- * Pryv → app-web-auth3 (different domain) handoff.
+ * core → consent UI (different domain) handoff.
  */
 
 const assert = require('node:assert/strict');

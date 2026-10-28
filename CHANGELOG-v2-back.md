@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## Unreleased
+
+### OAuth2 documentation brought in line with the code (no behaviour change)
+
+- `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and
+  the `default-config.yml` comments now say they are not enforced (`audAllowList` is superseded by
+  a planned per-client audience check). The keys stay in the config for now.
+- `docs/oauth2.md`: the discovery sample lists every field the server emits (`private_key_jwt`,
+  `token_endpoint_auth_signing_alg_values_supported`, `response_modes_supported`,
+  `authorization_response_iss_parameter_supported`, `dpop_signing_alg_values_supported`); the
+  required `oauth.consentUrl` key is documented; on multi-core the issuer is per core and no core
+  forwards a code or refresh exchange to another (the old "per-deployment issuer" wording is gone).
+- `components/oauth2`: the scope-parser docs name the registered `cmc` namespace (not `pryv:`) and
+  describe the real parser contract; the consent UI is named generically instead of the retired
+  app-web-auth3; the `routes.ts` dependency comments give the 500 `server_error` answered for an
+  advertised but unwired grant (not 501); the `authorize.ts` and INTERNALS text no longer claim
+  cross-core forwarding at `/oauth2/token`; the README status is current.
+
 ## Lint: the TypeScript sources are style-checked
 
 - `eslint.config.js` enables neostandard's `ts` option, so `just lint` and CI's `npx eslint .` now

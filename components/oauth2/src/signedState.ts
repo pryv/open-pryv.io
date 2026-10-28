@@ -10,7 +10,7 @@
  *
  * The `/oauth2/authorize` handler validates the client's parameters and
  * then redirects the user-agent to the consent UI (typically served
- * from a different (sub)domain by app-web-auth3). Cross-domain handoff
+ * from a different (sub)domain). Cross-domain handoff
  * via a cookie has too many gotchas, so the handoff goes over a signed
  * URL parameter instead.
  *

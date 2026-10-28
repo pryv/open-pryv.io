@@ -100,7 +100,8 @@ export type Deps = {
    * directly (no user-context-auth available). The original
    * accesses.create chain ran at /accept time and already validated
    * permissions; refresh rotates credentials, never widens authority.
-   * If not provided, refresh_token grant returns 501 unsupported_grant_type.
+   * If not provided, the refresh_token grant answers 500 server_error
+   * (advertised but not wired is a server fault, see routes/token.ts).
    */
   mintRefreshedAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
@@ -109,8 +110,8 @@ export type Deps = {
    * Mint an app access at /oauth2/token client_credentials-grant time.
    * Storage-layer-direct (same shape as mintRefreshedAccess). Targets
    * the App account's own underlying user — no end-user involved. If
-   * not provided alongside `resolveAccountUserId`, client_credentials
-   * grant returns 501 unsupported_grant_type.
+   * not provided alongside `resolveAccountUserId`, the client_credentials
+   * grant answers 500 server_error (see routes/token.ts).
    */
   mintClientAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;

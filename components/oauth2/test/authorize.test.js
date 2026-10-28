@@ -11,8 +11,8 @@ const require = createRequire(import.meta.url);
  * [OAUTH-AUTH] OAuth2 — GET /oauth2/authorize handler.
  *
  * Exercises the validate-then-redirect flow against a fake
- * PlatformDB-backed clientRegistry. Cross-core forwarding is deferred
- * to a follow-up commit and not tested here.
+ * PlatformDB-backed clientRegistry. There is no cross-core forwarding
+ * (the issuer is per core), so none is tested here.
  */
 
 const assert = require('node:assert/strict');
@@ -271,7 +271,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
       const handler = handleAuthorize({ config: fakeConfig(), platform });
       const res = fakeRes();
-      await handler(fakeReq({ ...VALID_QUERY, scope: 'smart:patient.read' }), res);
+      await handler(fakeReq({ ...VALID_QUERY, scope: 'ext:records.read' }), res);
       assert.match(res.headers.location, /error=invalid_scope/);
     });
   });

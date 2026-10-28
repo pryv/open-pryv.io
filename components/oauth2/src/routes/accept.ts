@@ -34,10 +34,10 @@
  *      MUST happen here.
  *   6. Return the redirect URL `redirect_uri?code=…&state=…&iss=…`.
  *
- * Refuse path: when the user declines, app-web-auth3 should NOT call
- * this endpoint — it should navigate the user-agent directly to
- * `redirect_uri?error=access_denied&state=…&iss=…`. That path is
- * client-side; nothing for the server to do beyond audit (deferred).
+ * Refuse path: when the user declines, the consent UI does NOT call
+ * this endpoint — it calls `POST /oauth2/authorize/refuse` (see
+ * refuse.ts), which verifies the signed state and returns the
+ * `redirect_uri?error=access_denied&state=…&iss=…` URL to navigate to.
  */
 
 import { createRequire } from 'node:module';

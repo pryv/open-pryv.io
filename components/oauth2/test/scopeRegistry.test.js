@@ -80,26 +80,26 @@ describe('[OAUTH-SCOPE] scope-parser registry', () => {
 
   describe('[OAUTH-SCOPE-4] extension via registerScopeParser', () => {
     it('[OAUTH-SCOPE-4a] registers and parses a new namespace', () => {
-      registerScopeParser('smart', (body) => ({
-        namespace: 'smart',
-        raw: `smart:${body}`,
+      registerScopeParser('ext', (body) => ({
+        namespace: 'ext',
+        raw: `ext:${body}`,
         permission: 'read',
-        smartBody: body,
+        extBody: body,
       }));
-      const parsed = parseScopes('smart:patient/Observation.read');
+      const parsed = parseScopes('ext:records/item.read');
       assert.equal(parsed.length, 1);
-      assert.equal(parsed[0].namespace, 'smart');
-      assert.equal(parsed[0].smartBody, 'patient/Observation.read');
+      assert.equal(parsed[0].namespace, 'ext');
+      assert.equal(parsed[0].extBody, 'records/item.read');
     });
     it('[OAUTH-SCOPE-4b] duplicate registration throws', () => {
       assert.throws(() => registerScopeParser('cmc', () => null), /already registered/);
     });
     it('[OAUTH-SCOPE-4c] mixed namespaces parse together', () => {
-      registerScopeParser('smart', (body) => ({ namespace: 'smart', raw: `smart:${body}`, permission: 'read' }));
-      const parsed = parseScopes('cmc:study-A smart:patient/Observation.read');
+      registerScopeParser('ext', (body) => ({ namespace: 'ext', raw: `ext:${body}`, permission: 'read' }));
+      const parsed = parseScopes('cmc:study-A ext:records/item.read');
       assert.equal(parsed.length, 2);
       assert.equal(parsed[0].namespace, 'cmc');
-      assert.equal(parsed[1].namespace, 'smart');
+      assert.equal(parsed[1].namespace, 'ext');
     });
   });
 
