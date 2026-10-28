@@ -44,6 +44,14 @@ describe('[SNMQ] eventMatchQuery', function () {
       assert.strictEqual(eventMatchesQuery(event, { types: ['note/txt'] }), true);
       assert.strictEqual(eventMatchesQuery(event, { types: ['mass/kg'] }), false);
     });
+    it('[SNMC7] a `class/*` type matches every format of that class, as in events.get', function () {
+      assert.strictEqual(eventMatchesQuery(event, { types: ['note/*'] }), true);
+      assert.strictEqual(eventMatchesQuery(event, { types: ['mass/*', 'note/*'] }), true);
+      assert.strictEqual(eventMatchesQuery(event, { types: ['mass/*'] }), false);
+      assert.strictEqual(eventMatchesQuery({ ...event, type: 'notebook/txt' }, { types: ['note/*'] }), false);
+      assert.strictEqual(eventMatchesQuery({ ...event, type: 'series:mass/kg' }, { types: ['series:mass/*'] }), true);
+      assert.strictEqual(eventMatchesQuery({ ...event, type: 'series:mass/kg' }, { types: ['mass/*'] }), false);
+    });
     it('[SNMC4] content conditions', function () {
       assert.strictEqual(eventMatchesQuery(event, { content: [{ field: 'content', path: ['status'], op: 'eq', value: 'unread' }] }), true);
       assert.strictEqual(eventMatchesQuery(event, { content: [{ field: 'content', path: ['n'], op: 'gt', value: 10 }] }), false);
