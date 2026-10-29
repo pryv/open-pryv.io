@@ -50,14 +50,18 @@ describe('[UCRC] changeUsername gates (the availability check passed, the name t
     usersIndex = usersRepository.usersIndex;
   });
 
-  /** The account still holds `name` exactly as before a refused change. */
-  async function assertUnchanged ({ uname, userId, email }) {
+  /**
+   * The account still holds `name` exactly as before a refused change; a
+   * `freeName` (the refused new name, held by nobody) routes nowhere.
+   */
+  async function assertUnchanged ({ uname, userId, email }, { freeName } = {}) {
     assert.strictEqual(await usersRepository.getUserIdForUsername(uname), userId, 'the name still resolves to the account');
     assert.strictEqual(await usersRepository.getUsernameForUserId(userId), uname, 'and is still its username');
     assert.ok(!(await usersIndex.getAliasesForId(userId)).includes(uname), 'not left as an alias');
     assert.strictEqual(await platform.getUsersUniqueField('alias', uname), null, 'no alias reservation left');
     assert.strictEqual(await platform.getUsersUniqueField('email', email), platform.hashFor('username', uname), 'the email row keeps its owner');
     assert.strictEqual(await usersRepository.getUsernameChangeCount(userId), 0, 'no change counted');
+    if (freeName != null) assert.strictEqual(await platform.getUserCore(freeName), null, 'no name -> core row left for the refused name');
   }
 
   it('[UCRC1] a name another account of this core holds as its username is refused, nothing written', async function () {
@@ -133,6 +137,22 @@ describe('[UCRC] changeUsername gates (the availability check passed, the name t
         platform.renameUser.failNext = true;
         return () => { platform.renameUser = original; };
       }],
+      ['change counter', () => {
+        const storage = usersRepository.userAccountStorage;
+        const original = storage.setAccountField;
+        let failNext = true;
+        storage.setAccountField = async function (userId, field, ...rest) {
+          if (field === 'usernameChangeCount' && failNext) { failNext = false; throw new Error('injected'); }
+          return await original.call(this, userId, field, ...rest);
+        };
+        return () => { storage.setAccountField = original; };
+      }],
+      ['password reset requests', () => {
+        const resets = usersRepository.storageLayer.passwordResetRequests;
+        const original = resets.destroyAllForUser;
+        resets.destroyAllForUser = function (name, cb) { cb(new Error('injected')); };
+        return () => { resets.destroyAllForUser = original; };
+      }],
       ['username account field', () => {
         const storage = usersRepository.userAccountStorage;
         const original = storage.setAccountField;
@@ -153,12 +173,13 @@ describe('[UCRC] changeUsername gates (the availability check passed, the name t
       } finally {
         restore();
       }
-      await assertUnchanged(renamer);
+      await assertUnchanged(renamer, { freeName: target });
       assert.strictEqual(await usersRepository.getUserIdForUsername(target), undefined, where + ': the new name is free');
       assert.strictEqual(await platform.getUsersUniqueField('username', target), null, where + ': no platform row for the new name');
       await usersRepository.changeUsername(renamer.userId, renamer.uname, target, 'system');
       assert.strictEqual(await usersRepository.getUsernameForUserId(renamer.userId), target, where + ': a retry applies');
       assert.strictEqual(await usersRepository.getUsernameChangeCount(renamer.userId), 1, where);
+      assert.strictEqual(await platform.getUserCore(target), platform.coreId, where + ': the retry routes the new name here');
     }
   });
 

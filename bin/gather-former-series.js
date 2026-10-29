@@ -35,8 +35,11 @@
 // keep the series credentials of a name in a cache for a while. A worker of an
 // earlier release, or one that cached a former name and missed the change
 // notification, can still write under the former name during and after the
-// move; those points are again not returned. A second run moves them, as does
-// the account's next username change.
+// move. A point written after the move is again not returned: a second run
+// moves it, as does the account's next username change. A point written DURING
+// the move itself is lost on SQLite and InfluxDB (copied, then the source is
+// dropped; PostgreSQL moves in one statement): for a strict guarantee run the
+// tool with the HF workers stopped.
 
 const path = require('path');
 
@@ -100,13 +103,17 @@ require('@pryv/boiler').init({
 
     const found = [];
     const failed = [];
-    for (const username of usernames) {
+    for (const listed of usernames) {
+      const userId = byUsername[listed];
       try {
-        for (const f of await gatherFormerSeries(seriesConnection, usersIndex, byUsername[username], username, args.dryRun)) {
+        // The account may have been renamed or deleted since the listing.
+        const username = await usersIndex.getUsername(userId);
+        if (username == null) continue;
+        for (const f of await gatherFormerSeries(seriesConnection, usersIndex, userId, username, args.dryRun)) {
           found.push({ username, ...f });
         }
       } catch (err) {
-        failed.push(username + ': ' + ((err && err.message) || err));
+        failed.push(listed + ': ' + ((err && err.message) || err));
       }
     }
 
@@ -160,8 +167,11 @@ function printUsage (stream) {
     'release. Safe to re-run. The core may be running, but HF workers cache the series',
     'credentials of a name for a while: a worker of an earlier release, or one that',
     'cached a former name and missed the change notification, can still write under',
-    'the former name during and after the move. Those points are not returned until',
-    'moved: a second run moves them (so does the account\'s next username change).',
+    'the former name during and after the move. A point written after the move is not',
+    'returned until moved: a second run moves it (so does the account\'s next username',
+    'change). On SQLite and InfluxDB a point written during the move itself is lost',
+    '(copied, then the source dropped): run with the HF workers stopped for a strict',
+    'guarantee.',
     'Exit code 2 when an account failed (listed; re-run to retry).',
     ''
   ].join('\n'));

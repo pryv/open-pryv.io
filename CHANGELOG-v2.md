@@ -14,7 +14,8 @@
   username in the credentials answered `400 invalid-operation` ("The username in the path does not
   match that of the credentials"), under either path. A name the account holds as a former
   username now signs in like the current one (the session and `apiEndpoint` carry the current
-  username). The `r-` alias of an access is not a sign-in name, and a username of another account
+  username). The alias minted for an access (`r-` + 8 characters) is not a sign-in name (a
+  username that merely starts with `r-` is one like any other), and a username of another account
   still answers `400 invalid-operation`.
 - **`account.changeUsername` result: `warnings`.** A few steps of a username change do not undo it
   when they fail, and were only logged: the move of the breach-scope index rows of the accesses,

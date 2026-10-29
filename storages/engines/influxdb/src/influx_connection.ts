@@ -79,7 +79,9 @@ class InfluxConnection {
     this.logger.debug(`Moving database ${from} to ${to}.`);
     await this.conn.createDatabase(to);
     const quote = (name: string) => '"' + name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-    await this.conn.query(`SELECT * INTO ${quote(to)}."autogen".:MEASUREMENT FROM ${quote(from)}."autogen"./.*/ GROUP BY *`, { database: from });
+    // An empty retention policy (`db..measurement`) is the database's default
+    // one, which every write and read of this engine uses.
+    await this.conn.query(`SELECT * INTO ${quote(to)}..:MEASUREMENT FROM ${quote(from)}../.*/ GROUP BY *`, { database: from });
     await this.conn.dropDatabase(from);
   }
 

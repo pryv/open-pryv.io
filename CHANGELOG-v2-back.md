@@ -16,7 +16,19 @@
   core too, where it was a no-op: the embedded DNS of a single core answers every name through the
   name -> core rows, and the aliases and changed usernames of a single core got none before this
   release. One run after the upgrade gives them back (`--dry-run` reports first); it also deletes
-  the rows of names no account of the core holds any more. Idempotent. Test `[ALRT3]`.
+  the rows of names no account of the core holds any more. Idempotent. Stale rows are deleted from
+  one snapshot of the local index, so a registration in flight can lose its row: run it with the
+  core's API stopped, or run it again afterwards. An empty users index facing rows of this core is
+  refused (exit 3, nothing written, dry run included) unless `--force-empty-local` (like the
+  `--ext-ids` pass): a lost index or a wrong `--config` would otherwise unroute every name of the
+  core. Tests `[ALRT3]`, `[ALRT4]`.
+- InfluxDB `renameDatabase` copies through the database's default retention policy (`db..m`)
+  instead of naming `autogen`, which a server with another default policy does not have.
+- `Platform.renameUser` writes the new username self-row before deleting the former one: a failure
+  in between leaves both (the undo re-keys back), never none.
+- `business/src/users/aliasShape.ts` (`ALIAS_SHAPE_RE`, `isMintedAliasShape`): the minted alias
+  shape, shared by the registration refusal, the former-username series namespaces and the sign-in
+  rule (which used `startsWith('r-')`, treating usernames such as `r-johnny` as access aliases).
 - New `bin/gather-former-series.js` (`--dry-run`, `--user <username>`, `--config`): moves the HF
   series that a username change of an earlier release left under a former username into the
   namespace of the current one, with the same `renameDatabase` move a username change now makes
@@ -25,15 +37,21 @@
   the other repair tools, idempotent (a second run finds nothing). Run once per core after
   upgrading. **Cached credentials race:** HF workers cache the series credentials of a name for a
   while; a worker of an earlier release, or one that cached a former name and missed the change
-  notification, can write under the former name during and after the move. Those points are not
-  returned until moved: run the tool once every API and HF worker runs the new release, and run it
-  again (or let the next username change move them) if writes may have landed meanwhile. Tests
+  notification, can write under the former name during and after the move. A point written after
+  the move is not returned until moved: run the tool once every API and HF worker runs the new
+  release, and run it again (or let the next username change move them) if writes may have landed
+  meanwhile. A point written during the move itself is lost on SQLite and InfluxDB (copied, then the
+  source dropped; PostgreSQL moves in one statement): run it with the HF workers stopped for a strict
+  guarantee. Tests
   `[HFGS1-3]` (PostgreSQL, SQLite, InfluxDB).
 - Backup exports the series of every namespace of an account (its username's and each former
   username's, `formerUsernames`), concatenated with the username's last, and the restore imports
-  them under the username, so the username's points win on a clash as in a move; a restore over
-  an existing account clears the former namespaces too. Before, only the username's namespace was
-  exported: points left under a former name were lost by a backup and restore. Test `[BKAL3]`.
+  them under the username, so on restore the username's points win on a clash (on InfluxDB this
+  differs from the move, which keeps the moved point); a restore over an existing account clears
+  the former namespaces too. Former usernames are the account's aliases except those of the minted
+  shape (`r-` + 8 characters): a username such as `r-johnny` is one like any other. Before, only the
+  username's namespace was exported: points left under a former name were lost by a backup and
+  restore. Tests `[BKAL3]` (with a point under the former name the restore clears), `[BKAL4]`.
 - `SeriesConnection.exportDatabase` of a namespace that never had series returns no measurement and
   creates nothing (SQLite created an empty series file for it; PostgreSQL and InfluxDB already
   behaved so). Tests `[SLEX1]`, `[IC12]` (InfluxDB, a pin).

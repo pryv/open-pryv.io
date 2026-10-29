@@ -288,7 +288,8 @@ class BackupOrchestrator {
     // Every namespace of the account: its username's and those of its former
     // usernames (points a change could not move, or written before changes
     // moved them). Restore writes them all under the username, in this order:
-    // the username's own points last, so they win on a clash, as in a move.
+    // the username's own points last, so they win on a clash at restore (on
+    // InfluxDB the move does the opposite: it keeps the moved point).
     if (this.seriesConnection) {
       try {
         const names = [...await formerUsernames({ getAliasesForId: async () => aliases }, userId, username), username];
