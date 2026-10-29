@@ -107,9 +107,15 @@ class UsersRepository {
   /**
    * only for test data to reset all users Dbs.
    */
-  async deleteAll () {
+  /**
+   * Reset everything – used by tests only. `keepUserCollections` leaves the
+   * accounts' accesses, profile and webhooks for a caller that resets them
+   * itself (and recreates the same accounts).
+   */
+  async deleteAll (options: { keepUserCollections?: boolean } = {}) {
     const usersMap = await this.usersIndex.getAllByUsername();
     for (const [, userId] of Object.entries(usersMap)) {
+      if (!options.keepUserCollections) await this.#removeUserCollections(userId);
       await this.mall.deleteUser(userId);
     }
     await this.usersIndex.deleteAll();
@@ -823,7 +829,13 @@ class UsersRepository {
     });
   }
 
-  async deleteOne (userId: string, username: string | null) {
+  /**
+   * Delete an account: its index entry, platform rows, events, streams,
+   * accesses, profile and webhooks. `keepUserCollections` leaves the
+   * accesses, profile and webhooks (tests only: a reset that recreates the
+   * same account and resets those collections itself).
+   */
+  async deleteOne (userId: string, username: string | null, options: { keepUserCollections?: boolean } = {}) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
@@ -865,6 +877,7 @@ class UsersRepository {
       // one of its aliases (a former username is released here too).
       await this.#destroyResetRequests([username, ...aliases]);
     }
+    if (!options.keepUserCollections) await this.#removeUserCollections(userId);
     await this.mall.deleteUser(userId);
     // Release the account's external ids (keyed by id, not by name), so the
     // same record can be linked again at once. After the data: a deletion that
@@ -881,6 +894,21 @@ class UsersRepository {
     // drops the account's cached accesses, streams and name mappings (the
     // index is gone, so they cannot be refilled).
     cache.unsetUserById(userId);
+  }
+
+  /**
+   * Removes the account's accesses, profile and webhooks (events and streams
+   * go with the mall). The account deletion flow removes them as well; a
+   * caller of deleteOne alone would otherwise leave them as rows of a user id
+   * no account owns.
+   */
+  async #removeUserCollections (userId: string): Promise<void> {
+    for (const name of ['accesses', 'profile', 'webhooks']) {
+      const coll = this.storageLayer?.[name] as { removeAll?: (user: { id: string }, cb: (err: Error | null) => void) => void } | undefined;
+      const removeAll = coll?.removeAll;
+      if (removeAll == null) continue;
+      await fromCallback((cb: (err: Error | null) => void) => removeAll.call(coll, { id: userId }, cb));
+    }
   }
 
   /** Destroys the password reset requests stored under each of `usernames`. */

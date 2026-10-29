@@ -43,7 +43,9 @@ export const resetUsers = async () => {
   await accountStreams.init();
   const customAccountProperties = buildCustomAccountProperties();
   const usersRepository = await getUsersRepository();
-  await usersRepository.deleteAll();
+  // The same accounts are recreated below; their accesses, profile and
+  // webhooks are reset by the callers (resetAccesses, resetProfile, ...).
+  await usersRepository.deleteAll({ keepUserCollections: true });
   for (const user of users) {
     const userObj = new User(deepMerge(customAccountProperties, user)); // might alter storage "dump data" script
     userLocalDirectory.forgetErasedTestOnly(userObj.id); // fixed ids, possibly erased by an earlier test

@@ -111,7 +111,6 @@ describe('[ROOT] root', function () {
     user = user.attrs;
 
     user2 = await fixtures.user(username2, {
-      id: 'u_2',
       password: 't3st-Numb3r',
       email: '00001@test.com',
       language: 'en'

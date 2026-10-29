@@ -45,25 +45,27 @@ class UsersLocalIndex {
   }
 
   /**
-   * Check the integrity of the userIndex compared to the username events in SystemStreams
+   * Check the integrity of the users index against the stored data: every
+   * user id holding rows in a user collection must be an account of the
+   * index (an id that is not is reported: rows an account deletion left).
    */
   async checkIntegrity (): Promise<{ title: string; infos: Record<string, number>; errors: string[] }> {
     const errors: string[] = [];
     const infos: Record<string, number> = {};
-    const checkedMap: Record<string, boolean> = {};
-
+    const idsByCollection: Array<[string, string[]]> = [];
     for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks']) {
       const userIds = await getAllKnownUserIdsFromDB(collectionName);
       infos['userIdsCount-' + collectionName] = userIds.length;
-
+      idsByCollection.push([collectionName, userIds]);
+    }
+    // Read after the collections: an account registered meanwhile is known.
+    const indexed = new Set(Object.values(await this.getAllByUsername()));
+    const reported = new Set<string>();
+    for (const [collectionName, userIds] of idsByCollection) {
       for (const userId of userIds) {
-        if (checkedMap[userId]) continue;
-        const username = this.getUsername(userId);
-        checkedMap[userId] = true;
-        if (username == null) {
-          errors.push(`User id "${userId}" in "${collectionName}" is unknown in the user index DB`);
-          continue;
-        }
+        if (indexed.has(userId) || reported.has(userId)) continue;
+        reported.add(userId);
+        errors.push(`User id "${userId}" in "${collectionName}" is unknown in the user index DB`);
       }
     }
     return {

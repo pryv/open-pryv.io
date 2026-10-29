@@ -252,10 +252,11 @@ function createDynData (options: any = {}) {
 
     const usersRepository = await getUsersRepository();
 
-    // Delete users created by this instance
+    // Delete users created by this instance (recreated below: their
+    // accesses, profile and webhooks are reset by the callers)
     for (const user of users) {
       try {
-        await usersRepository.deleteOne(user.id, user.username, true);
+        await usersRepository.deleteOne(user.id, user.username, { keepUserCollections: true });
       } catch (e) {
         // User might not exist, ignore
       }
@@ -431,7 +432,7 @@ function createDynData (options: any = {}) {
     // Delete users (cascades to other data)
     for (const user of users) {
       try {
-        await usersRepository.deleteOne(user.id, user.username, true);
+        await usersRepository.deleteOne(user.id, user.username);
       } catch (e) {
         // Ignore errors
       }
