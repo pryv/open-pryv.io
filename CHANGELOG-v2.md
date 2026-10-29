@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the
   consent data-grant of an OAuth client (from the account app, `accesses.delete`, or a revoke from
