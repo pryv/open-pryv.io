@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Config: an empty `oauth.consentUrl` is reported (boot warning and `check-config`)
+
+- `GET /oauth2/authorize` answers 500 (`oauth:consentUrl not configured`) while `oauth.consentUrl`
+  is empty, and nothing said so before the first authorization attempt. The master now logs a
+  boot warning (`[oauth] oauth.consentUrl is not set: …`) and `bin/check-config.js` lists the same
+  warning. A warning only, never a refusal: OAuth has no enable flag and a core that does not use
+  the authorization flow runs fine without the key. Nothing is reported when the OAuth routes do
+  not mount (no issuer can be derived). The rule lives in `components/oauth2/src/consentUrlCheck.ts`,
+  shared by both. Tests `[OCUW1]`-`[OCUW3]`, `[CKOC1]`.
+
 ### OAuth2 documentation brought in line with the code (no behaviour change)
 
 - `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and

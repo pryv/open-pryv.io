@@ -132,6 +132,14 @@ if (cluster.isPrimary) {
         '(security fixes of 2026-10-21): upgrade Node and run `npm rebuild`, see INSTALL.md "Node major bumps".');
     }
 
+    // oauth.consentUrl: not a boot-time required key (OAuth has no enable
+    // flag), but the authorization flow answers 500 without it. Never blocks.
+    {
+      const { consentUrlWarning } = require('../components/oauth2/src/consentUrlCheck.ts');
+      const message = consentUrlWarning(config);
+      if (message != null) warn(`[oauth] ${message}`);
+    }
+
     // Start rqlited when rqlite is the platform engine — master.js owns the lifecycle.
     // When `storages.engines.rqlite.external` is true, skip spawning and connect to an
     // already-running instance (useful for multi-core deployments sharing one rqlited).

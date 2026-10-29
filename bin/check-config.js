@@ -423,6 +423,21 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   warnings.push('service.account is not set — clients cannot link to the account pages. Set it to the root URL of your app-web-user-account deployment (the access.defaultAuthUrl without its trailing /auth).');
 }
 
+// oauth.consentUrl: not required at boot (OAuth has no enable flag and a core
+// that does not use it runs fine without it), but GET /oauth2/authorize answers
+// 500 while it is empty. Same rule as the boot warning: reported whenever the
+// OAuth routes mount, i.e. an issuer can be derived (oauth.issuer,
+// dnsLess.publicUrl, or service.api, which dns.domain provides).
+{
+  const { CONSENT_URL_WARNING, isConsentUrlSet } = require('../components/oauth2/src/consentUrlCheck.ts');
+  const oauthMounted = ['oauth.issuer', 'dnsLess.publicUrl', 'service.api', 'dns.domain']
+    .some((key) => !isMissingOrSentinel(get(key)));
+  const consentUrl = get('oauth.consentUrl') ?? get('oauth.consentUrl', baseLayer);
+  if (oauthMounted && (!isConsentUrlSet(consentUrl) || isMissingOrSentinel(consentUrl))) {
+    warnings.push(CONSENT_URL_WARNING);
+  }
+}
+
 // services.mfa — the same check master.js runs at boot. The override is merged
 // over the shipped defaults first, as at boot, so a partial block is judged by
 // the configuration it actually produces.
