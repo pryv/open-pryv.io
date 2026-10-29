@@ -13,6 +13,13 @@
   now carry a millisecond creation time, like every other access. Tokens minted before the revoke
   stay refused.
 
+- **SQLite engine: `events.getOne` no longer serves a history version by its own storage id.**
+  With versioning on (`versioning.forceKeepHistory`), each earlier version of an event is stored
+  under an id of its own. The API never returns that id, but asking for it on the SQLite engine
+  answered with the stored version (its `headId` included), where the PostgreSQL engine answers
+  `404 unknown-resource`. The SQLite engine now answers `unknown-resource` too, for reads and
+  updates; history stays available through `includeHistory` on the head event.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the

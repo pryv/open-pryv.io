@@ -118,7 +118,9 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   // A range on `term` narrows the vocabulary scan; `LIKE 'prefix%'` read every term.
   this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term >= ? AND term < ?');
 
-  this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ?');
+  // Head events only: a history version is a row of its own (headId set), never
+  // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
+  this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ? AND headId IS NULL');
   this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE deleted > ? ORDER BY deleted DESC');
   this.eventQueries.getHistory = this.db.prepare('SELECT * from events WHERE headId = ? ORDER BY modified ASC');
 
