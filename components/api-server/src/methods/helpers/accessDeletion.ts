@@ -268,6 +268,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });
+        if (typeof a.alias === 'string') aliasesToRelease.push(a.alias);
         rowsToTombstone.push(a as IndexAccessInput);
         await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, a);
       }
