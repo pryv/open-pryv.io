@@ -1,5 +1,13 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **`auth.login` sets `lastUsed` on the personal access it issues.** A login was not recorded as
+  use of that access: `lastUsed` (and the `lastAccess` of `system.getUserInfo`) only moved with the
+  next call made with the token. A completed login now sets it. When MFA is active the login is not
+  complete until `mfa.verify`, so `lastUsed` then moves with the first call made with the released
+  token, as before.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the

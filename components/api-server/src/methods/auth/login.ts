@@ -215,6 +215,13 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     findAccess(context, (err: Error | null, access: AccessRow | null) => {
       if (err) { return next(errors.unexpectedError(err)); }
       const accessData: AccessRow = { token: result.token as string | undefined };
+      // A completed login is account activity, but the usage tracker cannot see
+      // it (it runs under a synthetic access id). Record it on the personal
+      // access here. With MFA pending the token is not released yet: activity
+      // then starts with the first call made with it, which the tracker records.
+      if ((context.mfaLogin as MfaLoginState | undefined)?.mfaToken == null) {
+        accessData.lastUsed = timestamp.now();
+      }
       if (access != null) {
         // Access is already existing, updating it with new token (as we have updated the sessions with it earlier).
         updatePersonalAccess(accessData, access, context, next);
