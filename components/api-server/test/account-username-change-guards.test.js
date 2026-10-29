@@ -152,6 +152,39 @@ describe('[UCGD] account.changeUsername: names refused, limits, trail', function
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepStrictEqual(heard.sort(), [newName, uname].sort());
   });
+
+  it('[UCGD9] the result lists the steps that did not complete in `warnings` (empty when none)', async function () {
+    const clean = await freshUser('go');
+    const ok = await changeUsername(clean.uname, freshName('gp'), await login(clean.uname));
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepStrictEqual(ok.body.warnings, [], 'every step completed');
+
+    const { uname } = await freshUser('gq');
+    const newName = freshName('gr');
+    const token = await login(uname);
+    const platform = usersRepository.platform;
+    const listOriginal = platform.listPlatformKvEntries;
+    platform.listPlatformKvEntries = async function () { throw new Error('injected access-index failure'); };
+    const webhooks = (await require('storage').getStorageLayer()).webhooks;
+    const findOriginal = webhooks.find;
+    webhooks.find = function (user, query, options, cb) { cb(new Error('injected webhooks failure')); };
+    const series = require('storages').seriesConnection;
+    assert.ok(series != null, 'series storage is initialised');
+    const renameOriginal = series.renameDatabase;
+    series.renameDatabase = async function () { throw new Error('injected series failure'); };
+    let res;
+    try {
+      res = await changeUsername(uname, newName, token);
+    } finally {
+      platform.listPlatformKvEntries = listOriginal;
+      webhooks.find = findOriginal;
+      series.renameDatabase = renameOriginal;
+    }
+    assert.equal(res.status, 200, 'the change stands: ' + JSON.stringify(res.body));
+    assert.equal(res.body.account.username, newName);
+    assert.deepStrictEqual(res.body.warnings.map((w) => w.step).sort(), ['access-index', 'hf-series', 'webhooks']);
+    for (const w of res.body.warnings) assert.ok(typeof w.message === 'string' && w.message.length > 0, JSON.stringify(w));
+  });
 });
 
 describe('[UCLG] sign-in after a username change', function () {

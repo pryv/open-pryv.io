@@ -62,6 +62,8 @@ function generateRandomAlias (): string {
  * Repository of the users
  */
 type UserData = { id: string; username: string; password?: string; [k: string]: unknown };
+/** A step of a username change that did not complete; the change itself stands. */
+export type UsernameChangeWarning = { step: string; message: string };
 type Operation = import('platform/src/Platform.ts').PlatformOperation;
 
 class UsersRepository {
@@ -296,7 +298,8 @@ class UsersRepository {
    * Caller is responsible for limit + format + reserved-word validation and
    * gives the friendly "taken" answer first; the gates above are the backstop.
    */
-  async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<void> {
+  async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<UsernameChangeWarning[]> {
+    const warnings: UsernameChangeWarning[] = [];
     const coreId = await this.#aliasOwnerCoreId(oldUsername);
     const taken = () => errors.itemAlreadyExists('user', { username: newUsername });
     const undo: Array<() => Promise<unknown>> = [];
@@ -382,7 +385,9 @@ class UsersRepository {
       await this.platform.renameUser(oldUsername, newUsername);
       // The breach-scope index names the owner of each access: move its rows
       // too, or they would be resolved to a later holder of the former name.
-      await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
+      if (!await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername)) {
+        warnings.push({ step: 'access-index', message: 'The breach-scope index rows of the accesses still name the former username (repaired by the access-index resync).' });
+      }
       undo.push(async () => await renameAccessIndexOwnerNonFatal(this.platform, newUsername, oldUsername));
 
       // Reset requests are keyed by username and the former name can no longer
@@ -410,7 +415,10 @@ class UsersRepository {
     // HF workers first forget the series credentials they cached for the
     // former name, which would write under it again.
     pubsub.series.emit(pubsub.SERIES_USERNAME_CHANGED, { username: oldUsername, newUsername });
-    await this.#gatherSeriesNonFatal(userId, newUsername);
+    if (!await this.#gatherSeriesNonFatal(userId, newUsername)) {
+      warnings.push({ step: 'hf-series', message: 'The HF series stored under a former username could not be moved under the new one (they are moved at the next username change, or sooner by the operator).' });
+    }
+    return warnings;
   }
 
   /**
@@ -419,13 +427,15 @@ class UsersRepository {
    * left under a former name are still erased with the account and gathered
    * again at its next username change.
    */
-  async #gatherSeriesNonFatal (userId: string, username: string): Promise<void> {
+  async #gatherSeriesNonFatal (userId: string, username: string): Promise<boolean> {
     const conn = require('storages').seriesConnection;
-    if (conn == null) return;
+    if (conn == null) return true;
     try {
       await gatherAccountSeries(conn, this.usersIndex, userId, username);
+      return true;
     } catch (err) {
       logger.error(`username change: the HF series of the former names could not be moved under "${username}"`, err);
+      return false;
     }
   }
 

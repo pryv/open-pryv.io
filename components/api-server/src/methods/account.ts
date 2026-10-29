@@ -336,7 +336,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         return next(errors.itemAlreadyExists('user', { username: newUsername }));
       }
 
-      await usersRepository.changeUsername(userId, oldUsername, newUsername, context.access.id);
+      // Steps that did not complete (the change stands): reported in the
+      // result, always present, empty when every step completed.
+      const warnings = await usersRepository.changeUsername(userId, oldUsername, newUsername, context.access.id);
 
       // Keep the context coherent for the downstream result builders.
       context.user.username = newUsername;
@@ -351,8 +353,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       } catch (err) {
         // The rename stands; the service picks the new name up at its next start.
         logger.warn('Could not move the webhooks of a renamed account', err);
+        warnings.push({ step: 'webhooks', message: 'The webhooks of the account could not be moved to the new username: they run again under it at the next start of the webhooks service.' });
       }
       result.usernameChangesRemaining = Math.max(0, limit - (used + 1));
+      result.warnings = warnings;
       next();
     } catch (err) {
       const id = (err as { id?: string } | null)?.id;

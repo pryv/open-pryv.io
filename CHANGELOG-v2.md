@@ -16,6 +16,12 @@
   username now signs in like the current one (the session and `apiEndpoint` carry the current
   username). The `r-` alias of an access is not a sign-in name, and a username of another account
   still answers `400 invalid-operation`.
+- **`account.changeUsername` result: `warnings`.** A few steps of a username change do not undo it
+  when they fail, and were only logged: the move of the breach-scope index rows of the accesses,
+  the move of the HF series kept under a former username, the move of the webhooks. The result now
+  carries `warnings`, an array of `{ step, message }` (`step`: `access-index`, `hf-series`,
+  `webhooks`), always present and empty when every step completed (like the other fields of this
+  result, a client can read it without testing for its presence). The change itself stands.
 
 ### Fixed
 
