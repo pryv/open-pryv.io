@@ -98,6 +98,48 @@ describe('[BKAL] backup + restore carry the alias index', function () {
     assert.notStrictEqual(await platform.getUsersUniqueField('alias', alias), null, 'the alias is reserved on the platform');
   });
 
+  it('[BKAL3] the series under a former username are backed up and restored under the username, its own points kept on a clash', async function () {
+    const series = require('storages').seriesConnection;
+    assert.ok(series != null, 'series storage is initialised');
+    const { seriesNamespace } = require('business/src/series/namespace.ts');
+    const formerName = freshName('bkap');
+    const currentName = freshName('bkaq');
+    const fixtureUser = await getNewFixture().user(formerName);
+    const userId = fixtureUser.attrs.id;
+    await usersRepository.changeUsername(userId, formerName, currentName, 'system');
+    restored.push({ userId, username: currentName });
+    // Points left under the former username (an account renamed by an earlier
+    // release), and the username's own.
+    const point = (value, seconds) => ({ fields: { value }, timestamp: seconds * 1e9 });
+    await series.writeMeasurement('event.a', [point(1, 1), point(2, 2)], { database: seriesNamespace(formerName) });
+    await series.writeMeasurement('event.b', [point(3, 1)], { database: seriesNamespace(formerName) });
+    await series.writeMeasurement('event.a', [point(20, 2), point(30, 3)], { database: seriesNamespace(currentName) });
+
+    const dir = fs.mkdtempSync(path.join(backupDir, 'bkal3-'));
+    const writer = backupIO.createFilesystemBackupWriter(dir, { maxChunkSize: 50 * 1024 * 1024, compress: true });
+    const backup = new BackupOrchestrator();
+    await backup.init();
+    await backup.backupUser(userId, writer);
+    for (const name of [formerName, currentName]) await series.dropDatabase(seriesNamespace(name));
+
+    const reader = backupIO.createFilesystemBackupReader(dir, {});
+    const restore = new RestoreOrchestrator();
+    await restore.init();
+    await restore.restoreUser(userId, reader, { overwrite: true });
+    await reader.close();
+
+    const contentOf = async (name) => {
+      const out = {};
+      for (const { measurement, points } of (await series.exportDatabase(seriesNamespace(name))).measurements) {
+        out[measurement] = [...points].sort((a, b) => Number(a.time) - Number(b.time)).map((p) => p.value);
+      }
+      return out;
+    };
+    assert.deepStrictEqual(await contentOf(currentName), { 'event.a': [1, 20, 30], 'event.b': [3] });
+    assert.deepStrictEqual(await contentOf(formerName), {}, 'nothing restored under the former username');
+    for (const name of [formerName, currentName]) await series.dropDatabase(seriesNamespace(name));
+  });
+
   it('[BKAL2] an alias another account holds by the time of the restore stays with its holder and is reported', async function () {
     const name = freshName('bkan');
     const fixtureUser = await getNewFixture().user(name);

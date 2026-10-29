@@ -53,7 +53,9 @@
   series under the new name (PostgreSQL, SQLite and InfluxDB series storage), merging any left
   under a former name by an earlier change, and HF workers forget the series credentials they
   cached for the former name. Accounts renamed before this release get their earlier series back
-  at their next username change (they are still erased with the account).
+  when the operator runs `node bin/gather-former-series.js` once (or at their next username
+  change); they are still erased with the account. The backup now exports the series under every
+  former username too, and the restore writes them under the username.
 - **Sockets opened before a username change are disconnected** (`io server disconnect`) instead of
   staying open and silent: they listened under the former name while notifications are sent under
   the new one. The client reconnects, by either name, and is notified again.

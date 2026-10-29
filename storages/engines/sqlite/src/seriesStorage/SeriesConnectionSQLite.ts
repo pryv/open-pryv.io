@@ -219,7 +219,9 @@ class SeriesConnectionSQLite {
 
   // ----- Backup / restore -------------------------------------------------
 
+  /** A namespace that never had series exports nothing, and creates nothing. */
   async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: SeriesPoint[] }> }> {
+    if (await fileIdentity(this.existingPathForUser(name)) == null) return { measurements: [] };
     const db = await this.forUser(name);
     const eventIds = db.listEventIds();
     const measurements: Array<{ measurement: string, points: SeriesPoint[] }> = [];

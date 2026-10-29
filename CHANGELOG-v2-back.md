@@ -9,6 +9,26 @@
   name -> core rows, and the aliases and changed usernames of a single core got none before this
   release. One run after the upgrade gives them back (`--dry-run` reports first); it also deletes
   the rows of names no account of the core holds any more. Idempotent. Test `[ALRT3]`.
+- New `bin/gather-former-series.js` (`--dry-run`, `--user <username>`, `--config`): moves the HF
+  series that a username change of an earlier release left under a former username into the
+  namespace of the current one, with the same `renameDatabase` move a username change now makes
+  (`business/src/series/namespace.ts` `gatherFormerSeries`; on a clash, the current username's point
+  is kept on PostgreSQL and SQLite, the moved one on InfluxDB); a namespace holding nothing is left alone and nothing is created. Applies by default like
+  the other repair tools, idempotent (a second run finds nothing). Run once per core after
+  upgrading. **Cached credentials race:** HF workers cache the series credentials of a name for a
+  while; a worker of an earlier release, or one that cached a former name and missed the change
+  notification, can write under the former name during and after the move. Those points are not
+  returned until moved: run the tool once every API and HF worker runs the new release, and run it
+  again (or let the next username change move them) if writes may have landed meanwhile. Tests
+  `[HFGS1-3]` (PostgreSQL, SQLite, InfluxDB).
+- Backup exports the series of every namespace of an account (its username's and each former
+  username's, `formerUsernames`), concatenated with the username's last, and the restore imports
+  them under the username, so the username's points win on a clash as in a move; a restore over
+  an existing account clears the former namespaces too. Before, only the username's namespace was
+  exported: points left under a former name were lost by a backup and restore. Test `[BKAL3]`.
+- `SeriesConnection.exportDatabase` of a namespace that never had series returns no measurement and
+  creates nothing (SQLite created an empty series file for it; PostgreSQL and InfluxDB already
+  behaved so). Tests `[SLEX1]`, `[IC12]` (InfluxDB, a pin).
 
 ### Username resolution: no storage read of the canonical name per request
 

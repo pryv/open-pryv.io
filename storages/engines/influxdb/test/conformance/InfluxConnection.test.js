@@ -133,6 +133,12 @@ export default function conformanceTests (getConnection) {
       }
     });
 
+    it('[IC12] exportDatabase() of a database that does not exist is empty and creates nothing', async () => {
+      const never = 'user.icexnever' + Date.now();
+      assert.deepStrictEqual(await conn.exportDatabase(never), { measurements: [] });
+      assert.ok(!(await conn.getDatabases()).includes(never), 'nothing is created');
+    });
+
     it('[IC09] dropDatabase() must remove a database', async () => {
       await conn.dropDatabase(testDbName);
       const dbs = await conn.getDatabases();

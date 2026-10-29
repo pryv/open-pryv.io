@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
-const { seriesNamespace } = require('../series/namespace.ts');
+const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
 const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
 
 // A backup can come from storage the operator does not control: its user ids
@@ -544,10 +544,17 @@ class RestoreOrchestrator {
       }
     }
 
-    // Clear series
+    // Clear series: under the username and each former username the account
+    // holds here (the restore writes them all under the username; a namespace
+    // left under a former name would be merged in at the next username change).
     if (this.seriesConnection) {
       try {
-        await this.seriesConnection.dropDatabase(seriesNamespace(username));
+        const formers = typeof this.usersLocalIndex.getAliasesForId === 'function'
+          ? await formerUsernames(this.usersLocalIndex as { getAliasesForId (userId: string): Promise<string[]> }, userId, username)
+          : [];
+        for (const name of [username, ...formers]) {
+          await this.seriesConnection.dropDatabase(seriesNamespace(name));
+        }
       } catch (e: unknown) {
         this.logger.warn(`Series clear failed for user ${userId}: ${(e as Error).message}`);
       }
@@ -801,6 +808,7 @@ type UsersLocalIndexLike = {
   addUser (username: string, userId: string): Promise<unknown>;
   getUserId (username: string): Promise<string>;
   getUsername (userId: string): Promise<string>;
+  getAliasesForId? (userId: string): Promise<string[]>;
 };
 type UserAccountStorageLike = {
   _importAll (userId: string, data: unknown): Promise<unknown>;

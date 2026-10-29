@@ -162,6 +162,16 @@ describe('[SQSR] SQLite series', function () {
     await conn.dropDatabase(to);
   });
 
+  // A backup exports every namespace an account holds, most of which never
+  // had series: that must neither fail nor create a namespace directory.
+  it('[SLEX1] exportDatabase of a namespace that never had series is empty and creates nothing', async function () {
+    const fs = require('node:fs');
+    const never = 'user.slexnever' + cuid.slug();
+    assert.deepStrictEqual(await conn.exportDatabase(never), { measurements: [] });
+    const neverDir = require('storage/src/userLocalDirectory.ts').getPathForUser(never);
+    assert.ok(!fs.existsSync(neverDir), 'exporting a namespace that never had series must not create its directory');
+  });
+
   // A measurement is dropped under every name an account holds, most of which
   // never had series: that must not create a namespace directory for them.
   it('[SQDM] dropMeasurement creates nothing for an unknown namespace', async function () {
