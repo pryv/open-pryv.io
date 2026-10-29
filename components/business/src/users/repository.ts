@@ -149,9 +149,9 @@ class UsersRepository {
    * Reserve a routable alias for a user. Three coordinated writes:
    *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
    *  2. local alias index — on-core alias→userId resolution (`getUserId`);
-   *  3. name→core mapping (multi-core only) — so `alias.domain` routes to the
-   *     owning core exactly like the username does; claimed, never
-   *     overwritten (see `#bindAlias`).
+   *  3. name→core mapping, so `alias.domain` routes to the owning core
+   *     exactly like the username does (and the embedded DNS of a single
+   *     core answers it); claimed, never overwritten (see `#bindAlias`).
    * Generates an `r-` prefixed alias and retries on collision.
    * @returns the reserved alias string.
    */
@@ -192,7 +192,7 @@ class UsersRepository {
    * @returns the aliases not restored.
    */
   async restoreAliases (ownerUsername: string, ownerUserId: string, aliases: string[]): Promise<string[]> {
-    const coreId = this.platform.isSingleCore ? null : this.platform.coreId;
+    const coreId = this.platform.coreId;
     const indexed = new Set(await this.usersIndex.getAliasesForId(ownerUserId));
     const refused: string[] = [];
     for (const alias of new Set(aliases)) {
@@ -201,32 +201,52 @@ class UsersRepository {
       if (!await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias)) { refused.push(alias); continue; }
       if (!indexed.has(alias)) {
         if (!await this.#bindAlias(alias, ownerUserId, coreId)) refused.push(alias);
-      } else if (coreId != null && !await this.platform.setUserCoreIfNotExists(alias, coreId)) {
+      } else if (!await this.#claimNameForCore(alias, coreId)) {
         refused.push(alias);
       }
     }
     return refused;
   }
 
+  /**
+   * The core an alias of `ownerUsername` routes to: the owner's core. On a
+   * single core it is this core: registration writes the name -> core row
+   * there too, and the embedded DNS answers every name through it.
+   */
   async #aliasOwnerCoreId (ownerUsername: string): Promise<string | null> {
-    if (this.platform.isSingleCore) { return null; }
+    if (this.platform.isSingleCore) { return this.platform.coreId; }
     return await this.platform.getUserCore(ownerUsername);
   }
 
   /**
-   * Bind a reserved alias: claim its name -> core mapping (multi-core), then
+   * Bind a reserved alias: claim its name -> core mapping, then
    * index it locally. The claim never overwrites a mapping held for another
    * core (a username or alias there): the alias reservation is then given
    * back and false answered, with nothing bound. A mapping already pointing
    * here (a former username of this account) is confirmed.
    */
   async #bindAlias (alias: string, ownerUserId: string, coreId: string | null): Promise<boolean> {
-    if (coreId != null && !await this.platform.setUserCoreIfNotExists(alias, coreId)) {
+    if (!await this.#claimNameForCore(alias, coreId)) {
       await this.platform.deleteUserUniqueField('alias', alias);
       return false;
     }
     await this.usersIndex.addAlias(alias, ownerUserId);
     return true;
+  }
+
+  /**
+   * Point `name` at `coreId`. Multi-core: an atomic claim that never
+   * overwrites a row held for another core (false then). Single core: written
+   * like registration writes its row (no other core can hold it). A null
+   * `coreId` (owner without a core row) claims nothing and answers true.
+   */
+  async #claimNameForCore (name: string, coreId: string | null): Promise<boolean> {
+    if (coreId == null) return true;
+    if (this.platform.isSingleCore) {
+      await this.platform.setUserCore(name, coreId);
+      return true;
+    }
+    return await this.platform.setUserCoreIfNotExists(name, coreId);
   }
 
   /**
@@ -240,7 +260,7 @@ class UsersRepository {
     if (!aliases.includes(alias)) return;
     await this.platform.deleteUserUniqueField('alias', alias);
     await this.usersIndex.deleteAlias(alias, ownerUserId);
-    if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
+    await this.platform.deleteUserCore(alias);
   }
 
   /**
@@ -251,7 +271,7 @@ class UsersRepository {
    * Cross-store transactions are not available, so the writes are ordered so
    * that every one which can refuse runs before any that cannot, and a refusal
    * undoes only what this call wrote:
-   *  1. name -> core claim of the new name (multi-core; atomic, never
+   *  1. name -> core claim of the new name (multi-core: atomic, never
    *     overwrites another core's row);
    *  2. platform `alias` reservation of the old name, owned by the new name:
    *     the old name is held before anything releases it, and of two
@@ -291,7 +311,7 @@ class UsersRepository {
     //    answers true: the local gates below refuse that case. Given back on
     //    refusal unless an account of this core holds the name.
     if (coreId != null) {
-      if (!await this.platform.setUserCoreIfNotExists(newUsername, coreId)) { throw taken(); }
+      if (!await this.#claimNameForCore(newUsername, coreId)) { throw taken(); }
       undo.push(async () => {
         if (!(await this.usersIndex.usernameExists(newUsername))) await this.platform.deleteUserCore(newUsername);
       });
