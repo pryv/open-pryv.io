@@ -30,6 +30,8 @@ const { getPlatform } = require('platform');
 // and a user's index rows are cleaned up (Art.17) when the account is erased.
 const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal, renameAccessIndexOwnerNonFatal } = require('platform/src/accessIndex.ts');
 const cache = require('cache').default;
+const { pubsub } = require('messages');
+const { gatherAccountSeries } = require('business/src/series/namespace.ts');
 const cmc = require('cmc');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsConstants = require('business/src/emails/constants.ts');
@@ -379,6 +381,28 @@ class UsersRepository {
     // username before the rename and cached it after the first bust would
     // otherwise keep reporting it until the entry ages out.
     cache.unsetUser(oldUsername);
+
+    // HF series are keyed by the username: bring them under the new one. The
+    // HF workers first forget the series credentials they cached for the
+    // former name, which would write under it again.
+    pubsub.series.emit(pubsub.SERIES_USERNAME_CHANGED, { username: oldUsername, newUsername });
+    await this.#gatherSeriesNonFatal(userId, newUsername);
+  }
+
+  /**
+   * {@link gatherAccountSeries} on the configured series storage. A failure
+   * is logged, not raised: the account is renamed already, and the points
+   * left under a former name are still erased with the account and gathered
+   * again at its next username change.
+   */
+  async #gatherSeriesNonFatal (userId: string, username: string): Promise<void> {
+    const conn = require('storages').seriesConnection;
+    if (conn == null) return;
+    try {
+      await gatherAccountSeries(conn, this.usersIndex, userId, username);
+    } catch (err) {
+      logger.error(`username change: the HF series of the former names could not be moved under "${username}"`, err);
+    }
   }
 
   /** Number of username changes already performed (0 if never). */

@@ -137,6 +137,31 @@ describe('[SQSR] SQLite series', function () {
     assert.ok(!fs.existsSync(neverDir), 'dropping a namespace that never had series must not create its directory');
   });
 
+  it('[SLMV1] renameDatabase moves every point to the target, keeping the target\'s on a clash, and leaves no file behind', async function () {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const from = 'user.slmvfrom' + cuid.slug();
+    const to = 'user.slmvto' + cuid.slug();
+    const point = (value, timestamp) => ({ fields: { value }, timestamp });
+    await conn.writeMeasurement('event.a', [point(1, 1000), point(2, 2000)], { database: from });
+    await conn.writeMeasurement('event.b', [point(3, 1000)], { database: from });
+    await conn.writeMeasurement('event.a', [point(20, 2000), point(30, 3000)], { database: to });
+    const fromPath = conn.existingPathForUser(from);
+    await conn.renameDatabase(from, to);
+    assert.ok(!fs.existsSync(fromPath), 'the former series file is gone');
+    assert.ok(!fs.existsSync(path.dirname(fromPath)), 'the former namespace directory is gone');
+    const target = await conn.forUser(to);
+    const rows = target.selectRows('SELECT event_id, point_time, fields FROM series_data ORDER BY event_id, point_time', []);
+    assert.deepStrictEqual(rows.map((r) => [r.event_id, r.point_time, JSON.parse(r.fields).value]),
+      [['event.a', 1000, 1], ['event.a', 2000, 20], ['event.a', 3000, 30], ['event.b', 1000, 3]]);
+
+    const never = 'user.slmvnever' + cuid.slug();
+    await conn.renameDatabase(never, to);
+    const neverDir = require('storage/src/userLocalDirectory.ts').getPathForUser(never);
+    assert.ok(!fs.existsSync(neverDir), 'moving a namespace that never had series creates nothing');
+    await conn.dropDatabase(to);
+  });
+
   // A measurement is dropped under every name an account holds, most of which
   // never had series: that must not create a namespace directory for them.
   it('[SQDM] dropMeasurement creates nothing for an unknown namespace', async function () {

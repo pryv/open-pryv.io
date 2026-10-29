@@ -21,6 +21,12 @@ export type SeriesPoint = {
 export interface SeriesConnection {
   createDatabase (name: string): Promise<void> | void;
   dropDatabase (name: string): Promise<void> | void;
+  /**
+   * Move every point of namespace `from` into namespace `to` (created if
+   * needed, merged with what it holds), then remove `from`. No-op when
+   * `from` holds nothing, and creates nothing then.
+   */
+  renameDatabase (from: string, to: string): Promise<void> | void;
   writeMeasurement (measurement: string, points: SeriesPoint[]): Promise<void> | void;
   dropMeasurement (measurement: string): Promise<void> | void;
   writePoints (points: SeriesPoint[]): Promise<void> | void;
@@ -31,6 +37,7 @@ export interface SeriesConnection {
 const REQUIRED_METHODS: string[] = [
   'createDatabase',
   'dropDatabase',
+  'renameDatabase',
   'writeMeasurement',
   'dropMeasurement',
   'writePoints',

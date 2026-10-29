@@ -32,6 +32,16 @@ describe('[SDHF] Storing data in a HF series', function () {
     pryv = databaseFixture(database);
     seriesConn = await produceSeriesConnection();
   });
+  // Points of a measurement in a namespace; a namespace removed (InfluxDB drops
+  // the database) holds none.
+  async function countPoints (query, namespace) {
+    try {
+      return (await seriesConn.query(query, { database: namespace })).length;
+    } catch (err) {
+      if (/database not found/.test(err.message)) return 0;
+      throw err;
+    }
+  }
   describe('[SD01] Use Case: Store data in InfluxDB, Verification on either half', function () {
     let server;
     before(async () => {
@@ -343,9 +353,9 @@ describe('[SDHF] Storing data in a HF series', function () {
       assert.strictEqual(rows2.length, 0);
     });
   });
-  // Series are stored under a namespace derived from the username: after a
-  // username change, points written before it stay under the former name,
-  // which the account still holds as an alias.
+  // Series are stored under a namespace derived from the username: a username
+  // change moves them under the new name, but a late write can still leave
+  // points under the former name, which the account holds as an alias.
   describe('[SDRN] DELETE of a series event after a username change', function () {
     this.timeout(10000);
     let hfServer;
@@ -384,6 +394,11 @@ describe('[SDHF] Storing data in a HF series', function () {
 
       const usersRepository = await getUsersRepository();
       await usersRepository.changeUsername(userId, formerName, currentName, 'system');
+      assert.strictEqual(await countPoints(query, `user.${currentName}`), 3, 'moved under the new name');
+      // A late write under the former name.
+      await seriesConn.createDatabase(`user.${formerName}`);
+      await seriesConn.writeMeasurement(`event.${event.id}`, [{ fields: { deltaTime: 4, value: 4 }, timestamp: 4000000 }], { database: `user.${formerName}` });
+      assert.strictEqual(await countPoints(query, `user.${formerName}`), 1);
 
       for (let i = 0; i < 2; i++) { // trash, then delete
         const res = await apiServer.request()
@@ -394,9 +409,80 @@ describe('[SDHF] Storing data in a HF series', function () {
       let left = -1;
       for (let i = 0; i < 20 && left !== 0; i++) {
         await awaiting.delay(100);
-        left = (await seriesConn.query(query, { database: `user.${formerName}` })).length;
+        left = await countPoints(query, `user.${formerName}`) + await countPoints(query, `user.${currentName}`);
       }
-      assert.strictEqual(left, 0, 'no point left under the former name');
+      assert.strictEqual(left, 0, 'no point left under either name');
+    });
+  });
+
+  // A username change moves the account's series under the new name, and the
+  // HF worker forgets the credentials it cached for the former one.
+  describe('[SDMV] series across a username change', function () {
+    this.timeout(15000);
+    let hfServer;
+    let apiServer;
+    let userId, formerName, currentName, parentStreamId, accessToken;
+    before(async () => {
+      hfServer = await spawnContext.spawn();
+      apiServer = await apiServerContext.spawn();
+      userId = 'sdmva' + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+      formerName = userId;
+      currentName = 'sdmvb' + cuid.slug().toLowerCase().replace(/[^a-z0-9]/g, '');
+      parentStreamId = cuid();
+      accessToken = cuid();
+      await pryv.user(userId, {}, function (user) {
+        user.stream({ id: parentStreamId }, function () { });
+        user.access({ token: accessToken, type: 'personal' });
+        user.session(accessToken);
+      });
+    });
+    after(async () => {
+      hfServer.stop();
+      apiServer.stop();
+      await pryv.clean();
+    });
+
+    function store (name, eventId, points) {
+      return hfServer.request()
+        .post(`/${name}/events/${eventId}/series`)
+        .set('authorization', accessToken)
+        .send({ format: 'flatJSON', fields: ['deltaTime', 'value'], points });
+    }
+    async function read (name, eventId) {
+      const res = await hfServer.request()
+        .get(`/${name}/events/${eventId}/series`)
+        .set('authorization', accessToken);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      return res.body.points;
+    }
+
+    it('[SDMV1] points stored before the change are read under both names; points stored after join them; nothing is left under the former name', async function () {
+      const event = await mall.events.create(userId, {
+        streamIds: [parentStreamId], time: timestamp.now(), type: 'series:angular-speed/rad-s'
+      });
+      const before = await store(formerName, event.id, [[1, 1], [2, 2]]);
+      assert.strictEqual(before.status, 200, JSON.stringify(before.body));
+      // Cache the credentials of both names in the HF worker.
+      assert.deepStrictEqual(await read(formerName, event.id), [[1, 1], [2, 2]]);
+
+      const usersRepository = await getUsersRepository();
+      await usersRepository.changeUsername(userId, formerName, currentName, 'system');
+
+      // A write through the former name, right after the change.
+      let after = null;
+      for (let i = 0; i < 20; i++) {
+        after = await store(formerName, event.id, [[3, 3]]);
+        if (after.status === 200) break;
+        await awaiting.delay(100);
+      }
+      assert.strictEqual(after.status, 200, JSON.stringify(after.body));
+      const stored = await store(currentName, event.id, [[4, 4]]);
+      assert.strictEqual(stored.status, 200, JSON.stringify(stored.body));
+      for (const name of [formerName, currentName]) {
+        assert.deepStrictEqual(await read(name, event.id), [[1, 1], [2, 2], [3, 3], [4, 4]], 'read under ' + name);
+      }
+      const query = `select * from "event.${event.id}"`;
+      assert.strictEqual(await countPoints(query, `user.${formerName}`), 0, 'nothing under the former name');
     });
   });
 
