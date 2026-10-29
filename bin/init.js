@@ -864,6 +864,12 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   deletionRecords:
 # #     retentionDays: 0
 
+# # auth.usernameChangeLimit — how many times an account may change its
+# # username (default 2; 0 disables it). Every former username stays held by
+# # the account as an alias, so accesses issued under it keep working.
+# # auth:
+# #   usernameChangeLimit: 2
+
 # # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
 # # username lookups (default 60). Bounds how long a worker that missed an
 # # invalidation keeps using a deleted or changed access; a lower value costs
