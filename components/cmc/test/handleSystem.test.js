@@ -770,6 +770,32 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(updated, true);
     });
 
+    it('[HSAS1] an account field above read is refused without triggerAccess too (retry replay), nothing applied', async () => {
+      const mall = fakeMall([CHANNEL_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }, { streamId: ':_system:language', level: 'contribute' }],
+        },
+      };
+      // The retry loop dispatches with deps that carry no triggerAccess.
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false, JSON.stringify(r));
+      assert.equal(r.reason, 'cmc-offer-invalid-permissions');
+      assert.equal(updated, false);
+      assert.equal(calls.length, 0);
+    });
+
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {
       const mall = fakeMall([CHANNEL_ACCESS]);
       mall.accesses.update = async () => { throw new Error('access-update-fail'); };

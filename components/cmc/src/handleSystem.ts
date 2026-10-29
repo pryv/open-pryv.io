@@ -677,18 +677,15 @@ async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<Syst
   // Account-stream rules of accesses.update (hidden or unknown account
   // streams, the account root or an account field above `read`): a collector's
   // request supplies the set, and mall.accesses.update applies none of them.
-  // Same live-context condition as the chain check; judged on copies.
-  if (triggerAccess != null) {
-    // Required here: the account-stream schema is loaded by a live server only.
-    const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
-    const invalid = validateAccountStreamPermissions(mergedPerms.map((p) => ({ ...(p as object) })));
-    if (invalid != null) {
-      return {
-        ok: false,
-        reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS,
-        detail: { accessId, message: invalid.message, data: invalid.data ?? null },
-      };
-    }
+  // Runs on every dispatch, with or without triggerAccess: a retry replays
+  // the trigger without it, and must reach the same refusal.
+  const accountStreamsRefusal = await validators.accountStreamPermissionsError(mergedPerms);
+  if (accountStreamsRefusal != null) {
+    return {
+      ok: false,
+      reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS,
+      detail: { accessId, message: accountStreamsRefusal.message, data: accountStreamsRefusal.data ?? null },
+    };
   }
 
   // The update is wrapped in runWithSuppression so the accesses.update

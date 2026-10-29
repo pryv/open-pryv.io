@@ -112,6 +112,13 @@ const VALID_OFFER = {
 };
 
 describe('[CMCDISP] cmc/dispatch', () => {
+  // The accept and the scope update apply the account-stream rules, which
+  // read the account-stream config.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCDISP-D] dispatch() type-routing', () => {
     it('[CD01] skips events without a cmc/ type prefix', async () => {
       const r = await dispatch({

@@ -16,7 +16,8 @@ const require = createRequire(import.meta.url);
  * unknown account stream, the account root above read, or a visible account
  * field above read is refused (trigger `failed`, reason
  * `cmc-offer-invalid-permissions`) and no data-grant is stored; read on a
- * visible account field is granted.
+ * visible account field is granted, and so is a choice that leaves the
+ * account-field entry out of an offer allowing it.
  *
  * Pattern C: initCore + coreRequest + getNewFixture + cuid, with the shared
  * in-process fetch shim for the cross-account delivery.
@@ -69,7 +70,7 @@ describe('[CMCAS] cmc accept: account-stream permissions in the granted set', fu
   }
 
   // Alice offers `permissions`, Bob accepts; returns Bob's settled trigger.
-  async function offerAndAccept (permissions) {
+  async function offerAndAccept (permissions, { allowUserChoice, grantedPermissions } = {}) {
     const scope = ':_cmc:apps:my-app:cmcas-' + cuid().slice(-8);
     await ensureStream(alice.streamsPath, alice.token, { id: scope, parentId: ':_cmc:apps:my-app', name: scope });
     const reqRes = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({
@@ -78,7 +79,7 @@ describe('[CMCAS] cmc accept: account-stream permissions in the granted set', fu
       content: {
         to: null,
         capabilityRequested: true,
-        request: { title: { en: 'CMCAS' }, description: { en: 'd' }, consent: { en: 'I consent.' }, permissions },
+        request: { title: { en: 'CMCAS' }, description: { en: 'd' }, consent: { en: 'I consent.' }, permissions, ...(allowUserChoice ? { allowUserChoice } : {}) },
         requesterMeta: { username: alice.username, appId: 'my-app' },
       },
     });
@@ -87,7 +88,7 @@ describe('[CMCAS] cmc accept: account-stream permissions in the granted set', fu
     const accRes = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token).send({
       streamIds: [':_cmc:apps:my-app'],
       type: 'consent/accept-cmc',
-      content: { capabilityUrl, accessName: 'cmcas-grant-' + cuid().slice(-8) },
+      content: { capabilityUrl, accessName: 'cmcas-grant-' + cuid().slice(-8), ...(grantedPermissions ? { grantedPermissions } : {}) },
     });
     assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
     const t0 = Date.now();
@@ -106,14 +107,14 @@ describe('[CMCAS] cmc accept: account-stream permissions in the granted set', fu
     return (res.body.accesses || []).filter((a) => a.clientData?.cmc?.acceptEventId === trigger.id);
   }
 
-  for (const [label, permission] of [
-    ['a hidden account stream at read', { streamId: ':_system:invitationToken', level: 'read' }],
-    ['an unknown account stream at read', { streamId: ':_system:cmcasunknown', level: 'read' }],
-    ['the account root above read', { streamId: ':_system:account', level: 'contribute' }],
-    ['a visible account field above read', { streamId: ':_system:language', level: 'contribute' }],
-    ['a visible account field above read, store-prefixed', { streamId: ':account::_system:language', level: 'manage' }],
+  for (const [code, label, permission] of [
+    ['CMAS1', 'a hidden account stream at read', { streamId: ':_system:invitationToken', level: 'read' }],
+    ['CMAS2', 'an unknown account stream at read', { streamId: ':_system:cmcasunknown', level: 'read' }],
+    ['CMAS3', 'the account root above read', { streamId: ':_system:account', level: 'contribute' }],
+    ['CMAS4', 'a visible account field above read', { streamId: ':_system:language', level: 'contribute' }],
+    ['CMAS5', 'a visible account field above read, store-prefixed', { streamId: ':account::_system:language', level: 'manage' }],
   ]) {
-    it('[CMCAS1] ' + label + ' is refused and no data-grant is stored (' + permission.streamId + ')', async function () {
+    it('[' + code + '] ' + label + ' is refused and no data-grant is stored (' + permission.streamId + ')', async function () {
       const { trigger } = await offerAndAccept([{ streamId: 'fertility', level: 'read' }, permission]);
       assert.strictEqual(trigger.content.status, 'failed', JSON.stringify(trigger.content));
       assert.strictEqual(trigger.content.failure?.reason, 'cmc-offer-invalid-permissions', JSON.stringify(trigger.content));
@@ -121,11 +122,24 @@ describe('[CMCAS] cmc accept: account-stream permissions in the granted set', fu
     });
   }
 
-  it('[CMCAS2] read on a visible account field is granted', async function () {
+  it('[CMAS6] read on a visible account field is granted', async function () {
     const { trigger } = await offerAndAccept([{ streamId: ':_system:language', level: 'read' }]);
     assert.strictEqual(trigger.content.status, 'completed', JSON.stringify(trigger.content));
     const grants = await grantsOf(trigger);
     assert.strictEqual(grants.length, 1);
     assert.ok(grants[0].permissions.some((p) => p.streamId === ':_system:language' && p.level === 'read'), JSON.stringify(grants[0].permissions));
+  });
+
+  it('[CMAS7] an offer allowing choice: leaving the account-field entry out is granted', async function () {
+    const fertility = { streamId: 'fertility', level: 'read' };
+    const { trigger } = await offerAndAccept(
+      [fertility, { streamId: ':_system:language', level: 'contribute' }],
+      { allowUserChoice: true, grantedPermissions: [fertility] }
+    );
+    assert.strictEqual(trigger.content.status, 'completed', JSON.stringify(trigger.content));
+    const grants = await grantsOf(trigger);
+    assert.strictEqual(grants.length, 1);
+    assert.ok(grants[0].permissions.some((p) => p.streamId === 'fertility' && p.level === 'read'), JSON.stringify(grants[0].permissions));
+    assert.ok(!grants[0].permissions.some((p) => p.streamId === ':_system:language'), JSON.stringify(grants[0].permissions));
   });
 });

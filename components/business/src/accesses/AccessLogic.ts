@@ -791,16 +791,16 @@ AccessLogic.PERMISSION_LEVEL_MANAGE = 'manage';
 AccessLogic.PERMISSION_LEVEL_READ = 'read';
 AccessLogic.PERMISSION_LEVEL_CREATE_ONLY = 'create-only';
 
-/**
- * return true is A >= B
- * @param permissionLevelA - level to challenge
- * @param permissionLevelB  - level
- */
 /** Whether the stream id, in any spelling, routes to the account store. */
 function isAccountStream (streamId: string) {
   return storeDataUtils.parseStoreIdAndStoreItemId(storeDataUtils.canonicalStreamId(streamId))[0] === storeDataUtils.AccountStoreId;
 }
 
+/**
+ * return true is A >= B
+ * @param permissionLevelA - level to challenge
+ * @param permissionLevelB  - level
+ */
 function isHigherOrEqualLevel (permissionLevelA: string, permissionLevelB: string) {
   return (PermissionLevels as Record<string, number>)[permissionLevelA] >= (PermissionLevels as Record<string, number>)[permissionLevelB];
 }
